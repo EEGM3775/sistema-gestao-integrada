@@ -1,0 +1,26 @@
+{
+  "name": "funcoeswhatsapp",
+  "version": "1.0.0",
+  "description": "Microserviço para gerenciar a comunicação com o WhatsApp.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "jest",
+    "start:prod": "pm2 start index.js --name whatsapp-service"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.11.0",
+    "dotenv": "^17.2.1",
+    "express": "^5.1.0",
+    "form-data": "^4.0.4",
+    "redis": "^5.8.1",
+    "winston": "^3.17.0"
+  },
+  "devDependencies": {
+    "axios-mock-adapter": "^2.1.0",
+    "jest": "^30.0.5"
+  }
+}

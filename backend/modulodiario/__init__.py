@@ -1,0 +1,1 @@
+# backend/modulodiario/__init__.py
