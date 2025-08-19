@@ -24,7 +24,7 @@ class DiarioObra(models.Model):
         ordering = ['-data']
 
     def __str__(self):
-        return f"Diário da Obra {self.obra.nome} - {self.data.strftime('%d/%m/%Y')}"
+        return f"Diário da Obra {self.obra.descricao} - {self.data.strftime('%d/%m/%Y')}"
 
 class DocumentoDiario(models.Model):
     """

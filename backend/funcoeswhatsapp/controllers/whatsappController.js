@@ -55,6 +55,13 @@ const handleWebhook = (req, res) => {
 
       if (messageType === 'text') {
         messageBody = messageData.text.body.trim();
+      } else if (messageType === 'interactive') {
+        const interactiveType = messageData.interactive.type;
+        if (interactiveType === 'button_reply') {
+          messageBody = messageData.interactive.button_reply.id;
+        } else if (interactiveType === 'list_reply') {
+          messageBody = messageData.interactive.list_reply.id;
+        }
       } else if (['image', 'video', 'audio', 'document'].includes(messageType)) {
         mediaId = messageData[messageType].id;
       } else {

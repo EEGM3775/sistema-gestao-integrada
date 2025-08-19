@@ -16,7 +16,20 @@ class Obra(models.Model):
     nome_obra = models.CharField(max_length=255, verbose_name=_("Nome da Obra"))
     endereco = models.TextField(verbose_name=_("Endereço"))
     status_obra = models.CharField(max_length=50, choices=STATUS_OBRA_CHOICES, default="planejamento", verbose_name=_("Status da Obra"))
-    responsavel_tecnico = models.ForeignKey('rh.Funcionario', on_delete=models.SET_NULL, null=True, blank=True, related_name="obras_tecnicas", verbose_name=_("Responsável Técnico"))
+    
+    responsaveis_tecnicos = models.ManyToManyField(
+        'rh.Funcionario',
+        related_name="obras_responsaveis",
+        blank=True,
+        verbose_name=_("Responsáveis Técnicos")
+    )
+    equipe = models.ManyToManyField(
+        'rh.Funcionario',
+        related_name="obras_equipe",
+        blank=True,
+        verbose_name=_("Equipe da Obra")
+    )
+
     data_inicio_prevista = models.DateField(null=True, blank=True, verbose_name=_("Data de Início Prevista"))
     data_fim_prevista = models.DateField(null=True, blank=True, verbose_name=_("Data de Fim Prevista"))
     data_inicio_real = models.DateField(null=True, blank=True, verbose_name=_("Data de Início Real"))

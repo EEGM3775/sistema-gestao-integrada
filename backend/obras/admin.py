@@ -18,11 +18,12 @@ class DocumentoObraInline(admin.TabularInline):
 
 @admin.register(Obra)
 class ObraAdmin(admin.ModelAdmin):
-    list_display = ['obra_id', 'nome_obra', 'empreendimento', 'endereco', 'status_obra', 'responsavel_tecnico', 'data_cadastro']
+    list_display = ['obra_id', 'nome_obra', 'empreendimento', 'endereco', 'status_obra', 'data_cadastro']
     list_filter = ['status_obra', 'data_inicio_prevista', 'data_fim_prevista', 'empreendimento']
     search_fields = ['nome_obra', 'endereco', 'descricao', 'empreendimento__nome_empreendimento']
     readonly_fields = ['obra_id', 'data_cadastro', 'data_atualizacao']
     ordering = ['nome_obra']
+    filter_horizontal = ['responsaveis_tecnicos', 'equipe']
     
     fieldsets = (
         (_('Informações Básicas'), {
@@ -34,8 +35,8 @@ class ObraAdmin(admin.ModelAdmin):
         (_('Financeiro'), {
             'fields': ('orcamento_previsto',)
         }),
-        (_('Responsabilidade'), {
-            'fields': ('responsavel_tecnico', 'status_obra')
+        (_('Equipe'), {
+            'fields': ('responsaveis_tecnicos', 'equipe', 'status_obra')
         }),
         (_('Descrição'), {
             'fields': ('descricao',)

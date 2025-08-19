@@ -5,6 +5,7 @@ const cache = require('../services/cacheService');
 const commandRouter = require('./commandRouter');
 const fs = require('fs');
 const path = require('path');
+const logger = require('../logger');
 
 // Carrega dinamicamente todos os fluxos disponíveis da pasta /flows
 const flows = {};
@@ -21,44 +22,57 @@ const handleMessage = async (from, message) => {
 
   if (messageBody && messageBody.toLowerCase() === 'sair') {
     await cache.deleteState(from);
-    await sendTextMessage(from, "Sessão encerrada. Para começar de novo, envie uma palavra-chave como 'diario'.");
+    await sendTextMessage(from, "Sessão encerrada. Para começar de novo, envie uma mensagem.");
     return;
   }
 
+  // 1. Identificação obrigatória a cada mensagem recebida
+  const { user, role, error } = await identifyUser(`+${from}`);
+  if (error) {
+    await sendTextMessage(from, error);
+    return;
+  }
+
+  // 2. Verificação de conversa ativa
   const currentState = await cache.getState(from);
 
-  // Se o usuário já está em um fluxo, o contexto já existe.
-  if (currentState && currentState.flow && flows[currentState.flow]) {
-    const context = {
-      from,
-      message,
-      user: currentState.user,
-      userRole: currentState.role,
-      state: currentState,
-      setState: (newState) => cache.setState(from, newState),
-      clearState: () => cache.deleteState(from),
-    };
-    const activeFlow = flows[currentState.flow];
-    await activeFlow.handleMessage(context);
-  } else {
-    // Se não há fluxo, identifica o usuário antes de prosseguir.
-    const { user, role, error } = await identifyUser(`+${from}`);
-    if (error) {
-      await sendTextMessage(from, error);
+  const context = {
+    from,
+    message,
+    user,
+    userRole: role,
+    state: currentState,
+    // Atualiza o estado no Redis, sempre incluindo os dados de usuário mais recentes
+    setState: (newState) => cache.setState(from, { ...newState, user, role }),
+    clearState: () => cache.deleteState(from),
+  };
+
+  // 3. Roteamento da lógica
+  if (currentState) {
+    // Conversa em andamento
+    // Verificação de consistência de segurança: o perfil do usuário mudou?
+    if (currentState.role !== role) {
+      await context.clearState();
+      await sendTextMessage(from, "Notamos uma alteração em seu cadastro. Por segurança, sua sessão foi reiniciada. Por favor, envie sua mensagem novamente.");
       return;
     }
-
-    const context = {
-      from,
-      message,
-      user,
-      userRole: role,
-      state: currentState, // será null aqui
-      setState: (newState) => cache.setState(from, { ...newState, user, role }), // Garante que user e role sejam salvos no estado
-      clearState: () => cache.deleteState(from),
-    };
     
-    await commandRouter.handleCommand(context);
+    const activeFlow = flows[currentState.flow];
+    if (activeFlow) {
+      await activeFlow.handleMessage(context);
+    } else {
+      // Estado órfão (ex: fluxo foi removido), limpa e informa o usuário
+      await context.clearState();
+      await sendTextMessage(from, "Ocorreu um erro em sua sessão e ela foi reiniciada. Por favor, envie sua mensagem novamente.");
+    }
+  } else {
+    // Conversa nova
+    if (role === 'unknown') {
+      await flows.preCadastro.start(context);
+    } else {
+      // Para usuários conhecidos, vai para o roteador de comandos para iniciar um novo fluxo
+      await commandRouter.handleCommand(context);
+    }
   }
 };
 

@@ -11,6 +11,7 @@ const requiredEnvVars = [
   'GOOGLE_API_KEY',
   'DJANGO_API_URL',
   'DJANGO_API_TOKEN',
+  'IA_SERVICE_SECRET_TOKEN',
 ];
 
 // Valida se todas as variáveis de ambiente necessárias estão definidas

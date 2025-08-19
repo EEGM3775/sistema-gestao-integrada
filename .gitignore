@@ -81,3 +81,6 @@ secrets.env
 # Temporary files
 *.tmp
 *.temp
+
+#Arquivos de terminal
+terminal.txt

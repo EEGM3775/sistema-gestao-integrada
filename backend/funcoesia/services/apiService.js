@@ -46,6 +46,5 @@ async function patchAnaliseIA(analiseId, data) {
 
 module.exports = {
   getDocumentoDiario,
-  createAnaliseIA,
   patchAnaliseIA,
 };

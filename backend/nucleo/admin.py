@@ -2,7 +2,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from django.utils.translation import gettext_lazy as _
-from .models import Usuario, Perfil, Permissao, LogAtividadeUsuario, FailedTask
+from .models import Usuario, Perfil, Permissao, LogAtividadeUsuario, FailedTask, PreCadastro
 
 
 @admin.register(Usuario)
@@ -86,5 +86,49 @@ class LogAtividadeUsuarioAdmin(admin.ModelAdmin):
     def has_add_permission(self, request):
         return False
 
+@admin.register(PreCadastro)
+class PreCadastroAdmin(admin.ModelAdmin):
+    """
+    Configura a exibição dos Pré-Cadastros na interface de administração.
+    """
+    list_display = ('nome_completo', 'telefone', 'tipo_interesse', 'status', 'data_criacao')
+    list_filter = ('status', 'tipo_interesse', 'data_criacao')
+    search_fields = ('nome_completo', 'telefone')
+    readonly_fields = ('data_criacao', 'data_atualizacao')
+    list_editable = ('status',)
+    fieldsets = (
+        (None, {'fields': ('nome_completo', 'telefone', 'tipo_interesse', 'mensagem_inicial', 'status')}),
+        (_('Datas'), {'fields': ('data_criacao', 'data_atualizacao')}),
+    )
+
     def has_change_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(FailedTask)
+class FailedTaskAdmin(admin.ModelAdmin):
+    """
+    Configura a exibição das Tarefas Falhas na interface de administração.
+    """
+    list_display = ('task_name', 'task_id', 'status', 'timestamp')
+    list_filter = ('status', 'task_name', 'timestamp')
+    search_fields = ('task_name', 'task_id', 'exception')
+    readonly_fields = ('task_id', 'task_name', 'args', 'kwargs', 'exception', 'traceback', 'timestamp')
+    list_editable = ('status',)
+    fieldsets = (
+        (_('Detalhes da Tarefa'), {
+            'fields': ('task_name', 'task_id', 'status', 'timestamp')
+        }),
+        (_('Dados da Falha'), {
+            'classes': ('collapse',),
+            'fields': ('exception', 'traceback')
+        }),
+        (_('Argumentos da Tarefa'), {
+            'classes': ('collapse',),
+            'fields': ('args', 'kwargs')
+        }),
+    )
+
+    def has_add_permission(self, request):
+        # Ninguém deve ser capaz de adicionar uma tarefa falha manualmente.
         return False

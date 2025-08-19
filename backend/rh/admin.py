@@ -165,6 +165,7 @@ class FuncionarioAdmin(admin.ModelAdmin):
             'fields': (
                 'usuario',
                 'cargo',
+                'empreendimento_vinculado',
                 'data_admissao',
                 'data_demissao',
                 'salario_base',

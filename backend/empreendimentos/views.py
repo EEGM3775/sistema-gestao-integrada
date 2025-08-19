@@ -1,36 +1,39 @@
 # backend/empreendimentos/views.py
-from rest_framework import viewsets, permissions
-from .models import (
-    Empreendimento,
-    ContaBancariaEmpreendimento,
-    CustoEmpreendimento
-)
-from .serializers import (
-    EmpreendimentoSerializer,
-    ContaBancariaEmpreendimentoSerializer,
-    CustoEmpreendimentoSerializer
-)
+from rest_framework import viewsets
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from .models import Empreendimento, ContaBancariaEmpreendimento, CustoEmpreendimento
+from .serializers import EmpreendimentoSerializer, ContaBancariaEmpreendimentoSerializer, CustoEmpreendimentoSerializer
+from obras.models import Obra
+from django.db.models import Q
 
 class EmpreendimentoViewSet(viewsets.ModelViewSet):
-    """
-    Endpoint da API que permite que empreendimentos sejam visualizados ou editados.
-    """
-    queryset = Empreendimento.objects.all().order_by('empreendimento')
+    queryset = Empreendimento.objects.all()
     serializer_class = EmpreendimentoSerializer
-    # permission_classes = [permissions.IsAuthenticated]
+
+    @action(detail=False, methods=['get'], url_path='por-funcionario')
+    def por_funcionario(self, request):
+        funcionario_id = request.query_params.get('funcionario_id')
+        if not funcionario_id:
+            return Response({'error': 'O parâmetro funcionario_id é obrigatório'}, status=400)
+
+        # Encontra todas as obras pelas quais o funcionário é responsável
+        obras_do_funcionario = Obra.objects.filter(responsavel_tecnico_id=funcionario_id)
+        
+        # Obtém os IDs únicos dos empreendimentos dessas obras
+        empreendimento_ids = obras_do_funcionario.values_list('empreendimento_id', flat=True).distinct()
+        
+        # Filtra os empreendimentos com base nesses IDs
+        empreendimentos = Empreendimento.objects.filter(pk__in=empreendimento_ids)
+        
+        serializer = self.get_serializer(empreendimentos, many=True)
+        return Response(serializer.data)
 
 class ContaBancariaEmpreendimentoViewSet(viewsets.ModelViewSet):
-    """
-    Endpoint da API que permite que contas bancárias de empreendimentos sejam visualizadas ou editadas.
-    """
     queryset = ContaBancariaEmpreendimento.objects.all()
     serializer_class = ContaBancariaEmpreendimentoSerializer
-    # permission_classes = [permissions.IsAuthenticated]
 
 class CustoEmpreendimentoViewSet(viewsets.ModelViewSet):
-    """
-    Endpoint da API que permite que custos de empreendimentos sejam visualizados ou editados.
-    """
     queryset = CustoEmpreendimento.objects.all()
     serializer_class = CustoEmpreendimentoSerializer
-    # permission_classes = [permissions.IsAuthenticated]
+

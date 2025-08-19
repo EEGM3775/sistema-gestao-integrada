@@ -4,54 +4,78 @@ const logger = require('../logger');
 const config = require('../config');
 const { getExtensionFromMimeType } = require('../utils');
 
+const cache = require('./cacheService');
+
 const djangoApi = axios.create({
-  baseURL: config.djangoApiUrl, // Corrigido para usar a nova estrutura de config
-  headers: { 'Authorization': `Token ${config.djangoApiToken}` } // Corrigido para usar Token
+  baseURL: config.djangoApiUrl,
+  headers: { 'Authorization': `Token ${config.djangoApiToken}` }
 });
 
 /**
  * Identifica o tipo e os dados de um usuário (funcionário, cliente ou fornecedor)
- * com base no número de telefone.
+ * com base no número de telefone, utilizando um cache de curta duração.
  * @param {string} phone - O número de telefone no formato E.164 (ex: +5511999999999).
  * @returns {Promise<{user: object, role: string} | {error: string}>}
  */
 async function identifyUser(phone) {
+  const cacheKey = `identity:${phone}`;
+  const IDENTITY_CACHE_TTL = 15; // Cache de 15 segundos
+
   try {
-    // 1. Tenta encontrar como Funcionário
+    // 1. Tenta buscar a identidade do cache
+    const cachedIdentity = await cache.get(cacheKey);
+    if (cachedIdentity) {
+      logger.debug(`Cache HIT para identidade de ${phone}.`);
+      return cachedIdentity;
+    }
+
+    logger.debug(`Cache MISS para identidade de ${phone}. Buscando na API.`);
+
+    // 2. Se não estiver no cache, busca na API do Django
+    let identityData = {};
+
+    // Tenta encontrar como Funcionário
     let response = await djangoApi.get(`/rh/funcionarios/?telefone=${phone}`);
     if (response.data && response.data.length > 0) {
-      logger.info(`Usuário ${phone} identificado como Funcionário.`);
       const funcionario = response.data[0];
       if (!funcionario.usuario) {
-         logger.warn(`Funcionário ${funcionario.nome_completo} não possui usuário associado.`);
-         return { user: null, role: null, error: `O funcionário '${funcionario.nome_completo}' não possui um usuário de sistema associado.` };
+        identityData = { user: null, role: null, error: `O funcionário '${funcionario.nome_completo}' não possui um usuário de sistema associado.` };
+      } else {
+        identityData = { user: funcionario, role: 'funcionario', error: null };
       }
-      return { user: funcionario, role: 'funcionario', error: null };
+    }
+    // Tenta encontrar como Cliente
+    else {
+      response = await djangoApi.get(`/clientes/?telefone=${phone}`);
+      if (response.data && response.data.length > 0) {
+        identityData = { user: response.data[0], role: 'cliente', error: null };
+      }
+      // Tenta encontrar como Fornecedor
+      else {
+        response = await djangoApi.get(`/fornecedores/?telefone=${phone}`);
+        if (response.data && response.data.length > 0) {
+          identityData = { user: response.data[0], role: 'fornecedor', error: null };
+        }
+        // Se não encontrar em nenhuma tabela
+        else {
+          identityData = { user: null, role: 'unknown', error: null };
+        }
+      }
+    }
+    
+    // 3. Salva o resultado no cache antes de retornar
+    if (!identityData.error) {
+      await cache.set(cacheKey, identityData, IDENTITY_CACHE_TTL);
     }
 
-    // 2. Tenta encontrar como Cliente
-    response = await djangoApi.get(`/clientes/?telefone=${phone}`);
-    if (response.data && response.data.length > 0) {
-      logger.info(`Usuário ${phone} identificado como Cliente.`);
-      return { user: response.data[0], role: 'cliente', error: null };
-    }
-
-    // 3. Tenta encontrar como Fornecedor
-    response = await djangoApi.get(`/fornecedores/?telefone=${phone}`);
-    if (response.data && response.data.length > 0) {
-      logger.info(`Usuário ${phone} identificado como Fornecedor.`);
-      return { user: response.data[0], role: 'fornecedor', error: null };
-    }
-
-    // 4. Se não encontrar em nenhuma tabela
-    logger.warn(`Nenhum usuário encontrado para o telefone ${phone}.`);
-    return { user: null, role: null, error: "Desculpe, seu número de telefone não foi encontrado em nosso sistema." };
+    return identityData;
 
   } catch (error) {
     logger.error(`Erro ao identificar usuário para o telefone ${phone}:`, error.response?.data || error.message);
     return { user: null, role: null, error: "Ocorreu um erro ao verificar suas credenciais. Por favor, tente novamente mais tarde." };
   }
 }
+
 
 /**
  * Busca obras na API do Django pelo nome.
@@ -206,11 +230,81 @@ const downloadAndUploadMedia = async (mediaId, diarioId) => {
     return null;
 };
 
+/**
+ * Cria um novo registro de pré-cadastro na API do Django.
+ * @param {object} data - Dados do pré-cadastro.
+ * @returns {Promise<{precadastro: object|null, error: string|null}>}
+ */
+const createPreCadastro = async (data) => {
+  try {
+    const response = await djangoApi.post('/nucleo/precadastros/', data);
+    return { precadastro: response.data, error: null };
+  } catch (error) {
+    logger.error(`Erro ao criar pré-cadastro:`, { error: error.response ? error.response.data : error.message });
+    return { precadastro: null, error: "Ocorreu um erro ao salvar suas informações." };
+  }
+};
+
+/**
+ * Busca o diário de obra de hoje para um determinado usuário e obra.
+ * @param {number} usuarioId - O ID do usuário do sistema.
+ * @param {number} obraId - O ID da obra.
+ * @returns {Promise<{diario: object|null, error: string|null}>}
+ */
+const getTodaysDiario = async (usuarioId, obraId) => {
+  try {
+    // Este endpoint precisará ser criado no Django
+    const response = await djangoApi.get(`/diario/diarios/today/?usuario_id=${usuarioId}&obra_id=${obraId}`);
+    return { diario: response.data, error: null };
+  } catch (error) {
+    if (error.response && error.response.status === 404) {
+      return { diario: null, error: null }; // Não é um erro, apenas não há diário
+    }
+    logger.error(`Erro ao buscar diário de hoje:`, { error: error.response?.data || error.message });
+    return { diario: null, error: "Ocorreu um erro ao verificar seus diários recentes." };
+  }
+};
+
+/**
+ * Busca os empreendimentos associados a um funcionário.
+ * @param {number} funcionarioId - O ID do funcionário.
+ * @returns {Promise<{empreendimentos: Array|null, error: string|null}>}
+ */
+const getEmpreendimentosByFuncionario = async (funcionarioId) => {
+  try {
+    const response = await djangoApi.get(`/empreendimentos/por-funcionario/?funcionario_id=${funcionarioId}`);
+    return { empreendimentos: response.data, error: null };
+  } catch (error) {
+    logger.error(`Erro ao buscar empreendimentos:`, { error: error.response?.data || error.message });
+    return { empreendimentos: null, error: "Ocorreu um erro ao buscar os empreendimentos." };
+  }
+};
+
+/**
+ * Busca as obras ativas de um determinado empreendimento às quais um funcionário pertence.
+ * @param {number} empreendimentoId - O ID do empreendimento.
+ * @param {number} funcionarioId - O ID do funcionário.
+ * @returns {Promise<{obras: Array|null, error: string|null}>}
+ */
+const getObrasByEmpreendimento = async (empreendimentoId, funcionarioId) => {
+  try {
+    const response = await djangoApi.get(`/obras/obras/?empreendimento_id=${empreendimentoId}&membro_id=${funcionarioId}&status_obra=em_andamento`);
+    return { obras: response.data, error: null };
+  } catch (error) {
+    logger.error(`Erro ao buscar obras do empreendimento ${empreendimentoId}:`, { error: error.response?.data || error.message });
+    return { obras: null, error: "Ocorreu um erro ao buscar as obras deste empreendimento." };
+  }
+};
+
 module.exports = {
   identifyUser,
+  getTodaysDiario,
+  getEmpreendimentosByFuncionario,
+  getObrasByEmpreendimento,
   getObrasByName,
   getObraById,
   createObra,
   createOrUpdateDiario,
   downloadAndUploadMedia,
+  createPreCadastro,
 };

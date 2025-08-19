@@ -5,7 +5,7 @@ const requiredEnvVars = [
   'META_VERIFY_TOKEN',
   'META_APP_SECRET',
   'META_PHONE_NUMBER_ID',
-  'META_API_VERSION',
+  // 'META_API_VERSION', // Tornou-se opcional com valor padrão
   'DJANGO_API_URL',
   'DJANGO_API_TOKEN',
   'REDIS_URL',
@@ -21,7 +21,7 @@ const config = {
     verifyToken: process.env.META_VERIFY_TOKEN,
     appSecret: process.env.META_APP_SECRET,
     phoneNumberId: process.env.META_PHONE_NUMBER_ID,
-    apiVersion: process.env.META_API_VERSION,
+    apiVersion: process.env.META_API_VERSION || 'v18.0', // Valor padrão adicionado
   },
 
   django: {

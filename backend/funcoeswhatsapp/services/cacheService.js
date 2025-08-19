@@ -16,19 +16,44 @@ const CONVERSATION_PREFIX = 'whatsapp_state:';
 const CONVERSATION_TIMEOUT_SECONDS = 3600; // 1 hora
 
 /**
+ * Obtém um valor genérico do cache.
+ * @param {string} key 
+ * @returns {Promise<any|null>}
+ */
+const get = async (key) => {
+  try {
+    const valueJSON = await redisClient.get(key);
+    return valueJSON ? JSON.parse(valueJSON) : null;
+  } catch (error) {
+    console.error(`Erro ao obter a chave '${key}' do Redis:`, error);
+    return null;
+  }
+};
+
+/**
+ * Define um valor genérico no cache com um TTL (tempo de vida).
+ * @param {string} key 
+ * @param {any} value 
+ * @param {number} ttlSeconds - Tempo de expiração em segundos.
+ */
+const set = async (key, value, ttlSeconds) => {
+  try {
+    await redisClient.set(key, JSON.stringify(value), {
+      EX: ttlSeconds,
+    });
+  } catch (error) {
+    console.error(`Erro ao definir a chave '${key}' no Redis:`, error);
+  }
+};
+
+/**
  * Obtém o estado da conversa de um usuário.
  * @param {string} fromNumber 
  * @returns {Promise<object|null>}
  */
 const getState = async (fromNumber) => {
-  try {
-    const key = `${CONVERSATION_PREFIX}${fromNumber}`;
-    const stateJSON = await redisClient.get(key);
-    return stateJSON ? JSON.parse(stateJSON) : null;
-  } catch (error) {
-    console.error('Erro ao obter estado do Redis:', error);
-    return null;
-  }
+  const key = `${CONVERSATION_PREFIX}${fromNumber}`;
+  return await get(key);
 };
 
 /**
@@ -37,14 +62,8 @@ const getState = async (fromNumber) => {
  * @param {object} state 
  */
 const setState = async (fromNumber, state) => {
-  try {
-    const key = `${CONVERSATION_PREFIX}${fromNumber}`;
-    await redisClient.set(key, JSON.stringify(state), {
-      EX: CONVERSATION_TIMEOUT_SECONDS, // Define um tempo de expiração
-    });
-  } catch (error) {
-    console.error('Erro ao definir estado no Redis:', error);
-  }
+  const key = `${CONVERSATION_PREFIX}${fromNumber}`;
+  await set(key, state, CONVERSATION_TIMEOUT_SECONDS);
 };
 
 /**
@@ -61,6 +80,8 @@ const deleteState = async (fromNumber) => {
 };
 
 module.exports = {
+  get,
+  set,
   getState,
   setState,
   deleteState,

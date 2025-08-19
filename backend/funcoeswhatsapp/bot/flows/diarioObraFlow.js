@@ -1,123 +1,134 @@
 // backend/funcoeswhatsapp/bot/flows/diarioObraFlow.js
-const { sendTextMessage } = require('../../services/whatsappService');
+const { sendTextMessage, sendListMessage, sendQuickReplyButtons } = require('../../services/whatsappService');
 const apiService = require('../../services/apiService');
 const STEPS = require('../conversationSteps');
 
-// Função auxiliar para lidar com a lógica de máquina de estados
+const ITEMS_PER_PAGE = 9; // 9 itens + 1 "mais" = 10
+
+/**
+ * Envia uma lista paginada (empreendimentos ou obras).
+ */
+const sendPaginatedList = async (context, items, page, text, buttonText, step, idPrefix) => {
+  const { from, setState, state } = context;
+  const startIndex = (page - 1) * ITEMS_PER_PAGE;
+  const endIndex = startIndex + ITEMS_PER_PAGE;
+  const pageItems = items.slice(startIndex, endIndex);
+
+  const listItems = pageItems.map(item => ({
+    id: `${idPrefix}_${item.empreendimento_id || item.obra_id}`,
+    title: item.nome_empreendimento || item.nome_obra,
+    description: `ID: ${item.empreendimento_id || item.obra_id}`,
+  }));
+
+  if (items.length > endIndex) {
+    listItems.push({ id: `mais_${step}`, title: 'Mais opções' });
+  }
+
+  const newState = { ...state, step: step, allItems: items, page: page };
+  await setState(newState);
+  await sendListMessage(from, text, buttonText, listItems);
+};
+
 const handleState = async (context) => {
   const { from, message, state, setState, clearState, user } = context;
-  const messageBody = message.body;
+  const messageBody = message.body.toLowerCase().trim();
 
   switch (state.step) {
-    // ... (toda a lógica do switch case do diarioObraBot.js virá aqui) ...
-    case STEPS.AWAITING_WORK_NAME: {
-      const { obras, error } = await apiService.getObrasByName(messageBody);
-
-      if (error) {
-        await sendTextMessage(from, error);
-        clearState();
-        return;
-      }
-
-      if (obras.length === 0) {
-        const newState = { ...state, step: STEPS.AWAITING_CREATE_WORK_CONFIRMATION, obraNome: messageBody };
-        setState(newState);
-        await sendTextMessage(from, `A obra '${messageBody}' não foi encontrada. Deseja criar uma nova com este nome? (Responda 'sim' ou 'não')`);
-      } else if (obras.length === 1) {
-        const obra = obras[0];
-        if (obra.status_obra !== 'em_andamento') {
-          await sendTextMessage(from, `A obra '${obra.nome_obra}' não está 'Em Andamento' e não pode receber novos registros. Por favor, inicie novamente com outra obra.`);
-          clearState();
+    case STEPS.AWAITING_START_CONFIRMATION: {
+      if (messageBody === 'sim') {
+        const { empreendimentos, error } = await apiService.getEmpreendimentosByFuncionario(user.id);
+        if (error || !empreendimentos || empreendimentos.length === 0) {
+          await sendTextMessage(from, "Não encontrei empreendimentos sob sua responsabilidade. Por favor, contate o administrador.");
+          await clearState();
           return;
         }
-        const newState = { ...state, step: STEPS.AWAITING_REPORT_CONTENT, obraId: obra.id, descricao: '', pendingMediaIds: [] };
-        setState(newState);
-        await sendTextMessage(from, `Obra '${obra.nome_obra}' encontrada. Envie o texto, fotos e vídeos do seu relatório. Quando terminar, digite 'salvar'.`);
+        await sendPaginatedList(context, empreendimentos, 1, "Selecione o empreendimento:", "Ver Empreendimentos", STEPS.AWAITING_EMPREENDIMENTO_SELECTION, 'emp');
       } else {
-        let responseText = `Encontrei mais de uma obra com o nome '${messageBody}'. Por favor, escolha a correta digitando o número:
-`;
-        const possibleObras = {};
-        obras.forEach((obra, index) => {
-          const i = index + 1;
-          const detalheExtra = obra.empreendimento ? ` (Empreendimento: ${obra.empreendimento.empreendimento})` : "";
-          responseText += `
-${i}. ${obra.nome_obra}${detalheExtra}`;
-          possibleObras[i] = obra.id;
-        });
-        
-        const newState = { ...state, step: STEPS.AWAITING_WORK_CLARIFICATION, possibleObras };
-        setState(newState);
-        await sendTextMessage(from, responseText);
+        await sendTextMessage(from, "Ok, quando precisar, é só chamar!");
+        await clearState();
       }
       break;
     }
 
-    case STEPS.AWAITING_WORK_CLARIFICATION: {
-      const choice = messageBody.trim();
-      const obraId = state.possibleObras[choice];
-
-      if (!obraId) {
-        await sendTextMessage(from, "Opção inválida. Por favor, responda apenas com o número correspondente à obra desejada (por exemplo: 1).");
+    case STEPS.AWAITING_EMPREENDIMENTO_SELECTION: {
+      if (messageBody === `mais_${STEPS.AWAITING_EMPREENDIMENTO_SELECTION}`) {
+        const nextPage = state.page + 1;
+        await sendPaginatedList(context, state.allItems, nextPage, "Selecione o empreendimento:", "Ver Empreendimentos", STEPS.AWAITING_EMPREENDIMENTO_SELECTION, 'emp');
         return;
       }
 
-      const { obra, error } = await apiService.getObraById(obraId);
-      if (error) {
-        await sendTextMessage(from, error);
-        clearState();
+      if (!messageBody.startsWith('emp_')) {
+        await sendTextMessage(from, "Por favor, selecione uma das opções da lista.");
         return;
       }
 
-      if (obra.status_obra !== 'em_andamento') {
-        await sendTextMessage(from, `A obra '${obra.nome_obra}' não está 'Em Andamento' e não pode receber novos registros. Por favor, inicie novamente com outra obra.`);
-        clearState();
+      const empreendimentoId = parseInt(messageBody.replace('emp_', ''), 10);
+      const { obras, error } = await apiService.getObrasByEmpreendimento(empreendimentoId, user.id);
+      if (error || !obras || obras.length === 0) {
+        await sendTextMessage(from, "Não encontrei obras ativas sob sua responsabilidade para este empreendimento.");
+        await clearState();
         return;
       }
-
-      const newState = { ...state, step: STEPS.AWAITING_REPORT_CONTENT, obraId: obra.id, descricao: '', pendingMediaIds: [] };
-      setState(newState);
-      await sendTextMessage(from, `Obra '${obra.nome_obra}' selecionada. Envie o texto, fotos e vídeos do seu relatório. Quando terminar, digite 'salvar'.`);
+      await sendPaginatedList(context, obras, 1, "Agora, selecione a obra:", "Ver Obras", STEPS.AWAITING_OBRA_SELECTION, 'obra');
       break;
     }
 
-    case STEPS.AWAITING_CREATE_WORK_CONFIRMATION: {
-      const resposta = messageBody.toLowerCase().trim();
-      if (['sim', 's'].includes(resposta)) {
-        const newState = { ...state, step: STEPS.AWAITING_NEW_WORK_ADDRESS };
-        setState(newState);
-        await sendTextMessage(from, `Ótimo! Por favor, envie o endereço completo para a nova obra '${state.obraNome}'.`);
-      } else if (['não', 'nao', 'n'].includes(resposta)) {
-        await sendTextMessage(from, "Ok, a obra não foi criada. Para tentar novamente, digite o nome de outra obra. Para sair, digite 'sair'.");
-        const newState = { ...state, step: STEPS.AWAITING_WORK_NAME };
-        setState(newState);
-      } else {
-        await sendTextMessage(from, "Resposta inválida. Por favor, responda com 'sim' ou 'não'.");
+    case STEPS.AWAITING_OBRA_SELECTION: {
+      if (messageBody === `mais_${STEPS.AWAITING_OBRA_SELECTION}`) {
+        const nextPage = state.page + 1;
+        await sendPaginatedList(context, state.allItems, nextPage, "Selecione a obra:", "Ver Obras", STEPS.AWAITING_OBRA_SELECTION, 'obra');
+        return;
       }
-      break;
-    }
 
-    case STEPS.AWAITING_NEW_WORK_ADDRESS: {
-      const obraNome = state.obraNome;
-      const endereco = messageBody;
-      
-      const { obra, error } = await apiService.createObra({
-        nome: obraNome,
-        endereco: endereco,
-        responsavelId: user.id,
-      });
+      if (!messageBody.startsWith('obra_')) {
+        await sendTextMessage(from, "Por favor, selecione uma das opções da lista.");
+        return;
+      }
+
+      const obraId = parseInt(messageBody.replace('obra_', ''), 10);
+      const { diario, error } = await apiService.getTodaysDiario(user.usuario.id, obraId);
 
       if (error) {
         await sendTextMessage(from, error);
-      } else {
-        await sendTextMessage(from, `Obra '${obra.nome_obra}' criada com sucesso! Ela precisa ser aprovada e ter seu status alterado para 'Em Andamento' antes de poder receber registros no diário.`);
+        await clearState();
+        return;
       }
-      
-      clearState();
+
+      const obraSelecionada = state.allItems.find(o => o.obra_id === obraId);
+      const nomeObra = obraSelecionada ? obraSelecionada.nome_obra : "da obra selecionada";
+
+      if (diario) {
+        const newState = { ...state, step: STEPS.AWAITING_CONTINUE_DIARIO_CONFIRMATION, obraId: obraId, diarioId: diario.diario_obra_id };
+        await setState(newState);
+        const text = `Você já iniciou um diário para a obra "${nomeObra}" hoje. Deseja continuar adicionando informações a ele?`;
+        const buttons = [
+          { id: 'continuar_sim', title: 'Sim, continuar' },
+          { id: 'continuar_nao', title: 'Não, começar do zero' }
+        ];
+        await sendQuickReplyButtons(from, text, buttons);
+      } else {
+        const newState = { ...state, step: STEPS.COLLECTING_REPORT_CONTENT, obraId: obraId, descricao: '', pendingMediaIds: [] };
+        await setState(newState);
+        await sendTextMessage(from, `Iniciando novo diário para a obra "${nomeObra}". Envie o texto, fotos e vídeos. Quando terminar, digite 'salvar'.`);
+      }
       break;
     }
 
-    case STEPS.AWAITING_REPORT_CONTENT: {
-      if (messageBody.toLowerCase() === 'salvar') {
+    case STEPS.AWAITING_CONTINUE_DIARIO_CONFIRMATION: {
+      const newState = { ...state, step: STEPS.COLLECTING_REPORT_CONTENT };
+      await setState(newState);
+      if (messageBody === 'continuar_sim') {
+        await sendTextMessage(from, "Ok, continuando o diário. Envie mais informações ou digite 'salvar'.");
+      } else { // 'continuar_nao'
+        newState.descricao = '';
+        newState.pendingMediaIds = [];
+        await sendTextMessage(from, "Ok, começando um novo relatório para hoje. Envie o texto, fotos e vídeos. Quando terminar, digite 'salvar'.");
+      }
+      break;
+    }
+
+    case STEPS.COLLECTING_REPORT_CONTENT: {
+      if (messageBody === 'salvar') {
         const { obraId, descricao, pendingMediaIds } = state;
 
         if (!descricao && pendingMediaIds.length === 0) {
@@ -133,27 +144,22 @@ ${i}. ${obra.nome_obra}${detalheExtra}`;
 
         if (diarioError) {
           await sendTextMessage(from, diarioError);
-          clearState();
+          await clearState();
           return;
         }
 
         if (pendingMediaIds.length > 0) {
           await sendTextMessage(from, `Relatório de texto salvo. Agora, enviando ${pendingMediaIds.length} arquivo(s) de mídia. Aguarde...`);
-
           const uploadPromises = pendingMediaIds.map(mediaId => 
-            apiService.downloadAndUploadMedia(mediaId, diario.id)
+            apiService.downloadAndUploadMedia(mediaId, diario.diario_obra_id)
           );
-
           const results = await Promise.all(uploadPromises);
           const uploadSuccessCount = results.filter(doc => doc !== null).length;
-
           await sendTextMessage(from, `Diário salvo com sucesso! ${uploadSuccessCount} de ${pendingMediaIds.length} arquivos de mídia foram enviados.`);
         } else {
           await sendTextMessage(from, "Diário salvo com sucesso!");
         }
-
-        clearState();
-
+        await clearState();
       } else {
         const newState = { ...state };
         if (message.body) {
@@ -167,36 +173,20 @@ ${i}. ${obra.nome_obra}${detalheExtra}`;
       }
       break;
     }
-
-    default:
-      await sendTextMessage(from, "Desculpe, não entendi. Para recomeçar, digite 'sair' e envie uma nova mensagem.");
-      break;
   }
 };
 
 const diarioObraFlow = {
-  /**
-   * Inicia o fluxo de conversa do Diário de Obra.
-   * @param {object} context - O contexto da conversa (from, setState, funcionario, etc.).
-   */
   async start(context) {
     const { from, setState, user } = context;
-    const newState = { flow: 'diarioObra', step: STEPS.AWAITING_WORK_NAME };
+    const newState = { flow: 'diarioObra', step: STEPS.AWAITING_START_CONFIRMATION };
     await setState(newState);
-    await sendTextMessage(from, `Olá, ${user.nome_completo}! Para iniciar um relatório, por favor, digite o nome da Obra.`);
+    const text = `Olá, ${user.nome_completo}! Pronto para iniciar ou continuar um diário de obra?`;
+    const buttons = [{ id: 'sim', title: 'Sim' }, { id: 'nao', title: 'Não' }];
+    await sendQuickReplyButtons(from, text, buttons);
   },
 
-  /**
-   * Lida com as mensagens subsequentes do usuário dentro deste fluxo.
-   * @param {object} context - O contexto da conversa.
-   */
   async handleMessage(context) {
-    // Se não há estado, algo está errado. O fluxo deve sempre ter um estado.
-    if (!context.state) {
-      await sendTextMessage(context.from, "Ocorreu um erro. Reiniciando a conversa.");
-      await this.start(context);
-      return;
-    }
     await handleState(context);
   }
 };

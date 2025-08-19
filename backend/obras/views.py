@@ -1,12 +1,14 @@
 # backend/obras/views.py
 # Define a lógica da API (endpoints) para o app 'obras'.
 from rest_framework import viewsets
+from django_filters.rest_framework import DjangoFilterBackend
 from .models import Obra, EtapaObra, DocumentoObra
 from .serializers import (
     ObraSerializer,
     EtapaObraSerializer,
     DocumentoObraSerializer
 )
+from .filters import ObraFilter
 
 class ObraViewSet(viewsets.ModelViewSet):
     """
@@ -14,6 +16,8 @@ class ObraViewSet(viewsets.ModelViewSet):
     """
     queryset = Obra.objects.all()
     serializer_class = ObraSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = ObraFilter
     # permission_classes = [permissions.IsAuthenticated]
 
 class EtapaObraViewSet(viewsets.ModelViewSet):

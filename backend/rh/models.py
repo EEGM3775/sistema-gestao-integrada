@@ -40,6 +40,14 @@ class Funcionario(models.Model):
     funcionario_id = models.AutoField(primary_key=True, verbose_name=_("Funcionário ID"))
     usuario = models.OneToOneField('nucleo.Usuario', on_delete=models.SET_NULL, null=True, blank=True, related_name='funcionario_profile', verbose_name=_("Usuário do Sistema"))
     cargo = models.ForeignKey(Cargo, on_delete=models.SET_NULL, null=True, verbose_name=_("Cargo"))
+    empreendimento_vinculado = models.ForeignKey(
+        'empreendimentos.Empreendimento',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        verbose_name=_("Empreendimento Vinculado"),
+        help_text=_("Empreendimento ao qual o funcionário está diretamente contratado, se aplicável.")
+    )
     nome_completo = models.CharField(max_length=255, verbose_name=_("Nome Completo"))
     cpf = models.CharField(max_length=14, unique=True, verbose_name=_("CPF"))
     rg = models.CharField(max_length=20, null=True, blank=True, verbose_name=_("RG"))

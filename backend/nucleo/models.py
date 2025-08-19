@@ -36,6 +36,41 @@ class FailedTask(models.Model):
     def __str__(self):
         return f"{self.task_name} ({self.task_id})"
 
+class PreCadastro(models.Model):
+    """
+    Armazena informações de contatos via WhatsApp que não foram
+    encontrados no sistema para aprovação manual.
+    """
+    precadastro_id = models.AutoField(primary_key=True)
+    nome_completo = models.CharField(_("Nome Completo"), max_length=255)
+    telefone = models.CharField(_("Telefone"), max_length=20, unique=True)
+    
+    TIPO_INTERESSE_CHOICES = [
+        ('cliente', 'Cliente'),
+        ('fornecedor', 'Fornecedor'),
+        ('candidato', 'Candidato a Vaga'),
+        ('outro', 'Outro'),
+    ]
+    tipo_interesse = models.CharField(_("Tipo de Interesse"), max_length=20, choices=TIPO_INTERESSE_CHOICES)
+    mensagem_inicial = models.TextField(_("Mensagem Inicial"), blank=True, null=True)
+    
+    STATUS_CHOICES = [
+        ('pendente', 'Pendente'),
+        ('aprovado', 'Aprovado'),
+        ('rejeitado', 'Rejeitado'),
+    ]
+    status = models.CharField(_("Status"), max_length=20, choices=STATUS_CHOICES, default='pendente')
+    data_criacao = models.DateTimeField(auto_now_add=True)
+    data_atualizacao = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _("Pré-Cadastro")
+        verbose_name_plural = _("Pré-Cadastros")
+        ordering = ['-data_criacao']
+
+    def __str__(self):
+        return f"{self.nome_completo} ({self.telefone})"
+
 class Usuario(AbstractUser):
     """
     Modelo de usuário customizado, estendendo o AbstractUser do Django.
