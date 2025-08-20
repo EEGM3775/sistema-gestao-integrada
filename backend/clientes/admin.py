@@ -38,15 +38,7 @@ class DadoBancarioClienteInline(admin.TabularInline):
 
 class ClienteEmpreendimentoInline(admin.TabularInline):
     model = ClienteEmpreendimento
-    extra = 0
-    fields = (
-        'empreendimento',
-        'unidade_comprada',
-        'data_compra',
-        'valor_compra',
-        'condicoes_pagamento'
-    )
-    readonly_fields = ('data_compra',)
+    extra = 1
 
 
 class ContratoClienteInline(admin.TabularInline):

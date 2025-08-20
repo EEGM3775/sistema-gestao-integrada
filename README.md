@@ -1,5 +1,24 @@
 # Sistema de Gestão Integrada - Backend
 
+## ⚠️ Aviso de Segurança Crítico - Ação Necessária
+
+**Foi identificada uma vulnerabilidade de segurança crítica em toda a aplicação. A correção é de alta prioridade.**
+
+Atualmente, múltiplos endpoints da API estão configurados de forma insegura, o que pode levar a vazamentos de dados graves e acesso não autorizado. O problema se manifesta de duas formas:
+
+1.  **Endpoints Completamente Abertos:** Vários `ViewSets` (como em `moduloerp` e outros) estão com a autenticação comentada ou ausente (`# permission_classes = [permissions.IsAuthenticated]`). Isso expõe dados sensíveis (financeiros, clientes, etc.) publicamente na API.
+2.  **Falta de Validação de Permissão por Objeto:** Nos endpoints que possuem autenticação (`permissions.IsAuthenticated`), a validação atual apenas confirma que o usuário está logado. **Ela não verifica se o usuário tem permissão para acessar o recurso específico solicitado.** Isso significa que um usuário `A` pode visualizar ou modificar dados de um usuário `B` se souber o ID do objeto.
+
+### Ação Requerida
+
+É mandatório revisar **todos os módulos** da aplicação e garantir que:
+
+- **Todos os `ViewSets` e `APIViews` tenham a classe de permissão `IsAuthenticated` (ou mais restritiva) ativa e configurada.**
+- **As querysets sejam filtradas para garantir que os usuários só possam acessar dados pertencentes à sua organização ou contexto (ex: filtrar por `empreendimento` ou `usuario`).** Isso deve ser feito, preferencialmente, sobrescrevendo o método `get_queryset` em cada `ViewSet`.
+
+---
+
+
 Este é o backend do Sistema de Gestão Integrada, uma aplicação web desenvolvida em Django para gerenciar diversos processos de uma empresa.
 
 ## Estrutura de Pastas
@@ -10,7 +29,6 @@ sistema_gestao_integrada/
 │   ├── clientes/
 │   ├── config/
 │   ├── empreendimentos/
-│   ├── financeiro/
 │   ├── fornecedores/
 │   ├── funcoesia/
 │   ├── funcoeswhatsapp/
@@ -72,15 +90,27 @@ Gerencia os projetos e empreendimentos da empresa.
 *   **Endpoints:**
     *   `/api/empreendimentos/`: Lista todos os empreendimentos (acesso restrito a sócios e gerentes).
 
-### Financeiro (`financeiro`)
+### Módulo ERP (`moduloerp`)
 
-Controla as contas a pagar e a receber da empresa.
+Planejamento de Recursos Empresariais (ERP) - **Financeiro e Faturamento**.
+
+Este módulo foi aprimorado para gerenciar faturas, transações, emissão de Notas Fiscais e boletos.
 
 *   **Modelos:**
-    *   `NotaFiscal`: Armazena as informações das notas fiscais recebidas de fornecedores.
-    *   `ContaPagar`: Registra as contas a serem pagas a fornecedores.
-    *   `ContaReceber`: Registra os valores a serem recebidos de clientes.
-    *   `CobrancaCliente`: Registra as cobranças (boletos, parcelas) geradas para os clientes.
+    *   `Fatura`: Modelo central para contas a pagar e a receber.
+    *   `Transacao`: Registra as transações financeiras (entradas e saídas).
+    *   `NotaFiscalServico` / `NotaFiscalProduto`: Gerenciam os dados e status de Notas Fiscais de Serviço (NFS-e) e de Produto (NF-e).
+    *   `ContaPagar` / `ContaReceber`: Registram as contas da empresa.
+    *   `CobrancaCliente`: Registra as cobranças (parcelas) geradas para os clientes.
+    *   `Boleto`: Representa um boleto bancário, que pode ser vinculado a uma `ContaPagar` (boletos recebidos) ou a uma `ContaReceber` (boletos emitidos).
+*   **Endpoints:**
+    *   `/api/erp/dashboard/`: Fornece dados para o dashboard financeiro.
+    *   `/api/erp/faturas/`: CRUD para Faturas.
+    *   `/api/erp/transacoes/`: CRUD para Transações.
+    *   `/api/erp/contas-a-pagar/`: CRUD para Contas a Pagar.
+    *   `/api/erp/contas-a-receber/`: CRUD para Contas a Receber.
+    *   `/api/erp/boletos/`: CRUD para Boletos.
+    *   `/api/erp/faturas/<id>/emitir-nfse/`: Aciona a emissão de uma NFS-e para uma fatura.
 
 ### Fornecedores (`fornecedores`)
 
@@ -108,165 +138,16 @@ O objetivo é permitir que funcionários interajam com o sistema através de um 
     *   `/webhook`: Endpoint no serviço Node.js para receber mensagens da API da Meta.
 *   **Documentação de Referência (v1):** Para uma análise completa do fluxo original (implementado em Django), consulte o arquivo [`funcoeswhatsapp/READMEFW.md`](./backend/funcoeswhatsapp/READMEFW.md).
 
-### Módulo APS (`moduloaps`)
+### Microserviço de Emissão de Notas Fiscais (`funcoesnf`) - Node.js
 
-Integração com a plataforma Autodesk Platform Services (APS).
+**Nota de Arquitetura:** Este é um **microserviço em Node.js** dedicado à integração com APIs externas (como NFE.io) para a emissão de Notas Fiscais. Ele é acionado pelo backend Django e opera de forma assíncrona.
 
-*   **Modelos:**
-    *   `APSModel`: Armazena os modelos (plantas/desenhos) do APS associados a uma obra.
-*   **Endpoints:**
-    *   `/api/aps/token/`: Gera um token de acesso para a API da Autodesk.
-    *   `/api/aps/obras/<int:obra_id>/plantas/`: Lista as plantas de uma obra específica.
-
-### Módulo CRM (`modulocrm`)
-
-Gerenciamento de Relacionamento com o Cliente (CRM).
-
-*   **Modelos:**
-    *   `Oportunidade`: Representa uma oportunidade de negócio (lead) em um funil de vendas.
-    *   `Interacao`: Registra os pontos de contato com o cliente em uma oportunidade.
-*   **Endpoints:**
-    *   `/api/crm/oportunidades/`: CRUD completo para oportunidades.
-    *   `/api/crm/dashboard/`: Fornece dados agregados para o dashboard de CRM.
-
-### Módulo Diário de Obra (`modulodiario`)
-
-Registro diário do andamento das obras.
-
-*   **Modelos:**
-    *   `DiarioObra`: Armazena os registros diários da obra, com descrições e tags.
-    *   `DocumentoDiario`: Guarda os arquivos de mídia (fotos, vídeos, etc.) associados a um registro do diário.
-*   **Endpoints:**
-    *   `/api/diario/diarios/`: CRUD para os diários de obra.
-    *   `/api/diario/documentos/`: CRUD para os documentos do diário.
-
-### Módulo DMS (`modulodms`)
-
-Sistema de Gerenciamento de Documentos (DMS).
-
-*   **Modelos:**
-    *   `Documento`: Representa um documento principal, contendo suas versões.
-    *   `VersaoDocumento`: Armazena uma versão específica de um documento.
-*   **Endpoints:**
-    *   `/api/dms/documentos/`: Lista e cria novos documentos.
-    *   `/api/dms/documentos/<int:pk>/`: Detalhes, atualização e exclusão de um documento.
-
-### Módulo ERP (`moduloerp`)
-
-Planejamento de Recursos Empresariais (ERP).
-
-*   **Modelos:**
-    *   `Fatura`: Modelo central para contas a pagar e a receber.
-    *   `Transacao`: Registra as transações financeiras (entradas e saídas).
-    *   `Contrato`: Repositório central para todos os contratos da empresa.
-*   **Endpoints:**
-    *   `/api/erp/dashboard/`: Fornece dados para o dashboard financeiro (aging report, fluxo de caixa).
-
-### Módulo de Importação/Exportação (`moduloimpexp`)
-
-Funcionalidades para importar e exportar dados do sistema.
-
-*   **Modelos:**
-    *   `ExportedFile`: Rastreia os arquivos exportados.
-*   **Endpoints:**
-    *   `/api/impexp/export/`: Inicia uma tarefa de exportação.
-    *   `/api/impexp/import/`: Inicia uma tarefa de importação.
-    *   `/api/impexp/task-status/<str:task_id>/`: Verifica o status de uma tarefa.
-
-### Módulo de Mapas (`modulomaps`)
-
-Funcionalidades de mapa interativo.
-
-*   **Modelos:**
-    *   `MapObra`: Representa um mapa de uma obra.
-    *   `MapFornecedor`, `MapEstoque`, `MapInformativo`: Marcadores no mapa.
-*   **Endpoints:**
-    *   `/api/maps/obras/<int:obra_id>/details/`: Detalhes do mapa de uma obra.
-
-### Módulo PDCA (`modulopdca`)
-
-Ciclo Plan-Do-Check-Act para gestão de projetos.
-
-*   **Modelos:**
-    *   `Tarefa`: Tarefas específicas de uma etapa da obra.
-    *   `Marco`: Marcos importantes do projeto.
-    *   `Risco`: Riscos do projeto.
-*   **Endpoints:**
-    *   `/api/pdca/kpis/`: Retorna KPIs (Key Performance Indicators) do projeto.
-    *   `/api/pdca/riscos/`: Lista os riscos do projeto.
-    *   `/api/pdca/alertas/`: Lista tarefas que precisam de atenção.
-
-### Módulo RH (`modulorh`)
-
-Gerenciamento de Recursos Humanos.
-
-*   **Modelos:**
-    *   `FolhaPagamento`: Registra os pagamentos dos funcionários.
-    *   `AvaliacaoDesempenho`: Armazena as avaliações de desempenho dos funcionários.
-*   **Endpoints:**
-    *   `/api/rh/dashboard/`: Dados para o dashboard de RH.
-
-### Módulo SCM (`moduloscm`)
-
-Gerenciamento da Cadeia de Suprimentos (SCM).
-
-*   **Modelos:**
-    *   `PedidoCompra`: Pedidos de compra de materiais e serviços.
-    *   `ItemPedido`: Itens de um pedido de compra.
-    *   `AvaliacaoFornecedor`: Avaliações de desempenho dos fornecedores.
-*   **Endpoints:**
-    *   `/api/scm/dashboard/`: Dados para o dashboard de SCM.
-
-### Módulo SIL (`modulosil`)
-
-Sistema de Informação Logística (SIL).
-
-*   **Modelos:**
-    *   `ItemCatalogo`: Catálogo de todos os itens de estoque.
-    *   `Estoque`: Locais de armazenamento de estoque.
-    *   `ItemEstoque`: Quantidade de um item em um local de estoque.
-    *   `MovimentacaoEstoque`: Histórico de movimentações de estoque.
-*   **Endpoints:**
-    *   `/api/sil/dashboard/`: Dados para o dashboard de estoque.
-
-### Núcleo (`nucleo`)
-
-Funcionalidades centrais do sistema.
-
-*   **Modelos:**
-    *   `Usuario`: Modelo de usuário customizado.
-    *   `Perfil`, `Permissao`, `PerfisPermissoes`: Controle de acesso baseado em perfis e permissões.
-    *   `LogAtividadeUsuario`: Registra as ações dos usuários no sistema.
-*   **Endpoints:**
-    *   `/api/nucleo/empreendimentos/`: Lista todos os empreendimentos.
-    *   `/api/nucleo/obras/<int:obra_id>/diarios/`: Lista os diários de uma obra.
-
-### Obras (`obras`)
-
-Gerenciamento de obras.
-
-*   **Modelos:**
-    *   `Obra`: Informações gerais da obra.
-    *   `EtapaObra`: Etapas de uma obra.
-    *   `DocumentoObra`: Documentos de uma obra.
-*   **Endpoints:**
-    *   `/api/obras/diarios-por-empreendimento/<int:empreendimento_id>/`: Diários de um empreendimento.
-    *   `/api/obras/obras/`: Lista de obras de um empreendimento.
-    *   `/api/obras/obras/<int:pk>/`: Detalhes de uma obra.
-    *   `/api/obras/documentos/`: Criação de documentos de uma obra.
-
-### RH (`rh`)
-
-Gerenciamento de Recursos Humanos (dados cadastrais).
-
-*   **Modelos:**
-    *   `Cargo`: Cargos da empresa.
-    *   `Funcionario`: Dados dos funcionários.
-    *   `DadoMedicoFuncionario`: Dados médicos dos funcionários.
-    *   `DocumentoFuncionario`: Documentos dos funcionários.
-    *   `DadoBancarioFuncionario`: Dados bancários dos funcionários.
-    *   `PagamentoFuncionario`: Pagamentos dos funcionários.
-    *   `FolhaPagamento`: Folhas de pagamento dos funcionários.
+*   **Funcionalidade:** O fluxo de emissão funciona da seguinte forma:
+    1.  O Django (através da `FaturaViewSet`) cria um registro de `NotaFiscalServico` ou `NotaFiscalProduto` no banco de dados com status `AGUARDANDO`.
+    2.  O Django envia uma requisição para o microserviço `funcoesnf`, informando o `fatura_id` e o `nf_id`.
+    3.  O microserviço busca os detalhes da fatura no Django, monta o payload para a API externa e **(atualmente em modo de simulação)** a chama.
+    4.  Ao receber o resultado (sucesso ou erro), o microserviço faz um *callback* para o Django, que atualiza o status da nota fiscal e armazena os arquivos (PDF/XML) ou registra a falha.
+*   **Documentação Detalhada:** Para informações completas sobre configuração, execução e endpoints deste microserviço, consulte o arquivo [`backend/funcoesnf/README.md`](./backend/funcoesnf/README.md).
 
 ## Endpoints da API
 
@@ -282,11 +163,14 @@ Os seguintes endpoints da API estão disponíveis no prefixo `/api/`:
     *   `/api/empreendimentos/`
     *   `/api/contas-bancarias-empreendimentos/`
     *   `/api/custos-empreendimentos/`
-*   **Financeiro:**
-    *   `/api/notas-fiscais/`
-    *   `/api/contas-a-pagar/`
-    *   `/api/contas-a-receber/`
-    *   `/api/cobrancas-clientes/`
+*   **ERP / Financeiro:**
+    *   `/api/erp/faturas/`
+    *   `/api/erp/transacoes/`
+    *   `/api/erp/notas-fiscais/`
+    *   `/api/erp/contas-a-pagar/`
+    *   `/api/erp/contas-a-receber/`
+    *   `/api/erp/cobrancas-cliente/`
+    *   `/api/erp/boletos/`
 *   **Fornecedores:**
     *   `/api/fornecedores/`
     *   `/api/dados-bancarios-fornecedores/`

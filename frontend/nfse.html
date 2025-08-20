@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Emissão NFS-e</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            background: rgba(255,255,255,0.95);
+            backdrop-filter: blur(10px);
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 30px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+
+        .header h1 {
+            color: #667eea;
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            color: #6c757d;
+            font-size: 1.1rem;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background: rgba(255,255,255,0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 12px 40px rgba(0,0,0,0.15);
+        }
+
+        .card h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .faturas-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .fatura-item {
+            background: #f8f9ff;
+            border: 1px solid #e0e6ff;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .fatura-item:hover {
+            background: #e8edff;
+            border-color: #667eea;
+        }
+
+        .fatura-item.selected {
+            background: #667eea;
+            color: white;
+            border-color: #5a67d8;
+        }
+
+        .fatura-info {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            font-size: 0.9rem;
+        }
+
+        .fatura-id {
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .fatura-item.selected .fatura-id {
+            color: white;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .status-pendente {
+            background: #ffeaa7;
+            color: #d63031;
+        }
+
+        .status-emitida {
+            background: #00b894;
+            color: white;
+        }
+
+        .emissao-form {
+            display: none;
+        }
+
+        .emissao-form.active {
+            display: block;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #555;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e6ff;
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: border-color 0.3s ease;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            border-radius: 8px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #6c757d;
+        }
+
+        .loading i {
+            font-size: 2rem;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            border-radius: 8px;
+            color: white;
+            font-weight: 500;
+            z-index: 1000;
+            animation: slideIn 0.3s ease;
+        }
+
+        .notification.success {
+            background: #00b894;
+        }
+
+        .notification.error {
+            background: #e17055;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(100%);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .status-panel {
+            grid-column: 1 / -1;
+        }
+
+        .nf-status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+        }
+
+        .nf-status-item {
+            background: #f8f9ff;
+            padding: 15px;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+        }
+
+        .nf-status-item h4 {
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+
+        @media (max-width: 768px) {
+            .main-content {
+                grid-template-columns: 1fr;
+                gap: 20px;
+            }
+            
+            .container {
+                padding: 10px;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1><i class="fas fa-file-invoice"></i> Sistema de Emissão NFS-e</h1>
+            <p>Gestão e Emissão de Notas Fiscais de Serviço</p>
+        </div>
+
+        <div class="main-content">
+            <!-- Lista de Faturas -->
+            <div class="card">
+                <h2><i class="fas fa-list"></i> Faturas Disponíveis</h2>
+                <div id="faturasList" class="faturas-list">
+                    <div class="loading">
+                        <i class="fas fa-spinner"></i>
+                        <p>Carregando faturas...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Formulário de Emissão -->
+            <div class="card">
+                <h2><i class="fas fa-paper-plane"></i> Emitir NFS-e</h2>
+                <div id="noFaturaSelected">
+                    <p style="text-align: center; color: #6c757d; padding: 40px 20px;">
+                        <i class="fas fa-arrow-left" style="font-size: 2rem; margin-bottom: 10px;"></i><br>
+                        Selecione uma fatura ao lado para iniciar a emissão
+                    </p>
+                </div>
+                
+                <form id="emissaoForm" class="emissao-form">
+                    <div class="form-group">
+                        <label for="faturaId">Fatura Selecionada</label>
+                        <input type="text" id="faturaId" readonly>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="clienteNome">Cliente</label>
+                        <input type="text" id="clienteNome" readonly>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="valorFatura">Valor</label>
+                        <input type="text" id="valorFatura" readonly>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="descricaoServico">Descrição do Serviço</label>
+                        <textarea id="descricaoServico" rows="3" placeholder="Descreva o serviço prestado..."></textarea>
+                    </div>
+                    
+                    <div class="form-group">
+                        <button type="submit" class="btn">
+                            <i class="fas fa-paper-plane"></i>
+                            Emitir NFS-e
+                        </button>
+                        <button type="button" class="btn btn-secondary" onclick="deselecionarFatura()" style="margin-left: 10px;">
+                            <i class="fas fa-times"></i>
+                            Cancelar
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Painel de Status das NFs -->
+        <div class="card status-panel">
+            <h2><i class="fas fa-chart-line"></i> Status das Notas Fiscais</h2>
+            <div id="statusPanel" class="nf-status-grid">
+                <div class="loading">
+                    <i class="fas fa-spinner"></i>
+                    <p>Carregando status...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Estado da aplicação
+        let faturas = [];
+        let faturaSelected = null;
+
+        // Carregar faturas ao inicializar
+        document.addEventListener('DOMContentLoaded', function() {
+            carregarFaturas();
+            carregarStatusNFs();
+            
+            // Configurar formulário
+            document.getElementById('emissaoForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+                emitirNFSe();
+            });
+        });
+
+        // Carregar faturas da API
+        async function carregarFaturas() {
+            try {
+                const response = await fetch('/api/erp/faturas/');
+                const data = await response.json();
+                
+                // Filtrar apenas faturas A_RECEBER que podem ter NF emitida
+                faturas = data.filter(fatura => fatura.tipo === 'RECEBER' && fatura.status === 'PENDENTE');
+                
+                renderizarFaturas();
+            } catch (error) {
+                console.error('Erro ao carregar faturas:', error);
+                showNotification('Erro ao carregar faturas', 'error');
+            }
+        }
+
+        // Renderizar lista de faturas
+        function renderizarFaturas() {
+            const container = document.getElementById('faturasList');
+            
+            if (faturas.length === 0) {
+                container.innerHTML = `
+                    <div style="text-align: center; padding: 40px; color: #6c757d;">
+                        <i class="fas fa-inbox" style="font-size: 2rem; margin-bottom: 10px;"></i>
+                        <p>Nenhuma fatura disponível para emissão de NF</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = faturas.map(fatura => `
+                <div class="fatura-item" onclick="selecionarFatura(${fatura.fatura_id})" data-id="${fatura.fatura_id}">
+                    <div class="fatura-info">
+                        <div class="fatura-id">#${fatura.fatura_id}</div>
+                        <div class="status-badge status-${fatura.status.toLowerCase()}">${fatura.status}</div>
+                        <div><strong>Cliente:</strong> ${getClienteName(fatura)}</div>
+                        <div><strong>Valor:</strong> R$ ${formatCurrency(parseFloat(fatura.valor))}</div>
+                        <div><strong>Vencimento:</strong> ${formatDate(fatura.data_vencimento)}</div>
+                        <div><strong>Descrição:</strong> ${fatura.descricao}</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Selecionar fatura para emissão
+        function selecionarFatura(faturaId) {
+            // Remover seleção anterior
+            document.querySelectorAll('.fatura-item').forEach(item => {
+                item.classList.remove('selected');
+            });
+
+            // Selecionar nova fatura
+            const item = document.querySelector(`[data-id="${faturaId}"]`);
+            item.classList.add('selected');
+
+            // Encontrar dados da fatura
+            faturaSelected = faturas.find(f => f.fatura_id === faturaId);
+
+            // Mostrar formulário
+            document.getElementById('noFaturaSelected').style.display = 'none';
+            document.getElementById('emissaoForm').classList.add('active');
+
+            // Preencher formulário
+            document.getElementById('faturaId').value = `#${faturaSelected.fatura_id}`;
+            document.getElementById('clienteNome').value = getClienteName(faturaSelected);
+            document.getElementById('valorFatura').value = `R$ ${formatCurrency(parseFloat(faturaSelected.valor))}`;
+            document.getElementById('descricaoServico').value = faturaSelected.descricao || '';
+        }
+
+        // Desselecionar fatura
+        function deselecionarFatura() {
+            document.querySelectorAll('.fatura-item').forEach(item => {
+                item.classList.remove('selected');
+            });
+
+            faturaSelected = null;
+            document.getElementById('noFaturaSelected').style.display = 'block';
+            document.getElementById('emissaoForm').classList.remove('active');
+        }
+
+        // Emitir NFS-e
+        async function emitirNFSe() {
+            if (!faturaSelected) return;
+
+            const submitBtn = document.querySelector('#emissaoForm button[type="submit"]');
+            const originalText = submitBtn.innerHTML;
+
+            try {
+                // Mostrar loading
+                submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Emitindo...';
+                submitBtn.disabled = true;
+
+                const descricao = document.getElementById('descricaoServico').value;
+
+                const response = await fetch(`/api/erp/faturas/${faturaSelected.fatura_id}/emitir-nfse/`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': getCsrfToken()
+                    },
+                    body: JSON.stringify({
+                        descricao: descricao || null
+                    })
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    showNotification('NFS-e enviada para processamento com sucesso!', 'success');
+                    
+                    // Recarregar dados
+                    setTimeout(() => {
+                        carregarFaturas();
+                        carregarStatusNFs();
+                        deselecionarFatura();
+                    }, 2000);
+                } else {
+                    showNotification(`Erro: ${result.error || 'Falha na emissão'}`, 'error');
+                }
+            } catch (error) {
+                showNotification('Erro de comunicação com o servidor', 'error');
+                console.error('Erro:', error);
+            } finally {
+                // Restaurar botão
+                submitBtn.innerHTML = originalText;
+                submitBtn.disabled = false;
+            }
+        }
+
+        // Carregar status das NFs
+        async function carregarStatusNFs() {
+            try {
+                const [nfServico, nfProduto] = await Promise.all([
+                    fetch('/api/erp/notas-fiscal-servico/'),
+                    fetch('/api/erp/notas-fiscal-produto/')
+                ]);
+
+                const [servicoData, produtoData] = await Promise.all([
+                    nfServico.json(),
+                    nfProduto.json()
+                ]);
+
+                renderizarStatusNFs([...servicoData, ...produtoData]);
+            } catch (error) {
+                console.error('Erro ao carregar status das NFs:', error);
+                document.getElementById('statusPanel').innerHTML = `
+                    <div style="text-align: center; padding: 20px; color: #e17055;">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <p>Erro ao carregar status das notas fiscais</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Renderizar status das NFs
+        function renderizarStatusNFs(nfs) {
+            const container = document.getElementById('statusPanel');
+            
+            if (nfs.length === 0) {
+                container.innerHTML = `
+                    <div style="text-align: center; padding: 40px; color: #6c757d;">
+                        <i class="fas fa-file-alt" style="font-size: 2rem; margin-bottom: 10px;"></i>
+                        <p>Nenhuma nota fiscal emitida ainda</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = nfs.slice(0, 6).map(nf => `
+                <div class="nf-status-item">
+                    <h4>NF #${nf.id} - ${nf.numero || 'Aguardando'}</h4>
+                    <p><strong>Status:</strong> ${nf.status || 'PROCESSANDO'}</p>
+                    <p><strong>Data:</strong> ${nf.data_emissao ? formatDate(nf.data_emissao) : 'Processando'}</p>
+                    ${nf.valor ? `<p><strong>Valor:</strong> R$ ${formatCurrency(parseFloat(nf.valor))}</p>` : ''}
+                </div>
+            `).join('');
+        }
+
+        // Funções auxiliares
+        function getClienteName(fatura) {
+            if (fatura.cliente && fatura.cliente.nome_completo) {
+                return fatura.cliente.nome_completo;
+            }
+            return fatura.cliente_nome || 'Cliente não informado';
+        }
+
+        function formatCurrency(value) {
+            return new Intl.NumberFormat('pt-BR', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+            }).format(value);
+        }
+
+        function formatDate(dateString) {
+            return new Date(dateString).toLocaleDateString('pt-BR');
+        }
+
+        function getCsrfToken() {
+            const cookies = document.cookie.split(';');
+            for (let cookie of cookies) {
+                const [name, value] = cookie.trim().split('=');
+                if (name === 'csrftoken') {
+                    return value;
+                }
+            }
+            return '';
+        }
+
+        function showNotification(message, type = 'success') {
+            // Remover notificações existentes
+            document.querySelectorAll('.notification').forEach(n => n.remove());
+
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.innerHTML = `
+                <i class="fas ${type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'}"></i>
+                ${message}
+            `;
+
+            document.body.appendChild(notification);
+
+            // Remover após 5 segundos
+            setTimeout(() => {
+                notification.style.animation = 'slideIn 0.3s ease reverse';
+                setTimeout(() => notification.remove(), 300);
+            }, 5000);
+        }
+
+        // Recarregar dados a cada 30 segundos
+        setInterval(() => {
+            carregarStatusNFs();
+        }, 30000);
+    </script>
+</body>
+</html>

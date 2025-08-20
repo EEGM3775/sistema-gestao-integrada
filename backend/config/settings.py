@@ -37,12 +37,12 @@ INSTALLED_APPS = [
     "nucleo",
     "clientes",
     "empreendimentos",
-    "financeiro",
     "fornecedores",
     "obras",
     "rh",
     "modulodiario",
     "funcoesia",
+    "moduloerp.apps.ModuloerpConfig",
     
     
     # Apps do Django
@@ -81,6 +81,7 @@ TEMPLATES = [
         "BACKEND": "django.template.backends.django.DjangoTemplates",
         "DIRS": [
             os.path.join(BASE_DIR, 'templates'),
+            os.path.join(BASE_DIR, '../frontend'),
         ],
         "APP_DIRS": True,
         "OPTIONS": {
@@ -168,6 +169,10 @@ MEDIA_URL = '/media/'
 # Para desenvolvimento local
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+
+STATICFILES_DIRS = [
+    os.path.join(BASE_DIR, '../frontend'),
+]
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

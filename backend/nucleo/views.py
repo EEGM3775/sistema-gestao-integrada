@@ -1,6 +1,9 @@
 # backend/nucleo/views.py
 # Define a lógica da API para o app 'nucleo'.
-from rest_framework import viewsets
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 from .models import Usuario, Perfil, Permissao, LogAtividadeUsuario
 from .serializers import (
     UsuarioSerializer,
@@ -16,7 +19,15 @@ class UsuarioViewSet(viewsets.ModelViewSet):
     """
     queryset = Usuario.objects.all()
     serializer_class = UsuarioSerializer
-    # permission_classes = [permissions.IsAuthenticated]
+    # permission_classes = [IsAuthenticated]
+    
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
+    def me(self, request):
+        """
+        Retorna os dados do usuário logado
+        """
+        serializer = self.get_serializer(request.user)
+        return Response(serializer.data)
 
 class PerfilViewSet(viewsets.ModelViewSet):
     """

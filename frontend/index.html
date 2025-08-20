@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Gestão Integrada</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <div class="logo">
+                <i class="fas fa-building"></i>
+                <h1>Sistema de Gestão Integrada</h1>
+            </div>
+            <nav class="nav">
+                <a href="#home" class="nav-link active" onclick="showSection('home')">
+                    <i class="fas fa-home"></i> Início
+                </a>
+                <a href="#nfe" class="nav-link" onclick="showSection('nfe')">
+                    <i class="fas fa-file-invoice"></i> Notas Fiscais
+                </a>
+                <a href="#faturas" class="nav-link" onclick="showSection('faturas')">
+                    <i class="fas fa-list-check"></i> Seleção de Faturas
+                </a>
+                <a href="#modules" class="nav-link" onclick="showSection('modules')">
+                    <i class="fas fa-th-large"></i> Módulos
+                </a>
+                <a href="#admin" class="nav-link" onclick="window.open('/admin/', '_blank')">
+                    <i class="fas fa-cogs"></i> Admin
+                </a>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main">
+        <!-- Home Section -->
+        <section id="home" class="section active">
+            <div class="container">
+                <div class="hero">
+                    <div class="hero-content">
+                        <h2>Bem-vindo ao Sistema de Gestão Integrada</h2>
+                        <p>Plataforma completa para gestão empresarial com foco em automação e eficiência.</p>
+                        <div class="hero-stats">
+                            <div class="stat-card">
+                                <i class="fas fa-file-invoice-dollar"></i>
+                                <h3>Emissão de NF</h3>
+                                <p>Sistema completo de emissão de Notas Fiscais integrado com NFE.io</p>
+                            </div>
+                            <div class="stat-card">
+                                <i class="fas fa-users"></i>
+                                <h3>Gestão de Clientes</h3>
+                                <p>Cadastro e controle completo de clientes e fornecedores</p>
+                            </div>
+                            <div class="stat-card">
+                                <i class="fas fa-project-diagram"></i>
+                                <h3>Múltiplos Módulos</h3>
+                                <p>CRM, ERP, RH, SCM e muito mais em uma única plataforma</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="features-grid">
+                    <div class="feature-card">
+                        <i class="fas fa-rocket"></i>
+                        <h3>Sistema Modular</h3>
+                        <p>Arquitetura modular permitindo expansão e customização conforme necessário</p>
+                    </div>
+                    <div class="feature-card">
+                        <i class="fas fa-shield-alt"></i>
+                        <h3>Segurança</h3>
+                        <p>Sistema seguro com controle de acesso e autenticação robusta</p>
+                    </div>
+                    <div class="feature-card">
+                        <i class="fas fa-mobile-alt"></i>
+                        <h3>Responsivo</h3>
+                        <p>Interface adaptada para desktop, tablet e dispositivos móveis</p>
+                    </div>
+                    <div class="feature-card">
+                        <i class="fas fa-chart-line"></i>
+                        <h3>Relatórios</h3>
+                        <p>Dashboards e relatórios detalhados para tomada de decisão</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- NFe Section -->
+        <section id="nfe" class="section">
+            <div class="container">
+                <div class="section-header">
+                    <h2><i class="fas fa-file-invoice"></i> Sistema de Notas Fiscais</h2>
+                    <p>Emissão automatizada de NF-e e NFS-e integrada com a NFE.io</p>
+                </div>
+
+                <div class="nfe-dashboard">
+                    <div class="nfe-actions">
+                        <div class="action-card" onclick="showSection('faturas')">
+                            <i class="fas fa-list-check"></i>
+                            <h3>Emissão em Lote</h3>
+                            <p>Selecionar múltiplas faturas</p>
+                        </div>
+                        <div class="action-card" onclick="showNfeForm('servico')">
+                            <i class="fas fa-plus-circle"></i>
+                            <h3>Emitir NFS-e</h3>
+                            <p>Nota Fiscal de Serviço</p>
+                        </div>
+                        <div class="action-card disabled" title="Em desenvolvimento">
+                            <i class="fas fa-box"></i>
+                            <h3>Emitir NF-e</h3>
+                            <p>Nota Fiscal de Produto</p>
+                            <span class="badge">Em breve</span>
+                        </div>
+                        <div class="action-card" onclick="showNfeConsulta()">
+                            <i class="fas fa-search"></i>
+                            <h3>Consultar NF</h3>
+                            <p>Verificar status</p>
+                        </div>
+                    </div>
+
+                    <div class="nfe-process">
+                        <h3>Como funciona o processo:</h3>
+                        <div class="process-steps">
+                            <div class="step">
+                                <div class="step-number">1</div>
+                                <div class="step-content">
+                                    <h4>Dados da Fatura</h4>
+                                    <p>Sistema busca dados completos da fatura no Django</p>
+                                </div>
+                            </div>
+                            <div class="step">
+                                <div class="step-number">2</div>
+                                <div class="step-content">
+                                    <h4>Microserviço Node.js</h4>
+                                    <p>Processa dados e comunica com NFE.io</p>
+                                </div>
+                            </div>
+                            <div class="step">
+                                <div class="step-number">3</div>
+                                <div class="step-content">
+                                    <h4>Emissão</h4>
+                                    <p>Nota fiscal emitida e armazenada automaticamente</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- NFe Form Modal -->
+                <div id="nfeModal" class="modal">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h3 id="modalTitle">Emitir Nota Fiscal</h3>
+                            <span class="close" onclick="closeModal()">&times;</span>
+                        </div>
+                        <div class="modal-body">
+                            <form id="nfeForm">
+                                <div class="form-group">
+                                    <label for="faturaId">ID da Fatura *</label>
+                                    <input type="number" id="faturaId" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="tipoNF">Tipo de Nota Fiscal *</label>
+                                    <select id="tipoNF" required>
+                                        <option value="servico">NFS-e (Serviço)</option>
+                                        <option value="produto" disabled>NF-e (Produto) - Em desenvolvimento</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="descricao">Descrição do Serviço</label>
+                                    <textarea id="descricao" rows="3" placeholder="Descreva o serviço prestado..."></textarea>
+                                </div>
+                                <div class="form-actions">
+                                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+                                    <button type="submit" class="btn btn-primary">
+                                        <i class="fas fa-paper-plane"></i> Emitir Nota Fiscal
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Consulta Modal -->
+                <div id="consultaModal" class="modal">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h3>Consultar Nota Fiscal</h3>
+                            <span class="close" onclick="closeConsultaModal()">&times;</span>
+                        </div>
+                        <div class="modal-body">
+                            <p class="info-message">
+                                <i class="fas fa-info-circle"></i>
+                                Funcionalidade de consulta será implementada em breve.
+                                Por enquanto, use o painel administrativo para verificar o status das notas fiscais.
+                            </p>
+                            <div class="form-actions">
+                                <button type="button" class="btn btn-primary" onclick="window.open('/admin/', '_blank')">
+                                    <i class="fas fa-external-link-alt"></i> Ir para Admin
+                                </button>
+                                <button type="button" class="btn btn-secondary" onclick="closeConsultaModal()">Fechar</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Faturas Section -->
+        <section id="faturas" class="section">
+            <div class="container">
+                <div class="section-header">
+                    <h2><i class="fas fa-list-check"></i> Seleção de Faturas para Emissão</h2>
+                    <p>Selecione múltiplas faturas para emissão de notas fiscais em lote</p>
+                </div>
+
+                <div class="faturas-dashboard">
+                    <!-- Filtros e Controles -->
+                    <div class="faturas-controls">
+                        <div class="search-filter">
+                            <div class="form-group inline">
+                                <label for="searchFatura">Buscar fatura:</label>
+                                <input type="text" id="searchFatura" placeholder="Digite o ID, cliente ou descrição..." onkeyup="filterFaturas()">
+                            </div>
+                            <div class="form-group inline">
+                                <label for="statusFilter">Status:</label>
+                                <select id="statusFilter" onchange="filterFaturas()">
+                                    <option value="">Todos</option>
+                                    <option value="pendente">Pendentes</option>
+                                    <option value="paga">Pagas</option>
+                                    <option value="atrasada">Atrasadas</option>
+                                </select>
+                            </div>
+                            <button type="button" class="btn btn-secondary" onclick="resetFilters()">
+                                <i class="fas fa-undo"></i> Limpar Filtros
+                            </button>
+                        </div>
+                        
+                        <div class="bulk-actions">
+                            <button type="button" class="btn btn-info" onclick="selectAll()">
+                                <i class="fas fa-check-double"></i> Selecionar Todos
+                            </button>
+                            <button type="button" class="btn btn-secondary" onclick="deselectAll()">
+                                <i class="fas fa-times"></i> Desmarcar Todos
+                            </button>
+                            <button type="button" class="btn btn-primary" onclick="showBulkEmissionModal()" id="bulkEmitBtn" disabled>
+                                <i class="fas fa-file-invoice"></i> Emitir Selecionadas (<span id="selectedCount">0</span>)
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Lista de Faturas -->
+                    <div class="faturas-list">
+                        <div class="faturas-header">
+                            <div class="checkbox-col">
+                                <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(this)">
+                            </div>
+                            <div class="id-col">ID</div>
+                            <div class="cliente-col">Cliente</div>
+                            <div class="descricao-col">Descrição</div>
+                            <div class="valor-col">Valor</div>
+                            <div class="vencimento-col">Vencimento</div>
+                            <div class="status-col">Status</div>
+                            <div class="nf-col">NF Status</div>
+                        </div>
+                        
+                        <div id="faturasList">
+                            <!-- Faturas serão carregadas aqui via JavaScript -->
+                        </div>
+                        
+                        <div id="noFaturasMessage" class="no-faturas" style="display: none;">
+                            <i class="fas fa-inbox"></i>
+                            <h3>Nenhuma fatura encontrada</h3>
+                            <p>Não há faturas que correspondam aos filtros aplicados.</p>
+                        </div>
+                    </div>
+
+                    <!-- Paginação -->
+                    <div class="pagination-container">
+                        <div class="pagination-info">
+                            <span id="paginationInfo">Mostrando 1-10 de 25 faturas</span>
+                        </div>
+                        <div class="pagination">
+                            <button class="btn-pagination" id="prevPage" onclick="changePage(-1)" disabled>
+                                <i class="fas fa-chevron-left"></i> Anterior
+                            </button>
+                            <span class="page-numbers">
+                                <span class="page-number active">1</span>
+                                <span class="page-number">2</span>
+                                <span class="page-number">3</span>
+                            </span>
+                            <button class="btn-pagination" id="nextPage" onclick="changePage(1)">
+                                Próximo <i class="fas fa-chevron-right"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Modal de Emissão em Lote -->
+                <div id="bulkEmissionModal" class="modal">
+                    <div class="modal-content large">
+                        <div class="modal-header">
+                            <h3>Emissão de Notas Fiscais em Lote</h3>
+                            <span class="close" onclick="closeBulkEmissionModal()">&times;</span>
+                        </div>
+                        <div class="modal-body">
+                            <div class="bulk-summary">
+                                <h4>Resumo da Emissão</h4>
+                                <div class="summary-stats">
+                                    <div class="summary-item">
+                                        <i class="fas fa-file-invoice"></i>
+                                        <span>Faturas selecionadas: <strong id="bulkSelectedCount">0</strong></span>
+                                    </div>
+                                    <div class="summary-item">
+                                        <i class="fas fa-dollar-sign"></i>
+                                        <span>Valor total: <strong id="bulkTotalValue">R$ 0,00</strong></span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <form id="bulkEmissionForm">
+                                <div class="form-group">
+                                    <label for="bulkTipoNF">Tipo de Nota Fiscal *</label>
+                                    <select id="bulkTipoNF" required>
+                                        <option value="servico">NFS-e (Serviço)</option>
+                                        <option value="produto" disabled>NF-e (Produto) - Em desenvolvimento</option>
+                                    </select>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label for="bulkDescricao">Descrição padrão (opcional)</label>
+                                    <textarea id="bulkDescricao" rows="3" placeholder="Descrição que será aplicada a todas as notas fiscais..."></textarea>
+                                    <small>Se não preenchida, será usada a descrição individual de cada fatura.</small>
+                                </div>
+
+                                <div class="selected-faturas-preview">
+                                    <h5>Faturas que serão processadas:</h5>
+                                    <div id="selectedFaturasList" class="selected-list">
+                                        <!-- Lista de faturas selecionadas será preenchida aqui -->
+                                    </div>
+                                </div>
+
+                                <div class="form-actions">
+                                    <button type="button" class="btn btn-secondary" onclick="closeBulkEmissionModal()">Cancelar</button>
+                                    <button type="submit" class="btn btn-primary">
+                                        <i class="fas fa-rocket"></i> Processar Emissão em Lote
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Modules Section -->
+        <section id="modules" class="section">
+            <div class="container">
+                <div class="section-header">
+                    <h2><i class="fas fa-th-large"></i> Módulos do Sistema</h2>
+                    <p>Explore todos os módulos disponíveis na plataforma</p>
+                </div>
+
+                <div class="modules-grid">
+                    <div class="module-card">
+                        <i class="fas fa-users"></i>
+                        <h3>Clientes</h3>
+                        <p>Gestão completa de clientes e prospects</p>
+                        <div class="module-status active">Ativo</div>
+                    </div>
+                    <div class="module-card">
+                        <i class="fas fa-truck"></i>
+                        <h3>Fornecedores</h3>
+                        <p>Cadastro e controle de fornecedores</p>
+                        <div class="module-status active">Ativo</div>
+                    </div>
+                    <div class="module-card">
+                        <i class="fas fa-building"></i>
+                        <h3>Empreendimentos</h3>
+                        <p>Gestão de projetos e empreendimentos</p>
+                        <div class="module-status active">Ativo</div>
+                    </div>
+                    <div class="module-card">
+                        <i class="fas fa-file-invoice-dollar"></i>
+                        <h3>Funções NF</h3>
+                        <p>Microserviço de Notas Fiscais</p>
+                        <div class="module-status active">Ativo</div>
+                    </div>
+                    <div class="module-card">
+                        <i class="fas fa-whatsapp"></i>
+                        <h3>WhatsApp</h3>
+                        <p>Integração com WhatsApp Business</p>
+                        <div class="module-status active">Ativo</div>
+                    </div>
+                    <div class="module-card">
+                        <i class="fas fa-chart-line"></i>
+                        <h3>APS - Analytics</h3>
+                        <p>Análises e relatórios avançados</p>
+                        <div class="module-status active">Ativo</div>
+                    </div>
+                    <div class="module-card">
+                        <i class="fas fa-handshake"></i>
+                        <h3>CRM</h3>
+                        <p>Customer Relationship Management</p>
+                        <div class="module-status active">Ativo</div>
+                    </div>
+                    <div class="module-card">
+                        <i class="fas fa-calendar-alt"></i>
+                        <h3>Diário</h3>
+                        <p>Gestão de tarefas e agenda</p>
+                        <div class="module-status active">Ativo</div>
+                    </div>
+                    <div class="module-card">
+                        <i class="fas fa-folder"></i>
+                        <h3>DMS</h3>
+                        <p>Document Management System</p>
+                        <div class="module-status active">Ativo</div>
+                    </div>
+                    <div class="module-card">
+                        <i class="fas fa-cogs"></i>
+                        <h3>ERP</h3>
+                        <p>Enterprise Resource Planning</p>
+                        <div class="module-status active">Ativo</div>
+                    </div>
+                    <div class="module-card">
+                        <i class="fas fa-exchange-alt"></i>
+                        <h3>Import/Export</h3>
+                        <p>Gestão de importação e exportação</p>
+                        <div class="module-status active">Ativo</div>
+                    </div>
+                    <div class="module-card">
+                        <i class="fas fa-map-marked-alt"></i>
+                        <h3>Maps</h3>
+                        <p>Integração com mapas e geolocalização</p>
+                        <div class="module-status active">Ativo</div>
+                    </div>
+                    <div class="module-card">
+                        <i class="fas fa-clipboard-check"></i>
+                        <h3>PDCA</h3>
+                        <p>Plan-Do-Check-Act</p>
+                        <div class="module-status active">Ativo</div>
+                    </div>
+                    <div class="module-card">
+                        <i class="fas fa-user-tie"></i>
+                        <h3>RH</h3>
+                        <p>Recursos Humanos</p>
+                        <div class="module-status active">Ativo</div>
+                    </div>
+                    <div class="module-card">
+                        <i class="fas fa-warehouse"></i>
+                        <h3>SCM</h3>
+                        <p>Supply Chain Management</p>
+                        <div class="module-status active">Ativo</div>
+                    </div>
+                    <div class="module-card">
+                        <i class="fas fa-industry"></i>
+                        <h3>SIL</h3>
+                        <p>Sistema Industrial</p>
+                        <div class="module-status active">Ativo</div>
+                    </div>
+                    <div class="module-card">
+                        <i class="fas fa-hard-hat"></i>
+                        <h3>Obras</h3>
+                        <p>Gestão de obras e construção</p>
+                        <div class="module-status active">Ativo</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-section">
+                    <h4>Sistema de Gestão Integrada</h4>
+                    <p>Plataforma completa para gestão empresarial</p>
+                </div>
+                <div class="footer-section">
+                    <h4>Links Rápidos</h4>
+                    <ul>
+                        <li><a href="/admin/">Painel Admin</a></li>
+                        <li><a href="/api-info/">API Documentation</a></li>
+                    </ul>
+                </div>
+                <div class="footer-section">
+                    <h4>Tecnologias</h4>
+                    <ul>
+                        <li>Django + Python</li>
+                        <li>Node.js (Microserviços)</li>
+                        <li>NFE.io Integration</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>&copy; 2025 Sistema de Gestão Integrada. Todos os direitos reservados.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>

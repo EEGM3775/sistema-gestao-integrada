@@ -75,10 +75,13 @@ class Usuario(AbstractUser):
     """
     Modelo de usuário customizado, estendendo o AbstractUser do Django.
     """
-    cpf = models.CharField(max_length=14, unique=True, verbose_name=_("CPF"))
+    cpf = models.CharField(_("CPF"), max_length=14, unique=True, null=True, blank=True)
     telefone = models.CharField(max_length=20, blank=True, null=True, verbose_name=_("Telefone"))
     is_data_admin = models.BooleanField(default=False, verbose_name=_("Administrador de Dados"))
     perfil = models.ForeignKey('Perfil', on_delete=models.SET_NULL, null=True, blank=True, related_name='usuarios', verbose_name=_("Perfil"))
+
+    USERNAME_FIELD = 'username'
+    REQUIRED_FIELDS = ['email']
 
     class Meta:
         verbose_name = _("Usuário")

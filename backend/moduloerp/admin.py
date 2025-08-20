@@ -1,7 +1,67 @@
-# financeiro/admin.py
+# backend/moduloerp/admin.py
 from django.contrib import admin
 from django.utils.translation import gettext_lazy as _
-from .models import NotaFiscal, ContaPagar, ContaReceber, CobrancaCliente
+from .models import (
+    Fatura, Transacao, NotaFiscalServico, NotaFiscalProduto,
+    NotaFiscal, ContaPagar, ContaReceber, CobrancaCliente, Boleto
+)
+
+class BoletoInline(admin.TabularInline):
+    model = Boleto
+    extra = 0
+    readonly_fields = ('status', 'valor', 'data_vencimento', 'data_pagamento', 'gateway_id', 'url_pdf', 'linha_digitavel')
+    can_delete = True
+
+@admin.register(Boleto)
+class BoletoAdmin(admin.ModelAdmin):
+    list_display = ('boleto_id', 'conta_receber', 'conta_pagar', 'status', 'valor', 'data_vencimento')
+    list_filter = ('status', 'data_vencimento')
+    search_fields = ('conta_receber__cliente__nome_completo', 'conta_pagar__fornecedor__razao_social', 'gateway_id')
+    readonly_fields = ('boleto_id', 'criado_em', 'atualizado_em')
+    raw_id_fields = ('conta_receber', 'conta_pagar')
+
+    fieldsets = (
+        (None, {
+            'fields': ('boleto_id', 'status', 'valor', 'data_vencimento', 'data_pagamento')
+        }),
+        (_('Relacionamentos'), {
+            'fields': ('conta_receber', 'conta_pagar')
+        }),
+        (_('Dados do Gateway'), {
+            'fields': ('gateway_id', 'url_pdf', 'linha_digitavel'),
+            'classes': ('collapse',)
+        }),
+        (_('Datas de Controle'), {
+            'fields': ('criado_em', 'atualizado_em'),
+            'classes': ('collapse',)
+        })
+    )
+
+@admin.register(Fatura)
+class FaturaAdmin(admin.ModelAdmin):
+    list_display = ('fatura_id', 'descricao', 'tipo', 'status', 'valor', 'data_vencimento', 'data_pagamento', 'cliente', 'fornecedor')
+    list_filter = ('tipo', 'status', 'data_vencimento')
+    search_fields = ('descricao', 'cliente__nome', 'fornecedor__nome_fantasia')
+    raw_id_fields = ('cliente', 'fornecedor', 'empreendimento', 'nota_fiscal_servico', 'nota_fiscal_produto', 'nota_fiscal_recebida')
+
+@admin.register(Transacao)
+class TransacaoAdmin(admin.ModelAdmin):
+    list_display = ('transacao_id', 'fatura', 'valor', 'tipo', 'data_transacao')
+    list_filter = ('tipo', 'data_transacao')
+    search_fields = ('fatura__descricao',)
+    raw_id_fields = ('fatura', 'empreendimento', 'obra', 'usuario')
+
+@admin.register(NotaFiscalServico)
+class NotaFiscalServicoAdmin(admin.ModelAdmin):
+    list_display = ('id', 'status', 'nfe_io_id', 'numero', 'data_emissao')
+    list_filter = ('status', 'data_emissao')
+    search_fields = ('nfe_io_id', 'numero')
+
+@admin.register(NotaFiscalProduto)
+class NotaFiscalProdutoAdmin(admin.ModelAdmin):
+    list_display = ('id', 'status', 'nfe_io_id', 'numero', 'data_emissao')
+    list_filter = ('status', 'data_emissao')
+    search_fields = ('nfe_io_id', 'numero')
 
 @admin.register(NotaFiscal)
 class NotaFiscalAdmin(admin.ModelAdmin):
@@ -35,6 +95,7 @@ class ContaPagarAdmin(admin.ModelAdmin):
     search_fields = ['descricao', 'fornecedor__razao_social']
     readonly_fields = ['conta_pagar_id']
     ordering = ['data_vencimento']
+    inlines = [BoletoInline]
     
     fieldsets = (
         (_('Informações da Conta'), {
@@ -56,6 +117,7 @@ class ContaReceberAdmin(admin.ModelAdmin):
     search_fields = ['descricao', 'cliente__nome_completo']
     readonly_fields = ['conta_receber_id']
     ordering = ['data_vencimento']
+    inlines = [BoletoInline]
     
     fieldsets = (
         (_('Informações da Conta'), {
@@ -87,10 +149,6 @@ class CobrancaClienteAdmin(admin.ModelAdmin):
         }),
         (_('Pagamento'), {
             'fields': ('valor_pago', 'status', 'referencia_pagamento')
-        }),
-        (_('Gateway/Boleto'), {
-            'fields': ('gateway_id', 'boleto_url', 'boleto_linha_digitavel'),
-            'classes': ('collapse',)
         }),
         (_('Observações'), {
             'fields': ('observacoes',),

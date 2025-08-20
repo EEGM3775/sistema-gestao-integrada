@@ -4,6 +4,10 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from rest_framework.routers import DefaultRouter
+from rest_framework_simplejwt.views import (
+    TokenObtainPairView,
+    TokenRefreshView,
+)
 
 # Importa as views dos apps
 from clientes.views import (
@@ -17,12 +21,6 @@ from empreendimentos.views import (
     EmpreendimentoViewSet,
     ContaBancariaEmpreendimentoViewSet,
     CustoEmpreendimentoViewSet
-)
-from financeiro.views import (
-    NotaFiscalViewSet,
-    ContaPagarViewSet,
-    ContaReceberViewSet,
-    CobrancaClienteViewSet
 )
 from fornecedores.views import (
     FornecedorViewSet,
@@ -66,12 +64,6 @@ router.register(r'empreendimentos', EmpreendimentoViewSet, basename='empreendime
 router.register(r'contas-bancarias-empreendimentos', ContaBancariaEmpreendimentoViewSet, basename='contabancariaempreendimento')
 router.register(r'custos-empreendimentos', CustoEmpreendimentoViewSet, basename='custoempreendimento')
 
-# --- Rotas do App 'financeiro' ---
-router.register(r'notas-fiscais', NotaFiscalViewSet, basename='notafiscal')
-router.register(r'contas-a-pagar', ContaPagarViewSet, basename='contapagar')
-router.register(r'contas-a-receber', ContaReceberViewSet, basename='contareceber')
-router.register(r'cobrancas-clientes', CobrancaClienteViewSet, basename='cobrancacliente')
-
 # --- Rotas do App 'fornecedores' ---
 router.register(r'fornecedores', FornecedorViewSet, basename='fornecedor')
 router.register(r'dados-bancarios-fornecedores', DadoBancarioFornecedorViewSet, basename='dadobancariofornecedor')
@@ -103,14 +95,26 @@ urlpatterns = [
     path('', views.home, name='home'),
     path('admin/', admin.site.urls),
     
+    # Endpoints JWT
+    path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
+    path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    
     # Adiciona todas as URLs da API geradas pelo roteador sob o prefixo /api/
     path('api/', include(router.urls)),
     
     # --- Rotas dos Módulos (sem roteador principal) ---
     path('api/diario/', include('modulodiario.urls')),
     path('api/ia/', include('funcoesia.urls')),
+    path('api/erp/', include('moduloerp.urls')),
     
-    # Adiciona a URL do webhook do WhatsApp
+    # Página de informações da API
+    path('api/', views.api_info, name='api_info'),
+    
+    # Frontend NFS-e
+    path('nfse/', views.nfse_frontend, name='nfse_frontend'),
+    
+    # Servir arquivos do frontend (deve ficar por último para não interceptar outras rotas)
+    path('<str:file_name>', views.serve_frontend_file, name='frontend_files'),
     
 ]
 
