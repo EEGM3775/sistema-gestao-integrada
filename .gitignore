@@ -84,3 +84,9 @@ secrets.env
 
 #Arquivos de terminal
 terminal.txt
+
+#arquivos php
+vendor/
+
+#pastas de media
+media/

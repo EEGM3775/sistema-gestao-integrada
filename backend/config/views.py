@@ -35,6 +35,8 @@ def serve_frontend_file(request, file_name):
             content_type = 'text/css'
         elif file_name.endswith('.js'):
             content_type = 'application/javascript'
+        elif file_name.endswith('.svg'):
+            content_type = 'image/svg+xml'
         else:
             content_type = 'text/plain'
         
@@ -45,6 +47,19 @@ def serve_frontend_file(request, file_name):
     
     except Exception:
         raise Http404("Arquivo não encontrado")
+
+
+def login_page(request):
+    """Serve a página de login"""
+    try:
+        frontend_path = os.path.join(settings.BASE_DIR, '../frontend/login.html')
+        
+        with open(frontend_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        return HttpResponse(content, content_type='text/html')
+    except FileNotFoundError:
+        raise Http404("Página de login não encontrada")
 
 def get_fallback_home_content():
     """Retorna conteúdo HTML de fallback caso o frontend não esteja disponível"""
@@ -275,6 +290,72 @@ def api_info(request):
     </body>
     </html>
     """)
+
+def analises_ia_frontend(request):
+    """Serve o frontend específico para análises de IA"""
+    try:
+        # Caminho para o arquivo frontend de análises de IA
+        frontend_path = os.path.join(settings.BASE_DIR, '../frontend/analises-ia.html')
+        
+        with open(frontend_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        return HttpResponse(content, content_type='text/html')
+    except FileNotFoundError:
+        # Fallback se o arquivo não existir
+        return HttpResponse(get_analises_ia_fallback_content())
+
+def get_analises_ia_fallback_content():
+    """Retorna conteúdo HTML de fallback para análises de IA"""
+    return """
+    <!DOCTYPE html>
+    <html lang="pt-br">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Análises de IA - Sistema de Gestão</title>
+        <style>
+            body {
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                margin: 0; padding: 20px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: #333; min-height: 100vh;
+            }
+            .container {
+                max-width: 800px; margin: 0 auto; background: white;
+                border-radius: 15px; padding: 40px;
+                box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            }
+            .error { background: #fff3cd; padding: 20px; border-radius: 10px;
+                border-left: 4px solid #ffc107; margin: 20px 0; }
+            .link { display: inline-block; background: #667eea; color: white;
+                text-decoration: none; padding: 15px 30px; border-radius: 25px;
+                margin: 10px; transition: all 0.3s ease; }
+            .link:hover { background: #5a6fd8; transform: translateY(-2px); }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🧠 Sistema de Análises de IA</h1>
+            <div class="error">
+                <h3>⚠️ Frontend não encontrado</h3>
+                <p>O arquivo /frontend/analises-ia.html não foi encontrado.</p>
+                <p><strong>As APIs estão funcionando!</strong> Você pode acessar diretamente:</p>
+                <ul>
+                    <li><strong>Documentos com análise:</strong> /api/diario/documentos-com-analise/</li>
+                    <li><strong>Reprocessar análise:</strong> POST /api/diario/reprocessar-analise/</li>
+                    <li><strong>Tipos de análise:</strong> /api/ia/analise/tipos/</li>
+                </ul>
+            </div>
+            <div style="text-align: center;">
+                <a href="/" class="link">← Página Inicial</a>
+                <a href="/api/diario/documentos-com-analise/" class="link">Ver Documentos (JSON)</a>
+                <a href="/admin/" class="link">Admin</a>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
 
 def nfse_frontend(request):
     """Serve o frontend específico para emissão de NFS-e"""

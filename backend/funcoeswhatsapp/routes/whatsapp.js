@@ -11,6 +11,11 @@ const webhookLimiter = rateLimit({
 	standardHeaders: true,
 	legacyHeaders: false,
     message: 'Muitas requisições recebidas deste IP. Tente novamente em um minuto.',
+    trustProxy: true, // Confia em proxies como ngrok
+    keyGenerator: (req) => {
+        // Use o IP real ou um fallback
+        return req.ip || req.connection.remoteAddress || 'unknown';
+    }
 });
 
 // Rota para a verificação do webhook da Meta (GET)

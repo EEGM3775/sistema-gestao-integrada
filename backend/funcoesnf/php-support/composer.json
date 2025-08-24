@@ -1,0 +1,29 @@
+{
+    "name": "funcoesnf/php-support",
+    "description": "PHP Support for NFE.io API integration",
+    "type": "library",
+    "require": {
+        "php": ">=7.4",
+        "ext-curl": "*",
+        "ext-json": "*",
+        "nfe/nfe": "^2.5"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "FuncoesNF\\PHPSupport\\": "src/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit",
+        "install-deps": "composer install --no-dev --optimize-autoloader"
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

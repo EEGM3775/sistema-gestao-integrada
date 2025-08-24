@@ -5,6 +5,26 @@ const logger = require('../logger');
 
 const genAI = new GoogleGenerativeAI(config.googleApiKey);
 
+// Controle de rate limiting simples
+let lastRequestTime = 0;
+const MIN_DELAY_BETWEEN_REQUESTS = 2000; // 2 segundos entre requisições
+
+/**
+ * Aguarda um tempo mínimo entre requisições para evitar rate limiting
+ */
+async function waitForRateLimit() {
+  const now = Date.now();
+  const timeSinceLastRequest = now - lastRequestTime;
+  
+  if (timeSinceLastRequest < MIN_DELAY_BETWEEN_REQUESTS) {
+    const delayNeeded = MIN_DELAY_BETWEEN_REQUESTS - timeSinceLastRequest;
+    logger.info(`Aguardando ${delayNeeded}ms antes da próxima requisição à API Gemini`);
+    await new Promise(resolve => setTimeout(resolve, delayNeeded));
+  }
+  
+  lastRequestTime = Date.now();
+}
+
 /**
  * Analisa uma imagem usando a API do Google Gemini com um prompt específico.
  * @param {Buffer} imageBuffer - O buffer da imagem a ser analisada.
@@ -14,7 +34,11 @@ const genAI = new GoogleGenerativeAI(config.googleApiKey);
  */
 async function analisarImagem(imageBuffer, mimeType, prompt) {
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-pro-vision" });
+    // Aguardar rate limit antes de fazer a requisição
+    await waitForRateLimit();
+    
+    // Usando gemini-1.5-flash que tem limites maiores no plano gratuito
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
     const imagePart = {
       inlineData: {

@@ -1,3 +1,96 @@
+console.log('[frontend] script.js carregado');
+// Authentication functionality
+let currentUser = null;
+
+// Verificar autenticação na inicialização
+document.addEventListener('DOMContentLoaded', function() {
+    checkAuthentication();
+});
+
+async function checkAuthentication() {
+    try {
+        const response = await fetch('/auth/login/', {
+            method: 'GET',
+            credentials: 'include'
+        });
+        
+        const data = await response.json();
+        
+        if (data.authenticated) {
+            currentUser = data.user;
+            updateUIForLoggedUser();
+        } else {
+            // Usuário não autenticado, redirecionar para login
+            window.location.href = '/login.html';
+        }
+    } catch (error) {
+        console.error('Erro ao verificar autenticação:', error);
+        window.location.href = '/login.html';
+    }
+}
+
+function updateUIForLoggedUser() {
+    // Atualizar interface para usuário logado
+    const userInfo = document.createElement('div');
+    userInfo.className = 'user-info';
+    userInfo.innerHTML = `
+        <span>Olá, ${currentUser.username}</span>
+        <button onclick="logout()" class="logout-btn">Sair</button>
+    `;
+    
+    // Adicionar ao header se não existir
+    const header = document.querySelector('.header .container');
+    if (header && !header.querySelector('.user-info')) {
+        header.appendChild(userInfo);
+    }
+}
+
+async function logout() {
+    try {
+        const response = await fetch('/auth/logout/', {
+            method: 'POST',
+            credentials: 'include'
+        });
+        
+        if (response.ok) {
+            currentUser = null;
+            localStorage.removeItem('user');
+            window.location.href = '/login.html';
+        }
+    } catch (error) {
+        console.error('Erro no logout:', error);
+        // Mesmo com erro, redirecionar para login
+        window.location.href = '/login.html';
+    }
+}
+
+// Interceptor para adicionar autenticação às requisições
+const originalFetch = window.fetch;
+window.fetch = async function(url, options = {}) {
+    // Adicionar credenciais a todas as requisições para APIs
+    if (url.startsWith('/api/')) {
+        options.credentials = 'include';
+        
+        // Garantir que o header de Content-Type está presente para POST/PUT/PATCH
+        if (['POST', 'PUT', 'PATCH'].includes(options.method)) {
+            options.headers = options.headers || {};
+            if (!options.headers['Content-Type']) {
+                options.headers['Content-Type'] = 'application/json';
+            }
+        }
+    }
+    
+    const response = await originalFetch(url, options);
+    
+    // Se receber 401, redirecionar para login
+    if (response.status === 401 && !url.includes('/auth/')) {
+        console.log('Token expirado ou usuário não autenticado');
+        window.location.href = '/login.html';
+    }
+    
+    return response;
+};
+
 // Navigation functionality
 function showSection(sectionId) {
     // Hide all sections
@@ -25,7 +118,17 @@ function showSection(sectionId) {
     if (sectionId === 'faturas') {
         setTimeout(() => loadFaturas(), 100);
     }
+    
+    // Carregar análises quando a seção for mostrada
+    if (sectionId === 'analises') {
+        setTimeout(() => {
+            carregarObrasParaFiltro();
+            carregarDocumentosComAnalise();
+        }, 100);
+    }
 }
+
+// (removido) exportações antecipadas – serão definidas ao final do arquivo após as funções
 
 // NFe Modal functionality
 function showNfeForm(tipo) {
@@ -950,4 +1053,599 @@ document.addEventListener('DOMContentLoaded', function() {
     if (document.getElementById('faturas')?.classList.contains('active')) {
         loadFaturas();
     }
+    
+    // Carregar análises se a seção estiver ativa
+    if (document.getElementById('analises')?.classList.contains('active')) {
+        carregarObrasParaFiltro();
+        carregarDocumentosComAnalise();
+    }
+});
+
+// Funções para Análises de IA
+let tiposAnaliseDisponiveis = [];
+
+// Carregar obras para o filtro
+async function carregarObrasParaFiltro() {
+    try {
+        const response = await fetch('/api/obras/');
+        if (!response.ok) throw new Error('Erro ao carregar obras');
+        
+        const data = await response.json();
+        const select = document.getElementById('filtroObra');
+        
+        // Limpar opções existentes (exceto "Todas as obras")
+        select.innerHTML = '<option value="">Todas as obras</option>';
+        
+        // Verificar se a resposta tem formato paginado ou é array direto
+        const obras = data.results || data;
+        
+        // Verificar se obras é um array
+        if (Array.isArray(obras)) {
+            obras.forEach(obra => {
+                const option = document.createElement('option');
+                option.value = obra.obra_id;
+                option.textContent = obra.nome;
+                select.appendChild(option);
+            });
+        } else {
+            console.warn('Formato de resposta inesperado para obras:', data);
+        }
+    } catch (error) {
+        console.error('Erro ao carregar obras:', error);
+    }
+}
+
+// Carregar tipos de análise disponíveis
+async function carregarTiposAnalise() {
+    try {
+        // Usar a API do Django que fará proxy para o serviço de IA
+        const response = await fetch('/api/ia/analise/tipos');
+        if (!response.ok) {
+            // Se o serviço não estiver disponível, usar fallback
+            throw new Error('Serviço de IA indisponível');
+        }
+        
+        const data = await response.json();
+        
+        // Converter a estrutura { tipos_por_categoria: {...} } para um array plano
+        if (data.tipos_por_categoria) {
+            tiposAnaliseDisponiveis = [];
+            Object.values(data.tipos_por_categoria).forEach(categoria => {
+                tiposAnaliseDisponiveis.push(...categoria);
+            });
+        } else {
+            // Fallback se a estrutura for diferente
+            tiposAnaliseDisponiveis = Array.isArray(data) ? data : [];
+        }
+    } catch (error) {
+        console.error('Erro ao carregar tipos de análise:', error);
+        // Fallback com tipos básicos quando o serviço não está disponível
+        tiposAnaliseDisponiveis = [
+            { id: 'residencial', nome: 'Construção Residencial' },
+            { id: 'comercial', nome: 'Construção Comercial' },
+            { id: 'infraestrutura', nome: 'Infraestrutura' },
+            { id: 'industrial', nome: 'Construção Industrial' }
+        ];
+    }
+}
+
+// Carregar documentos com análise
+async function carregarDocumentosComAnalise() {
+    const loadingEl = document.getElementById('loadingAnalises');
+    const gridEl = document.getElementById('documentosAnalises');
+    
+    loadingEl.style.display = 'block';
+    gridEl.innerHTML = '';
+    
+    try {
+        const obraId = document.getElementById('filtroObra').value;
+        const status = document.getElementById('filtroStatus').value;
+        
+        let url = '/api/diario/documentos-com-analise/';
+        const params = new URLSearchParams();
+        
+        if (obraId) params.append('obra', obraId);
+        if (status) params.append('status', status);
+        
+        if (params.toString()) {
+            url += '?' + params.toString();
+        }
+        
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('Erro ao carregar documentos');
+        
+        const data = await response.json();
+        const documentos = data.documentos || [];
+        
+        if (documentos.length === 0) {
+            gridEl.innerHTML = `
+                <div class="no-documents">
+                    <i class="fas fa-search"></i>
+                    <h3>Nenhum documento encontrado</h3>
+                    <p>Não há documentos com análises para os filtros selecionados.</p>
+                </div>
+            `;
+        } else {
+            documentos.forEach(documento => {
+                const card = criarCardDocumento(documento);
+                gridEl.appendChild(card);
+            });
+
+            // Bind dos botões "Reprocessar" renderizados
+            const reprocessButtons = gridEl.querySelectorAll('.btn-reprocessar');
+            reprocessButtons.forEach((btn) => {
+                // Evitar múltiplos bindings em recriação da lista
+                if (!btn.dataset.bound) {
+                    btn.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        const documentoId = Number(btn.dataset.documentoId);
+                        const nomeDocumento = btn.dataset.documentoNome || 'Documento';
+                        console.log('🟢 Clique em Reprocessar:', { documentoId, nomeDocumento });
+                        if (!isNaN(documentoId)) {
+                            abrirModalReprocessar(documentoId, nomeDocumento);
+                        } else {
+                            console.warn('Documento ID inválido no botão Reprocessar:', btn.dataset.documentoId);
+                        }
+                    });
+                    btn.dataset.bound = 'true';
+                }
+            });
+        }
+    } catch (error) {
+        console.error('Erro ao carregar documentos:', error);
+        gridEl.innerHTML = `
+            <div class="no-documents">
+                <i class="fas fa-exclamation-triangle"></i>
+                <h3>Erro ao carregar</h3>
+                <p>Ocorreu um erro ao carregar os documentos. Tente novamente.</p>
+            </div>
+        `;
+    } finally {
+        loadingEl.style.display = 'none';
+    }
+}
+
+// Criar card de documento
+function criarCardDocumento(documento) {
+    const card = document.createElement('div');
+    card.className = 'documento-card';
+    
+    const statusClass = documento.status_analise ? `status-${documento.status_analise}` : 'status-erro';
+    const statusText = getStatusText(documento.status_analise);
+    
+    card.innerHTML = `
+        <div class="documento-header">
+            <h3>${documento.nome}</h3>
+            <div class="obra-info">Obra: ${documento.obra_nome || 'N/A'}</div>
+        </div>
+        <div class="documento-body">
+            <div class="documento-info">
+                <div class="info-item">
+                    <span class="info-label">Data:</span>
+                    <span>${formatDate(documento.data_upload)}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Status:</span>
+                    <span class="status-badge ${statusClass}">${statusText}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Tipo de Análise:</span>
+                    <span>${documento.tipo_analise || 'N/A'}</span>
+                </div>
+            </div>
+            
+            ${documento.resultado_analise ? `
+                <div class="analise-info">
+                    <h4>Resultado da Análise:</h4>
+                    <div class="analise-preview">${documento.resultado_analise.substring(0, 200)}...</div>
+                </div>
+            ` : ''}
+            
+            <div class="documento-actions">
+                <button class="btn-reprocessar" data-documento-id="${documento.id}" data-documento-nome="${documento.nome}">
+                    <i class="fas fa-sync"></i> Reprocessar
+                </button>
+                <button class="btn-ver-detalhes" onclick="verDetalhesAnalise(${documento.id})">
+                    <i class="fas fa-eye"></i> Detalhes
+                </button>
+            </div>
+        </div>
+    `;
+    
+    return card;
+}
+
+// Listener delegado global como fallback para cliques em Reprocessar
+if (!window.__reprocessListenerAdded) {
+    document.addEventListener('click', (ev) => {
+        const btn = ev.target && ev.target.closest && ev.target.closest('.btn-reprocessar');
+        if (!btn) return;
+        ev.preventDefault();
+        const documentoId = Number(btn.dataset.documentoId);
+        const nomeDocumento = btn.dataset.documentoNome || 'Documento';
+        console.log('🟢 (Delegado) Clique em Reprocessar:', { documentoId, nomeDocumento });
+        if (!isNaN(documentoId)) {
+            abrirModalReprocessar(documentoId, nomeDocumento);
+        }
+    });
+    window.__reprocessListenerAdded = true;
+}
+
+// Função auxiliar para formatar data
+function formatDate(dateString) {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('pt-BR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+}
+
+// Função auxiliar para texto do status
+function getStatusText(status) {
+    const statusMap = {
+        'completa': 'Completa',
+        'em_andamento': 'Em andamento',
+        'erro': 'Com erro'
+    };
+    return statusMap[status] || 'Desconhecido';
+}
+
+// Abrir modal para reprocessar análise
+function abrirModalReprocessar(documentoId, nomeDocumento) {
+    console.log('🔄 Abrindo modal de reprocessar para documento:', documentoId, nomeDocumento);
+    
+    // Verificação defensiva para garantir que temos um array
+    if (!Array.isArray(tiposAnaliseDisponiveis) || tiposAnaliseDisponiveis.length === 0) {
+        console.log('📋 Carregando tipos de análise...');
+        carregarTiposAnalise().then(() => {
+            console.log('📋 Tipos carregados:', tiposAnaliseDisponiveis);
+            mostrarModalReprocessar(documentoId, nomeDocumento);
+        });
+    } else {
+        console.log('📋 Usando tipos já carregados:', tiposAnaliseDisponiveis);
+        mostrarModalReprocessar(documentoId, nomeDocumento);
+    }
+}
+
+// Mostrar modal de reprocessamento
+function mostrarModalReprocessar(documentoId, nomeDocumento) {
+    console.log('📱 Criando modal de reprocessar...');
+    console.log('📊 Tipos disponíveis:', tiposAnaliseDisponiveis);
+    
+    // Verificação defensiva para garantir que temos um array
+    if (!Array.isArray(tiposAnaliseDisponiveis)) {
+        console.warn('⚠️ tiposAnaliseDisponiveis não é um array, inicializando fallback');
+        tiposAnaliseDisponiveis = [
+            { id: 'completa', nome: 'Análise Completa da Obra', descricao: 'Análise abrangente incluindo progresso, segurança e qualidade' }
+        ];
+    }
+    
+    // Remover modal anterior se existir para evitar duplicidade
+    const modalExistente = document.getElementById('modalReprocessar');
+    if (modalExistente) {
+        console.log('♻️ Removendo modal anterior antes de criar um novo');
+        modalExistente.remove();
+    }
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'modalReprocessar';
+    
+    const tiposHtml = tiposAnaliseDisponiveis.map(tipo => `
+        <div class="tipo-option" data-tipo="${tipo.id}" onclick="selecionarTipo('${tipo.id}')">
+            <strong>${tipo.nome}</strong>
+            <div style="font-size: 12px; color: #666; margin-top: 5px;">
+                ${tipo.descricao || 'Análise especializada para este tipo de construção'}
+            </div>
+        </div>
+    `).join('');
+    
+    console.log('🎨 HTML dos tipos:', tiposHtml);
+    
+    modal.innerHTML = `
+        <div class="modal">
+            <h3>Reprocessar Análise</h3>
+            <p style="margin-bottom: 20px; color: #666;">
+                Documento: <strong>${nomeDocumento}</strong>
+            </p>
+            <p style="margin-bottom: 20px;">Escolha o tipo de análise:</p>
+            <div class="tipo-analise-grid">
+                ${tiposHtml}
+            </div>
+            <div class="modal-actions">
+                <button class="btn-modal btn-cancel" onclick="fecharModal()">Cancelar</button>
+                <button class="btn-modal btn-confirm" onclick="confirmarReprocessamento(${documentoId})" disabled id="btnConfirmar" data-documento-id="${documentoId}">
+                    Reprocessar
+                </button>
+            </div>
+        </div>
+    `;
+    
+    console.log('🎯 Adicionando modal ao body');
+    document.body.appendChild(modal);
+    console.log('✅ Modal adicionado');
+
+    // Auto-selecionar tipo padrão (completa ou primeiro disponível)
+    const preferido = (Array.isArray(tiposAnaliseDisponiveis) && tiposAnaliseDisponiveis.find(t => t.id === 'completa'))
+        ? 'completa'
+        : (Array.isArray(tiposAnaliseDisponiveis) && tiposAnaliseDisponiveis[0] ? tiposAnaliseDisponiveis[0].id : null);
+    if (preferido) {
+        console.log('✅ Auto-selecionando tipo padrão:', preferido);
+        selecionarTipo(preferido);
+    }
+}
+
+// Selecionar tipo de análise
+function selecionarTipo(tipoId) {
+    console.log('🎯 Selecionando tipo:', tipoId);
+    
+    // Remove seleção anterior
+    const modal = document.getElementById('modalReprocessar');
+    const lista = modal ? modal.querySelectorAll('.tipo-option') : document.querySelectorAll('.tipo-option');
+    lista.forEach(el => {
+        el.classList.remove('selected');
+        console.log('🔄 Removendo seleção de:', el.dataset.tipo);
+    });
+    
+    // Adiciona seleção atual
+    const tipoElement = (modal ? modal.querySelector(`[data-tipo="${tipoId}"]`) : document.querySelector(`[data-tipo="${tipoId}"]`));
+    if (tipoElement) {
+        tipoElement.classList.add('selected');
+        console.log('✅ Tipo selecionado:', tipoId);
+    } else {
+        console.error('❌ Elemento não encontrado para tipo:', tipoId);
+    }
+    
+    // Habilita botão de confirmar
+    const btnConfirmar = modal ? modal.querySelector('#btnConfirmar') : document.getElementById('btnConfirmar');
+    if (btnConfirmar) {
+        btnConfirmar.disabled = false;
+        btnConfirmar.dataset.tipo = tipoId;
+        console.log('✅ Botão habilitado com tipo:', tipoId);
+    } else {
+        console.error('❌ Botão confirmar não encontrado');
+    }
+}
+
+// Fechar modal
+function fecharModal() {
+    const modal = document.getElementById('modalReprocessar');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+// Listener delegado para seleção de tipo dentro do modal
+document.addEventListener('click', (ev) => {
+    const opt = ev.target && ev.target.closest && ev.target.closest('.tipo-option');
+    if (!opt) return;
+    const tipoId = opt.dataset.tipo;
+    if (tipoId) {
+        selecionarTipo(tipoId);
+    }
+});
+
+// Listener delegado para confirmar reprocessamento (robustez)
+document.addEventListener('click', (ev) => {
+    const confirmBtn = ev.target && ev.target.closest && ev.target.closest('#btnConfirmar');
+    if (!confirmBtn) return;
+    ev.preventDefault();
+    const documentoIdAttr = confirmBtn.dataset.documentoId;
+    const documentoId = documentoIdAttr ? Number(documentoIdAttr) : null;
+    console.log('🟠 Clique em Confirmar detectado (delegado):', { documentoId, tipo: confirmBtn.dataset.tipo });
+    if (documentoId) {
+        confirmarReprocessamento(documentoId);
+    } else {
+        console.warn('DocumentoId ausente no botão confirmar');
+    }
+});
+
+// Expor funções no escopo global (após declaração de todas as funções)
+window.abrirModalReprocessar = abrirModalReprocessar;
+window.verDetalhesAnalise = verDetalhesAnalise;
+window.carregarDocumentosComAnalise = carregarDocumentosComAnalise;
+window.selecionarTipo = selecionarTipo;
+window.confirmarReprocessamento = confirmarReprocessamento;
+window.fecharModal = fecharModal;
+
+// Confirmar reprocessamento
+async function confirmarReprocessamento(documentoId) {
+    const modal = document.getElementById('modalReprocessar');
+    const btnConfirmar = modal ? modal.querySelector('#btnConfirmar') : document.getElementById('btnConfirmar');
+    const tipoAnalise = btnConfirmar.dataset.tipo;
+    
+    if (!tipoAnalise) {
+        alert('Selecione um tipo de análise');
+        return;
+    }
+    
+    btnConfirmar.disabled = true;
+    btnConfirmar.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processando...';
+    console.log('🚀 Iniciando reprocessamento via frontend:', { documentoId, tipoAnalise });
+    
+    try {
+        const response = await fetch('/api/diario/reprocessar-analise/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCsrfToken()
+            },
+            body: JSON.stringify({
+                documento_id: documentoId,
+                tipo_analise: tipoAnalise
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error('Erro ao reprocessar análise');
+        }
+        
+        const resultado = await response.json();
+        
+        alert('Reprocessamento iniciado com sucesso! A análise será atualizada em breve.');
+        fecharModal();
+        
+        // Recarregar lista de documentos
+        setTimeout(() => {
+            carregarDocumentosComAnalise();
+        }, 1000);
+        
+    } catch (error) {
+        console.error('Erro ao reprocessar:', error);
+        alert('Erro ao iniciar reprocessamento. Tente novamente.');
+        btnConfirmar.disabled = false;
+        btnConfirmar.innerHTML = 'Reprocessar';
+    }
+}
+
+// Ver detalhes da análise
+async function verDetalhesAnalise(documentoId) {
+    try {
+        // Buscar os detalhes do documento específico
+        const response = await fetch(`/api/diario/documento-analise/${documentoId}/`);
+        if (!response.ok) {
+            if (response.status === 404) {
+                throw new Error('Documento não encontrado ou não possui análise');
+            }
+            throw new Error('Erro ao carregar documento');
+        }
+        
+        const documento = await response.json();
+        
+        // Preencher e exibir o modal
+        preencherModalAnalise(documento);
+        
+        // Exibir o modal
+        const modal = document.getElementById('analiseModal');
+        modal.style.display = 'block';
+        
+    } catch (error) {
+        console.error('Erro ao carregar detalhes da análise:', error);
+        alert(`Erro ao carregar os detalhes da análise: ${error.message}`);
+    }
+}
+
+function preencherModalAnalise(documento) {
+    // Informações gerais
+    document.getElementById('analiseNome').textContent = documento.nome;
+    document.getElementById('analiseObra').textContent = documento.obra_nome || 'Não especificada';
+    document.getElementById('analiseData').textContent = documento.data_analise;
+    
+    // Status com classe CSS
+    const statusElement = document.getElementById('analiseStatus');
+    statusElement.textContent = documento.status_analise;
+    statusElement.className = `status-badge ${documento.status_analise.toLowerCase()}`;
+    
+    // Imagem do documento
+    const imagemElement = document.getElementById('analiseImagem');
+    if (documento.url_imagem) {
+        imagemElement.src = documento.url_imagem;
+    } else {
+        // Fallback para imagem não disponível
+        imagemElement.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjIwMCIgdmlld0JveD0iMCAwIDMwMCAyMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIzMDAiIGhlaWdodD0iMjAwIiBmaWxsPSIjRjhGOUZBIi8+CjxwYXRoIGQ9Ik0xNTAgNzVMMTI1IDEwMEwxNzUgMTAwTDE1MCA3NVoiIGZpbGw9IiM2QzU0N0QiLz4KPHJlY3QgeD0iMTI1IiB5PSIxMDAiIHdpZHRoPSI1MCIgaGVpZ2h0PSI1MCIgZmlsbD0iIzZDNzU3RCIvPgo8dGV4dCB4PSIxNTAiIHk9IjE2MCIgZm9udC1mYW1pbHk9IkFyaWFsLCBzYW5zLXNlcmlmIiBmb250LXNpemU9IjEyIiBmaWxsPSIjNkM3NTdEIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5JbWFnZW0gbsOjbyBkaXNwb27DrXZlbDwvdGV4dD4KPC9zdmc+';
+        imagemElement.alt = 'Imagem não disponível';
+    }
+    
+    // Resultado da análise
+    if (documento.resultado) {
+        // Progresso
+        preencherProgresso(documento.resultado.progresso);
+        
+        // Atividades
+        preencherAtividades(documento.resultado.atividades_identificadas);
+        
+        // Riscos
+        preencherRiscos(documento.resultado.riscos_seguranca);
+        
+        // Pessoal
+        preencherPessoal(documento.resultado.reconhecimento_pessoal);
+    }
+}
+
+function preencherProgresso(progresso) {
+    const container = document.getElementById('analiseProgresso');
+    if (!progresso) {
+        container.innerHTML = '<p>Informações de progresso não disponíveis.</p>';
+        return;
+    }
+    
+    container.innerHTML = `
+        <div class="progresso-item">
+            <strong>Resumo:</strong> ${progresso.resumo}
+        </div>
+        <div class="progresso-item">
+            <strong>Percentual concluído:</strong>
+            <span class="progresso-percentual">${progresso.percentual_concluido_etapa}%</span>
+        </div>
+    `;
+}
+
+function preencherAtividades(atividades) {
+    const container = document.getElementById('analiseAtividades');
+    if (!atividades || atividades.length === 0) {
+        container.innerHTML = '<p>Nenhuma atividade identificada.</p>';
+        return;
+    }
+    
+    const lista = atividades.map(atividade => 
+        `<li>${atividade}</li>`
+    ).join('');
+    
+    container.innerHTML = `<ul class="atividades-lista">${lista}</ul>`;
+}
+
+function preencherRiscos(riscos) {
+    const container = document.getElementById('analiseRiscos');
+    if (!riscos || riscos.length === 0) {
+        container.innerHTML = '<p>Nenhum risco identificado.</p>';
+        return;
+    }
+    
+    const riscosHtml = riscos.map(risco => {
+        const nivel = risco.nivel_criticidade.toLowerCase().replace('é', 'e');
+        return `
+            <div class="risco-item ${nivel}">
+                <div class="risco-nivel ${nivel}">${risco.nivel_criticidade}</div>
+                <div class="risco-descricao">${risco.risco}</div>
+            </div>
+        `;
+    }).join('');
+    
+    container.innerHTML = `<div class="riscos-lista">${riscosHtml}</div>`;
+}
+
+function preencherPessoal(pessoal) {
+    const container = document.getElementById('analisePessoal');
+    if (!pessoal || !pessoal.resumo) {
+        container.innerHTML = '<p>Informações de pessoal não disponíveis.</p>';
+        return;
+    }
+    
+    container.innerHTML = `
+        <div class="pessoal-resumo">
+            ${pessoal.resumo}
+        </div>
+    `;
+}
+
+function fecharModalAnalise() {
+    const modal = document.getElementById('analiseModal');
+    modal.style.display = 'none';
+}
+
+// Fechar modal ao clicar fora dele
+window.onclick = function(event) {
+    const modal = document.getElementById('analiseModal');
+    if (event.target === modal) {
+        modal.style.display = 'none';
+    }
+}
+
+// Inicializar seção quando carregada
+document.addEventListener('DOMContentLoaded', function() {
+    // Carregar tipos de análise ao inicializar
+    carregarTiposAnalise();
 });

@@ -12,7 +12,8 @@ from .views import (
     ContaReceberViewSet,
     CobrancaClienteViewSet,
     BoletoViewSet,
-    AtualizarStatusNFView
+    AtualizarStatusNFView,
+    ConsultarStatusNFView
 )
 
 router = DefaultRouter()
@@ -30,4 +31,5 @@ urlpatterns = [
     path('', include(router.urls)),
     path('dashboard/', ERPDashboardView.as_view(), name='erp-dashboard'),
     path('atualizar-status-nf/', AtualizarStatusNFView.as_view(), name='atualizar-status-nf'),
+    path('nf/<int:nf_id>/consultar/', ConsultarStatusNFView.as_view(), name='consultar-status-nf'),
 ]

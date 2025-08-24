@@ -1,5 +1,6 @@
 # backend/clientes/views.py
-from rest_framework import viewsets, permissions
+from rest_framework import viewsets, permissions, filters
+from django_filters.rest_framework import DjangoFilterBackend
 from .models import (
     Cliente,
     ClienteEmpreendimento,
@@ -19,8 +20,13 @@ class ClienteViewSet(viewsets.ModelViewSet):
     """
     Endpoint da API que permite que clientes sejam visualizados ou editados.
     """
-    queryset = Cliente.objects.all().order_by('-nome_completo')
+    queryset = Cliente.objects.all().order_by('nome_completo')
     serializer_class = ClienteSerializer
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['estado_civil', 'profissao', 'cidade', 'estado']
+    search_fields = ['nome_completo', 'cpf_cnpj', 'email', 'telefone', 'endereco', 'bairro', 'cidade', 'cep']
+    ordering_fields = ['nome_completo', 'data_cadastro', 'cidade', 'estado']
+    ordering = ['nome_completo']
     # permission_classes = [permissions.IsAuthenticated] # Exemplo de permissão
 
 class ClienteEmpreendimentoViewSet(viewsets.ModelViewSet):

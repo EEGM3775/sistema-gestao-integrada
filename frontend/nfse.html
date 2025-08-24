@@ -88,6 +88,9 @@
             margin-bottom: 10px;
             cursor: pointer;
             transition: all 0.3s ease;
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
         }
 
         .fatura-item:hover {
@@ -99,6 +102,100 @@
             background: #667eea;
             color: white;
             border-color: #5a67d8;
+        }
+        
+        .fatura-checkbox {
+            margin-top: 2px;
+            transform: scale(1.2);
+        }
+        
+        .fatura-item.disabled {
+            opacity: 0.6;
+            cursor: default;
+        }
+        
+        .fatura-item.disabled:hover {
+            background: #f8f9ff;
+            border-color: #e0e6ff;
+        }
+        
+        .fatura-checkbox:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Modal styles */
+        .modal {
+            position: fixed;
+            z-index: 2000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(5px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 15px;
+            width: 90%;
+            max-width: 500px;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            animation: modalSlideIn 0.3s ease;
+        }
+
+        @keyframes modalSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-50px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .modal-header {
+            padding: 20px 25px 15px;
+            border-bottom: 1px solid #e9ecef;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h3 {
+            margin: 0;
+            color: #667eea;
+        }
+
+        .modal-close {
+            font-size: 24px;
+            font-weight: bold;
+            cursor: pointer;
+            color: #6c757d;
+            padding: 5px;
+        }
+
+        .modal-close:hover {
+            color: #e17055;
+        }
+
+        .modal-body {
+            padding: 20px 25px;
+        }
+
+        .modal-footer {
+            padding: 15px 25px 20px;
+            border-top: 1px solid #e9ecef;
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
         }
 
         .fatura-info {
@@ -134,6 +231,11 @@
         .status-emitida {
             background: #00b894;
             color: white;
+        }
+        
+        .status-processando {
+            background: #fdcb6e;
+            color: #333;
         }
 
         .emissao-form {
@@ -202,6 +304,20 @@
         .btn-secondary {
             background: #6c757d;
         }
+        
+        .btn-icon {
+            padding: 8px 10px;
+            font-size: 0.8rem;
+        }
+
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #c82333;
+        }
 
         .loading {
             text-align: center;
@@ -238,6 +354,11 @@
         .notification.error {
             background: #e17055;
         }
+        
+        .notification.warning {
+            background: #fdcb6e;
+            color: #333;
+        }
 
         @keyframes slideIn {
             from {
@@ -256,7 +377,7 @@
 
         .nf-status-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
             gap: 15px;
         }
 
@@ -265,11 +386,19 @@
             padding: 15px;
             border-radius: 10px;
             border-left: 4px solid #667eea;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
         }
 
         .nf-status-item h4 {
             color: #667eea;
             margin-bottom: 5px;
+        }
+        
+        .nf-actions {
+            margin-top: 10px;
+            align-self: flex-end;
         }
 
         @media (max-width: 768px) {
@@ -299,6 +428,22 @@
             <!-- Lista de Faturas -->
             <div class="card">
                 <h2><i class="fas fa-list"></i> Faturas Disponíveis</h2>
+                
+                <!-- Controles de seleção em lote -->
+                <div style="margin-bottom: 15px; padding: 10px; background: #f8f9ff; border-radius: 8px; border: 1px solid #e0e6ff;">
+                    <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
+                        <label style="display: flex; align-items: center; gap: 5px; margin: 0;">
+                            <input type="checkbox" id="selectAllFaturas" onchange="toggleSelectAll()">
+                            <span>Selecionar Todas</span>
+                        </label>
+                        <button type="button" class="btn" id="emitirLoteBtn" onclick="abrirModalLote()" style="display: none;">
+                            <i class="fas fa-layer-group"></i>
+                            Emitir NFS-e em Lote
+                        </button>
+                        <span id="selectedCount" style="color: #667eea; font-weight: bold;"></span>
+                    </div>
+                </div>
+                
                 <div id="faturasList" class="faturas-list">
                     <div class="loading">
                         <i class="fas fa-spinner"></i>
@@ -339,6 +484,28 @@
                     </div>
                     
                     <div class="form-group">
+                        <label for="cityServiceCode">Código do Serviço Municipal</label>
+                        <select id="cityServiceCode" required>
+                            <option value="">Selecione o código do serviço</option>
+                            <option value="2690">2690 - Outros serviços</option>
+                            <option value="1401">1401 - Serviços de tecnologia da informação</option>
+                            <option value="0701">0701 - Serviços de consultoria</option>
+                            <option value="1701">1701 - Serviços de engenharia</option>
+                            <option value="1101">1101 - Serviços advocatícios</option>
+                            <option value="1301">1301 - Serviços de contabilidade</option>
+                            <option value="0801">0801 - Serviços de ensino</option>
+                            <option value="0901">0901 - Serviços de saúde</option>
+                            <option value="1001">1001 - Serviços veterinários</option>
+                            <option value="1201">1201 - Serviços de administração</option>
+                            <option value="1501">1501 - Serviços de arquitetura</option>
+                            <option value="1601">1601 - Serviços de design</option>
+                            <option value="1801">1801 - Serviços de marketing</option>
+                            <option value="1901">1901 - Serviços de publicidade</option>
+                            <option value="2001">2001 - Serviços de manutenção</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
                         <button type="submit" class="btn">
                             <i class="fas fa-paper-plane"></i>
                             Emitir NFS-e
@@ -354,7 +521,15 @@
 
         <!-- Painel de Status das NFs -->
         <div class="card status-panel">
-            <h2><i class="fas fa-chart-line"></i> Status das Notas Fiscais</h2>
+            <h2>
+                <i class="fas fa-chart-line"></i> Status das Notas Fiscais
+                <button class="btn btn-icon" onclick="listarNFsPHP()" title="Atualizar via PHP" style="float: right; margin-left: 10px;">
+                    <i class="fas fa-sync-alt"></i> Atualizar via PHP
+                </button>
+                <button class="btn btn-icon" onclick="carregarStatusNFs()" title="Atualizar" style="float: right;">
+                    <i class="fas fa-refresh"></i> Atualizar
+                </button>
+            </h2>
             <div id="statusPanel" class="nf-status-grid">
                 <div class="loading">
                     <i class="fas fa-spinner"></i>
@@ -364,10 +539,58 @@
         </div>
     </div>
 
+    <!-- Modal para configuração de emissão em lote -->
+    <div id="modalLote" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i class="fas fa-layer-group"></i> Configurar Emissão em Lote</h3>
+                <span class="modal-close" onclick="fecharModalLote()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <p>Você está prestes a emitir NFS-e para <strong id="qtdFaturasSelecionadas">0</strong> faturas selecionadas.</p>
+                
+                <div class="form-group">
+                    <label for="loteServiceCode">Código do Serviço Municipal (aplicado a todas)</label>
+                    <select id="loteServiceCode" required>
+                        <option value="010701">0701 - Serviços de consultoria</option>
+                        <option value="1401">1401 - Serviços de tecnologia da informação</option>
+                        <option value="2690">2690 - Outros serviços</option>
+                        <option value="1701">1701 - Serviços de engenharia</option>
+                        <option value="1101">1101 - Serviços advocatícios</option>
+                        <option value="1301">1301 - Serviços de contabilidade</option>
+                        <option value="0801">0801 - Serviços de ensino</option>
+                        <option value="0901">0901 - Serviços de saúde</option>
+                        <option value="1001">1001 - Serviços veterinários</option>
+                        <option value="1201">1201 - Serviços de administração</option>
+                        <option value="1501">1501 - Serviços de arquitetura</option>
+                        <option value="1601">1601 - Serviços de design</option>
+                        <option value="1801">1801 - Serviços de marketing</option>
+                        <option value="1901">1901 - Serviços de publicidade</option>
+                        <option value="2001">2001 - Serviços de manutenção</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="loteDescricao">Descrição Padrão (opcional)</label>
+                    <textarea id="loteDescricao" rows="3" placeholder="Será usada para faturas sem descrição específica...">Serviços prestados - Emissão em lote</textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="fecharModalLote()">
+                    <i class="fas fa-times"></i> Cancelar
+                </button>
+                <button type="button" class="btn" onclick="confirmarEmissaoLote()">
+                    <i class="fas fa-paper-plane"></i> Confirmar Emissão
+                </button>
+            </div>
+        </div>
+    </div>
+
     <script>
         // Estado da aplicação
         let faturas = [];
         let faturaSelected = null;
+        let faturasSelecionadasLote = new Set();
 
         // Carregar faturas ao inicializar
         document.addEventListener('DOMContentLoaded', function() {
@@ -378,6 +601,13 @@
             document.getElementById('emissaoForm').addEventListener('submit', function(e) {
                 e.preventDefault();
                 emitirNFSe();
+            });
+            
+            // Fechar modal clicando fora dele
+            document.getElementById('modalLote').addEventListener('click', function(e) {
+                if (e.target === this) {
+                    fecharModalLote();
+                }
             });
         });
 
@@ -411,18 +641,34 @@
                 return;
             }
 
-            container.innerHTML = faturas.map(fatura => `
-                <div class="fatura-item" onclick="selecionarFatura(${fatura.fatura_id})" data-id="${fatura.fatura_id}">
-                    <div class="fatura-info">
-                        <div class="fatura-id">#${fatura.fatura_id}</div>
-                        <div class="status-badge status-${fatura.status.toLowerCase()}">${fatura.status}</div>
-                        <div><strong>Cliente:</strong> ${getClienteName(fatura)}</div>
-                        <div><strong>Valor:</strong> R$ ${formatCurrency(parseFloat(fatura.valor))}</div>
-                        <div><strong>Vencimento:</strong> ${formatDate(fatura.data_vencimento)}</div>
-                        <div><strong>Descrição:</strong> ${fatura.descricao}</div>
+            container.innerHTML = faturas.map(fatura => {
+                // Verificar se já tem nota fiscal
+                const temNF = fatura.nota_fiscal_servico || fatura.nota_fiscal_produto;
+                
+                return `
+                    <div class="fatura-item ${temNF ? 'disabled' : ''}" data-id="${fatura.fatura_id}">
+                        <input type="checkbox" 
+                               class="fatura-checkbox" 
+                               data-fatura-id="${fatura.fatura_id}"
+                               onchange="toggleFaturaSelection(${fatura.fatura_id})"
+                               onclick="event.stopPropagation()"
+                               ${temNF ? 'disabled' : ''}>
+                        <div class="fatura-content" onclick="${temNF ? '' : `selecionarFatura(${fatura.fatura_id})`}">
+                            <div class="fatura-info">
+                                <div class="fatura-id">#${fatura.fatura_id}</div>
+                                <div class="status-badge status-${fatura.status.toLowerCase()}">${fatura.status}</div>
+                                <div><strong>Cliente:</strong> ${getClienteName(fatura)}</div>
+                                <div><strong>Valor:</strong> R$ ${formatCurrency(parseFloat(fatura.valor))}</div>
+                                <div><strong>Vencimento:</strong> ${formatDate(fatura.data_vencimento)}</div>
+                                <div><strong>Descrição:</strong> ${fatura.descricao}</div>
+                                ${temNF ? '<div style="color: #00b894; margin-top: 5px;"><i class="fas fa-check-circle"></i> Nota Fiscal já emitida</div>' : ''}
+                            </div>
+                        </div>
                     </div>
-                </div>
-            `).join('');
+                `;
+            }).join('');
+            
+            atualizarContadorSelecionadas();
         }
 
         // Selecionar fatura para emissão
@@ -461,6 +707,157 @@
             document.getElementById('emissaoForm').classList.remove('active');
         }
 
+        // Funções para seleção em lote
+        function toggleFaturaSelection(faturaId) {
+            const checkbox = document.querySelector(`input[data-fatura-id="${faturaId}"]`);
+            
+            if (checkbox.checked) {
+                faturasSelecionadasLote.add(faturaId);
+            } else {
+                faturasSelecionadasLote.delete(faturaId);
+            }
+            
+            atualizarContadorSelecionadas();
+        }
+
+        function toggleSelectAll() {
+            const selectAllCheckbox = document.getElementById('selectAllFaturas');
+            const faturaCheckboxes = document.querySelectorAll('.fatura-checkbox:not(:disabled)');
+            
+            faturasSelecionadasLote.clear();
+            
+            faturaCheckboxes.forEach(checkbox => {
+                checkbox.checked = selectAllCheckbox.checked;
+                if (selectAllCheckbox.checked) {
+                    faturasSelecionadasLote.add(parseInt(checkbox.dataset.faturaId));
+                }
+            });
+            
+            atualizarContadorSelecionadas();
+        }
+
+        function atualizarContadorSelecionadas() {
+            const count = faturasSelecionadasLote.size;
+            const countElement = document.getElementById('selectedCount');
+            const loteBtn = document.getElementById('emitirLoteBtn');
+            
+            if (count > 0) {
+                countElement.textContent = `${count} fatura${count > 1 ? 's' : ''} selecionada${count > 1 ? 's' : ''}`;
+                loteBtn.style.display = 'inline-flex';
+            } else {
+                countElement.textContent = '';
+                loteBtn.style.display = 'none';
+            }
+            
+            // Atualizar checkbox "Selecionar Todas"
+            const selectAllCheckbox = document.getElementById('selectAllFaturas');
+            const faturaCheckboxes = document.querySelectorAll('.fatura-checkbox:not(:disabled)');
+            const checkedCount = document.querySelectorAll('.fatura-checkbox:checked').length;
+            
+            if (checkedCount === 0) {
+                selectAllCheckbox.indeterminate = false;
+                selectAllCheckbox.checked = false;
+            } else if (checkedCount === faturaCheckboxes.length) {
+                selectAllCheckbox.indeterminate = false;
+                selectAllCheckbox.checked = true;
+            } else {
+                selectAllCheckbox.indeterminate = true;
+            }
+        }
+
+        // Abrir modal de configuração do lote
+        function abrirModalLote() {
+            if (faturasSelecionadasLote.size === 0) {
+                showNotification('Nenhuma fatura selecionada', 'error');
+                return;
+            }
+            
+            document.getElementById('qtdFaturasSelecionadas').textContent = faturasSelecionadasLote.size;
+            document.getElementById('modalLote').style.display = 'flex';
+        }
+
+        // Fechar modal de configuração do lote
+        function fecharModalLote() {
+            document.getElementById('modalLote').style.display = 'none';
+        }
+
+        // Confirmar emissão do lote com os parâmetros configurados
+        function confirmarEmissaoLote() {
+            const cityServiceCode = document.getElementById('loteServiceCode').value;
+            const descricao = document.getElementById('loteDescricao').value.trim() || null;
+            
+            fecharModalLote();
+            emitirNFSeLote(cityServiceCode, descricao);
+        }
+        // Emitir NFS-e em lote
+        async function emitirNFSeLote(cityServiceCode = '010701', descricao = 'Serviços prestados - Emissão em lote') {
+            if (faturasSelecionadasLote.size === 0) {
+                showNotification('Nenhuma fatura selecionada', 'error');
+                return;
+            }
+
+            const faturasSelecionadas = Array.from(faturasSelecionadasLote);
+            const loteBtn = document.getElementById('emitirLoteBtn');
+            const originalText = loteBtn.innerHTML;
+
+            try {
+                // Mostrar loading
+                loteBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processando...';
+                loteBtn.disabled = true;
+
+                const response = await fetch('/api/erp/faturas/emitir-lote-nfse/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': getCsrfToken()
+                    },
+                    body: JSON.stringify({
+                        fatura_ids: faturasSelecionadas,
+                        city_service_code: cityServiceCode,
+                        descricao: descricao
+                    })
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    let notificationType = 'success';
+                    if (result.erros > 0) {
+                        notificationType = result.sucessos > 0 ? 'warning' : 'error';
+                    }
+                    
+                    showNotification(result.message, notificationType);
+                    
+                    // Mostrar detalhes se houver erros
+                    if (result.erros > 0) {
+                        console.log('Resultados detalhados:', result.resultados);
+                    }
+                } else {
+                    showNotification(`Erro no lote: ${result.error || 'Erro desconhecido'}`, 'error');
+                }
+
+                // Limpar seleções
+                faturasSelecionadasLote.clear();
+                document.getElementById('selectAllFaturas').checked = false;
+                document.querySelectorAll('.fatura-checkbox').forEach(cb => cb.checked = false);
+
+                // Recarregar dados após processamento
+                setTimeout(() => {
+                    carregarFaturas();
+                    carregarStatusNFs();
+                }, 2000);
+
+            } catch (error) {
+                showNotification('Erro ao processar lote', 'error');
+                console.error('Erro no lote:', error);
+            } finally {
+                // Restaurar botão
+                loteBtn.innerHTML = originalText;
+                loteBtn.disabled = false;
+                atualizarContadorSelecionadas();
+            }
+        }
+
         // Emitir NFS-e
         async function emitirNFSe() {
             if (!faturaSelected) return;
@@ -474,6 +871,13 @@
                 submitBtn.disabled = true;
 
                 const descricao = document.getElementById('descricaoServico').value;
+                const cityServiceCode = document.getElementById('cityServiceCode').value;
+
+                // Validar se o código do serviço foi selecionado
+                if (!cityServiceCode) {
+                    showNotification('Por favor, selecione o código do serviço municipal', 'error');
+                    return;
+                }
 
                 const response = await fetch(`/api/erp/faturas/${faturaSelected.fatura_id}/emitir-nfse/`, {
                     method: 'POST',
@@ -482,7 +886,8 @@
                         'X-CSRFToken': getCsrfToken()
                     },
                     body: JSON.stringify({
-                        descricao: descricao || null
+                        descricao: descricao || null,
+                        city_service_code: cityServiceCode
                     })
                 });
 
@@ -514,8 +919,8 @@
         async function carregarStatusNFs() {
             try {
                 const [nfServico, nfProduto] = await Promise.all([
-                    fetch('/api/erp/notas-fiscal-servico/'),
-                    fetch('/api/erp/notas-fiscal-produto/')
+                    fetch('/api/erp/notas-fiscais-servico/'),
+                    fetch('/api/erp/notas-fiscais-produto/')
                 ]);
 
                 const [servicoData, produtoData] = await Promise.all([
@@ -549,14 +954,432 @@
                 return;
             }
 
-            container.innerHTML = nfs.slice(0, 6).map(nf => `
-                <div class="nf-status-item">
-                    <h4>NF #${nf.id} - ${nf.numero || 'Aguardando'}</h4>
-                    <p><strong>Status:</strong> ${nf.status || 'PROCESSANDO'}</p>
-                    <p><strong>Data:</strong> ${nf.data_emissao ? formatDate(nf.data_emissao) : 'Processando'}</p>
-                    ${nf.valor ? `<p><strong>Valor:</strong> R$ ${formatCurrency(parseFloat(nf.valor))}</p>` : ''}
+            
+        }
+        
+        // Consultar status de uma NF via PHP (síncrono)
+        async function consultarStatusPHP(btn, nfId, nfeIoId) {
+            if (!nfeIoId) {
+                showNotification('ID da NFE.io não encontrado', 'error');
+                return;
+            }
+
+            const originalIcon = btn.innerHTML;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+            btn.disabled = true;
+
+            try {
+                const response = await fetch('http://localhost:3002/api/consultar-nf-sync', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ invoice_id: nfeIoId })
+                });
+
+                const result = await response.json();
+
+                if (response.ok && result.success) {
+                    const nfData = result.data;
+                    
+                    // Mostrar dados da consulta
+                    const statusMsg = `NF #${nfId} consultada com sucesso via PHP:
+Status: ${nfData.status || 'N/A'}
+Número: ${nfData.number || 'N/A'}
+Chave de Acesso: ${nfData.accessKey || 'N/A'}`;
+                    
+                    showNotification('Consulta PHP realizada com sucesso!', 'success');
+                    console.log('Dados da NF:', nfData);
+                    
+                    // Mostrar modal com detalhes se necessário
+                    mostrarDetalhesNF(nfData, nfId);
+                    
+                    // Recarregar lista após consulta
+                    setTimeout(carregarStatusNFs, 1000);
+                    
+                } else {
+                    showNotification(`Erro na consulta PHP: ${result.error || 'Erro desconhecido'}`, 'error');
+                    console.error('Erro na consulta PHP:', result);
+                }
+            } catch (error) {
+                showNotification('Erro de comunicação com o microserviço PHP', 'error');
+                console.error('Erro na consulta PHP:', error);
+            } finally {
+                btn.innerHTML = originalIcon;
+                btn.disabled = false;
+            }
+        }
+
+        // Baixar PDF de uma NF via PHP
+        async function baixarPDF(btn, nfId, nfeIoId) {
+            if (!nfeIoId) {
+                showNotification('ID da NFE.io não encontrado', 'error');
+                return;
+            }
+
+            const originalIcon = btn.innerHTML;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+            btn.disabled = true;
+
+            try {
+                const requestBody = { 
+                    invoice_id: nfeIoId,
+                    filename: `NF_${nfeIoId}.pdf`
+                };
+                
+                // Adicionar nf_id apenas se não for null
+                if (nfId !== null && nfId !== undefined) {
+                    requestBody.nf_id = nfId;
+                    requestBody.filename = `NF_${nfId}_${nfeIoId}.pdf`;
+                }
+
+                const response = await fetch('http://localhost:3002/api/baixar-pdf', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(requestBody)
+                });
+
+                const result = await response.json();
+
+                if (response.ok && result.success) {
+                    showNotification('Download de PDF iniciado via PHP!', 'success');
+                    console.log('Resultado do download:', result.data);
+                    
+                    // Se houver URL do PDF na resposta, abrir em nova aba
+                    if (result.data && (result.data.pdfUrl || result.data.downloadUrl)) {
+                        const pdfUrl = result.data.pdfUrl || result.data.downloadUrl;
+                        window.open(pdfUrl, '_blank');
+                    }
+                } else {
+                    // Mensagens de erro mais específicas
+                    let errorMessage = result.error || 'Erro desconhecido';
+                    if (errorMessage.includes('não encontrado') || errorMessage.includes('not found')) {
+                        errorMessage = 'Nota fiscal não encontrada na NFE.io. Esta nota pode ter sido deletada ou criada em outro ambiente.';
+                    } else if (errorMessage.includes('unauthorized') || errorMessage.includes('access denied')) {
+                        errorMessage = 'Acesso negado. Verifique as credenciais da API NFE.io.';
+                    }
+                    
+                    showNotification(`Erro no download PDF: ${errorMessage}`, 'error');
+                    console.error('Erro no download PDF:', result);
+                    
+                    // Mostrar informações de debug se disponível
+                    if (result.debug_info) {
+                        console.log('Debug Info:', result.debug_info);
+                        console.log('Invoice ID:', result.debug_info.invoice_id);
+                        console.log('Company ID:', result.debug_info.company_id);
+                        console.log('API Key presente:', result.debug_info.api_key_present);
+                    }
+                }
+            } catch (error) {
+                showNotification('Erro de comunicação ao baixar PDF', 'error');
+                console.error('Erro no download PDF:', error);
+            } finally {
+                btn.innerHTML = originalIcon;
+                btn.disabled = false;
+            }
+        }
+
+        // Cancelar uma NF via PHP
+        async function cancelarNF(btn, nfId, nfeIoId) {
+            if (!nfeIoId) {
+                showNotification('ID da NFE.io não encontrado', 'error');
+                return;
+            }
+
+            // Solicitar motivo do cancelamento
+            const reason = prompt('Digite o motivo do cancelamento da nota fiscal:');
+            if (!reason || reason.trim() === '') {
+                showNotification('Motivo do cancelamento é obrigatório', 'error');
+                return;
+            }
+
+            // Confirmar cancelamento
+            if (!confirm(`Tem certeza que deseja cancelar esta nota fiscal?\n\nMotivo: ${reason}\n\nEsta ação não pode ser desfeita.`)) {
+                return;
+            }
+
+            const originalIcon = btn.innerHTML;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+            btn.disabled = true;
+
+            try {
+                const requestBody = { 
+                    invoice_id: nfeIoId,
+                    reason: reason.trim()
+                };
+                
+                // Adicionar nf_id apenas se não for null
+                if (nfId !== null && nfId !== undefined) {
+                    requestBody.nf_id = nfId;
+                }
+
+                const response = await fetch('http://localhost:3002/api/cancelar-nf', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(requestBody)
+                });
+
+                const result = await response.json();
+
+                if (response.ok && result.success) {
+                    showNotification('Nota fiscal cancelada com sucesso!', 'success');
+                    console.log('Resultado do cancelamento:', result.data);
+                    
+                    // Recarregar a lista para mostrar o status atualizado
+                    if (typeof listarNFsPHP === 'function') {
+                        listarNFsPHP();
+                    }
+                } else {
+                    // Mensagens de erro mais específicas
+                    let errorMessage = result.error || 'Erro desconhecido';
+                    if (errorMessage.includes('não pode ser cancelada')) {
+                        errorMessage = 'Esta nota fiscal não pode ser cancelada. Verifique se ela foi emitida corretamente.';
+                    } else if (errorMessage.includes('não encontrado') || errorMessage.includes('not found')) {
+                        errorMessage = 'Nota fiscal não encontrada na NFE.io.';
+                    }
+                    
+                    showNotification(`Erro no cancelamento: ${errorMessage}`, 'error');
+                    console.error('Erro no cancelamento:', result);
+                    
+                    // Mostrar informações de debug se disponível
+                    if (result.debug_info) {
+                        console.log('Debug Info:', result.debug_info);
+                    }
+                }
+            } catch (error) {
+                showNotification('Erro de comunicação ao cancelar NF', 'error');
+                console.error('Erro no cancelamento:', error);
+            } finally {
+                btn.innerHTML = originalIcon;
+                btn.disabled = false;
+            }
+        }
+
+        // Mostrar detalhes da NF em modal
+        function mostrarDetalhesNF(nfData, nfId) {
+            // Criar modal dinamicamente se não existir
+            let modal = document.getElementById('modalDetalhesNF');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'modalDetalhesNF';
+                modal.className = 'modal';
+                modal.innerHTML = `
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h3><i class="fas fa-file-invoice"></i> Detalhes da Nota Fiscal #${nfId}</h3>
+                            <span class="modal-close" onclick="fecharModalDetalhes()">&times;</span>
+                        </div>
+                        <div class="modal-body" id="modalDetalhesContent">
+                            <!-- Conteúdo será preenchido dinamicamente -->
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" onclick="fecharModalDetalhes()">
+                                <i class="fas fa-times"></i> Fechar
+                            </button>
+                        </div>
+                    </div>
+                `;
+                document.body.appendChild(modal);
+                
+                // Fechar modal clicando fora dele
+                modal.addEventListener('click', function(e) {
+                    if (e.target === this) {
+                        fecharModalDetalhes();
+                    }
+                });
+            }
+            
+            // Preencher conteúdo do modal
+            const content = document.getElementById('modalDetalhesContent');
+            content.innerHTML = `
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
+                    <div>
+                        <strong>Status:</strong><br>
+                        <span class="status-badge status-${(nfData.status || 'processando').toLowerCase()}">${nfData.status || 'PROCESSANDO'}</span>
+                    </div>
+                    <div>
+                        <strong>Número:</strong><br>
+                        ${nfData.number || 'Aguardando numeração'}
+                    </div>
+                    <div>
+                        <strong>ID NFE.io:</strong><br>
+                        ${nfData.id || 'N/A'}
+                    </div>
+                    <div>
+                        <strong>Chave de Acesso:</strong><br>
+                        ${nfData.accessKey || 'Aguardando processamento'}
+                    </div>
                 </div>
-            `).join('');
+                
+                ${nfData.accessKey ? `
+                <div style="margin-bottom: 20px;">
+                    <strong>Links Disponíveis:</strong><br>
+                    ${nfData.urlPdf ? `<a href="${nfData.urlPdf}" target="_blank" class="btn btn-secondary" style="margin: 5px;"><i class="fas fa-file-pdf"></i> PDF</a>` : ''}
+                    ${nfData.urlXml ? `<a href="${nfData.urlXml}" target="_blank" class="btn btn-secondary" style="margin: 5px;"><i class="fas fa-file-code"></i> XML</a>` : ''}
+                </div>` : ''}
+                
+                <div style="background: #f8f9ff; padding: 15px; border-radius: 8px; border-left: 4px solid #667eea;">
+                    <strong>Dados Completos (JSON):</strong><br>
+                    <pre style="background: white; padding: 10px; border-radius: 5px; overflow-x: auto; font-size: 12px; margin-top: 10px;">${JSON.stringify(nfData, null, 2)}</pre>
+                </div>
+            `;
+            
+            modal.style.display = 'flex';
+        }
+
+        // Fechar modal de detalhes
+        function fecharModalDetalhes() {
+            const modal = document.getElementById('modalDetalhesNF');
+            if (modal) {
+                modal.style.display = 'none';
+            }
+        }
+
+        // Listar NFs via PHP
+        async function listarNFsPHP() {
+            const statusPanel = document.getElementById('statusPanel');
+            const originalContent = statusPanel.innerHTML;
+
+            try {
+                statusPanel.innerHTML = `
+                    <div class="loading">
+                        <i class="fas fa-spinner fa-spin"></i>
+                        <p>Consultando notas via PHP...</p>
+                    </div>
+                `;
+
+                // Filtros padrão para listar NFs recentes
+                const filtros = {
+                    pageSize: 20, // Limitar a 20 registros mais recentes
+                    // Adicione outros filtros conforme necessário
+                };
+
+                const response = await fetch('http://localhost:3002/api/listar-nf', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ filtros })
+                });
+
+                const result = await response.json();
+
+                if (response.ok && result.success) {
+                    const nfsPHP = result.data.serviceInvoices || [];
+                    
+                    showNotification(`${nfsPHP.length} notas fiscais consultadas via PHP!`, 'success');
+                    console.log('NFs consultadas via PHP:', nfsPHP);
+                    
+                    // Renderizar as NFs consultadas via PHP
+                    renderizarNFsPHP(nfsPHP);
+                    
+                } else {
+                    statusPanel.innerHTML = originalContent;
+                    showNotification(`Erro na listagem PHP: ${result.error || 'Erro desconhecido'}`, 'error');
+                    console.error('Erro na listagem PHP:', result);
+                }
+            } catch (error) {
+                statusPanel.innerHTML = originalContent;
+                showNotification('Erro de comunicação ao listar NFs via PHP', 'error');
+                console.error('Erro na listagem PHP:', error);
+            }
+        }
+
+        // Renderizar NFs consultadas via PHP
+        function renderizarNFsPHP(nfsPHP) {
+            const container = document.getElementById('statusPanel');
+            
+            if (!nfsPHP || nfsPHP.length === 0) {
+                container.innerHTML = `
+                    <div style="text-align: center; padding: 40px; color: #6c757d;">
+                        <i class="fas fa-file-alt" style="font-size: 2rem; margin-bottom: 10px;"></i>
+                        <p>Nenhuma nota fiscal encontrada via PHP</p>
+                        <button class="btn btn-secondary" onclick="carregarStatusNFs()" style="margin-top: 10px;">
+                            <i class="fas fa-arrow-left"></i> Voltar à listagem local
+                        </button>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = `
+                <div style="grid-column: 1 / -1; margin-bottom: 15px; padding: 10px; background: #e8f4f8; border-radius: 8px; border-left: 4px solid #17a2b8;">
+                    <strong><i class="fas fa-server"></i> Dados consultados via PHP - NFE.io API</strong>
+                    <span style="float: right;">
+                        <button class="btn btn-icon" onclick="carregarStatusNFs()" title="Voltar à listagem local">
+                            <i class="fas fa-arrow-left"></i> Voltar
+                        </button>
+                    </span>
+                </div>
+                ${nfsPHP.map(nf => `
+                    <div class="nf-status-item" style="border-left-color: #17a2b8;">
+                        <div>
+                            <h4>NF NFE.io #${nf.number || 'N/A'} - ${nf.borrower?.name || 'Tomador não informado'}</h4>
+                            <p><strong>Status:</strong> <span class="status-badge status-${(nf.status || 'processando').toLowerCase()}">${nf.status || 'N/A'}</span></p>
+                            <p><strong>Data:</strong> ${nf.issuedOn ? formatDate(nf.issuedOn) : (nf.createdOn ? formatDate(nf.createdOn) : 'N/A')}</p>
+                            ${nf.servicesAmount ? `<p><strong>Valor:</strong> R$ ${formatCurrency(parseFloat(nf.servicesAmount))}</p>` : ''}
+                            <p><strong>Descrição:</strong> ${(nf.description || 'Sem descrição').substring(0, 80)}${(nf.description || '').length > 80 ? '...' : ''}</p>
+                            ${nf.checkCode ? `<p><strong>Código:</strong> ${nf.checkCode}</p>` : ''}
+                        </div>
+                        <div class="nf-actions">
+                            <button class="btn btn-icon" title="Ver Detalhes" onclick="mostrarDetalhesNF(${JSON.stringify(nf).replace(/"/g, '&quot;')}, '${nf.id}')">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                            ${nf.id ? 
+                            `<button class="btn btn-icon" title="Consultar Atualizado" onclick="consultarStatusPHP(this, null, '${nf.id}')" style="margin-left: 5px;">
+                                <i class="fas fa-sync-alt"></i>
+                             </button>
+                             <button class="btn btn-icon" title="Baixar PDF" onclick="baixarPDF(this, null, '${nf.id}')" style="margin-left: 5px;">
+                                <i class="fas fa-download"></i>
+                             </button>
+                             ${(nf.status === 'Issued') ? 
+                                `<button class="btn btn-icon btn-danger" title="Cancelar Nota Fiscal" onclick="cancelarNF(this, null, '${nf.id}')" style="margin-left: 5px;">
+                                    <i class="fas fa-ban"></i>
+                                 </button>` : ''
+                             }` : ''}
+                        </div>
+                    </div>
+                `).join('')}
+            `;
+        }
+        
+        // Consultar status de uma NF (função original - assíncrona)
+        async function consultarStatus(btn, nfId, nfeIoId) {
+            if (!nfId || !nfeIoId) return;
+
+            const originalIcon = btn.innerHTML;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+            btn.disabled = true;
+
+            try {
+                const response = await fetch(`/api/erp/nf/${nfId}/consultar/`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': getCsrfToken()
+                    },
+                    body: JSON.stringify({ nfe_io_id: nfeIoId })
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    showNotification(`Consulta da NF #${nfId} enviada (assíncrona).`, 'success');
+                    setTimeout(carregarStatusNFs, 2000); // Recarrega a lista
+                } else {
+                    showNotification(`Erro ao consultar NF #${nfId}: ${result.error || 'Erro desconhecido'}`, 'error');
+                }
+            } catch (error) {
+                showNotification('Erro de comunicação ao consultar status.', 'error');
+                console.error('Erro ao consultar status:', error);
+            } finally {
+                btn.innerHTML = originalIcon;
+                btn.disabled = false;
+            }
         }
 
         // Funções auxiliares

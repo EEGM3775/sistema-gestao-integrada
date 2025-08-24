@@ -29,6 +29,9 @@
                 <a href="#modules" class="nav-link" onclick="showSection('modules')">
                     <i class="fas fa-th-large"></i> Módulos
                 </a>
+                <a href="/analises-ia.html" class="nav-link">
+                    <i class="fas fa-brain"></i> Análises de IA
+                </a>
                 <a href="#admin" class="nav-link" onclick="window.open('/admin/', '_blank')">
                     <i class="fas fa-cogs"></i> Admin
                 </a>
@@ -472,6 +475,47 @@
                 </div>
             </div>
         </section>
+
+        <!-- Analises IA Section -->
+        <section id="analises" class="section">
+            <div class="container">
+                <div class="section-header">
+                    <h2><i class="fas fa-brain"></i> Análises de IA - Construção</h2>
+                    <p>Gerencie e reprocesse análises de imagens de obras</p>
+                </div>
+
+                <div class="analises-content">
+                    <div class="filters-section">
+                        <div class="filter-group">
+                            <label>Filtrar por obra:</label>
+                            <select id="filtroObra" onchange="carregarDocumentosComAnalise()">
+                                <option value="">Todas as obras</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label>Status da análise:</label>
+                            <select id="filtroStatus" onchange="carregarDocumentosComAnalise()">
+                                <option value="">Todos</option>
+                                <option value="completa">Completa</option>
+                                <option value="em_andamento">Em andamento</option>
+                                <option value="erro">Com erro</option>
+                            </select>
+                        </div>
+                        <button class="btn-primary" onclick="carregarDocumentosComAnalise()">
+                            <i class="fas fa-sync"></i> Atualizar
+                        </button>
+                    </div>
+
+                    <div id="documentosAnalises" class="documentos-grid">
+                        <!-- Documentos serão carregados aqui via JavaScript -->
+                    </div>
+
+                    <div class="loading-indicator" id="loadingAnalises" style="display: none;">
+                        <i class="fas fa-spinner fa-spin"></i> Carregando análises...
+                    </div>
+                </div>
+            </div>
+        </section>
     </main>
 
     <!-- Footer -->
@@ -503,6 +547,81 @@
             </div>
         </div>
     </footer>
+
+    <!-- Modal de Detalhes da Análise -->
+    <div id="analiseModal" class="modal">
+        <div class="modal-content large">
+            <div class="modal-header">
+                <h3>Detalhes da Análise de IA</h3>
+                <span class="close" onclick="fecharModalAnalise()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="analise-container">
+                    <div class="analise-imagem">
+                        <h4>Imagem Analisada</h4>
+                        <div class="imagem-wrapper">
+                            <img id="analiseImagem" src="" alt="Imagem do documento" />
+                        </div>
+                    </div>
+                    <div class="analise-detalhes">
+                        <div class="analise-info">
+                            <h4>Informações Gerais</h4>
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <label>Documento:</label>
+                                    <span id="analiseNome"></span>
+                                </div>
+                                <div class="info-item">
+                                    <label>Obra:</label>
+                                    <span id="analiseObra"></span>
+                                </div>
+                                <div class="info-item">
+                                    <label>Status:</label>
+                                    <span id="analiseStatus" class="status-badge"></span>
+                                </div>
+                                <div class="info-item">
+                                    <label>Data da Análise:</label>
+                                    <span id="analiseData"></span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="analise-resultado">
+                            <h4>Resultado da Análise</h4>
+                            
+                            <div class="resultado-secao">
+                                <h5><i class="fas fa-chart-line"></i> Progresso da Obra</h5>
+                                <div id="analiseProgresso" class="resultado-content">
+                                    <!-- Progresso será inserido aqui -->
+                                </div>
+                            </div>
+                            
+                            <div class="resultado-secao">
+                                <h5><i class="fas fa-tasks"></i> Atividades Identificadas</h5>
+                                <div id="analiseAtividades" class="resultado-content">
+                                    <!-- Atividades serão inseridas aqui -->
+                                </div>
+                            </div>
+                            
+                            <div class="resultado-secao">
+                                <h5><i class="fas fa-exclamation-triangle"></i> Riscos de Segurança</h5>
+                                <div id="analiseRiscos" class="resultado-content">
+                                    <!-- Riscos serão inseridos aqui -->
+                                </div>
+                            </div>
+                            
+                            <div class="resultado-secao">
+                                <h5><i class="fas fa-users"></i> Reconhecimento de Pessoal</h5>
+                                <div id="analisePessoal" class="resultado-content">
+                                    <!-- Reconhecimento será inserido aqui -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <script src="script.js"></script>
 </body>

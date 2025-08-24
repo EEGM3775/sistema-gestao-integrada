@@ -120,7 +120,7 @@ class FaturaViewSet(viewsets.ModelViewSet):
                 descricao_servico = request.data.get('descricao') or fatura.descricao or 'Prestação de Serviços'
                 
                 nf = nf_model.objects.create(
-                    city_service_code='010701',  # Código padrão - pode ser configurável
+                    city_service_code=request.data.get('city_service_code', '010701'),  # Usar valor do frontend ou código padrão
                     description=descricao_servico,
                     services_amount=fatura.valor,
                     borrower_data=borrower_data
@@ -161,7 +161,17 @@ class FaturaViewSet(viewsets.ModelViewSet):
             # Trigger the microservice (optional in development)
             microservice_url = f'http://localhost:3002{microservice_endpoint}'
             try:
-                response = requests.post(microservice_url, json={'fatura_id': fatura.fatura_id, 'nf_id': nf.id}, timeout=5)
+                # Preparar payload para o microserviço
+                microservice_payload = {
+                    'fatura_id': fatura.fatura_id, 
+                    'nf_id': nf.id
+                }
+                
+                # Para NFS-e, incluir o city_service_code
+                if tipo_nf == 'servico':
+                    microservice_payload['city_service_code'] = request.data.get('city_service_code', '010701')
+                
+                response = requests.post(microservice_url, json=microservice_payload, timeout=5)
                 response.raise_for_status()
                 logger.info(f"Microserviço de NF acionado para Fatura ID: {fatura.fatura_id} e NF ID: {nf.id}")
                 
@@ -203,6 +213,76 @@ class FaturaViewSet(viewsets.ModelViewSet):
         fatura = self.get_object()
         return self._emitir_nf(request, fatura, 'produto')
 
+    @action(detail=False, methods=['post'], url_path='emitir-lote-nfse')
+    def emitir_lote_nfse(self, request):
+        """Emite NFS-e em lote para múltiplas faturas"""
+        try:
+            fatura_ids = request.data.get('fatura_ids', [])
+            city_service_code = request.data.get('city_service_code', '010701')
+            descricao = request.data.get('descricao', None)
+            
+            if not fatura_ids:
+                return Response({'error': 'Lista de fatura_ids é obrigatória'}, status=status_module.HTTP_400_BAD_REQUEST)
+            
+            resultados = []
+            sucessos = 0
+            erros = 0
+            
+            for fatura_id in fatura_ids:
+                try:
+                    fatura = Fatura.objects.get(fatura_id=fatura_id)
+                    
+                    # Simular requisição individual
+                    individual_request = type('Request', (), {
+                        'data': {
+                            'city_service_code': city_service_code,
+                            'descricao': descricao
+                        }
+                    })()
+                    
+                    response = self._emitir_nf(individual_request, fatura, 'servico')
+                    
+                    if response.status_code in [201, 202]:
+                        sucessos += 1
+                        resultados.append({
+                            'fatura_id': fatura_id,
+                            'status': 'sucesso',
+                            'message': f'NFS-e iniciada para fatura #{fatura_id}'
+                        })
+                    else:
+                        erros += 1
+                        resultados.append({
+                            'fatura_id': fatura_id,
+                            'status': 'erro',
+                            'message': response.data.get('error', 'Erro desconhecido')
+                        })
+                        
+                except Fatura.DoesNotExist:
+                    erros += 1
+                    resultados.append({
+                        'fatura_id': fatura_id,
+                        'status': 'erro',
+                        'message': 'Fatura não encontrada'
+                    })
+                except Exception as e:
+                    erros += 1
+                    resultados.append({
+                        'fatura_id': fatura_id,
+                        'status': 'erro',
+                        'message': str(e)
+                    })
+            
+            return Response({
+                'message': f'Lote processado: {sucessos} sucessos, {erros} erros',
+                'sucessos': sucessos,
+                'erros': erros,
+                'resultados': resultados
+            }, status=status_module.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"Erro ao processar lote de NFS-e: {e}")
+            return Response({'error': f'Erro interno: {str(e)}'}, status=status_module.HTTP_500_INTERNAL_SERVER_ERROR)
+
 class TransacaoViewSet(viewsets.ModelViewSet):
     queryset = Transacao.objects.all()
     serializer_class = TransacaoSerializer
@@ -211,7 +291,7 @@ class TransacaoViewSet(viewsets.ModelViewSet):
 class NotaFiscalServicoViewSet(viewsets.ModelViewSet):
     queryset = NotaFiscalServico.objects.all()
     serializer_class = NotaFiscalServicoSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]  # Permite acesso sem autenticação para demonstração
 
     @action(detail=True, methods=['post'], url_path='registrar-arquivos')
     def registrar_arquivos(self, request, pk=None):
@@ -236,7 +316,7 @@ class NotaFiscalServicoViewSet(viewsets.ModelViewSet):
 class NotaFiscalProdutoViewSet(viewsets.ModelViewSet):
     queryset = NotaFiscalProduto.objects.all()
     serializer_class = NotaFiscalProdutoSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]  # Permite acesso sem autenticação para demonstração
 
     @action(detail=True, methods=['post'], url_path='registrar-arquivos')
     def registrar_arquivos(self, request, pk=None):
@@ -437,3 +517,42 @@ class AtualizarStatusNFView(views.APIView):
                 {'error': f'Erro interno: {str(e)}'},
                 status=status_module.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+class ConsultarStatusNFView(views.APIView):
+    """
+    View para o frontend solicitar a consulta de status de uma NF ao microserviço.
+    """
+    permission_classes = [permissions.AllowAny] # Ajustar permissões conforme necessário
+
+    def post(self, request, nf_id):
+        try:
+            # Usamos NotaFiscalServico diretamente, mas poderia ser genérico
+            nf = NotaFiscalServico.objects.get(pk=nf_id)
+            
+            if not nf.nfe_io_id:
+                return Response({'error': 'Esta NF não possui um ID externo (nfe_io_id) para consulta.'}, status=status_module.HTTP_400_BAD_REQUEST)
+
+            # Payload para o microserviço
+            payload = {
+                'nf_id': nf.id,
+                'invoice_id': nf.nfe_io_id
+            }
+            
+            # Chama o microserviço Node.js
+            microservice_url = 'http://localhost:3002/api/consultar-nf'
+            response = requests.post(microservice_url, json=payload, timeout=10)
+            
+            if response.status_code == 202:
+                return Response({'message': 'Pedido de consulta de status enviado ao microserviço.'}, status=status_module.HTTP_202_ACCEPTED)
+            else:
+                logger.error(f"Erro ao chamar microserviço para consultar NF {nf_id}. Status: {response.status_code}, Resposta: {response.text}")
+                return Response({'error': 'Falha na comunicação com o serviço de notas fiscais.'}, status=status_module.HTTP_502_BAD_GATEWAY)
+
+        except NotaFiscalServico.DoesNotExist:
+            return Response({'error': 'Nota Fiscal de Serviço não encontrada.'}, status=status_module.HTTP_404_NOT_FOUND)
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Não foi possível conectar ao microserviço de NF para consulta da NF {nf_id}: {e}")
+            return Response({'error': 'Serviço de notas fiscais indisponível.'}, status=status_module.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception as e:
+            logger.error(f"Erro inesperado ao consultar status da NF {nf_id}: {e}")
+            return Response({'error': 'Erro interno do servidor.'}, status=status_module.HTTP_500_INTERNAL_SERVER_ERROR)

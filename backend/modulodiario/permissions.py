@@ -18,7 +18,7 @@ class IsResponsavelTecnicoDaObra(permissions.BasePermission):
         
         # Para edição (PUT, PATCH, DELETE), verifica se o usuário é responsável
         obra = obj.obra
-        return request.user.funcionario in obra.responsaveis_tecnicos.all()
+        return request.user.funcionario_profile in obra.responsaveis_tecnicos.all()
 
     def has_permission_for_create(self, request, serializer):
         """
@@ -28,6 +28,6 @@ class IsResponsavelTecnicoDaObra(permissions.BasePermission):
         try:
             obra = Obra.objects.get(pk=obra_id)
             # O usuário logado (que é um funcionário) deve estar na lista de responsáveis
-            return request.user.funcionario in obra.responsaveis_tecnicos.all()
+            return request.user.funcionario_profile in obra.responsaveis_tecnicos.all()
         except Obra.DoesNotExist:
             return False

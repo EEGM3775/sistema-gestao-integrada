@@ -1,22 +1,22 @@
 # Microserviço de Notas Fiscais (`funcoesnf`)
 
-Este microserviço em Node.js é responsável por toda a comunicação com a API de emissão de Notas Fiscais (ex: NFE.io). Ele é projetado para ser chamado pelo backend principal do Django.
+Este microserviço em Node.js é responsável por toda a comunicação com a API de emissão e consulta de Notas Fiscais (ex: NFE.io). Ele é projetado para ser chamado pelo backend principal do Django.
 
 ## Arquitetura
 
 O fluxo de trabalho é o seguinte:
 
-1.  **Requisição Inicial (Django -> Node):** O backend Django recebe a ordem para emitir uma NF. Ele cria um registro da nota no banco de dados com status `AGUARDANDO` e faz uma requisição para este microserviço, enviando o ID da fatura e o ID da nota fiscal recém-criada.
+1.  **Requisição Inicial (Django -> Node):** O backend Django recebe a ordem para emitir ou consultar uma NF. Ele faz uma requisição para este microserviço, enviando os dados necessários (ID da fatura, ID da nota fiscal, etc.).
 
 2.  **Processamento (Node):**
     *   Este serviço recebe a requisição.
-    *   (A ser implementado) Ele usa o ID da fatura para buscar os dados completos (cliente, serviços/produtos) no Django.
-    *   (A ser implementado) Ele monta o payload no formato exigido pela API da NFE.io.
-    *   (A ser implementado) Ele envia a requisição para a NFE.io e aguarda a resposta.
+    *   Ele busca os dados completos (cliente, serviços/produtos) no Django, se necessário.
+    *   Ele monta o payload no formato exigido pela API da NFE.io.
+    *   Ele envia a requisição para a NFE.io (emissão ou consulta) e aguarda a resposta.
 
 3.  **Callback (Node -> Django):**
     *   Após receber a resposta da NFE.io, este serviço faz uma requisição de volta (callback) para o Django.
-    *   Ele informa o novo status (`EMITIDA` ou `ERRO`), os dados de retorno da API (como a chave de acesso) e os links para o PDF e XML da nota.
+    *   Ele informa o novo status (`EMITIDA`, `ERRO`, `PROCESSANDO`, `CANCELADA`), os dados de retorno da API (como a chave de acesso) e os links para o PDF e XML da nota.
 
 4.  **Finalização (Django):** O Django atualiza o registro da nota fiscal no banco de dados com as informações recebidas.
 
@@ -27,9 +27,21 @@ O serviço é dividido nos seguintes arquivos:
 -   `index.js`: Ponto de entrada da aplicação. Inicia o servidor Express e define as rotas.
 -   `emitirNF.js`: Contém a lógica principal para se comunicar com a API de emissão.
 -   `armazenarNF.js`: Responsável por fazer o callback para o Django, atualizando o status e enviando os arquivos.
--   `consultarNF.js`: (Futuro) Lógica para consultar notas já emitidas.
+-   `consultarNF.js`: Contém a lógica para consultar o status de notas fiscais já emitidas na NFE.io.
 -   `cancelarNF.js`: (Futuro) Lógica para cancelar notas.
 -   `config.js`: Arquivo de configuração (URLs de API, etc.).
+-   `logger.js`: Módulo para registro de logs.
+
+## Endpoints da API (Expostos pelo Microserviço)
+
+Este microserviço expõe os seguintes endpoints para comunicação com o backend Django:
+
+-   **`POST /api/emitir-nfse`**: Inicia o processo de emissão de uma Nota Fiscal de Serviço (NFS-e).
+    *   **Payload esperado:** `{ "fatura_id": <int>, "nf_id": <int> }`
+-   **`POST /api/emitir-nfe`**: Inicia o processo de emissão de uma Nota Fiscal de Produto (NF-e). (Em desenvolvimento)
+    *   **Payload esperado:** `{ "fatura_id": <int>, "nf_id": <int> }`
+-   **`POST /api/consultar-nf`**: Consulta o status de uma Nota Fiscal de Serviço já emitida na NFE.io.
+    *   **Payload esperado:** `{ "nf_id": <int>, "invoice_id": "<string_id_nfeio>" }`
 
 ## Variáveis de Ambiente
 

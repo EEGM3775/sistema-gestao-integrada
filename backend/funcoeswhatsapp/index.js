@@ -8,6 +8,9 @@ const logger = require('./logger');
 const app = express();
 const PORT = config.port;
 
+// Configura o Express para confiar em proxies (necessário para ngrok)
+app.set('trust proxy', true);
+
 // Middleware para processar o corpo das requisições
 // A Meta exige que o 'raw body' seja usado para a verificação da assinatura,
 // então o middleware de parsing é aplicado diretamente nas rotas, conforme necessário.

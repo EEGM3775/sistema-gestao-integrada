@@ -1,6 +1,6 @@
 // backend/funcoeswhatsapp/bot/flows/preCadastroFlow.js
 const { sendTextMessage } = require('../../services/whatsappService');
-const apiService = require('../../services/apiService');
+const { createPreCadastro } = require('../../services/api/preCadastroService');
 const STEPS = require('../conversationSteps');
 
 const handleState = async (context) => {
@@ -24,7 +24,7 @@ const handleState = async (context) => {
         return;
       }
 
-      const { precadastro, error } = await apiService.createPreCadastro({
+      const { precadastro, error } = await createPreCadastro({
         nome_completo: state.nome,
         telefone: `+${from}`,
         tipo_interesse: interesse,

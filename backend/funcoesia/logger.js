@@ -9,7 +9,15 @@ const devFormat = combine(
   colorize(),
   timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
   printf(({ timestamp, level, message, ...meta }) => {
-    return `${timestamp} [${level}]: ${message} ${Object.keys(meta).length ? JSON.stringify(meta, null, 2) : ''}`;
+    let metaStr = '';
+    if (Object.keys(meta).length) {
+      try {
+        metaStr = JSON.stringify(meta, null, 2);
+      } catch (error) {
+        metaStr = '[Object with circular reference]';
+      }
+    }
+    return `${timestamp} [${level}]: ${message} ${metaStr}`;
   })
 );
 

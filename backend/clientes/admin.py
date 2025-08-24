@@ -62,12 +62,16 @@ class ClienteAdmin(admin.ModelAdmin):
         'cpf_cnpj',
         'email',
         'telefone',
+        'cidade',
+        'estado',
         'estado_civil',
         'data_cadastro'
     )
     list_filter = (
         'estado_civil',
         'profissao',
+        'estado',
+        'cidade',
         'data_cadastro',
         'data_nascimento'
     )
@@ -75,7 +79,12 @@ class ClienteAdmin(admin.ModelAdmin):
         'nome_completo',
         'cpf_cnpj',
         'email',
-        'telefone'
+        'telefone',
+        'endereco',
+        'bairro',
+        'cidade',
+        'estado',
+        'cep'
     )
     ordering = ('nome_completo',)
     readonly_fields = ('cliente_id', 'data_cadastro')
@@ -94,8 +103,19 @@ class ClienteAdmin(admin.ModelAdmin):
         (_('Contato'), {
             'fields': (
                 'email',
-                'telefone',
-                'endereco'
+                'telefone'
+            )
+        }),
+        (_('Endereço'), {
+            'fields': (
+                'endereco',
+                'numero_endereco',
+                'complemento_endereco',
+                'bairro',
+                'cidade',
+                'estado',
+                'cep',
+                'cidade_ibge'
             )
         }),
         (_('Sistema'), {

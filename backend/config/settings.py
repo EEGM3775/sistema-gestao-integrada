@@ -59,6 +59,7 @@ INSTALLED_APPS = [
     'django_filters',
     "rest_framework",
     "rest_framework_simplejwt",
+    'rest_framework_simplejwt.token_blacklist',
     'rest_framework.authtoken',
 ]
 
@@ -199,12 +200,19 @@ CORS_ALLOW_HEADERS = [
 # REST Framework Configuration
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework.authentication.TokenAuthentication',
         'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
+        'rest_framework.authentication.TokenAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
+    ],
+    'DEFAULT_PARSER_CLASSES': [
+        'rest_framework.parsers.JSONParser',
+    ],
 }
 
 # JWT Configuration
@@ -231,3 +239,15 @@ LOGGING = {
         'level': 'INFO',
     },
 }
+
+# Celery Configuration
+CELERY_BROKER_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+CELERY_ACCEPT_CONTENT = ['application/json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = TIME_ZONE
+
+# IA Service Configuration
+IA_SERVICE_URL = os.getenv('IA_SERVICE_URL', 'http://localhost:3002/api/analise')
+IA_SERVICE_SECRET_TOKEN = os.getenv('IA_SERVICE_SECRET_TOKEN', 'um-token-secreto-forte-para-ia')

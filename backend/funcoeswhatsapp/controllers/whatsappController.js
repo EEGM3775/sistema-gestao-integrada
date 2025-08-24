@@ -30,8 +30,16 @@ const handleWebhook = (req, res) => {
 
   const appSecret = config.meta.appSecret;
   const expectedSignature = crypto.createHmac('sha256', appSecret).update(req.body).digest('hex');
+  const expectedSignatureWithPrefix = `sha256=${expectedSignature}`;
 
-  if (signature !== `sha256=${expectedSignature}`) {
+  logger.info('Debug da assinatura', {
+    receivedSignature: signature,
+    expectedSignature: expectedSignatureWithPrefix,
+    bodyLength: req.body.length,
+    appSecretLength: appSecret.length
+  });
+
+  if (signature !== expectedSignatureWithPrefix) {
     logger.error("Requisição de webhook descartada: Assinatura inválida.");
     return res.sendStatus(403);
   }

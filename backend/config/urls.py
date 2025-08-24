@@ -8,6 +8,14 @@ from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
 )
+from .auth_views import (
+    api_login,
+    api_logout,
+    api_user_info,
+    session_login,
+    session_logout,
+    refresh_token
+)
 
 # Importa as views dos apps
 from clientes.views import (
@@ -48,6 +56,14 @@ from rh.views import (
     FolhaPagamentoViewSet
 )
 from . import views
+from .auth_views import (
+    api_login,
+    api_logout,
+    api_user_info,
+    session_login,
+    session_logout,
+    refresh_token
+)
 
 # Cria o roteador da API, que gera as rotas automaticamente
 router = DefaultRouter()
@@ -95,9 +111,20 @@ urlpatterns = [
     path('', views.home, name='home'),
     path('admin/', admin.site.urls),
     
-    # Endpoints JWT
+    # Endpoints JWT (API)
     path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    
+    # Endpoints de autenticação personalizados
+    path('api/auth/login/', api_login, name='api_login'),
+    path('api/auth/logout/', api_logout, name='api_logout'),
+    path('api/auth/user/', api_user_info, name='api_user_info'),
+    path('api/auth/refresh/', refresh_token, name='refresh_token'),
+    
+    # Endpoints de sessão para frontend HTML
+    path('auth/login/', session_login, name='session_login'),
+    path('auth/logout/', session_logout, name='session_logout'),
+    path('login.html', views.login_page, name='login_page'),
     
     # Adiciona todas as URLs da API geradas pelo roteador sob o prefixo /api/
     path('api/', include(router.urls)),
@@ -112,6 +139,9 @@ urlpatterns = [
     
     # Frontend NFS-e
     path('nfse/', views.nfse_frontend, name='nfse_frontend'),
+    
+    # Frontend Análises de IA
+    path('analises-ia.html', views.analises_ia_frontend, name='analises_ia_frontend'),
     
     # Servir arquivos do frontend (deve ficar por último para não interceptar outras rotas)
     path('<str:file_name>', views.serve_frontend_file, name='frontend_files'),

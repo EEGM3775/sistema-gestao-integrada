@@ -23,11 +23,15 @@ frontend/
 
 ### 📄 Sistema de Notas Fiscais
 - **Interface para emissão de NFS-e** (Nota Fiscal de Serviço)
+  - **Agora com seleção de Código de Serviço Municipal (`cityServiceCode`)**
 - **✨ NOVO: Seleção de faturas em lote**
   - Lista paginada de faturas com filtros
   - Seleção múltipla com checkboxes
   - Emissão de várias NF simultaneamente
   - Resumo de valores e quantidades
+- **✨ NOVO: Consulta de Status de Notas Fiscais**
+  - Botão "Consultar Status" no painel de notas fiscais para atualização individual.
+  - Formulário de consulta na página principal para buscar status por ID interno da NF.
 - **Demonstração do fluxo de trabalho:**
   1. Busca dados da fatura no Django
   2. Processamento via microserviço Node.js
@@ -67,7 +71,7 @@ Apresentação visual de todos os 17+ módulos integrados:
 
 ### JavaScript Interativo
 - **Navegação SPA**: Troca de seções sem reload
-- **Modais funcionais**: Para emissão de NF
+- **Modais funcionais**: Para emissão e consulta de NF
 - **Sistema de notificações**: Feedback visual
 - **Simulação de API**: Para demonstração
 
@@ -90,11 +94,11 @@ Apresentação visual de todos os 17+ módulos integrados:
 - [x] Design responsivo
 - [x] Apresentação dos módulos
 - [x] Links para admin Django
+- [x] **Consulta de status das notas**
 
 ### 🔄 Em Desenvolvimento
 - [ ] Integração real com APIs
 - [ ] Emissão de NF-e (produtos)
-- [ ] Consulta de status das notas
 - [ ] Dashboard com métricas reais
 
 ## 💡 Para Apresentação
@@ -114,8 +118,11 @@ Apresentação visual de todos os 17+ módulos integrados:
    - Seleção múltipla com checkboxes
    - Modal de emissão em lote
    - Processamento simulado
-4. Apresentar todos os módulos
-5. Mostrar o painel admin Django
+4. **Demonstrar a consulta de status:**
+   - Usar o botão de atualização no painel de status.
+   - Usar o formulário de consulta por ID na página principal.
+5. Apresentar todos os módulos
+6. Mostrar o painel admin Django
 
 ## 🔗 Integração com Backend
 

@@ -14,11 +14,11 @@ class EmpreendimentoViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='por-funcionario')
     def por_funcionario(self, request):
         funcionario_id = request.query_params.get('funcionario_id')
-        if not funcionario_id:
-            return Response({'error': 'O parâmetro funcionario_id é obrigatório'}, status=400)
+        if not funcionario_id or funcionario_id == 'undefined':
+            return Response({'error': 'O parâmetro funcionario_id é obrigatório e deve ser um ID válido'}, status=400)
 
-        # Encontra todas as obras pelas quais o funcionário é responsável
-        obras_do_funcionario = Obra.objects.filter(responsavel_tecnico_id=funcionario_id)
+        # Encontra todas as obras pelas quais o funcionário é responsável técnico
+        obras_do_funcionario = Obra.objects.filter(responsaveis_tecnicos=funcionario_id)
         
         # Obtém os IDs únicos dos empreendimentos dessas obras
         empreendimento_ids = obras_do_funcionario.values_list('empreendimento_id', flat=True).distinct()
