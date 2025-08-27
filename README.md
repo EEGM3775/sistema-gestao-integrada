@@ -128,6 +128,25 @@ Módulo para integração com serviços de Inteligência Artificial.
 *   **Modelos:**
     *   `AnaliseImagemIA`: Armazena o resultado da análise de imagens por uma IA.
 
+### Funções de Lead (`funcoeslead`) - Node.js
+
+**Nota de Arquitetura:** Este é um **microserviço em Node.js** responsável por orquestrar lógicas de negócio complexas relacionadas ao ciclo de vida de Leads e Oportunidades do módulo CRM. Ele é acionado pelo backend Django através de chamadas de API seguras.
+
+*   **Funcionalidades:**
+    *   **Serviço de Conversão de Leads:** Automatiza a promoção de um `Lead` qualificado para as próximas etapas do funil de vendas (criação de `Account`, `Contact`, `Opportunity` e atualização do `Lead`).
+    *   **Serviço de Notificação:** Um worker que periodicamente verifica as `Interactions` (tarefas) com prazo para vencer e envia notificações (via e-mail) para o responsável (que pode ser um `Usuário`, `Funcionário` ou `Fornecedor`).
+    *   **API de "Minha Agenda":** Um endpoint auxiliar que retorna tarefas e interações de um usuário para um determinado período, facilitando a criação de interfaces de produtividade.
+
+### Módulo Calendário (`modulocalendar`)
+
+Este módulo gerencia eventos de calendário e tarefas, integrando-se com o frontend para visualização e gerenciamento.
+
+*   **Modelos:**
+    *   `CalendarEvent`: Armazena informações sobre eventos e tarefas (título, data, descrição, etc.).
+*   **Endpoints:**
+    *   `/api/calendar/events/`: CRUD para eventos do calendário.
+    *   `/calendar/`: Visualização do calendário no frontend.
+
 ### Funções WhatsApp (`funcoeswhatsapp`) - Node.js
 
 **Nota de Arquitetura:** Conforme o plano de escalar o projeto, este módulo será implementado como um **microserviço em Node.js**, em vez de ser recriado em Django/Celery. Ele será responsável pela comunicação com a API do WhatsApp e pela lógica de conversação do bot.
@@ -175,6 +194,13 @@ Os seguintes endpoints da API estão disponíveis no prefixo `/api/`:
     *   `/api/fornecedores/`
     *   `/api/dados-bancarios-fornecedores/`
     *   `/api/produtos-servicos-fornecedores/`
+*   **Funções de IA:**
+    *   `/api/ia/analises-imagem/`
+*   **Funções de Lead:**
+    *   `/api/leads/{leadId}/convert/`
+    *   `/api/users/{userId}/agenda/`
+*   **Calendário:**
+    *   `/api/calendar/events/`
 *   **Núcleo:**
     *   `/api/usuarios/`
     *   `/api/perfis/`

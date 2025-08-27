@@ -969,7 +969,7 @@
             btn.disabled = true;
 
             try {
-                const response = await fetch('http://localhost:3002/api/consultar-nf-sync', {
+                const response = await fetch('http://localhost:3003/api/consultar-nf-sync', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -1033,7 +1033,7 @@ Chave de Acesso: ${nfData.accessKey || 'N/A'}`;
                     requestBody.filename = `NF_${nfId}_${nfeIoId}.pdf`;
                 }
 
-                const response = await fetch('http://localhost:3002/api/baixar-pdf', {
+                const response = await fetch('http://localhost:3003/api/baixar-pdf', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -1115,7 +1115,7 @@ Chave de Acesso: ${nfData.accessKey || 'N/A'}`;
                     requestBody.nf_id = nfId;
                 }
 
-                const response = await fetch('http://localhost:3002/api/cancelar-nf', {
+                const response = await fetch('http://localhost:3003/api/cancelar-nf', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -1258,7 +1258,7 @@ Chave de Acesso: ${nfData.accessKey || 'N/A'}`;
                     // Adicione outros filtros conforme necessário
                 };
 
-                const response = await fetch('http://localhost:3002/api/listar-nf', {
+                const response = await fetch('http://localhost:3003/api/listar-nf', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'

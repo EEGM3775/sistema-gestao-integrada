@@ -159,7 +159,7 @@ class FaturaViewSet(viewsets.ModelViewSet):
             fatura.save()
 
             # Trigger the microservice (optional in development)
-            microservice_url = f'http://localhost:3002{microservice_endpoint}'
+            microservice_url = f'http://localhost:3003{microservice_endpoint}'
             try:
                 # Preparar payload para o microserviço
                 microservice_payload = {
@@ -539,7 +539,7 @@ class ConsultarStatusNFView(views.APIView):
             }
             
             # Chama o microserviço Node.js
-            microservice_url = 'http://localhost:3002/api/consultar-nf'
+            microservice_url = 'http://localhost:3003/api/consultar-nf'
             response = requests.post(microservice_url, json=payload, timeout=10)
             
             if response.status_code == 202:

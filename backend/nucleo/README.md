@@ -93,3 +93,69 @@ Para mitigar este risco, todas as tarefas Celery devem seguir o padrão de **pas
 *   **Correto:** `processar_pagamento.delay(pagamento_id=456)`
 
 A tarefa, ao ser executada, deve usar o `pagamento_id` para buscar os dados sensíveis diretamente do banco de dados de forma segura. Isso garante que, se a tarefa falhar, apenas o ID não-sensível será registrado na Dead Letter Queue.
+
+## Log de Atividade Centralizado
+
+O módulo `nucleo` agora oferece um sistema de log de atividades centralizado, permitindo o registro de ações importantes tanto de tarefas assíncronas do Celery quanto de microserviços externos. Todos os logs são armazenados no modelo `LogAtividadeUsuario`.
+
+### 1. Log de Tarefas Celery
+
+As tarefas Celery são automaticamente logadas através de sinais (signals) do Celery.
+
+*   **Início da Tarefa:** Quando uma tarefa Celery começa a ser executada, um registro de "Início da tarefa" é criado no `LogAtividadeUsuario`.
+*   **Fim da Tarefa:** Ao finalizar (com sucesso ou falha), o registro inicial é atualizado com o status final da tarefa.
+
+Para associar uma tarefa a um usuário específico, é **altamente recomendado** que o `user_id` seja passado como um argumento `kwargs` ao chamar a tarefa:
+
+```python
+from myapp.tasks import my_celery_task
+
+# Exemplo de chamada de tarefa com user_id
+my_celery_task.delay(arg1, arg2, user_id=request.user.id)
+```
+
+### 2. Log de Microserviços Externos
+
+Microserviços (como o `funcoesnf` em Node.js) podem enviar seus logs de atividade para o backend Django através de um endpoint dedicado.
+
+*   **Endpoint:** `POST /api/log-interno/`
+*   **Corpo da Requisição (JSON):**
+    ```json
+    {
+        "acao": "Descrição da ação realizada",
+        "entidade_alvo": "Nome do serviço ou componente (ex: 'funcoesnf')",
+        "detalhes": {
+            "chave1": "valor1",
+            "chave2": "valor2"
+        },
+        "user_id": 123 // Opcional: ID do usuário associado à ação
+    }
+    ```
+*   **Exemplo de Uso (Node.js com `axios`):**
+    ```javascript
+    const axios = require('axios');
+
+    async function logToDjango(acao, entidade_alvo, detalhes, user_id = null) {
+        try {
+            await axios.post('http://localhost:8000/api/log-interno/', {
+                acao,
+                entidade_alvo,
+                detalhes,
+                user_id,
+            });
+            console.log('Log enviado com sucesso para o Django.');
+        } catch (error) {
+            console.error('Falha ao enviar log para o Django:', error.message);
+        }
+    }
+
+    // Exemplo de chamada
+    logToDjango('Emissão de NF-e', 'funcoesnf', { faturaId: 123, nfId: 456 }, 789);
+    ```
+
+**Considerações de Segurança:**
+
+O endpoint `/api/log-interno/` atualmente permite requisições de qualquer origem (`AllowAny` na configuração de desenvolvimento). Em um ambiente de produção, é **fundamental** implementar medidas de segurança mais robustas, como:
+
+*   **Autenticação de Serviço:** Utilizar tokens de API ou chaves pré-compartilhadas para autenticar os microserviços que enviam logs.
+*   **Restrição de Rede:** Limitar o acesso ao endpoint apenas para IPs ou redes internas confiáveis.

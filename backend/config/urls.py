@@ -39,7 +39,8 @@ from nucleo.views import (
     UsuarioViewSet,
     PerfilViewSet,
     PermissaoViewSet,
-    LogAtividadeUsuarioViewSet
+    LogAtividadeUsuarioViewSet,
+    LogInternoView
 )
 from obras.views import (
     ObraViewSet,
@@ -129,10 +130,15 @@ urlpatterns = [
     # Adiciona todas as URLs da API geradas pelo roteador sob o prefixo /api/
     path('api/', include(router.urls)),
     
+    # Endpoint para log interno
+    path('api/log-interno/', LogInternoView.as_view(), name='log_interno'),
+
     # --- Rotas dos Módulos (sem roteador principal) ---
     path('api/diario/', include('modulodiario.urls')),
     path('api/ia/', include('funcoesia.urls')),
     path('api/erp/', include('moduloerp.urls')),
+    path('api/crm/', include('modulocrm.urls')),
+    path('calendar/', include(('modulocalendar.urls', 'modulocalendar'), namespace='calendar')),
     
     # Página de informações da API
     path('api/', views.api_info, name='api_info'),

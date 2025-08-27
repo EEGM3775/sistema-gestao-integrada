@@ -3,9 +3,9 @@ require('dotenv').config({ path: '/home/eegm/02sistema_gestao_integrada/backend/
 const express = require('express');
 const cors = require('cors');
 const app = express();
-const port = 3002;
+const port = 3003;
 
-const logger = require('./logger'); // Importar o logger
+const { logger, logToDjango } = require('./logger'); // Importar o logger
 
 // Importar as funções de cada arquivo
 const { emitirNF } = require('./emitirNF');

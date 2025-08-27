@@ -11,8 +11,8 @@ async function carregarDocumentosDisponiveis() {
     console.log('📄 Carregando documentos disponíveis para análise...');
     
     try {
-        console.log('🔗 Fazendo requisição para /api/diario/documentos/');
-        const response = await fetch('/api/diario/documentos/');
+        console.log('🔗 Fazendo requisição para /api/diario/documentos-com-analise/');
+        const response = await fetch('/api/diario/documentos-com-analise/');
         
         console.log('📡 Status da resposta:', response.status);
         
@@ -23,10 +23,23 @@ async function carregarDocumentosDisponiveis() {
         }
 
         const data = await response.json();
-        console.log('📊 Dados recebidos:', data);
+        console.log('📊 DADOS DOCUMENTOS DISPONÍVEIS:', JSON.stringify(data, null, 2));
         
-        documentosDisponiveis = data || [];
+        // O endpoint documentos-com-analise retorna { documentos: [...] }
+        documentosDisponiveis = data.documentos || data || [];
         console.log('✅ ' + documentosDisponiveis.length + ' documentos disponíveis carregados');
+        
+        // Logs detalhados de cada documento disponível
+        documentosDisponiveis.forEach((doc, index) => {
+            console.log(`📄 Documento disponível ${index + 1}:`, {
+                id: doc.id,
+                nome: doc.nome,
+                nome_original: doc.nome_original,
+                obra_nome: doc.obra_nome,
+                status_analise: doc.status_analise,
+                tem_analise: doc.tem_analise
+            });
+        });
         
         // Atualiza a interface
         preencherSelectDocumentos();
@@ -40,17 +53,48 @@ async function carregarDocumentosDisponiveis() {
 
 // Preencher o select de documentos
 function preencherSelectDocumentos() {
+    console.log('📋 Preenchendo select de documentos...');
     const selectDocumento = document.getElementById('selectDocumento');
-    if (!selectDocumento) return;
+    if (!selectDocumento) {
+        console.error('❌ Elemento selectDocumento não encontrado');
+        return;
+    }
     
     // Limpar opções existentes
     selectDocumento.innerHTML = '<option value="">Selecione um documento...</option>';
     
+    // Verificar se há documentos disponíveis
+    if (!documentosDisponiveis || documentosDisponiveis.length === 0) {
+        selectDocumento.innerHTML += '<option value="" disabled>Nenhum documento disponível</option>';
+        console.warn('⚠️ Nenhum documento disponível para preencher o select');
+        return;
+    }
+    
     // Adicionar documentos disponíveis
-    documentosDisponiveis.forEach(doc => {
+    documentosDisponiveis.forEach((doc, index) => {
+        console.log(`📄 Processando documento ${index + 1} para o select:`, doc);
+        
         const option = document.createElement('option');
-        option.value = doc.id;
-        option.textContent = (doc.nome_original || doc.nome) + ' - ' + (doc.obra_nome || 'Obra não definida');
+        
+        // ID do documento - usar o campo 'id' que está disponível
+        const documentoId = doc.id;
+        option.value = documentoId;
+        
+        // Nome do documento - usar os campos que existem nos dados
+        let nomeDocumento = doc.nome_original || doc.nome || doc.descricao;
+        
+        // Se ainda estiver undefined/vazio, usar fallback
+        if (!nomeDocumento || nomeDocumento === 'undefined' || nomeDocumento.trim() === '') {
+            nomeDocumento = `Documento ${documentoId}`;
+        }
+        
+        // Nome da obra - campo já disponível nos dados  
+        const obraNome = doc.obra_nome || 'Obra não definida';
+        
+        option.textContent = `${nomeDocumento} - ${obraNome}`;
+        
+        console.log(`✅ Opção criada: ID=${documentoId}, Texto="${option.textContent}"`);
+        
         selectDocumento.appendChild(option);
     });
     
@@ -203,6 +247,8 @@ async function carregarDocumentosComAnalise() {
         
         const response = await fetch('/api/diario/documentos-com-analise/');
         
+        console.log('📡 Status da resposta:', response.status);
+        
         if (!response.ok) {
             const errorText = await response.text();
             console.error('🚨 Erro na resposta:', errorText);
@@ -210,10 +256,24 @@ async function carregarDocumentosComAnalise() {
         }
 
         const data = await response.json();
-        console.log('📊 Dados de análises recebidos:', data);
+        console.log('📊 DADOS BRUTOS RECEBIDOS:', JSON.stringify(data, null, 2));
         
-        documentosCarregados = data.documentos || [];
+        documentosCarregados = data.documentos || data || [];
+        console.log('📋 DOCUMENTOS PROCESSADOS:', documentosCarregados);
         console.log('✅ ' + documentosCarregados.length + ' documentos com análise carregados');
+        
+        // Logs detalhados de cada documento
+        documentosCarregados.forEach((doc, index) => {
+            console.log(`📄 Documento ${index + 1}:`, {
+                id: doc.id,
+                nome: doc.nome_original || doc.nome,
+                status_original: doc.status,
+                status_analise: doc.status_analise,
+                tipo_analise: doc.tipo_analise,
+                data_criacao: doc.data_criacao,
+                obra_nome: doc.obra_nome
+            });
+        });
         
         // Atualiza a interface
         exibirDocumentosComAnalise();
@@ -253,19 +313,48 @@ function exibirDocumentosComAnalise() {
 
 // Criar card para um documento
 function criarCardDocumento(documento) {
-    console.log('🎴 Criando card para documento:', documento);
+    console.log('🎴 ========== CRIANDO CARD ==========');
+    console.log('📄 Documento completo:', JSON.stringify(documento, null, 2));
     console.log('📊 Status original do documento:', documento.status);
+    console.log('📊 Status análise:', documento.status_analise);
+    console.log('📊 Todos os campos de status:', {
+        status: documento.status,
+        status_analise: documento.status_analise,
+        status_ia: documento.status_ia,
+        analise_status: documento.analise_status
+    });
     
     const card = document.createElement('div');
     card.className = 'documento-card';
     card.setAttribute('data-documento-id', documento.id);
     
+    // Tentar múltiplos campos de status (prioridade para status_analise)
+    const statusCandidatos = [
+        documento.status_analise,  // Campo correto do backend!
+        documento.status_ia, 
+        documento.analise_status,
+        documento.status
+    ];
+    
+    let statusOriginal = 'sem_analise'; // Status padrão
+    for (const candidato of statusCandidatos) {
+        if (candidato && candidato !== '' && candidato !== 'sem_analise') {
+            statusOriginal = candidato;
+            console.log('✅ Status encontrado:', candidato, 'no campo correspondente');
+            break;
+        }
+    }
+    
+    console.log('🔍 Status original selecionado:', statusOriginal);
+    
     // Usar funções utilitárias para mapear status
-    const statusExibicao = mapearStatus(documento.status);
+    const statusExibicao = mapearStatus(statusOriginal);
     const statusClass = 'status-' + statusExibicao;
     const textoStatus = obterTextoStatus(statusExibicao);
     
-    console.log('🔄 Status mapeado:', documento.status, '=>', statusExibicao, '=>', textoStatus);
+    console.log('🔄 Mapeamento final:', statusOriginal, '=>', statusExibicao, '=>', textoStatus);
+    console.log('🎨 Classe CSS:', statusClass);
+    console.log('==========================================');
     
     // HTML do card usando concatenação
     let cardHTML = '<div class="documento-header">';
@@ -296,8 +385,9 @@ function criarCardDocumento(documento) {
     cardHTML += '<div class="info-item"><span class="info-label"><i class="fas fa-info-circle"></i> Status:</span>';
     cardHTML += '<span class="status-badge ' + statusClass + '">' + textoStatus + '</span></div>';
     
-    if (documento.data_ultima_analise) {
-        cardHTML += '<div class="info-item"><span class="info-label"><i class="fas fa-clock"></i> Última análise:</span><span>' + formatDate(documento.data_ultima_analise) + '</span></div>';
+    if (documento.data_analise || documento.data_ultima_analise) {
+        const dataAnalise = documento.data_analise || documento.data_ultima_analise;
+        cardHTML += '<div class="info-item"><span class="info-label"><i class="fas fa-clock"></i> Última análise:</span><span>' + formatDate(dataAnalise) + '</span></div>';
     }
     
     cardHTML += '</div></div>';
@@ -425,8 +515,9 @@ function mostrarModalDetalhes(dados) {
     modalHTML += '<div class="info-item"><label><i class="fas fa-microscope"></i> Tipo de análise:</label><span>' + (dados.tipo_analise || 'Não especificado') + '</span></div>';
     modalHTML += '<div class="info-item"><label><i class="fas fa-clock"></i> Data da análise:</label><span>' + (formatDate(dados.data_analise) || 'Não disponível') + '</span></div>';
     
-    // Usar funções utilitárias para mapear status
-    const statusExibicaoModal = mapearStatus(dados.status);
+    // Usar funções utilitárias para mapear status (prioridade para status_analise)
+    const statusOriginalModal = dados.status_analise || dados.status || 'sem_analise';
+    const statusExibicaoModal = mapearStatus(statusOriginalModal);
     const textoStatusModal = obterTextoStatus(statusExibicaoModal);
     
     modalHTML += '<div class="info-item"><label><i class="fas fa-info-circle"></i> Status:</label><span class="status-badge status-' + statusExibicaoModal + '">' + textoStatusModal + '</span></div>';
@@ -583,18 +674,24 @@ function getIconeSecao(secao) {
 // Utilitários
 function mapearStatus(statusOriginal) {
     const statusMap = {
+        // Status do backend
+        'sem_analise': 'pendente',
         'pendente': 'pendente',
-        'processando': 'processando', 
+        'em_processamento': 'processando',
+        'em_andamento': 'processando',
+        'completa': 'completa',
         'concluido': 'completa',
         'concluída': 'completa',
         'completo': 'completa',
-        'completa': 'completa',
         'erro': 'erro',
         'error': 'erro',
-        'falhou': 'erro'
+        'falhou': 'erro',
+        // Status alternativos
+        'processando': 'processando'
     };
     
-    return statusMap[statusOriginal?.toLowerCase()] || statusOriginal || 'pendente';
+    const statusLower = statusOriginal?.toLowerCase();
+    return statusMap[statusLower] || statusOriginal || 'pendente';
 }
 
 function obterTextoStatus(statusMapeado) {

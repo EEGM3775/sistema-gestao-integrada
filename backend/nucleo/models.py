@@ -9,7 +9,7 @@ class FailedTask(models.Model):
     """
     Atua como uma Dead Letter Queue para tarefas Celery que falharam permanentemente.
     """
-    task_id = models.CharField(_("ID da Tarefa Celery"), max_length=255, unique=True)
+    task_id = models.PositiveIntegerField(_("ID da Tarefa Celery"), unique=True)
     task_name = models.CharField(_("Nome da Tarefa"), max_length=255, db_index=True)
     args = models.JSONField(_("Argumentos"))
     kwargs = models.JSONField(_("Argumentos Chave-Valor"))

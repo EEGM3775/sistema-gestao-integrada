@@ -43,6 +43,8 @@ INSTALLED_APPS = [
     "modulodiario",
     "funcoesia",
     "moduloerp.apps.ModuloerpConfig",
+    "modulocrm.apps.ModulocrmConfig",
+    "modulocalendar.apps.ModulocalendarConfig",
     
     
     # Apps do Django

@@ -270,7 +270,7 @@ def api_info(request):
             
             <div class="api-endpoint">
                 <h3>📄 Microserviço de Notas Fiscais</h3>
-                <p><strong>Porta:</strong> 3002</p>
+                <p><strong>Porta:</strong> 3003</p>
                 <p><strong>Status:</strong> Ativo e integrado com NFE.io</p>
                 <p><strong>Funcionalidades:</strong> Emissão de NFS-e, consulta e cancelamento</p>
             </div>
