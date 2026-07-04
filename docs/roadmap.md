@@ -18,7 +18,7 @@
 | 5 | Endurecimento — RS256/JWKS + borda | ✅ 01/06/2026 (núcleo); operacionais → Fase 10 |
 | 6 | Consolidação de identidade & RBAC de plataforma | ✅ 02/06/2026 |
 | 7 | Migração v01 → v02 (frontend + backend dos módulos vazios) | 🚧 em andamento |
-| 8 | Fundação de dados: Postgres real + `tenant` obrigatório + uniques por-tenant | 🚧 8.1 ✅ 04/07/2026 · 8.4 ✅ 04/07/2026 · faltam 8.2/8.3/8.5 |
+| 8 | Fundação de dados: Postgres real + `tenant` obrigatório + uniques por-tenant | 🚧 8.1/8.2/8.4 ✅ 04/07/2026 · faltam 8.3/8.5 |
 | 9 | RBAC de campo — mascaramento de PII por papel (RH/financeiro) | 📋 planejado |
 | 10 | Observabilidade & redução de superfície operacional | 📋 planejado |
 | 11 | Consolidação de linguagens (Python como stack principal) | 🚧 11.2 ✅ 03/07/2026 (funcoeslead); resto planejado |
@@ -168,7 +168,12 @@ prioridade**; precede qualquer dado real.
   autocontido — corrige vazamento de contexto entre métodos de `TestCase`, achado ao rodar sob PG);
   teste do S1 lê a linha do outro tenant sob `rls_bypass()`. Ver [historico.md](historico.md) e
   [desenvolvimento.md](desenvolvimento.md#rodar-os-testes).
-- **8.2 `tenant` obrigatório:** FK `tenant` do `TenantScopedModel` **NOT NULL** + backfill.
+- **8.2 `tenant` obrigatório:** ✅ 04/07/2026 — FK `tenant` do `TenantScopedModel` agora **NOT
+  NULL** (11 migrações `AlterField`, uma por app, sobre ~40 modelos concretos). Backfill defensivo
+  ([nucleo/migrations/0012](../backend/nucleo/migrations/0012_backfill_tenant.py)) roda antes do
+  `SET NOT NULL` (todas dependem dele), sob bypass da RLS (a fail-closed esconde linha `tenant` NULL
+  do role de app): órfãs → tenant único; aborta se ambíguo (0 ou >1 tenants). Aplicado no `erp_db`
+  (0 órfãs) e provado no test DB (suíte 37/37). `perform_create` + RLS + coluna NOT NULL = 3 camadas.
 - **8.3 Uniques por-tenant:** trocar cada `unique=True`/`unique_together` global por
   `UniqueConstraint(fields=["tenant", …])` nos modelos de negócio.
 - **8.4 RLS ponta a ponta:** ✅ 04/07/2026 (S2) — política **fail-closed** (`migrations/0011`) +

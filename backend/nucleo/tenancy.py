@@ -99,11 +99,16 @@ def scope_queryset_by_tenant(queryset, user, tenant_field="tenant_id"):
 
 
 class TenantScopedModel(models.Model):
+    # `tenant` é OBRIGATÓRIO (Fase 8.2): toda linha de negócio pertence a um
+    # tenant. O `perform_create` dos mixins injeta o tenant do usuário e a RLS
+    # fail-closed barra qualquer INSERT sem contexto — a coluna NOT NULL é a
+    # terceira camada (banco). Backfill de linhas legadas: migration de dados
+    # antes do AlterField (ver nucleo/migrations).
     tenant = models.ForeignKey(
         "nucleo.Tenant",
         on_delete=models.CASCADE,
-        null=True,
-        blank=True,
+        null=False,
+        blank=False,
         db_index=True,
         related_name="+",
     )

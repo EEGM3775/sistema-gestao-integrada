@@ -7,6 +7,29 @@
 
 ---
 
+## 04/07/2026 — Fase 8.2: `tenant` NOT NULL (coluna obrigatória, 3ª camada de isolamento)
+
+Com a suíte já validada sobre Postgres (8.1), o FK `tenant` do `TenantScopedModel` deixou de ser
+`nullable`. Antes, `tenant` NULL era um furo silencioso: a linha nascia "sem dono", sumia das
+listagens escopadas e escapava da RLS. Agora a coluna é **NOT NULL** no banco — a terceira camada,
+somada ao `perform_create` (arma o tenant do usuário) e à RLS fail-closed (barra INSERT sem
+contexto).
+
+Como o campo mora na base abstrata, o `makemigrations` gerou um `AlterField` por app (11 migrações,
+~40 modelos concretos). Antes do `SET NOT NULL` roda um **backfill** defensivo
+([nucleo/migrations/0012_backfill_tenant](../backend/nucleo/migrations/0012_backfill_tenant.py)):
+todas as 11 migrações passaram a depender dele. Ele atribui um tenant às linhas legadas com `tenant`
+NULL — tenant único → todas para ele; 0 ou >1 tenants com órfãs → **aborta** pedindo atribuição
+manual (ambíguo). Roda sob `rls_bypass` explícito, senão a própria fail-closed esconderia as órfãs
+do role de aplicação. Detalhe: o `makemigrations` não-interativo (`--no-input`) evita o default
+one-off que o Django pediria, deixando o backfill ser a única fonte de preenchimento.
+
+Aplicado no `erp_db` de dev (0 órfãs → backfill no-op, `SET NOT NULL` limpo em todas as tabelas) e
+provado no test DB (suíte **37/37** sobre Postgres, aplicando a cadeia do zero). Uma deriva
+pré-existente inofensiva (choices de `ClienteEmpreendimento.condicoes_pagamento`, sem SQL) foi
+reconciliada junto. **Falta da Fase 8:** uniques por-tenant (8.3), tenant nas entidades-filhas do
+drone (8.5).
+
 ## 04/07/2026 — Fase 8.1: suíte inteira verde sobre Postgres (RLS fail-closed de verdade)
 
 Continuação direta do S2. A prova do S2 tinha sido um ensaio manual em transação revertida; agora a
