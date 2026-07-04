@@ -35,7 +35,14 @@ def arm_rls_for_tenant(tenant_id):
       aqui; use `arm_rls_bypass()` para os caminhos de plataforma.
 
     Fail-closed (migration `0010`): sessão sem `app.current_tenant` **não
-    enxerga nenhuma** linha de negócio. No-op fora do Postgres."""
+    enxerga nenhuma** linha de negócio. No-op fora do Postgres.
+
+    Armar um tenant concreto **desliga** qualquer bypass ativo: a semântica é
+    "eu sou este tenant, aplique a política". Isso torna a função autocontida e
+    remove a dependência de ordem — importante porque `SET LOCAL` tem escopo de
+    transação (não de savepoint), então um bypass ligado num bloco anterior da
+    mesma transação (ex.: seed sob `rls_bypass()` num `TestCase`) vazaria."""
+    _set_config("app.rls_bypass", "off")
     _set_config("app.current_tenant", str(tenant_id) if tenant_id else "")
 
 

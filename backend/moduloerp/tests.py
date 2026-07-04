@@ -12,6 +12,7 @@ from rest_framework.test import APITestCase
 
 from clientes.models import Cliente
 from nucleo.models import Tenant, Usuario
+from nucleo.tenancy import rls_bypass
 from .models import ContaReceber, NotaFiscalServico, StatusNFE
 
 
@@ -122,7 +123,11 @@ class S1TenantIsolationAPIViewTests(APITestCase):
             format="json",
         )
         self.assertEqual(resp.status_code, 404)
-        self.nf_b.refresh_from_db()
+        # A NF é do tenant B; sob a RLS fail-closed, o contexto do request (tenant
+        # A) a esconde. Lemos sob bypass de plataforma só para provar que o write
+        # foi bloqueado (status intacto).
+        with rls_bypass():
+            self.nf_b.refresh_from_db()
         self.assertEqual(self.nf_b.status, StatusNFE.AGUARDANDO)  # write bloqueado
 
     def test_consultar_status_nf_cross_tenant_da_404(self):

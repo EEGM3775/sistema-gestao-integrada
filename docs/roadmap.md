@@ -18,7 +18,7 @@
 | 5 | Endurecimento — RS256/JWKS + borda | ✅ 01/06/2026 (núcleo); operacionais → Fase 10 |
 | 6 | Consolidação de identidade & RBAC de plataforma | ✅ 02/06/2026 |
 | 7 | Migração v01 → v02 (frontend + backend dos módulos vazios) | 🚧 em andamento |
-| 8 | Fundação de dados: Postgres real + `tenant` obrigatório + uniques por-tenant | 📋 planejado |
+| 8 | Fundação de dados: Postgres real + `tenant` obrigatório + uniques por-tenant | 🚧 8.1 ✅ 04/07/2026 · 8.4 ✅ 04/07/2026 · faltam 8.2/8.3/8.5 |
 | 9 | RBAC de campo — mascaramento de PII por papel (RH/financeiro) | 📋 planejado |
 | 10 | Observabilidade & redução de superfície operacional | 📋 planejado |
 | 11 | Consolidação de linguagens (Python como stack principal) | 🚧 11.2 ✅ 03/07/2026 (funcoeslead); resto planejado |
@@ -160,8 +160,14 @@ configurável por tenant, IDs nunca reutilizados). Plano: [arquitetura/lixo.md](
 transações **só são reais no PostgreSQL**, não no SQLite (fallback de dev). Fase de **maior
 prioridade**; precede qualquer dado real.
 
-- **8.1 Rodar sobre Postgres:** subir a suíte no Postgres; validar migrations, `CheckConstraint`,
-  `ATOMIC_REQUESTS=True` e a RLS ([nucleo/tenancy.py](../backend/nucleo/tenancy.py)).
+- **8.1 Rodar sobre Postgres:** ✅ 04/07/2026 — suíte completa **verde sobre Postgres** (37/37) como
+  o role `erp_app` (não-superuser/não-BYPASSRLS, `FORCE ROW LEVEL SECURITY`), com a política
+  fail-closed valendo de fato; SQLite segue verde (5 RLS pulados). Entregou: `TEST_RUNNER` ciente da
+  RLS ([nucleo/test_runner.py](../backend/nucleo/test_runner.py)) que arma o bypass de plataforma por
+  sessão para o seed; `arm_rls_for_tenant` passou a **desligar** o bypass (armar um tenant é
+  autocontido — corrige vazamento de contexto entre métodos de `TestCase`, achado ao rodar sob PG);
+  teste do S1 lê a linha do outro tenant sob `rls_bypass()`. Ver [historico.md](historico.md) e
+  [desenvolvimento.md](desenvolvimento.md#rodar-os-testes).
 - **8.2 `tenant` obrigatório:** FK `tenant` do `TenantScopedModel` **NOT NULL** + backfill.
 - **8.3 Uniques por-tenant:** trocar cada `unique=True`/`unique_together` global por
   `UniqueConstraint(fields=["tenant", …])` nos modelos de negócio.

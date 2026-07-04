@@ -68,6 +68,34 @@ venv novo do zero não consegue instalar o pip. Use sempre `.venv/bin/python -m 
 rm -f .venv/bin/python* && python3 -m venv .venv   # regenera symlinks, preserva site-packages
 ```
 
+## Rodar os testes
+
+Por padrão a suíte roda em **SQLite in-memory** (rápido, sem infra) — basta não definir
+`POSTGRES_DB`:
+
+```bash
+cd backend && env -u POSTGRES_DB ../.venv/bin/python manage.py test
+```
+
+Os testes de RLS (`nucleo/test_rls_fail_closed.py` e parte de `test_tenant_isolation.py`) são
+**pulados no SQLite**, onde a RLS é no-op. Para valê-la de verdade, rode sobre o **Postgres** de dev
+(Fase 8.1) — como o **role de aplicação** `erp_app` (não-superuser, não-BYPASSRLS), que é o cenário
+real de produção:
+
+```bash
+# o role de app precisa criar o banco de teste (dev apenas; NÃO conceda em produção):
+docker exec sgi-postgres psql -U postgres -c 'ALTER ROLE erp_app CREATEDB;'
+
+cd backend && POSTGRES_DB=erp_db POSTGRES_USER=erp_app POSTGRES_PASSWORD=erp_app_senha_dev \
+  DB_HOST=localhost DB_PORT=5432 DB_SSLMODE=disable \
+  ../.venv/bin/python manage.py test --keepdb
+```
+
+O `TEST_RUNNER` do projeto ([nucleo/test_runner.py](../backend/nucleo/test_runner.py)) arma o bypass
+de plataforma **em nível de sessão** durante os testes, para o seed de fixtures (que roda fora de um
+request) não ser barrado pela política **fail-closed**; cada request e os testes de isolamento armam
+o tenant via `is_local`, que sobrepõe a sessão — então o escopo por tenant continua sendo provado.
+
 ## Dados demo
 
 A IAM tem um seed ([iam/seed_demo.py](../iam/seed_demo.py)) que cria os módulos, perfis e usuários de

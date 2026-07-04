@@ -200,6 +200,12 @@ STATICFILES_DIRS = [
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# Test runner ciente da RLS fail-closed (Fase 8.1): arma o bypass de plataforma
+# em nível de sessão durante os testes, para o seed de fixtures (fora de request)
+# não ser barrado pelo WITH CHECK. Requests e testes de isolamento continuam
+# armando o tenant via is_local, que sobrepõe. No-op no SQLite; nunca em produção.
+TEST_RUNNER = "nucleo.test_runner.RLSAwareTestRunner"
+
 # CORS Configuration
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",

@@ -7,6 +7,37 @@
 
 ---
 
+## 04/07/2026 — Fase 8.1: suíte inteira verde sobre Postgres (RLS fail-closed de verdade)
+
+Continuação direta do S2. A prova do S2 tinha sido um ensaio manual em transação revertida; agora a
+**suíte completa** roda sobre o `erp_db` como o role de aplicação `erp_app` (não-superuser,
+não-BYPASSRLS, tabelas em `FORCE ROW LEVEL SECURITY`) — o cenário real de produção, onde a política
+fail-closed vale de fato. Resultado: **37/37 verde** no Postgres; SQLite segue verde (37, 5 RLS
+pulados). Para reproduzir, o role de app precisa de `CREATEDB` no container de dev (nunca em
+produção) — ver [desenvolvimento.md](desenvolvimento.md#rodar-os-testes).
+
+Ao rodar de fato sobre o Postgres, três coisas apareceram (invisíveis no SQLite):
+
+- **Seed de fixtures barrado.** A maioria dos testes cria dados via ORM em `setUpTestData`/`setUp`,
+  fora de um request e sem contexto → o `WITH CHECK` fail-closed rejeitava o INSERT (11 erros).
+  Solução: um `TEST_RUNNER` ciente da RLS ([nucleo/test_runner.py](../backend/nucleo/test_runner.py))
+  que arma `app.rls_bypass='on'` em **nível de sessão** (`is_local=false`) a cada conexão de teste.
+  Espelha produção: seed/plataforma faz bypass (como migrações/jobs); cada request e cada teste de
+  isolamento arma o tenant com `is_local=true`, que **sobrepõe** a sessão — então o escopo por
+  tenant continua sendo exercitado e provado. Só liga sob `manage.py test`; no-op no SQLite.
+- **Vazamento de contexto entre métodos de `TestCase`.** `SET LOCAL` tem escopo de **transação**, e o
+  `TestCase` roda a classe inteira numa transação (cada método num savepoint). Um bypass armado no
+  seed vazava para os métodos → `test_tenant_armado_ve_so_o_proprio` via tudo (2 falhas). Correção
+  na fonte: `arm_rls_for_tenant()` passou a **desligar** o bypass antes de setar o tenant — armar um
+  tenant concreto virou autocontido ("eu sou este tenant, aplique a política"). Endurece produção,
+  não só o teste.
+- **Inspeção cross-tenant nos testes do S1.** `test_atualizar_status_nf_cross_tenant` lia a NF do
+  tenant B via `refresh_from_db()` sob o contexto do request (tenant A) → a RLS a escondia. Passou a
+  ler sob `rls_bypass()` só para provar que o write foi bloqueado.
+
+**Falta da Fase 8:** `tenant` NOT NULL (8.2), uniques por-tenant (8.3), tenant nas entidades-filhas
+do drone (8.5). `roadmap.md` e `pendencias.md` atualizados.
+
 ## 04/07/2026 — S2 corrigido: RLS fail-closed + contexto armado na autenticação
 
 Parte estrutural do pacote S1–S4 fechada — a que "resolve a classe inteira" do vazamento entre
