@@ -179,6 +179,10 @@ Postgres**; `phase8_tenancy_test.py` provando NOT NULL + unique por-tenant + RLS
 (`DadoMedicoFuncionario`, `DadoBancarioFuncionario`) e dados financeiros, mascaramento por papel é
 **requisito LGPD**.
 
+> **Desenho-alvo (AD-9):** o modelo completo — RBAC + ABAC, catálogo global de permissões, papéis
+> por tenant e mascaramento de campo — está em [arquitetura/rbac-abac.md](arquitetura/rbac-abac.md).
+> Esta Fase 9 é a **fatia C** daquele plano de migração.
+
 - **9.1 Mascaramento na serialização:** redigir/ocultar campos sensíveis quando o papel do JWT não
   autoriza — em vez de barrar o endpoint inteiro.
 - **9.2 Mapa de sensibilidade:** por modelo, quais campos são sensíveis e qual papel os vê.

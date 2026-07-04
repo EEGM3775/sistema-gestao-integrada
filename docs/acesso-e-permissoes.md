@@ -78,7 +78,7 @@ Angular) e ainda assim plugar na **mesma** identidade/entitlement — sem reimpl
 | **IAM** | é a autoridade | emite os entitlements | dono dos papéis | dono dos tenants |
 | **Drone** (`funcoesODM`) | ✅ JWT IAM | ✅ `MODULE_drone` (403) | ⚠️ por owner | ✅ `tenant_id` |
 | **ERP — `modulocrm` (`crm`)** | ✅ JWT IAM | ✅ `RequireModule` (403) | — | ✅ tenant-scope |
-| **ERP — `rh` (`rh`)** | ✅ | ✅ `RequireModule` | — | ✅ |
+| **ERP — `rh` (`rh`)** | ✅ | ✅ `RequireModule` | ⚠️ sub-recursos sensíveis por papel (`rh_medico`/`rh_financeiro`) — hoje **não semeados** (403 até provisionar) | ✅ |
 | **ERP — `moduloerp` (`erp_financeiro`)** | ✅ | ✅ `RequireModule` | ✅ `RequireRole("financeiro")` | ✅ |
 | **ERP — base** (`clientes`/`obras`/`empreendimentos`) | ✅ | n/a (sempre disponível) | — | ✅ |
 | **Sistema de lixo** (`/api/lixo/`) — 📋 **planejado, não implementado** | 📋 JWT IAM | n/a (base) | 📋 `RequireRole("gestor_lixo")` | 📋 tenant-scope |
@@ -90,6 +90,11 @@ vendáveis do ERP (`crm`/`rh`/`erp_financeiro`); a **camada 2** já gateia o fin
 `Perfil`/`Permissao`** (a fonte é a IAM; o ERP lê os papéis das claims). Validado por
 `infra/gateway/phase6_rbac_test.py`. Pendências: mascaramento de **campos** sensíveis por papel; e
 remover os **modelos** `nucleo.Perfil`/`Permissao` (hoje só espelho legado).
+
+> **Evolução planejada (AD-9):** esta camada 2 será reprojetada como **RBAC + ABAC** — endpoints
+> passam a checar **permissão** (catálogo global) em vez de nome de papel, papéis viram composições
+> **por tenant**, e a PII ganha **mascaramento de campo**. Desenho completo (com plano de migração)
+> em [arquitetura/rbac-abac.md](arquitetura/rbac-abac.md).
 
 ## 6. Fase 6 — implementada (02/06/2026)
 

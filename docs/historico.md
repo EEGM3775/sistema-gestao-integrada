@@ -7,6 +7,25 @@
 
 ---
 
+## 04/07/2026 — Desenho aprovado: camada 2 evolui para RBAC + ABAC (AD-9)
+
+Gatilho: 403 nas abas sensíveis da ficha do funcionário (dados médicos/ASO/bancários/pagamentos/
+folha). Investigação mostrou que **não era bug** — é a RBAC camada 2 barrando: o `demo` tem só o
+papel `financeiro`, e esses endpoints exigem `rh_medico`/`rh_financeiro`. Mas expôs a fragilidade do
+modelo de papéis ("previsibilidade de cargos"): papéis são strings mágicas espalhadas (só 3 no
+código), o seed não bate com o enforcement (`operacional` morto; `rh_medico`/`rh_financeiro` nunca
+semeados → inalcançáveis), o modelo granular `Permissao`/`Perfil.permissoes` existe mas é **código
+morto** (o JWT só carrega nomes de papel), e um `Perfil` homônimo vazio passa no `RequireRole`.
+
+Decisão (alinhada com o usuário, 4 escolhas): modelo-alvo **híbrido RBAC + ABAC**, com **papéis
+definidos por tenant**, granularidade **ação + campo (PII)**; entrega de agora = **só o desenho
+(ADR)**, sem código. Registrada em **AD-9** e detalhada na nova prancha
+[arquitetura/rbac-abac.md](arquitetura/rbac-abac.md): catálogo global de permissões em código (a
+espinha previsível) → papéis por tenant que as agrupam (com templates de fábrica clonáveis) → claim
+`permissions` no JWT (endpoints checam permissão, não nome) → políticas ABAC opt-in por recurso →
+mascaramento de campo PII na serialização (que é a Fase 9). Inclui plano de migração em 5 fatias
+(a fatia A já destrava o 403 ao provisionar os papéis de RH). Nada implementado ainda.
+
 ## 04/07/2026 — S1 corrigido (pontual): dashboard ERP e views de NF cruzavam tenants
 
 Primeiro achado do pacote crítico de segurança S1–S4 fechado. Três endpoints do ERP eram `APIView`
