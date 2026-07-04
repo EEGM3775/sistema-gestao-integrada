@@ -46,8 +46,8 @@ TIPO_CUSTO_CHOICES = [
 class Empreendimento(TenantScopedModel):
     empreendimento_id = models.AutoField(primary_key=True)
     empreendimento = models.CharField(max_length=255, verbose_name=_("Nome do Empreendimento"))
-    razao_social = models.CharField(max_length=255, unique=True, verbose_name=_("Razão Social"))
-    cnpj = models.CharField(max_length=18, unique=True, verbose_name=_("CNPJ"))
+    razao_social = models.CharField(max_length=255, verbose_name=_("Razão Social"))
+    cnpj = models.CharField(max_length=18, verbose_name=_("CNPJ"))
     telefone = models.CharField(max_length=20, verbose_name=_("Telefone"))
     endereco = models.TextField(verbose_name=_("Endereço"))
     data_inicio_prevista = models.DateField(null=True, blank=True, verbose_name=_("Data de Início Prevista"))
@@ -70,6 +70,11 @@ class Empreendimento(TenantScopedModel):
                 name='emp_status_execucao_idx',
                 condition=Q(status_empreendimento='em_execucao')
             ),
+        ]
+        # Unicidade por-tenant (Fase 8.3).
+        constraints = [
+            models.UniqueConstraint(fields=['tenant', 'razao_social'], name='empreend_razao_unica_por_tenant'),
+            models.UniqueConstraint(fields=['tenant', 'cnpj'], name='empreend_cnpj_unico_por_tenant'),
         ]
 
     def __str__(self):
@@ -112,7 +117,7 @@ class CustoEmpreendimento(TenantScopedModel):
     valor = models.DecimalField(max_digits=15, decimal_places=2, null=False, blank=False, verbose_name=_("Preço Unitário"))
     quantidade = models.DecimalField(max_digits=15, decimal_places=2, null=False, blank=False, verbose_name=_("Quantidade"))
     data_custo = models.DateField(null=False, blank=False, verbose_name=_("Data do Custo"))
-    chave_acesso = models.CharField(max_length=44, unique=True, null=True, blank=True, verbose_name=_("Chave de Acesso NF-e"))
+    chave_acesso = models.CharField(max_length=44, null=True, blank=True, verbose_name=_("Chave de Acesso NF-e"))
     data_emissao = models.DateTimeField(auto_now_add=True, null=False, verbose_name=_("Data de Emissão"))
     valor_total = models.DecimalField(max_digits=15, decimal_places=4, null=False, blank=False, verbose_name=_("Valor Total"))
     arquivo_xml = models.FileField(upload_to="nfe_xmls/%Y/%m/", null=True, blank=True, verbose_name=_("Arquivo XML NF-e"))
@@ -122,6 +127,10 @@ class CustoEmpreendimento(TenantScopedModel):
     class Meta:
         verbose_name = _("Custo do Empreendimento")
         verbose_name_plural = _("Custos dos Empreendimentos")
+        # Chave de acesso NF-e única por-tenant (nullable → múltiplos NULL ok).
+        constraints = [
+            models.UniqueConstraint(fields=['tenant', 'chave_acesso'], name='custo_chave_acesso_unica_por_tenant'),
+        ]
 
     def __str__(self):
         return f"Custo: {self.descricao} - {self.valor}"

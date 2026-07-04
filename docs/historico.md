@@ -7,6 +7,33 @@
 
 ---
 
+## 04/07/2026 — Fase 8.3: uniques por-tenant (dois tenants, o mesmo CPF)
+
+Fechou o último furo estrutural de multi-empresa: a unicidade global. Antes, `unique=True` em
+`cpf_cnpj`, `email`, `razao_social`, `cnpj`, `numero_contrato`, número/chave de NF, `nome_cargo`,
+nome de obra sem empreendimento, nome de conta CRM etc. era **global** — dois tenants não podiam
+cadastrar o mesmo documento, e a colisão ainda **vazava a existência** do dado do outro tenant. Cada
+um desses virou `UniqueConstraint(fields=["tenant", campo])` (7 migrações, `AlterField` que remove o
+unique + `AddConstraint`). Os `unique_together` cujo primeiro campo já é uma FK tenant-scoped (ex.:
+`(obra, nome_etapa)`, `(account, email)`, `(funcionario, mes_referencia)`) ficaram como estavam — a
+FK-pai já amarra o tenant.
+
+O nó foi a camada DRF: ao incluir `tenant` (campo não exposto no serializer) no constraint, o DRF
+**descarta** o validador de unicidade automático → uma duplicata dentro do mesmo tenant só seria
+pega pelo banco (`IntegrityError` → HTTP 500). Solução reutilizável em
+[nucleo/tenant_validators.py](../backend/nucleo/tenant_validators.py): `TenantScopedUniqueSerializer
+Mixin` deriva, de cada `UniqueConstraint` que começa por `tenant`, um `TenantScopedUniqueTogether
+Validator` que restringe o queryset ao `tenant_id` do request. Aplicado a 12 serializers (Cliente,
+Fornecedor, Empreendimento, Custo, Contrato, Cargo, Funcionário, Account, Lead, as 3 NF). Isso é
+necessário inclusive porque **no SQLite a RLS é no-op** — sem o filtro explícito a checagem voltaria
+a ser global; no Postgres é defesa redundante à RLS.
+
+Provado por `nucleo/test_tenant_isolation.py::PerTenantUniquenessTests`: o mesmo CPF em dois tenants
+é aceito; duplicado no mesmo tenant retorna **400 limpo** (não 500). Suíte **39/39** no Postgres e no
+SQLite (5 RLS pulados no SQLite); migrações aplicadas no `erp_db`. **Falta da Fase 8:** só a 8.5
+(tenant nas entidades-filhas do drone, stack Java). O achado **A3** de `pendencias.md`
+(uniques + `tenant` NOT NULL) está integralmente resolvido (8.2 + 8.3).
+
 ## 04/07/2026 — Fase 8.2: `tenant` NOT NULL (coluna obrigatória, 3ª camada de isolamento)
 
 Com a suíte já validada sobre Postgres (8.1), o FK `tenant` do `TenantScopedModel` deixou de ser

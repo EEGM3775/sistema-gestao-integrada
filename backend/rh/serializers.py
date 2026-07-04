@@ -1,6 +1,7 @@
 # backend/rh/serializers.py
 # Este arquivo define como os modelos do app 'rh' são convertidos para o formato JSON para a API.
 from rest_framework import serializers
+from nucleo.tenant_validators import TenantScopedUniqueSerializerMixin
 from .models import (
     Cargo,
     Funcionario,
@@ -12,7 +13,7 @@ from .models import (
     FolhaPagamento
 )
 
-class CargoSerializer(serializers.ModelSerializer):
+class CargoSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
     """
     Serializador para o modelo Cargo.
     Define os campos que serão incluídos na representação da API.
@@ -21,7 +22,7 @@ class CargoSerializer(serializers.ModelSerializer):
         model = Cargo
         fields = '__all__' # Inclui todos os campos do modelo.
 
-class FuncionarioSerializer(serializers.ModelSerializer):
+class FuncionarioSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
     class Meta:
         model = Funcionario
         fields = '__all__'

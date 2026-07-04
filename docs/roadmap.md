@@ -18,7 +18,7 @@
 | 5 | Endurecimento — RS256/JWKS + borda | ✅ 01/06/2026 (núcleo); operacionais → Fase 10 |
 | 6 | Consolidação de identidade & RBAC de plataforma | ✅ 02/06/2026 |
 | 7 | Migração v01 → v02 (frontend + backend dos módulos vazios) | 🚧 em andamento |
-| 8 | Fundação de dados: Postgres real + `tenant` obrigatório + uniques por-tenant | 🚧 8.1/8.2/8.4 ✅ 04/07/2026 · faltam 8.3/8.5 |
+| 8 | Fundação de dados: Postgres real + `tenant` obrigatório + uniques por-tenant | 🚧 8.1/8.2/8.3/8.4 ✅ 04/07/2026 · falta 8.5 (drone) |
 | 9 | RBAC de campo — mascaramento de PII por papel (RH/financeiro) | 📋 planejado |
 | 10 | Observabilidade & redução de superfície operacional | 📋 planejado |
 | 11 | Consolidação de linguagens (Python como stack principal) | 🚧 11.2 ✅ 03/07/2026 (funcoeslead); resto planejado |
@@ -174,8 +174,16 @@ prioridade**; precede qualquer dado real.
   `SET NOT NULL` (todas dependem dele), sob bypass da RLS (a fail-closed esconde linha `tenant` NULL
   do role de app): órfãs → tenant único; aborta se ambíguo (0 ou >1 tenants). Aplicado no `erp_db`
   (0 órfãs) e provado no test DB (suíte 37/37). `perform_create` + RLS + coluna NOT NULL = 3 camadas.
-- **8.3 Uniques por-tenant:** trocar cada `unique=True`/`unique_together` global por
-  `UniqueConstraint(fields=["tenant", …])` nos modelos de negócio.
+- **8.3 Uniques por-tenant:** ✅ 04/07/2026 — cada `unique=True` global escalar em modelo de
+  negócio (CPF/CNPJ, e-mail, razão social, nº/chave de NF, nome de cargo/obra/conta, etc.) virou
+  `UniqueConstraint(fields=["tenant", …])` (7 migrações). Como o DRF descarta o validador quando o
+  constraint inclui `tenant`, um mixin reutilizável
+  ([nucleo/tenant_validators.py](../backend/nucleo/tenant_validators.py)) reintroduz a checagem
+  **escopada ao tenant do request** (deriva o validador das próprias `UniqueConstraint`) → duplicata
+  no mesmo tenant dá **400 limpo**, não 500. Necessário também porque no SQLite a RLS é no-op. Os
+  `unique_together` sobre FKs já tenant-scoped (ex.: `(obra, nome_etapa)`) permaneceram — a FK-pai já
+  amarra o tenant. Provado (`test_tenant_isolation::PerTenantUniquenessTests`): mesmo CPF em tenants
+  distintos OK; duplicado no mesmo tenant → 400. Aplicado no `erp_db`; suíte 39/39 (PG e SQLite).
 - **8.4 RLS ponta a ponta:** ✅ 04/07/2026 (S2) — política **fail-closed** (`migrations/0011`) +
   contexto armado na autenticação; provado no Postgres que sessão sem `app.current_tenant` não
   enxerga nem grava linha e que o acesso *cross-tenant* é bloqueado (defesa além do mixin). Bypass

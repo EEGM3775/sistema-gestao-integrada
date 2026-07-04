@@ -4,13 +4,14 @@
 # em tipos de dados nativos do Python que podem ser facilmente renderizados em JSON para a API.
 
 from rest_framework import serializers
+from nucleo.tenant_validators import TenantScopedUniqueSerializerMixin
 from .models import (
     Empreendimento,
     ContaBancariaEmpreendimento,
     CustoEmpreendimento
 )
 
-class EmpreendimentoSerializer(serializers.ModelSerializer):
+class EmpreendimentoSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
     """
     Serializador para o modelo Empreendimento.
     A classe Meta especifica o modelo a ser serializado e os campos a serem incluídos.
@@ -28,7 +29,7 @@ class ContaBancariaEmpreendimentoSerializer(serializers.ModelSerializer):
         model = ContaBancariaEmpreendimento
         fields = '__all__'
 
-class CustoEmpreendimentoSerializer(serializers.ModelSerializer):
+class CustoEmpreendimentoSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
     """
     Serializador para o modelo CustoEmpreendimento.
     Converte os dados de custos dos empreendimentos para JSON.

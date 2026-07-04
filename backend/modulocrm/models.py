@@ -51,7 +51,7 @@ class Lead(BaseModel):
 
     first_name = models.CharField(_("Nome"), max_length=100)
     last_name = models.CharField(_("Sobrenome"), max_length=100)
-    email = models.EmailField(_("E-mail"), max_length=254, unique=True, db_index=True)
+    email = models.EmailField(_("E-mail"), max_length=254, db_index=True)
     phone = models.CharField(_("Telefone"), max_length=20, blank=True)
     company = models.CharField(_("Empresa"), max_length=255, blank=True)
     status = models.CharField(_("Status"), max_length=20, choices=StatusChoices.choices, default=StatusChoices.NOVO)
@@ -73,10 +73,13 @@ class Lead(BaseModel):
     class Meta(BaseModel.Meta):
         verbose_name = _("Lead")
         verbose_name_plural = _("Leads")
+        constraints = [
+            models.UniqueConstraint(fields=['tenant', 'email'], name='lead_email_unico_por_tenant'),
+        ]
 
 # 2. Account: A empresa cliente
 class Account(BaseModel):
-    name = models.CharField(_("Nome da Conta/Empresa"), max_length=255, unique=True, db_index=True)
+    name = models.CharField(_("Nome da Conta/Empresa"), max_length=255, db_index=True)
     email = models.EmailField(_("E-mail Principal"), blank=True)
     phone = models.CharField(_("Telefone Principal"), max_length=20, blank=True)
     website = models.URLField(_("Website"), blank=True)
@@ -99,6 +102,9 @@ class Account(BaseModel):
     class Meta(BaseModel.Meta):
         verbose_name = _("Conta (Empresa)")
         verbose_name_plural = _("Contas (Empresas)")
+        constraints = [
+            models.UniqueConstraint(fields=['tenant', 'name'], name='account_name_unico_por_tenant'),
+        ]
 
 # 3. Contact: O contato individual dentro de uma Account
 class Contact(BaseModel):

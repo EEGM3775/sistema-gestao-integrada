@@ -24,8 +24,8 @@ class Cliente(TenantScopedModel):
 
     cliente_id = models.AutoField(primary_key=True)
     nome_completo = models.CharField(max_length=255, verbose_name=_("Nome Completo"))
-    cpf_cnpj = models.CharField(max_length=18, unique=True, blank=False, verbose_name=_("CPF/CNPJ"), validators=[cpf_cnpj_validator])
-    email = models.EmailField(max_length=255, unique=True, blank=False, verbose_name=_("E-mail"))
+    cpf_cnpj = models.CharField(max_length=18, blank=False, verbose_name=_("CPF/CNPJ"), validators=[cpf_cnpj_validator])
+    email = models.EmailField(max_length=255, blank=False, verbose_name=_("E-mail"))
     telefone = models.CharField(max_length=20, blank=True, verbose_name=_("Telefone"))
     endereco = models.TextField(blank=True, verbose_name=_("Endereço"))
     numero_endereco = models.CharField(max_length=10, blank=True, verbose_name=_("Número do Endereço"))
@@ -48,6 +48,12 @@ class Cliente(TenantScopedModel):
         verbose_name = _("Cliente")
         verbose_name_plural = _("Clientes")
         ordering = ['nome_completo']
+        # Unicidade por-tenant (Fase 8.3): dois tenants podem ter o mesmo
+        # CPF/CNPJ ou e-mail; dentro de um tenant, não.
+        constraints = [
+            models.UniqueConstraint(fields=['tenant', 'cpf_cnpj'], name='cliente_cpf_cnpj_unico_por_tenant'),
+            models.UniqueConstraint(fields=['tenant', 'email'], name='cliente_email_unico_por_tenant'),
+        ]
 
 
 class ClienteEmpreendimento(TenantScopedModel):
@@ -97,7 +103,7 @@ class ContratoCliente(TenantScopedModel):
     cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE, related_name='contratos', verbose_name=_('Cliente'))
     empreendimento = models.ForeignKey('empreendimentos.Empreendimento', on_delete=models.RESTRICT, related_name='contratos_gerados', verbose_name=_('Empreendimento'))
     cliente_empreendimento = models.ForeignKey('ClienteEmpreendimento', on_delete=models.SET_NULL, null=True, blank=True, verbose_name=_("Aquisição Vinculada"))
-    numero_contrato = models.CharField(max_length=50, unique=True, verbose_name=_("Número do Contrato"))
+    numero_contrato = models.CharField(max_length=50, verbose_name=_("Número do Contrato"))
     data_assinatura = models.DateField(verbose_name=_("Data de Assinatura"), null=True, blank=True)
     objeto_contrato = models.TextField(verbose_name=_("Objeto do Contrato"))
     arquivo_contrato = models.URLField(max_length=512, null=True, blank=True, verbose_name=_("Arquivo do Contrato"))
@@ -111,6 +117,9 @@ class ContratoCliente(TenantScopedModel):
     class Meta:
         verbose_name = _("Contrato do Cliente")
         verbose_name_plural = _("Contratos dos Clientes")
+        constraints = [
+            models.UniqueConstraint(fields=['tenant', 'numero_contrato'], name='contrato_numero_unico_por_tenant'),
+        ]
 
 
 class DocumentoCliente(TenantScopedModel):

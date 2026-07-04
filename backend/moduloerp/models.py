@@ -110,8 +110,8 @@ class NotaFiscalServico(TenantScopedModel):
     """ Model for Service Invoices (NFS-e). """
     id = models.AutoField(primary_key=True)
     status = models.CharField(max_length=20, choices=StatusNFE.choices, default=StatusNFE.AGUARDANDO)
-    nfe_io_id = models.CharField(max_length=255, unique=True, null=True, blank=True, db_index=True, help_text="ID retornado pela API NFE.io")
-    
+    nfe_io_id = models.CharField(max_length=255, null=True, blank=True, db_index=True, help_text="ID retornado pela API NFE.io")
+
     # Service data
     city_service_code = models.CharField(max_length=20, help_text="Código de Serviço do Município")
     description = models.TextField(help_text="Discriminação do Serviço")
@@ -132,12 +132,15 @@ class NotaFiscalServico(TenantScopedModel):
     class Meta:
         verbose_name = _("Nota Fiscal de Serviço (NFS-e)")
         verbose_name_plural = _("Notas Fiscais de Serviço (NFS-e)")
+        constraints = [
+            models.UniqueConstraint(fields=['tenant', 'nfe_io_id'], name='nfse_nfeio_id_unico_por_tenant'),
+        ]
 
 class NotaFiscalProduto(TenantScopedModel):
     """ Model for Product Invoices (NF-e). """
     id = models.AutoField(primary_key=True)
     status = models.CharField(max_length=20, choices=StatusNFE.choices, default=StatusNFE.AGUARDANDO)
-    nfe_io_id = models.CharField(max_length=255, unique=True, null=True, blank=True, db_index=True, help_text="ID retornado pela API NFE.io")
+    nfe_io_id = models.CharField(max_length=255, null=True, blank=True, db_index=True, help_text="ID retornado pela API NFE.io")
 
     # Product data
     buyer_data = models.JSONField(help_text="Dados do comprador enviados para a API")
@@ -157,6 +160,9 @@ class NotaFiscalProduto(TenantScopedModel):
     class Meta:
         verbose_name = _("Nota Fiscal de Produto (NF-e)")
         verbose_name_plural = _("Notas Fiscais de Produto (NF-e)")
+        constraints = [
+            models.UniqueConstraint(fields=['tenant', 'nfe_io_id'], name='nfprod_nfeio_id_unico_por_tenant'),
+        ]
 
 # --- Models from financeiro app ---
 
@@ -168,8 +174,8 @@ class NotaFiscal(TenantScopedModel):
     nota_fiscal_id = models.AutoField(primary_key=True)
     empreendimento = models.ForeignKey('empreendimentos.Empreendimento', on_delete=models.CASCADE, related_name='notas_fiscais', verbose_name=_("Empreendimento"))
     fornecedor = models.ForeignKey('fornecedores.Fornecedor', on_delete=models.CASCADE, related_name='notas_fiscais_emitidas', verbose_name=_("Fornecedor"))
-    numero_nota = models.CharField(max_length=50, unique=True, verbose_name=_("Número da Nota Fiscal"))
-    chave_acesso = models.CharField(max_length=44, unique=True, help_text=_("Chave de Acesso de 44 dígitos da NF-e"))
+    numero_nota = models.CharField(max_length=50, verbose_name=_("Número da Nota Fiscal"))
+    chave_acesso = models.CharField(max_length=44, help_text=_("Chave de Acesso de 44 dígitos da NF-e"))
     data_emissao = models.DateField(verbose_name=_("Data de Emissão"), help_text=_("Data em que a NF-e foi emitida"))
     valor_total = models.DecimalField(max_digits=15, decimal_places=2, verbose_name=_("Valor Total da NF-e"))
     arquivo_xml = models.FileField(upload_to='nfe_xmls/%Y/%m/', verbose_name=_("Arquivo XML da NF-e"))
@@ -181,6 +187,11 @@ class NotaFiscal(TenantScopedModel):
         verbose_name_plural = _("Notas Fiscais")
         ordering = ['-data_emissao']
         db_table = 'financeiro_notafiscal'
+        # Número e chave de acesso únicos por-tenant (Fase 8.3).
+        constraints = [
+            models.UniqueConstraint(fields=['tenant', 'numero_nota'], name='nf_numero_unico_por_tenant'),
+            models.UniqueConstraint(fields=['tenant', 'chave_acesso'], name='nf_chave_acesso_unica_por_tenant'),
+        ]
 
     def __str__(self):
         return f"NF {self.numero_nota} - {self.fornecedor.razao_social}"

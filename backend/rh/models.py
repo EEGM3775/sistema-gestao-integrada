@@ -5,7 +5,7 @@ from nucleo.tenancy import TenantScopedModel
 
 class Cargo(TenantScopedModel):
     cargo_id = models.AutoField(primary_key=True, verbose_name=_("ID do Cargo"))
-    nome_cargo = models.CharField(max_length=100, unique=True, verbose_name=_("Nome do Cargo"))
+    nome_cargo = models.CharField(max_length=100, verbose_name=_("Nome do Cargo"))
     descricao = models.TextField(blank=True, verbose_name=_("Descrição"))
     departamento = models.CharField(max_length=100, null=True, blank=True, verbose_name=_("Departamento"))
 
@@ -13,6 +13,9 @@ class Cargo(TenantScopedModel):
         verbose_name = _("Cargo")
         verbose_name_plural = _("Cargos")
         ordering = ['nome_cargo']
+        constraints = [
+            models.UniqueConstraint(fields=['tenant', 'nome_cargo'], name='cargo_nome_unico_por_tenant'),
+        ]
 
     def __str__(self):
         return self.nome_cargo
@@ -50,14 +53,14 @@ class Funcionario(TenantScopedModel):
         help_text=_("Empreendimento ao qual o funcionário está diretamente contratado, se aplicável.")
     )
     nome_completo = models.CharField(max_length=255, verbose_name=_("Nome Completo"))
-    cpf = models.CharField(max_length=14, unique=True, verbose_name=_("CPF"))
+    cpf = models.CharField(max_length=14, verbose_name=_("CPF"))
     rg = models.CharField(max_length=20, null=True, blank=True, verbose_name=_("RG"))
     data_nascimento = models.DateField(verbose_name=_("Data de Nascimento"))
     genero = models.CharField(max_length=20, choices=GENERO_CHOICES, verbose_name=_("Gênero"))
     estado_civil = models.CharField(max_length=20, choices=ESTADO_CIVIL_CHOICES, blank=True, null=True, verbose_name=_("Estado Civil"))
     telefone_pessoal = models.CharField(max_length=25, null=True, blank=True, verbose_name=_("Telefone"))
-    telefone_celular = models.CharField(max_length=20, null=True, blank=True, unique=True, verbose_name=_("Telefone Celular (WhatsApp)"), help_text=_("Número com código do país. Ex: +5575912345678"))
-    email_pessoal = models.EmailField(max_length=255, null=True, blank=True, unique=True, verbose_name=_("E-mail Pessoal"))
+    telefone_celular = models.CharField(max_length=20, null=True, blank=True, verbose_name=_("Telefone Celular (WhatsApp)"), help_text=_("Número com código do país. Ex: +5575912345678"))
+    email_pessoal = models.EmailField(max_length=255, null=True, blank=True, verbose_name=_("E-mail Pessoal"))
     endereco_completo = models.TextField(verbose_name=_("Endereço Completo"))
     data_admissao = models.DateField(verbose_name=_("Data de Admissão"))
     data_demissao = models.DateField(null=True, blank=True, verbose_name=_("Data de Demissão"))
@@ -80,6 +83,13 @@ class Funcionario(TenantScopedModel):
         verbose_name = _("Funcionário")
         verbose_name_plural = _("Funcionários")
         ordering = ['nome_completo']
+        # Unicidade por-tenant (Fase 8.3). Celular/e-mail são nullable →
+        # múltiplos NULL são distintos, então não bloqueiam quem não os informa.
+        constraints = [
+            models.UniqueConstraint(fields=['tenant', 'cpf'], name='funcionario_cpf_unico_por_tenant'),
+            models.UniqueConstraint(fields=['tenant', 'telefone_celular'], name='funcionario_celular_unico_por_tenant'),
+            models.UniqueConstraint(fields=['tenant', 'email_pessoal'], name='funcionario_email_unico_por_tenant'),
+        ]
 
     def __str__(self):
         return self.nome_completo

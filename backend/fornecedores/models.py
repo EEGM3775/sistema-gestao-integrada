@@ -5,16 +5,23 @@ from nucleo.tenancy import TenantScopedModel
 
 class Fornecedor(TenantScopedModel):
     fornecedor_id = models.AutoField(primary_key=True, verbose_name=_("ID do Fornecedor"))
-    razao_social = models.CharField(max_length=255, unique=True, verbose_name=_("Razão Social"))
-    cnpj = models.CharField(max_length=18, unique=True, null=True, blank=True, verbose_name=_("CNPJ"))
+    razao_social = models.CharField(max_length=255, verbose_name=_("Razão Social"))
+    cnpj = models.CharField(max_length=18, null=True, blank=True, verbose_name=_("CNPJ"))
     contato = models.CharField(max_length=100, blank=True, verbose_name=_("Contato"))
-    email = models.EmailField(max_length=255, unique=True, verbose_name=_("E-mail"))
+    email = models.EmailField(max_length=255, verbose_name=_("E-mail"))
     telefone = models.CharField(max_length=20, blank=True, verbose_name=_("Telefone"))
 
     class Meta:
         verbose_name = _("Fornecedor")
         verbose_name_plural = _("Fornecedores")
         ordering = ['razao_social']
+        # Unicidade por-tenant (Fase 8.3). CNPJ é nullable → múltiplos NULL são
+        # distintos no Postgres/SQLite, então o constraint não bloqueia sem-CNPJ.
+        constraints = [
+            models.UniqueConstraint(fields=['tenant', 'razao_social'], name='fornecedor_razao_unica_por_tenant'),
+            models.UniqueConstraint(fields=['tenant', 'cnpj'], name='fornecedor_cnpj_unico_por_tenant'),
+            models.UniqueConstraint(fields=['tenant', 'email'], name='fornecedor_email_unico_por_tenant'),
+        ]
 
     def __str__(self):
         return self.razao_social

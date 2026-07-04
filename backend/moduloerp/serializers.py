@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
+from nucleo.tenant_validators import TenantScopedUniqueSerializerMixin
 from .models import (
     Transacao, NotaFiscalServico, NotaFiscalProduto,
     NotaFiscal, ContaPagar, ContaReceber, CobrancaCliente, Boleto,
@@ -19,12 +20,12 @@ class BoletoSerializer(serializers.ModelSerializer):
         model = Boleto
         fields = '__all__'
 
-class NotaFiscalServicoSerializer(serializers.ModelSerializer):
+class NotaFiscalServicoSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
     class Meta:
         model = NotaFiscalServico
         fields = '__all__'
 
-class NotaFiscalProdutoSerializer(serializers.ModelSerializer):
+class NotaFiscalProdutoSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
     class Meta:
         model = NotaFiscalProduto
         fields = '__all__'
@@ -34,7 +35,7 @@ class TransacaoSerializer(serializers.ModelSerializer):
         model = Transacao
         fields = '__all__'
 
-class NotaFiscalSerializer(serializers.ModelSerializer):
+class NotaFiscalSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
     """
     Serializador para o modelo NotaFiscal.
     """

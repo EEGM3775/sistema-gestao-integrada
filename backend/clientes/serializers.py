@@ -1,5 +1,6 @@
 # backend/clientes/serializers.py
 from rest_framework import serializers
+from nucleo.tenant_validators import TenantScopedUniqueSerializerMixin
 from .models import (
     Cliente,
     ClienteEmpreendimento,
@@ -9,7 +10,7 @@ from .models import (
 )
 
 
-class ClienteSerializer(serializers.ModelSerializer):
+class ClienteSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
     class Meta:
         model = Cliente
         fields = '__all__'
@@ -26,7 +27,7 @@ class ClienteEmpreendimentoSerializer(serializers.ModelSerializer):
         read_only_fields = ['cliente_empreendimento_id', 'tenant']
 
 
-class ContratoClienteSerializer(serializers.ModelSerializer):
+class ContratoClienteSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
     cliente_nome = serializers.CharField(source='cliente.nome_completo', read_only=True)
     empreendimento_nome = serializers.CharField(source='empreendimento.empreendimento', read_only=True)
     responsavel_nome = serializers.CharField(source='responsavel.nome_completo', read_only=True, default=None)

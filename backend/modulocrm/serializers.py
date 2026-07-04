@@ -1,5 +1,6 @@
 # backend/modulocrm/serializers.py
 from rest_framework import serializers
+from nucleo.tenant_validators import TenantScopedUniqueSerializerMixin
 from .models import Lead, Account, Contact, Opportunity, Interaction, OpportunityProduct
 from nucleo.serializers import UsuarioSerializer
 
@@ -99,7 +100,7 @@ class ContactSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 # Serializer para Contas
-class AccountSerializer(serializers.ModelSerializer):
+class AccountSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
     assigned_to = UsuarioSerializer(read_only=True)
     assigned_to_id = serializers.PrimaryKeyRelatedField(
         queryset=UsuarioSerializer.Meta.model.objects.all(),
@@ -115,7 +116,7 @@ class AccountSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 # Serializer para Leads
-class LeadSerializer(serializers.ModelSerializer):
+class LeadSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
     assigned_to = UsuarioSerializer(read_only=True)
     assigned_to_id = serializers.PrimaryKeyRelatedField(
         queryset=UsuarioSerializer.Meta.model.objects.all(),

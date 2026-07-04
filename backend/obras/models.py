@@ -44,9 +44,13 @@ class Obra(TenantScopedModel):
         verbose_name = _("Obra")
         verbose_name_plural = _("Obras")
         ordering = ['nome_obra']
+        # Unicidade por-tenant (Fase 8.3): o nome da obra sem empreendimento era
+        # global (bloqueava o mesmo nome em tenants distintos); agora inclui o
+        # tenant. A variante com empreendimento já era escopada pela FK-pai, mas
+        # incluímos o tenant por consistência/defesa.
         constraints = [
-            UniqueConstraint(fields=['empreendimento', 'nome_obra'], condition=Q(empreendimento__isnull=False), name='unique_obra_empreendimento'),
-            UniqueConstraint(fields=['nome_obra'], condition=Q(empreendimento__isnull=True), name='unique_obra_sem_empreendimento'),
+            UniqueConstraint(fields=['tenant', 'empreendimento', 'nome_obra'], condition=Q(empreendimento__isnull=False), name='unique_obra_empreendimento'),
+            UniqueConstraint(fields=['tenant', 'nome_obra'], condition=Q(empreendimento__isnull=True), name='unique_obra_sem_empreendimento'),
         ]
 
     def __str__(self):

@@ -160,9 +160,11 @@ ao compose com healthcheck.
 `localhost:300x` fixo (o `funcoeslead` foi absorvido — Fase 11.2). **Correção:** entrar no compose
 com URLs via env — ou antecipar o resto da Fase 11 e eliminá-los.
 
-### A3 — Uniques por tenant + `tenant` NOT NULL · 🔴 aberto · **Fase 8** *(v01-B1/B6)*
-Unicidade global (CPF/CNPJ, e-mail, nº NF) impede dois tenants de cadastrarem o mesmo documento e
-`tenant` nullable é furo de isolamento. É exatamente o escopo da Fase 8 do roadmap.
+### A3 — Uniques por tenant + `tenant` NOT NULL · ✅ corrigido 04/07/2026 · Fase 8.2/8.3 *(v01-B1/B6)*
+Unicidade global (CPF/CNPJ, e-mail, nº NF) impedia dois tenants de cadastrarem o mesmo documento e
+`tenant` nullable era furo de isolamento. **Corrigido:** `tenant` **NOT NULL** (8.2) + cada
+`unique=True` global escalar virou `UniqueConstraint(fields=["tenant", …])` (8.3), com validador DRF
+escopado ao tenant (400 limpo em duplicata). Ver [historico.md](historico.md) (Fases 8.2 e 8.3).
 
 ### A4 — Upload sem validação server-side · 🔴 aberto *(v01-B2)*
 Tipo/tamanho só são validados no cliente. **Correção:** validador no backend reutilizando a

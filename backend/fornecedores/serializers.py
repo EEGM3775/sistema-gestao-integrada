@@ -1,13 +1,14 @@
 # backend/fornecedores/serializers.py
 # Converte os modelos do app 'fornecedores' para o formato JSON para a API.
 from rest_framework import serializers
+from nucleo.tenant_validators import TenantScopedUniqueSerializerMixin
 from .models import (
     Fornecedor,
     DadoBancarioFornecedor,
     ProdutoServicoFornecedor
 )
 
-class FornecedorSerializer(serializers.ModelSerializer):
+class FornecedorSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
     cnpj = serializers.CharField(
         max_length=18, allow_null=True, allow_blank=True, required=False
     )
