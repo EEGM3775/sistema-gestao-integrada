@@ -7,6 +7,43 @@
 
 ---
 
+## 04/07/2026 — S2 corrigido: RLS fail-closed + contexto armado na autenticação
+
+Parte estrutural do pacote S1–S4 fechada — a que "resolve a classe inteira" do vazamento entre
+tenants. Antes, a política RLS (`migrations/0007`) era **fail-open**: sem `app.current_tenant`
+setado ela liberava **todas** as linhas, e só o `TenantScopedViewSetMixin` armava esse contexto.
+Todo caminho fora do mixin (APIView pura — como as três do S1 —, comando, shell, Celery task,
+webhook) rodava sem proteção, silenciosamente.
+
+Duas mudanças, verificadas no Postgres:
+
+- **Contexto armado na classe de autenticação** (`nucleo/authentication.py::IamJWTAuthentication.
+  authenticate`), não em middleware. O tenant vem do JWT, resolvido em `initial()` → **dentro** da
+  transação do `ATOMIC_REQUESTS`; um middleware Django clássico veria `AnonymousUser` (o JWT só é
+  validado na camada DRF) e rodaria fora da transação, onde `set_config(is_local=true)` não persiste.
+  Assim **toda** requisição autenticada arma o contexto — inclusive views que esquecem o mixin (foi
+  a brecha do S1). Helper único `arm_rls_for_request(user)`: superusuário → bypass de plataforma;
+  demais → o tenant do usuário. Os dois mixins passaram a usá-lo (defesa em profundidade redundante).
+- **Política fail-closed** (`nucleo/migrations/0011`): recria a policy de todas as tabelas de negócio
+  removendo os escapes `IS NULL`/`= ''`. Sem contexto → **nenhuma** linha; só passa quem bate o
+  `tenant_id` **ou** liga o bypass explícito `app.rls_bypass='on'`. O bypass é para código de
+  plataforma confiável (superusuário, webhook do Asaas, migrações de dados, jobs), via os novos
+  `arm_rls_bypass()`/`rls_bypass()`/`tenant_context()` em `nucleo/tenancy.py`. Como `erp_app` não é
+  superuser nem BYPASSRLS e as tabelas estão em `FORCE ROW LEVEL SECURITY`, a política vale de fato
+  sobre a aplicação.
+
+Caminhos sem usuário ajustados: o **webhook do Asaas** localiza o `Boleto` por `gateway_id` (global,
+cross-tenant) sob `rls_bypass()` e aplica a baixa sob `tenant_context(boleto.tenant_id)`; o comando
+`analisar_divergencias_asaas` (auditoria cross-tenant, só leitura) roda sob `rls_bypass()`.
+
+Validação: `nucleo/test_rls_fail_closed.py` (pulado no SQLite, onde a RLS é no-op) e um ensaio
+manual em transação revertida sobre o `erp_db` provaram os quatro cenários — sessão sem contexto
+**lê e grava 0 linhas**, tenant A não enxerga B, bypass vê tudo, INSERT sem contexto é barrado pelo
+`WITH CHECK`. Suíte no SQLite segue verde (37 testes). **Falta da Fase 8:** subir a suíte inteira
+sobre Postgres (8.1 — muitos testes criam linhas via ORM sem armar contexto e quebrariam sob
+fail-closed; precisam de uma base de teste que arme um tenant padrão), `tenant` NOT NULL (8.2) e
+uniques por-tenant (8.3). `pendencias.md` (S2) atualizado.
+
 ## 04/07/2026 — Desenho aprovado: camada 2 evolui para RBAC + ABAC (AD-9)
 
 Gatilho: 403 nas abas sensíveis da ficha do funcionário (dados médicos/ASO/bancários/pagamentos/

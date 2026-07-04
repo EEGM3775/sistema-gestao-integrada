@@ -13,12 +13,27 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken
 
 from .models import Tenant
+from .tenancy import arm_rls_for_request
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
 class IamJWTAuthentication(JWTAuthentication):
+    def authenticate(self, request):
+        """Além de validar o JWT, **arma o contexto RLS** assim que o usuário é
+        resolvido. Como isto roda em `initial()` → dentro da transação do
+        `ATOMIC_REQUESTS`, o `set_config(is_local=true)` vale por toda a
+        requisição — cobrindo TODA view autenticada, mesmo as que não herdam o
+        `TenantScopedViewSetMixin` (foi a brecha do S1). Com a política
+        fail-closed (migration 0010), esquecer o mixin deixa de vazar dados: sem
+        contexto, a RLS não devolve linha alguma."""
+        resultado = super().authenticate(request)
+        if resultado is not None:
+            user, _token = resultado
+            arm_rls_for_request(user)
+        return resultado
+
     def get_user(self, validated_token):
         username = validated_token.get("sub") or validated_token.get("username")
         if not username:

@@ -9,7 +9,8 @@
 
 **Ordem de ataque recomendada:**
 1. **L1–L4** — módulos inoperantes (**✅ todos corrigidos 03/07/2026**).
-2. **S1–S4** — pré-requisito para operar como SaaS real (S1+S2 juntos: RLS por middleware + fail-closed resolve a classe inteira).
+2. **S1–S4** — pré-requisito para operar como SaaS real (**S1+S2 ✅ 04/07/2026**: RLS armada na
+   autenticação + política fail-closed fecharam a classe do vazamento entre tenants; faltam **S3, S4**).
 3. **L5–L7 + A1** — pacote "integridade financeira sob concorrência" (mesma sprint).
 4. O restante por severidade, aproveitando as fases do [roadmap](roadmap.md) indicadas.
 
@@ -26,16 +27,26 @@ tenant por `id`.
 — arma a RLS em `initial()` e expõe `scope_qs()`; as três views herdam e escopam cada queryset →
 cross-tenant some do somatório do dashboard e vira 404 nas NF. Vale em SQLite e Postgres. Testes:
 `moduloerp/tests.py::S1TenantIsolationAPIViewTests` (3).
-**Falta a parte estrutural (S2):** RLS fail-closed + armar o tenant em middleware fecha a classe
-inteira (todo caminho fora do mixin — comando, shell, task, webhook).
+**Parte estrutural (S2) resolvida em 04/07/2026** — ver abaixo.
 
-### S2 — RLS fail-open · 🔴 aberto · Fase 8.4
-A política RLS (`nucleo/migrations/0007`) **libera todas as linhas** quando `app.current_tenant`
-não está setado — e só o mixin o seta. Qualquer caminho fora dele (APIView, comando, shell, task,
-webhook) roda sem proteção, silenciosamente.
-**Correção:** (a) armar a RLS em **middleware/base view** para toda requisição autenticada;
-(b) política **fail-closed** (`USING (tenant_id::text = current_setting(...))`), com role
-`BYPASSRLS` explícita para migrações/jobs.
+### S2 — RLS fail-open · ✅ corrigido 04/07/2026 · Fase 8.4
+A política RLS (`nucleo/migrations/0007`) **liberava todas as linhas** quando `app.current_tenant`
+não estava setado — e só o mixin o setava. Qualquer caminho fora dele (APIView, comando, shell,
+task, webhook) rodava sem proteção, silenciosamente.
+**Correção (entregue):** (a) contexto armado na **classe de autenticação** (`IamJWTAuthentication`),
+não em middleware — o tenant vem do JWT resolvido em `initial()`, dentro da transação do
+`ATOMIC_REQUESTS`; um middleware Django clássico veria `AnonymousUser` e rodaria fora da transação.
+Assim **toda** requisição autenticada arma o contexto, mesmo views que não herdam o mixin (a brecha
+do S1). (b) política **fail-closed** (`nucleo/migrations/0011`): sem contexto → 0 linhas; só passa
+quem bate o `tenant_id` **ou** liga o bypass explícito `app.rls_bypass='on'` (superusuário/webhook/
+migração/job, via `arm_rls_bypass()`/`rls_bypass()`). O role `erp_app` não é superuser nem BYPASSRLS
+e as tabelas estão em `FORCE ROW LEVEL SECURITY`, então a política vale de fato; migrações/jobs
+cruzam tenants sob o role `postgres` (BYPASSRLS) ou `rls_bypass()`. Webhook do Asaas e o comando
+`analisar_divergencias_asaas` ajustados para armar o contexto. **Provado em Postgres**: sessão sem
+contexto vê/insere 0 linhas; tenant A não enxerga B; bypass vê tudo (`nucleo/test_rls_fail_closed.py`,
+pulado no SQLite). **Resta da Fase 8:** rodar a suíte inteira sobre Postgres (8.1 — hoje muitos
+testes criam linhas via ORM sem contexto e quebrariam sob fail-closed), `tenant` NOT NULL (8.2) e
+uniques por-tenant (8.3).
 
 ### S3 — Fallback HS256 com segredo compartilhado · 🔴 aberto · Fase 10
 Sem `JWT_PUBLIC_KEY_PATH`, IAM e ERP caem em HS256 com o mesmo `JWT_SECRET` — quem valida também

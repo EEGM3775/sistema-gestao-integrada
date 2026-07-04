@@ -12,6 +12,8 @@ from decimal import Decimal, InvalidOperation
 
 from django.utils import timezone
 
+from nucleo.tenancy import rls_bypass, tenant_context
+
 from .client import AsaasClient
 from .models import EventoWebhookAsaas
 
@@ -327,12 +329,17 @@ def processar_evento_webhook(*, evento_id, tipo, payload):
 
     payment = payload.get('payment') or {}
     gateway_id = payment.get('id')
-    boleto = (
-        Boleto.objects.select_related('conta_receber', 'conta_receber__cliente')
-        .filter(gateway_id=gateway_id)
-        .first()
-        if gateway_id else None
-    )
+    # O webhook não tem usuário/tenant e o `payment.id` do Asaas é global: a
+    # localização do boleto precisa cruzar tenants, então roda sob o bypass
+    # explícito da RLS (código confiável, guardado pelo token do Asaas). Sem
+    # isto, sob a política fail-closed (S2), a busca não devolveria linha alguma.
+    with rls_bypass():
+        boleto = (
+            Boleto.objects.select_related('conta_receber', 'conta_receber__cliente')
+            .filter(gateway_id=gateway_id)
+            .first()
+            if gateway_id else None
+        )
     evento.boleto = boleto
 
     if not boleto:
@@ -343,17 +350,21 @@ def processar_evento_webhook(*, evento_id, tipo, payload):
         evento.resultado = "Boleto sem ContaReceber associada — sem baixa automática"
     else:
         conta = boleto.conta_receber
+        # A partir daqui já sabemos o tenant do título: a baixa roda escopada
+        # nele (não mais em bypass), para que toda escrita (Transacao, rateios)
+        # respeite a RLS do tenant dono do boleto.
         try:
-            conta.dar_baixa(
-                valor=_parse_valor(payment, 'value', conta.saldo_aberto),
-                data=_parse_data_pagamento(payment),
-                meio_pagamento=payment.get('billingType', ''),
-                usuario=None,
-                origem='asaas',
-            )
-            boleto.status = Boleto.StatusBoleto.PAGO
-            boleto.data_pagamento = timezone.now()
-            boleto.save(update_fields=['status', 'data_pagamento', 'atualizado_em'])
+            with tenant_context(boleto.tenant_id):
+                conta.dar_baixa(
+                    valor=_parse_valor(payment, 'value', conta.saldo_aberto),
+                    data=_parse_data_pagamento(payment),
+                    meio_pagamento=payment.get('billingType', ''),
+                    usuario=None,
+                    origem='asaas',
+                )
+                boleto.status = Boleto.StatusBoleto.PAGO
+                boleto.data_pagamento = timezone.now()
+                boleto.save(update_fields=['status', 'data_pagamento', 'atualizado_em'])
             evento.resultado = 'baixa automática aplicada'
         except BaixaRequerRevisao as exc:
             evento.resultado = f"encaminhado para revisão do financeiro (RevisaoBaixa #{exc.revisao.revisao_id})"

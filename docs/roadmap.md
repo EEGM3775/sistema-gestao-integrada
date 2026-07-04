@@ -165,8 +165,10 @@ prioridade**; precede qualquer dado real.
 - **8.2 `tenant` obrigatório:** FK `tenant` do `TenantScopedModel` **NOT NULL** + backfill.
 - **8.3 Uniques por-tenant:** trocar cada `unique=True`/`unique_together` global por
   `UniqueConstraint(fields=["tenant", …])` nos modelos de negócio.
-- **8.4 RLS ponta a ponta:** provar no banco que sessão sem `app.current_tenant` não enxerga linhas
-  e que acesso *cross-tenant* é bloqueado (defesa além do mixin).
+- **8.4 RLS ponta a ponta:** ✅ 04/07/2026 (S2) — política **fail-closed** (`migrations/0011`) +
+  contexto armado na autenticação; provado no Postgres que sessão sem `app.current_tenant` não
+  enxerga nem grava linha e que o acesso *cross-tenant* é bloqueado (defesa além do mixin). Bypass
+  explícito (`app.rls_bypass`) para plataforma/webhook/jobs. Ver [historico.md](historico.md).
 - **8.5 Tenant nas entidades-filhas do drone:** hoje escopadas por `owner`; adicionar `tenant_id`
   obrigatório às entidades do funcoesODM e validar isolamento cruzado via E2E.
 
