@@ -1,0 +1,109 @@
+"""
+Testes do CRM (achado L4 / Fase 11.2): conversão e scoring de lead agora são
+in-process (portados do microsserviço funcoeslead), e a listagem de
+interações não pode quebrar para usuário não-staff (o filtro antigo em
+GenericFK levantava FieldError).
+"""
+from django.contrib.contenttypes.models import ContentType
+from django.utils import timezone
+from rest_framework.test import APITestCase
+
+from nucleo.models import Tenant, Usuario
+from .models import Account, Contact, Interaction, Lead, Opportunity
+
+
+class CrmTestBase(APITestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.tenant = Tenant.objects.create(slug="emp-a", nome="Empresa A")
+        cls.user = Usuario.objects.create(username="vendedor_a", tenant=cls.tenant)
+        cls.outro = Usuario.objects.create(username="vendedor_b", tenant=cls.tenant)
+
+    def autenticar(self, user):
+        user.iam_modules = ["crm"]
+        self.client.force_authenticate(user=user)
+
+
+class ConvertLeadTests(CrmTestBase):
+    def _novo_lead(self, **kwargs):
+        dados = dict(
+            first_name="Ana", last_name="Souza", email="ana@exemplo.com",
+            phone="41999990000", company="Construtora Alfa", source="Indicação",
+            status=Lead.StatusChoices.QUALIFICADO,
+            assigned_to=self.user, tenant=self.tenant,
+        )
+        dados.update(kwargs)
+        return Lead.objects.create(**dados)
+
+    def test_convert_cria_account_contact_opportunity_e_marca_convertido(self):
+        lead = self._novo_lead()
+        self.autenticar(self.user)
+
+        resp = self.client.post(f"/api/crm/leads/{lead.id}/convert/")
+
+        self.assertEqual(resp.status_code, 200)
+        lead.refresh_from_db()
+        self.assertEqual(lead.status, Lead.StatusChoices.CONVERTIDO)
+
+        account = Account.objects.get(name="Construtora Alfa")
+        contact = Contact.objects.get(account=account, email="ana@exemplo.com")
+        opportunity = Opportunity.objects.get(account=account)
+        self.assertEqual(opportunity.stage, Opportunity.StageChoices.PROPOSTA)
+        for obj in (account, contact, opportunity):
+            self.assertEqual(obj.tenant_id, self.tenant.id)
+
+    def test_convert_exige_status_qualificado(self):
+        lead = self._novo_lead(status=Lead.StatusChoices.NOVO, email="novo@exemplo.com")
+        self.autenticar(self.user)
+
+        resp = self.client.post(f"/api/crm/leads/{lead.id}/convert/")
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(Opportunity.objects.count(), 0)
+
+    def test_score_aplica_regras_de_pontuacao(self):
+        lead = self._novo_lead(email="score@exemplo.com")  # indicação(30) + empresa(20) + fone(10)
+        self.autenticar(self.user)
+
+        resp = self.client.post(f"/api/crm/leads/{lead.id}/score/")
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["score"], 60)
+
+
+class InteractionListTests(CrmTestBase):
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        agora = timezone.now()
+        ct_usuario = ContentType.objects.get_for_model(Usuario)
+        cls.minha = Interaction.objects.create(
+            type=Interaction.TypeChoices.TAREFA, subject="Minha tarefa",
+            due_date=agora, tenant=cls.tenant,
+            assigned_to_content_type=ct_usuario, assigned_to_object_id=cls.user.pk,
+        )
+        lead_alheio = Lead.objects.create(
+            first_name="Beto", last_name="Lima", email="beto@exemplo.com",
+            assigned_to=cls.outro, tenant=cls.tenant,
+        )
+        Interaction.objects.create(
+            type=Interaction.TypeChoices.REUNIAO, subject="Tarefa alheia",
+            due_date=agora, lead=lead_alheio, tenant=cls.tenant,
+        )
+
+    def test_nao_staff_lista_so_o_que_e_seu_sem_500(self):
+        self.autenticar(self.user)
+
+        resp = self.client.get("/api/crm/interactions/")
+
+        self.assertEqual(resp.status_code, 200)
+        assuntos = {i["subject"] for i in resp.json()}
+        self.assertEqual(assuntos, {"Minha tarefa"})
+
+    def test_filtros_da_agenda_funcionam(self):
+        self.autenticar(self.user)
+
+        resp = self.client.get("/api/crm/interactions/", {"type": "REUNIAO"})
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), [])

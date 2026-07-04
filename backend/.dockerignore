@@ -1,0 +1,14 @@
+# Mantém o contexto de build do ERP enxuto.
+**/node_modules
+**/__pycache__
+**/*.pyc
+**/.env
+db.sqlite3
+*.sqlite3
+media/
+nfe_xmls/
+funcoesnf/php-support/vendor/
+**/*.log
+**/combined.log
+**/error.log
+.git

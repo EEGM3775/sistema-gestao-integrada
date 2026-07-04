@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    /* Marca */
+    --color-brand:        #0A2A5B;
+    --color-brand-dark:   #082247;
+    --color-brand-app:    #0f1f3d;
+    --color-brand-surface:#1a2f52;
+
+    /* Superfícies */
+    --color-bg:           #FFFFFF;
+    --color-bg-alt:       #F0F2F5;
+
+    /* Texto */
+    --color-text:         #495057;
+    --color-text-light:   #FFFFFF;
+    --color-text-muted:   #6c757d;
+
+    /* Feedback */
+    --color-success:      #1AAB7B;
+    --color-danger:       #ef4444;
+    --color-accent:       #f59e0b;
+
+    /* Tipografia */
+    --font-heading: 'Montserrat', sans-serif;
+    --font-body:    'Roboto', sans-serif;
+
+    /* Misc */
+    --border-radius: 8px;
+    --shadow-sm: 0 2px 8px rgba(0,0,0,0.06);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.10);
+    --shadow-lg: 0 10px 30px rgba(0,0,0,0.12);
+  }
+
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    font-family: var(--font-body);
+    color: var(--color-text);
+    background-color: var(--color-bg);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    line-height: 1.6;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-heading);
+    color: var(--color-brand);
+    line-height: 1.2;
+  }
+
+  a {
+    text-decoration: none;
+    color: inherit;
+  }
+
+  img {
+    max-width: 100%;
+    display: block;
+  }
+}

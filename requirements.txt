@@ -1,9 +1,12 @@
+pip-requirements
 Django
 djangorestframework
 djangorestframework-simplejwt
 psycopg2-binary
 celery
 redis
+django-filter
+django-redis
 gunicorn
 python-dotenv
 requests
@@ -11,3 +14,4 @@ Pillow
 pandas
 openpyxl
 weasyprint
+django-cors-headers

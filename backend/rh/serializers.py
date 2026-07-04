@@ -5,6 +5,7 @@ from .models import (
     Cargo,
     Funcionario,
     DadoMedicoFuncionario,
+    ASOFuncionario,
     DocumentoFuncionario,
     DadoBancarioFuncionario,
     PagamentoFuncionario,
@@ -21,12 +22,24 @@ class CargoSerializer(serializers.ModelSerializer):
         fields = '__all__' # Inclui todos os campos do modelo.
 
 class FuncionarioSerializer(serializers.ModelSerializer):
-    """
-    Serializador para o modelo Funcionário.
-    """
     class Meta:
         model = Funcionario
         fields = '__all__'
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        if request:
+            user = request.user
+            roles = getattr(user, 'iam_roles', []) or []
+            is_privileged = (
+                'rh_financeiro' in roles
+                or getattr(user, 'is_tenant_admin', False)
+                or getattr(user, 'is_superuser', False)
+            )
+            if not is_privileged:
+                data.pop('salario_base', None)
+        return data
 
 class DadoMedicoFuncionarioSerializer(serializers.ModelSerializer):
     """
@@ -34,6 +47,14 @@ class DadoMedicoFuncionarioSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = DadoMedicoFuncionario
+        fields = '__all__'
+
+class ASOFuncionarioSerializer(serializers.ModelSerializer):
+    """
+    Serializador para o modelo ASOFuncionario (registros de exame ocupacional, 1 por ano).
+    """
+    class Meta:
+        model = ASOFuncionario
         fields = '__all__'
 
 class DocumentoFuncionarioSerializer(serializers.ModelSerializer):

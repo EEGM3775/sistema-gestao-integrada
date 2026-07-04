@@ -1,6 +1,7 @@
 # empreendimentos/models.py
 from django.db import models
 from django.db.models import Q
+from nucleo.tenancy import TenantScopedModel
 from django.utils.translation import gettext_lazy as _
 
 # Choices for Empreendimento.status_empreendimento
@@ -42,7 +43,7 @@ TIPO_CUSTO_CHOICES = [
 ]
 
 
-class Empreendimento(models.Model):
+class Empreendimento(TenantScopedModel):
     empreendimento_id = models.AutoField(primary_key=True)
     empreendimento = models.CharField(max_length=255, verbose_name=_("Nome do Empreendimento"))
     razao_social = models.CharField(max_length=255, unique=True, verbose_name=_("Razão Social"))
@@ -75,7 +76,7 @@ class Empreendimento(models.Model):
         return self.empreendimento
 
 
-class ContaBancariaEmpreendimento(models.Model):
+class ContaBancariaEmpreendimento(TenantScopedModel):
     empreendimento = models.ForeignKey(Empreendimento, on_delete=models.CASCADE, related_name='contas_bancarias', verbose_name=_("Empreendimento"))
     codigo_banco = models.CharField(max_length=10, verbose_name=_("Código do Banco"))
     agencia = models.CharField(max_length=20, null=False, blank=False, verbose_name=_("Agência"))
@@ -101,7 +102,7 @@ class ContaBancariaEmpreendimento(models.Model):
         return f"{self.empreendimento.empreendimento} - {self.codigo_banco} - {self.agencia}/{self.conta}"
 
 
-class CustoEmpreendimento(models.Model):
+class CustoEmpreendimento(TenantScopedModel):
     custo_id = models.AutoField(primary_key=True)
     empreendimento = models.ForeignKey(Empreendimento, null=True, blank=True, on_delete=models.SET_NULL, related_name='custos', verbose_name=_("Empreendimento"))
     descricao = models.TextField(null=True, blank=True, verbose_name=_("Descrição do Custo"))
@@ -111,10 +112,10 @@ class CustoEmpreendimento(models.Model):
     valor = models.DecimalField(max_digits=15, decimal_places=2, null=False, blank=False, verbose_name=_("Preço Unitário"))
     quantidade = models.DecimalField(max_digits=15, decimal_places=2, null=False, blank=False, verbose_name=_("Quantidade"))
     data_custo = models.DateField(null=False, blank=False, verbose_name=_("Data do Custo"))
-    chave_acesso = models.CharField(max_length=44, unique=True, null=False, blank=False, verbose_name=_("Chave de Acesso"))
+    chave_acesso = models.CharField(max_length=44, unique=True, null=True, blank=True, verbose_name=_("Chave de Acesso NF-e"))
     data_emissao = models.DateTimeField(auto_now_add=True, null=False, verbose_name=_("Data de Emissão"))
     valor_total = models.DecimalField(max_digits=15, decimal_places=4, null=False, blank=False, verbose_name=_("Valor Total"))
-    arquivo_xml = models.FileField(upload_to="nfe_xmls/%Y/%m/", verbose_name=_("Arquivo XML"))
+    arquivo_xml = models.FileField(upload_to="nfe_xmls/%Y/%m/", null=True, blank=True, verbose_name=_("Arquivo XML NF-e"))
     data_upload = models.DateTimeField(auto_now_add=True, null=False, verbose_name=_("Data de Upload"))
     nota_fiscal = models.CharField(_("Nota Fiscal"), max_length=100, blank=True, null=True, db_index=True)
 

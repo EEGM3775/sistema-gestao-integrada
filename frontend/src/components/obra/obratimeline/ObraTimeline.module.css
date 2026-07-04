@@ -1,0 +1,71 @@
+.timeline {
+  position: relative;
+  padding-left: 24px;
+}
+
+.timeline::before {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #e0e4e8;
+}
+
+.entry {
+  position: relative;
+  margin-bottom: 20px;
+}
+
+.dot {
+  position: absolute;
+  left: -20px;
+  top: 4px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #3498db;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 2px #3498db;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid #e8ecf0;
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+
+.date {
+  font-size: 0.78rem;
+  color: #888;
+  text-transform: capitalize;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.desc {
+  margin: 0 0 8px;
+  font-size: 0.92rem;
+  color: #2c3e50;
+  line-height: 1.4;
+}
+
+.tag {
+  display: inline-block;
+  background: #e8f4fd;
+  color: #2980b9;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.78rem;
+  margin-right: 6px;
+}
+
+.problem {
+  margin: 6px 0 0;
+  font-size: 0.85rem;
+  color: #c0392b;
+}
+
+.empty { color: #aaa; font-style: italic; margin: 16px 0; }

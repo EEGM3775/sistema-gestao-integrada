@@ -25,7 +25,6 @@ def log_task_start(sender=None, task_id=None, task=None, args=None, kwargs=None,
         usuario=usuario,
         acao=f"Início da tarefa: {task.name}",
         entidade_alvo="CeleryTask",
-        alvo_id=task_id,
         detalhes={
             "task_id": task_id,
             "task_name": task.name,
@@ -85,7 +84,6 @@ def log_task_end(sender=None, task_id=None, task=None, args=None, kwargs=None, r
             usuario=usuario,
             acao=f"Fim da tarefa: {task.name} - {state}",
             entidade_alvo="CeleryTask",
-            alvo_id=task_id,
             detalhes={
                 "task_id": task_id,
                 "task_name": task.name,

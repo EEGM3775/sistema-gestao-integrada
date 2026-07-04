@@ -2,17 +2,19 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
-    DiarioObraViewSet, 
+    DiarioObraViewSet,
+    EntradaDiarioViewSet,
     DocumentoDiarioViewSet,
     documentos_com_analise,
     detalhes_documento_analise,
     reprocessar_analise,
-    status_analise
+    status_analise,
 )
 
 router = DefaultRouter()
-router.register(r'diarios', DiarioObraViewSet)
-router.register(r'documentos', DocumentoDiarioViewSet)
+router.register(r'diarios', DiarioObraViewSet, basename='diarioobra')
+router.register(r'entradas', EntradaDiarioViewSet, basename='entradadiario')
+router.register(r'documentos', DocumentoDiarioViewSet, basename='documentodiario')
 
 urlpatterns = [
     path('', include(router.urls)),

@@ -2,15 +2,23 @@ const djangoApi = require('./djangoApiService');
 const logger = require('../logger');
 const nodemailer = require('nodemailer');
 
-// TODO--- Configuração do Nodemailer (usar variáveis de ambiente em produção) ---
-const transporter = nodemailer.createTransport({
-    host: 'smtp.ethereal.email', // Usando Ethereal para testes
-    port: 587,
-    auth: {
-        user: 'madisen.conn@ethereal.email',
-        pass: 'g2j5T4bS4t6kC8nZ5c'
-    }
-});
+const config = require('../config');
+
+// Configuração do Nodemailer
+let transporter;
+if (config.mail.host && config.mail.user && config.mail.pass) {
+    transporter = nodemailer.createTransport({
+        host: config.mail.host,
+        port: config.mail.port,
+        secure: config.mail.port === 465, // true for 465, false for other ports
+        auth: {
+            user: config.mail.user,
+            pass: config.mail.pass
+        }
+    });
+} else {
+    logger.warn('Serviço de notificação por e-mail desabilitado. Configure as variáveis de ambiente MAIL_HOST, MAIL_USER e MAIL_PASS.');
+}
 
 /**
  * Busca tarefas próximas do vencimento.
@@ -42,6 +50,10 @@ async function getUpcomingTasks() {
  * @param {object} task A tarefa para a qual enviar a notificação.
  */
 async function sendNotificationEmail(task) {
+    if (!transporter) {
+        return; // Não envia e-mail se o transporter não estiver configurado
+    }
+
     if (!task.assigned_to) {
         logger.warn(`A tarefa ${task.id} não tem um responsável definido.`);
         return;
@@ -101,6 +113,11 @@ async function sendNotificationEmail(task) {
  * Inicia o worker de notificação para verificar tarefas periodicamente.
  */
 function startNotificationWorker() {
+    if (!transporter) {
+        logger.warn('Worker de notificação não iniciado pois o serviço de e-mail não está configurado.');
+        return;
+    }
+
     logger.info('Iniciando o Worker de Notificação de Tarefas.');
 
     // Executa a cada 1 hora (3600000 ms)

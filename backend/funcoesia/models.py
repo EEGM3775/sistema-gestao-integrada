@@ -2,8 +2,9 @@
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from modulodiario.models import DocumentoDiario
+from nucleo.tenancy import TenantScopedModel
 
-class AnaliseImagemIA(models.Model):
+class AnaliseImagemIA(TenantScopedModel):
     """
     Armazena o resultado estruturado da análise de uma imagem
     feita pelo microserviço de Inteligência Artificial.

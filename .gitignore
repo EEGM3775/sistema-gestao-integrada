@@ -84,9 +84,22 @@ secrets.env
 
 #Arquivos de terminal
 terminal.txt
+lista_testes.txt
 
 #arquivos php
 vendor/
 
 #pastas de media
 media/
+
+# --- Higiene do repo (nunca versionar aqui) ---
+# Repo git aninhado separado (~2.4 GB, tem .git próprio)
+ImgDrone/
+# Scratch de operação (scripts ad-hoc + logs de ngrok/webhook)
+.runtime/
+# Segredo OAuth do Google (funcoeslead) e afins
+client_secret_*.json
+# Lixo do Windows: device name reservado + alternate data streams de download
+# (o WSL representa o ':' do ADS como U+F03A, então casa-se pelo sufixo, sem o ':')
+nul
+*Zone.Identifier

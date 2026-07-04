@@ -63,9 +63,26 @@ const updateObject = async (endpoint, id, data) => {
     }
 };
 
+/**
+ * Deleta um objeto existente na API do Django.
+ * @param {string} endpoint O endpoint da API (ex: '/crm/leads/').
+ * @param {string} id O ID do objeto a ser deletado.
+ * @returns {Promise<void>}
+ */
+const deleteObject = async (endpoint, id) => {
+    try {
+        await apiClient.delete(`${endpoint}${id}/`);
+        logger.info(`Objeto ${id} deletado com sucesso de ${endpoint}`);
+    } catch (error) {
+        logger.error(`Erro ao deletar objeto ${id} de ${endpoint}:`, error.response?.data || error.message);
+        throw error;
+    }
+};
+
 module.exports = {
     getObject,
     createObject,
     updateObject,
+    deleteObject,
     apiClient // Exporta a instância para buscas mais complexas se necessário
 };

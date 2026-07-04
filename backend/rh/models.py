@@ -1,8 +1,9 @@
 # rh/models.py
 from django.db import models
 from django.utils.translation import gettext_lazy as _
+from nucleo.tenancy import TenantScopedModel
 
-class Cargo(models.Model):
+class Cargo(TenantScopedModel):
     cargo_id = models.AutoField(primary_key=True, verbose_name=_("ID do Cargo"))
     nome_cargo = models.CharField(max_length=100, unique=True, verbose_name=_("Nome do Cargo"))
     descricao = models.TextField(blank=True, verbose_name=_("Descrição"))
@@ -16,7 +17,7 @@ class Cargo(models.Model):
     def __str__(self):
         return self.nome_cargo
 
-class Funcionario(models.Model):
+class Funcionario(TenantScopedModel):
     GENERO_CHOICES = [
         ('masculino', _('Masculino')),
         ('feminino', _('Feminino')),
@@ -83,19 +84,7 @@ class Funcionario(models.Model):
     def __str__(self):
         return self.nome_completo
 
-class DadoMedicoFuncionario(models.Model):
-    TIPO_EXAME_ASO_CHOICES = [
-        ('admissional', _('Admissional')),
-        ('periodico', _('Periódico')),
-        ('demissional', _('Demissional')),
-    ]
-    STATUS_ASO_CHOICES = [
-        ('ativo', _('Ativo')),
-        ('inativo', _('Inativo')),
-        ('pendente', _('Pendente')),
-        ('cancelado', _('Cancelado')),
-    ]
-
+class DadoMedicoFuncionario(TenantScopedModel):
     funcionario = models.OneToOneField(Funcionario, on_delete=models.CASCADE, verbose_name=_("Funcionário"))
     numero_cartao_sus = models.CharField(max_length=20, null=True, blank=True, verbose_name=_("Número do Cartão SUS"))
     tipo_sanguineo = models.CharField(max_length=5, null=True, blank=True, verbose_name=_("Tipo Sanguíneo"))
@@ -104,12 +93,7 @@ class DadoMedicoFuncionario(models.Model):
     historico_doencas = models.TextField(null=True, blank=True, verbose_name=_("Histórico de Doenças"))
     contato_emergencia_nome = models.CharField(max_length=255, null=True, blank=True, verbose_name=_("Nome do Contato de Emergência"))
     contato_emergencia_telefone = models.CharField(max_length=20, null=True, blank=True, verbose_name=_("Telefone do Contato de Emergência"))
-    tipo_exame_aso = models.CharField(max_length=100, choices=TIPO_EXAME_ASO_CHOICES, null=True, blank=True, verbose_name=_("Tipo de Exame (ASO)"))
-    data_exame_aso = models.DateField(null=True, blank=True, verbose_name=_("Data do Exame (ASO)"))
-    data_validade_aso = models.DateField(null=True, blank=True, verbose_name=_("Data de Validade do Exame (ASO)"))
     observacoes_medicas = models.TextField(null=True, blank=True, verbose_name=_("Observações Médicas"))
-    status_aso = models.CharField(max_length=50, choices=STATUS_ASO_CHOICES, default='ativo', verbose_name=_("Status do Exame (ASO)"))
-    link_documento_aso = models.URLField(max_length=512, null=True, blank=True, verbose_name=_("Link do Documento do Exame (ASO)"))
 
     class Meta:
         verbose_name = _("Dado Médico do Funcionário")
@@ -118,7 +102,37 @@ class DadoMedicoFuncionario(models.Model):
     def __str__(self):
         return f"Dados Médicos - {self.funcionario.nome_completo} (Cartão SUS: {self.numero_cartao_sus})"
 
-class DocumentoFuncionario(models.Model):
+class ASOFuncionario(TenantScopedModel):
+    TIPO_EXAME_CHOICES = [
+        ('admissional', _('Admissional')),
+        ('periodico', _('Periódico')),
+        ('demissional', _('Demissional')),
+    ]
+    STATUS_CHOICES = [
+        ('ativo', _('Ativo')),
+        ('inativo', _('Inativo')),
+        ('pendente', _('Pendente')),
+        ('cancelado', _('Cancelado')),
+    ]
+
+    aso_id = models.AutoField(primary_key=True, verbose_name=_("ASO ID"))
+    funcionario = models.ForeignKey(Funcionario, on_delete=models.CASCADE, related_name='asos', verbose_name=_("Funcionário"))
+    tipo_exame = models.CharField(max_length=50, choices=TIPO_EXAME_CHOICES, verbose_name=_("Tipo de Exame"))
+    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='ativo', verbose_name=_("Status"))
+    data_exame = models.DateField(verbose_name=_("Data do Exame"))
+    data_validade = models.DateField(null=True, blank=True, verbose_name=_("Data de Validade"))
+    arquivo = models.FileField(upload_to='asos_funcionarios/', null=True, blank=True, verbose_name=_("Documento ASO"))
+    observacoes = models.TextField(null=True, blank=True, verbose_name=_("Observações"))
+
+    class Meta:
+        verbose_name = _("ASO do Funcionário")
+        verbose_name_plural = _("ASOs dos Funcionários")
+        ordering = ['-data_exame']
+
+    def __str__(self):
+        return f"ASO {self.get_tipo_exame_display()} - {self.funcionario.nome_completo} ({self.data_exame})"
+
+class DocumentoFuncionario(TenantScopedModel):
     TIPO_DOCUMENTO_CHOICES = [
         ('rg', _('RG')),
         ('cpf', _('CPF')),
@@ -145,7 +159,7 @@ class DocumentoFuncionario(models.Model):
     def __str__(self):
         return f"{self.get_tipo_documento_display()} de {self.funcionario.nome_completo}"
 
-class DadoBancarioFuncionario(models.Model):
+class DadoBancarioFuncionario(TenantScopedModel):
     TIPO_CONTA_CHOICES = [
         ('corrente', _('Conta Corrente')),
         ('poupanca', _('Conta Poupança')),
@@ -178,7 +192,7 @@ class DadoBancarioFuncionario(models.Model):
     def __str__(self):
         return f"Dados Bancários de {self.funcionario.nome_completo}"
 
-class PagamentoFuncionario(models.Model):
+class PagamentoFuncionario(TenantScopedModel):
     FORMA_PAGAMENTO_CHOICES = [
         ('dinheiro', _('Dinheiro')),
         ('cartao_credito', _('Cartão de Crédito')),
@@ -217,7 +231,7 @@ class PagamentoFuncionario(models.Model):
     def __str__(self):
         return f"Pagamento de {self.funcionario.nome_completo} - {self.data_pagamento} - Parcela {self.parcela}"
 
-class FolhaPagamento(models.Model):
+class FolhaPagamento(TenantScopedModel):
     folha_id = models.AutoField(primary_key=True)
     funcionario = models.ForeignKey(Funcionario, on_delete=models.CASCADE, related_name='folhas_pagamento', verbose_name=_("Funcionário"))
     mes_referencia = models.DateField(verbose_name=_("Mês de Referência"))

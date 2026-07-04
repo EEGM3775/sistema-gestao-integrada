@@ -1,0 +1,59 @@
+# ============================================================
+# Gateway de borda (Fase 2) — domínio único para ERP + drone + IAM.
+#
+# Sobe SÓ o nginx do gateway, reaproveitando os containers do funcoesODM
+# (rede externa) e os serviços do host (ERP/IAM/React) via host.docker.internal.
+# O compose unificado com todos os serviços é a Fase 4.
+#
+# Pré-requisitos (rodando à parte):
+#   - funcoesODM no ar:  cd ImgDrone/funcoesODM && docker compose up -d
+#   - IAM   no host:     cd iam     && ../.venv/bin/python manage.py runserver 8001
+#   - ERP   no host:     cd backend && ../.venv/bin/python manage.py runserver 8000
+#   - React no host:     cd frontend && npm run dev    (vite em 5173)
+#
+# Uso:
+#   docker compose -f infra/gateway/docker-compose.gateway.yml up -d
+#   # abra http://localhost:8090/
+# ============================================================
+
+services:
+  gateway:
+    image: nginx:alpine
+    container_name: sgi-gateway
+    ports:
+      - "${GATEWAY_PORT:-8090}:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    extra_hosts:
+      # Garante host.docker.internal mesmo fora do Docker Desktop (Linux).
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - react
+    networks:
+      - funcoesodm
+    restart: unless-stopped
+
+  # Shell React (ERP) em container — o host não tem Node. Roda o vite dev
+  # servindo a SPA; o browser fala com o gateway (mesma origem), não com este
+  # container diretamente. node_modules é instalado no volume nomeado (rápido
+  # e isolado do bind-mount do código).
+  react:
+    image: node:22-alpine   # vite 7 exige Node ^20.19 || >=22.12
+    container_name: sgi-react
+    working_dir: /app
+    command: sh -c "npm install --no-audit --no-fund --legacy-peer-deps && npm run dev -- --host 0.0.0.0 --port 5173"
+    volumes:
+      - ../../frontend:/app
+      - react_node_modules:/app/node_modules
+    networks:
+      - funcoesodm
+    restart: unless-stopped
+
+volumes:
+  react_node_modules:
+
+networks:
+  # Rede já criada pelo compose do funcoesODM (containers do drone).
+  funcoesodm:
+    external: true
+    name: funcoesodm_funcoesodm-network

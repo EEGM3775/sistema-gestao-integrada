@@ -1,0 +1,2 @@
+# As chaves do JWT (RS256) NÃO são versionadas. Gere-as com generate.sh.
+*.pem

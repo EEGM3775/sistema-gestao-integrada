@@ -5,22 +5,28 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
-from .models import Usuario, Perfil, Permissao, LogAtividadeUsuario
+from .models import Usuario, LogAtividadeUsuario, ConfiguracaoArquivos
+from .permissions import IsDataAdminOrStaff
+from .tenancy import TenantScopedViewSetMixin
 from .serializers import (
     UsuarioSerializer,
-    PerfilSerializer,
-    PermissaoSerializer,
     LogAtividadeUsuarioSerializer
 )
 
-class UsuarioViewSet(viewsets.ModelViewSet):
+class UsuarioViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     """
     Endpoint da API para visualizar e editar usuários.
     A segurança aqui é crucial e deve ser reforçada com permissões.
     """
     queryset = Usuario.objects.all()
     serializer_class = UsuarioSerializer
-    # permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if getattr(user, 'is_superuser', False) or getattr(user, 'is_staff', False) or getattr(user, 'is_data_admin', False):
+            return Usuario.objects.all()
+        return Usuario.objects.filter(pk=user.pk)
     
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def me(self, request):
@@ -30,21 +36,9 @@ class UsuarioViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(request.user)
         return Response(serializer.data)
 
-class PerfilViewSet(viewsets.ModelViewSet):
-    """
-    Endpoint da API para visualizar e editar perfis de usuário.
-    """
-    queryset = Perfil.objects.all()
-    serializer_class = PerfilSerializer
-    # permission_classes = [permissions.IsAuthenticated]
-
-class PermissaoViewSet(viewsets.ModelViewSet):
-    """
-    Endpoint da API para visualizar e editar permissões do sistema.
-    """
-    queryset = Permissao.objects.all()
-    serializer_class = PermissaoSerializer
-    # permission_classes = [permissions.IsAuthenticated]
+# Perfil/Permissao saíram do ERP (Fase 6): a IAM é a autoridade de papéis e
+# permissões; o ERP os lê das claims do JWT (`request.user.iam_roles`). Os
+# modelos locais nucleo.Perfil/Permissao ficam só como espelho legado.
 
 class LogAtividadeUsuarioViewSet(viewsets.ReadOnlyModelViewSet):
     """
@@ -53,7 +47,32 @@ class LogAtividadeUsuarioViewSet(viewsets.ReadOnlyModelViewSet):
     """
     queryset = LogAtividadeUsuario.objects.all()
     serializer_class = LogAtividadeUsuarioSerializer
-    # permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsDataAdminOrStaff]
+
+_DEFAULT_TIPOS = [
+    'application/pdf', 'image/jpeg', 'image/png',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+]
+
+class ConfiguracaoUploadView(APIView):
+    """Retorna a configuração de upload de arquivos para o tenant do usuário."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        tid = getattr(getattr(request, 'user', None), 'tenant_id', None)
+        obj = None
+        if tid:
+            obj = ConfiguracaoArquivos.objects.filter(tenant_id=tid).first()
+        if obj is None:
+            obj = ConfiguracaoArquivos.objects.filter(tenant__isnull=True).first()
+        if obj is None:
+            return Response({'max_tamanho_mb': 10, 'tipos_aceitos': _DEFAULT_TIPOS})
+        return Response({
+            'max_tamanho_mb': obj.max_tamanho_mb,
+            'tipos_aceitos': obj.tipos_aceitos or _DEFAULT_TIPOS,
+        })
+
 
 class LogInternoView(APIView):
     """

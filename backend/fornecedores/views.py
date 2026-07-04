@@ -1,6 +1,7 @@
 # backend/fornecedores/views.py
-# Define a lógica da API (endpoints) para o app 'fornecedores'.
-from rest_framework import viewsets
+from rest_framework import viewsets, permissions, filters
+from django_filters.rest_framework import DjangoFilterBackend
+from nucleo.tenancy import TenantScopedViewSetMixin
 from .models import (
     Fornecedor,
     DadoBancarioFornecedor,
@@ -12,27 +13,32 @@ from .serializers import (
     ProdutoServicoFornecedorSerializer
 )
 
-class FornecedorViewSet(viewsets.ModelViewSet):
-    """
-    Endpoint da API para visualizar e editar fornecedores.
-    """
-    queryset = Fornecedor.objects.all()
+
+class FornecedorViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    queryset = Fornecedor.objects.all().order_by('razao_social')
     serializer_class = FornecedorSerializer
-    # permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['cnpj']
+    search_fields = ['razao_social', 'cnpj', 'email', 'contato', 'telefone']
+    ordering_fields = ['razao_social']
+    ordering = ['razao_social']
+    permission_classes = [permissions.IsAuthenticated]
 
 
-class DadoBancarioFornecedorViewSet(viewsets.ModelViewSet):
-    """
-    Endpoint da API para visualizar e editar dados bancários de fornecedores.
-    """
-    queryset = DadoBancarioFornecedor.objects.all()
+class DadoBancarioFornecedorViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    queryset = DadoBancarioFornecedor.objects.all().order_by('fornecedor')
     serializer_class = DadoBancarioFornecedorSerializer
-    # permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['fornecedor']
+    permission_classes = [permissions.IsAuthenticated]
 
-class ProdutoServicoFornecedorViewSet(viewsets.ModelViewSet):
-    """
-    Endpoint da API para visualizar e editar produtos e serviços de fornecedores.
-    """
-    queryset = ProdutoServicoFornecedor.objects.all()
+
+class ProdutoServicoFornecedorViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    queryset = ProdutoServicoFornecedor.objects.all().order_by('nome_produto_servico')
     serializer_class = ProdutoServicoFornecedorSerializer
-    # permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['fornecedor', 'tipo_produto_servico']
+    search_fields = ['nome_produto_servico', 'descricao']
+    ordering_fields = ['nome_produto_servico', 'preco_unitario', 'data_cotacao']
+    ordering = ['nome_produto_servico']
+    permission_classes = [permissions.IsAuthenticated]

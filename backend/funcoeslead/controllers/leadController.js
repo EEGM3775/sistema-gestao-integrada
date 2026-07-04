@@ -1,5 +1,6 @@
 // backend/funcoeslead/controllers/leadController.js
 const leadConversionService = require('../services/leadConversionService');
+const leadScoringService = require('../services/leadScoringService');
 const logger = require('../logger');
 
 /**
@@ -25,6 +26,26 @@ async function convertLeadController(req, res) {
     }
 }
 
+async function scoreLeadController(req, res) {
+    const { leadId } = req.params;
+
+    if (!leadId) {
+        return res.status(400).json({ error: 'O ID do Lead é obrigatório.' });
+    }
+
+    try {
+        logger.info(`Requisição recebida para pontuar o Lead ID: ${leadId}`);
+        const result = await leadScoringService.scoreLead(leadId);
+        res.status(200).json(result);
+    } catch (error) {
+        logger.error(`Erro no controller ao pontuar o Lead ${leadId}:`, error);
+        const statusCode = error.response?.status || 500;
+        const errorMessage = error.message || 'Ocorreu um erro interno no servidor.';
+        res.status(statusCode).json({ error: errorMessage, details: error.response?.data });
+    }
+}
+
 module.exports = {
-    convertLeadController
+    convertLeadController,
+    scoreLeadController
 };

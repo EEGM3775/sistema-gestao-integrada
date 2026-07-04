@@ -16,10 +16,12 @@ app.get('/', (req, res) => {
 // Rotas da aplicação
 const leadRoutes = require('./routes/leadRoutes');
 const agendaRoutes = require('./routes/agendaRoutes');
+const productRoutes = require('./routes/productRoutes');
 const notificationService = require('./services/notificationService');
 
 app.use('/api/leads', leadRoutes);
 app.use('/api', agendaRoutes);
+app.use('/api/products', productRoutes);
 
 // Iniciar o worker de notificação
 notificationService.startNotificationWorker();

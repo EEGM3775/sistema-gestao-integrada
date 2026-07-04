@@ -6,7 +6,8 @@ from .views import (
     AccountViewSet,
     ContactViewSet,
     OpportunityViewSet,
-    InteractionViewSet
+    InteractionViewSet,
+    OpportunityProductViewSet
 )
 
 router = DefaultRouter()
@@ -14,6 +15,7 @@ router.register(r'leads', LeadViewSet, basename='lead')
 router.register(r'accounts', AccountViewSet, basename='account')
 router.register(r'contacts', ContactViewSet, basename='contact')
 router.register(r'opportunities', OpportunityViewSet, basename='opportunity')
+router.register(r'opportunity-products', OpportunityProductViewSet, basename='opportunity-product')
 router.register(r'interactions', InteractionViewSet, basename='interaction')
 
 urlpatterns = [

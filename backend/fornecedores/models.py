@@ -1,11 +1,12 @@
 # fornecedores/models.py
 from django.db import models
 from django.utils.translation import gettext_lazy as _
+from nucleo.tenancy import TenantScopedModel
 
-class Fornecedor(models.Model):
+class Fornecedor(TenantScopedModel):
     fornecedor_id = models.AutoField(primary_key=True, verbose_name=_("ID do Fornecedor"))
     razao_social = models.CharField(max_length=255, unique=True, verbose_name=_("Razão Social"))
-    cnpj = models.CharField(max_length=18, unique=True, verbose_name=_("CNPJ"))
+    cnpj = models.CharField(max_length=18, unique=True, null=True, blank=True, verbose_name=_("CNPJ"))
     contato = models.CharField(max_length=100, blank=True, verbose_name=_("Contato"))
     email = models.EmailField(max_length=255, unique=True, verbose_name=_("E-mail"))
     telefone = models.CharField(max_length=20, blank=True, verbose_name=_("Telefone"))
@@ -18,7 +19,7 @@ class Fornecedor(models.Model):
     def __str__(self):
         return self.razao_social
 
-class DadoBancarioFornecedor(models.Model):
+class DadoBancarioFornecedor(TenantScopedModel):
     TIPO_CONTA_CHOICES = [
         ('corrente', _('Conta Corrente')),
         ('poupanca', _('Conta Poupança')),
@@ -45,7 +46,7 @@ class DadoBancarioFornecedor(models.Model):
     def __str__(self):
         return f"Dados Bancários de {self.fornecedor.razao_social} - Banco {self.codigo_banco}"
 
-class ProdutoServicoFornecedor(models.Model):
+class ProdutoServicoFornecedor(TenantScopedModel):
     TIPO_PRODUTO_SERVICO_CHOICES = [
         ('aluguel', _('Aluguel')),
         ('aluguel_equipamento', _('Aluguel de Equipamento')),

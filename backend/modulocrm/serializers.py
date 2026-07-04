@@ -1,15 +1,15 @@
 # backend/modulocrm/serializers.py
 from rest_framework import serializers
-from .models import Lead, Account, Contact, Opportunity, Interaction
+from .models import Lead, Account, Contact, Opportunity, Interaction, OpportunityProduct
 from nucleo.serializers import UsuarioSerializer
 
 from rest_framework import serializers
-from .models import Lead, Account, Contact, Opportunity, Interaction
+from .models import Lead, Account, Contact, Opportunity, Interaction, OpportunityProduct
 from nucleo.serializers import UsuarioSerializer
-from fornecedores.serializers import FornecedorSerializer
+from fornecedores.serializers import FornecedorSerializer, ProdutoServicoFornecedorSerializer
 from rh.serializers import FuncionarioSerializer
 from nucleo.models import Usuario
-from fornecedores.models import Fornecedor
+from fornecedores.models import Fornecedor, ProdutoServicoFornecedor
 from rh.models import Funcionario
 
 class GenericObjectRelatedField(serializers.RelatedField):
@@ -38,6 +38,21 @@ class InteractionSerializer(serializers.ModelSerializer):
         model = Interaction
         fields = '__all__'
 
+
+# Serializer for OpportunityProduct
+class OpportunityProductSerializer(serializers.ModelSerializer):
+    product = ProdutoServicoFornecedorSerializer(read_only=True)
+    product_id = serializers.PrimaryKeyRelatedField(
+        queryset=ProdutoServicoFornecedor.objects.all(),
+        write_only=True,
+        source='product'
+    )
+
+    class Meta:
+        model = OpportunityProduct
+        fields = '__all__'
+
+
 # Serializer para Oportunidades
 class OpportunitySerializer(serializers.ModelSerializer):
     assigned_to = UsuarioSerializer(read_only=True)
@@ -61,6 +76,8 @@ class OpportunitySerializer(serializers.ModelSerializer):
         allow_null=True
     )
     interactions = InteractionSerializer(many=True, read_only=True)
+    products = OpportunityProductSerializer(many=True, read_only=True)
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
 
     class Meta:
         model = Opportunity

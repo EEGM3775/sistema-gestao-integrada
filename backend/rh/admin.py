@@ -6,6 +6,7 @@ from .models import (
     Cargo,
     Funcionario,
     DadoMedicoFuncionario,
+    ASOFuncionario,
     DocumentoFuncionario,
     DadoBancarioFuncionario,
     PagamentoFuncionario,
@@ -22,9 +23,19 @@ class DadoMedicoFuncionarioInline(admin.StackedInline):
         'alergias',
         'medicamentos',
         'historico_doencas',
-        ('tipo_exame_aso', 'data_exame_aso', 'data_validade_aso'),
-        'status_aso',
         'observacoes_medicas'
+    )
+
+
+class ASOFuncionarioInline(admin.TabularInline):
+    model = ASOFuncionario
+    extra = 0
+    fields = (
+        'tipo_exame',
+        'data_exame',
+        'data_validade',
+        'status',
+        'arquivo'
     )
 
 
@@ -196,6 +207,7 @@ class FuncionarioAdmin(admin.ModelAdmin):
     
     inlines = [
         DadoMedicoFuncionarioInline,
+        ASOFuncionarioInline,
         DocumentoFuncionarioInline,
         DadoBancarioFuncionarioInline,
         PagamentoFuncionarioInline
@@ -207,16 +219,10 @@ class DadoMedicoFuncionarioAdmin(admin.ModelAdmin):
     list_display = (
         'funcionario',
         'numero_cartao_sus',
-        'tipo_sanguineo',
-        'tipo_exame_aso',
-        'data_validade_aso',
-        'status_aso'
+        'tipo_sanguineo'
     )
     list_filter = (
-        'tipo_exame_aso',
-        'status_aso',
         'tipo_sanguineo',
-        'data_exame_aso'
     )
     search_fields = (
         'funcionario__nome_completo',
@@ -245,15 +251,6 @@ class DadoMedicoFuncionarioAdmin(admin.ModelAdmin):
             'fields': (
                 'contato_emergencia_nome',
                 'contato_emergencia_telefone'
-            )
-        }),
-        (_('ASO - Atestado de Saúde Ocupacional'), {
-            'fields': (
-                'tipo_exame_aso',
-                'data_exame_aso',
-                'data_validade_aso',
-                'status_aso',
-                'link_documento_aso'
             )
         }),
         (_('Observações'), {
@@ -298,6 +295,51 @@ class DocumentoFuncionarioAdmin(admin.ModelAdmin):
                 'nome_documento',
                 'arquivo',
                 'data_upload'
+            )
+        }),
+    )
+
+
+@admin.register(ASOFuncionario)
+class ASOFuncionarioAdmin(admin.ModelAdmin):
+    list_display = (
+        'aso_id',
+        'funcionario',
+        'tipo_exame',
+        'data_exame',
+        'data_validade',
+        'status'
+    )
+    list_filter = (
+        'tipo_exame',
+        'status',
+        'data_exame'
+    )
+    search_fields = (
+        'funcionario__nome_completo',
+    )
+    ordering = ('-data_exame',)
+    readonly_fields = ('aso_id',)
+
+    fieldsets = (
+        (_('Identificação'), {
+            'fields': (
+                'aso_id',
+                'funcionario',
+                'tipo_exame',
+                'status'
+            )
+        }),
+        (_('Exame'), {
+            'fields': (
+                'data_exame',
+                'data_validade',
+                'arquivo'
+            )
+        }),
+        (_('Observações'), {
+            'fields': (
+                'observacoes',
             )
         }),
     )

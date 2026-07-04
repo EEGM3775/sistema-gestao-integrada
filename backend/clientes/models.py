@@ -1,6 +1,7 @@
 # clientes/models.py
 from django.db import models
 from django.core.validators import RegexValidator
+from nucleo.tenancy import TenantScopedModel
 from django.utils.translation import gettext_lazy as _
 
 # Reusable validator
@@ -9,7 +10,7 @@ cpf_cnpj_validator = RegexValidator(
     message=_("O CPF/CNPJ deve conter apenas números.")
 )
 
-class Cliente(models.Model):
+class Cliente(TenantScopedModel):
     """
     Armazena os dados cadastrais dos clientes.
     """
@@ -49,7 +50,7 @@ class Cliente(models.Model):
         ordering = ['nome_completo']
 
 
-class ClienteEmpreendimento(models.Model):
+class ClienteEmpreendimento(TenantScopedModel):
     """
     Vincula um cliente a um empreendimento específico, registrando a aquisição.
     """
@@ -58,6 +59,8 @@ class ClienteEmpreendimento(models.Model):
         ('financiamento_bancario', _('Financiamento Bancário')),
         ('financiamento_direto', _('Financiamento Direto com a Construtora')),
         ('permuta', _('Permuta')),
+        ('cartao', _('Cartão de Crédito/Débito')),
+        ('outro', _('Outro')),
     ]
 
     cliente_empreendimento_id = models.AutoField(primary_key=True)
@@ -79,7 +82,7 @@ class ClienteEmpreendimento(models.Model):
         unique_together = ('empreendimento', 'unidade_comprada')
 
 
-class ContratoCliente(models.Model):
+class ContratoCliente(TenantScopedModel):
     """
     Mantém os contratos firmados com os clientes.
     """
@@ -110,7 +113,7 @@ class ContratoCliente(models.Model):
         verbose_name_plural = _("Contratos dos Clientes")
 
 
-class DocumentoCliente(models.Model):
+class DocumentoCliente(TenantScopedModel):
     """
     Armazena documentos diversos dos clientes (RG, CPF, etc.).
     """
@@ -138,7 +141,7 @@ class DocumentoCliente(models.Model):
         verbose_name_plural = _("Documentos dos Clientes")
 
 
-class DadoBancarioCliente(models.Model):
+class DadoBancarioCliente(TenantScopedModel):
     """
     Guarda as informações bancárias dos clientes para faturamento.
     Relação One-to-One com Cliente.

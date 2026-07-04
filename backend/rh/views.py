@@ -1,13 +1,17 @@
 # backend/rh/views.py
 # Este arquivo define a lógica da API (endpoints) para o app 'rh'.
 # Cada ViewSet agrupa as operações CRUD (Create, Retrieve, Update, Delete) para um modelo.
-from rest_framework import viewsets
+from rest_framework import viewsets, permissions, filters
 from django.db.models import Q
 import re
+from django_filters.rest_framework import DjangoFilterBackend
+from nucleo.tenancy import TenantScopedViewSetMixin
+from nucleo.permissions import RequireModule, RequireRole
 from .models import (
     Cargo,
     Funcionario,
     DadoMedicoFuncionario,
+    ASOFuncionario,
     DocumentoFuncionario,
     DadoBancarioFuncionario,
     PagamentoFuncionario,
@@ -17,28 +21,29 @@ from .serializers import (
     CargoSerializer,
     FuncionarioSerializer,
     DadoMedicoFuncionarioSerializer,
+    ASOFuncionarioSerializer,
     DocumentoFuncionarioSerializer,
     DadoBancarioFuncionarioSerializer,
     PagamentoFuncionarioSerializer,
     FolhaPagamentoSerializer
 )
 
-class CargoViewSet(viewsets.ModelViewSet):
-    """
-    Endpoint da API para visualizar e editar cargos.
-    """
-    queryset = Cargo.objects.all()
+class CargoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    queryset = Cargo.objects.all().order_by('nome_cargo')
     serializer_class = CargoSerializer
-    # permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, RequireModule]
+    required_module = "rh"
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    search_fields = ['nome_cargo', 'departamento']
 
-class FuncionarioViewSet(viewsets.ModelViewSet):
-    """
-    Endpoint da API para visualizar e editar funcionários.
-    Inclui lógica especial para busca por telefone que normaliza os números.
-    """
-    queryset = Funcionario.objects.all()
+class FuncionarioViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    queryset = Funcionario.objects.all().order_by('nome_completo')
     serializer_class = FuncionarioSerializer
-    # permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, RequireModule]
+    required_module = "rh"
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filterset_fields = ['status_contrato', 'cargo']
+    search_fields = ['nome_completo', 'cpf', 'email_pessoal']
     
     def get_queryset(self):
         """
@@ -87,42 +92,55 @@ class FuncionarioViewSet(viewsets.ModelViewSet):
         
         return queryset
 
-class DadoMedicoFuncionarioViewSet(viewsets.ModelViewSet):
-    """
-    Endpoint da API para visualizar e editar dados médicos de funcionários.
-    """
+class DadoMedicoFuncionarioViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     queryset = DadoMedicoFuncionario.objects.all()
     serializer_class = DadoMedicoFuncionarioSerializer
-    # permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequireRole]
+    required_module = "rh"
+    required_role = "rh_medico"
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['funcionario']
 
-class DocumentoFuncionarioViewSet(viewsets.ModelViewSet):
-    """
-    Endpoint da API para visualizar e editar documentos de funcionários.
-    """
-    queryset = DocumentoFuncionario.objects.all()
+class ASOFuncionarioViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    queryset = ASOFuncionario.objects.all().order_by('-data_exame')
+    serializer_class = ASOFuncionarioSerializer
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequireRole]
+    required_module = "rh"
+    required_role = "rh_medico"
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['funcionario']
+
+class DocumentoFuncionarioViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    queryset = DocumentoFuncionario.objects.all().order_by('-data_upload')
     serializer_class = DocumentoFuncionarioSerializer
-    # permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, RequireModule]
+    required_module = "rh"
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['funcionario']
 
-class DadoBancarioFuncionarioViewSet(viewsets.ModelViewSet):
-    """
-    Endpoint da API para visualizar e editar dados bancários de funcionários.
-    """
+class DadoBancarioFuncionarioViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     queryset = DadoBancarioFuncionario.objects.all()
     serializer_class = DadoBancarioFuncionarioSerializer
-    # permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequireRole]
+    required_module = "rh"
+    required_role = "rh_financeiro"
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['funcionario']
 
-class PagamentoFuncionarioViewSet(viewsets.ModelViewSet):
-    """
-    Endpoint da API para visualizar e editar pagamentos de funcionários.
-    """
-    queryset = PagamentoFuncionario.objects.all()
+class PagamentoFuncionarioViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    queryset = PagamentoFuncionario.objects.all().order_by('-data_pagamento')
     serializer_class = PagamentoFuncionarioSerializer
-    # permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequireRole]
+    required_module = "rh"
+    required_role = "rh_financeiro"
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['funcionario']
 
-class FolhaPagamentoViewSet(viewsets.ModelViewSet):
-    """
-    Endpoint da API para visualizar e editar folhas de pagamento.
-    """
-    queryset = FolhaPagamento.objects.all()
+class FolhaPagamentoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    queryset = FolhaPagamento.objects.all().order_by('-mes_referencia')
     serializer_class = FolhaPagamentoSerializer
-    # permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequireRole]
+    required_module = "rh"
+    required_role = "rh_financeiro"
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['funcionario']

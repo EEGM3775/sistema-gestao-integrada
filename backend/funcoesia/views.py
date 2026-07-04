@@ -1,6 +1,7 @@
 # backend/funcoesia/views.py
 from rest_framework import viewsets, mixins, status
 from rest_framework.decorators import api_view, permission_classes
+from nucleo.tenancy import TenantScopedViewSetMixin
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.http import JsonResponse
@@ -9,7 +10,8 @@ from .serializers import AnaliseImagemIASerializer
 import requests
 from django.conf import settings
 
-class AnaliseImagemIAViewSet(mixins.CreateModelMixin,
+class AnaliseImagemIAViewSet(TenantScopedViewSetMixin,
+                               mixins.CreateModelMixin,
                                mixins.RetrieveModelMixin,
                                mixins.UpdateModelMixin,
                                mixins.ListModelMixin,

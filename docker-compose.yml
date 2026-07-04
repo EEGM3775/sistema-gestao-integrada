@@ -1,0 +1,275 @@
+# ============================================================
+# Plataforma SGI — compose UNIFICADO (Fase 4).
+#
+# Perfis:
+#   (sem perfil)  -> só infra: postgres + redis
+#   --profile full -> plataforma inteira: IAM, ERP, React, funcoesODM e gateway
+#
+# Uso:
+#   cp .env.example .env
+#   docker compose up -d                 # só infra (postgres + redis)
+#   docker compose --profile full up -d  # tudo; abra http://localhost:8090/
+#
+# Tudo numa rede só (sgi). Os nomes de serviço java-service / nodeodm /
+# drone-nginx / funcoesodm-db são referenciados em configs internas do drone.
+# ============================================================
+
+services:
+  # ---------- INFRA (sempre) ----------
+
+  # PostgreSQL — cluster de registro do IAM e do ERP (bancos iam_db e erp_db)
+  postgres:
+    image: postgres:16-alpine
+    container_name: sgi-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_SUPERUSER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERPASSWORD:-postgres}
+      POSTGRES_DB: postgres
+      ERP_DB: ${POSTGRES_DB:-erp_db}
+      ERP_USER: ${POSTGRES_USER:-erp_app}
+      ERP_PASSWORD: ${POSTGRES_PASSWORD:-erp_app_senha_dev}
+      IAM_DB: ${IAM_POSTGRES_DB:-iam_db}
+      IAM_USER: ${IAM_POSTGRES_USER:-iam_app}
+      IAM_PASSWORD: ${IAM_POSTGRES_PASSWORD:-iam_app_senha_dev}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_SUPERUSER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [sgi]
+    restart: unless-stopped
+
+  # Redis — cache do Django + broker/result do Celery
+  redis:
+    image: redis:7-alpine
+    container_name: sgi-redis
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [sgi]
+    restart: unless-stopped
+
+  # ---------- IAM (identidade / SSO) ----------
+  iam:
+    build: ./iam
+    container_name: sgi-iam
+    profiles: ["full"]
+    environment:
+      IAM_SECRET_KEY: ${IAM_SECRET_KEY:-django-insecure-iam-dev}
+      IAM_DEBUG: ${IAM_DEBUG:-True}
+      IAM_ALLOWED_HOSTS: ${IAM_ALLOWED_HOSTS:-localhost,127.0.0.1,iam,gateway}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ACCESS_MINUTES: ${JWT_ACCESS_MINUTES:-60}
+      JWT_REFRESH_DAYS: ${JWT_REFRESH_DAYS:-7}
+      IAM_POSTGRES_DB: ${IAM_POSTGRES_DB:-iam_db}
+      IAM_POSTGRES_USER: ${IAM_POSTGRES_USER:-iam_app}
+      IAM_POSTGRES_PASSWORD: ${IAM_POSTGRES_PASSWORD:-iam_app_senha_dev}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_SSLMODE: disable
+      # Fase 5: RS256. A IAM detém a chave privada (assina); a pública vira JWKS.
+      JWT_PRIVATE_KEY_PATH: /keys/jwt_private.pem
+      JWT_PUBLIC_KEY_PATH: /keys/jwt_public.pem
+    volumes:
+      - ./infra/keys:/keys:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/admin/login/')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks: [sgi]
+    restart: unless-stopped
+
+  # ---------- ERP (Django, resource server da IAM) ----------
+  erp:
+    build: ./backend
+    container_name: sgi-erp
+    profiles: ["full"]
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-django-insecure-erp-dev}
+      DEBUG: ${DEBUG:-True}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1,erp,gateway}
+      JWT_SECRET: ${JWT_SECRET}
+      POSTGRES_DB: ${POSTGRES_DB:-erp_db}
+      POSTGRES_USER: ${POSTGRES_USER:-erp_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-erp_app_senha_dev}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_SSLMODE: disable
+      REDIS_URL: redis://redis:6379/0
+      # Fase 5: valida RS256 com a chave pública da IAM (não conhece a privada).
+      JWT_PUBLIC_KEY_PATH: /keys/jwt_public.pem
+      # D.1.2: integração de cobrança Asaas (sandbox em dev) — services.py/client.py.
+      ASAAS_BASE_URL: ${ASAAS_BASE_URL:-https://api-sandbox.asaas.com/v3}
+      ASAAS_API_KEY: ${ASAAS_API_KEY:-}
+      ASAAS_WEBHOOK_TOKEN: ${ASAAS_WEBHOOK_TOKEN:-}
+    volumes:
+      - ./infra/keys:/keys:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/admin/login/')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks: [sgi]
+    restart: unless-stopped
+
+  # ---------- Shell React (ERP UI) ----------
+  react:
+    build: ./frontend
+    container_name: sgi-react
+    profiles: ["full"]
+    networks: [sgi]
+    restart: unless-stopped
+
+  # ---------- funcoesODM: banco próprio ----------
+  funcoesodm-db:
+    image: postgres:15-alpine
+    container_name: sgi-odm-db
+    profiles: ["full"]
+    environment:
+      POSTGRES_DB: ${ODM_POSTGRES_DB:-funcoesodm}
+      POSTGRES_USER: ${ODM_POSTGRES_USER:-funcoesodm}
+      POSTGRES_PASSWORD: ${ODM_POSTGRES_PASSWORD:-funcoesodm_dev}
+    volumes:
+      - odm_db_data:/var/lib/postgresql/data
+      - ./ImgDrone/funcoesODM/init-db:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ODM_POSTGRES_USER:-funcoesodm} -d ${ODM_POSTGRES_DB:-funcoesodm}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [sgi]
+    restart: unless-stopped
+
+  # ---------- funcoesODM: NodeODM (processamento) ----------
+  nodeodm:
+    build: ./ImgDrone/funcoesODM/docker/nodeodm
+    image: funcoesodm/nodeodm:numpy-fix
+    container_name: sgi-nodeodm
+    profiles: ["full"]
+    volumes:
+      - nodeodm_data:/var/www/data
+      - potree_data:/potree/data
+    networks: [sgi]
+    restart: unless-stopped
+
+  # ---------- funcoesODM: Potree Converter ----------
+  potree-converter:
+    build: ./ImgDrone/funcoesODM/docker/potree-converter
+    container_name: sgi-potree
+    profiles: ["full"]
+    environment:
+      - NODEODM_DATA=/nodeodm/data
+      - POTREE_OUTPUT=/potree/data
+      - PORT=5001
+    volumes:
+      - nodeodm_data:/nodeodm/data:ro
+      - potree_data:/potree/data
+    networks: [sgi]
+    restart: unless-stopped
+
+  # ---------- funcoesODM: backend Java (resource server da IAM) ----------
+  java-service:
+    build: ./ImgDrone/funcoesODM/backend/java-service
+    container_name: sgi-odm-java
+    profiles: ["full"]
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://funcoesodm-db:5432/${ODM_POSTGRES_DB:-funcoesodm}
+      SPRING_DATASOURCE_USERNAME: ${ODM_POSTGRES_USER:-funcoesodm}
+      SPRING_DATASOURCE_PASSWORD: ${ODM_POSTGRES_PASSWORD:-funcoesodm_dev}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRATION: "3600000"
+      APP_MODULE_REQUIRED: drone
+      APP_LOCAL_LOGIN_ENABLED: "false"
+      # Fase 5: valida RS256 com a chave pública da IAM (não conhece a privada).
+      JWT_PUBLIC_KEY_PATH: /keys/jwt_public.pem
+    depends_on:
+      funcoesodm-db:
+        condition: service_healthy
+      nodeodm:
+        condition: service_started
+      potree-converter:
+        condition: service_started
+    volumes:
+      - uploads_data:/app/uploads
+      - nodeodm_data:/nodeodm/data
+      - potree_data:/potree/data:ro
+      - ./infra/keys:/keys:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    networks: [sgi]
+    restart: unless-stopped
+
+  # ---------- funcoesODM: frontend Angular (nginx interno, serve sob /drone/) ----------
+  drone-nginx:
+    build: ./ImgDrone/funcoesODM/frontend
+    container_name: sgi-odm-nginx
+    profiles: ["full"]
+    depends_on:
+      java-service:
+        condition: service_healthy
+    volumes:
+      - potree_data:/potree/data:ro
+    networks: [sgi]
+    restart: unless-stopped
+
+  # ---------- Gateway de borda (domínio único) ----------
+  gateway:
+    image: nginx:alpine
+    container_name: sgi-gateway
+    profiles: ["full"]
+    ports:
+      - "${GATEWAY_PORT:-8090}:80"
+    volumes:
+      - ./infra/gateway/nginx.unified.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      iam:
+        condition: service_healthy
+      erp:
+        condition: service_healthy
+      java-service:
+        condition: service_healthy
+      react:
+        condition: service_started
+      drone-nginx:
+        condition: service_started
+    networks: [sgi]
+    restart: unless-stopped
+
+networks:
+  sgi:
+    driver: bridge
+
+volumes:
+  pg_data:
+  redis_data:
+  odm_db_data:
+  uploads_data:
+  nodeodm_data:
+  potree_data:

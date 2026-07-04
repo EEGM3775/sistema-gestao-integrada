@@ -2,8 +2,9 @@ from django.db import models
 from django.conf import settings
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
+from nucleo.tenancy import TenantScopedModel
 
-class CalendarEvent(models.Model):
+class CalendarEvent(TenantScopedModel):
     EVENT_TYPE_CHOICES = [
         ('tarefa', 'Tarefa'),
         ('reuniao', 'Reunião'),

@@ -1,0 +1,9 @@
+Django>=5.2,<5.3
+djangorestframework
+djangorestframework-simplejwt
+cryptography
+psycopg2-binary
+python-dotenv
+django-cors-headers
+argon2-cffi
+gunicorn

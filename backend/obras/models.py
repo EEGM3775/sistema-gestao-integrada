@@ -2,8 +2,9 @@
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.db.models import Q, UniqueConstraint
+from nucleo.tenancy import TenantScopedModel
 
-class Obra(models.Model):
+class Obra(TenantScopedModel):
     STATUS_OBRA_CHOICES = [
         ("planejamento", _("Planejamento")),
         ("em_execucao", _("Em Execução")),
@@ -51,7 +52,7 @@ class Obra(models.Model):
     def __str__(self):
         return self.nome_obra
 
-class EtapaObra(models.Model):
+class EtapaObra(TenantScopedModel):
     STATUS_ETAPA_CHOICES = [
         ("planejamento", _("Planejamento")),
         ("em_execucao", _("Em Execução")),
@@ -84,7 +85,7 @@ class EtapaObra(models.Model):
     def __str__(self):
         return f"{self.obra.nome_obra} - {self.nome_etapa}"
 
-class DocumentoObra(models.Model):
+class DocumentoObra(TenantScopedModel):
     TIPO_DOCUMENTO_CHOICES = [
         ("projeto", _("Projeto")),
         ("relatorio", _("Relatório")),

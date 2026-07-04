@@ -1,22 +1,43 @@
 # backend/nucleo/tasks.py
-from celery import shared_task
-from .models import FailedTask
+import json
+import logging
 
-@shared_task
-def handle_failed_task(request, exc, traceback):
-    """
-    Salva os detalhes de uma tarefa que falhou permanentemente em um modelo
-    para análise posterior (Dead Letter Queue).
-    """
+from celery import Task
+
+logger = logging.getLogger(__name__)
+
+
+def _json_safe(value):
+    """JSONField não aceita objetos arbitrários; degrada para repr() sem perder o registro."""
     try:
-        FailedTask.objects.create(
-            task_id=request.id,
-            task_name=request.task,
-            args=request.args,
-            kwargs=request.kwargs,
-            exception=str(exc),
-            traceback=traceback,
-        )
-    except Exception as e:
-        # Se até o handler de erro falhar, logamos para o console.
-        print(f"CRÍTICO: Falha ao salvar a tarefa falha no banco de dados: {e}")
+        json.dumps(value)
+        return value
+    except (TypeError, ValueError):
+        return repr(value)
+
+
+class DLQTask(Task):
+    """
+    Base de task Celery com Dead Letter Queue: falha permanente (retries
+    esgotados) vira linha em `FailedTask`. Usar com
+    `@shared_task(bind=True, base=DLQTask, ...)`; o Celery chama `on_failure`
+    tanto no worker quanto em modo eager.
+    """
+
+    def on_failure(self, exc, task_id, args, kwargs, einfo):
+        from .models import FailedTask
+
+        try:
+            FailedTask.objects.get_or_create(
+                task_id=task_id,
+                defaults={
+                    "task_name": self.name,
+                    "args": [_json_safe(a) for a in (args or [])],
+                    "kwargs": {k: _json_safe(v) for k, v in (kwargs or {}).items()},
+                    "exception": str(exc),
+                    "traceback": str(einfo),
+                },
+            )
+        except Exception:
+            logger.exception("CRÍTICO: falha ao gravar na DLQ (task %s)", task_id)
+        super().on_failure(exc, task_id, args, kwargs, einfo)

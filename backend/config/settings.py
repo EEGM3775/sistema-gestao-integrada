@@ -42,11 +42,19 @@ INSTALLED_APPS = [
     "rh",
     "modulodiario",
     "funcoesia",
+    "funcoescobrancas.apps.FuncoesCobrancasConfig",
     "moduloerp.apps.ModuloerpConfig",
     "modulocrm.apps.ModulocrmConfig",
     "modulocalendar.apps.ModulocalendarConfig",
-    
-    
+    "moduloapi.apps.ModuloApiConfig",
+    # Módulos planejados (placeholder com contrato de entitlement aplicado)
+    "moduloaps.apps.ModuloApsConfig",
+    "modulodms.apps.ModuloDmsConfig",
+    "modulopdca.apps.ModuloPdcaConfig",
+    "moduloscm.apps.ModuloScmConfig",
+    "modulosil.apps.ModuloSilConfig",
+    "modulomaps.apps.ModuloMapsConfig",
+
     # Apps do Django
     "django.contrib.admin",
     "django.contrib.auth",
@@ -106,26 +114,36 @@ AUTH_USER_MODEL = "nucleo.Usuario"
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
-
-# Para desenvolvimento local, vamos usar SQLite
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+#
+# Seleção por ambiente: se POSTGRES_DB estiver definido, usa PostgreSQL
+# (alvo de produção — ver docs/arquitetura.md, Fase 0.1); caso contrário, cai
+# para SQLite, mantendo o desenvolvimento local funcionando sem infra.
+if os.getenv('POSTGRES_DB'):
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.getenv('POSTGRES_DB'),
+            'USER': os.getenv('POSTGRES_USER', 'erp_app'),
+            'PASSWORD': os.getenv('POSTGRES_PASSWORD', ''),
+            'HOST': os.getenv('DB_HOST', 'localhost'),
+            'PORT': os.getenv('DB_PORT', '5432'),
+            'CONN_MAX_AGE': int(os.getenv('DB_CONN_MAX_AGE', '60')),
+            # Cada requisição roda numa transação — necessário para o RLS
+            # (set_config(..., is_local=true)) e bom para integridade financeira.
+            'ATOMIC_REQUESTS': True,
+            'OPTIONS': {
+                # TLS obrigatório em produção; em dev (localhost) use 'prefer'.
+                'sslmode': os.getenv('DB_SSLMODE', 'prefer'),
+            },
+        }
     }
-}
-
-# Para PostgreSQL (descomente quando necessário):
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.postgresql',
-#         'NAME': os.getenv('POSTGRES_DB', 'sistema_gestao_v2'),
-#         'USER': os.getenv('POSTGRES_USER', 'postgres'),
-#         'PASSWORD': os.getenv('POSTGRES_PASSWORD', 'password'),
-#         'HOST': os.getenv('DB_HOST', 'localhost'),
-#         'PORT': os.getenv('DB_PORT', '5432'),
-#     }
-# }
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
@@ -202,30 +220,61 @@ CORS_ALLOW_HEADERS = [
 # REST Framework Configuration
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        # ERP como resource server: valida o JWT emitido pela IAM e
+        # provisiona (JIT) o espelho local de tenant/usuário.
+        'nucleo.authentication.IamJWTAuthentication',
         'rest_framework.authentication.SessionAuthentication',
-        'rest_framework.authentication.TokenAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
+        'rest_framework.renderers.BrowsableAPIRenderer',  # interface web
     ],
     'DEFAULT_PARSER_CLASSES': [
         'rest_framework.parsers.JSONParser',
+        'rest_framework.parsers.MultiPartParser',
+        'rest_framework.parsers.FormParser',
     ],
 }
 
 # JWT Configuration
 from datetime import timedelta
 
-SIMPLE_JWT = {
+# Validação do JWT da IAM. Fase 5: se houver chave pública RSA, valida RS256
+# (assimétrico — o ERP NÃO conhece a privada, só pode validar, nunca forjar).
+# Sem a chave, usa HS256 com o segredo compartilhado (compat).
+def _read_public_key(path):
+    if path and os.path.exists(path):
+        with open(path, 'r', encoding='utf-8') as fh:
+            return fh.read()
+    return ''
+
+JWT_PUBLIC_KEY = _read_public_key(os.getenv('JWT_PUBLIC_KEY_PATH'))
+
+_SIMPLE_JWT_COMMON = {
     'ACCESS_TOKEN_LIFETIME': timedelta(hours=24),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
+    'USER_ID_CLAIM': 'sub',
+    'USER_ID_FIELD': 'username',
 }
+
+if JWT_PUBLIC_KEY:
+    SIMPLE_JWT = {
+        **_SIMPLE_JWT_COMMON,
+        'ALGORITHM': 'RS256',
+        'VERIFYING_KEY': JWT_PUBLIC_KEY,
+        'SIGNING_KEY': '',  # o ERP não assina (resource server)
+    }
+else:
+    SIMPLE_JWT = {
+        **_SIMPLE_JWT_COMMON,
+        'ALGORITHM': 'HS256',
+        'SIGNING_KEY': os.getenv('JWT_SECRET', SECRET_KEY),
+    }
 
 # Logging Configuration
 LOGGING = {
@@ -249,6 +298,48 @@ CELERY_ACCEPT_CONTENT = ['application/json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
+# Em dev (sem worker/Redis), roda as tasks in-process — permite validar
+# integrações como o funcoescobrancas (D.1.2) sem subir infraestrutura extra.
+CELERY_TASK_ALWAYS_EAGER = os.getenv('CELERY_TASK_ALWAYS_EAGER', str(DEBUG)).lower() == 'true'
+CELERY_TASK_EAGER_PROPAGATES = True
+# Tarefas periódicas — exigem um processo `celery beat` (pendência A1/Fase 10:
+# worker+beat no compose); sem beat, nada é disparado.
+CELERY_BEAT_SCHEDULE = {
+    'crm-notificar-tarefas-a-vencer': {
+        'task': 'modulocrm.tasks.notificar_tarefas_a_vencer',
+        'schedule': 3600.0,
+    },
+}
+
+# E-mail (notificações do CRM — portado do worker do funcoeslead, Fase 11.2).
+# Sem MAIL_HOST, o envio fica desabilitado (a task vira no-op).
+EMAIL_HOST = os.getenv('MAIL_HOST', '')
+EMAIL_PORT = int(os.getenv('MAIL_PORT', '587'))
+EMAIL_HOST_USER = os.getenv('MAIL_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('MAIL_PASS', '')
+EMAIL_USE_SSL = EMAIL_PORT == 465
+EMAIL_USE_TLS = not EMAIL_USE_SSL
+DEFAULT_FROM_EMAIL = os.getenv('MAIL_FROM', 'Sistema de Gestão <noreply@sistemagestao.com>')
+
+# Asaas — cobrança/boletos (funcoescobrancas, D.1.2). Credencial GLOBAL nesta
+# fase (todos os tenants compartilham a mesma conta sandbox); migrar para
+# credencial por tenant quando a gestão de segredos da Fase 5 estiver pronta
+# (ver docs/modulos/moduloerp.md §15 e docs/modulos/funcoescobrancas.md).
+ASAAS_BASE_URL = os.getenv('ASAAS_BASE_URL', 'https://api-sandbox.asaas.com/v3')
+ASAAS_API_KEY = os.getenv('ASAAS_API_KEY', '')
+ASAAS_WEBHOOK_TOKEN = os.getenv('ASAAS_WEBHOOK_TOKEN', '')
+
+# Cache Configuration (using Redis)
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": os.getenv('REDIS_URL', 'redis://localhost:6379/1'), # DB 1 for cache
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+        }
+    }
+}
+
 
 # IA Service Configuration
 IA_SERVICE_URL = os.getenv('IA_SERVICE_URL', 'http://localhost:3002/api/analise')

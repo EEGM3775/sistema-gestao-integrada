@@ -8,9 +8,10 @@ from .models import (
 )
 
 class FornecedorSerializer(serializers.ModelSerializer):
-    """
-    Serializador para o modelo Fornecedor.
-    """
+    cnpj = serializers.CharField(
+        max_length=18, allow_null=True, allow_blank=True, required=False
+    )
+
     class Meta:
         model = Fornecedor
         fields = '__all__'
