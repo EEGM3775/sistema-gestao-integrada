@@ -285,6 +285,18 @@ class ContaPagar(TenantScopedModel):
             meio_pagamento=meio_pagamento or 'Não informado',
             usuario=usuario,
         )
+
+        # Auditoria (Fase 9.E): a baixa é o evento financeiro sensível por
+        # excelência — registra os dois caminhos (manual e webhook Asaas), que
+        # compartilham este choke point. `valor`/status não são PII.
+        from nucleo.auditoria import registrar_auditoria
+        registrar_auditoria(
+            acao="baixa", instance=self, usuario=usuario,
+            detalhes={
+                "valor": str(valor), "origem": origem,
+                "meio_pagamento": meio_pagamento or "", "novo_status": self.status,
+            },
+        )
         return self
 
 
@@ -371,6 +383,17 @@ class ContaReceber(TenantScopedModel):
             tipo=Transacao.TipoTransacao.ENTRADA,
             meio_pagamento=meio_pagamento or 'Não informado',
             usuario=usuario,
+        )
+
+        # Auditoria (Fase 9.E): mesmo choke point da baixa manual e do webhook
+        # Asaas (espelha `ContaPagar.dar_baixa`).
+        from nucleo.auditoria import registrar_auditoria
+        registrar_auditoria(
+            acao="baixa", instance=self, usuario=usuario,
+            detalhes={
+                "valor": str(valor), "origem": origem,
+                "meio_pagamento": meio_pagamento or "", "novo_status": self.status,
+            },
         )
         return self
 

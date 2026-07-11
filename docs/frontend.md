@@ -5,9 +5,7 @@
 > (pronto e planejado), **sem status** — o status por módulo e o fluxo testável estão na
 > [tabela de frontend do roadmap](roadmap.md#estado-dos-módulos--frontend-react-08062026); as
 > **convenções de código** (obrigatórias para quem desenvolve) em
-> [frontend-convencoes.md](frontend-convencoes.md); a narrativa das entregas no
-> [historico.md](historico.md).
->
+> [frontend-convencoes.md](frontend-convencoes.md)
 > Stack: React 19 · Vite 7 · TypeScript 5.8 · Tailwind CSS 4 · React Router v7 · Axios ·
 > TanStack Query/Table · RHF+zod · Recharts
 > Infra: container `react` atrás do Nginx gateway em `:8090`; código em `frontend/src/`.
@@ -224,12 +222,20 @@ Utiliza `createBrowserRouter` com rotas aninhadas.
   /app/diario           → DiarioObraPage       (base)
   /app/drone            → DroneWrapperPage     (hasModule: drone)
   /app/calendario       → CalendarioPage       (base)
+  /app/admin/papeis     → PersonasPage ✅       (adminOnly — Papéis e Acessos, Fase 9.A)
+  /app/admin/usuarios   → UsuariosPage ✅       (adminOnly — Usuários e seus papéis, Fase 9.A)
   *                     → NotFoundPage
 ```
 
 > **Guard de entitlement:** `<ModuleRoute module="erp_financeiro">` wrapping a rota
 > redireciona para `/app/dashboard` com toast "Módulo não disponível no seu plano"
 > se `!hasModule(module)`.
+
+> **Área de Administração (Fase 9.A):** [modules/admin/](../frontend/src/modules/admin/) — `PersonasPage`
+> (CRUD de papéis/personas com picker de permissões por módulo + clonar) e `UsuariosPage` (atribui
+> papéis a usuários). Itens de menu só aparecem para `is_tenant_admin` (`AuthContext.isTenantAdmin`).
+> Falam com a IAM pelo cliente `iamAdminClient` (baseURL `/iam`, roteado pelo gateway → IAM). Detalhe
+> do modelo em [arquitetura/rbac-abac.md §9.1](arquitetura/rbac-abac.md).
 
 ---
 

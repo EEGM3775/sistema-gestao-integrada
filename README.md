@@ -10,8 +10,7 @@ gateway Nginx.
 > [arquitetura](docs/arquitetura.md) · [domínio de negócio](docs/dominio.md) ·
 > [acesso & permissões](docs/acesso-e-permissoes.md) · [módulos](docs/modulos/README.md) ·
 > [frontend](docs/frontend.md) · [desenvolvimento](docs/desenvolvimento.md) ·
-> [roadmap & status](docs/roadmap.md) · [pendências](docs/pendencias.md) ·
-> [histórico](docs/historico.md).
+> [roadmap & status](docs/roadmap.md) · [pendências](docs/pendencias.md).
 
 ## Como rodar
 

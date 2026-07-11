@@ -8,10 +8,7 @@ from rest_framework.views import APIView
 from .models import Usuario, LogAtividadeUsuario, ConfiguracaoArquivos
 from .permissions import IsDataAdminOrStaff
 from .tenancy import TenantScopedViewSetMixin
-from .serializers import (
-    UsuarioSerializer,
-    LogAtividadeUsuarioSerializer
-)
+from .serializers import UsuarioSerializer
 
 class UsuarioViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     """
@@ -40,14 +37,9 @@ class UsuarioViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
 # permissões; o ERP os lê das claims do JWT (`request.user.iam_roles`). Os
 # modelos locais nucleo.Perfil/Permissao ficam só como espelho legado.
 
-class LogAtividadeUsuarioViewSet(viewsets.ReadOnlyModelViewSet):
-    """
-    Endpoint da API apenas para visualização dos logs de atividade.
-    Não deve permitir criação, edição ou exclusão via API.
-    """
-    queryset = LogAtividadeUsuario.objects.all()
-    serializer_class = LogAtividadeUsuarioSerializer
-    permission_classes = [IsDataAdminOrStaff]
+# LogAtividadeUsuarioViewSet removido na Fase 9.E: a trilha de auditoria sensível
+# é o AuditLog (GET /api/auditoria/, fail-closed). O LogAtividadeUsuario ficou
+# como telemetria operacional (Celery/microsserviços) — ver docstring do modelo.
 
 _DEFAULT_TIPOS = [
     'application/pdf', 'image/jpeg', 'image/png',

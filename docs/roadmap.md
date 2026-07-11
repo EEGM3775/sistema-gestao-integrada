@@ -2,26 +2,26 @@
 
 > **O que está pronto e o que falta** para concluir a plataforma (visão em
 > [arquitetura.md](arquitetura.md)). Este documento guarda **só status e plano**; a narrativa datada
-> de cada entrega (bugs encontrados, decisões, validações) vive no [historico.md](historico.md), e os
+> de cada entrega (bugs encontrados, decisões, validações) e os
 > achados de revisão ainda abertos em [pendencias.md](pendencias.md). A **ordem importa**: a fundação
 > precede a integração — não faz sentido federar um módulo sobre SQLite e sem isolamento de tenant.
 
 ## Status das fases
 
-| Fase | Tema | Status |
-|---|---|---|
-| 0 | Fundação (banco, IAM, multi-tenancy no ERP) | ✅ |
-| 1 | SSO ponta a ponta (entitlement por módulo) | ✅ 31/05/2026 |
-| 2 | UI integrada (gateway, domínio único) | ✅ 31/05/2026 |
-| 3 | Vínculo drone ↔ obra/empreendimento | ✅ 31/05/2026 |
-| 4 | Deploy unificado (`docker compose --profile full`) | ✅ 31/05/2026 |
-| 5 | Endurecimento — RS256/JWKS + borda | ✅ 01/06/2026 (núcleo); operacionais → Fase 10 |
-| 6 | Consolidação de identidade & RBAC de plataforma | ✅ 02/06/2026 |
-| 7 | Migração v01 → v02 (frontend + backend dos módulos vazios) | 🚧 em andamento |
-| 8 | Fundação de dados: Postgres real + `tenant` obrigatório + uniques por-tenant | 🚧 8.1/8.2/8.3/8.4 ✅ 04/07/2026 · falta 8.5 (drone) |
-| 9 | RBAC de campo — mascaramento de PII por papel (RH/financeiro) | 📋 planejado |
-| 10 | Observabilidade & redução de superfície operacional | 📋 planejado |
-| 11 | Consolidação de linguagens (Python como stack principal) | 🚧 11.2 ✅ 03/07/2026 (funcoeslead); resto planejado |
+| Fase | Tema                                                                             | Status                                               |
+| ---- | -------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| 0    | Fundação (banco, IAM, multi-tenancy no ERP)                                    | ✅                                                   |
+| 1    | SSO ponta a ponta (entitlement por módulo)                                      | ✅ 31/05/2026                                        |
+| 2    | UI integrada (gateway, domínio único)                                          | ✅ 31/05/2026                                        |
+| 3    | Vínculo drone ↔ obra/empreendimento                                            | ✅ 31/05/2026                                        |
+| 4    | Deploy unificado (`docker compose --profile full`)                             | ✅ 31/05/2026                                        |
+| 5    | Endurecimento — RS256/JWKS + borda                                              | ✅ 01/06/2026 (núcleo); operacionais → Fase 10     |
+| 6    | Consolidação de identidade & RBAC de plataforma                                | ✅ 02/06/2026                                        |
+| 7    | Migração v01 → v02 (frontend + backend dos módulos vazios)                   | 🚧 em andamento                                      |
+| 8    | Fundação de dados: Postgres real +`tenant` obrigatório + uniques por-tenant | ✅ 04/07/2026 (8.1–8.5)                             |
+| 9    | RBAC de campo — catálogo de permissões + mascaramento de PII                  | 🚧 A–E ✅ 11/07 (suíte 71/71 + E2E 15/15); residual D3–D6 |
+| 10   | Observabilidade & redução de superfície operacional                           | 📋 planejado                                         |
+| 11   | Consolidação de linguagens (Python como stack principal)                       | 🚧 11.2 ✅ 03/07/2026 (funcoeslead); resto planejado |
 
 Cada fase concluída foi validada por um script E2E em [infra/gateway/](../infra/gateway/)
 (`phase4_e2e.py`, `phase5_rs256_test.py`, `phase6_rbac_test.py`).
@@ -36,7 +36,7 @@ Cada fase concluída foi validada por um script E2E em [infra/gateway/](../infra
 
 ## Fases concluídas (0–6) — o que existe e o que ficou pendente
 
-Narrativa completa de cada entrega (validações, bugs corrigidos) no [historico.md](historico.md).
+Narrativa completa de cada entrega (validações, bugs corrigidos) no histórico do git (`git log`).
 
 ### Fase 0 — Fundação
 
@@ -102,16 +102,16 @@ Login local do ERP removido; entitlement genérico `RequireModule("codigo")` + R
 
 ### Estado dos módulos — backend (07/06/2026)
 
-| Módulo | Entitlement | Status |
-|---|---|---|
-| nucleo, empreendimentos, obras, fornecedores, modulodiario, moduloapi, funcoesia | — | ✅ Completo |
-| clientes | — | ✅ 04/06/2026 |
-| modulocalendar | — | ✅ Completo + testes |
-| rh | `rh` | ✅ Completo |
-| moduloerp | `erp_financeiro` | ✅ 07/06/2026 (`Fatura`→`ContaPagar`/`ContaReceber`; +`CentroCusto`/`Rateio*`/`LoteRemessa`/`RevisaoBaixa`) |
-| modulocrm | `crm` | ✅ Completo |
-| funcoescobrancas (Asaas) | via `moduloerp` | ✅ MVP 08/06/2026 ([doc](modulos/funcoescobrancas.md)) |
-| moduloaps · modulodms · modulopdca · moduloscm · modulosil · modulomaps | próprio | 📋 Placeholder (alvos do porte v01) |
+| Módulo                                                                          | Entitlement        | Status                                                                                                                     |
+| -------------------------------------------------------------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| nucleo, empreendimentos, obras, fornecedores, modulodiario, moduloapi, funcoesia | —                 | ✅ Completo                                                                                                                |
+| clientes                                                                         | —                 | ✅ 04/06/2026                                                                                                              |
+| modulocalendar                                                                   | —                 | ✅ Completo + testes                                                                                                       |
+| rh                                                                               | `rh`             | ✅ Completo                                                                                                                |
+| moduloerp                                                                        | `erp_financeiro` | ✅ 07/06/2026 (`Fatura`→`ContaPagar`/`ContaReceber`; +`CentroCusto`/`Rateio*`/`LoteRemessa`/`RevisaoBaixa`) |
+| modulocrm                                                                        | `crm`            | ✅ Completo                                                                                                                |
+| funcoescobrancas (Asaas)                                                         | via`moduloerp`   | ✅ MVP 08/06/2026 ([doc](modulos/funcoescobrancas.md))                                                                      |
+| moduloaps · modulodms · modulopdca · moduloscm · modulosil · modulomaps     | próprio           | 📋 Placeholder (alvos do porte v01)                                                                                        |
 
 > Rotas de apps simples registradas direto em `config/urls.py` (padrão correto, sem `urls.py` local).
 > Cobertura de testes ainda pontual: `modulocalendar`, `modulocrm`, `nucleo` e `moduloerp`.
@@ -122,22 +122,22 @@ Login local do ERP removido; entitlement genérico `RequireModule("codigo")` + R
 Arquitetura, design system e convenções em [frontend.md](frontend.md); fases de construção
 (A/B/C/D/E/F) definidas lá na §10 equivalem às linhas abaixo.
 
-| Fase | Módulo / componente | Status |
-|---|---|---|
-| A | Fundação (Tailwind 4, AuthContext, AppShell, roteamento) | ✅ 04/06/2026 |
-| B | Landing + Login + Hub de módulos | ✅ 04/06/2026 |
-| C.1 | Dashboard de KPIs | ❌ Pendente |
-| C.2–C.4 | Empreendimentos · Obras · Clientes | ✅ 04/06/2026 |
-| C.5 | Fornecedores | ✅ 05/06/2026 |
-| C.6 | Diário de Obra + IA | ✅ 06/06/2026 |
-| D.1.0–D.1.1 | ERP: fundação UI + Contas a pagar/receber | ✅ 07/06/2026 |
-| D.1.2 | ERP: Boletos & Asaas (telas + botão gerar cobrança) | ✅ 08/06/2026 |
-| D.1.3+ | ERP: notas fiscais, financeiro por obra (DRE) | ❌ ([moduloerp.md §13](modulos/moduloerp.md#13-roadmap-em-sub-fases-fase-d1x)) |
-| D.2 | RH | ✅ 06/06/2026 |
-| D.3 | CRM | ❌ Pendente |
-| E.1–E.2 | Drone wrapper (iframe+SSO) · Calendário | ❌ Pendente |
-| E.3 | SCM / SIL / PDCA / DMS / APS / Maps | ❌ Aguarda backend |
-| F.1 | Dashboard de KPIs (substitui o hub) | ❌ Pendente |
+| Fase         | Módulo / componente                                       | Status                                                                         |
+| ------------ | ---------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| A            | Fundação (Tailwind 4, AuthContext, AppShell, roteamento) | ✅ 04/06/2026                                                                  |
+| B            | Landing + Login + Hub de módulos                          | ✅ 04/06/2026                                                                  |
+| C.1          | Dashboard de KPIs                                          | ❌ Pendente                                                                    |
+| C.2–C.4     | Empreendimentos · Obras · Clientes                       | ✅ 04/06/2026                                                                  |
+| C.5          | Fornecedores                                               | ✅ 05/06/2026                                                                  |
+| C.6          | Diário de Obra + IA                                       | ✅ 06/06/2026                                                                  |
+| D.1.0–D.1.1 | ERP: fundação UI + Contas a pagar/receber                | ✅ 07/06/2026                                                                  |
+| D.1.2        | ERP: Boletos & Asaas (telas + botão gerar cobrança)      | ✅ 08/06/2026                                                                  |
+| D.1.3+       | ERP: notas fiscais, financeiro por obra (DRE)              | ❌ ([moduloerp.md §13](modulos/moduloerp.md#13-roadmap-em-sub-fases-fase-d1x)) |
+| D.2          | RH                                                         | ✅ 06/06/2026                                                                  |
+| D.3          | CRM                                                        | ✅ 05/07/2026 (dashboard + leads + accounts + contacts + opportunities)                                           |
+| E.1–E.2     | Drone wrapper (iframe+SSO) · Calendário                  | ❌ Pendente                                                                    |
+| E.3          | SCM / SIL / PDCA / DMS / APS / Maps                        | ❌ Aguarda backend                                                             |
+| F.1          | Dashboard de KPIs (substitui o hub)                        | ❌ Pendente                                                                    |
 
 > **Fluxo testável hoje** (`http://localhost:8090/`, demo/demo123): Landing → Login → Hub →
 > Empreendimentos · Obras · Clientes · Fornecedores · Diário+IA · RH (4 abas, mascaramento por
@@ -153,7 +153,7 @@ configurável por tenant, IDs nunca reutilizados). Plano: [arquitetura/lixo.md](
 
 ---
 
-## Fase 8 — Fundação de dados (Postgres real + tenancy forte) 📋
+## Fase 8 — Fundação de dados (Postgres real + tenancy forte) ✅
 
 **Objetivo:** fechar o **calcanhar de Aquiles do isolamento**. Hoje `tenant` é `nullable` e os
 `unique` são globais — um bug aqui é **vazamento de dados entre empresas**. RLS, `CheckConstraint` e
@@ -166,7 +166,7 @@ prioridade**; precede qualquer dado real.
   RLS ([nucleo/test_runner.py](../backend/nucleo/test_runner.py)) que arma o bypass de plataforma por
   sessão para o seed; `arm_rls_for_tenant` passou a **desligar** o bypass (armar um tenant é
   autocontido — corrige vazamento de contexto entre métodos de `TestCase`, achado ao rodar sob PG);
-  teste do S1 lê a linha do outro tenant sob `rls_bypass()`. Ver [historico.md](historico.md) e
+  teste do S1 lê a linha do outro tenant sob `rls_bypass()`. Ver
   [desenvolvimento.md](desenvolvimento.md#rodar-os-testes).
 - **8.2 `tenant` obrigatório:** ✅ 04/07/2026 — FK `tenant` do `TenantScopedModel` agora **NOT
   NULL** (11 migrações `AlterField`, uma por app, sobre ~40 modelos concretos). Backfill defensivo
@@ -187,34 +187,94 @@ prioridade**; precede qualquer dado real.
 - **8.4 RLS ponta a ponta:** ✅ 04/07/2026 (S2) — política **fail-closed** (`migrations/0011`) +
   contexto armado na autenticação; provado no Postgres que sessão sem `app.current_tenant` não
   enxerga nem grava linha e que o acesso *cross-tenant* é bloqueado (defesa além do mixin). Bypass
-  explícito (`app.rls_bypass`) para plataforma/webhook/jobs. Ver [historico.md](historico.md).
-- **8.5 Tenant nas entidades-filhas do drone:** hoje escopadas por `owner`; adicionar `tenant_id`
-  obrigatório às entidades do funcoesODM e validar isolamento cruzado via E2E.
+  explícito (`app.rls_bypass`) para plataforma/webhook/jobs.
+- **8.5 Tenant nas entidades-filhas do drone:** ✅ 04/07/2026 — `tenant_id` **NOT NULL** nas 6
+  filhas do funcoesODM (`Chunk`/`ChunkImage`/`Measurement`/`Annotation`/`ProcessingTask`/
+  `ProjectImage`), herdado do projeto-pai na criação. Isolamento imposto na **borda** por um
+  `ProjectTenantInterceptor` (`config/`): todo `/api/v1/projects/{projectId}/**` exige que o projeto
+  da URL pertença ao tenant do token → senão **404** (fechou vazamento real: `Measurement`/`Annotation`
+  só validavam existência do projeto, não o tenant). Backfill idempotente no start promove a coluna a
+  NOT NULL onde não há nulos. Seed ganhou 2º tenant `acme` (drone) p/ o E2E. Também travado o anexo de
+  imagem cross-projeto em `addImagesToChunk`. Ver [phase8_tenancy_test.py](../infra/gateway/phase8_tenancy_test.py).
 
 **DoD:** [test_tenant_isolation.py](../backend/nucleo/test_tenant_isolation.py) verde **em
 Postgres**; `phase8_tenancy_test.py` provando NOT NULL + unique por-tenant + RLS + isolamento do drone.
 
-## Fase 9 — RBAC de campo (mascaramento de PII por papel) 📋
+## Fase 9 — RBAC de campo: catálogo de permissões + mascaramento de PII 🚧
 
-**Objetivo:** o RBAC atual controla **endpoints**, não **campos**. Para PII do RH
-(`DadoMedicoFuncionario`, `DadoBancarioFuncionario`) e dados financeiros, mascaramento por papel é
-**requisito LGPD**.
+**Objetivo:** o RBAC atual controla **endpoints** por *nome de papel* (tudo-ou-nada), não **campos**.
+Para PII do RH (`DadoMedicoFuncionario`, `DadoBancarioFuncionario`) e dados financeiros, mascaramento
+por permissão é **requisito LGPD**. Hoje só há um mascaramento *ad-hoc* (`salario_base` num único
+serializer) e papéis são strings mágicas — três exigidos no código, dois nunca provisionados (origem
+dos **403** na ficha do funcionário).
 
-> **Desenho-alvo (AD-9):** o modelo completo — RBAC + ABAC, catálogo global de permissões, papéis
-> por tenant e mascaramento de campo — está em [arquitetura/rbac-abac.md](arquitetura/rbac-abac.md).
-> Esta Fase 9 é a **fatia C** daquele plano de migração.
+> **Desenho-alvo (AD-9):** RBAC + ABAC, catálogo global de permissões, papéis por tenant e
+> mascaramento de campo em [arquitetura/rbac-abac.md](arquitetura/rbac-abac.md). A Fase 9 executa esse
+> plano **por fatias A→E**; a fatia C fecha o mascaramento. **Decisão de sequência (04/07/2026):**
+> fazer a fundação antes da máscara — sem chavear PII em nome de papel para não re-migrar depois.
+> **Decisões resolvidas:** catálogo é registry Python **na IAM** (fonte única) sincronizado p/ a
+> tabela `Permissao`; a checagem passa a ser por **permissão** (claim `permissions` no JWT), não por
+> nome; máscara de leitura é **parcial** (`•••` + últimos dígitos) onde fizer sentido, `null` no resto.
 
-- **9.1 Mascaramento na serialização:** redigir/ocultar campos sensíveis quando o papel do JWT não
-  autoriza — em vez de barrar o endpoint inteiro.
-- **9.2 Mapa de sensibilidade:** por modelo, quais campos são sensíveis e qual papel os vê.
-- **9.3 Escrita também protegida:** papel sem permissão não **grava** campo sensível.
-- **9.4 LGPD além do mascaramento:** direito ao esquecimento, portabilidade, procedimento de
-  notificação de incidente à ANPD em até 72h.
-- **9.5 Trilha de auditoria:** tabela imutável `AuditLog` (`tenant`, `usuario`, `acao`, `modelo`,
-  `objeto_id`, `timestamp`) nas operações sensíveis de RH e financeiro.
+- **9.A Catálogo + destravar (fundação):** ✅ 05/07/2026 (ativado no stack) — catálogo
+  único [catalog.py](../iam/identity/catalog.py) com **99 permissões `modulo.recurso.acao`** (rh,
+  erp_financeiro, crm, drone, base, plataforma; PII como recurso próprio) e **14 personas de fábrica**
+  (com descrição legível); `sync_authz` reflete p/ `Permissao` e compõe papéis por tenant;
+  `permissions` no JWT. **Personas dinâmicas** com trava anti-escalada (permissão ⊆ módulos assinados)
+  e **UI de administração** ([modules/admin/](../frontend/src/modules/admin/): `/app/admin/papeis`
+  cria/edita/**clona**/exclui papéis com picker por módulo; `/app/admin/usuarios` atribui papéis a
+  usuários) — só `is_tenant_admin`, via gateway `/iam/`. Seed ganhou usuário `admin`. Testes 13/13 +
+  E2E vivo (o 403 do RH destravado de verdade). Padrão de extensão p/ módulos da v01 em
+  [rbac-abac.md §9](arquitetura/rbac-abac.md).
+- **9.B Permissão no enforcement:** ✅ 05/07/2026 —
+  [`RequirePermission`](../backend/nucleo/permissions.py) substitui `RequireRole`: ViewSet declara
+  `required_resource="modulo.recurso"` (GET→`.view`, escrita→`.edit`) ou `permission_map`; auth expõe
+  `iam_permissions`. RH (dado_medico/dado_bancario/folha) migrado; `RequireRole` **depreciado** com
+  **fallback** (token sem `permissions` cai no papel → zero-downtime). CRM inteiro gateado por
+  módulo+permissão, fechando **S5** (`OpportunityProductViewSet` só tinha `IsAuthenticated`). Testes
+  DRF verdes sobre Postgres (`rh/tests.py`, `modulocrm/tests.py` — 15/15) + E2E vivo. **Estendido
+  05/07** aos cadastros-base (`clientes`/`fornecedores`/`obras`/`empreendimentos`), que estavam sem
+  camada 2 — achado **D5** (operacional criava cliente/venda). Falta varrer calendar/erp (D5).
+- **9.C Campo/PII (mascaramento):** ✅ 05/07/2026 — `FieldMaskingSerializerMixin`
+  ([nucleo/field_masking.py](../backend/nucleo/field_masking.py)) com **dois eixos**:
+  `sensitive_fields` (leitura — mascara: CPF/CNPJ/conta → `••••`+dígitos; valores/PIX/texto → `null`;
+  **fail-closed** sem contexto) e `write_protected_fields` (escrita — trava explícita com a `.edit`
+  concedível). Aplicado em RH (`Funcionario` CPF/salário, `DadoMedico`, `DadoBancario`, `Pagamento`,
+  `Folha`), clientes (`Cliente` CPF via `cadastro.cliente_doc.view`, `DadoBancarioCliente`) e
+  fornecedores (só `DadoBancarioFornecedor` — CNPJ é público, não mascarado). Substituiu o hack do
+  `salario_base`. **Correção pós-revisão (05/07):** a 1ª versão derivava a escrita da leitura
+  (`rh.cpf.edit`, inexistente) e **travava a criação** de funcionário/cliente/fornecedor p/ não-admins;
+  os eixos foram separados. **Correlato Fase 8.2:** `tenant` obrigatório no POST → `tenant` read-only
+  nos serializers de RH/fornecedores. Testes `rh/test_field_masking.py` (11); E2E: não-admin cria ficha.
+- **9.D LGPD além da máscara:** ✅ 05/07/2026 — **portabilidade** (`GET /api/lgpd/<tipo>/<id>/exportar/`,
+  `plataforma.lgpd.exportar`) e **esquecimento** (`POST …/esquecer/`, `plataforma.lgpd.excluir`) p/
+  funcionário/cliente ([nucleo/lgpd.py](../backend/nucleo/lgpd.py): exporta PII integral; anonimiza +
+  apaga filhos de PII + desativa login). **Incidente ANPD** (`IncidenteLGPD`, RLS fail-closed): nasce
+  **pendente**; só o **dono da plataforma** (`is_platform_admin`) **confirma** (inicia prazo de **72h**)
+  ou **descarta** (falso positivo) — a trava anti-falso-positivo. Endpoints usam `RequirePermissionStrict`
+  (fail-closed, sem fallback de papel). Testes `nucleo/test_lgpd.py` (8) verde. Falta a UI (Fase 7).
+- **9.E Trilha de auditoria:** ✅ 11/07/2026 — `AuditLog` **imutável
+  append-only** tenant-scoped: `save`/`delete` bloqueados no modelo
+  ([nucleo/models.py](../backend/nucleo/models.py)), **trigger PostgreSQL** barrando UPDATE/DELETE mesmo
+  em SQL cru/`queryset` ([migration 0017](../backend/nucleo/migrations/0017_auditlog_imutavel.py)), RLS
+  fail-closed ([0016](../backend/nucleo/migrations/0016_auditlog_rls.py)) e API **read-only**
+  `GET /api/auditoria/` restrita a `plataforma.auditoria.view` + admin de tenant/plataforma (fail-closed).
+  Helper `registrar_auditoria` + mixins opt-in `AuditedModelViewSetMixin`/`PiiReadAuditMixin`
+  ([nucleo/auditoria.py](../backend/nucleo/auditoria.py)); FK `usuario` congelado (`db_constraint=False`,
+  rótulo durável em `usuario_nome`). **Coberto:** escritas de RH (funcionário, dado médico/bancário, ASO,
+  pagamento, folha) com **nomes dos campos alterados** no update; **leitura de PII** (retrieve de
+  médico/bancário/ASO → `visualizar_pii`); **baixa** financeira (choke point manual + Asaas); **emissão de
+  NF** e **gerar cobrança**; **LGPD** export/forget. `detalhes` só metadados não-PII. **Legado:**
+  `LogAtividadeUsuario` demovido a telemetria operacional (Celery/microsserviço) e sua API de leitura
+  `/api/logs-atividade/` removida — a trilha sensível é o `AuditLog`; remoção do modelo + telemetria
+  estruturada → Fase 10. **Validado:** `nucleo/test_auditoria.py` + **suíte completa verde (71/71)** sob
+  Postgres (role `erp_app`, RLS real) **+ E2E [phase9_auditoria_test.py](../infra/gateway/phase9_auditoria_test.py)
+  — 15/15 no stack vivo** (criar/atualizar+`campos_alterados`/`visualizar_pii`/`exportar_lgpd`; leitura
+  restrita a admin/permissão; POST/DELETE → 405); migrations 0015–0017 aplicadas no `erp_db`.
 
-**DoD:** `phase9_field_mask_test.py` verde; procedimento LGPD documentado em [infra/](../infra/);
-`AuditLog` populado; exportação e exclusão de titular via endpoint admin.
+**DoD:** `phase9_field_mask_test.py` verde; checagem por permissão em todo endpoint pago; procedimento
+LGPD documentado em [infra/](../infra/); `AuditLog` populado; exportação e exclusão de titular via
+endpoint admin.
 
 ## Fase 10 — Observabilidade & redução de superfície operacional 📋
 
@@ -252,18 +312,18 @@ staging funcional; WebSocket e serviço→serviço autenticados; checklist de de
 **Objetivo:** reduzir de **5 stacks para 3**, eliminando o Node.js do backend e planejando a saída
 do Angular — sem reescrever o que funciona.
 
-**Decisão permanente de linguagens:** **Python** (negócio, IAM, ERP, integrações — stack dominante),
-**Java** (drone e novos serviços onde performance/JVM justifiquem — não é legado tolerado) e
+**Decisão permanente de linguagens:** **Python** (models),
+**Java** (drone e serviços onde performance/JVM justifiquem) e
 **TypeScript** (todo o frontend). Ver AD-8 em [arquitetura.md](arquitetura.md).
 
 Os microsserviços Node são wrappers finos sobre APIs REST — não justificam um quarto runtime:
 
-| Serviço Node | O que faz | Equivalente Python |
-|---|---|---|
-| `funcoesnf` | Chama NFE.io REST para emitir NF-e/NFS-e | Celery task + `httpx` |
-| `funcoeslead` | Conversão/score de lead, agenda, notificações | ✅ **Absorvido 03/07/2026**: `modulocrm/services.py` + actions, agenda in-process no `modulocalendar`, Celery task de lembretes |
-| `funcoeswhatsapp` | Webhook WhatsApp → pré-cadastro do diário | Django view + Celery task |
-| worker de `funcoesia` (embutido no app) | Chama o Gemini na análise de imagens | Celery task (+ LLM local — ver [plano](arquitetura/diario-ia-reintegracao.md)) |
+| Serviço Node                            | O que faz                                        | Equivalente Python                                                                                                                       |
+| ---------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `funcoesnf`                            | Chama NFE.io REST para emitir NF-e/NFS-e         | Celery task +`httpx`                                                                                                                   |
+| `funcoeslead`                          | Conversão/score de lead, agenda, notificações | ✅**Absorvido 03/07/2026**: `modulocrm/services.py` + actions, agenda in-process no `modulocalendar`, Celery task de lembretes |
+| `funcoeswhatsapp`                      | Webhook WhatsApp → pré-cadastro do diário     | Django view + Celery task                                                                                                                |
+| worker de`funcoesia` (embutido no app) | Chama o Gemini na análise de imagens            | Celery task (+ LLM local — ver[plano](arquitetura/diario-ia-reintegracao.md))                                                            |
 
 O Angular migra por último (Leaflet, Three.js/Potree, GeoTIFF, STOMP): o gatilho é **manutenção
 significativa do drone**, não uma data.
@@ -292,9 +352,16 @@ Achados das revisões técnicas com status vivo: [pendencias.md](pendencias.md).
   Aquiles do isolamento).
 - **RBAC fino / LGPD:** mascaramento de campos por papel, esquecimento, portabilidade, auditoria —
   **Fase 9**.
-- **Drone:** entidades-filhas por owner (não tenant) — **8.5**; WebSocket e serviço→serviço — **10.8**.
+- **Drone:** entidades-filhas escopadas por tenant (`tenant_id` NOT NULL + gate na borda) — **✅ 8.5**;
+  WebSocket e serviço→serviço — **10.8**.
 - **Módulos vazios:** `moduloaps`/`modulodms`/`modulopdca`/`moduloscm`/`modulosil`/`modulomaps` —
   porte da **Fase 7** ([plano](arquitetura/migracao-v01.md)).
+- **Monetização / paywall (planejado, sem código):** auto-serviço (landing → checkout → pagamento
+  Asaas → código de ativação), planos híbridos (planos + add-ons), **quotas** por plano (usuários,
+  empreendimentos, obras, clientes, storage, processamento de drone, IA, NF, boletos), trial de 28
+  dias. Vínculo **usuário↔funcionário** (seat = funcionário com login). Estudo do consultor +
+  faseamento em [arquitetura/monetizacao.md](arquitetura/monetizacao.md); ABAC por objeto (acesso a
+  empreendimento) é a **fatia D** do [AD-9](arquitetura/rbac-abac.md).
 - **Frontend pendente:** dashboard de KPIs, CRM, drone wrapper, calendário — tabela da Fase 7 acima.
 - **Operacional:** LGPD, secrets, observabilidade, DR, pentest — **Fase 10**.
 - **Supply chain:** nenhuma varredura automatizada (npm/Maven/pip) — **10.4**.

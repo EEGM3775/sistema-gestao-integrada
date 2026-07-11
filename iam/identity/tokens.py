@@ -14,6 +14,7 @@ def build_claims(user):
         "tenant_id": str(tenant.id) if tenant else None,
         "tenant_slug": tenant.slug if tenant else None,
         "roles": user.nomes_perfis(),
+        "permissions": user.permissoes_efetivas(),
         "modules": user.modulos_efetivos(),
         "is_tenant_admin": user.is_tenant_admin,
         "is_platform_admin": user.is_superuser,

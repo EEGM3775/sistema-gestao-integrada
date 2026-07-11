@@ -4,6 +4,7 @@ from rest_framework import viewsets
 from rest_framework import permissions
 from django_filters.rest_framework import DjangoFilterBackend
 from nucleo.tenancy import TenantScopedViewSetMixin
+from nucleo.permissions import RequirePermission
 from .models import Obra, EtapaObra, DocumentoObra
 from .serializers import (
     ObraSerializer,
@@ -24,7 +25,8 @@ class ObraViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     serializer_class = ObraSerializer
     filter_backends = [DjangoFilterBackend]
     filterset_class = ObraFilter
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, RequirePermission]
+    required_resource = "obra.obra"
 
     @action(detail=True, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def progresso(self, request, pk=None):
@@ -85,7 +87,8 @@ class EtapaObraViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     """
     queryset = EtapaObra.objects.all().order_by('ordem', 'etapa_id')
     serializer_class = EtapaObraSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, RequirePermission]
+    required_resource = "obra.obra"
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['obra']
 
@@ -95,6 +98,7 @@ class DocumentoObraViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     """
     queryset = DocumentoObra.objects.all()
     serializer_class = DocumentoObraSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, RequirePermission]
+    required_resource = "obra.obra"
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['obra']

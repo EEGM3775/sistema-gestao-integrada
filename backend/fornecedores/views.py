@@ -2,6 +2,7 @@
 from rest_framework import viewsets, permissions, filters
 from django_filters.rest_framework import DjangoFilterBackend
 from nucleo.tenancy import TenantScopedViewSetMixin
+from nucleo.permissions import RequirePermission
 from .models import (
     Fornecedor,
     DadoBancarioFornecedor,
@@ -22,7 +23,8 @@ class FornecedorViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     search_fields = ['razao_social', 'cnpj', 'email', 'contato', 'telefone']
     ordering_fields = ['razao_social']
     ordering = ['razao_social']
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, RequirePermission]
+    required_resource = "cadastro.fornecedor"
 
 
 class DadoBancarioFornecedorViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
@@ -30,7 +32,8 @@ class DadoBancarioFornecedorViewSet(TenantScopedViewSetMixin, viewsets.ModelView
     serializer_class = DadoBancarioFornecedorSerializer
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['fornecedor']
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, RequirePermission]
+    required_resource = "cadastro.fornecedor_banco"
 
 
 class ProdutoServicoFornecedorViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
@@ -41,4 +44,5 @@ class ProdutoServicoFornecedorViewSet(TenantScopedViewSetMixin, viewsets.ModelVi
     search_fields = ['nome_produto_servico', 'descricao']
     ordering_fields = ['nome_produto_servico', 'preco_unitario', 'data_cotacao']
     ordering = ['nome_produto_servico']
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, RequirePermission]
+    required_resource = "cadastro.fornecedor"

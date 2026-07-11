@@ -1,6 +1,7 @@
 # backend/clientes/serializers.py
 from rest_framework import serializers
 from nucleo.tenant_validators import TenantScopedUniqueSerializerMixin
+from nucleo.field_masking import FieldMaskingSerializerMixin
 from .models import (
     Cliente,
     ClienteEmpreendimento,
@@ -10,11 +11,19 @@ from .models import (
 )
 
 
-class ClienteSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
+class ClienteSerializer(FieldMaskingSerializerMixin, TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
+    """Cliente — CPF/CNPJ mascarado por permissão (Fase 9.C / LGPD)."""
     class Meta:
         model = Cliente
         fields = '__all__'
         read_only_fields = ['cliente_id', 'data_cadastro', 'tenant']
+
+    # CPF/CNPJ do cliente é PII de leitura (permissão dedicada, concedível a quem
+    # trata documentos do cliente). A escrita é do cadastro (`cadastro.cliente.edit`,
+    # gate do endpoint) — não travada aqui, senão o comercial não criaria cliente.
+    sensitive_fields = {
+        "cpf_cnpj": "cadastro.cliente_doc.view",
+    }
 
 
 class ClienteEmpreendimentoSerializer(serializers.ModelSerializer):
@@ -49,10 +58,24 @@ class DocumentoClienteSerializer(serializers.ModelSerializer):
         read_only_fields = ['documento_cliente_id', 'data_upload', 'tenant']
 
 
-class DadoBancarioClienteSerializer(serializers.ModelSerializer):
+class DadoBancarioClienteSerializer(FieldMaskingSerializerMixin, serializers.ModelSerializer):
+    """Dados bancários do cliente — PII sensível (LGPD). Mascarada por permissão."""
     cliente_nome = serializers.CharField(source='cliente.nome_completo', read_only=True)
 
     class Meta:
         model = DadoBancarioCliente
         fields = '__all__'
         read_only_fields = ['data_atualizacao', 'tenant']
+
+    sensitive_fields = {
+        "agencia": "cadastro.cliente_banco.view",
+        "conta": "cadastro.cliente_banco.view",
+        "titular_cpf_cnpj": "cadastro.cliente_banco.view",
+        "chave_pix": "cadastro.cliente_banco.view",
+    }
+    write_protected_fields = {
+        "agencia": "cadastro.cliente_banco.edit",
+        "conta": "cadastro.cliente_banco.edit",
+        "titular_cpf_cnpj": "cadastro.cliente_banco.edit",
+        "chave_pix": "cadastro.cliente_banco.edit",
+    }

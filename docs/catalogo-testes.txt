@@ -1,0 +1,122 @@
+CATÁLOGO DE TESTES DO BACKEND — para decidir o que manter/excluir
+==================================================================
+Gerado em 04/07/2026. 39 testes, todos rodando sobre PostgreSQL (banco único).
+Coluna "AVALIAÇÃO": ESSENCIAL = trava uma regressão de bug real já corrigido ou
+o isolamento multi-tenant; ÚTIL = cobre fluxo de negócio; REVER = candidato a
+corte se quiser enxugar.
+
+Rodar: cd backend && ../.venv/bin/python manage.py test
+(defaults já apontam para o Postgres de dev em localhost:5432)
+
+
+nucleo/test_tenant_isolation.py  — ISOLAMENTO ENTRE TENANTS (núcleo do SaaS)
+---------------------------------------------------------------------------
+[ESSENCIAL] TenantIsolationTests.test_list_so_mostra_clientes_do_proprio_tenant
+            Lista de clientes só traz o tenant do usuário.
+[ESSENCIAL] TenantIsolationTests.test_detail_cross_tenant_retorna_404
+            Acesso a cliente de outro tenant por id → 404.
+[ESSENCIAL] TenantIsolationTests.test_create_atribui_tenant_do_usuario
+            Ao criar, o tenant do usuário é atribuído automaticamente.
+[ESSENCIAL] TenantIsolationTests.test_superuser_ve_todos_os_tenants
+            Admin de plataforma (superuser) enxerga todos os tenants.
+[ESSENCIAL] PerTenantUniquenessTests.test_mesmo_cpf_em_outro_tenant_e_permitido
+            Fase 8.3: dois tenants podem ter o mesmo CPF/CNPJ.
+[ESSENCIAL] PerTenantUniquenessTests.test_cpf_duplicado_no_mesmo_tenant_da_400
+            Fase 8.3: duplicata dentro do tenant → 400 limpo (não 500).
+
+nucleo/test_rls_fail_closed.py  — RLS FAIL-CLOSED no PostgreSQL (S2/Fase 8.4)
+---------------------------------------------------------------------------
+[ESSENCIAL] RLSFailClosedTests.test_sem_contexto_nao_enxerga_nada
+            Sessão sem tenant nem bypass → 0 linhas (coração do fail-closed).
+[ESSENCIAL] RLSFailClosedTests.test_tenant_armado_ve_so_o_proprio
+            Contexto do tenant A vê só as linhas de A.
+[ESSENCIAL] RLSFailClosedTests.test_bypass_ve_todos
+            Bypass de plataforma vê todas as linhas.
+[ESSENCIAL] RLSFailClosedTests.test_insert_sem_contexto_e_bloqueado
+            WITH CHECK: inserir sem contexto é barrado pelo banco.
+[ESSENCIAL] RLSFailClosedTests.test_nao_grava_em_outro_tenant
+            Contexto do tenant A não insere linha do tenant B.
+
+moduloerp/tests.py  — NF + ISOLAMENTO EM APIView (S1, L3)
+--------------------------------------------------------
+[ESSENCIAL] EmitirNFSETests.test_nfse_herda_tenant_e_snapshot_completo_do_cliente
+            Achado L3: NF herda tenant do título e snapshot completo do cliente.
+[ESSENCIAL] S1TenantIsolationAPIViewTests.test_dashboard_soma_apenas_o_proprio_tenant
+            Achado S1: dashboard soma só o tenant do usuário (não todos).
+[ESSENCIAL] S1TenantIsolationAPIViewTests.test_atualizar_status_nf_cross_tenant_da_404_e_nao_grava
+            Achado S1: atualizar NF de outro tenant → 404, sem gravar.
+[ESSENCIAL] S1TenantIsolationAPIViewTests.test_consultar_status_nf_cross_tenant_da_404
+            Achado S1: consultar NF de outro tenant → 404.
+
+nucleo/test_dlq.py  — Dead Letter Queue (L2)
+--------------------------------------------
+[ESSENCIAL] DLQTests.test_falha_permanente_grava_failedtask
+            Achado L2: task que esgota retries grava linha na DLQ (FailedTask).
+
+nucleo/test_legacy_token.py  — Token legado rejeitado (D1)
+---------------------------------------------------------
+[ESSENCIAL] TokenLegadoRejeitadoTests.test_callbacks_node_para_erp_recebem_401
+            Achado D1: header "Token" legado → 401 nos endpoints-alvo.
+
+modulocalendar/tests.py  — Agenda/Calendário (L1)
+-------------------------------------------------
+[ESSENCIAL] CalendarEventListTests.test_listagem_responde_200_com_id_nos_eventos_locais
+            Achado L1: listagem não dá mais 500 e eventos locais têm id.
+[ÚTIL]      CalendarEventListTests.test_tarefas_do_crm_entram_na_agenda_in_process
+            Tarefas do CRM aparecem na agenda (Fase 11.2, funcoeslead absorvido).
+[ÚTIL]      CalendarEventListTests.test_feriados_buscados_para_cada_ano_do_periodo
+            Feriados cobrem todos os anos do intervalo (bug dez→jan do L1).
+
+modulocrm/tests.py  — CRM: conversão de lead e agenda (L4/Fase 11.2)
+--------------------------------------------------------------------
+[ÚTIL]      ConvertLeadTests.test_convert_cria_account_contact_opportunity_e_marca_convertido
+            Conversão de lead cria Account/Contact/Opportunity e marca convertido.
+[ÚTIL]      ConvertLeadTests.test_convert_exige_status_qualificado
+            Só converte lead QUALIFICADO.
+[ÚTIL]      ConvertLeadTests.test_score_aplica_regras_de_pontuacao
+            Pontuação de lead por regras.
+[ÚTIL]      InteractionListTests.test_nao_staff_lista_so_o_que_e_seu_sem_500
+            Não-staff lista só o que é seu, sem 500.
+[ÚTIL]      InteractionListTests.test_filtros_da_agenda_funcionam
+            Filtros da agenda (assigned_to/due_date) funcionam.
+
+funcoescobrancas/tests.py  — Cobrança Asaas / trava de identidade (D2)
+----------------------------------------------------------------------
+[ESSENCIAL] BuscarCustomerTests.test_documento_vazio_nao_lista_a_conta_inteira
+            Achado D2: documento vazio não devolve a conta Asaas inteira.
+[ESSENCIAL] BuscarCustomerTests.test_ignora_customer_com_documento_diferente
+            D2: ignora customer cujo CPF/CNPJ não bate.
+[ESSENCIAL] BuscarCustomerTests.test_retorna_customer_com_documento_igual
+            D2: retorna o customer certo quando o documento bate.
+[ÚTIL]      NormalizarNomeTests.test_tolerante_a_acento_caixa_espaco
+            Comparação de nome tolerante a acento/caixa/espaço.
+[ÚTIL]      NormalizarNomeTests.test_sensivel_ao_conteudo
+            Comparação de nome sensível ao conteúdo real.
+[ESSENCIAL] ValidarClienteTests.test_bloqueia_quando_nome_diverge_do_gateway
+            D2: bloqueia cobrança se nome diverge do cadastro no gateway.
+[ESSENCIAL] ValidarClienteTests.test_bloqueia_sem_documento_valido
+            D2: bloqueia cobrança sem documento válido.
+[ÚTIL]      ValidarClienteTests.test_reusa_quando_nome_bate
+            Reusa o customer quando nome + documento batem.
+[ESSENCIAL] ValidarClienteTests.test_garantir_nao_adota_cadastro_alheio_e_nao_grava_id
+            D2: não adota cadastro de terceiro nem grava id contaminado.
+[ÚTIL]      ValidarClienteTests.test_garantir_cria_quando_nao_existe
+            Cria customer no gateway quando não existe.
+[ÚTIL]      AnalisarDivergenciasTests.test_relatorio_classifica_cada_divergencia
+            Relatório de divergências Asaas classifica cada caso.
+[ÚTIL]      AnalisarDivergenciasTests.test_endpoint_divergencias_asaas
+            Endpoint de divergências responde.
+[ESSENCIAL] GerarCobrancaEndpointTests.test_endpoint_bloqueia_e_nao_enfileira_quando_diverge
+            D2: gerar-cobrança bloqueia (409) e NÃO enfileira quando diverge.
+[ÚTIL]      GerarCobrancaEndpointTests.test_endpoint_enfileira_quando_ok
+            Gerar-cobrança enfileira quando tudo bate.
+
+
+RESUMO
+------
+- ESSENCIAL: 22  — regressões de bugs corrigidos (L1,L2,L3,D1,D2,S1,S2) e o
+  isolamento multi-tenant (o coração do produto). Recomendo NÃO excluir.
+- ÚTIL: 17       — cobrem fluxo de negócio (CRM, agenda, cobrança). Corte só se
+  quiser suíte mínima; cada um ainda dá sinal real.
+- Nenhum teste redundante ou "de enfeite" foi identificado. A suíte roda em
+  ~0,6s inteira, então o custo de mantê-la é baixo.

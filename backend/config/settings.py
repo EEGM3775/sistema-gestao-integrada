@@ -115,35 +115,27 @@ AUTH_USER_MODEL = "nucleo.Usuario"
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 #
-# Seleção por ambiente: se POSTGRES_DB estiver definido, usa PostgreSQL
-# (alvo de produção — ver docs/arquitetura.md, Fase 0.1); caso contrário, cai
-# para SQLite, mantendo o desenvolvimento local funcionando sem infra.
-if os.getenv('POSTGRES_DB'):
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.postgresql',
-            'NAME': os.getenv('POSTGRES_DB'),
-            'USER': os.getenv('POSTGRES_USER', 'erp_app'),
-            'PASSWORD': os.getenv('POSTGRES_PASSWORD', ''),
-            'HOST': os.getenv('DB_HOST', 'localhost'),
-            'PORT': os.getenv('DB_PORT', '5432'),
-            'CONN_MAX_AGE': int(os.getenv('DB_CONN_MAX_AGE', '60')),
-            # Cada requisição roda numa transação — necessário para o RLS
-            # (set_config(..., is_local=true)) e bom para integridade financeira.
-            'ATOMIC_REQUESTS': True,
-            'OPTIONS': {
-                # TLS obrigatório em produção; em dev (localhost) use 'prefer'.
-                'sslmode': os.getenv('DB_SSLMODE', 'prefer'),
-            },
-        }
+# PostgreSQL é o único banco (dev e produção). A RLS, os CheckConstraint e as
+# transações do ATOMIC_REQUESTS só são reais no PostgreSQL — o SQLite não é mais
+# suportado. Os defaults apontam para o container de dev (localhost:5432).
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.getenv('POSTGRES_DB', 'erp_db'),
+        'USER': os.getenv('POSTGRES_USER', 'erp_app'),
+        'PASSWORD': os.getenv('POSTGRES_PASSWORD', 'erp_app_senha_dev'),
+        'HOST': os.getenv('DB_HOST', 'localhost'),
+        'PORT': os.getenv('DB_PORT', '5432'),
+        'CONN_MAX_AGE': int(os.getenv('DB_CONN_MAX_AGE', '60')),
+        # Cada requisição roda numa transação — necessário para o RLS
+        # (set_config(..., is_local=true)) e bom para integridade financeira.
+        'ATOMIC_REQUESTS': True,
+        'OPTIONS': {
+            # TLS obrigatório em produção; em dev (localhost) use 'prefer'.
+            'sslmode': os.getenv('DB_SSLMODE', 'prefer'),
+        },
     }
-else:
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': BASE_DIR / 'db.sqlite3',
-        }
-    }
+}
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators

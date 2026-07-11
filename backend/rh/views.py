@@ -6,7 +6,8 @@ from django.db.models import Q
 import re
 from django_filters.rest_framework import DjangoFilterBackend
 from nucleo.tenancy import TenantScopedViewSetMixin
-from nucleo.permissions import RequireModule, RequireRole
+from nucleo.auditoria import AuditedModelViewSetMixin, PiiReadAuditMixin
+from nucleo.permissions import RequireModule, RequireRole, RequirePermission
 from .models import (
     Cargo,
     Funcionario,
@@ -36,7 +37,7 @@ class CargoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     search_fields = ['nome_cargo', 'departamento']
 
-class FuncionarioViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+class FuncionarioViewSet(AuditedModelViewSetMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
     queryset = Funcionario.objects.all().order_by('nome_completo')
     serializer_class = FuncionarioSerializer
     permission_classes = [permissions.IsAuthenticated, RequireModule]
@@ -92,20 +93,22 @@ class FuncionarioViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
         
         return queryset
 
-class DadoMedicoFuncionarioViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+class DadoMedicoFuncionarioViewSet(PiiReadAuditMixin, AuditedModelViewSetMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
     queryset = DadoMedicoFuncionario.objects.all()
     serializer_class = DadoMedicoFuncionarioSerializer
-    permission_classes = [permissions.IsAuthenticated, RequireModule, RequireRole]
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "rh"
-    required_role = "rh_medico"
+    required_resource = "rh.dado_medico"   # GET→.view · escrita→.edit
+    required_role = "rh_medico"            # fallback legado (token sem permissions)
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['funcionario']
 
-class ASOFuncionarioViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+class ASOFuncionarioViewSet(PiiReadAuditMixin, AuditedModelViewSetMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
     queryset = ASOFuncionario.objects.all().order_by('-data_exame')
     serializer_class = ASOFuncionarioSerializer
-    permission_classes = [permissions.IsAuthenticated, RequireModule, RequireRole]
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "rh"
+    required_resource = "rh.dado_medico"   # ASO é PII médica
     required_role = "rh_medico"
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['funcionario']
@@ -118,29 +121,32 @@ class DocumentoFuncionarioViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSe
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['funcionario']
 
-class DadoBancarioFuncionarioViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+class DadoBancarioFuncionarioViewSet(PiiReadAuditMixin, AuditedModelViewSetMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
     queryset = DadoBancarioFuncionario.objects.all()
     serializer_class = DadoBancarioFuncionarioSerializer
-    permission_classes = [permissions.IsAuthenticated, RequireModule, RequireRole]
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "rh"
+    required_resource = "rh.dado_bancario"
     required_role = "rh_financeiro"
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['funcionario']
 
-class PagamentoFuncionarioViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+class PagamentoFuncionarioViewSet(AuditedModelViewSetMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
     queryset = PagamentoFuncionario.objects.all().order_by('-data_pagamento')
     serializer_class = PagamentoFuncionarioSerializer
-    permission_classes = [permissions.IsAuthenticated, RequireModule, RequireRole]
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "rh"
+    required_resource = "rh.folha"
     required_role = "rh_financeiro"
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['funcionario']
 
-class FolhaPagamentoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+class FolhaPagamentoViewSet(AuditedModelViewSetMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
     queryset = FolhaPagamento.objects.all().order_by('-mes_referencia')
     serializer_class = FolhaPagamentoSerializer
-    permission_classes = [permissions.IsAuthenticated, RequireModule, RequireRole]
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "rh"
+    required_resource = "rh.folha"
     required_role = "rh_financeiro"
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['funcionario']

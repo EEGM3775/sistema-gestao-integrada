@@ -4,6 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from nucleo.tenancy import TenantScopedViewSetMixin
+from nucleo.permissions import RequirePermission
 from funcoescobrancas.services import analisar_divergencias_asaas
 from funcoescobrancas.client import AsaasAPIError
 from .models import (
@@ -36,7 +37,8 @@ class ClienteViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     search_fields = ['nome_completo', 'cpf_cnpj', 'email', 'telefone', 'bairro', 'cidade', 'cep']
     ordering_fields = ['nome_completo', 'data_cadastro', 'cidade', 'estado']
     ordering = ['nome_completo']
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, RequirePermission]
+    required_resource = "cadastro.cliente"  # GET→.view · escrita→.edit
 
     @action(detail=False, methods=['get'], url_path='divergencias-asaas')
     def divergencias_asaas(self, request):
@@ -63,7 +65,8 @@ class ClienteEmpreendimentoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewS
     filterset_class = ClienteEmpreendimentoFilter
     ordering_fields = ['data_compra', 'valor_compra']
     ordering = ['-data_compra']
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, RequirePermission]
+    required_resource = "cadastro.cliente"  # aquisição/venda do cliente
 
 
 class ContratoClienteViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
@@ -74,7 +77,8 @@ class ContratoClienteViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     search_fields = ['numero_contrato', 'objeto_contrato']
     ordering_fields = ['data_assinatura', 'numero_contrato', 'status_contrato']
     ordering = ['-data_assinatura']
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, RequirePermission]
+    required_resource = "cadastro.cliente"
 
 
 class DocumentoClienteViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
@@ -84,7 +88,8 @@ class DocumentoClienteViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     filterset_class = DocumentoClienteFilter
     ordering_fields = ['data_upload', 'tipo_documento']
     ordering = ['-data_upload']
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, RequirePermission]
+    required_resource = "cadastro.cliente"
 
 
 class DadoBancarioClienteViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
@@ -92,4 +97,5 @@ class DadoBancarioClienteViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet
     serializer_class = DadoBancarioClienteSerializer
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['cliente']
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, RequirePermission]
+    required_resource = "cadastro.cliente_banco"

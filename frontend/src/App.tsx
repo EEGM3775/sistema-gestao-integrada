@@ -16,7 +16,10 @@ import DiarioObraPage from './modules/diario/pages/DiarioObraPage'
 import FuncionariosListPage from './modules/rh/pages/FuncionariosListPage'
 import FuncionarioDetailPage from './modules/rh/pages/FuncionarioDetailPage'
 import CargosPage from './modules/rh/pages/CargosPage'
+import PersonasPage from './modules/admin/pages/PersonasPage'
+import UsuariosPage from './modules/admin/pages/UsuariosPage'
 import { erpRoutes } from './modules/erp/routes'
+import { crmRoutes } from './modules/crm/routes'
 
 function App() {
   return (
@@ -62,8 +65,15 @@ function App() {
           <Route path="rh/cargos" element={<CargosPage />} />
           <Route path="rh/:id" element={<FuncionarioDetailPage />} />
 
+          {/* ── Administração do tenant (papéis/personas + usuários) — guardado por is_tenant_admin ── */}
+          <Route path="admin/papeis" element={<PersonasPage />} />
+          <Route path="admin/usuarios" element={<UsuariosPage />} />
+
           {/* ── ERP Financeiro (sub-rotas lazy — code-splitting, docs/modulos/moduloerp.md §5.6) ── */}
           {erpRoutes}
+
+          {/* ── CRM (sub-rotas lazy — code-splitting) ── */}
+          {crmRoutes}
 
           {/* Fallback interno — caminho absoluto evita loop de append no splat (/app/x → /app/x/dashboard → …) */}
           <Route path="*" element={<Navigate to="/app/dashboard" replace />} />

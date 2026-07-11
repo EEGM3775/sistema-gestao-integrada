@@ -157,6 +157,13 @@ def _emitir_nf_para_conta_receber(request, conta, tipo_nf):
             conta.nota_fiscal_produto = nf
         conta.save()
 
+        # Auditoria (Fase 9.E): emissão de NF é evento fiscal sensível.
+        from nucleo.auditoria import registrar_auditoria
+        registrar_auditoria(
+            acao="emitir_nf", instance=conta, usuario=getattr(request, "user", None),
+            detalhes={"tipo_nf": tipo_nf, "nf_id": nf.id, "valor": str(conta.valor)},
+        )
+
         # Trigger the microservice (optional in development)
         microservice_url = f'http://localhost:3003{microservice_endpoint}'
         try:
@@ -557,6 +564,12 @@ class ContaReceberViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
                 {'detail': f'Erro ao gerar cobrança no Asaas: {e}'},
                 status=status_module.HTTP_502_BAD_GATEWAY,
             )
+        # Auditoria (Fase 9.E): cobrança enfileirada com sucesso.
+        from nucleo.auditoria import registrar_auditoria
+        registrar_auditoria(
+            acao="gerar_cobranca", instance=conta, usuario=getattr(request, "user", None),
+            detalhes={"conta_receber_id": conta.conta_receber_id},
+        )
         return Response(
             {'detail': 'Geração de cobrança Asaas iniciada — o boleto/PIX aparece em "Boletos" assim que o gateway confirmar.'},
             status=status_module.HTTP_202_ACCEPTED,

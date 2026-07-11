@@ -70,26 +70,20 @@ rm -f .venv/bin/python* && python3 -m venv .venv   # regenera symlinks, preserva
 
 ## Rodar os testes
 
-Por padrão a suíte roda em **SQLite in-memory** (rápido, sem infra) — basta não definir
-`POSTGRES_DB`:
+**Banco único = PostgreSQL** (não há mais fallback SQLite). Os defaults do `settings.py` já apontam
+para o container de dev (`localhost:5432`, `erp_db`/`erp_app`), então basta ter a infra de pé:
 
 ```bash
-cd backend && env -u POSTGRES_DB ../.venv/bin/python manage.py test
-```
-
-Os testes de RLS (`nucleo/test_rls_fail_closed.py` e parte de `test_tenant_isolation.py`) são
-**pulados no SQLite**, onde a RLS é no-op. Para valê-la de verdade, rode sobre o **Postgres** de dev
-(Fase 8.1) — como o **role de aplicação** `erp_app` (não-superuser, não-BYPASSRLS), que é o cenário
-real de produção:
-
-```bash
+docker compose up -d postgres                                   # se ainda não estiver rodando
 # o role de app precisa criar o banco de teste (dev apenas; NÃO conceda em produção):
 docker exec sgi-postgres psql -U postgres -c 'ALTER ROLE erp_app CREATEDB;'
 
-cd backend && POSTGRES_DB=erp_db POSTGRES_USER=erp_app POSTGRES_PASSWORD=erp_app_senha_dev \
-  DB_HOST=localhost DB_PORT=5432 DB_SSLMODE=disable \
-  ../.venv/bin/python manage.py test --keepdb
+cd backend && ../.venv/bin/python manage.py test                # roda a suíte inteira no Postgres
 ```
+
+Como o Postgres é o único banco, a RLS *fail-closed* vale de fato e **todos** os testes de isolamento
+(`nucleo/test_rls_fail_closed.py`, `test_tenant_isolation.py`) rodam — nenhum é pulado. A suíte roda
+como o role `erp_app` (não-superuser, não-BYPASSRLS), o cenário real de produção.
 
 O `TEST_RUNNER` do projeto ([nucleo/test_runner.py](../backend/nucleo/test_runner.py)) arma o bypass
 de plataforma **em nível de sessão** durante os testes, para o seed de fixtures (que roda fora de um
@@ -137,4 +131,4 @@ conteúdo (`index-<hash>.js`); se o Docker reutilizou um layer, o hash não muda
 `304 Not Modified`. **Solução:** hard refresh — `Ctrl+Shift+R` (Windows/Linux) ou `Cmd+Shift+R` (Mac).
 
 > O mesmo vale para o backend: o container `sgi-erp` roda imagem buildada — `docker compose build erp`
-> a cada mudança de código Python (descoberto na validação do D.1.2, ver [historico.md](historico.md)).
+> a cada mudança de código Python (descoberto na validação do D.1.2).

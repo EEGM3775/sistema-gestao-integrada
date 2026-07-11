@@ -4,46 +4,20 @@ Este arquivo é lido automaticamente pelo Claude Code no início de cada convers
 
 ## Regra de sincronização de documentação
 
-**Após qualquer implementação significativa, atualizar TODOS os documentos afetados no mesmo turno.**
+Após implementação significativa (módulo concluído, campo/model alterado, fase do roadmap avançada,
+rota nova), atualizar **só os documentos de status**, de forma concisa e no mesmo turno:
 
-### O que é "implementação significativa"
+- **`docs/roadmap.md`** — status de fases/módulos: 1 linha por mudança, **sem narrativa**.
+- **`docs/pendencias.md`** — achados de revisão: ao corrigir, status → `✅ corrigido DD/MM/AAAA`
+  (achado novo = linha nova; nunca criar pastas de laudo `revisao-*`).
 
-- Novo módulo backend concluído (models + views + serializers + rotas)
-- Novo módulo frontend concluído (páginas + componentes + hooks)
-- Campo de model alterado (adicionado, removido, tornado nullable/not null, unique alterado)
-- Migration aplicada que diverge do models.py
-- Fase do roadmap concluída ou parcialmente concluída
-- Rota nova registrada (mesmo que em `config/urls.py` sem `urls.py` local)
+As **plantas** (`arquitetura*`, `dominio`, `modulos/`, `frontend*`) descrevem o sistema **sem status
+nem datas** — atualizar só quando o **desenho** muda (nova página/rota/model/padrão/endpoint).
 
-### Cada documento tem UMA natureza — não misturar
+Padrão de status nas tabelas
 
-- **Planta** (`arquitetura*`, `dominio`, `modulos/`, `frontend.md`, `frontend-convencoes.md`):
-  descreve o sistema inteiro, **sem status nem datas**.
-- **Status** (`roadmap.md`, `pendencias.md`): o que está pronto/falta/quebrado — tabelas e links,
-  **sem narrativa**.
-- **Histórico** (`historico.md`): narrativa datada (entregas, bugs corrigidos, validações,
-  decisões). **Todo texto com data vai para cá**, nunca para o roadmap.
-- **Uma revisão técnica só:** achados (problema → correção → status) e o backlog de ideias vivem
-  consolidados em `docs/pendencias.md`. Nunca criar pastas de laudo versionadas (`revisao-*`,
-  `*-v02`); revisões novas atualizam o `pendencias.md` (achado novo = linha nova).
-
-### Documentos a atualizar (por escopo da mudança)
-
-| Mudança | Documentos a atualizar |
-|---|---|
-| Backend: model alterado | `docs/modulos/<modulo>.md` (campos + choices corretos) · `backend/<modulo>/models.py` (sincronizar com migration) |
-| Backend: módulo completo | `docs/modulos/<modulo>.md` · `docs/roadmap.md` (tabela backend, 1 linha) · `docs/historico.md` (nota de entrega datada) |
-| Frontend: módulo completo | `docs/roadmap.md` (tabela frontend + fluxo testável, 1 linha cada) · `docs/historico.md` (nota de entrega datada) · `docs/frontend.md` **só se** o desenho mudou (nova página/rota/padrão) · `docs/frontend-convencoes.md` se nasceu convenção nova |
-| Fase do roadmap concluída | `docs/roadmap.md` (status) · `docs/README.md` (tabela de resumo de fases) · `docs/historico.md` (narrativa da entrega) |
-| Rota nova registrada | `docs/modulos/<modulo>.md` (seção de endpoints) |
-| Bug relevante corrigido / achado de revisão resolvido | `docs/pendencias.md` (status → `✅ corrigido DD/MM/AAAA`) · `docs/historico.md` (o que era e como foi corrigido) |
-
-### Padrão de status nas tabelas
-
-- `✅ DD/MM/AAAA` — implementado e validado
-- `🚧 em andamento` — iniciado mas incompleto
-- `❌ Fase X.Y` — planejado para a fase indicada
-- `📋 Planejado` — ainda sem fase definida
+- `✅ DD/MM/AAAA` — implementado e validado · `🚧 em andamento` · `❌ Fase X.Y` — planejado p/ a fase ·
+  `📋 Planejado` — sem fase definida
 
 ### Armadilha frequente
 
@@ -56,7 +30,6 @@ Antes de documentar um campo, verificar se o modelo Python reflete o estado atua
 - Planta baixa: [docs/arquitetura.md](docs/arquitetura.md)
 - Roadmap (status de fases + plano): [docs/roadmap.md](docs/roadmap.md)
 - Pendências (achados de revisão abertos): [docs/pendencias.md](docs/pendencias.md)
-- Histórico (diário de obra, entregas datadas): [docs/historico.md](docs/historico.md)
 - Módulos do ERP em detalhe: [docs/modulos/](docs/modulos/)
 - Frontend (React): [docs/frontend.md](docs/frontend.md) · convenções obrigatórias:
   [docs/frontend-convencoes.md](docs/frontend-convencoes.md)

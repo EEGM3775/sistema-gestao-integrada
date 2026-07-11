@@ -43,22 +43,26 @@ usuário (admins do tenant recebem todos os módulos ativos). É esse conjunto q
 {
   "sub": "username",                 // identidade
   "tenant_id": "...", "tenant_slug": "...",
-  "modules": ["erp_financeiro", "drone"],   // CAMADA 1 — entitlements efetivos
-  "roles":   ["financeiro"],                // CAMADA 2 — papéis (RBAC)
+  "modules":     ["erp_financeiro", "drone"],        // CAMADA 1 — entitlements efetivos
+  "permissions": ["rh.dado_medico.view", "erp.conta_pagar.baixar"], // CAMADA 2 — permissões efetivas
+  "roles":       ["financeiro"],                     // CAMADA 2 — nomes (transição/exibição)
   "is_tenant_admin": false, "iss": "sgi-iam", "exp": 0
 }
 ```
 
 Todo serviço valida a assinatura (RS256, chave pública/JWKS) e lê essas claims. **Nenhuma decisão
-de acesso depende de tabela local de permissão** — a verdade está no token.
+de acesso depende de tabela local de permissão** — a verdade está no token. Desde a **Fase 9.A**, a
+checagem da camada 2 é por **permissão** (`permissions`); `roles` fica para transição/exibição.
 
 ## 4. Enforcement genérico (o padrão que TODO módulo segue)
 
 A regra é sempre a mesma, independente da tecnologia do módulo:
 
 1. **Entitlement (camada 1):** o endpoint exige um **código de módulo**; se ele não está em
-   `modules`, responde **403**.
-2. **RBAC (camada 2):** se exigir papel/permissão, checa `roles`; senão **403**.
+   `modules`, responde **403** (`RequireModule`).
+2. **RBAC por permissão (camada 2):** o endpoint declara `required_resource`/`required_permission` e
+   `RequirePermission` checa o claim `permissions`; senão **403**. Token legado (sem `permissions`)
+   cai no `RequireRole` (papel) durante a transição.
 3. **Isolamento:** toda query filtra por `tenant_id` do token (+ RLS no Postgres).
 
 ### Implementação de referência — o drone (`funcoesODM`, Java)
@@ -75,26 +79,38 @@ Angular) e ainda assim plugar na **mesma** identidade/entitlement — sem reimpl
 
 | Serviço / módulo | Autenticação | Entitlement (cam.1) | RBAC (cam.2) | Isolamento |
 |---|---|---|---|---|
-| **IAM** | é a autoridade | emite os entitlements | dono dos papéis | dono dos tenants |
+| **IAM** | é a autoridade | emite os entitlements | dono do catálogo + papéis (personas por tenant) | dono dos tenants |
 | **Drone** (`funcoesODM`) | ✅ JWT IAM | ✅ `MODULE_drone` (403) | ⚠️ por owner | ✅ `tenant_id` |
-| **ERP — `modulocrm` (`crm`)** | ✅ JWT IAM | ✅ `RequireModule` (403) | — | ✅ tenant-scope |
-| **ERP — `rh` (`rh`)** | ✅ | ✅ `RequireModule` | ⚠️ sub-recursos sensíveis por papel (`rh_medico`/`rh_financeiro`) — hoje **não semeados** (403 até provisionar) | ✅ |
-| **ERP — `moduloerp` (`erp_financeiro`)** | ✅ | ✅ `RequireModule` | ✅ `RequireRole("financeiro")` | ✅ |
-| **ERP — base** (`clientes`/`obras`/`empreendimentos`) | ✅ | n/a (sempre disponível) | — | ✅ |
-| **Sistema de lixo** (`/api/lixo/`) — 📋 **planejado, não implementado** | 📋 JWT IAM | n/a (base) | 📋 `RequireRole("gestor_lixo")` | 📋 tenant-scope |
+| **ERP — `modulocrm` (`crm`)** | ✅ JWT IAM | ✅ `RequireModule` (403) | ✅ `RequirePermission` por recurso (fecha o S5) | ✅ tenant-scope |
+| **ERP — `rh` (`rh`)** | ✅ | ✅ `RequireModule` | ✅ `RequirePermission` — `rh.dado_medico`/`rh.dado_bancario`/`rh.folha` (papéis provisionados, 403 destravado) | ✅ |
+| **ERP — `moduloerp` (`erp_financeiro`)** | ✅ | ✅ `RequireModule` | ✅ `RequireRole("financeiro")` (migra p/ permissão na 9.B) | ✅ |
+| **ERP — base** (`clientes`/`fornecedores`/`obras`/`empreendimentos`) | ✅ | n/a (sempre disponível) | ✅ `RequirePermission` por recurso (`cadastro.*`/`obra.*`) — 05/07/2026 | ✅ |
+| **ERP — `modulodiario`** | ✅ | n/a (base) | ✅ ABAC próprio (`PodeModerarDiario` + equipe/responsável) | ✅ |
+| **Sistema de lixo** (`/api/lixo/`) — 📋 **planejado, não implementado** | 📋 JWT IAM | n/a (base) | 📋 `plataforma.lixo.*` | 📋 tenant-scope |
 
-**Leitura (após a Fase 6, 02/06/2026):** a **camada 1 é aplicada genericamente** — o mesmo
-`RequireModule` (espelho do `MODULE_drone`) lê o claim `modules` e devolve **403** nos módulos
-vendáveis do ERP (`crm`/`rh`/`erp_financeiro`); a **camada 2** já gateia o financeiro por papel
-(`RequireRole`). Os legados foram removidos: o **login local do ERP** (apagado) e os **endpoints
-`Perfil`/`Permissao`** (a fonte é a IAM; o ERP lê os papéis das claims). Validado por
-`infra/gateway/phase6_rbac_test.py`. Pendências: mascaramento de **campos** sensíveis por papel; e
-remover os **modelos** `nucleo.Perfil`/`Permissao` (hoje só espelho legado).
+**Leitura (após a Fase 9.A/9.B, 05/07/2026):** a **camada 1** segue genérica (`RequireModule` lê
+`modules`). A **camada 2** passou a checar **permissão** (`RequirePermission` lê `permissions`), com
+`RequireRole` **depreciado** (fallback p/ token legado). A IAM ganhou um **catálogo global de
+permissões** (`modulo.recurso.acao`, [iam/identity/catalog.py](../iam/identity/catalog.py)),
+**personas por tenant** compostas do catálogo (com trava anti-escalada) e uma **UI de administração**
+(`/app/admin/papeis` e `/app/admin/usuarios`, via gateway `/iam/`). O 403 histórico do RH foi
+**destravado** (papéis `rh_medico`/`rh_financeiro` provisionados). A **fatia C** (mascaramento de
+campo/PII) também já vale: `FieldMaskingSerializerMixin` mascara campo sem permissão na leitura e
+rejeita na escrita (RH, clientes, fornecedores). Validado por `iam/identity/tests.py`,
+`backend/rh/tests.py`, `backend/rh/test_field_masking.py` e `backend/modulocrm/tests.py`.
+**Pendência:** ABAC por objeto (fatia D) e remover os **modelos** legados `nucleo.Perfil`/`Permissao`.
 
-> **Evolução planejada (AD-9):** esta camada 2 será reprojetada como **RBAC + ABAC** — endpoints
-> passam a checar **permissão** (catálogo global) em vez de nome de papel, papéis viram composições
-> **por tenant**, e a PII ganha **mascaramento de campo**. Desenho completo (com plano de migração)
-> em [arquitetura/rbac-abac.md](arquitetura/rbac-abac.md).
+> **Desenho-alvo (AD-9) — status por fatia:** **A** (catálogo + personas + `permissions` no JWT),
+> **B** (`RequirePermission` no enforcement) e **C** (mascaramento de campo/PII) ✅. A **fatia D do
+> AD-9** (ABAC por objeto — acesso a empreendimento) segue pendente; a **fatia E** (limpeza do
+> `RequireRole`) também. **LGPD** (roadmap 9.D — portabilidade, esquecimento e incidente ANPD com
+> confirmação do dono) ✅ 05/07/2026: `GET/POST /api/lgpd/<tipo>/<id>/exportar|esquecer/` e
+> `/api/lgpd/incidentes/` ([nucleo/lgpd.py](../backend/nucleo/lgpd.py)). Desenho completo em
+> [arquitetura/rbac-abac.md](arquitetura/rbac-abac.md); paywall/planos em
+> [arquitetura/monetizacao.md](arquitetura/monetizacao.md).
+>
+> ⚠️ Numeração: "9.D" no [roadmap](roadmap.md) = **LGPD**; "fatia D" no AD-9 §6 = **ABAC por objeto**.
+> São coisas diferentes (herança de dois esquemas).
 
 ## 6. Fase 6 — implementada (02/06/2026)
 

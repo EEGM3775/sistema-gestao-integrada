@@ -25,7 +25,6 @@ from fornecedores.views import (
 )
 from nucleo.views import (
     UsuarioViewSet,
-    LogAtividadeUsuarioViewSet,
     LogInternoView,
     ConfiguracaoUploadView,
 )
@@ -45,8 +44,22 @@ from rh.views import (
     FolhaPagamentoViewSet
 )
 
+# Views LGPD (Fase 9.D)
+from nucleo.lgpd_views import (
+    LgpdExportarView, LgpdEsquecerView, IncidenteLGPDViewSet,
+)
+
+# Trilha de auditoria (Fase 9.E)
+from nucleo.auditoria_views import AuditLogViewSet
+
 # Cria o roteador da API, que gera as rotas automaticamente
 router = DefaultRouter()
+
+# --- LGPD (Fase 9.D) ---
+router.register(r'lgpd/incidentes', IncidenteLGPDViewSet, basename='incidentelgpd')
+
+# --- Trilha de auditoria (Fase 9.E) ---
+router.register(r'auditoria', AuditLogViewSet, basename='auditlog')
 
 # --- Rotas do App 'clientes' ---
 router.register(r'clientes', ClienteViewSet, basename='cliente')
@@ -68,7 +81,6 @@ router.register(r'produtos-servicos-fornecedores', ProdutoServicoFornecedorViewS
 # --- Rotas do App 'nucleo' ---
 # (perfis/permissoes saíram: a IAM é a autoridade de papéis/permissões — Fase 6)
 router.register(r'usuarios', UsuarioViewSet, basename='usuario')
-router.register(r'logs-atividade', LogAtividadeUsuarioViewSet, basename='logatividade')
 
 # --- Rotas do App 'obras' ---
 router.register(r'obras', ObraViewSet, basename='obra')
@@ -100,6 +112,10 @@ urlpatterns = [
     # Endpoint para log interno
     path('api/log-interno/', LogInternoView.as_view(), name='log_interno'),
     path('api/configuracoes/upload/', ConfiguracaoUploadView.as_view(), name='configuracao_upload'),
+
+    # LGPD (Fase 9.D): portabilidade e esquecimento do titular
+    path('api/lgpd/<str:tipo>/<int:pk>/exportar/', LgpdExportarView.as_view(), name='lgpd_exportar'),
+    path('api/lgpd/<str:tipo>/<int:pk>/esquecer/', LgpdEsquecerView.as_view(), name='lgpd_esquecer'),
 
     # --- Rotas dos Módulos (sem roteador principal) ---
     path('api/diario/', include('modulodiario.urls')),

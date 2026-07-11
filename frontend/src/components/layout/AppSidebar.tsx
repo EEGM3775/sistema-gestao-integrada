@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Building2, HardHat, Users, Truck,
   BarChart3, UserCog, TrendingUp, Brain, Plane,
-  CalendarDays, PanelLeft, Lock,
+  CalendarDays, PanelLeft, Lock, ShieldCheck,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 
@@ -12,6 +12,7 @@ interface NavItem {
   icon: React.ReactNode
   to: string
   module?: string       // entitlement code — se definido, item some se não tiver o módulo
+  adminOnly?: boolean   // só aparece para admin do tenant
   implemented: boolean  // quando false: mostra o item mas não navega
 }
 
@@ -27,14 +28,17 @@ const NAV_ITEMS: NavItem[] = [
   // ── Módulos pagos ──
   { label: 'ERP',             icon: <BarChart3 size={20} />,       to: '/app/erp',             module: 'erp_financeiro', implemented: true },
   { label: 'Diário / IA',    icon: <Brain size={20} />,            to: '/app/diario',          implemented: true },
-  { label: 'CRM',             icon: <TrendingUp size={20} />,      to: '/app/crm',             module: 'crm',            implemented: false },
+  { label: 'CRM',             icon: <TrendingUp size={20} />,      to: '/app/crm',             module: 'crm',            implemented: true },
   { label: 'Drone',           icon: <Plane size={20} />,           to: '/app/drone',           module: 'drone',          implemented: false },
+  // ── Administração do tenant ──
+  { label: 'Papéis e Acessos', icon: <ShieldCheck size={20} />,    to: '/app/admin/papeis',    adminOnly: true,          implemented: true },
+  { label: 'Usuários',         icon: <Users size={20} />,          to: '/app/admin/usuarios',  adminOnly: true,          implemented: true },
 ]
 
-const SEPARATOR_BEFORE = new Set(['ERP'])
+const SEPARATOR_BEFORE = new Set(['ERP', 'Papéis e Acessos'])
 
 export const AppSidebar: React.FC = () => {
-  const { hasModule } = useAuth()
+  const { hasModule, isTenantAdmin } = useAuth()
   const [collapsed, setCollapsed] = useState(() =>
     localStorage.getItem('sgi_sidebar_collapsed') === 'true'
   )
@@ -44,7 +48,7 @@ export const AppSidebar: React.FC = () => {
   }, [collapsed])
 
   const visibleItems = NAV_ITEMS.filter(
-    (item) => !item.module || hasModule(item.module)
+    (item) => (!item.module || hasModule(item.module)) && (!item.adminOnly || isTenantAdmin)
   )
 
   return (

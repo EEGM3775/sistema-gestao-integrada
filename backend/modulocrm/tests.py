@@ -107,3 +107,34 @@ class InteractionListTests(CrmTestBase):
 
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json(), [])
+
+
+class S5EntitlementCrmTests(CrmTestBase):
+    """Achado S5: `OpportunityProductViewSet` só tinha `IsAuthenticated` — tenant
+    sem o módulo `crm` acessava `/api/crm/opportunity-products/`. Corrigido com
+    `RequireModule('crm')` + `RequirePermission` (camadas 1 e 2, Fase 9.B)."""
+
+    URL = "/api/crm/opportunity-products/"
+
+    def test_sem_o_modulo_crm_nega(self):
+        self.user.iam_modules = []          # tenant não assina crm
+        self.client.force_authenticate(user=self.user)
+        self.assertEqual(self.client.get(self.URL).status_code, 403)
+
+    def test_com_modulo_mas_sem_a_permissao_nega(self):
+        # era das permissões: tem crm, mas não `crm.oportunidade_produto` → 403.
+        self.user.iam_modules = ["crm"]
+        self.user.iam_permissions = ["crm.lead.view"]
+        self.client.force_authenticate(user=self.user)
+        self.assertEqual(self.client.get(self.URL).status_code, 403)
+
+    def test_com_permissao_concede(self):
+        self.user.iam_modules = ["crm"]
+        self.user.iam_permissions = ["crm.oportunidade_produto.view"]
+        self.client.force_authenticate(user=self.user)
+        self.assertEqual(self.client.get(self.URL).status_code, 200)
+
+    def test_token_legado_com_modulo_passa(self):
+        # token sem `permissions` → fallback de papel (CRM não exige papel) → 200.
+        self.autenticar(self.user)  # seta iam_modules=["crm"], sem permissions
+        self.assertEqual(self.client.get(self.URL).status_code, 200)

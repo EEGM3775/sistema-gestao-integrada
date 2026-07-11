@@ -1,7 +1,7 @@
 # nucleo/models.py
 import uuid
 
-from django.db import models
+from django.db import IntegrityError, models
 from django.contrib.auth.models import AbstractUser
 from django.utils.translation import gettext_lazy as _
 
@@ -147,8 +147,16 @@ class ConfiguracaoArquivos(models.Model):
 
 
 class LogAtividadeUsuario(models.Model):
-    """
-    Registra as ações importantes realizadas pelos usuários no sistema.
+    """Log OPERACIONAL (telemetria) — ciclo de vida de tasks Celery
+    (`signals.py`) e sink de microsserviços (`LogInternoView`).
+
+    **Demovido na Fase 9.E:** a *trilha de auditoria sensível* (RH/financeiro/
+    LGPD, imutável e por-tenant) passou para `AuditLog`. Este modelo é **mutável**
+    (o `task_postrun` atualiza a linha de início) e **não é tenant-scoped**
+    (tasks de sistema não têm tenant) — por isso não serve como trilha LGPD. A API
+    de leitura `/api/logs-atividade/` foi removida (use `/api/auditoria/`); a
+    remoção do modelo e a migração da telemetria para logs estruturados são da
+    **Fase 10** (observabilidade).
     """
     log_id = models.BigAutoField(primary_key=True)
     usuario = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, verbose_name=_("Usuário"))
@@ -165,3 +173,134 @@ class LogAtividadeUsuario(models.Model):
 
     def __str__(self):
         return f"{self.timestamp} - {self.usuario}: {self.acao}"
+
+
+from datetime import timedelta
+
+from django.utils import timezone
+from nucleo.tenancy import TenantScopedModel
+
+
+class IncidenteLGPD(TenantScopedModel):
+    """Incidente de segurança com dado pessoal (Fase 9.D — LGPD art. 48).
+
+    Fluxo com trava de falso-positivo: um incidente nasce **pendente**; só o
+    **dono da plataforma** (superuser da IAM) o **confirma** (aí começa o prazo
+    de 72h para notificar a ANPD) ou o **descarta** (falso positivo). Isso evita
+    notificação automática indevida à ANPD.
+    """
+
+    class Status(models.TextChoices):
+        PENDENTE = "pendente", _("Pendente de confirmação")
+        CONFIRMADO = "confirmado", _("Confirmado (prazo ANPD correndo)")
+        DESCARTADO = "descartado", _("Descartado (falso positivo)")
+        NOTIFICADO = "notificado", _("ANPD notificada")
+
+    descricao = models.TextField(_("Descrição do incidente"))
+    dados_afetados = models.TextField(_("Dados/titulares afetados"), blank=True, default="")
+    detectado_em = models.DateTimeField(_("Detectado em"), default=timezone.now)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDENTE)
+    reportado_por = models.ForeignKey(
+        "nucleo.Usuario", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="incidentes_reportados",
+    )
+    confirmado_por = models.ForeignKey(
+        "nucleo.Usuario", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="incidentes_confirmados",
+    )
+    confirmado_em = models.DateTimeField(null=True, blank=True)
+    prazo_anpd = models.DateTimeField(null=True, blank=True, help_text="confirmado_em + 72h")
+    notificado_em = models.DateTimeField(null=True, blank=True)
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = _("Incidente LGPD")
+        verbose_name_plural = _("Incidentes LGPD")
+        ordering = ["-detectado_em"]
+
+    def __str__(self):
+        return f"[{self.status}] {self.descricao[:40]}"
+
+    def confirmar(self, usuario):
+        """Dono confirma o incidente: inicia o prazo de 72h para a ANPD."""
+        agora = timezone.now()
+        self.status = self.Status.CONFIRMADO
+        self.confirmado_por = usuario
+        self.confirmado_em = agora
+        self.prazo_anpd = agora + timedelta(hours=72)
+        self.save(update_fields=["status", "confirmado_por", "confirmado_em", "prazo_anpd"])
+
+    def descartar(self, usuario):
+        self.status = self.Status.DESCARTADO
+        self.confirmado_por = usuario
+        self.confirmado_em = timezone.now()
+        self.save(update_fields=["status", "confirmado_por", "confirmado_em"])
+
+    def marcar_notificado(self):
+        self.status = self.Status.NOTIFICADO
+        self.notificado_em = timezone.now()
+        self.save(update_fields=["status", "notificado_em"])
+
+
+class AuditLog(TenantScopedModel):
+    """Trilha de auditoria imutável (Fase 9.E) — *append-only*.
+
+    Registra QUEM fez O QUÊ em QUAL objeto e QUANDO nas operações sensíveis de
+    **RH** e **financeiro** (rastreabilidade LGPD). A linha nunca é alterada:
+    `save()` rejeita atualização, `delete()` é bloqueado no nível do modelo, o
+    `AuditLogViewSet` é *read-only* (a API não expõe verbo de escrita) e a RLS
+    fail-closed (migration companion) isola por tenant. Imutabilidade forte no
+    banco (trigger que barra UPDATE/DELETE) fica como reforço opcional.
+
+    `detalhes` guarda **contexto não-PII** (ex.: valor da baixa, origem, status
+    novo, campos alterados) — nunca o valor de um campo sensível, para não
+    recriar em texto puro o que a 9.C ([field_masking.py](field_masking.py))
+    mascara. Ver [auditoria.py](auditoria.py) para o helper e o mixin de ViewSet.
+    """
+
+    class Acao(models.TextChoices):
+        CRIAR = "criar", _("Criação")
+        ATUALIZAR = "atualizar", _("Atualização")
+        EXCLUIR = "excluir", _("Exclusão")
+        BAIXA = "baixa", _("Baixa financeira")
+        EMITIR_NF = "emitir_nf", _("Emissão de NF")
+        GERAR_COBRANCA = "gerar_cobranca", _("Geração de cobrança")
+        EXPORTAR_LGPD = "exportar_lgpd", _("Exportação LGPD (portabilidade)")
+        ANONIMIZAR_LGPD = "anonimizar_lgpd", _("Anonimização LGPD (esquecimento)")
+        VISUALIZAR_PII = "visualizar_pii", _("Visualização de PII")
+
+    # FK "congelado": db_constraint=False + DO_NOTHING → excluir um usuário NÃO
+    # dispara UPDATE nesta tabela (que o trigger de imutabilidade da migration
+    # 0017 barraria). A identidade de QUEM agiu fica durável em `usuario_nome`.
+    usuario = models.ForeignKey(
+        "nucleo.Usuario", null=True, blank=True, on_delete=models.DO_NOTHING,
+        db_constraint=False, related_name="auditorias", verbose_name=_("Usuário"),
+    )
+    usuario_nome = models.CharField(_("Usuário (rótulo)"), max_length=150, blank=True, default="")
+    acao = models.CharField(_("Ação"), max_length=32, choices=Acao.choices)
+    modelo = models.CharField(_("Modelo"), max_length=100)
+    objeto_id = models.CharField(_("ID do objeto"), max_length=64, blank=True, default="")
+    detalhes = models.JSONField(_("Detalhes (não-PII)"), null=True, blank=True)
+    timestamp = models.DateTimeField(_("Timestamp"), auto_now_add=True)
+
+    class Meta:
+        verbose_name = _("Registro de Auditoria")
+        verbose_name_plural = _("Trilha de Auditoria")
+        ordering = ["-timestamp"]
+        indexes = [
+            models.Index(fields=["tenant", "modelo", "objeto_id"], name="audit_tenant_obj_idx"),
+            models.Index(fields=["tenant", "timestamp"], name="audit_tenant_ts_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.timestamp:%Y-%m-%d %H:%M} {self.usuario_nome} {self.acao} {self.modelo}#{self.objeto_id}"
+
+    def save(self, *args, **kwargs):
+        # Append-only: uma linha de auditoria nunca é atualizada. `_state.adding`
+        # é True só no primeiro INSERT; qualquer save posterior é rejeitado.
+        if not self._state.adding:
+            raise IntegrityError("AuditLog é imutável: atualização não permitida.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise IntegrityError("AuditLog é imutável: exclusão não permitida.")

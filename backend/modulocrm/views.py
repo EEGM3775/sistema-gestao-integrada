@@ -6,7 +6,7 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from nucleo.tenancy import TenantScopedViewSetMixin
-from nucleo.permissions import RequireModule
+from nucleo.permissions import RequireModule, RequirePermission
 from . import services
 from .models import Lead, Account, Contact, Opportunity, Interaction, OpportunityProduct
 from .serializers import (
@@ -20,8 +20,9 @@ from .serializers import (
 from .permissions import IsOwnerOrReadOnly
 
 class BaseCrmViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
-    """ViewSet base para o CRM que filtra objetos por usuário atribuído."""
-    permission_classes = [permissions.IsAuthenticated, IsOwnerOrReadOnly, RequireModule]
+    """ViewSet base para o CRM: entitlement de módulo (camada 1) + permissão
+    (camada 2, Fase 9.B). Cada subclasse declara ``required_resource``."""
+    permission_classes = [permissions.IsAuthenticated, IsOwnerOrReadOnly, RequireModule, RequirePermission]
     required_module = "crm"
 
     def get_queryset(self):
@@ -47,6 +48,7 @@ class BaseCrmViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
 class LeadViewSet(BaseCrmViewSet):
     queryset = Lead.objects.all()
     serializer_class = LeadSerializer
+    required_resource = "crm.lead"
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['status', 'source', 'campaign']
 
@@ -69,9 +71,11 @@ class LeadViewSet(BaseCrmViewSet):
 class AccountViewSet(BaseCrmViewSet):
     queryset = Account.objects.all()
     serializer_class = AccountSerializer
+    required_resource = "crm.conta"
 
 class ContactViewSet(BaseCrmViewSet):
     queryset = Contact.objects.all()
+    required_resource = "crm.contato"
     # A lógica de permissão para contatos pode precisar ser mais complexa
     # (ex: permitir ver contatos da mesma conta)
     # Por enquanto, segue o padrão do assigned_to.
@@ -89,12 +93,17 @@ class ContactViewSet(BaseCrmViewSet):
 class OpportunityViewSet(BaseCrmViewSet):
     queryset = Opportunity.objects.all()
     serializer_class = OpportunitySerializer
+    required_resource = "crm.oportunidade"
 
 
 class OpportunityProductViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     queryset = OpportunityProduct.objects.all()
     serializer_class = OpportunityProductSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    # S5 corrigido: exigia só IsAuthenticated → tenant sem o módulo `crm` acessava.
+    # Agora entitlement de módulo (camada 1) + permissão (camada 2).
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
+    required_module = "crm"
+    required_resource = "crm.oportunidade_produto"
 
     def get_queryset(self):
         """
@@ -110,6 +119,8 @@ class OpportunityProductViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet)
 class InteractionViewSet(BaseCrmViewSet):
     queryset = Interaction.objects.all()
     serializer_class = InteractionSerializer
+    # `crm.interacao` tem só view+create no catálogo (sem edit) → mapa explícito.
+    permission_map = {"view": "crm.interacao.view", "write": "crm.interacao.create"}
     filter_backends = [DjangoFilterBackend]
     filterset_fields = {
         'type': ['exact', 'in'],

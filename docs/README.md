@@ -35,9 +35,8 @@ A documentação tem **três naturezas** — saber qual você procura já resolv
 
 ### 📜 Histórico — o que aconteceu, quando
 
-| Quero consultar… | Documento |
-|---|---|
-| **O diário de obra** — entregas datadas, bugs corrigidos, decisões | [historico.md](historico.md) |
+Entregas datadas, bugs corrigidos e decisões vivem no **histórico do git** (`git log`), não em
+documento versionado, quando for solicitado fazer o git.
 
 ## Os serviços
 
@@ -79,8 +78,7 @@ Setup completo (venvs, portas, seed) em [desenvolvimento.md](desenvolvimento.md)
 
 ## Convenções da documentação
 
-- **Cada documento tem UMA natureza** (planta · status · histórico) e não mistura as outras:
-  - narrativa datada (entregas, bugs corrigidos, validações) → **só** no [historico.md](historico.md);
+- **Cada documento tem UMA natureza** (planta · status) e não mistura as outras:
   - status/plano → **só** no [roadmap.md](roadmap.md) e [pendencias.md](pendencias.md);
   - a planta (arquitetura, módulos, frontend) descreve o sistema inteiro **sem** status nem datas.
 - **Uma revisão técnica só** — achados e backlog de ideias vivem consolidados em

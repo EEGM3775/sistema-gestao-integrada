@@ -112,7 +112,13 @@ class TenantViewSet(viewsets.ModelViewSet):
 class PermissaoViewSet(viewsets.ModelViewSet):
     queryset = Permissao.objects.all()
     serializer_class = PermissaoSerializer
-    permission_classes = [IsPlatformAdmin]
+
+    def get_permissions(self):
+        # Catálogo de permissões é legível por admin de tenant (para compor papéis);
+        # alterá-lo é só via `sync_authz` (superuser), pois a fonte é o código.
+        if self.action in ("list", "retrieve"):
+            return [IsTenantAdmin()]
+        return [IsPlatformAdmin()]
 
 
 class ModuloViewSet(viewsets.ModelViewSet):
@@ -134,6 +140,38 @@ class AssinaturaTenantViewSet(viewsets.ModelViewSet):
 
 
 # --- Administração do tenant (escopada ao próprio tenant) ---
+
+class CatalogoPermissoesView(APIView):
+    """Catálogo de permissões agrupado por módulo — insumo da tela de personas
+    ("criar cargo" no RH). Marca quais módulos o tenant assina (o front desabilita
+    os demais) e devolve os templates de fábrica para clonar. Só admin de tenant.
+    """
+
+    permission_classes = [IsTenantAdmin]
+
+    def get(self, request):
+        from . import catalog
+
+        u = request.user
+        assinados = set(u.tenant.modulos_ativos()) if getattr(u, "tenant", None) else set()
+        ids = {p.codename: p.id for p in Permissao.objects.all()}
+        grupos: dict[str, list] = {}
+        for p in catalog.CATALOGO:
+            grupos.setdefault(p.modulo, []).append(
+                {"id": ids.get(p.code), "code": p.code, "nome": p.nome}
+            )
+        modulos = [
+            {
+                "modulo": mod,
+                "atribuivel": mod in ("base", "plataforma") or mod in assinados,
+                "permissoes": perms,
+            }
+            for mod, perms in grupos.items()
+        ]
+        return Response({"modulos": modulos, "templates": list(catalog.TEMPLATES_PAPEL)})
+
+
+
 
 class UsuarioViewSet(viewsets.ModelViewSet):
     queryset = Usuario.objects.select_related("tenant").all()

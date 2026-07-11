@@ -1,0 +1,143 @@
+"""Testes do RBAC — catálogo + templates + permissões no JWT (Fase 9, fatia A)."""
+from django.core.management import call_command
+from django.test import TestCase
+from rest_framework.test import APIClient
+
+from identity import catalog
+from identity.models import (
+    Tenant, Modulo, Usuario, AssinaturaTenant, AcessoUsuarioModulo, Perfil, Permissao,
+)
+from identity.tokens import build_claims
+
+
+class CatalogoConformidadeTests(TestCase):
+    """Conformidade estática: o vocabulário é finito, único e os templates ⊆ catálogo."""
+
+    def test_codigos_unicos(self):
+        codigos = [p.code for p in catalog.CATALOGO]
+        self.assertEqual(len(codigos), len(set(codigos)), "há código duplicado no catálogo")
+
+    def test_formato_modulo_recurso_acao(self):
+        for p in catalog.CATALOGO:
+            self.assertEqual(p.code.count("."), 2, f"código fora do formato modulo.recurso.acao: {p.code}")
+
+    def test_todo_template_subset_do_catalogo(self):
+        self.assertEqual(catalog.templates_invalidos(), {}, "template referencia código fora do catálogo")
+
+    def test_segregacao_medico_x_gestor(self):
+        gestor = set(catalog.codigos_do_template("rh_gestor"))
+        self.assertNotIn("rh.dado_medico.view", gestor)
+        self.assertIn("rh.dado_medico.view", catalog.codigos_do_template("rh_medico"))
+
+
+class SyncAuthzTests(TestCase):
+    def test_sync_cria_permissoes_e_papeis_idempotente(self):
+        t = Tenant.objects.create(nome="T", slug="t")
+        call_command("sync_authz", tenant="t")
+        self.assertEqual(Permissao.objects.count(), len(catalog.CATALOGO))
+        self.assertEqual(
+            Perfil.objects.filter(tenant=t).count(), len(catalog.TEMPLATES_PAPEL)
+        )
+        medico = Perfil.objects.get(tenant=t, nome="rh_medico")
+        self.assertTrue(medico.permissoes.filter(codename="rh.dado_medico.view").exists())
+        # idempotente: rodar de novo não duplica
+        call_command("sync_authz", tenant="t")
+        self.assertEqual(Permissao.objects.count(), len(catalog.CATALOGO))
+        self.assertEqual(Perfil.objects.filter(tenant=t).count(), len(catalog.TEMPLATES_PAPEL))
+
+
+class PermissoesEfetivasTests(TestCase):
+    def setUp(self):
+        self.t = Tenant.objects.create(nome="T", slug="t")
+        self.rh = Modulo.objects.create(codigo="rh", nome="RH")
+        self.erp = Modulo.objects.create(codigo="erp_financeiro", nome="ERP")
+        for m in (self.rh, self.erp):
+            AssinaturaTenant.objects.create(tenant=self.t, modulo=m)
+        call_command("sync_authz", tenant="t")
+
+    def _user(self, username, papeis, modulos):
+        u = Usuario.objects.create(username=username, tenant=self.t)
+        for cod in modulos:
+            AcessoUsuarioModulo.objects.create(usuario=u, modulo=Modulo.objects.get(codigo=cod))
+        u.perfis.set(Perfil.objects.filter(tenant=self.t, nome__in=papeis))
+        return u
+
+    def test_permissao_filtrada_por_modulo_assinado(self):
+        # papel financeiro dá permissões de ERP; sem acesso ao módulo, não viajam.
+        u = self._user("so_rh", ["financeiro"], modulos=["rh"])
+        perms = set(u.permissoes_efetivas())
+        self.assertNotIn("erp.conta_pagar.view", perms)  # não acessa erp_financeiro
+        # já obra.* é base (sem entitlement) — mas financeiro não tem base; fica vazio de ERP
+        u2 = self._user("com_erp", ["financeiro"], modulos=["erp_financeiro"])
+        self.assertIn("erp.conta_pagar.view", set(u2.permissoes_efetivas()))
+
+    def test_medico_desbloqueia_pii_medica(self):
+        u = self._user("medico", ["rh_medico"], modulos=["rh"])
+        self.assertIn("rh.dado_medico.view", set(u.permissoes_efetivas()))
+        # e NÃO recebe dado bancário (segregação)
+        self.assertNotIn("rh.dado_bancario.view", set(u.permissoes_efetivas()))
+
+    def test_admin_recebe_catalogo_limitado_aos_modulos(self):
+        u = Usuario.objects.create(username="adm", tenant=self.t, is_tenant_admin=True)
+        perms = set(u.permissoes_efetivas())
+        self.assertIn("rh.dado_medico.view", perms)          # tem rh
+        self.assertIn("erp.conta_pagar.view", perms)          # tem erp
+        self.assertIn("obra.obra.view", perms)                # base sempre
+        self.assertNotIn("crm.lead.view", perms)              # tenant não assina crm
+
+    def test_jwt_carrega_permissions(self):
+        u = self._user("medico2", ["rh_medico"], modulos=["rh"])
+        claims = build_claims(u)
+        self.assertIn("permissions", claims)
+        self.assertIn("rh.dado_medico.view", claims["permissions"])
+        self.assertIn("rh_medico", claims["roles"])  # nome mantido p/ transição (fatia B)
+
+
+class PersonasDinamicasTests(TestCase):
+    """Admin de tenant compõe personas do catálogo, sem escalar além do plano."""
+
+    def setUp(self):
+        self.t = Tenant.objects.create(nome="T", slug="t")
+        self.rh = Modulo.objects.create(codigo="rh", nome="RH")
+        self.drone = Modulo.objects.create(codigo="drone", nome="Drone")
+        # O tenant assina RH, mas NÃO drone.
+        AssinaturaTenant.objects.create(tenant=self.t, modulo=self.rh)
+        call_command("sync_authz")  # só o catálogo global (Permissao)
+        self.admin = Usuario.objects.create(username="adm", tenant=self.t, is_tenant_admin=True)
+        self.comum = Usuario.objects.create(username="joe", tenant=self.t)
+        self.client = APIClient()
+
+    def test_admin_le_catalogo_agrupado(self):
+        self.client.force_authenticate(self.admin)
+        r = self.client.get("/catalogo-permissoes/")
+        self.assertEqual(r.status_code, 200)
+        mods = {m["modulo"]: m for m in r.data["modulos"]}
+        self.assertTrue(mods["rh"]["atribuivel"])       # assinado
+        self.assertFalse(mods["drone"]["atribuivel"])   # não assinado
+        self.assertTrue(mods["base"]["atribuivel"])     # base sempre
+        self.assertIn("rh_medico", r.data["templates"])
+
+    def test_usuario_comum_nao_le_catalogo(self):
+        self.client.force_authenticate(self.comum)
+        self.assertEqual(self.client.get("/catalogo-permissoes/").status_code, 403)
+        self.assertEqual(self.client.get("/permissoes/").status_code, 403)
+
+    def test_admin_cria_persona_dentro_do_plano(self):
+        self.client.force_authenticate(self.admin)
+        rh_view = Permissao.objects.get(codename="rh.funcionario.view")
+        obra_view = Permissao.objects.get(codename="obra.obra.view")  # base
+        r = self.client.post("/perfis/", {
+            "nome": "recepcao", "descricao": "",
+            "permissoes": [rh_view.id, obra_view.id],
+        }, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertTrue(Perfil.objects.filter(tenant=self.t, nome="recepcao").exists())
+
+    def test_admin_nao_escala_para_modulo_nao_assinado(self):
+        self.client.force_authenticate(self.admin)
+        drone_perm = Permissao.objects.get(codename="drone.projeto.view")
+        r = self.client.post("/perfis/", {
+            "nome": "espiao", "permissoes": [drone_perm.id],
+        }, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertFalse(Perfil.objects.filter(tenant=self.t, nome="espiao").exists())

@@ -98,7 +98,8 @@ const PAID_MODULES: ModuleDef[] = [
     icon: <TrendingUp size={28} />,
     color: '#ede9fe',
     description: 'Pipeline de leads, oportunidades e contas. Do primeiro contato ao contrato assinado.',
-    implemented: false,
+    implemented: true,
+    route: '/app/crm',
   },
   {
     code: 'drone',

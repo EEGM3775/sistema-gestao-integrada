@@ -2,6 +2,7 @@
 # Este arquivo define como os modelos do app 'rh' são convertidos para o formato JSON para a API.
 from rest_framework import serializers
 from nucleo.tenant_validators import TenantScopedUniqueSerializerMixin
+from nucleo.field_masking import FieldMaskingSerializerMixin
 from .models import (
     Cargo,
     Funcionario,
@@ -21,34 +22,50 @@ class CargoSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSerial
     class Meta:
         model = Cargo
         fields = '__all__' # Inclui todos os campos do modelo.
+        # `tenant` é injetado pelo perform_create (Fase 8.2 o tornou NOT NULL →
+        # DRF o exigiria no payload); read-only para não travar a criação.
+        read_only_fields = ['tenant']
 
-class FuncionarioSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
+class FuncionarioSerializer(FieldMaskingSerializerMixin, TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
+    """Ficha do funcionário — PII mascarada por permissão (Fase 9.C).
+
+    Substitui o hack ad-hoc do ``salario_base`` (que checava o nome do papel
+    ``rh_financeiro``): agora o CPF exige ``rh.cpf.view`` e o salário exige
+    ``rh.folha.view``. Quem só tem ``rh.funcionario.view`` vê o cadastro, mas
+    com CPF e salário mascarados — a ficha "para de chover 403".
+    """
     class Meta:
         model = Funcionario
         fields = '__all__'
+        read_only_fields = ['tenant']  # injetado pelo perform_create (Fase 8.2)
 
-    def to_representation(self, instance):
-        data = super().to_representation(instance)
-        request = self.context.get('request')
-        if request:
-            user = request.user
-            roles = getattr(user, 'iam_roles', []) or []
-            is_privileged = (
-                'rh_financeiro' in roles
-                or getattr(user, 'is_tenant_admin', False)
-                or getattr(user, 'is_superuser', False)
-            )
-            if not is_privileged:
-                data.pop('salario_base', None)
-        return data
+    # Leitura: CPF e salário mascarados por permissão.
+    sensitive_fields = {
+        "cpf": "rh.cpf.view",
+        "salario_base": "rh.folha.view",
+    }
+    # Escrita: só o salário é protegido (tem `.edit` concedível). O CPF faz parte
+    # do cadastro — sua escrita é governada pelo gate do endpoint
+    # (`rh.funcionario.edit`); protegê-lo aqui travaria a criação da ficha.
+    write_protected_fields = {
+        "salario_base": "rh.folha.edit",
+    }
 
-class DadoMedicoFuncionarioSerializer(serializers.ModelSerializer):
-    """
-    Serializador para o modelo DadoMedicoFuncionario.
-    """
+class DadoMedicoFuncionarioSerializer(FieldMaskingSerializerMixin, serializers.ModelSerializer):
+    """Prontuário/ASO — PII médica sensível (LGPD). Mascarada por permissão."""
     class Meta:
         model = DadoMedicoFuncionario
         fields = '__all__'
+        read_only_fields = ['tenant']
+
+    sensitive_fields = {
+        "numero_cartao_sus": "rh.dado_medico.view",
+        "alergias": "rh.dado_medico.view",
+        "medicamentos": "rh.dado_medico.view",
+        "historico_doencas": "rh.dado_medico.view",
+        "contato_emergencia_telefone": "rh.dado_medico.view",
+        "observacoes_medicas": "rh.dado_medico.view",
+    }
 
 class ASOFuncionarioSerializer(serializers.ModelSerializer):
     """
@@ -57,6 +74,7 @@ class ASOFuncionarioSerializer(serializers.ModelSerializer):
     class Meta:
         model = ASOFuncionario
         fields = '__all__'
+        read_only_fields = ['tenant']
 
 class DocumentoFuncionarioSerializer(serializers.ModelSerializer):
     """
@@ -65,27 +83,48 @@ class DocumentoFuncionarioSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocumentoFuncionario
         fields = '__all__'
+        read_only_fields = ['tenant']
 
-class DadoBancarioFuncionarioSerializer(serializers.ModelSerializer):
-    """
-    Serializador para o modelo DadoBancarioFuncionario.
-    """
+class DadoBancarioFuncionarioSerializer(FieldMaskingSerializerMixin, serializers.ModelSerializer):
+    """Dados bancários do funcionário — PII sensível (LGPD). Mascarada por permissão."""
     class Meta:
         model = DadoBancarioFuncionario
         fields = '__all__'
+        read_only_fields = ['tenant']
 
-class PagamentoFuncionarioSerializer(serializers.ModelSerializer):
-    """
-    Serializador para o modelo PagamentoFuncionario.
-    """
+    sensitive_fields = {
+        "agencia": "rh.dado_bancario.view",
+        "conta": "rh.dado_bancario.view",
+        "titular_cpf_cnpj": "rh.dado_bancario.view",
+        "chave_pix": "rh.dado_bancario.view",
+    }
+
+class PagamentoFuncionarioSerializer(FieldMaskingSerializerMixin, serializers.ModelSerializer):
+    """Pagamentos — valores financeiros mascarados por ``rh.folha.view``."""
     class Meta:
         model = PagamentoFuncionario
         fields = '__all__'
+        read_only_fields = ['tenant']
 
-class FolhaPagamentoSerializer(serializers.ModelSerializer):
-    """
-    Serializador para o modelo FolhaPagamento.
-    """
+    sensitive_fields = {
+        "salario_base": "rh.folha.view",
+        "salario_liquido": "rh.folha.view",
+        "descontos": "rh.folha.view",
+        "adicionais": "rh.folha.view",
+        "extras": "rh.folha.view",
+        "bonus": "rh.folha.view",
+    }
+
+class FolhaPagamentoSerializer(FieldMaskingSerializerMixin, serializers.ModelSerializer):
+    """Folha de pagamento — valores financeiros mascarados por ``rh.folha.view``."""
     class Meta:
         model = FolhaPagamento
         fields = '__all__'
+        read_only_fields = ['tenant']
+
+    sensitive_fields = {
+        "salario_bruto": "rh.folha.view",
+        "salario_liquido": "rh.folha.view",
+        "total_descontos": "rh.folha.view",
+        "total_proventos": "rh.folha.view",
+    }

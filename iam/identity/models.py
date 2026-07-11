@@ -39,6 +39,19 @@ class Tenant(models.Model):
     def __str__(self):
         return f"{self.nome} ({self.slug})"
 
+    def modulos_ativos(self):
+        """Códigos dos módulos que o tenant tem assinatura ativa hoje. Usado para
+        impedir que um papel receba permissão de módulo não contratado (escalada)."""
+        hoje = timezone.now().date()
+        return list(
+            AssinaturaTenant.objects.filter(
+                tenant_id=self.id, status=AssinaturaTenant.Status.ATIVA, inicio__lte=hoje
+            )
+            .filter(Q(fim__isnull=True) | Q(fim__gte=hoje))
+            .values_list("modulo__codigo", flat=True)
+            .distinct()
+        )
+
 
 class Permissao(models.Model):
     """Permissão granular, referenciada por código (ex.: 'pode_ver_financeiro')."""
@@ -144,6 +157,35 @@ class Usuario(AbstractUser):
 
     def nomes_perfis(self):
         return list(self.perfis.values_list("nome", flat=True))
+
+    def permissoes_efetivas(self):
+        """Conjunto de permissões que viaja no JWT (Fase 9, fatia A): união das
+        permissões dos papéis do usuário, **filtrada pelos módulos efetivos** —
+        uma permissão de módulo vendável só vale se o tenant o assina e o usuário
+        o acessa. Permissões `base`/`plataforma` não dependem de entitlement.
+        Admin de tenant/plataforma recebe todo o catálogo (limitado aos módulos).
+        """
+        from identity.catalog import POR_CODIGO, CODIGOS
+
+        if self.is_tenant_admin or self.is_superuser:
+            codigos = set(CODIGOS)
+        else:
+            codigos = set(
+                self.perfis.values_list("permissoes__codename", flat=True)
+            )
+            codigos.discard(None)
+
+        modulos = set(self.modulos_efetivos())
+
+        def liberado(code: str) -> bool:
+            p = POR_CODIGO.get(code)
+            if p is None:
+                return False  # código fora do catálogo não viaja no token
+            if p.modulo in ("base", "plataforma"):
+                return True
+            return p.modulo in modulos
+
+        return sorted(c for c in codigos if liberado(c))
 
 
 class AssinaturaTenant(models.Model):

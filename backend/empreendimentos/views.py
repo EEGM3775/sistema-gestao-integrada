@@ -4,6 +4,8 @@ from rest_framework.decorators import action
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
 from nucleo.tenancy import TenantScopedViewSetMixin
+from nucleo.permissions import RequirePermission
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from .models import Empreendimento, ContaBancariaEmpreendimento, CustoEmpreendimento
 from .serializers import EmpreendimentoSerializer, ContaBancariaEmpreendimentoSerializer, CustoEmpreendimentoSerializer
@@ -13,6 +15,8 @@ from django.db.models import Q
 class EmpreendimentoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     queryset = Empreendimento.objects.all()
     serializer_class = EmpreendimentoSerializer
+    permission_classes = [IsAuthenticated, RequirePermission]
+    required_resource = "obra.empreendimento"
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     search_fields = ['empreendimento', 'razao_social', 'cnpj']
 
@@ -32,12 +36,16 @@ class EmpreendimentoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
 class ContaBancariaEmpreendimentoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     queryset = ContaBancariaEmpreendimento.objects.all()
     serializer_class = ContaBancariaEmpreendimentoSerializer
+    permission_classes = [IsAuthenticated, RequirePermission]
+    required_resource = "obra.empreend_conta"
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['empreendimento']
 
 class CustoEmpreendimentoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     queryset = CustoEmpreendimento.objects.all()
     serializer_class = CustoEmpreendimentoSerializer
+    permission_classes = [IsAuthenticated, RequirePermission]
+    required_resource = "obra.empreend_custo"
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['empreendimento']
     search_fields = ['descricao', 'nota_fiscal']

@@ -1,10 +1,13 @@
 # Cargos, papéis e permissões — RBAC + ABAC (camada 2)
 
-> **Prancha de desenho — PROPOSTA, ainda não implementada.** Registra o modelo-alvo de controle de
+> **Prancha de desenho — em implementação (Fase 9).** Registra o modelo-alvo de controle de
 > acesso *dentro* do tenant (a "camada 2"). Decisão em [AD-9](../arquitetura.md#2-decisões-de-arquitetura-registradas);
 > o **estado atual** (o que existe hoje no código) fica em
-> [../acesso-e-permissoes.md](../acesso-e-permissoes.md); a narrativa datada da decisão, no
-> [../historico.md](../historico.md). A camada 1 (entitlement de módulo) **não muda** — ver AD-4.
+> [../acesso-e-permissoes.md](../acesso-e-permissoes.md); o **status por fatia** em
+> [../roadmap.md](../roadmap.md#fase-9). A camada 1 (entitlement de módulo) **não muda** — ver AD-4.
+> A **fatia A** (catálogo + permissões no JWT + personas dinâmicas) já está no código:
+> [iam/identity/catalog.py](../../iam/identity/catalog.py) é a fonte única; §9 abaixo descreve o
+> catálogo real e **como estendê-lo ao importar módulos da v01**.
 
 ## 1. Por que redesenhar (contexto)
 
@@ -84,20 +87,33 @@ indexado por `(permissao, tipo_de_recurso)`. Política = predicado `(sujeito, re
 **Default = RBAC puro** (libera se tem a permissão); políticas ABAC só refinam recursos específicos —
 ou seja, ABAC é **opt-in por recurso**, não um custo global.
 
-### 2.4 Campo (PII) — mascarar na leitura, barrar na escrita
+### 2.4 Campo (PII) — mascarar na leitura, barrar na escrita · ✅ 05/07/2026 (Fase 9.C)
 
-A camada mais fina (a escolha "ação + campo"). Um **mapa de sensibilidade** por model
-`{campo: permissao_exigida}`, aplicado por um mixin de serializer:
+A camada mais fina (a escolha "ação + campo"). Um **mapa de sensibilidade** por serializer
+(`sensitive_fields = {campo: permissao_exigida}`), aplicado por um mixin reutilizável —
+[`FieldMaskingSerializerMixin`](../../backend/nucleo/field_masking.py):
 
-- **Leitura:** remove/reduz o campo cuja permissão falta — **devolve o registro, mascara o campo**,
-  em vez de 403 no endpoint inteiro. (Ex.: quem tem `rh.funcionario.view` vê o funcionário, mas
-  salário/CPF vêm mascarados sem `rh.folha.view`/`rh.dado_bancario.view`.)
-- **Escrita:** rejeita (ou descarta, logando) gravação em campo que o sujeito não pode setar.
+O mixin tem **dois eixos independentes** (não um derivado do outro):
+`sensitive_fields = {campo: permissao_leitura}` e `write_protected_fields = {campo: permissao_escrita}`.
 
-**Mudança de filosofia:** hoje o endpoint inteiro dá 403 (tudo-ou-nada); o alvo é **portão grosso no
-endpoint** (módulo + permissão-base) **+ máscara fina no campo**. Resultado prático: a ficha do
-funcionário **para de "chover" 403** — retorna o registro com as abas/campos sensíveis mascarados por
-permissão. Isto **é** a Fase 9 (LGPD); esta prancha a especifica.
+- **Leitura** (`sensitive_fields`): mascara o campo cuja permissão falta — **devolve o registro,
+  mascara o campo**, em vez de 403 no endpoint inteiro. (Ex.: quem tem `rh.funcionario.view` vê o
+  funcionário, mas CPF vem `••••09` sem `rh.cpf.view` e salário vem `null` sem `rh.folha.view`.)
+  Documentos/conta usam máscara **parcial** (`••••` + últimos dígitos); valores monetários, chave PIX
+  e texto livre são **redigidos** (`null`). **Fail-closed:** sem usuário no contexto, mascara tudo.
+- **Escrita** (`write_protected_fields`): rejeita com 400 (e loga) gravação em campo protegido, com a
+  permissão `.edit` **declarada explicitamente**. É **opt-in** e só cobre campos cuja `.edit` existe e
+  é concedível (salário→`rh.folha.edit`, banco→`cadastro.*_banco.edit`). **Por quê explícito:** derivar
+  a escrita da leitura (`rh.cpf.view`→`rh.cpf.edit`) travaria o cadastro — `rh.cpf.edit` **não existe**
+  no catálogo, então ninguém criaria funcionário. A escrita do CPF é do cadastro (`rh.funcionario.edit`,
+  gate do endpoint); só a **leitura** do CPF é sensível.
+
+**Mudança de filosofia:** antes o endpoint inteiro dava 403 (tudo-ou-nada); agora é **portão grosso
+no endpoint** (módulo + permissão-base) **+ máscara fina no campo**. Resultado prático: a ficha do
+funcionário **para de "chover" 403**. **Cobertura:** RH (`Funcionario` CPF/salário, `DadoMedico`,
+`DadoBancario`, `Pagamento`, `Folha`), clientes (`Cliente` CPF via `cadastro.cliente_doc.view`,
+`DadoBancarioCliente`) e fornecedores (só `DadoBancarioFornecedor` — **CNPJ não é mascarado**, é dado
+público de PJ). Testes: `rh/test_field_masking.py` (11) verde sobre Postgres.
 
 ## 3. O que passa a viajar no JWT
 
@@ -163,3 +179,68 @@ Casbin se o volume/complexidade justificar — decisão por evidência, não ant
 - Permissões no token × buscadas-e-cacheadas (recomendação: embutir + versão).
 - Máscara de campo: redigir (null) × parcial (`•••` + últimos 4) por tipo de campo.
 - Oferecer "marketplace" de templates de papel entre tenants? (provavelmente não agora.)
+
+## 9. Catálogo real e extensão (fatia A — implementado)
+
+A fonte única é [iam/identity/catalog.py](../../iam/identity/catalog.py): uma tupla `CATALOGO` de
+permissões atômicas `modulo.recurso.acao` e um dicionário `TEMPLATES_PAPEL` de personas de fábrica.
+`manage.py sync_authz` reflete o catálogo na tabela `Permissao` e compõe um `Perfil` por template em
+cada tenant. O JWT passa a carregar `permissions` (`Usuario.permissoes_efetivas()` — união dos papéis
+**∩ módulos assinados**; `base`/`plataforma` não dependem de entitlement).
+
+**Cobertura atual (99 permissões, 6 grupos):** `rh`, `erp_financeiro`, `crm`, `drone` (módulos
+vendáveis), `base` (obras/empreendimentos/diário/IA/calendário/cadastros — sem entitlement) e
+`plataforma` (auditoria, LGPD, lixeira, config, integrações, **gestão de papéis**). PII sensível é
+**recurso próprio** (`rh.dado_medico.*`, `rh.dado_bancario.*`, `cadastro.cliente_banco.*`,
+`cadastro.fornecedor_banco.*`) — nunca varrida por wildcard de outro recurso, para a máscara da fatia C.
+
+**Personas de fábrica (14):** `diretoria`, `rh_gestor`, `rh_medico`, `rh_financeiro`, `financeiro`,
+`tesouraria`, `fiscal`, `comercial`, `engenharia`, `campo`, `drone_analista`, `auditor` (read-only),
+`gestor_lixo`, `operacional`. São **linha de base**: cada tenant clona e recompõe (§2.2).
+
+### 9.1 Personas dinâmicas — tela dedicada de Administração (não no "criar cargo")
+
+As personas fixas **não bastam** para um SaaS completo. Um usuário de **alto poder** (admin do tenant,
+ou quem receber `plataforma.papel.gerir`) compõe papéis livremente a partir do catálogo.
+
+**Decisão de superfície:** a gestão de papéis mora numa tela **dedicada de Administração**
+(`/app/admin/papeis` — "Papéis e Acessos"), **não** dentro do "Novo Cargo" do RH. Motivo: `Cargo` (RH)
+é função na empresa (muitos, ligados a folha/funcionários); `Perfil` (persona) é papel de acesso
+(poucos, ligados a usuários de login, sensível a segurança). Misturá-los violaria separação de
+responsabilidades (quem edita cargo estaria editando segurança). A ponte opcional — o form de cargo
+apontar para um papel de acesso — fica como evolução, sem transformar o cargo num painel de permissões.
+
+Fluxo (frontend → gateway `/iam/` → IAM, guardado por `IsTenantAdmin`):
+
+| Endpoint (IAM, via `/iam/`) | Uso |
+|---|---|
+| `GET /catalogo-permissoes/` | catálogo agrupado por módulo + flag `atribuivel` (módulo assinado) + `templates` de fábrica p/ clonar. |
+| `GET/POST/PATCH/DELETE /perfis/` | CRUD de papéis, escopado ao tenant (`PerfilViewSet`). |
+| `GET /permissoes/` | leitura do vocabulário (liberada ao admin de tenant). |
+
+Front: [modules/admin/](../../frontend/src/modules/admin/) (`PersonasPage` + `PersonaForm` com picker
+por módulo; módulo não assinado fica bloqueado no picker). Menu "Papéis e Acessos" só aparece p/
+`is_tenant_admin`. O gateway ganhou `location /iam/` → IAM (remove o prefixo).
+
+**Trava anti-escalada** (`PerfilSerializer.validate_permissoes`): um papel só recebe permissão do
+catálogo e de módulo `base`/`plataforma` **ou** de módulo que o tenant **assina** — o admin nunca
+escala além do próprio plano. Superuser de plataforma é isento. Unicidade `(tenant, nome)` validada à
+mão (o `UniqueTogether` do DRF exigiria `tenant` no payload; ele é injetado pelo `perform_create`).
+
+### 9.2 Padrão de extensão — ao importar um módulo (inclui os da v01)
+
+Os módulos ainda **placeholder** (`aps`, `dms`, `pdca`, `scm`, `sil`, `maps` — porte da Fase 7) e
+qualquer módulo novo **entram no controle de acesso por aqui**, sem tocar enforcement:
+
+1. **Registrar as permissões** do módulo em `CATALOGO` (`catalog.py`), formato `modulo.recurso.acao`,
+   `modulo` = código do entitlement (ex.: `scm`) ou `base`/`plataforma`. PII sensível = recurso próprio.
+2. **Compor as personas**: adicionar os novos códigos aos `TEMPLATES_PAPEL` que fizerem sentido
+   (wildcards `modulo.*` / `modulo.recurso.*` são aceitos na autoria; PII fica **fora** dos wildcards).
+3. **Sincronizar**: `manage.py sync_authz --all-tenants` cria as `Permissao` e recompõe os papéis.
+4. **Enforcement** (fatias B/C): `RequirePermission("scm.recurso.acao")` no ViewSet e, se houver campo
+   sensível, entrada no mapa de sensibilidade do `FieldMaskingSerializerMixin`.
+
+O **teste de conformidade** ([iam/identity/tests.py](../../iam/identity/tests.py)) garante que todo
+template ⊆ catálogo e o formato `modulo.recurso.acao` — um código órfão falha o CI, não passa silencioso.
+Assim, quando um módulo da v01 é portado, ele **já nasce contemplado**: permissões no catálogo, papéis
+compostos, e o admin do tenant podendo delegá-lo a personas sem intervenção de plataforma.
