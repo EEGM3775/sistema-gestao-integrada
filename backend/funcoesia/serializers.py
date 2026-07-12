@@ -6,4 +6,4 @@ class AnaliseImagemIASerializer(serializers.ModelSerializer):
     class Meta:
         model = AnaliseImagemIA
         fields = '__all__'
-        # Removido read_only_fields para permitir criação com documento
+        read_only_fields = ['tenant']  # tenant injetado pelo perform_create (D3); documento segue gravável

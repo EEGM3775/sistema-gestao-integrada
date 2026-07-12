@@ -1,12 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { LogOut, ChevronDown, User } from 'lucide-react'
+import { LogOut, ChevronDown, User, KeyRound } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
+import { ChangePasswordModal } from '@/components/ChangePasswordModal'
 
 export const AppTopbar: React.FC = () => {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
+  const [pwOpen, setPwOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -116,6 +118,22 @@ export const AppTopbar: React.FC = () => {
                 </p>
               </div>
               <button
+                onClick={() => { setMenuOpen(false); setPwOpen(true) }}
+                className="w-full flex items-center gap-2 px-4 py-2.5 text-sm transition-colors duration-150"
+                style={{
+                  fontFamily: 'var(--font-body)',
+                  color: 'var(--color-text)',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                }}
+                onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = '#f8fafc')}
+                onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = 'none')}
+              >
+                <KeyRound size={14} /> Alterar senha
+              </button>
+              <button
                 onClick={handleLogout}
                 className="w-full flex items-center gap-2 px-4 py-2.5 text-sm transition-colors duration-150"
                 style={{
@@ -135,6 +153,8 @@ export const AppTopbar: React.FC = () => {
           )}
         </div>
       </div>
+
+      {pwOpen && <ChangePasswordModal onClose={() => setPwOpen(false)} />}
     </header>
   )
 }

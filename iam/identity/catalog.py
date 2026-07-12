@@ -188,7 +188,8 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
     # Gere os dados bancários de cliente e fornecedor (necessário p/ pagar/receber).
     "financeiro": [
         "erp.conta_pagar.*", "erp.conta_receber.*", "erp.centro_custo.*",
-        "erp.transacao.view", "erp.revisao_baixa.*", "erp.relatorio.view",
+        "erp.transacao.view", "erp.revisao_baixa.*", "erp.lote_remessa.*",
+        "erp.relatorio.view",
         "obra.empreend_conta.*", "obra.empreend_custo.*",
         "cadastro.fornecedor.view", "cadastro.fornecedor_banco.*",
         "cadastro.cliente.view", "cadastro.cliente_doc.view", "cadastro.cliente_banco.*",

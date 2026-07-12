@@ -7,7 +7,6 @@ const features = [
   { icon: <HardHat size={18} />,    text: 'Obras e empreendimentos integrados' },
   { icon: <BarChart3 size={18} />,  text: 'Financeiro, RH e CRM em um lugar' },
   { icon: <Brain size={18} />,      text: 'Análise de IA para fotos de obra' },
-  { icon: <ShieldCheck size={18} />,text: 'Multi-tenant seguro e conforme LGPD' },
 ]
 
 const LoginPage: React.FC = () => {
@@ -18,6 +17,7 @@ const LoginPage: React.FC = () => {
   const [username, setUsername]     = useState('')
   const [password, setPassword]     = useState('')
   const [showPass, setShowPass]     = useState(false)
+  const [remember, setRemember]     = useState(false)
   const [error, setError]           = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
@@ -29,7 +29,7 @@ const LoginPage: React.FC = () => {
     setError(null)
     setSubmitting(true)
     try {
-      await login(username, password)
+      await login(username, password, remember)
       navigate(from, { replace: true })
     } catch {
       setError('Usuário ou senha incorretos. Verifique seus dados e tente novamente.')
@@ -208,6 +208,20 @@ const LoginPage: React.FC = () => {
                 </button>
               </div>
             </div>
+
+            {/* Lembrar de mim */}
+            <label
+              className="flex items-center gap-2 text-sm select-none cursor-pointer -mt-1"
+              style={{ fontFamily: 'var(--font-body)', color: 'var(--color-text-muted)' }}
+            >
+              <input
+                type="checkbox"
+                checked={remember}
+                onChange={(e) => setRemember(e.target.checked)}
+                style={{ width: 16, height: 16, accentColor: 'var(--color-brand)', cursor: 'pointer' }}
+              />
+              Manter conectado neste dispositivo
+            </label>
 
             {/* Botão entrar */}
             <button

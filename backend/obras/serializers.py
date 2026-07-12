@@ -16,6 +16,7 @@ class ObraSerializer(serializers.ModelSerializer):
         model = Obra
         # expõe todos os campos do modelo + progresso_ponderado calculado
         fields = [*(f.name for f in Obra._meta.fields), 'progresso_ponderado']
+        read_only_fields = ['tenant']  # injetado pelo perform_create (Fase 8.2 / D3)
 
     def get_progresso_ponderado(self, obj: Obra) -> int:
         """Calcula o progresso da obra ponderado por valor (orcamento_previsto)
@@ -86,6 +87,7 @@ class EtapaObraSerializer(serializers.ModelSerializer):
     class Meta:
         model = EtapaObra
         fields = '__all__'
+        read_only_fields = ['tenant']  # injetado pelo perform_create (Fase 8.2 / D3)
 
 class DocumentoObraSerializer(serializers.ModelSerializer):
     """
@@ -94,4 +96,5 @@ class DocumentoObraSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocumentoObra
         fields = '__all__'
+        read_only_fields = ['tenant']  # injetado pelo perform_create (Fase 8.2 / D3)
 

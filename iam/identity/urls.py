@@ -1,6 +1,5 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
-from rest_framework_simplejwt.views import TokenRefreshView
 
 from . import views
 
@@ -15,8 +14,9 @@ router.register("acessos-modulo", views.AcessoUsuarioModuloViewSet, basename="ac
 
 urlpatterns = [
     path("auth/login/", views.LoginView.as_view(), name="login"),
-    path("auth/refresh/", TokenRefreshView.as_view(), name="refresh"),
+    path("auth/refresh/", views.RefreshView.as_view(), name="refresh"),
     path("auth/logout/", views.LogoutView.as_view(), name="logout"),
+    path("auth/senha/", views.ChangePasswordView.as_view(), name="change-password"),
     path("auth/me/", views.MeView.as_view(), name="me"),
     path("catalogo-permissoes/", views.CatalogoPermissoesView.as_view(), name="catalogo-permissoes"),
     path(".well-known/jwks.json", views.JwksView.as_view(), name="jwks"),

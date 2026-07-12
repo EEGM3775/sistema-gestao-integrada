@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+/* Esconde o "olho"/"x" nativos do Edge/IE em campos de senha — usamos um botão
+   de exibir/ocultar próprio (consistente e que não some em re-render). */
+input::-ms-reveal,
+input::-ms-clear {
+  display: none;
+}
+
 @layer base {
   :root {
     /* Marca */

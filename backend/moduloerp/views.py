@@ -4,7 +4,7 @@ import requests
 from rest_framework import viewsets, permissions, views, filters, status as status_module
 from django_filters.rest_framework import DjangoFilterBackend
 from nucleo.tenancy import TenantScopedViewSetMixin, TenantScopedAPIViewMixin
-from nucleo.permissions import RequireModule, RequireRole
+from nucleo.permissions import RequireModule, RequirePermission
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.utils import timezone
@@ -207,9 +207,10 @@ def _emitir_nf_para_conta_receber(request, conta, tipo_nf):
 class TransacaoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     queryset = Transacao.objects.all()
     serializer_class = TransacaoSerializer
-    permission_classes = [permissions.IsAuthenticated, RequireModule, RequireRole]
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
-    required_role = "financeiro"
+    required_resource = "erp.transacao"   # ledger: só .view no catálogo (escrita bloqueada)
+    required_role = "financeiro"          # fallback legado (token sem permissions)
     pagination_class = ErpPageNumberPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = TransacaoFilter
@@ -220,8 +221,9 @@ class TransacaoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
 class NotaFiscalServicoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     queryset = NotaFiscalServico.objects.all()
     serializer_class = NotaFiscalServicoSerializer
-    permission_classes = [permissions.IsAuthenticated, RequireModule, RequireRole]
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
+    required_resource = "erp.nf"
     required_role = "financeiro"
     pagination_class = ErpPageNumberPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
@@ -252,8 +254,9 @@ class NotaFiscalServicoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
 class NotaFiscalProdutoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     queryset = NotaFiscalProduto.objects.all()
     serializer_class = NotaFiscalProdutoSerializer
-    permission_classes = [permissions.IsAuthenticated, RequireModule, RequireRole]
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
+    required_resource = "erp.nf"
     required_role = "financeiro"
     pagination_class = ErpPageNumberPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
@@ -285,8 +288,9 @@ class ERPDashboardView(TenantScopedAPIViewMixin, views.APIView):
     """
     Provides aggregated and complex data for the Financial dashboard.
     """
-    permission_classes = [permissions.IsAuthenticated, RequireModule, RequireRole]
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
+    required_resource = "erp.relatorio"   # dashboard = relatório financeiro (GET→.view)
     required_role = "financeiro"
 
     def get(self, request, *args, **kwargs):
@@ -369,8 +373,9 @@ class NotaFiscalViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     """
     queryset = NotaFiscal.objects.all()
     serializer_class = NotaFiscalSerializer
-    permission_classes = [permissions.IsAuthenticated, RequireModule, RequireRole]
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
+    required_resource = "erp.nf"
     required_role = "financeiro"
     pagination_class = ErpPageNumberPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -385,9 +390,14 @@ class ContaPagarViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     """
     queryset = ContaPagar.objects.all()
     serializer_class = ContaPagarSerializer
-    permission_classes = [permissions.IsAuthenticated, RequireModule, RequireRole]
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
-    required_role = "financeiro"
+    required_resource = "erp.conta_pagar"   # CRUD: GET→.view · escrita→.edit
+    required_role = "financeiro"            # fallback legado
+    action_permission_map = {               # verbos de domínio (@action)
+        "dar_baixa": "erp.conta_pagar.baixar",
+        "gerar_lote_remessa": "erp.lote_remessa.create",
+    }
     pagination_class = ErpPageNumberPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = ContaPagarFilter
@@ -468,9 +478,17 @@ class ContaReceberViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     """
     queryset = ContaReceber.objects.all()
     serializer_class = ContaReceberSerializer
-    permission_classes = [permissions.IsAuthenticated, RequireModule, RequireRole]
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
-    required_role = "financeiro"
+    required_resource = "erp.conta_receber"   # CRUD: GET→.view · escrita→.edit
+    required_role = "financeiro"              # fallback legado
+    action_permission_map = {                 # verbos de domínio: baixa, cobrança, NF
+        "dar_baixa": "erp.conta_receber.baixar",
+        "gerar_cobranca": "erp.cobranca.emitir",
+        "emitir_nota_fiscal_servico": "erp.nf.emitir",
+        "emitir_nota_fiscal_produto": "erp.nf.emitir",
+        "emitir_lote_nfse": "erp.nf.emitir",
+    }
     pagination_class = ErpPageNumberPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = ContaReceberFilter
@@ -663,8 +681,9 @@ class CentroCustoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     """
     queryset = CentroCusto.objects.all()
     serializer_class = CentroCustoSerializer
-    permission_classes = [permissions.IsAuthenticated, RequireModule, RequireRole]
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
+    required_resource = "erp.centro_custo"
     required_role = "financeiro"
     pagination_class = ErpPageNumberPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -682,9 +701,14 @@ class RevisaoBaixaViewSet(TenantScopedViewSetMixin, viewsets.ReadOnlyModelViewSe
     """
     queryset = RevisaoBaixa.objects.all()
     serializer_class = RevisaoBaixaSerializer
-    permission_classes = [permissions.IsAuthenticated, RequireModule, RequireRole]
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
+    required_resource = "erp.revisao_baixa"   # ReadOnly: GET→.view
     required_role = "financeiro"
+    action_permission_map = {                 # aprovar/rejeitar = resolver
+        "aprovar": "erp.revisao_baixa.resolver",
+        "rejeitar": "erp.revisao_baixa.resolver",
+    }
     pagination_class = ErpPageNumberPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['status', 'origem']
@@ -727,8 +751,11 @@ class LoteRemessaViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     """
     queryset = LoteRemessa.objects.all()
     serializer_class = LoteRemessaSerializer
-    permission_classes = [permissions.IsAuthenticated, RequireModule, RequireRole]
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
+    # Catálogo tem só view+create (sem edit) → mapa explícito; a gestão de status
+    # do lote reusa `.create` como verbo de "gerir" (mesmo padrão do CRM interação).
+    permission_map = {"view": "erp.lote_remessa.view", "write": "erp.lote_remessa.create"}
     required_role = "financeiro"
     pagination_class = ErpPageNumberPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
@@ -742,8 +769,9 @@ class CobrancaClienteViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     """
     queryset = CobrancaCliente.objects.all()
     serializer_class = CobrancaClienteSerializer
-    permission_classes = [permissions.IsAuthenticated, RequireModule, RequireRole]
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
+    required_resource = "erp.cobranca"
     required_role = "financeiro"
     pagination_class = ErpPageNumberPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
@@ -757,8 +785,9 @@ class BoletoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     """
     queryset = Boleto.objects.all()
     serializer_class = BoletoSerializer
-    permission_classes = [permissions.IsAuthenticated, RequireModule, RequireRole]
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
+    required_resource = "erp.cobranca"   # boleto é o instrumento da cobrança
     required_role = "financeiro"
     pagination_class = ErpPageNumberPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
@@ -771,8 +800,9 @@ class AtualizarStatusNFView(TenantScopedAPIViewMixin, views.APIView):
     """
     Endpoint para o microserviço atualizar o status das Notas Fiscais.
     """
-    permission_classes = [permissions.IsAuthenticated, RequireModule, RequireRole]
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
+    required_resource = "erp.nf"
     required_role = "financeiro"
     
     def post(self, request, *args, **kwargs):
@@ -836,8 +866,9 @@ class ConsultarStatusNFView(TenantScopedAPIViewMixin, views.APIView):
     """
     View para o frontend solicitar a consulta de status de uma NF ao microserviço.
     """
-    permission_classes = [permissions.IsAuthenticated, RequireModule, RequireRole]
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
+    required_resource = "erp.nf"
     required_role = "financeiro"
 
     def post(self, request, nf_id):

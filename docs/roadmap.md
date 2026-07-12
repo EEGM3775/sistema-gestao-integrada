@@ -19,7 +19,7 @@
 | 6    | Consolidação de identidade & RBAC de plataforma                                | ✅ 02/06/2026                                        |
 | 7    | Migração v01 → v02 (frontend + backend dos módulos vazios)                   | 🚧 em andamento                                      |
 | 8    | Fundação de dados: Postgres real +`tenant` obrigatório + uniques por-tenant | ✅ 04/07/2026 (8.1–8.5)                             |
-| 9    | RBAC de campo — catálogo de permissões + mascaramento de PII                  | 🚧 A–E ✅ 11/07 (suíte 71/71 + E2E 15/15); residual D3–D6 |
+| 9    | RBAC de campo — catálogo de permissões + mascaramento de PII                  | 🚧 A–E ✅ 11/07 (suíte 71/71 + E2E 15/15); D3/D4/D5 ✅ 11/07; residual D6 |
 | 10   | Observabilidade & redução de superfície operacional                           | 📋 planejado                                         |
 | 11   | Consolidação de linguagens (Python como stack principal)                       | 🚧 11.2 ✅ 03/07/2026 (funcoeslead); resto planejado |
 
@@ -234,7 +234,12 @@ dos **403** na ficha do funcionário).
   módulo+permissão, fechando **S5** (`OpportunityProductViewSet` só tinha `IsAuthenticated`). Testes
   DRF verdes sobre Postgres (`rh/tests.py`, `modulocrm/tests.py` — 15/15) + E2E vivo. **Estendido
   05/07** aos cadastros-base (`clientes`/`fornecedores`/`obras`/`empreendimentos`), que estavam sem
-  camada 2 — achado **D5** (operacional criava cliente/venda). Falta varrer calendar/erp (D5).
+  camada 2 — achado **D5** (operacional criava cliente/venda). **Fatia B fechada 11/07 (D3/D4/D5):**
+  `moduloerp` migrado de `RequireRole` p/ `RequirePermission` nos 14 viewsets, com verbos de domínio
+  (baixa, cobrança, NF, lote, resolver) gateados por `action_permission_map`; camada 2 em
+  `modulocalendar`/`moduloapi`/`funcoesia`; fallback agora **fail-closed** (D4: `None`=legado→papel,
+  `[]`=nega); `tenant` read-only sistêmico nos serializers (D3, base `TenantScopedModelSerializer`).
+  Suíte 71/71 verde. Falta só a fatia **E** (remover o `RequireRole`).
 - **9.C Campo/PII (mascaramento):** ✅ 05/07/2026 — `FieldMaskingSerializerMixin`
   ([nucleo/field_masking.py](../backend/nucleo/field_masking.py)) com **dois eixos**:
   `sensitive_fields` (leitura — mascara: CPF/CNPJ/conta → `••••`+dígitos; valores/PIX/texto → `null`;
@@ -294,9 +299,16 @@ pendências operacionais da Fase 5.
   três ecossistemas (10.4.6).
 - **10.5 CI/CD mínimo:** pipeline a cada push (`pytest` + `mvn test` + `npm test`) (10.5.1); gates
   de qualidade bloqueando merge em CVE alta (10.5.2); build e push de imagens em merge (10.5.3).
-- **10.6 JWT em cookie HttpOnly:** hoje o token fica em `localStorage` (exposto a XSS). IAM seta
-  cookie `HttpOnly`+`SameSite=Strict` (10.6.1); React deixa o `localStorage` (10.6.2); iframe do
-  drone perde o `?token=` da query string (10.6.3); CSRF token nas mutações (10.6.4).
+- **10.6 JWT em cookie HttpOnly:** ✅ 11/07/2026 (antecipada, fecha o **F1**). Ciclo de sessão padrão
+  SaaS: **access token de 15 min em memória** + **refresh em cookie HttpOnly** (`SameSite=Strict`,
+  path `/auth/`) renovado em silêncio (10.6.1/10.6.2). Rotação + blacklist com **detecção de reuso** e
+  **teto absoluto**; login com **"Lembrar de mim"** (12h vs 30d deslizante/cap 90d); o refresh
+  **recalcula as claims** (revogação/mudança de permissão vale em ≤15 min). Iframe do drone deixou o
+  `?token=` — recebe o token por **postMessage** do shell e o atualiza a cada rotação (10.6.3). CSRF:
+  `SameSite=Strict` + checagem de `Origin` no refresh/logout (10.6.4). IAM
+  ([tokens.py](../iam/identity/tokens.py)/[cookies.py](../iam/identity/cookies.py)/views) validado
+  (19/19); React ([api/session.ts](../frontend/src/api/session.ts) + `attachAuth`/`tokenStore`) e Angular
+  do drone (postMessage) exigem rebuild dos containers p/ validação E2E.
 - **10.7 Ambiente de staging:** idêntico ao de produção (mesmo compose, env e banco separados);
   Fases 8, 9 e 11 validam nele antes do cutover real.
 - **10.8 Auth do WebSocket e serviço→serviço:** validar JWT no handshake STOMP do `/ws` (pendência
@@ -366,6 +378,7 @@ Achados das revisões técnicas com status vivo: [pendencias.md](pendencias.md).
 - **Operacional:** LGPD, secrets, observabilidade, DR, pentest — **Fase 10**.
 - **Supply chain:** nenhuma varredura automatizada (npm/Maven/pip) — **10.4**.
 - **CI/CD ausente:** testes manuais; gates pressupõem pipeline — **10.5**.
-- **JWT em `localStorage` e em query param (iframe):** vetor XSS/log — **10.6**.
+- **JWT em `localStorage` e em query param (iframe):** ✅ **10.6** (11/07) — access em memória + refresh
+  em cookie HttpOnly; iframe do drone via postMessage (sem `?token=`).
 - **Staging ausente:** validações vão direto para produção — **10.7**.
 - **Superfície:** 11 serviços, 3 stacks, 2 frontends — **Fases 10 e 11**.

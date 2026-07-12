@@ -38,6 +38,7 @@ class InteractionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Interaction
         fields = '__all__'
+        read_only_fields = ['tenant']  # injetado pelo perform_create (Fase 8.2 / D3)
 
 
 # Serializer for OpportunityProduct
@@ -52,6 +53,7 @@ class OpportunityProductSerializer(serializers.ModelSerializer):
     class Meta:
         model = OpportunityProduct
         fields = '__all__'
+        read_only_fields = ['tenant']  # injetado pelo perform_create (Fase 8.2 / D3)
 
 
 # Serializer para Oportunidades
@@ -83,6 +85,7 @@ class OpportunitySerializer(serializers.ModelSerializer):
     class Meta:
         model = Opportunity
         fields = '__all__'
+        read_only_fields = ['tenant']  # injetado pelo perform_create (Fase 8.2 / D3)
 
 # Serializer para Contatos
 class ContactSerializer(serializers.ModelSerializer):
@@ -98,6 +101,7 @@ class ContactSerializer(serializers.ModelSerializer):
     class Meta:
         model = Contact
         fields = '__all__'
+        read_only_fields = ['tenant']  # injetado pelo perform_create (Fase 8.2 / D3)
 
 # Serializer para Contas
 class AccountSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):

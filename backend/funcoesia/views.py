@@ -1,7 +1,9 @@
 # backend/funcoesia/views.py
 from rest_framework import viewsets, mixins, status
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import SAFE_METHODS
 from nucleo.tenancy import TenantScopedViewSetMixin
+from nucleo.permissions import RequirePermission
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.http import JsonResponse
@@ -9,6 +11,16 @@ from .models import AnaliseImagemIA
 from .serializers import AnaliseImagemIASerializer
 import requests
 from django.conf import settings
+
+
+class _RequireIaAnalise(RequirePermission):
+    """Camada 2 (D5) para os proxies FBV do serviço de IA — sem `view.action`,
+    então a permissão é fixada por método: leitura→`ia.analise.view`,
+    disparo (POST, custo de processamento)→`ia.analise.executar`."""
+
+    def _needed(self, request, view):
+        return "ia.analise.view" if request.method in SAFE_METHODS else "ia.analise.executar"
+
 
 class AnaliseImagemIAViewSet(TenantScopedViewSetMixin,
                                mixins.CreateModelMixin,
@@ -25,7 +37,11 @@ class AnaliseImagemIAViewSet(TenantScopedViewSetMixin,
     """
     queryset = AnaliseImagemIA.objects.all()
     serializer_class = AnaliseImagemIASerializer
-    
+    # Camada 2 (Fase 9.B/D5): leitura→ia.analise.view · escrita→ia.analise.executar
+    # (catálogo não tem `.edit`). Escrita vem do trigger/microserviço (D1/Fase 11).
+    permission_classes = [IsAuthenticated, RequirePermission]
+    permission_map = {"view": "ia.analise.view", "write": "ia.analise.executar"}
+
     def get_queryset(self):
         """
         Permite filtrar por documento_id
@@ -40,7 +56,7 @@ class AnaliseImagemIAViewSet(TenantScopedViewSetMixin,
 # Views de proxy para o microserviço de IA
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticated, _RequireIaAnalise])
 def tipos_analise(request):
     """
     Proxy para obter tipos de análise disponíveis no microserviço de IA
@@ -90,7 +106,7 @@ def tipos_analise(request):
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticated, _RequireIaAnalise])
 def recomendacoes_analise(request):
     """
     Proxy para obter recomendações de análise
@@ -120,7 +136,7 @@ def recomendacoes_analise(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticated, _RequireIaAnalise])
 def iniciar_analise_proxy(request):
     """
     Proxy para iniciar análise no microserviço
@@ -156,7 +172,7 @@ def iniciar_analise_proxy(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticated, _RequireIaAnalise])
 def reprocessar_analise(request):
     """
     Proxy para reprocessar análise no microserviço

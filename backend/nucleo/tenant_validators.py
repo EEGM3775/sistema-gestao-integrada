@@ -18,7 +18,29 @@ Aqui reconstruímos essa validação escopada ao tenant do request:
   campo. Basta o serializer herdar o mixin.
 """
 from django.db.models import UniqueConstraint
+from rest_framework import serializers
 from rest_framework.validators import UniqueTogetherValidator
+
+
+class TenantReadOnlyFieldMixin:
+    """Torna o campo `tenant` **read-only** sempre que ele estiver exposto no
+    serializer (típico de `fields='__all__'`). Fecha o achado **D3**: com `tenant`
+    NOT NULL (Fase 8.2) o DRF passou a **exigir `tenant` no payload** do POST, mas
+    quem o injeta é o `TenantScopedViewSetMixin.perform_create` — **depois** do
+    `is_valid()`. Sem isto, todo POST de recurso tenant-scoped com `__all__`
+    respondia **400 "tenant é obrigatório"** (o front nunca envia tenant).
+
+    No-op quando o modelo não tem campo `tenant` — seguro de herdar amplamente.
+    Herde **antes** de `ModelSerializer` para que `super().get_fields()` resolva.
+    """
+
+    def get_fields(self):
+        fields = super().get_fields()
+        tenant_field = fields.get("tenant")
+        if tenant_field is not None:
+            tenant_field.read_only = True
+            tenant_field.required = False
+        return fields
 
 
 class TenantScopedUniqueTogetherValidator(UniqueTogetherValidator):
@@ -37,9 +59,11 @@ class TenantScopedUniqueTogetherValidator(UniqueTogetherValidator):
         return queryset
 
 
-class TenantScopedUniqueSerializerMixin:
+class TenantScopedUniqueSerializerMixin(TenantReadOnlyFieldMixin):
     """Reintroduz, por-tenant, as validações de unicidade que o DRF descarta
-    quando o `UniqueConstraint` inclui `tenant`.
+    quando o `UniqueConstraint` inclui `tenant` — **e** força `tenant` read-only
+    (via `TenantReadOnlyFieldMixin`, achado D3), já que ambos derivam do `tenant`
+    ser injetado no servidor.
 
     Herde este mixin antes de `ModelSerializer`. Cada `UniqueConstraint` do
     modelo que comece por `tenant` e cujos demais campos estejam expostos (e
@@ -74,3 +98,9 @@ class TenantScopedUniqueSerializerMixin:
                 )
             )
         return validators
+
+
+class TenantScopedModelSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
+    """Base única p/ serializers de modelos tenant-scoped: `tenant` read-only (D3)
+    + unicidade por-tenant (Fase 8.3). Prefira herdar desta base a repetir os
+    mixins em cada serializer."""

@@ -36,5 +36,15 @@ export function useUsuarios() {
     setUsuarios(prev => prev.map(u => (u.id === id ? { ...u, ...res.data } : u)))
   }
 
-  return { usuarios, perfis, loading, error, setPerfisDoUsuario, refetch: fetchAll }
+  // Reset de senha pelo admin: exige a senha ATUAL do usuário (a recuperação sem
+  // a antiga é etapa futura). O backend verifica a senha atual, aplica a nova e
+  // encerra todas as sessões do usuário.
+  const resetSenha = async (id: string, senhaAtual: string, novaSenha: string) => {
+    await iamAdminClient.post(`/usuarios/${id}/redefinir-senha/`, {
+      senha_atual: senhaAtual,
+      nova_senha: novaSenha,
+    })
+  }
+
+  return { usuarios, perfis, loading, error, setPerfisDoUsuario, resetSenha, refetch: fetchAll }
 }

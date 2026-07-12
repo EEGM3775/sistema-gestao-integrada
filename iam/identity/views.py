@@ -1,8 +1,12 @@
 import base64
 import hashlib
+from urllib.parse import urlparse
 
 from django.conf import settings
+from django.utils import timezone
 from rest_framework import viewsets
+from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -19,6 +23,7 @@ from .models import (
     Tenant,
     Usuario,
 )
+from .cookies import clear_refresh_cookie, set_refresh_cookie
 from .permissions import IsPlatformAdmin, IsTenantAdmin
 from .serializers import (
     AcessoUsuarioModuloSerializer,
@@ -30,27 +35,193 @@ from .serializers import (
     TenantSerializer,
     UsuarioSerializer,
 )
-from .tokens import build_claims
+from .tokens import (
+    access_with_claims,
+    build_claims,
+    cookie_max_age,
+    issue_refresh,
+    revoke_all_sessions,
+)
 
 
 # --- Autenticação / SSO ---
+# Modelo de sessão (Fase 10.6 / F1): o **access token** (15 min) volta no corpo e
+# vive em memória no cliente; o **refresh** vive só num cookie HttpOnly. O cliente
+# renova o access em silêncio via /auth/refresh/ (cookie) → nunca desloga. Rotação
+# + blacklist detectam reuso; o refresh recalcula as claims (permissões atualizam).
+
+
+def _bloqueia_origem_estranha(request) -> None:
+    """Defesa de CSRF no refresh/logout (que dependem do cookie): rejeita origem
+    cross-site. Same-origin (via gateway) e clientes sem `Origin` passam.
+
+    Compara **hostname sem porta**: atrás do gateway, `proxy_set_header Host $host`
+    entrega o Host sem porta (`localhost`), mas o `Origin` do browser traz a porta
+    (`localhost:8090`) — comparar netloc com porta daria falso 403."""
+    origin = request.headers.get("Origin")
+    if not origin:
+        return  # apps nativos / same-origin sem header Origin
+    origin_host = urlparse(origin).hostname or ""
+    request_host = request.get_host().split(":")[0]
+    if origin_host and origin_host == request_host:
+        return  # mesma origem (mesmo host), ignorando porta
+    if origin in set(getattr(settings, "CORS_ALLOWED_ORIGINS", [])):
+        return  # origem de dev explicitamente permitida
+    raise PermissionDenied("Origem não permitida.")
+
+
+def _corpo_sessao(user, access) -> dict:
+    """Corpo devolvido no login: access + identidade + entitlements (sem refresh)."""
+    tenant = user.tenant
+    return {
+        "access": str(access),
+        "user": {
+            "id": str(user.id),
+            "username": user.username,
+            "email": user.email,
+            "is_tenant_admin": user.is_tenant_admin,
+            "is_platform_admin": user.is_superuser,
+        },
+        "tenant": (
+            {"id": str(tenant.id), "slug": tenant.slug, "nome": tenant.nome} if tenant else None
+        ),
+        "modules": user.modulos_efetivos(),
+    }
+
 
 class LoginView(TokenObtainPairView):
     serializer_class = IamTokenObtainPairSerializer
 
+    def post(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)  # valida credenciais → 401 se erradas
+        user = serializer.user
+        remember = bool(request.data.get("remember"))
+
+        refresh = issue_refresh(user, remember=remember)
+        resp = Response(_corpo_sessao(user, access_with_claims(refresh, user)))
+        # Sem "manter conectado" → cookie de sessão (some ao fechar o navegador/
+        # desligar o PC → novo login). Com → persistente (sobrevive ao reboot).
+        set_refresh_cookie(resp, str(refresh), cookie_max_age(refresh), persistent=remember)
+        return resp
+
+
+class RefreshView(APIView):
+    """Renova o access token a partir do refresh no cookie. Rotaciona o refresh
+    (blacklist do antigo → reuso de um token velho cai em 401 e derruba a sessão)
+    e **recalcula as claims** (permissão revogada/alterada vale em ≤ 15 min)."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        _bloqueia_origem_estranha(request)
+        raw = request.COOKIES.get(settings.REFRESH_COOKIE_NAME)
+        if not raw:
+            return Response({"detail": "Sessão ausente."}, status=401)
+
+        def falha(msg, token=None):
+            resp = Response({"detail": msg}, status=401)
+            if token is not None:
+                try:
+                    token.blacklist()
+                except (AttributeError, TokenError):
+                    pass
+            clear_refresh_cookie(resp)
+            return resp
+
+        try:
+            old = RefreshToken(raw)  # valida assinatura, exp e blacklist (reuso)
+        except TokenError:
+            return falha("Sessão inválida ou expirada.")
+
+        now = int(timezone.now().timestamp())
+        sst = int(old.get("sst") or now)
+        remember = bool(old.get("rem"))
+        cap = settings.SESSION_ABS_CAP if remember else settings.SESSION_SHORT
+        if now - sst > int(cap.total_seconds()):
+            return falha("Sessão expirada (tempo máximo atingido).", token=old)
+
+        try:
+            user = Usuario.objects.get(id=old["user_id"])
+        except Usuario.DoesNotExist:
+            return falha("Usuário inexistente.", token=old)
+        if not user.is_active:
+            return falha("Usuário inativo.", token=old)
+
+        # Rotação: invalida o antigo e emite um novo preservando o início da sessão.
+        try:
+            old.blacklist()
+        except (AttributeError, TokenError):
+            pass
+        novo = issue_refresh(user, remember=remember, sst=sst)
+        resp = Response({"access": str(access_with_claims(novo, user))})
+        set_refresh_cookie(resp, str(novo), cookie_max_age(novo), persistent=remember)
+        return resp
+
 
 class LogoutView(APIView):
+    """Encerra a sessão: blacklista o refresh do cookie e limpa o cookie. Aceita
+    mesmo sem access válido (o usuário pode estar com o access já expirado)."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        _bloqueia_origem_estranha(request)
+        raw = request.COOKIES.get(settings.REFRESH_COOKIE_NAME)
+        resp = Response({"detail": "logout efetuado"}, status=200)
+        clear_refresh_cookie(resp)
+        if raw:
+            try:
+                RefreshToken(raw).blacklist()
+            except TokenError:
+                pass
+        return resp
+
+
+class ChangePasswordView(APIView):
+    """Troca da própria senha. Valida a senha atual, aplica a nova e **encerra
+    todas as outras sessões** do usuário (blacklist) — reemitindo uma sessão nova
+    só para este dispositivo. Assim, uma senha vazada/roubada é cortada em todos
+    os outros lugares no ato da troca."""
+
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        refresh = request.data.get("refresh")
-        if not refresh:
-            return Response({"detail": "refresh é obrigatório"}, status=400)
-        try:
-            RefreshToken(refresh).blacklist()
-        except TokenError:
-            return Response({"detail": "token inválido"}, status=400)
-        return Response({"detail": "logout efetuado"}, status=205)
+        _bloqueia_origem_estranha(request)
+        user = request.user
+        atual = request.data.get("senha_atual") or ""
+        nova = request.data.get("nova_senha") or ""
+
+        if not user.check_password(atual):
+            return Response({"detail": "Senha atual incorreta."}, status=400)
+        if len(nova) < 8:
+            return Response({"detail": "A nova senha deve ter ao menos 8 caracteres."}, status=400)
+        if nova == atual:
+            return Response({"detail": "A nova senha deve ser diferente da atual."}, status=400)
+
+        # Preserva o "lembrar" da sessão atual para a nova sessão deste dispositivo.
+        remember = False
+        raw = request.COOKIES.get(settings.REFRESH_COOKIE_NAME)
+        if raw:
+            try:
+                remember = bool(RefreshToken(raw).get("rem"))
+            except TokenError:
+                pass
+
+        user.set_password(nova)
+        user.save(update_fields=["password"])
+        revoke_all_sessions(user)  # derruba TODAS as sessões (inclui a atual)
+
+        # Reemite uma sessão nova só para quem trocou a senha (não é deslogado).
+        refresh = issue_refresh(user, remember=remember)
+        resp = Response({
+            "detail": "Senha alterada. As outras sessões foram encerradas.",
+            "access": str(access_with_claims(refresh, user)),
+        })
+        set_refresh_cookie(resp, str(refresh), cookie_max_age(refresh), persistent=remember)
+        return resp
 
 
 class MeView(APIView):
@@ -190,6 +361,25 @@ class UsuarioViewSet(viewsets.ModelViewSet):
     def perform_update(self, serializer):
         u = self.request.user
         serializer.save() if u.is_superuser else serializer.save(tenant=u.tenant)
+
+    @action(detail=True, methods=["post"], url_path="redefinir-senha")
+    def redefinir_senha(self, request, pk=None):
+        """Admin redefine a senha de um usuário — **exigindo a senha atual** dele
+        (a recuperação/esqueci-minha-senha, sem a antiga, é etapa futura). Verifica
+        a senha atual do alvo, aplica a nova e encerra todas as sessões dele."""
+        alvo = self.get_object()  # já escopado ao tenant (get_queryset)
+        atual = request.data.get("senha_atual") or ""
+        nova = request.data.get("nova_senha") or ""
+        if not alvo.check_password(atual):
+            return Response({"detail": "Senha atual do usuário incorreta."}, status=400)
+        if len(nova) < 8:
+            return Response({"detail": "A nova senha deve ter ao menos 8 caracteres."}, status=400)
+        if nova == atual:
+            return Response({"detail": "A nova senha deve ser diferente da atual."}, status=400)
+        alvo.set_password(nova)
+        alvo.save(update_fields=["password"])
+        revoke_all_sessions(alvo)
+        return Response({"detail": "Senha redefinida. As sessões do usuário foram encerradas."})
 
 
 class PerfilViewSet(viewsets.ModelViewSet):

@@ -78,12 +78,19 @@ class RequirePermission(BasePermission):
         ``.view``; métodos de escrita exigem ``.edit`` (o comum p/ um CRUD de PII);
       - ``permission_map = {"view": "...view", "write": "...emitir"}`` — por método,
         quando a escrita não é ``.edit`` (verbos de domínio);
+      - ``action_permission_map = {"dar_baixa": "erp.conta_receber.baixar", …}`` —
+        por **ação** do DRF (``view.action``), p/ verbos de domínio em `@action`
+        que exigem uma permissão diferente do CRUD do próprio recurso (tem
+        precedência sobre `permission_map`/`required_resource`);
       - ``required_permission = "modulo.recurso.acao"`` — fixa p/ todas as ações.
 
     Admin de tenant / superuser passam. Sem declaração → não exige (apps base).
 
-    **Transição:** se o token não traz `permissions` (legado), cai no `RequireRole`
-    do ViewSet (que segue declarando ``required_role``) — zero-downtime até a fatia E.
+    **Transição (D4, fail-closed):** só o token **legado** — claim `permissions`
+    **ausente** (a autenticação seta `iam_permissions = None`) — cai no `RequireRole`
+    do ViewSet (que segue declarando ``required_role``). Um token da **era das
+    permissões** com conjunto **vazio** (`[]`) é negado sem fallback: sem isso, um
+    usuário sem nenhuma permissão passaria em endpoints sem `required_role`.
     """
 
     message = "Você não tem permissão para esta ação."
@@ -98,12 +105,19 @@ class RequirePermission(BasePermission):
         if getattr(user, "is_tenant_admin", False) or getattr(user, "is_superuser", False):
             return True
         perms = getattr(user, "iam_permissions", None)
-        if perms:  # token da era das permissões
-            return needed in perms
-        # Fallback legado: token sem `permissions` → checagem por papel.
-        return RequireRole().has_permission(request, view)
+        # D4 — fail-closed: `None` = claim ausente (token legado) → fallback de
+        # transição por papel; lista (mesmo VAZIA) = era das permissões → estrito.
+        if perms is None:
+            return RequireRole().has_permission(request, view)
+        return needed in perms
 
     def _needed(self, request, view):
+        # Verbo de domínio por ação (ex.: dar_baixa → erp.conta_receber.baixar) —
+        # precede o CRUD do recurso. `view.action` existe só em ViewSet.
+        action_map = getattr(view, "action_permission_map", None)
+        action = getattr(view, "action", None)
+        if action_map and action in action_map:
+            return action_map[action]
         pm = getattr(view, "permission_map", None)
         if pm:
             chave = "view" if request.method in SAFE_METHODS else "write"

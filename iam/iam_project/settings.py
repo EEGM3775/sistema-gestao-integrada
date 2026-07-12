@@ -125,6 +125,24 @@ CORS_ALLOW_HEADERS = [
     "x-csrftoken",
     "x-requested-with",
 ]
+# O refresh viaja em cookie HttpOnly → o browser precisa enviá-lo em requisições
+# XHR (fetch/axios com credentials). Em produção tudo é mesma-origem (gateway),
+# mas em dev (vite :5173) o CORS precisa permitir credenciais.
+CORS_ALLOW_CREDENTIALS = True
+
+# --- Ciclo de sessão: refresh token em cookie HttpOnly (Fase 10.6 / F1) ---
+# O login põe o refresh num cookie HttpOnly (imune a XSS) com path /auth/ → só
+# viaja para /auth/refresh e /auth/logout, nunca para /api. SameSite=Strict
+# bloqueia envio cross-site (defesa de CSRF). Secure=1 sob HTTPS (produção).
+REFRESH_COOKIE_NAME = os.getenv("IAM_REFRESH_COOKIE", "sgi_refresh")
+REFRESH_COOKIE_PATH = "/auth/"
+REFRESH_COOKIE_SECURE = os.getenv("IAM_COOKIE_SECURE", "0") == "1"
+REFRESH_COOKIE_SAMESITE = os.getenv("IAM_COOKIE_SAMESITE", "Strict")
+# Duração da sessão (refresh): curta (sem "lembrar") vs longa deslizante (com),
+# ambas limitadas por um teto absoluto desde o login.
+SESSION_SHORT = timedelta(hours=int(os.getenv("JWT_SESSION_SHORT_HOURS", "12")))
+SESSION_REMEMBER = timedelta(days=int(os.getenv("JWT_SESSION_REMEMBER_DAYS", "30")))
+SESSION_ABS_CAP = timedelta(days=int(os.getenv("JWT_SESSION_CAP_DAYS", "90")))
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
@@ -155,8 +173,13 @@ JWT_PRIVATE_KEY = _read_key(os.getenv("JWT_PRIVATE_KEY_PATH"))
 JWT_PUBLIC_KEY = _read_key(os.getenv("JWT_PUBLIC_KEY_PATH"))
 
 _JWT_COMMON = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=int(os.getenv("JWT_ACCESS_MINUTES", "60"))),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=int(os.getenv("JWT_REFRESH_DAYS", "7"))),
+    # Access curto (15 min): a credencial de uso vive em memória no cliente e é
+    # renovada em silêncio pelo refresh. Também define em quanto tempo uma
+    # revogação/mudança de permissão passa a valer (o refresh recalcula claims).
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=int(os.getenv("JWT_ACCESS_MINUTES", "15"))),
+    # Teto do refresh no SimpleJWT; a validade REAL por sessão é setada no login
+    # (12h sem "lembrar" · 30d com "lembrar"), respeitando o cap absoluto abaixo.
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=int(os.getenv("JWT_REFRESH_DAYS", "30"))),
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
     "AUTH_HEADER_TYPES": ("Bearer",),

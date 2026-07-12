@@ -220,27 +220,34 @@ escopado ao tenant (400 limpo em duplicata).
 Tipo/tamanho só são validados no cliente. **Correção:** validador no backend reutilizando a
 `UploadConfig` (mesmos limites do `/api/configuracoes/upload/`), aplicado a todo `FileField`.
 
-### D3 — `tenant` obrigatório no POST quebra a criação via API · 🟠 parcial (05/07/2026)
+### D3 — `tenant` obrigatório no POST quebra a criação via API · ✅ corrigido 11/07/2026
 
 Regressão da **Fase 8.2** (`tenant` virou NOT NULL): o DRF passou a **exigir `tenant` no payload**,
 mas o `perform_create` do `TenantScopedViewSetMixin` injeta o tenant **depois** do `is_valid()` → todo
 `POST` de recurso tenant-scoped cujo serializer usa `fields='__all__'` **sem** `read_only_fields=['tenant']`
 responde **400 "tenant é obrigatório"** (o front não envia tenant). Descoberto ao criar cargo/funcionário.
-**Corrigido (05/07):** `tenant` read-only nos serializers de **RH** (Cargo, Funcionario, DadoMedico,
-ASO, Documento, DadoBancario, Pagamento, Folha) e **fornecedores** (`clientes` já tinha). **Pendente:**
-varredura sistêmica dos demais apps (moduloerp, empreendimentos, obras, modulocrm…) — provável que
-vários tenham o mesmo furo; ideal um serializer-base tenant-scoped que force `tenant` read-only.
+**Corrigido (11/07):** serializer-base `TenantReadOnlyFieldMixin` em
+[nucleo/tenant_validators.py](../backend/nucleo/tenant_validators.py) — força `tenant` read-only quando
+exposto (no-op se o modelo não tem `tenant`); dobrado dentro do `TenantScopedUniqueSerializerMixin`
+(todo serializer que já o usava ficou coberto de graça) e exposto como base pronta
+`TenantScopedModelSerializer`. Varredura sistêmica concluída: `read_only_fields=['tenant']` nos
+serializers `__all__` remanescentes de **moduloerp** (Boleto/Transacao/CobrancaCliente), **empreendimentos**
+(ContaBancaria), **obras** (Obra/Etapa/Documento), **modulocrm** (Interaction/OpportunityProduct/
+Opportunity/Contact), **modulocalendar**, **moduloapi** e **funcoesia** (RH/clientes/fornecedores já tinham).
 
-### D4 — `RequirePermission` é fail-open com `permissions` vazia · 🟡 mitigado na LGPD (05/07/2026)
+### D4 — `RequirePermission` é fail-open com `permissions` vazia · ✅ corrigido 11/07/2026
 
-Como a autenticação sempre seta `iam_permissions = [...] or []`, não há como distinguir "token legado
+Como a autenticação sempre setava `iam_permissions = [...] or []`, não havia como distinguir "token legado
 sem a claim" de "usuário sem nenhuma permissão" — e o fallback de transição (`permissions` vazia → cai
-no `RequireRole`) **libera** quem não tem papel exigido em endpoints sem `required_role`. **Mitigado:**
-os endpoints LGPD (novos, sensíveis) usam `RequirePermissionStrict` (fail-closed, sem fallback).
-**Pendente:** revisar o fallback do `RequirePermission` para RH/CRM (hoje o CRM depende dele) —
-aposentá-lo junto da fatia **E** (remoção do `RequireRole`), tornando tudo fail-closed.
+no `RequireRole`) **liberava** quem não tem papel exigido em endpoints sem `required_role`.
+**Corrigido (11/07):** a autenticação passou a distinguir claim **ausente** → `iam_permissions = None`
+(token legado → fallback por papel, zero-downtime) de claim **presente porém vazia** → `[]` (era das
+permissões → checagem estrita, conjunto vazio **nega**). `RequirePermission` só cai no `RequireRole` quando
+`iam_permissions is None` ([nucleo/permissions.py](../backend/nucleo/permissions.py),
+[nucleo/authentication.py](../backend/nucleo/authentication.py)). Fecha o fail-open sem quebrar o fallback
+legado (provado: `S5EntitlementCrmTests`, `RequirePermissionRHTests`). O `RequireRole` some de vez na fatia **E**.
 
-### D5 — Cadastros-base sem camada 2 (broken access control) · 🟠 parcial (05/07/2026)
+### D5 — Cadastros-base sem camada 2 (broken access control) · ✅ corrigido 11/07/2026
 
 Relatado por teste do usuário: `semdrone` (papel **operacional**, só `cadastro.cliente.view`)
 **criou e editou clientes e criou uma "venda"** (`ClienteEmpreendimento`) — só não viu o CPF (mascarado
@@ -251,10 +258,16 @@ escrevia. O mascaramento de campo protege o **campo**, não a **operação** de 
 (`cadastro.cliente`/`cadastro.cliente_banco`), `fornecedores`, `obras` (`obra.obra`) e `empreendimentos`
 (`obra.empreendimento`/`empreend_conta`/`empreend_custo`). Provado: `semdrone` vê (200) mas não escreve
 (403); `demo` (comercial/engenharia) cria normalmente. `modulodiario` já tinha ABAC próprio
-(`PodeModerarDiario`). **Pendente:** varrer `modulocalendar`, `moduloapi`, `funcoesia` e revisar o
-`moduloerp` (hoje `RequireRole("financeiro")` — migrar p/ `RequirePermission`), fechando a fatia B em
-todo o backend. Some-se a isto o **D3** (tenant read-only nos serializers de obras/empreendimentos) e o
-**D4** (fail-open do fallback com permissões vazias).
+(`PodeModerarDiario`). **Concluído (11/07):** a fatia B foi fechada em todo o backend —
+`moduloerp` migrou de `RequireRole("financeiro")` para `RequirePermission` nos 14 viewsets/APIViews,
+com os verbos de domínio (baixa, cobrança, emissão de NF, lote de remessa, resolver revisão) gateados por
+permissão específica via novo `action_permission_map` do `RequirePermission`; `modulocalendar`
+(`calendario.evento`), `moduloapi` (`plataforma.integracao`) e `funcoesia` (`ia.analise.view`/`.executar`,
+inclusive os proxies FBV) ganharam camada 2. Template `financeiro` recebeu `erp.lote_remessa.*`
+(órfão no catálogo). Suíte 71/71 verde. **Deploy sem passo manual:** o `sync_authz` ficou **aditivo**
+(soma as permissões do modelo aos papéis de fábrica sem apagar ajustes do admin; `--reset` para
+realinhamento explícito) e roda `--all-tenants` no boot do IAM (CMD do Dockerfile), propagando o catálogo
+e o `lote_remessa` automaticamente. Usuários pegam a permissão nova no próximo login (token de 60 min).
 
 ### D6 — Ampliar dados sensíveis do mascaramento (9.C) a todo o PII · 📋 aberto (fazer depois)
 
@@ -275,11 +288,17 @@ Decidir a permissão de leitura: reusar `rh.funcionario.view`/`cadastro.cliente.
 `*.pii.view` dedicada (fino). Requer também estender o **export/anonimização LGPD (9.D)** a esses
 campos. **Não implementar agora** — planejado para uma extensão da 9.C.
 
-### F1 — Sessão expira sem refresh + sem 401 global · 🔴 aberto *(v01-F1/F2)*
+### F1 — Sessão expira sem refresh + sem 401 global · ✅ corrigido 11/07/2026 (junto da Fase 10.6)
 
-O access token vale 60 min e o front não usa o refresh; 401 não desloga nem redireciona.
-**Correção:** interceptor de resposta — 401 → `POST /auth/refresh` → retry; falhou → logout com
-aviso.
+O access token vale 60 min e o front não usava o refresh; 401 não deslogava nem redirecionava.
+**Corrigido (11/07):** ciclo de sessão completo (ver **Fase 10.6** no roadmap) — access token de
+**15 min em memória** + **refresh em cookie HttpOnly** renovado em silêncio; interceptor de resposta
+(`attachAuth`) trata 401 → `/auth/refresh/` → retry; refresh **proativo** (~1 min antes de expirar) →
+nenhuma requisição falha; bootstrap na carga chama `/auth/refresh/` (cookie) e repopula a sessão sem
+relogar. "Lembrar de mim" (12h vs 30d). **Validado ao vivo pelo gateway (:8090):** login (cookie 636 B,
+sem refresh no corpo) → refresh (rotaciona, access com claims, TTL 15 min) → reuso do refresh antigo = 401
+→ logout = 401. IAM 19/19; React e drone rebuildados e no ar (compilaram limpo). Refresh mínimo (só
+`user_id`+`sst`/`rem`) p/ caber no limite de cookie; claims só no access.
 
 ### F2 — Selects carregam tabelas inteiras · 🔴 aberto
 

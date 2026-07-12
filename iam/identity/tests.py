@@ -1,4 +1,5 @@
 """Testes do RBAC — catálogo + templates + permissões no JWT (Fase 9, fatia A)."""
+from django.conf import settings
 from django.core.management import call_command
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -141,3 +142,142 @@ class PersonasDinamicasTests(TestCase):
         }, format="json")
         self.assertEqual(r.status_code, 400)
         self.assertFalse(Perfil.objects.filter(tenant=self.t, nome="espiao").exists())
+
+
+class SessaoCookieTests(TestCase):
+    """Ciclo de sessão (Fase 10.6/F1): access no corpo, refresh em cookie HttpOnly,
+    rotação com detecção de reuso, 'lembrar de mim' e logout."""
+
+    def setUp(self):
+        self.t = Tenant.objects.create(nome="T", slug="t")
+        self.user = Usuario.objects.create(username="alice", tenant=self.t)
+        self.user.set_password("segredo123")
+        self.user.save()
+        self.client = APIClient()
+
+    def _login(self, remember=False):
+        return self.client.post(
+            "/auth/login/",
+            {"username": "alice", "password": "segredo123", "remember": remember},
+            format="json",
+        )
+
+    def test_login_da_access_e_cookie_sem_refresh_no_corpo(self):
+        r = self._login()
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("access", r.data)
+        self.assertNotIn("refresh", r.data)  # refresh NUNCA no corpo
+        cookie = r.cookies.get(settings.REFRESH_COOKIE_NAME)
+        self.assertIsNotNone(cookie)
+        self.assertTrue(cookie["httponly"])
+        self.assertEqual(cookie["path"], "/auth/")
+
+    def test_refresh_pelo_cookie_gira_e_devolve_novo_access(self):
+        self._login()
+        r = self.client.post("/auth/refresh/")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("access", r.data)
+        self.assertIn(settings.REFRESH_COOKIE_NAME, r.cookies)  # cookie rotacionado
+
+    def test_reuso_de_refresh_antigo_derruba_sessao(self):
+        self._login()
+        antigo = self.client.cookies[settings.REFRESH_COOKIE_NAME].value
+        self.client.post("/auth/refresh/")  # rotaciona → antigo vai p/ blacklist
+        self.client.cookies[settings.REFRESH_COOKIE_NAME] = antigo  # reapresenta o velho
+        r = self.client.post("/auth/refresh/")
+        self.assertEqual(r.status_code, 401)
+
+    def test_sem_lembrar_e_cookie_de_sessao(self):
+        # Sem "manter conectado" → cookie de sessão (sem Max-Age) → morre ao
+        # fechar o navegador/desligar o PC.
+        c = self._login(remember=False).cookies[settings.REFRESH_COOKIE_NAME]
+        self.assertEqual(c["max-age"], "")
+
+    def test_com_lembrar_e_cookie_persistente(self):
+        # Com "manter conectado" → cookie persistente ~30d (sobrevive ao reboot).
+        c = self._login(remember=True).cookies[settings.REFRESH_COOKIE_NAME]
+        self.assertGreater(int(c["max-age"]), 20 * 24 * 3600)
+
+    def test_refresh_sem_cookie_401(self):
+        self.assertEqual(self.client.post("/auth/refresh/").status_code, 401)
+
+    def test_logout_limpa_cookie_e_invalida_sessao(self):
+        self._login()
+        self.assertEqual(self.client.post("/auth/logout/").status_code, 200)
+        self.assertEqual(self.client.post("/auth/refresh/").status_code, 401)
+
+
+class TrocaSenhaTests(TestCase):
+    """Trocar a senha encerra as OUTRAS sessões, mantendo o dispositivo atual."""
+
+    def setUp(self):
+        self.t = Tenant.objects.create(nome="T", slug="t")
+        self.user = Usuario.objects.create(username="bob", tenant=self.t)
+        self.user.set_password("senha-antiga-1")
+        self.user.save()
+
+    def _login(self, client):
+        return client.post(
+            "/auth/login/",
+            {"username": "bob", "password": "senha-antiga-1", "remember": True},
+            format="json",
+        )
+
+    def test_troca_encerra_outras_sessoes_mantendo_a_atual(self):
+        A, B = APIClient(), APIClient()
+        self._login(A); self._login(B)
+        self.assertEqual(A.post("/auth/refresh/").status_code, 200)
+        self.assertEqual(B.post("/auth/refresh/").status_code, 200)
+
+        A.force_authenticate(user=self.user)  # no app real o Bearer vem do attachAuth
+        r = A.post("/auth/senha/", {"senha_atual": "senha-antiga-1", "nova_senha": "senha-nova-99"}, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("access", r.data)
+
+        self.assertEqual(B.post("/auth/refresh/").status_code, 401)  # outra sessão caiu
+        self.assertEqual(A.post("/auth/refresh/").status_code, 200)  # a atual continua
+
+    def test_senha_atual_errada_400(self):
+        A = APIClient(); self._login(A); A.force_authenticate(user=self.user)
+        r = A.post("/auth/senha/", {"senha_atual": "errada", "nova_senha": "qualquer-outra-1"}, format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_nova_senha_curta_400(self):
+        A = APIClient(); self._login(A); A.force_authenticate(user=self.user)
+        r = A.post("/auth/senha/", {"senha_atual": "senha-antiga-1", "nova_senha": "curta"}, format="json")
+        self.assertEqual(r.status_code, 400)
+
+
+class AdminRedefinirSenhaTests(TestCase):
+    """Admin redefine a senha de um usuário EXIGINDO a senha atual dele; um PATCH
+    comum não troca senha (só a ação dedicada)."""
+
+    def setUp(self):
+        self.t = Tenant.objects.create(nome="T", slug="t")
+        self.admin = Usuario.objects.create(username="adm", tenant=self.t, is_tenant_admin=True)
+        self.alvo = Usuario.objects.create(username="alvo", tenant=self.t)
+        self.alvo.set_password("antiga-123")
+        self.alvo.save()
+        self.client = APIClient()
+        self.client.force_authenticate(self.admin)
+
+    def _url(self):
+        return f"/usuarios/{self.alvo.id}/redefinir-senha/"
+
+    def test_reset_com_senha_atual_correta(self):
+        r = self.client.post(self._url(), {"senha_atual": "antiga-123", "nova_senha": "nova-1234"}, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.alvo.refresh_from_db()
+        self.assertTrue(self.alvo.check_password("nova-1234"))
+
+    def test_reset_com_senha_atual_errada_400(self):
+        r = self.client.post(self._url(), {"senha_atual": "errada", "nova_senha": "nova-1234"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.alvo.refresh_from_db()
+        self.assertTrue(self.alvo.check_password("antiga-123"))  # inalterada
+
+    def test_patch_comum_nao_troca_senha(self):
+        self.client.patch(f"/usuarios/{self.alvo.id}/", {"password": "hackeado-9"}, format="json")
+        self.alvo.refresh_from_db()
+        self.assertTrue(self.alvo.check_password("antiga-123"))
+        self.assertFalse(self.alvo.check_password("hackeado-9"))

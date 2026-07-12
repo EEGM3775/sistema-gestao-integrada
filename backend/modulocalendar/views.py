@@ -1,6 +1,7 @@
 
 from rest_framework import viewsets, permissions
 from nucleo.tenancy import TenantScopedViewSetMixin
+from nucleo.permissions import RequirePermission
 from .models import CalendarEvent
 from .serializers import CalendarEventSerializer
 from django.shortcuts import render
@@ -23,7 +24,11 @@ logger = logging.getLogger(__name__)
 
 class CalendarEventViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     serializer_class = CalendarEventSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    # Camada 2 (Fase 9.B/D5): agenda é "base" (sem entitlement de módulo), mas a
+    # escrita exige permissão. GET→calendario.evento.view · escrita→.edit. Token
+    # legado (sem `permissions`) cai no fallback (sem papel exigido → passa).
+    permission_classes = [permissions.IsAuthenticated, RequirePermission]
+    required_resource = "calendario.evento"
 
     def get_queryset(self):
         """Filtra eventos pelo usuário e pelo período solicitado (se houver)."""

@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react'
-import { Users, Search, Pencil, ShieldCheck } from 'lucide-react'
+import { Users, Search, Pencil, ShieldCheck, KeyRound, AlertTriangle, CheckCircle2 } from 'lucide-react'
 import { useUsuarios } from '../hooks/useUsuarios'
+import { PasswordField } from '@/components/PasswordField'
 import type { UsuarioAdmin, Perfil } from '../types'
 
 const PersonasEditor: React.FC<{
@@ -62,10 +63,95 @@ const PersonasEditor: React.FC<{
   )
 }
 
+const ResetSenhaModal: React.FC<{
+  usuario: UsuarioAdmin
+  onClose: () => void
+  onConfirm: (senhaAtual: string, novaSenha: string) => Promise<void>
+}> = ({ usuario, onClose, onConfirm }) => {
+  const [atual, setAtual] = useState('')
+  const [nova, setNova] = useState('')
+  const [conf, setConf] = useState('')
+  const [ciente, setCiente] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [ok, setOk] = useState(false)
+
+  const podeSalvar = atual.length > 0 && nova.length >= 8 && nova === conf && ciente && !saving
+
+  const salvar = async () => {
+    setError(null)
+    if (nova.length < 8) { setError('A nova senha deve ter ao menos 8 caracteres.'); return }
+    if (nova !== conf) { setError('A confirmação não confere com a nova senha.'); return }
+    setSaving(true)
+    try { await onConfirm(atual, nova); setOk(true) }
+    catch (e) {
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setError(detail ?? 'Não foi possível redefinir a senha.')
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40" style={{ background: 'rgba(0,0,0,0.4)' }} onClick={onClose} />
+      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 rounded-2xl w-full max-w-md"
+        style={{ background: '#FFFFFF', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+        <div className="p-6 pb-4 flex items-center gap-3" style={{ borderBottom: '1px solid #e2e8f0' }}>
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: '#fef3c7', color: '#b45309' }}>
+            <KeyRound size={18} />
+          </div>
+          <h2 className="text-lg font-bold" style={{ fontFamily: 'var(--font-heading)', color: 'var(--color-brand)' }}>
+            Redefinir senha de {usuario.username}
+          </h2>
+        </div>
+
+        {ok ? (
+          <div className="p-6 flex flex-col items-center text-center gap-3">
+            <CheckCircle2 size={40} style={{ color: 'var(--color-brand)' }} />
+            <p className="text-sm" style={{ color: 'var(--color-text)', fontFamily: 'var(--font-body)' }}>
+              Senha de <b>{usuario.username}</b> redefinida. As sessões desse usuário foram encerradas —
+              ele precisará entrar com a nova senha.
+            </p>
+            <button onClick={onClose} style={saveBtn}>Fechar</button>
+          </div>
+        ) : (
+          <div className="p-6 flex flex-col gap-4">
+            <div className="flex items-start gap-2 rounded-lg p-3" style={{ background: '#fffbeb', border: '1px solid #fde68a' }}>
+              <AlertTriangle size={16} style={{ color: '#b45309', marginTop: 1, flexShrink: 0 }} />
+              <p className="text-xs" style={{ color: '#92400e', fontFamily: 'var(--font-body)' }}>
+                Para trocar a senha de <b>{usuario.username}</b> você precisa informar a <b>senha atual</b> dele. Todas as sessões dele serão encerradas.
+              </p>
+            </div>
+            {error && (
+              <div className="text-sm px-4 py-2.5 rounded-lg" style={{ background: '#fff5f5', border: '1px solid #fed7d7', color: '#c53030', fontFamily: 'var(--font-body)' }}>
+                {error}
+              </div>
+            )}
+            <PasswordField label="Senha atual do usuário" value={atual} onChange={setAtual} autoFocus autoComplete="off" />
+            <PasswordField label="Nova senha" value={nova} onChange={setNova} hint="Mínimo 8 caracteres." autoComplete="new-password" />
+            <PasswordField label="Confirmar nova senha" value={conf} onChange={setConf} autoComplete="new-password" />
+            <label className="flex items-start gap-2 cursor-pointer text-sm" style={{ color: 'var(--color-text)', fontFamily: 'var(--font-body)' }}>
+              <input type="checkbox" checked={ciente} onChange={e => setCiente(e.target.checked)}
+                style={{ accentColor: 'var(--color-brand)', width: 15, height: 15, marginTop: 2 }} />
+              Entendo que isso encerra as sessões de {usuario.username} e ele precisará usar a nova senha.
+            </label>
+            <div className="flex justify-end gap-3 pt-1">
+              <button onClick={onClose} style={cancelBtn}>Cancelar</button>
+              <button onClick={salvar} disabled={!podeSalvar} style={{ ...saveBtn, background: '#b45309', opacity: podeSalvar ? 1 : 0.5, cursor: podeSalvar ? 'pointer' : 'not-allowed' }}>
+                {saving ? 'Redefinindo…' : 'Redefinir senha'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
+
 const UsuariosPage: React.FC = () => {
-  const { usuarios, perfis, loading, error, setPerfisDoUsuario } = useUsuarios()
+  const { usuarios, perfis, loading, error, setPerfisDoUsuario, resetSenha } = useUsuarios()
   const [search, setSearch] = useState('')
   const [editing, setEditing] = useState<UsuarioAdmin | null>(null)
+  const [resetting, setResetting] = useState<UsuarioAdmin | null>(null)
 
   const nomePorId = useMemo(() => new Map(perfis.map(p => [p.id, p.nome])), [perfis])
   const filtered = useMemo(() => {
@@ -133,11 +219,17 @@ const UsuariosPage: React.FC = () => {
                       ))}
                     </div>
                   </td>
-                  <td style={{ padding: '12px 16px', width: '60px' }}>
-                    <button onClick={() => setEditing(u)} className="p-1.5 rounded" title="Editar papéis"
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)' }}>
-                      <Pencil size={14} />
-                    </button>
+                  <td style={{ padding: '12px 16px', width: '96px' }}>
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => setEditing(u)} className="p-1.5 rounded" title="Editar papéis"
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)' }}>
+                        <Pencil size={14} />
+                      </button>
+                      <button onClick={() => setResetting(u)} className="p-1.5 rounded" title="Redefinir senha"
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)' }}>
+                        <KeyRound size={14} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -149,6 +241,11 @@ const UsuariosPage: React.FC = () => {
       {editing && (
         <PersonasEditor usuario={editing} perfis={perfis} onClose={() => setEditing(null)}
           onSave={async (ids) => { await setPerfisDoUsuario(editing.id, ids); setEditing(null) }} />
+      )}
+
+      {resetting && (
+        <ResetSenhaModal usuario={resetting} onClose={() => setResetting(null)}
+          onConfirm={async (atual, nova) => { await resetSenha(resetting.id, atual, nova) }} />
       )}
     </div>
   )

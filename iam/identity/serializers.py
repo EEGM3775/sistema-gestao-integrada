@@ -171,12 +171,13 @@ class UsuarioSerializer(serializers.ModelSerializer):
         return user
 
     def update(self, instance, validated_data):
-        password = validated_data.pop("password", None)
+        # Troca de senha de usuário existente NÃO passa por aqui: só pela ação
+        # `redefinir-senha` (exige a senha atual do usuário). Ignoramos `password`
+        # num PATCH comum para não haver caminho de troca sem a senha antiga.
+        validated_data.pop("password", None)
         perfis = validated_data.pop("perfis", None)
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
-        if password:
-            instance.set_password(password)
         instance.save()
         if perfis is not None:
             instance.perfis.set(perfis)

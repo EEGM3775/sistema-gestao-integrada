@@ -58,9 +58,13 @@ class IamJWTAuthentication(JWTAuthentication):
         # Claims voláteis, disponíveis para permissões/escopo na request.
         user.iam_modules = validated_token.get("modules", []) or []
         user.iam_roles = validated_token.get("roles", []) or []
-        # `permissions` (Fase 9.B): conjunto efetivo p/ RequirePermission. Vazio em
-        # tokens antigos → RequireRole segue como fallback durante a transição.
-        user.iam_permissions = validated_token.get("permissions", []) or []
+        # `permissions` (Fase 9.B): conjunto efetivo p/ RequirePermission.
+        # D4 — distinção deliberada: claim AUSENTE → `None` (token legado; fallback
+        # de transição por papel). Claim PRESENTE, mesmo vazia → lista (era das
+        # permissões; conjunto vazio NEGA, sem fallback fail-open).
+        _sentinela = object()
+        _perms = validated_token.get("permissions", _sentinela)
+        user.iam_permissions = None if _perms is _sentinela else list(_perms or [])
         # Dono da plataforma (superuser da IAM) — confirma incidente LGPD (Fase 9.D).
         user.is_platform_admin = bool(validated_token.get("is_platform_admin"))
         return user
