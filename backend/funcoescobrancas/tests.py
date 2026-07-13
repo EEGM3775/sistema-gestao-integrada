@@ -143,11 +143,33 @@ class AnalisarDivergenciasTests(APITestCase):
 
     def test_endpoint_divergencias_asaas(self):
         user = Usuario.objects.create(username="u_c", tenant=self.tenant)
+        user.iam_permissions = ["cadastro.cliente.view"]  # action é GET em ClienteViewSet
         self.client.force_authenticate(user=user)
         with patch.object(AsaasClient, "iterar_todos_customers", return_value=iter(self._asaas())):
             resp = self.client.get("/api/clientes/divergencias-asaas/")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data["total_divergencias"], 2)
+
+    def _relatorio_como(self, permissoes):
+        user = Usuario.objects.create(username=f"u_c_{'_'.join(permissoes)[:20]}", tenant=self.tenant)
+        user.iam_permissions = permissoes
+        self.client.force_authenticate(user=user)
+        with patch.object(AsaasClient, "iterar_todos_customers", return_value=iter(self._asaas())):
+            resp = self.client.get("/api/clientes/divergencias-asaas/")
+        self.assertEqual(resp.status_code, 200)
+        return {d["cliente_id"]: d for d in resp.data["divergencias"]}
+
+    def test_endpoint_mascara_documento_sem_permissao_de_doc(self):
+        """LGPD (D3): sem `cadastro.cliente_doc.view`, o relatório de divergências
+        não vaza o CPF/CNPJ inteiro — devolve mascarado (2 últimos dígitos, como a 9.C)."""
+        doc = self._relatorio_como(["cadastro.cliente.view"])[self.diverge.pk]["documento"]
+        self.assertIn("••••", doc)
+        self.assertNotEqual(doc, "11111111111")
+        self.assertTrue(doc.endswith("11"))
+
+    def test_endpoint_documento_visivel_com_permissao_de_doc(self):
+        por_id = self._relatorio_como(["cadastro.cliente.view", "cadastro.cliente_doc.view"])
+        self.assertEqual(por_id[self.diverge.pk]["documento"], "11111111111")
 
 
 class GerarCobrancaEndpointTests(APITestCase):
@@ -172,7 +194,7 @@ class GerarCobrancaEndpointTests(APITestCase):
 
     def _auth(self):
         self.user.iam_modules = ["erp_financeiro"]
-        self.user.iam_roles = ["financeiro"]
+        self.user.iam_permissions = ["erp.cobranca.emitir"]  # action gerar-cobranca
         self.client.force_authenticate(user=self.user)
 
     def test_endpoint_bloqueia_e_nao_enfileira_quando_diverge(self):

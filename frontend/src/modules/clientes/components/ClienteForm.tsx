@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react'
-import { X, AlertTriangle } from 'lucide-react'
+import { X } from 'lucide-react'
 import type { Cliente, ClienteFormData, EstadoCivil } from '@/types'
 import type { DivergenciaAsaas } from '../services/clientesService'
+import { DivergenciasAsaasPanel } from './DivergenciasAsaasPanel'
 import { FieldError, FormErrorBanner, parseApiErrors, type FieldErrors } from '@/utils/formErrors'
-import { maskCPFCNPJ, validateCPFCNPJ, formatCPFCNPJ } from '@/utils/masks'
+import { maskCPFCNPJ, validateCPFCNPJ } from '@/utils/masks'
 import { minNascISO, maxTodayISO, validateISO_Nasc } from '@/utils/dates'
 
 interface Props {
@@ -14,6 +15,8 @@ interface Props {
   /** Divergências banco × Asaas (auditadas ao abrir "Novo Cliente") — só no cadastro. */
   divergencias?: DivergenciaAsaas[]
   divergLoading?: boolean
+  /** Mensagem quando a auditoria não pôde rodar — evita o painel vazio silencioso (D3). */
+  divergError?: string | null
 }
 
 const ESTADO_CIVIL_OPTIONS: { value: EstadoCivil | ''; label: string }[] = [
@@ -79,65 +82,7 @@ const SectionTitle: React.FC<{ children: React.ReactNode }> = ({ children }) => 
 )
 
 
-// Teto de linhas efetivamente renderizadas no painel. Sem isso, um tenant com
-// milhares de divergências geraria milhares de <li> e o aviso "tomaria" toda a
-// gaveta, enterrando os campos do formulário. O total real continua no cabeçalho.
-const MAX_DIVERGENCIAS_VISIVEIS = 50
-
-const DivergenciasAsaasPanel: React.FC<{ loading: boolean; divergencias: DivergenciaAsaas[] }> = ({ loading, divergencias }) => {
-  if (loading) {
-    return (
-      <div className="mb-4 px-4 py-3 rounded-lg text-xs" style={{
-        background: '#f8fafc', border: '1px solid #e2e8f0',
-        color: 'var(--color-text-muted)', fontFamily: 'var(--font-body)',
-      }}>
-        Verificando divergências com o gateway de cobrança (Asaas)…
-      </div>
-    )
-  }
-  if (divergencias.length === 0) return null
-
-  const total = divergencias.length
-  const visiveis = divergencias.slice(0, MAX_DIVERGENCIAS_VISIVEIS)
-  const ocultas = total - visiveis.length
-
-  return (
-    <div className="mb-4 px-4 py-3 rounded-lg" style={{
-      background: '#fffbeb', border: '1px solid #fde68a', fontFamily: 'var(--font-body)',
-    }}>
-      <div className="flex items-center gap-2 mb-2" style={{ color: '#92400e' }}>
-        <AlertTriangle size={15} />
-        <span className="text-xs font-bold uppercase tracking-wide">
-          {total} divergência{total !== 1 ? 's' : ''} entre cadastro e Asaas
-        </span>
-      </div>
-      <p className="text-xs mb-2" style={{ color: '#92400e' }}>
-        Clientes cujo cadastro impediria ou desviaria uma cobrança. Corrija antes de emitir boletos:
-      </p>
-      {/* Lista com altura limitada e rolagem própria: o painel nunca cresce além
-          disso, independentemente do número de divergências. */}
-      <ul className="flex flex-col gap-1.5" style={{ maxHeight: '220px', overflowY: 'auto' }}>
-        {visiveis.map(d => (
-          <li key={d.cliente_id} className="text-xs" style={{ color: '#78350f', lineHeight: 1.4 }}>
-            <span className="font-semibold">{d.nome}</span>
-            {d.documento ? ` (${formatCPFCNPJ(d.documento)})` : ''}
-            {d.nome_gateway ? <> — no Asaas: <span className="font-semibold">“{d.nome_gateway}”</span></> : ''}
-            <br />
-            <span style={{ opacity: 0.85 }}>{d.detalhe}</span>
-          </li>
-        ))}
-      </ul>
-      {ocultas > 0 && (
-        <p className="text-xs mt-2 font-semibold" style={{ color: '#92400e' }}>
-          + {ocultas} outr{ocultas !== 1 ? 'as' : 'a'} divergência{ocultas !== 1 ? 's' : ''} não listada{ocultas !== 1 ? 's' : ''} aqui.
-          Corrija estas e reabra para ver as demais.
-        </p>
-      )}
-    </div>
-  )
-}
-
-const ClienteForm: React.FC<Props> = ({ open, onClose, onSave, initial, divergencias = [], divergLoading = false }) => {
+const ClienteForm: React.FC<Props> = ({ open, onClose, onSave, initial, divergencias = [], divergLoading = false, divergError = null }) => {
   const [form, setForm]         = useState<ClienteFormData>(EMPTY)
   const [saving, setSaving]         = useState(false)
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
@@ -194,7 +139,14 @@ const ClienteForm: React.FC<Props> = ({ open, onClose, onSave, initial, divergen
         {/* Body */}
         <form id="cliente-form" onSubmit={handleSubmit} className="flex-1 overflow-y-auto px-6 py-4">
 
-          {!initial && <DivergenciasAsaasPanel loading={divergLoading} divergencias={divergencias} />}
+          {!initial && (
+            <DivergenciasAsaasPanel
+              className="mb-4"
+              loading={divergLoading}
+              divergencias={divergencias}
+              error={divergError}
+            />
+          )}
 
           <SectionTitle>Dados Pessoais</SectionTitle>
 

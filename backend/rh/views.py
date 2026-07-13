@@ -7,7 +7,7 @@ import re
 from django_filters.rest_framework import DjangoFilterBackend
 from nucleo.tenancy import TenantScopedViewSetMixin
 from nucleo.auditoria import AuditedModelViewSetMixin, PiiReadAuditMixin
-from nucleo.permissions import RequireModule, RequireRole, RequirePermission
+from nucleo.permissions import RequireModule, RequirePermission
 from .models import (
     Cargo,
     Funcionario,
@@ -99,7 +99,6 @@ class DadoMedicoFuncionarioViewSet(PiiReadAuditMixin, AuditedModelViewSetMixin, 
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "rh"
     required_resource = "rh.dado_medico"   # GET→.view · escrita→.edit
-    required_role = "rh_medico"            # fallback legado (token sem permissions)
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['funcionario']
 
@@ -109,7 +108,6 @@ class ASOFuncionarioViewSet(PiiReadAuditMixin, AuditedModelViewSetMixin, TenantS
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "rh"
     required_resource = "rh.dado_medico"   # ASO é PII médica
-    required_role = "rh_medico"
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['funcionario']
 
@@ -127,7 +125,6 @@ class DadoBancarioFuncionarioViewSet(PiiReadAuditMixin, AuditedModelViewSetMixin
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "rh"
     required_resource = "rh.dado_bancario"
-    required_role = "rh_financeiro"
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['funcionario']
 
@@ -137,7 +134,6 @@ class PagamentoFuncionarioViewSet(AuditedModelViewSetMixin, TenantScopedViewSetM
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "rh"
     required_resource = "rh.folha"
-    required_role = "rh_financeiro"
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['funcionario']
 
@@ -147,6 +143,5 @@ class FolhaPagamentoViewSet(AuditedModelViewSetMixin, TenantScopedViewSetMixin, 
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "rh"
     required_resource = "rh.folha"
-    required_role = "rh_financeiro"
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['funcionario']

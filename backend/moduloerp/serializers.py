@@ -91,6 +91,40 @@ def _validar_rateios(rateios, valor, campo='rateios'):
         })
 
 
+def _validar_edicao_valor(instance, valor, rateios_no_payload):
+    """
+    L6: numa EDIÇÃO de título, o novo `valor` não pode (a) deixar o título com
+    saldo negativo — total devido menor que o já baixado — nem (b) quebrar
+    silenciosamente o rateio existente quando só o valor muda. Sem (a), um PATCH
+    reduzia `valor` abaixo de `valor_pago`; sem (b), os rateios deixavam de somar
+    o total e a divergência só aparecia depois.
+    """
+    if instance is None or valor is None:
+        return
+
+    total_devido = valor + instance.juros + instance.multa - instance.desconto
+    if total_devido < instance.valor_pago:
+        raise serializers.ValidationError({
+            'valor': _(
+                'O valor não pode ficar menor que o total já baixado (R$ %(pago)s).'
+            ) % {'pago': instance.valor_pago}
+        })
+
+    # Rateios não vieram no payload mas o valor mudou: os existentes precisam
+    # continuar fechando com o novo valor (se vieram, `_validar_rateios` já cuida).
+    if not rateios_no_payload:
+        existentes = list(instance.rateios.all())
+        if existentes:
+            soma = sum((r.valor for r in existentes), Decimal('0'))
+            if soma != valor:
+                raise serializers.ValidationError({
+                    'valor': _(
+                        'Alterar o valor para R$ %(valor)s quebra o rateio existente '
+                        '(soma R$ %(soma)s). Envie os rateios ajustados junto.'
+                    ) % {'valor': valor, 'soma': soma}
+                })
+
+
 class ContaPagarSerializer(serializers.ModelSerializer):
     """
     Serializador para o modelo ContaPagar.
@@ -119,6 +153,7 @@ class ContaPagarSerializer(serializers.ModelSerializer):
         rateios = attrs.get('rateios')
         valor = attrs.get('valor', getattr(self.instance, 'valor', None))
         _validar_rateios(rateios, valor)
+        _validar_edicao_valor(self.instance, valor, rateios is not None)  # L6
         return attrs
 
     def create(self, validated_data):
@@ -165,6 +200,7 @@ class ContaReceberSerializer(serializers.ModelSerializer):
         rateios = attrs.get('rateios')
         valor = attrs.get('valor', getattr(self.instance, 'valor', None))
         _validar_rateios(rateios, valor)
+        _validar_edicao_valor(self.instance, valor, rateios is not None)  # L6
         return attrs
 
     def create(self, validated_data):

@@ -19,7 +19,7 @@
 | 6    | Consolidação de identidade & RBAC de plataforma                                | ✅ 02/06/2026                                        |
 | 7    | Migração v01 → v02 (frontend + backend dos módulos vazios)                   | 🚧 em andamento                                      |
 | 8    | Fundação de dados: Postgres real +`tenant` obrigatório + uniques por-tenant | ✅ 04/07/2026 (8.1–8.5)                             |
-| 9    | RBAC de campo — catálogo de permissões + mascaramento de PII                  | 🚧 A–E ✅ 11/07 (suíte 71/71 + E2E 15/15); D3/D4/D5 ✅ 11/07; residual D6 |
+| 9    | RBAC de campo — catálogo de permissões + mascaramento de PII                  | ✅ A–E (fatia E 12/07, suíte 76/76); D3/D4/D5 ✅ 11/07; D6 = extensão planejada |
 | 10   | Observabilidade & redução de superfície operacional                           | 📋 planejado                                         |
 | 11   | Consolidação de linguagens (Python como stack principal)                       | 🚧 11.2 ✅ 03/07/2026 (funcoeslead); resto planejado |
 
@@ -239,7 +239,11 @@ dos **403** na ficha do funcionário).
   (baixa, cobrança, NF, lote, resolver) gateados por `action_permission_map`; camada 2 em
   `modulocalendar`/`moduloapi`/`funcoesia`; fallback agora **fail-closed** (D4: `None`=legado→papel,
   `[]`=nega); `tenant` read-only sistêmico nos serializers (D3, base `TenantScopedModelSerializer`).
-  Suíte 71/71 verde. Falta só a fatia **E** (remover o `RequireRole`).
+  Suíte 71/71 verde. **Fatia E fechada 12/07:** `RequireRole` **removido** (a classe e o fallback
+  por papel); `RequirePermission` ficou estritamente **fail-closed** — sem a permissão no token → 403,
+  sem cair em papel (a autenticação deixou de distinguir `None`/`[]`, já que todo token da IAM traz
+  `permissions` desde a 9.A). `required_role` retirado dos 20 viewsets/APIViews (moduloerp, rh,
+  funcoescobrancas). Suíte **76/76 verde** sobre Postgres (role `erp_app`, RLS real).
 - **9.C Campo/PII (mascaramento):** ✅ 05/07/2026 — `FieldMaskingSerializerMixin`
   ([nucleo/field_masking.py](../backend/nucleo/field_masking.py)) com **dois eixos**:
   `sensitive_fields` (leitura — mascara: CPF/CNPJ/conta → `••••`+dígitos; valores/PIX/texto → `null`;
@@ -292,6 +296,9 @@ pendências operacionais da Fase 5.
 - **10.2 Reduzir superfície:** coabitar os microsserviços Node; unificar build/CI; runbook único.
 - **10.3 Operacional (herdado da Fase 5):** segredos (Vault/Secrets Manager), DR (PITR + ensaios de
   restore), varredura de deps (`pip-audit`/`trivy`), pentest.
+- **10.3.1 Config segura por padrão:** ✅ 12/07/2026 (antecipada, fecha **S3+S4**). `DEBUG`/`IAM_DEBUG`
+  default **False** + fail-fast de `SECRET_KEY`/`ALLOWED_HOSTS` fora de DEBUG; **RS256 obrigatório em
+  produção** (HS256 só em dev); cookies seguros + HSTS quando não-DEBUG. Falta o gate `check --deploy` no CI (10.5).
 - **10.4 Supply chain (frontend):** `npm ci` + lockfile obrigatório nos Dockerfiles/CI (10.4.1);
   `npm audit --audit-level=high` bloqueando build (10.4.2); revisão dos `postinstall` existentes
   (10.4.3); política de adição de dependências com checklist versionado (10.4.4); varredura
@@ -314,6 +321,11 @@ pendências operacionais da Fase 5.
 - **10.8 Auth do WebSocket e serviço→serviço:** validar JWT no handshake STOMP do `/ws` (pendência
   Fase 1); gatilho `post_delete` ERP→drone com JWT de serviço de vida curta emitido pela IAM
   (pendência Fase 3).
+- **10.9 Executor Celery (worker+beat):** ✅ 12/07/2026 (antecipada, fecha o **A1**). Serviços
+  `worker` e `beat` no `docker-compose.yml` (perfil `full`), reusando a imagem do ERP; stack `full`
+  roda assíncrona (`CELERY_TASK_ALWAYS_EAGER=False`). Sem isto, o webhook Asaas e a geração de
+  cobrança processavam síncrono e nada periódico (lembretes CRM) disparava. Validação E2E do fluxo
+  enfileirado depende de subir o compose.
 
 **DoD:** dashboard mínimo (erros+latência) e alertas; runbook em [infra/](../infra/); pipeline CI
 verde com gates; `npm ci`+`npm audit`+`trivy`+`pip-audit` automatizados; JWT em cookie `HttpOnly`;

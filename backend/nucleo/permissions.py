@@ -42,36 +42,9 @@ class RequireModule(BasePermission):
         return required in modules
 
 
-class RequireRole(BasePermission):
-    """Camada 2 — RBAC por papel (**depreciado**, Fase 9.B). Mantido durante a
-    transição: `RequirePermission` cai aqui quando o token não traz `permissions`
-    (legado). Alvo (fatia E): remover, deixando só a checagem por permissão.
-
-    O ViewSet declara ``required_role``/``required_roles``; o acesso exige o papel
-    no claim ``roles`` do JWT. Admin do tenant passa.
-    """
-
-    message = "Seu papel não tem acesso a este recurso."
-
-    def has_permission(self, request, view):
-        user = getattr(request, "user", None)
-        if not user or not user.is_authenticated:
-            return False
-        required = getattr(view, "required_roles", None)
-        if not required:
-            single = getattr(view, "required_role", None)
-            required = [single] if single else []
-        if not required:
-            return True
-        if getattr(user, "is_tenant_admin", False) or getattr(user, "is_superuser", False):
-            return True
-        roles = getattr(user, "iam_roles", []) or []
-        return any(r in roles for r in required)
-
-
 class RequirePermission(BasePermission):
     """Camada 2 (Fase 9.B) — checagem por **permissão** (claim ``permissions`` do
-    JWT), substitui `RequireRole`. Lê o catálogo `modulo.recurso.acao` da IAM.
+    JWT). Lê o catálogo `modulo.recurso.acao` da IAM.
     O ViewSet declara UMA das formas:
 
       - ``required_resource = "rh.dado_medico"`` — atalho: métodos seguros exigem
@@ -86,11 +59,10 @@ class RequirePermission(BasePermission):
 
     Admin de tenant / superuser passam. Sem declaração → não exige (apps base).
 
-    **Transição (D4, fail-closed):** só o token **legado** — claim `permissions`
-    **ausente** (a autenticação seta `iam_permissions = None`) — cai no `RequireRole`
-    do ViewSet (que segue declarando ``required_role``). Um token da **era das
-    permissões** com conjunto **vazio** (`[]`) é negado sem fallback: sem isso, um
-    usuário sem nenhuma permissão passaria em endpoints sem `required_role`.
+    **Fail-closed (D4 / fatia E):** a checagem é sempre estrita — a permissão
+    exigida tem de estar no conjunto do token, senão **403**. Não há fallback por
+    papel: todo token da IAM traz a claim `permissions` (Fase 9.A), logo conjunto
+    ausente/vazio nega tudo.
     """
 
     message = "Você não tem permissão para esta ação."
@@ -104,11 +76,10 @@ class RequirePermission(BasePermission):
             return True
         if getattr(user, "is_tenant_admin", False) or getattr(user, "is_superuser", False):
             return True
-        perms = getattr(user, "iam_permissions", None)
-        # D4 — fail-closed: `None` = claim ausente (token legado) → fallback de
-        # transição por papel; lista (mesmo VAZIA) = era das permissões → estrito.
-        if perms is None:
-            return RequireRole().has_permission(request, view)
+        # Fail-closed: a permissão exigida tem de estar no conjunto do token.
+        # (Fatia E: sem fallback por papel — todo token da IAM traz `permissions`
+        # desde a Fase 9.A; ausente/vazio → nega.)
+        perms = getattr(user, "iam_permissions", None) or []
         return needed in perms
 
     def _needed(self, request, view):

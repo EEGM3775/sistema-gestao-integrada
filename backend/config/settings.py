@@ -24,11 +24,44 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-desenvolvimento-apenas-nao-usar-em-producao')
-DEBUG = os.getenv('DEBUG', 'True').lower() == 'true'
+from django.core.exceptions import ImproperlyConfigured
 
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+# S4 — segurança por padrão: DEBUG default = False. Fora do dev o serviço assume
+# PRODUÇÃO e se recusa a subir sem configuração explícita, em vez de subir
+# silenciosamente com segredos conhecidos e stack traces expostos.
+DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
+
+
+def _config(name, dev_default):
+    """Valor obrigatório em produção; cai no default de dev só quando DEBUG (fail-fast S4)."""
+    val = os.getenv(name)
+    if val:
+        return val
+    if DEBUG:
+        return dev_default
+    raise ImproperlyConfigured(
+        f"{name} é obrigatório em produção (DEBUG=False). Defina-o no ambiente, "
+        f"ou rode em desenvolvimento com DEBUG=True."
+    )
+
+
+# SECURITY WARNING: keep the secret key used in production secret!
+SECRET_KEY = _config('SECRET_KEY', 'django-insecure-desenvolvimento-apenas-nao-usar-em-producao')
+
+ALLOWED_HOSTS = _config('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+
+# S4 — endurecimento ligado só em produção (atrás do gateway, que termina o TLS):
+# cookies seguros, HSTS e proteção de MIME. SSL redirect fica a cargo do gateway
+# por padrão (evita loop de redirect), mas é habilitável por env.
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_HSTS_SECONDS = int(os.getenv('SECURE_HSTS_SECONDS', '31536000'))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_SSL_REDIRECT = os.getenv('SECURE_SSL_REDIRECT', 'False').lower() == 'true'
 
 # Application definition
 
@@ -267,12 +300,21 @@ if JWT_PUBLIC_KEY:
         'VERIFYING_KEY': JWT_PUBLIC_KEY,
         'SIGNING_KEY': '',  # o ERP não assina (resource server)
     }
-else:
+elif DEBUG:
+    # Dev: sem a chave pública, valida em HS256 com o segredo compartilhado.
     SIMPLE_JWT = {
         **_SIMPLE_JWT_COMMON,
         'ALGORITHM': 'HS256',
         'SIGNING_KEY': os.getenv('JWT_SECRET', SECRET_KEY),
     }
+else:
+    # S3 — em produção o ERP só valida RS256 (chave pública da IAM). HS256 usa um
+    # segredo compartilhado: quem valida também assina → tokens forjáveis.
+    raise ImproperlyConfigured(
+        "Em produção o ERP deve validar o JWT em RS256: defina JWT_PUBLIC_KEY_PATH "
+        "apontando para a chave pública RSA da IAM. HS256 (segredo compartilhado, "
+        "falsificável) só é permitido com DEBUG=True."
+    )
 
 # Logging Configuration
 LOGGING = {

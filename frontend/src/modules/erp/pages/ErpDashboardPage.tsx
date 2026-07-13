@@ -6,6 +6,7 @@ import { KpiCard } from '../components/shared/KpiCard'
 import { FluxoCaixaChart } from '../components/charts/FluxoCaixaChart'
 import { AgingChart } from '../components/charts/AgingChart'
 import { formatBRL, apiDecimalToCents } from '@/utils/money'
+import { mesToBR } from '@/utils/dates'
 import type { AgingFaixa } from '../types'
 
 const sumCents = (faixas: AgingFaixa[]) => faixas.reduce((acc, f) => acc + apiDecimalToCents(f.total), 0)
@@ -27,7 +28,7 @@ export default function ErpDashboardPage() {
     const fluxoMes = ultimoMes
       ? apiDecimalToCents(ultimoMes.receitas) - apiDecimalToCents(ultimoMes.despesas)
       : 0
-    return { aReceber, aPagar, saldoProjetado: aReceber - aPagar, fluxoMes, mesReferencia: ultimoMes?.mes }
+    return { aReceber, aPagar, saldoProjetado: aReceber - aPagar, fluxoMes, mesReferencia: ultimoMes ? mesToBR(ultimoMes.mes) : undefined }
   }, [data])
 
   return (

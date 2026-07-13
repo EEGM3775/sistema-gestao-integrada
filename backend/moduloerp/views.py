@@ -210,7 +210,6 @@ class TransacaoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
     required_resource = "erp.transacao"   # ledger: só .view no catálogo (escrita bloqueada)
-    required_role = "financeiro"          # fallback legado (token sem permissions)
     pagination_class = ErpPageNumberPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = TransacaoFilter
@@ -224,7 +223,6 @@ class NotaFiscalServicoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
     required_resource = "erp.nf"
-    required_role = "financeiro"
     pagination_class = ErpPageNumberPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['status']
@@ -257,7 +255,6 @@ class NotaFiscalProdutoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
     required_resource = "erp.nf"
-    required_role = "financeiro"
     pagination_class = ErpPageNumberPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['status']
@@ -291,8 +288,6 @@ class ERPDashboardView(TenantScopedAPIViewMixin, views.APIView):
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
     required_resource = "erp.relatorio"   # dashboard = relatório financeiro (GET→.view)
-    required_role = "financeiro"
-
     def get(self, request, *args, **kwargs):
         today = timezone.now().date()
         one_year_ago = today - timedelta(days=365)
@@ -376,7 +371,6 @@ class NotaFiscalViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
     required_resource = "erp.nf"
-    required_role = "financeiro"
     pagination_class = ErpPageNumberPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['empreendimento', 'fornecedor']
@@ -393,7 +387,6 @@ class ContaPagarViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
     required_resource = "erp.conta_pagar"   # CRUD: GET→.view · escrita→.edit
-    required_role = "financeiro"            # fallback legado
     action_permission_map = {               # verbos de domínio (@action)
         "dar_baixa": "erp.conta_pagar.baixar",
         "gerar_lote_remessa": "erp.lote_remessa.create",
@@ -481,7 +474,6 @@ class ContaReceberViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
     required_resource = "erp.conta_receber"   # CRUD: GET→.view · escrita→.edit
-    required_role = "financeiro"              # fallback legado
     action_permission_map = {                 # verbos de domínio: baixa, cobrança, NF
         "dar_baixa": "erp.conta_receber.baixar",
         "gerar_cobranca": "erp.cobranca.emitir",
@@ -684,7 +676,6 @@ class CentroCustoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
     required_resource = "erp.centro_custo"
-    required_role = "financeiro"
     pagination_class = ErpPageNumberPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['empreendimento', 'ativo']
@@ -704,7 +695,6 @@ class RevisaoBaixaViewSet(TenantScopedViewSetMixin, viewsets.ReadOnlyModelViewSe
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
     required_resource = "erp.revisao_baixa"   # ReadOnly: GET→.view
-    required_role = "financeiro"
     action_permission_map = {                 # aprovar/rejeitar = resolver
         "aprovar": "erp.revisao_baixa.resolver",
         "rejeitar": "erp.revisao_baixa.resolver",
@@ -756,7 +746,6 @@ class LoteRemessaViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     # Catálogo tem só view+create (sem edit) → mapa explícito; a gestão de status
     # do lote reusa `.create` como verbo de "gerir" (mesmo padrão do CRM interação).
     permission_map = {"view": "erp.lote_remessa.view", "write": "erp.lote_remessa.create"}
-    required_role = "financeiro"
     pagination_class = ErpPageNumberPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['status', 'banco']
@@ -772,7 +761,6 @@ class CobrancaClienteViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
     required_resource = "erp.cobranca"
-    required_role = "financeiro"
     pagination_class = ErpPageNumberPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_class = CobrancaClienteFilter
@@ -788,7 +776,6 @@ class BoletoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
     required_resource = "erp.cobranca"   # boleto é o instrumento da cobrança
-    required_role = "financeiro"
     pagination_class = ErpPageNumberPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_class = BoletoFilter
@@ -802,9 +789,8 @@ class AtualizarStatusNFView(TenantScopedAPIViewMixin, views.APIView):
     """
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
-    required_resource = "erp.nf"
-    required_role = "financeiro"
-    
+    required_resource = "erp.nf"   # grava status da NF → POST exige erp.nf.edit
+
     def post(self, request, *args, **kwargs):
         nf_id = request.data.get('nf_id')
         nf_tipo = request.data.get('nf_tipo')  # 'servico' ou 'produto'
@@ -868,8 +854,9 @@ class ConsultarStatusNFView(TenantScopedAPIViewMixin, views.APIView):
     """
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
-    required_resource = "erp.nf"
-    required_role = "financeiro"
+    # Consulta = leitura (não grava NF localmente, só dispara o refresh no
+    # microserviço); apesar do POST, exige apenas erp.nf.view — não .edit.
+    required_permission = "erp.nf.view"
 
     def post(self, request, nf_id):
         try:

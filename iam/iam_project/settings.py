@@ -16,9 +16,42 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR.parent / ".env")
 
-SECRET_KEY = os.getenv("IAM_SECRET_KEY", "django-insecure-iam-dev-apenas")
-DEBUG = os.getenv("IAM_DEBUG", "True").lower() == "true"
-ALLOWED_HOSTS = os.getenv("IAM_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+from django.core.exceptions import ImproperlyConfigured
+
+# S4 — segurança por padrão: IAM_DEBUG default = False. Fora do dev a IAM assume
+# PRODUÇÃO e se recusa a subir sem configuração, em vez de subir com segredos
+# conhecidos. A IAM é a autoridade de identidade: um segredo previsível aqui
+# permitiria forjar login de qualquer usuário/tenant.
+DEBUG = os.getenv("IAM_DEBUG", "False").lower() == "true"
+
+
+def _config(name, dev_default):
+    """Valor obrigatório em produção; cai no default de dev só quando DEBUG (fail-fast S4)."""
+    val = os.getenv(name)
+    if val:
+        return val
+    if DEBUG:
+        return dev_default
+    raise ImproperlyConfigured(
+        f"{name} é obrigatório em produção (IAM_DEBUG=False). Defina-o no ambiente, "
+        f"ou rode em desenvolvimento com IAM_DEBUG=True."
+    )
+
+
+SECRET_KEY = _config("IAM_SECRET_KEY", "django-insecure-iam-dev-apenas")
+ALLOWED_HOSTS = _config("IAM_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+
+# S4 — endurecimento ligado só em produção (atrás do gateway, que termina o TLS).
+# Importa em especial para o cookie HttpOnly de refresh emitido pela IAM (Fase 10.6).
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "31536000"))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "False").lower() == "true"
 
 INSTALLED_APPS = [
     "identity",
@@ -195,12 +228,22 @@ if JWT_PRIVATE_KEY:
         "SIGNING_KEY": JWT_PRIVATE_KEY,
         "VERIFYING_KEY": JWT_PUBLIC_KEY,
     }
-else:
+elif DEBUG:
+    # Dev: sem a chave privada, assina em HS256 com o segredo compartilhado.
     SIMPLE_JWT = {
         **_JWT_COMMON,
         "ALGORITHM": "HS256",
         "SIGNING_KEY": os.getenv("JWT_SECRET", SECRET_KEY),
     }
+else:
+    # S3 — em produção a IAM só assina em RS256 (só ela detém a privada; os
+    # validadores usam a pública e não conseguem forjar). HS256 compartilha o
+    # segredo com quem valida → qualquer serviço poderia emitir tokens.
+    raise ImproperlyConfigured(
+        "Em produção a IAM deve assinar o JWT em RS256: defina JWT_PRIVATE_KEY_PATH "
+        "apontando para a chave privada RSA. HS256 (segredo compartilhado, "
+        "falsificável) só é permitido com IAM_DEBUG=True."
+    )
 
 LOGGING = {
     "version": 1,

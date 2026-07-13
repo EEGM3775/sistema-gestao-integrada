@@ -1,10 +1,26 @@
 # backend/moduloerp/models.py
+from datetime import datetime, time
 from decimal import Decimal
 
-from django.db import models
+from django.conf import settings
+from django.db import models, transaction
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from nucleo.tenancy import TenantScopedModel
+
+
+def _data_baixa_para_datetime(data):
+    """
+    Converte a data da baixa (um `date`) no `datetime` de competência gravado na
+    `Transacao` (L7). Antes a `data_transacao` era `auto_now_add` — o ledger
+    registrava o instante do processamento, não a data real do pagamento; a baixa
+    do webhook Asaas (que pode chegar dias depois) caía no mês errado do fluxo de
+    caixa. Agora a competência acompanha a data informada na baixa.
+    """
+    dt = data if isinstance(data, datetime) else datetime.combine(data, time.min)
+    if settings.USE_TZ and timezone.is_naive(dt):
+        dt = timezone.make_aware(dt)
+    return dt
 
 # Dependencies from other modules in the project
 from empreendimentos.models import Empreendimento
@@ -68,7 +84,13 @@ class Transacao(TenantScopedModel):
     descricao = models.CharField(max_length=255, verbose_name="Descrição da Transação")
     valor = models.DecimalField(max_digits=15, decimal_places=2, verbose_name="Valor da Transação")
     tipo = models.CharField(max_length=7, choices=TipoTransacao.choices, verbose_name="Tipo da Transação")
-    data_transacao = models.DateTimeField(auto_now_add=True, verbose_name="Data da Transação")
+    # L7: data de COMPETÊNCIA (data real do pagamento). Deixou de ser
+    # `auto_now_add` para que a baixa — sobretudo a do webhook Asaas — lance a
+    # transação no mês em que o pagamento ocorreu, não no de processamento.
+    data_transacao = models.DateTimeField(default=timezone.now, verbose_name="Data da Transação (competência)")
+    # Carimbo imutável de quando a linha foi registrada no sistema (auditoria):
+    # preserva o "quando lançamos" que o `auto_now_add` de `data_transacao` dava.
+    data_lancamento = models.DateTimeField(auto_now_add=True, verbose_name="Data de Lançamento no Sistema")
     meio_pagamento = models.CharField(max_length=50, help_text="Ex: PIX, Boleto, Cartão")
     usuario = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True, related_name='transacoes_erp_usuario', verbose_name="Usuário Responsável")
 
@@ -246,58 +268,83 @@ class ContaPagar(TenantScopedModel):
         `valor_pago`/`status`/`Transacao` fiquem sempre consistentes
         independentemente de quem disparou a baixa.
 
-        Título já QUITADO/CANCELADO: em vez de aplicar (o que infla `valor_pago`
-        além de `total_devido` e duplica `Transacao`), registra uma
-        `RevisaoBaixa` pendente e levanta `BaixaRequerRevisao` — quem chamou
-        decide o que responder. `forcar=True` (usado só por `RevisaoBaixa.aprovar`)
-        ignora o guard e aplica a baixa represada.
+        Título já QUITADO/CANCELADO **ou baixa que ultrapassa o saldo** (L6): em
+        vez de aplicar (o que infla `valor_pago` além de `total_devido` e duplica
+        `Transacao`), registra uma `RevisaoBaixa` pendente e levanta
+        `BaixaRequerRevisao` — quem chamou decide o que responder. `forcar=True`
+        (usado só por `RevisaoBaixa.aprovar`) ignora o guard e aplica a baixa
+        represada.
+
+        L5: o read-modify-write roda sob `select_for_update()` numa transação —
+        há dois produtores reais concorrentes (baixa manual da UI × webhook do
+        Asaas) e sem o lock de linha um sobrescreve o `valor_pago` do outro (o
+        lock só é efetivo no Postgres; no SQLite é no-op).
         """
-        if self.status in (StatusConta.QUITADO, StatusConta.CANCELADO) and not forcar:
-            revisao = RevisaoBaixa.objects.create(
-                tenant=self.tenant,
-                conta_pagar=self,
-                valor=valor, data=data, juros=juros, multa=multa, desconto=desconto,
-                meio_pagamento=meio_pagamento, origem=origem,
-                motivo=f"Título já estava {self.get_status_display()} quando esta baixa foi recebida.",
-                solicitado_por=usuario,
+        with transaction.atomic():
+            # Trava a linha do título e recarrega o estado corrente sob o lock.
+            type(self).objects.select_for_update().get(pk=self.pk)
+            self.refresh_from_db()
+
+            novo_total_devido = (
+                self.valor + (self.juros + juros) + (self.multa + multa) - (self.desconto + desconto)
             )
-            raise BaixaRequerRevisao(revisao)
+            novo_valor_pago = self.valor_pago + valor
+            ja_encerrado = self.status in (StatusConta.QUITADO, StatusConta.CANCELADO)
+            excede_saldo = novo_valor_pago > novo_total_devido
 
-        self.valor_pago += valor
-        self.juros += juros
-        self.multa += multa
-        self.desconto += desconto
-        self.status = (
-            StatusConta.QUITADO if self.valor_pago >= self.total_devido
-            else StatusConta.PARCIAL if self.valor_pago > 0
-            else StatusConta.ABERTO
-        )
-        self.data_pagamento = data
-        self.save()
+            if forcar or not (ja_encerrado or excede_saldo):
+                self.valor_pago = novo_valor_pago
+                self.juros += juros
+                self.multa += multa
+                self.desconto += desconto
+                self.status = (
+                    StatusConta.QUITADO if self.valor_pago >= self.total_devido
+                    else StatusConta.PARCIAL if self.valor_pago > 0
+                    else StatusConta.ABERTO
+                )
+                self.data_pagamento = data
+                self.save()
 
-        Transacao.objects.create(
+                Transacao.objects.create(
+                    tenant=self.tenant,
+                    conta_pagar=self,
+                    empreendimento=self.empreendimento,
+                    descricao=f"Baixa de pagamento ({origem}) — {self.descricao[:200]}",
+                    valor=valor + juros + multa - desconto,
+                    tipo=Transacao.TipoTransacao.SAIDA,
+                    meio_pagamento=meio_pagamento or 'Não informado',
+                    usuario=usuario,
+                    data_transacao=_data_baixa_para_datetime(data),  # L7
+                )
+
+                # Auditoria (Fase 9.E): a baixa é o evento financeiro sensível por
+                # excelência — registra os dois caminhos (manual e webhook Asaas), que
+                # compartilham este choke point. `valor`/status não são PII.
+                from nucleo.auditoria import registrar_auditoria
+                registrar_auditoria(
+                    acao="baixa", instance=self, usuario=usuario,
+                    detalhes={
+                        "valor": str(valor), "origem": origem,
+                        "meio_pagamento": meio_pagamento or "", "novo_status": self.status,
+                    },
+                )
+                return self
+
+        # Represado (fora do lock): título já encerrado ou baixa em excesso (L6).
+        if ja_encerrado:
+            motivo = f"Título já estava {self.get_status_display()} quando esta baixa foi recebida."
+        else:
+            saldo = novo_total_devido - self.valor_pago
+            motivo = f"Baixa de R$ {valor} excede o saldo em aberto do título (R$ {saldo})."
+        revisao = RevisaoBaixa.objects.create(
             tenant=self.tenant,
             conta_pagar=self,
-            empreendimento=self.empreendimento,
-            descricao=f"Baixa de pagamento ({origem}) — {self.descricao[:200]}",
-            valor=valor + juros + multa - desconto,
-            tipo=Transacao.TipoTransacao.SAIDA,
-            meio_pagamento=meio_pagamento or 'Não informado',
-            usuario=usuario,
+            valor=valor, data=data, juros=juros, multa=multa, desconto=desconto,
+            meio_pagamento=meio_pagamento, origem=origem,
+            motivo=motivo,
+            solicitado_por=usuario,
         )
-
-        # Auditoria (Fase 9.E): a baixa é o evento financeiro sensível por
-        # excelência — registra os dois caminhos (manual e webhook Asaas), que
-        # compartilham este choke point. `valor`/status não são PII.
-        from nucleo.auditoria import registrar_auditoria
-        registrar_auditoria(
-            acao="baixa", instance=self, usuario=usuario,
-            detalhes={
-                "valor": str(valor), "origem": origem,
-                "meio_pagamento": meio_pagamento or "", "novo_status": self.status,
-            },
-        )
-        return self
+        raise BaixaRequerRevisao(revisao)
 
 
 class ContaReceber(TenantScopedModel):
@@ -346,56 +393,89 @@ class ContaReceber(TenantScopedModel):
         Aplica uma baixa total ou parcial e registra a `Transacao` correspondente.
 
         Espelha `ContaPagar.dar_baixa` — único caminho de baixa do título, seja
-        a ação manual da UI ou a baixa automática futura via webhook (Asaas,
-        D.1.2: chamar com `origem='asaas'`). Mesmo guard de título já
-        QUITADO/CANCELADO: registra `RevisaoBaixa` e levanta `BaixaRequerRevisao`
-        em vez de aplicar — ver docstring de `ContaPagar.dar_baixa`.
+        a ação manual da UI ou a baixa automática via webhook (Asaas, D.1.2:
+        `origem='asaas'`). Mesmos guards (título já QUITADO/CANCELADO ou baixa em
+        excesso → `RevisaoBaixa`, L6) e mesmo lock de linha (L5) — ver docstring
+        de `ContaPagar.dar_baixa`.
         """
-        if self.status in (StatusConta.QUITADO, StatusConta.CANCELADO) and not forcar:
-            revisao = RevisaoBaixa.objects.create(
-                tenant=self.tenant,
-                conta_receber=self,
-                valor=valor, data=data, juros=juros, multa=multa, desconto=desconto,
-                meio_pagamento=meio_pagamento, origem=origem,
-                motivo=f"Título já estava {self.get_status_display()} quando esta baixa foi recebida.",
-                solicitado_por=usuario,
+        with transaction.atomic():
+            # Trava a linha do título e recarrega o estado corrente sob o lock (L5).
+            type(self).objects.select_for_update().get(pk=self.pk)
+            self.refresh_from_db()
+
+            novo_total_devido = (
+                self.valor + (self.juros + juros) + (self.multa + multa) - (self.desconto + desconto)
             )
-            raise BaixaRequerRevisao(revisao)
+            novo_valor_pago = self.valor_pago + valor
+            ja_encerrado = self.status in (StatusConta.QUITADO, StatusConta.CANCELADO)
+            excede_saldo = novo_valor_pago > novo_total_devido
 
-        self.valor_pago += valor
-        self.juros += juros
-        self.multa += multa
-        self.desconto += desconto
-        self.status = (
-            StatusConta.QUITADO if self.valor_pago >= self.total_devido
-            else StatusConta.PARCIAL if self.valor_pago > 0
-            else StatusConta.ABERTO
-        )
-        self.data_recebimento = data
-        self.save()
+            if forcar or not (ja_encerrado or excede_saldo):
+                self.valor_pago = novo_valor_pago
+                self.juros += juros
+                self.multa += multa
+                self.desconto += desconto
+                self.status = (
+                    StatusConta.QUITADO if self.valor_pago >= self.total_devido
+                    else StatusConta.PARCIAL if self.valor_pago > 0
+                    else StatusConta.ABERTO
+                )
+                self.data_recebimento = data
+                self.save()
 
-        Transacao.objects.create(
+                Transacao.objects.create(
+                    tenant=self.tenant,
+                    conta_receber=self,
+                    empreendimento=self.empreendimento,
+                    descricao=f"Baixa de recebimento ({origem}) — {self.descricao[:200]}",
+                    valor=valor + juros + multa - desconto,
+                    tipo=Transacao.TipoTransacao.ENTRADA,
+                    meio_pagamento=meio_pagamento or 'Não informado',
+                    usuario=usuario,
+                    data_transacao=_data_baixa_para_datetime(data),  # L7
+                )
+
+                # Auditoria (Fase 9.E): mesmo choke point da baixa manual e do webhook
+                # Asaas (espelha `ContaPagar.dar_baixa`).
+                from nucleo.auditoria import registrar_auditoria
+                registrar_auditoria(
+                    acao="baixa", instance=self, usuario=usuario,
+                    detalhes={
+                        "valor": str(valor), "origem": origem,
+                        "meio_pagamento": meio_pagamento or "", "novo_status": self.status,
+                    },
+                )
+
+                # D3: propaga a quitação para os boletos vinculados. `dar_baixa` é o
+                # único caminho de baixa (manual ou webhook Asaas), mas até aqui só o
+                # handler do Asaas marcava o boleto como PAGO — uma baixa **manual**
+                # deixava o boleto preso em EMITIDO na listagem/detalhe ("como se a
+                # mudança não tivesse sido aplicada"). Só quando o título fica QUITADO
+                # e apenas para boletos em estado não-terminal (não reabre PAGO/CANCELADO).
+                if self.status == StatusConta.QUITADO:
+                    self.boletos.exclude(
+                        status__in=(Boleto.StatusBoleto.PAGO, Boleto.StatusBoleto.CANCELADO),
+                    ).update(
+                        status=Boleto.StatusBoleto.PAGO,
+                        data_pagamento=_data_baixa_para_datetime(data),
+                    )
+                return self
+
+        # Represado (fora do lock): título já encerrado ou baixa em excesso (L6).
+        if ja_encerrado:
+            motivo = f"Título já estava {self.get_status_display()} quando esta baixa foi recebida."
+        else:
+            saldo = novo_total_devido - self.valor_pago
+            motivo = f"Baixa de R$ {valor} excede o saldo em aberto do título (R$ {saldo})."
+        revisao = RevisaoBaixa.objects.create(
             tenant=self.tenant,
             conta_receber=self,
-            empreendimento=self.empreendimento,
-            descricao=f"Baixa de recebimento ({origem}) — {self.descricao[:200]}",
-            valor=valor + juros + multa - desconto,
-            tipo=Transacao.TipoTransacao.ENTRADA,
-            meio_pagamento=meio_pagamento or 'Não informado',
-            usuario=usuario,
+            valor=valor, data=data, juros=juros, multa=multa, desconto=desconto,
+            meio_pagamento=meio_pagamento, origem=origem,
+            motivo=motivo,
+            solicitado_por=usuario,
         )
-
-        # Auditoria (Fase 9.E): mesmo choke point da baixa manual e do webhook
-        # Asaas (espelha `ContaPagar.dar_baixa`).
-        from nucleo.auditoria import registrar_auditoria
-        registrar_auditoria(
-            acao="baixa", instance=self, usuario=usuario,
-            detalhes={
-                "valor": str(valor), "origem": origem,
-                "meio_pagamento": meio_pagamento or "", "novo_status": self.status,
-            },
-        )
-        return self
+        raise BaixaRequerRevisao(revisao)
 
 
 class RevisaoBaixa(TenantScopedModel):

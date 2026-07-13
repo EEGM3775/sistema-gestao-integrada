@@ -19,8 +19,22 @@ class CrmTestBase(APITestCase):
         cls.user = Usuario.objects.create(username="vendedor_a", tenant=cls.tenant)
         cls.outro = Usuario.objects.create(username="vendedor_b", tenant=cls.tenant)
 
+    # Conjunto de um usuário comercial pleno (persona `comercial` = crm.*), para os
+    # testes FUNCIONAIS do CRM — que não estão exercendo a camada de autorização.
+    CRM_PERMS_FULL = [
+        "crm.campanha.view", "crm.campanha.edit",
+        "crm.lead.view", "crm.lead.create", "crm.lead.edit", "crm.lead.delete",
+        "crm.conta.view", "crm.conta.edit",
+        "crm.contato.view", "crm.contato.edit",
+        "crm.oportunidade.view", "crm.oportunidade.create",
+        "crm.oportunidade.edit", "crm.oportunidade.delete",
+        "crm.oportunidade_produto.view", "crm.oportunidade_produto.edit",
+        "crm.interacao.view", "crm.interacao.create",
+    ]
+
     def autenticar(self, user):
         user.iam_modules = ["crm"]
+        user.iam_permissions = list(self.CRM_PERMS_FULL)
         self.client.force_authenticate(user=user)
 
 
@@ -134,7 +148,10 @@ class S5EntitlementCrmTests(CrmTestBase):
         self.client.force_authenticate(user=self.user)
         self.assertEqual(self.client.get(self.URL).status_code, 200)
 
-    def test_token_legado_com_modulo_passa(self):
-        # token sem `permissions` → fallback de papel (CRM não exige papel) → 200.
-        self.autenticar(self.user)  # seta iam_modules=["crm"], sem permissions
-        self.assertEqual(self.client.get(self.URL).status_code, 200)
+    def test_sem_permissao_nega_fail_closed(self):
+        # Fatia E: token com o módulo mas sem `permissions` (conjunto vazio) → 403.
+        # O fallback de papel (RequireRole) foi removido — nada mais passa sem a permissão.
+        self.user.iam_modules = ["crm"]
+        self.user.iam_permissions = []
+        self.client.force_authenticate(user=self.user)
+        self.assertEqual(self.client.get(self.URL).status_code, 403)

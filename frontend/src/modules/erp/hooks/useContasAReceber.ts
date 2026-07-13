@@ -29,14 +29,18 @@ export function useContaAReceber(id: number | undefined) {
 }
 
 /**
- * Invalida `.all` (toda lista/detalhe) + `dashboard.all` — o mesmo dado visto
- * de ângulos diferentes (listão, Sheet de detalhe, KPIs/aging do hub) se
- * atualiza sozinho após qualquer mutação (docs/modulos/moduloerp.md §5.4).
+ * Invalida `.all` (toda lista/detalhe) + `boletos.all` + `dashboard.all` — o mesmo
+ * dado visto de ângulos diferentes (listão, Sheet de detalhe, KPIs/aging do hub,
+ * workspace de boletos) se atualiza sozinho após qualquer mutação
+ * (docs/modulos/moduloerp.md §5.4). `boletos` entra porque a baixa que quita a
+ * conta agora marca o boleto vinculado como PAGO (D3) — sem invalidar aqui, o
+ * badge do boleto seguiria "Emitido" até um refresh manual.
  */
 function useInvalidateContasAReceber() {
   const queryClient = useQueryClient()
   return () => {
     queryClient.invalidateQueries({ queryKey: erpKeys.contasAReceber.all })
+    queryClient.invalidateQueries({ queryKey: erpKeys.boletos.all })
     queryClient.invalidateQueries({ queryKey: erpKeys.dashboard.all })
   }
 }

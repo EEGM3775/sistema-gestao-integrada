@@ -7,7 +7,7 @@ from rest_framework import permissions, status, viewsets
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from nucleo.permissions import RequireModule, RequireRole
+from nucleo.permissions import RequireModule, RequirePermission
 
 from . import services
 from .models import EventoWebhookAsaas
@@ -57,9 +57,9 @@ class EventoWebhookAsaasViewSet(viewsets.ReadOnlyModelViewSet):
     via `boleto__tenant_id`, o único caminho até o tenant.
     """
     serializer_class = EventoWebhookAsaasSerializer
-    permission_classes = [permissions.IsAuthenticated, RequireModule, RequireRole]
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
-    required_role = "financeiro"
+    required_resource = "erp.cobranca"   # ReadOnly: GET→erp.cobranca.view
     pagination_class = None
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['boleto']

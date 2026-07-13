@@ -32,6 +32,22 @@ export function dateToBR(iso: string): string {
   return `${d}/${m}/${y}`
 }
 
+const MESES_ABREV = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez']
+
+/**
+ * ISO de mês → rótulo pt-BR "jul/2026". Aceita tanto "2026-07-01" quanto o
+ * datetime ISO cru que o `/api/erp/dashboard/` devolve (`TruncMonth` →
+ * "2026-07-01T00:00:00Z"). Lê o prefixo YYYY-MM da string (sem `new Date()`),
+ * evitando que o fuso empurre o mês para o anterior.
+ */
+export function mesToBR(iso: string): string {
+  if (!iso) return ''
+  const [y, m] = iso.slice(0, 7).split('-')
+  const idx = Number(m) - 1
+  if (!y || Number.isNaN(idx) || idx < 0 || idx > 11) return iso
+  return `${MESES_ABREV[idx]}/${y}`
+}
+
 // ─── Helpers internos ─────────────────────────────────────────────────────────
 
 function toISO(d: Date): string { return d.toISOString().slice(0, 10) }

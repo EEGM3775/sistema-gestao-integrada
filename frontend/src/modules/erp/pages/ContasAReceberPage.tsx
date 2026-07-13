@@ -11,6 +11,7 @@ import { StatusBoletoBadge } from '../components/shared/StatusBoletoBadge'
 import { STATUS_CONTA_OPTIONS } from '../components/shared/statusConta'
 import { ContaReceberForm } from '../components/forms/ContaReceberForm'
 import { BaixaForm } from '../components/forms/BaixaForm'
+import { GerarCobrancaDialog } from '../components/GerarCobrancaDialog'
 import { buttonPrimaryStyle, buttonSecondaryStyle } from '../components/forms/formStyles'
 import {
   useContasAReceber, useCreateContaAReceber, useUpdateContaAReceber, useDarBaixaContaAReceber,
@@ -41,6 +42,7 @@ export default function ContasAReceberPage() {
   const [pageIndex, setPageIndex] = useState(0)
   const [sorting, setSorting] = useState<SortingState>([{ id: 'data_vencimento', desc: false }])
   const [sheet, setSheet] = useState<SheetState | null>(null)
+  const [cobrancaOpen, setCobrancaOpen] = useState(false)  // dialog de confirmação de cobrança (D3)
 
   const ordering = sorting[0] ? `${sorting[0].desc ? '-' : ''}${sorting[0].id}` : undefined
   const queryFiltros: ContaReceberFiltros = useMemo(() => ({
@@ -68,6 +70,15 @@ export default function ContasAReceberPage() {
   const updateMutation = useUpdateContaAReceber()
   const baixaMutation = useDarBaixaContaAReceber()
   const gerarCobrancaMutation = useGerarCobrancaContaAReceber()
+
+  // D3: só dispara a cobrança após o passo de confirmação. Fecha o dialog no fim
+  // (sucesso ou 409 de bloqueio) — o resultado aparece no feedback do detalhe.
+  const confirmarCobranca = () => {
+    if (sheet?.mode !== 'view') return
+    gerarCobrancaMutation.mutate(sheet.conta.conta_receber_id, {
+      onSettled: () => setCobrancaOpen(false),
+    })
+  }
 
   const columns = useMemo<ColumnDef<ContaReceber>[]>(() => [
     {
@@ -218,7 +229,7 @@ export default function ContasAReceberPage() {
             labelEmpreendimento={labelEmpreendimento}
             onEditar={() => setSheet({ mode: 'edit', conta: sheet.conta })}
             onDarBaixa={() => setSheet({ mode: 'baixa', conta: sheet.conta })}
-            onGerarCobranca={() => gerarCobrancaMutation.mutate(sheet.conta.conta_receber_id)}
+            onGerarCobranca={() => setCobrancaOpen(true)}
             gerarCobrancaPending={gerarCobrancaMutation.isPending}
             gerarCobrancaFeedback={
               gerarCobrancaMutation.isSuccess
@@ -231,6 +242,16 @@ export default function ContasAReceberPage() {
           />
         )}
       </Sheet>
+
+      {sheet?.mode === 'view' && (
+        <GerarCobrancaDialog
+          open={cobrancaOpen}
+          onClose={() => setCobrancaOpen(false)}
+          onConfirm={confirmarCobranca}
+          pending={gerarCobrancaMutation.isPending}
+          valorCents={apiDecimalToCents(sheet.conta.saldo_aberto)}
+        />
+      )}
     </div>
   )
 }

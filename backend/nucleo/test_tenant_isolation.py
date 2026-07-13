@@ -21,6 +21,11 @@ class TenantIsolationTests(APITestCase):
 
         cls.user_a = Usuario.objects.create(username="user_a", tenant=cls.tenant_a)
         cls.user_b = Usuario.objects.create(username="user_b", tenant=cls.tenant_b)
+        # Isolamento não é teste de autorização: dá-se a permissão do cadastro para
+        # que a camada 2 (RequirePermission) não mascare o que está sob prova (o
+        # escopo por tenant). Sem fallback por papel desde a fatia E.
+        for u in (cls.user_a, cls.user_b):
+            u.iam_permissions = ["cadastro.cliente.view", "cadastro.cliente.edit"]
 
         cls.cli_a = Cliente.objects.create(
             nome_completo="Cliente A", cpf_cnpj="11111111111",
@@ -77,6 +82,8 @@ class PerTenantUniquenessTests(APITestCase):
         cls.tenant_b = Tenant.objects.create(slug="uniq-b", nome="Uniq B")
         cls.user_a = Usuario.objects.create(username="uniq_ua", tenant=cls.tenant_a)
         cls.user_b = Usuario.objects.create(username="uniq_ub", tenant=cls.tenant_b)
+        for u in (cls.user_a, cls.user_b):
+            u.iam_permissions = ["cadastro.cliente.view", "cadastro.cliente.edit"]
         cls.cli_a = Cliente.objects.create(
             nome_completo="Cliente A", cpf_cnpj="99999999999", email="dup@a.com",
             data_nascimento=date(1990, 1, 1), tenant=cls.tenant_a,

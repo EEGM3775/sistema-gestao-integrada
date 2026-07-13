@@ -113,6 +113,10 @@ services:
       DB_PORT: "5432"
       DB_SSLMODE: disable
       REDIS_URL: redis://redis:6379/0
+      # A1/Fase 10: com worker+beat reais na stack, as tasks vão para o broker
+      # em vez de rodarem in-process. Sem isto (default = DEBUG), o webhook do
+      # Asaas e a geração de cobrança processariam síncrono e o worker ficaria ocioso.
+      CELERY_TASK_ALWAYS_EAGER: ${CELERY_TASK_ALWAYS_EAGER:-False}
       # Fase 5: valida RS256 com a chave pública da IAM (não conhece a privada).
       JWT_PUBLIC_KEY_PATH: /keys/jwt_public.pem
       # D.1.2: integração de cobrança Asaas (sandbox em dev) — services.py/client.py.
@@ -132,6 +136,79 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+    networks: [sgi]
+    restart: unless-stopped
+
+  # ---------- Celery worker (A1: executor das tasks assíncronas) ----------
+  # Sem este processo as tasks (baixa via webhook Asaas, geração de cobrança,
+  # emissão de NF, DLQ) enfileiravam para sempre em produção. Reusa a imagem do
+  # ERP; consome do Redis. Ver docs/pendencias.md#A1.
+  worker:
+    build: ./backend
+    container_name: sgi-worker
+    profiles: ["full"]
+    command: ["celery", "-A", "config", "worker", "-l", "info", "--concurrency", "2"]
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-django-insecure-erp-dev}
+      DEBUG: ${DEBUG:-True}
+      JWT_SECRET: ${JWT_SECRET}
+      POSTGRES_DB: ${POSTGRES_DB:-erp_db}
+      POSTGRES_USER: ${POSTGRES_USER:-erp_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-erp_app_senha_dev}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_SSLMODE: disable
+      REDIS_URL: redis://redis:6379/0
+      # O worker NUNCA pode ser eager — precisa consumir do broker.
+      CELERY_TASK_ALWAYS_EAGER: "False"
+      JWT_PUBLIC_KEY_PATH: /keys/jwt_public.pem
+      ASAAS_BASE_URL: ${ASAAS_BASE_URL:-https://api-sandbox.asaas.com/v3}
+      ASAAS_API_KEY: ${ASAAS_API_KEY:-}
+      ASAAS_WEBHOOK_TOKEN: ${ASAAS_WEBHOOK_TOKEN:-}
+    volumes:
+      - ./infra/keys:/keys:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A config inspect ping -d celery@$$(hostname) || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks: [sgi]
+    restart: unless-stopped
+
+  # ---------- Celery beat (A1: agendador de tarefas periódicas) ----------
+  # Dispara o CELERY_BEAT_SCHEDULE (hoje: lembrete de tarefas do CRM a vencer).
+  # Sem beat, nada periódico roda. Um único processo beat para todo o cluster.
+  beat:
+    build: ./backend
+    container_name: sgi-beat
+    profiles: ["full"]
+    command: ["celery", "-A", "config", "beat", "-l", "info"]
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-django-insecure-erp-dev}
+      DEBUG: ${DEBUG:-True}
+      JWT_SECRET: ${JWT_SECRET}
+      POSTGRES_DB: ${POSTGRES_DB:-erp_db}
+      POSTGRES_USER: ${POSTGRES_USER:-erp_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-erp_app_senha_dev}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_SSLMODE: disable
+      REDIS_URL: redis://redis:6379/0
+      CELERY_TASK_ALWAYS_EAGER: "False"
+      JWT_PUBLIC_KEY_PATH: /keys/jwt_public.pem
+    volumes:
+      - ./infra/keys:/keys:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks: [sgi]
     restart: unless-stopped
 

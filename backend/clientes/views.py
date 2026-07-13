@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from nucleo.tenancy import TenantScopedViewSetMixin
 from nucleo.permissions import RequirePermission
+from nucleo.field_masking import mask_document_unless
 from funcoescobrancas.services import analisar_divergencias_asaas
 from funcoescobrancas.client import AsaasAPIError
 from .models import (
@@ -45,8 +46,13 @@ class ClienteViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
         """
         Relatório (só leitura) das divergências de identidade entre os clientes
         deste tenant e os customers do Asaas — o mesmo critério que barra a
-        emissão de cobrança. Consumido ao abrir "Novo Cliente" para o operador
-        ver, antes de cadastrar, o que impediria/desviaria uma cobrança.
+        emissão de cobrança. Consumido ao abrir "Novo Cliente" e ao gerar
+        cobrança (D3), para ver o que impediria/desviaria um boleto.
+
+        **LGPD:** o relatório expõe CPF/CNPJ (PII documental) num dict cru, fora
+        do `FieldMaskingSerializerMixin`. Quem não tem `cadastro.cliente_doc.view`
+        recebe o documento **mascarado** (mesma regra da 9.C) — o nome basta para
+        localizar o cadastro a corrigir, sem vazar o documento inteiro.
         """
         try:
             relatorio = analisar_divergencias_asaas(self.get_queryset())
@@ -55,6 +61,8 @@ class ClienteViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
                 {'detail': f'Não foi possível consultar o gateway de cobrança (Asaas) agora: {exc}'},
                 status=drf_status.HTTP_502_BAD_GATEWAY,
             )
+        for d in relatorio.get('divergencias', []):
+            d['documento'] = mask_document_unless(request.user, d.get('documento'))
         return Response(relatorio)
 
 

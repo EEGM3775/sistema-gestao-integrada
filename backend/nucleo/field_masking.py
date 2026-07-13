@@ -102,6 +102,14 @@ def _has(user, permission: str) -> bool:
     return permission in perms
 
 
+def mask_document_unless(user, value, permission: str = "cadastro.cliente_doc.view"):
+    """Mantém o CPF/CNPJ só se o usuário puder ver a PII documental do cliente;
+    senão devolve a versão mascarada (``••••`` + 2 últimos dígitos). Para uso
+    **fora de serializer** — ex.: o relatório de divergências Asaas, que monta um
+    dict cru e não passa pelo `FieldMaskingSerializerMixin`. Fail-closed via `_has`."""
+    return value if _has(user, permission) else _mask_document(value)
+
+
 class FieldMaskingSerializerMixin:
     """Mascara campos sensíveis na leitura e guarda campos protegidos na escrita.
 

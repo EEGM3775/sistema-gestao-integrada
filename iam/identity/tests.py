@@ -30,6 +30,21 @@ class CatalogoConformidadeTests(TestCase):
         self.assertNotIn("rh.dado_medico.view", gestor)
         self.assertIn("rh.dado_medico.view", catalog.codigos_do_template("rh_medico"))
 
+    def test_relatorio_financeiro_visivel_aos_papeis_de_dinheiro(self):
+        """D3: o hub/dashboard do ERP (`erp.relatorio.view`) deve alcançar todo
+        papel com atribuição financeira/fiscal — senão o hub 403 e os KPIs/gráficos
+        não carregam. Personas sem relação com dinheiro seguem de fora."""
+        for persona in ("diretoria", "financeiro", "tesouraria", "fiscal", "auditor"):
+            self.assertIn(
+                "erp.relatorio.view", catalog.codigos_do_template(persona),
+                f"persona financeira/fiscal '{persona}' sem acesso ao relatório do ERP",
+            )
+        for persona in ("comercial", "engenharia", "campo", "operacional"):
+            self.assertNotIn(
+                "erp.relatorio.view", catalog.codigos_do_template(persona),
+                f"persona não-financeira '{persona}' não deveria ver o relatório do ERP",
+            )
+
 
 class SyncAuthzTests(TestCase):
     def test_sync_cria_permissoes_e_papeis_idempotente(self):

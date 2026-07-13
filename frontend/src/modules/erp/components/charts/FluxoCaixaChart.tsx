@@ -1,5 +1,6 @@
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts'
 import { apiDecimalToCents, formatBRL } from '@/utils/money'
+import { mesToBR } from '@/utils/dates'
 import type { FluxoCaixaMes } from '../../types'
 
 const tickStyle = { fontSize: 12, fill: '#64748b' }
@@ -8,7 +9,7 @@ const tooltipStyle = { borderRadius: 8, border: '1px solid #e2e8f0', fontFamily:
 /** Receitas x despesas por mês — `fluxoDeCaixaMensal` do `/api/erp/dashboard/`. */
 export function FluxoCaixaChart({ data }: { data: FluxoCaixaMes[] }) {
   const chartData = data.map(m => ({
-    mes: m.mes,
+    mes: mesToBR(m.mes),
     receitas: apiDecimalToCents(m.receitas) / 100,
     despesas: apiDecimalToCents(m.despesas) / 100,
   }))

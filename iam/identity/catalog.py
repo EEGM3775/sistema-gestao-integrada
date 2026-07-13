@@ -70,6 +70,7 @@ CATALOGO: tuple[Perm, ...] = (
     Perm("erp.lote_remessa.view", "Ver lotes de remessa", "erp_financeiro"),
     Perm("erp.lote_remessa.create", "Gerar lote de remessa", "erp_financeiro"),
     Perm("erp.nf.view", "Ver notas fiscais", "erp_financeiro"),
+    Perm("erp.nf.edit", "Lançar/editar nota fiscal (inclui atualização de status)", "erp_financeiro"),
     Perm("erp.nf.emitir", "Emitir nota fiscal", "erp_financeiro"),
     Perm("erp.relatorio.view", "Ver relatórios financeiros (DRE, fluxo)", "erp_financeiro"),
     # --- Cobranças Asaas (entra via 'erp_financeiro') ---
@@ -197,12 +198,13 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
     # Tesouraria: cobrança/boletos Asaas + conciliação (precisa do banco do cliente).
     "tesouraria": [
         "erp.conta_receber.view", "erp.conta_receber.baixar",
-        "erp.cobranca.*", "cadastro.cliente.view", "cadastro.cliente_doc.view",
+        "erp.cobranca.*", "erp.relatorio.view",
+        "cadastro.cliente.view", "cadastro.cliente_doc.view",
         "cadastro.cliente_banco.*",
     ],
     # Fiscal: emissão e gestão de NF (precisa do CPF/CNPJ do cliente p/ a NF).
     "fiscal": [
-        "erp.nf.*", "erp.conta_receber.view",
+        "erp.nf.*", "erp.conta_receber.view", "erp.relatorio.view",
         "cadastro.cliente.view", "cadastro.cliente_doc.view",
     ],
     # Comercial: CRM completo + documento do cliente (fechamento/contrato).

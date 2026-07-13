@@ -10,9 +10,10 @@
 **Ordem de ataque recomendada:**
 
 1. **L1–L4** — módulos inoperantes (**✅ todos corrigidos 03/07/2026**).
-2. **S1–S4** — pré-requisito para operar como SaaS real (**S1+S2 ✅ 04/07/2026**: RLS armada na
-   autenticação + política fail-closed fecharam a classe do vazamento entre tenants; faltam **S3, S4**).
-3. **L5–L7 + A1** — pacote "integridade financeira sob concorrência" (mesma sprint).
+2. **S1–S4** — pré-requisito para operar como SaaS real (**✅ todos corrigidos**: S1+S2 04/07/2026 —
+   RLS armada na autenticação + fail-closed fecharam o vazamento entre tenants; **S3+S4 12/07/2026** —
+   fail-fast de config + RS256 obrigatório em produção).
+3. **L5–L7 + A1** — pacote "integridade financeira sob concorrência" (**✅ todos corrigidos 12/07/2026**).
 4. O restante por severidade, aproveitando as fases do [roadmap](roadmap.md) indicadas.
 
 ---
@@ -67,19 +68,24 @@ cross-projeto em `addImagesToChunk`. Provado por [phase8_tenancy_test.py](../inf
 (2º tenant `acme` no seed). **Pendente correlato:** `/api/v1/chunks/*/assets/*` segue `permitAll`
 (download público por UUID) — revisar em **10.8** junto do auth de WebSocket/serviço→serviço.
 
-### S3 — Fallback HS256 com segredo compartilhado · 🔴 aberto · Fase 10
+### S3 — Fallback HS256 com segredo compartilhado · ✅ corrigido 12/07/2026
 
-Sem `JWT_PUBLIC_KEY_PATH`, IAM e ERP caem em HS256 com o mesmo `JWT_SECRET` — quem valida também
-**assina**: qualquer serviço (ou `.env` vazado) forja tokens de qualquer usuário/tenant.
-**Correção:** em produção, **exigir RS256** (`ImproperlyConfigured` se a chave faltar); manter
-HS256 só como opção explícita de dev; evoluir para validação via JWKS + `kid` (rotação sem deploy).
+Sem `JWT_PUBLIC_KEY_PATH`, IAM e ERP caíam em HS256 com o mesmo `JWT_SECRET` — quem valida também
+**assina**: qualquer serviço (ou `.env` vazado) forjava tokens de qualquer usuário/tenant.
+**Corrigido (12/07):** fora de DEBUG o ERP **exige** RS256 (`JWT_PUBLIC_KEY_PATH`) e a IAM exige a
+privada (`JWT_PRIVATE_KEY_PATH`) — chave ausente → `ImproperlyConfigured` no boot; HS256 só com
+`DEBUG=True`. Provado: prod sem chave não sobe; com chave sobe em `RS256`. **Resta (Fase 10):**
+validação via JWKS + `kid` (rotação sem redeploy).
 
-### S4 — Defaults inseguros ligados por omissão · 🔴 aberto
+### S4 — Defaults inseguros ligados por omissão · ✅ corrigido 12/07/2026
 
-`DEBUG=True`, `SECRET_KEY` e `JWT_SECRET` têm fallback embutido (ERP e IAM): produção sem as
-variáveis **sobe silenciosamente** com stack traces expostos e segredos conhecidos.
-**Correção:** default `DEBUG=False`; **falhar-rápido** se `SECRET_KEY`/`JWT_SECRET`/
-`ALLOWED_HOSTS` faltarem fora de DEBUG; ligar cookies/HSTS de produção; `manage.py check --deploy` como gate no CI.
+`DEBUG=True`, `SECRET_KEY` e `JWT_SECRET` tinham fallback embutido (ERP e IAM): produção sem as
+variáveis **subia silenciosamente** com stack traces expostos e segredos conhecidos.
+**Corrigido (12/07):** `DEBUG`/`IAM_DEBUG` default = **False**; helper `_config` **falha-rápido**
+(`ImproperlyConfigured`) se `SECRET_KEY`/`ALLOWED_HOSTS` faltarem fora de DEBUG (o `JWT_SECRET` só vive
+no ramo HS256/dev, coberto pelo S3); bloco de produção liga `SESSION/CSRF_COOKIE_SECURE`, HSTS e
+`nosniff` (`SECURE_PROXY_SSL_HEADER` atrás do gateway). **Resta (Fase 10.5):** `manage.py check --deploy`
+como gate no CI.
 
 ### L1 — Calendário 500 em toda listagem · ✅ corrigido 03/07/2026
 
@@ -145,16 +151,42 @@ permanente (sem retry, registrada na DLQ); UI destaca o motivo no Sheet da conta
 
 ## 🟠 Altas
 
-### D3 — UI e dashboards do ERP não sincronizam estado após criação/baixa · 🔴 aberto
+### D3 — UI e dashboards do ERP não sincronizam estado após criação/baixa · 🚧 parcial 12/07/2026
 
 Ao criar um `Cliente`, ele não entra imediatamente no fluxo de cobrança até recarregar a página (browser);
 ao gerar boleto, as divergências/pêndencias entre Asaas e banco/ERP não aparecem da mesma forma quando coloco em criar cliente;
 os gráficos de custos e recebimentos do ERP não carregam ou ficam defasados; e, após clicar em
 dar baixa, o boleto continua sendo exibido como `emitido` como se a mudança não tivesse sido
-aplicada. **Direção de correção:** revisar a invalidação/refetch das queries no frontend após
-mutação, garantir que as telas de cobrança e dashboard busquem o estado atualizado no backend e
-confirmar que o status de baixa é persistido e refletido na listagem antes de renderizar os cards
-e gráficos.
+aplicada.
+**Corrigido (12/07/2026):** (a) **boleto preso em `emitido` após baixa** era comportamento do backend —
+só o handler do webhook Asaas marcava o boleto `PAGO`; a baixa **manual** não propagava. `ContaReceber.dar_baixa`
+(choke point único) passou a marcar os boletos vinculados como `PAGO` quando o título fica `QUITADO`
+(estados terminais `PAGO`/`CANCELADO` preservados) — `moduloerp/tests.py::D3BaixaPropagaBoletoTests` (3).
+(b) o invalidador de contas a receber no front (`useContasAReceber`) passou a invalidar também `boletos.all`,
+para o badge do boleto atualizar sem refresh. (c) **cliente novo não entrava na cobrança** — os selects de
+entidade do ERP (`useEntityOptions`) cacheavam por 5 min e os cadastros vivem em outro módulo (não
+invalidam esse cache); agora revalidam no mount (`refetchOnMount: 'always'`).
+(d) **gráficos "não carregam"** — o hub `/api/erp/dashboard/` exige `erp.relatorio.view`, permissão que só
+existia em `diretoria`/`financeiro`/`auditor`; personas com o módulo ERP mas sem ela (`tesouraria`, `fiscal`)
+recebiam **403** → KPIs vazios + gráficos sem dados. `erp.relatorio.view` concedido a `tesouraria`/`fiscal`
+no catálogo ([iam/identity/catalog.py](../iam/identity/catalog.py); `sync_authz` aditivo propaga no boot).
+Admin de tenant já passava (bypass do `RequirePermission`). Testes: `moduloerp/tests.py::D3DashboardPermissionTests` (3)
++ `identity/tests.py::…relatorio_financeiro_visivel_aos_papeis_de_dinheiro`.
+(e) **rótulo do mês** do fluxo de caixa vinha como timestamp ISO cru (`TruncMonth` sem serializer) — o front
+passou a formatá-lo como `jul/2026` (`mesToBR` em [utils/dates.ts](../frontend/src/utils/dates.ts)).
+(f) **divergências Asaas × ERP inconsistentes entre as telas** — ao criar cliente havia um painel proativo
+(lista global banco × Asaas), mas ao **gerar boleto** o bloqueio só surgia reativo (409) depois do clique.
+Padronizado: o botão "Gerar cobrança" abre um **dialog de confirmação** ([GerarCobrancaDialog](../frontend/src/modules/erp/components/GerarCobrancaDialog.tsx))
+com opção de **ver as divergências** (mesmo painel, agora componente compartilhado
+[DivergenciasAsaasPanel](../frontend/src/modules/clientes/components/DivergenciasAsaasPanel.tsx)); confirmação
+dispara a cobrança (o 409 de bloqueio segue valendo). **Falha silenciosa corrigida:** quando a auditoria não
+roda (Asaas fora/sem permissão), as duas telas avisam "não foi possível verificar agora" em vez de painel
+vazio (falso "tudo certo"). **LGPD:** o relatório expunha CPF/CNPJ em texto puro fora do mascaramento 9.C —
+agora `divergencias-asaas` mascara o documento para quem não tem `cadastro.cliente_doc.view`
+([nucleo/field_masking.mask_document_unless](../backend/nucleo/field_masking.py)). Testes:
+`funcoescobrancas/tests.py::AnalisarDivergenciasTests` (máscara com/sem permissão).
+**Resta (aberto):** a degradação amigável do hub para quem não tem `erp.relatorio.view` (hoje mostra banner de
+erro) é o achado **F4** (guard de módulo/permissão no front). Quando fechar, o D3 vira ✅.
 
 ### S5 — Bypass de entitlement no CRM · ✅ corrigido 04/07/2026 · Fase 9.B
 
@@ -177,30 +209,43 @@ interna sem porta publicada; segredo dedicado por serviço nas chamadas internas
 com `!=` (não constante). **Correção:** sem fallback (ausente = erro em prod);
 `hmac.compare_digest` no webhook.
 
-### L5 — Corrida na baixa (sem lock de linha) · 🔴 aberto *(v01-B3)*
+### L5 — Corrida na baixa (sem lock de linha) · ✅ corrigido 12/07/2026 *(v01-B3)*
 
-`dar_baixa` faz read-modify-write sem `select_for_update`, e agora há dois produtores reais
-(baixa manual × webhook Asaas). **Correção:** `select_for_update()` dentro de
-`transaction.atomic()` nos dois caminhos; só é efetivo no Postgres → junto com a Fase 8.1.
+`dar_baixa` fazia read-modify-write sem `select_for_update`, com dois produtores reais concorrentes
+(baixa manual × webhook Asaas) — um sobrescrevia o `valor_pago` do outro.
+**Corrigido (12/07):** ambos os `dar_baixa` (`ContaPagar`/`ContaReceber`) passaram a rodar dentro de
+`transaction.atomic()` travando a linha do título (`select_for_update().get(pk=...)` + `refresh_from_db()`)
+antes do read-modify-write; efetivo no Postgres (no-op no SQLite, que não é mais suportado). Prova de
+consistência em `moduloerp/tests.py::IntegridadeFinanceiraBaixaTests` (baixas sequenciais acumulam).
 
-### L6 — Edição de título não revalida consistência · 🔴 aberto
+### L6 — Edição de título não revalida consistência · ✅ corrigido 12/07/2026
 
-`PATCH` pode reduzir `valor` abaixo de `valor_pago` (saldo negativo); rateios existentes não são
-revalidados quando só o `valor` muda; `BaixaSerializer` aceita baixa **maior** que o saldo.
-**Correção:** `validate()` nos serializers (valor ≥ valor_pago; rateios fecham com o novo valor);
-baixa com excesso cai na fila `RevisaoBaixa` (mesma filosofia do guard existente).
+`PATCH` podia reduzir `valor` abaixo de `valor_pago` (saldo negativo); rateios existentes não eram
+revalidados quando só o `valor` mudava; a baixa aceitava valor **maior** que o saldo.
+**Corrigido (12/07):** `_validar_edicao_valor` nos serializers de `ContaPagar`/`ContaReceber`
+(novo total devido ≥ `valor_pago`; se o valor muda sem reenviar rateios, os existentes têm de
+continuar fechando) e guard de **overpay** no `dar_baixa` — baixa que excede o saldo é represada em
+`RevisaoBaixa` (mesma filosofia do guard de título já quitado/cancelado), não aplicada. Testes cobrem
+os três casos (saldo negativo, rateio quebrado, baixa em excesso → 202).
 
-### L7 — `Transacao.data_transacao = auto_now_add` · 🔴 aberto *(v01-B5)*
+### L7 — `Transacao.data_transacao = auto_now_add` · ✅ corrigido 12/07/2026 *(v01-B5)*
 
-A data real do pagamento (inclusive a do webhook Asaas) não vai para o ledger → fluxo de caixa
-mensal no mês errado. **Correção:** campo editável (`DateTimeField`), `dar_baixa` grava a data da
-baixa; opcional `data_lancamento` separado para auditoria.
+A data real do pagamento (inclusive a do webhook Asaas) não ia para o ledger → fluxo de caixa mensal
+no mês errado. **Corrigido (12/07):** `Transacao.data_transacao` deixou de ser `auto_now_add` e virou
+a data de **competência** (`default=timezone.now`), gravada por `dar_baixa` a partir da data da baixa
+(`_data_baixa_para_datetime`); o carimbo imutável de lançamento no sistema migrou para o novo campo
+`data_lancamento` (`auto_now_add`). Migration `moduloerp/0011`. Teste confirma competência = data do
+pagamento, não "hoje".
 
-### A1 — Celery sem executor no deploy · 🔴 aberto · Fase 10
+### A1 — Celery sem executor no deploy · ✅ corrigido 12/07/2026 · Fase 10
 
-O compose não tem serviços `worker`/`beat` — em produção as tasks enfileiram para sempre (o
-webhook hoje processa síncrono). **Correção:** adicionar `worker` (e `beat` se houver agendadas)
-ao compose com healthcheck.
+O compose não tinha serviços `worker`/`beat` — em produção as tasks enfileirariam para sempre.
+**Corrigido (12/07):** serviços `worker` (`celery -A config worker`, com healthcheck `inspect ping`)
+e `beat` (`celery -A config beat`, dispara o `CELERY_BEAT_SCHEDULE` — hoje o lembrete de tarefas do
+CRM) adicionados ao `docker-compose.yml` (perfil `full`), reusando a imagem do ERP. A stack `full`
+passou a rodar **assíncrona de verdade**: `CELERY_TASK_ALWAYS_EAGER=False` por padrão no `erp`/`worker`/
+`beat` (antes o `erp` rodava eager por `DEBUG=True` e o worker ficaria ocioso). Validação E2E do fluxo
+enfileirado depende de subir o compose (Docker).
 
 ### A2 — Microsserviços fora do compose + URLs fixas · 🔴 aberto · Fase 11 *(v01-B4)*
 
@@ -321,6 +366,7 @@ Formulários carregam todos os clientes/fornecedores/empreendimentos para montar
 | A9 | `except Exception → str(e)` no corpo do 500 vaza detalhes internos → mensagem genérica + traceback só no log *(v01-B7)*                                                   | 🔴 aberto |
 | F3 | Acessibilidade: ordenação/linhas de tabela sem teclado,`Sheet` sem focus trap, hover via JS → handlers de teclado + focus trap + CSS *(v01-F3)*                            | 🔴 aberto |
 | F4 | Rotas do ERP sem guard de módulo no front (403 cru) →`ModuleRoute`/`hasModule` com tela amigável                                                                           | 🔴 aberto |
+| D7 | Recurso `erp.nf` não tinha `.edit` no catálogo → os 3 ViewSets de NF e `AtualizarStatusNFView` (POST→`.edit`) só passavam por admin; `ConsultarStatusNFView`, sendo **leitura**, exigia `.edit` indevidamente. Surgiu explícito ao remover o fallback de papel (fatia E). **Corrigido 12/07:** `erp.nf.edit` criado no catálogo (persona `fiscal` herda via `erp.nf.*`, `sync_authz` aditivo propaga no boot); `ConsultarStatusNFView` passou a exigir `erp.nf.view`. Testes `moduloerp.tests.D7NfApiViewPermissionTests` (4). | ✅ corrigido 12/07/2026 |
 
 ## 🟢 Baixas
 

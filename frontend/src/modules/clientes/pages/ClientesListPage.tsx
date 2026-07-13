@@ -17,6 +17,7 @@ const ClientesListPage: React.FC = () => {
   const [formOpen, setFormOpen]           = useState(false)
   const [divergencias, setDivergencias]   = useState<DivergenciaAsaas[]>([])
   const [divergLoading, setDivergLoading] = useState(false)
+  const [divergError, setDivergError]     = useState<string | null>(null)
 
   const { data, loading, error, refetch } = useClientes({ search, empreendimento: empFiltro })
 
@@ -32,9 +33,12 @@ const ClientesListPage: React.FC = () => {
     setFormOpen(true)
     setDivergLoading(true)
     setDivergencias([])
+    setDivergError(null)
     getDivergenciasAsaas()
       .then(r => setDivergencias(r.data.divergencias))
-      .catch(() => setDivergencias([]))
+      // D3: não engolir a falha — um painel vazio dava falsa sensação de "tudo
+      // certo". Avisa que a verificação não pôde rodar (Asaas fora/sem permissão).
+      .catch(() => setDivergError('Não foi possível verificar as divergências com o Asaas agora. Confira o cadastro antes de emitir boletos.'))
       .finally(() => setDivergLoading(false))
   }
 
@@ -198,6 +202,7 @@ const ClientesListPage: React.FC = () => {
         onSave={handleCreate}
         divergencias={divergencias}
         divergLoading={divergLoading}
+        divergError={divergError}
       />
     </div>
   )

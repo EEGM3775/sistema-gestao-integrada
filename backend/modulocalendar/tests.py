@@ -45,6 +45,7 @@ class CalendarEventListTests(APITestCase):
         )
 
     def _listar(self, start, end):
+        self.user.iam_permissions = ["calendario.evento.view"]  # GET → .view (fatia E)
         self.client.force_authenticate(user=self.user)
         return self.client.get("/api/calendar/events/", {"start": start, "end": end})
 
