@@ -111,7 +111,8 @@ Login local do backend removido; entitlement genérico `RequireModule("codigo")`
 | moduloerp                                                                        | `erp_financeiro` | ✅ 07/06/2026 (`Fatura`→`ContaPagar`/`ContaReceber`; +`CentroCusto`/`Rateio*`/`LoteRemessa`/`RevisaoBaixa`) |
 | modulocrm                                                                        | `crm`            | ✅ Completo                                                                                                                |
 | funcoescobrancas (Asaas)                                                         | via`moduloerp`   | ✅ MVP 08/06/2026 ([doc](modulos/funcoescobrancas.md))                                                                      |
-| moduloaps · modulodms · modulopdca · moduloscm · modulosil · modulomaps     | próprio           | 📋 Placeholder (alvos do porte v01)                                                                                        |
+| moduloscm                                                                        | `scm`            | ✅ Backend (fatias 1–3) 20/07/2026. F1: catálogo (`Produto`/`OfertaFornecedor`/`FaixaPrecoOferta`) + `CentroCusto` próprio. F2: pivô `Demanda`(+`ItemDemanda`) publicável + `Cotacao`→`Proposta`(+`ItemProposta`), verbos `publicar`/`adjudicar`. F3: `PedidoCompra`→`Recebimento`+`AvaliacaoFornecedor` com as **duas vias** (`comprar_direto`/`gerar_de_cotacao`) e seams ERP/SIL/NF-e. Seams de rede (`ref_externa`/`origem_tenant`) prontos; lado vendedor + marketplace → Esfera de Rede. 19 perms `scm.*`; suíte **29/29** sobre PG. Desenho em [expansão/modulos/moduloscm.md](../expansão/modulos/moduloscm.md). Falta: **UI React** (etapa C do porte) |
+| moduloaps · modulodms · modulopdca · modulosil · modulomaps                  | próprio           | 📋 Placeholder (alvos do porte v01)                                                                                        |
 
 > Rotas de apps simples registradas direto em `config/urls.py` (padrão correto, sem `urls.py` local).
 > Cobertura de testes ainda pontual: `modulocalendar`, `modulocrm`, `nucleo` e `moduloerp`.
@@ -137,7 +138,8 @@ Arquitetura, design system e convenções em [frontend.md](frontend.md); fases d
 | D.2          | RH                                                         | ✅ 06/06/2026                                                                  |
 | D.3          | CRM                                                        | ✅ 05/07/2026 (dashboard + leads + accounts + contacts + opportunities)                                           |
 | E.1–E.2     | Drone wrapper (iframe+SSO) · Calendário                  | 🚧 Calendário Fatia A (UI) + **Fatia B (recorrência RRULE) ✅ 13/07/2026** + **Fatia F (feriados federais/estaduais/municipais por localidade) ✅ 13/07/2026** (fed+est via python-holidays, mun via dataset MIT + comando `sincronizar_feriados`; seletor obra→estado→município; cor por escopo; carimbo de atualização p/ superuser; suíte 25/25) — **rebuild do sgi-react aplicado 13/07; Fatia B validada E2E 10/10 via gateway (expansão de série, override/exclusão "somente esta", exclusão total); polimento UX: cursor de ponteiro nos eventos, reticências em título longo, localidade persistida (localStorage), clique em evento não-editável (feriado/diário/CRM) abre diálogo de leitura com o nome inteiro** + **Fatia C (lembretes por evento + centro de notificações in-app) ✅ 14/07/2026** (`EventReminder` + `nucleo.Notificacao` tenant-scoped/RLS; task Celery `despachar_lembretes` a 60s → notificação in-app + e-mail opcional; sino no `AppTopbar` com badge/polling; chips de lembrete no diálogo; **validado 14/07: suíte 27/27 sobre Postgres, typecheck limpo na fatia, E2E do sino vivo pelo gateway** — beat@60s + worker despacham o lembrete → notificação in-app); D–E planejadas ([modulocalendar.md §6](modulos/modulocalendar.md)) |
-| E.3          | SCM / SIL / PDCA / DMS / APS / Maps                        | ❌ Aguarda backend                                                             |
+| D.4          | **SCM** (`scm`) — suprimentos                              | ❌ Pendente (backend ✅; **próximo a construir**) — sub-fases S.1–S.4 em [modulos/moduloscm.md](modulos/moduloscm.md#frontend-fase-atual--escopo-e-sub-fases) |
+| E.3          | SIL / PDCA / DMS / APS / Maps                              | ❌ Aguarda backend                                                             |
 | F.1          | Dashboard de KPIs (substitui o hub)                        | ❌ Pendente                                                                    |
 
 > **Fluxo testável hoje** (`http://localhost:8090/`, demo/demo123): Landing → Login → Hub →
@@ -509,8 +511,9 @@ Achados das revisões técnicas com status vivo: [pendencias.md](pendencias.md).
   **Fase 9**.
 - **Drone:** entidades-filhas escopadas por tenant (`tenant_id` NOT NULL + gate na borda) — **✅ 8.5**;
   WebSocket e serviço→serviço — **✅ 10.8** (CONNECT STOMP autenticado + JWT de serviço backend→drone).
-- **Módulos vazios:** `moduloaps`/`modulodms`/`modulopdca`/`moduloscm`/`modulosil`/`modulomaps` —
-  porte da **Fase 7** ([plano](arquitetura/migracao-v01.md)).
+- **Módulos vazios:** `moduloaps`/`modulodms`/`modulopdca`/`modulosil`/`modulomaps` —
+  porte da **Fase 7** ([plano](arquitetura/migracao-v01.md)). `moduloscm` 🚧 iniciado (fatia 1 ✅ 20/07),
+  desenho em [expansão/modulos/moduloscm.md](expansão/modulos/moduloscm.md).
 - **Monetização / paywall (catálogo ✅ 19/07 · trava de seats/objetos ✅ 19/07; checkout sem código):**
   o modelo de planos vive **inteiro** em [payment/](../payment/README.md) — `planos.py`/`addons.py`
   (valores, editáveis pelo dono) + `regras.py` (engenharia) —, com o plano **`free`** como default.

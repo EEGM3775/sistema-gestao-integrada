@@ -690,6 +690,36 @@ uma vez por cliente, e é a impressão que fica.
 
 Quando o checkout entrar, muda **só o destino do botão** — todo o resto desta seção continua valendo.
 
+### 5.17 SCM — Suprimentos (`hasModule: scm`) — 📋 próximo a construir (backend ✅)
+
+> Módulo **grande** e o primeiro porte v01→v02 completo no backend. O **contrato de API, o modelo e o
+> escopo detalhado de UI (sub-fases S.1–S.4)** estão em
+> [modulos/moduloscm.md](modulos/moduloscm.md#frontend-fase-atual--escopo-e-sub-fases) — esta seção é
+> só o resumo para navegação. **Este frontend é o SCM interno da fase atual, não o da expansão**
+> (marketplace/rede/lado vendedor ficam de fora; a UI apenas não esconde os campos-seam).
+
+O conceito que a UI precisa acertar: **duas vias de aquisição que convergem no mesmo pedido** —
+**compra direta** (de uma oferta a preço fixo, sem cotar) e **cotação/RFQ** (demanda → propostas →
+adjudicar → pedido). Fluxo interno: `Demanda → Cotação → adjudicar → Pedido → Recebimento → Avaliação`,
+ou `Oferta → comprar direto → Pedido → Recebimento`.
+
+Telas por sub-fase (todas `hasModule('scm')` + gate por permissão `scm.*`):
+
+- **S.1 Catálogo** — `ProdutosPage` (mestre), ofertas de fornecedor por produto (+ faixas de preço),
+  `CentrosCustoPage` (o centro de custo é **próprio do SCM**, com `tipo`; obra é só um dos tipos).
+- **S.2 Demanda & Cotação** — `DemandasPage` (com itens; botão **Publicar** → `scm.demanda.publicar`);
+  `CotacaoDetailPage` com **mapa comparativo** de propostas + **Adjudicar** (`scm.cotacao.adjudicar`).
+- **S.3 Pedido & Recebimento** — `PedidosPage` com os dois caminhos (**Comprar direto** de uma oferta
+  `compra_direta` · **Gerar de cotação** — ambos `scm.pedido.criar`); `PedidoDetailPage` (itens, status,
+  **registrar recebimento**); `AvaliacaoForm`.
+- **S.4 Hub SCM** — `ScmDashboardPage` (KPIs: demandas abertas, cotações a adjudicar, pedidos por
+  status) — substitui o `status/` placeholder.
+
+Stack/padrões: os mesmos do projeto (TanStack Query + `<módulo>/hooks`, RHF+zod nos forms, `Sheet`
+para create/edit, `FinanceDataTable`/`FilterBar` reaproveitados do ERP, code-splitting por
+`modules/scm/routes.tsx`). Endpoints em §7.3; contrato completo em
+[moduloscm.md](modulos/moduloscm.md).
+
 ---
 
 ## 6. Auth & Entitlement
@@ -822,6 +852,7 @@ function useObra(obraId: number) {
 | ERP | `GET /api/erp/dashboard/` · `GET/POST /api/erp/contas-a-pagar/` (+ `dar-baixa`, `gerar-lote-remessa`) · `GET/POST /api/erp/contas-a-receber/` (+ `dar-baixa`, `emitir-nfse`/`emitir-nfe`) · `GET/POST /api/erp/centros-custo/` · `GET /api/erp/lotes-remessa/` · etc. |
 | RH | `GET /api/funcionarios/` |
 | CRM | `GET /api/crm/leads/` · `GET /api/crm/oportunidades/` |
+| SCM (`scm`) | Catálogo: `/api/scm/{produtos,ofertas,faixas-preco,centros-custo}/` · Cotação: `/api/scm/{demandas,itens-demanda,cotacoes,propostas,itens-proposta}/` (+ `POST demandas/:id/publicar/`, `POST cotacoes/:id/adjudicar/`) · Pedido: `/api/scm/{pedidos,itens-pedido,recebimentos,avaliacoes}/` (+ `POST pedidos/comprar_direto/`, `POST pedidos/gerar_de_cotacao/`). Contrato e permissões `scm.*` em [moduloscm.md](modulos/moduloscm.md) |
 | Diário | `GET/POST /api/diario/diarios/` · `/api/diario/entradas/` · `/api/diario/documentos/` |
 | IA | `GET /api/ia/analises/` · `GET /api/ia/analises/:id/` |
 | Calendário | `GET/POST /api/calendar/events/` |
@@ -1009,8 +1040,8 @@ aqui só a definição do escopo:
 | A | Fundação — Tailwind, `AuthContext`, `AppShell`, roteamento |
 | B | Landing + Login + Hub de módulos |
 | C | Core — Dashboard de KPIs (C.1) · Empreendimentos (C.2) · Obras (C.3) · Clientes (C.4) · Fornecedores (C.5) · Diário+IA (C.6) |
-| D | Módulos pagos — ERP `erp_financeiro` (D.1.x, sub-fases em [moduloerp.md §13](modulos/moduloerp.md#13-roadmap-em-sub-fases-fase-d1x)) · RH `rh` (D.2) · CRM `crm` (D.3) |
-| E | Extras — Drone wrapper iframe+SSO (E.1) · Calendário (E.2) · SCM/SIL/PDCA/DMS/APS/Maps (E.3, aguarda backend) |
+| D | Módulos pagos — ERP `erp_financeiro` (D.1.x, sub-fases em [moduloerp.md §13](modulos/moduloerp.md#13-roadmap-em-sub-fases-fase-d1x)) · RH `rh` (D.2) · CRM `crm` (D.3) · **SCM `scm` (D.4 — backend ✅; sub-fases S.1–S.4 em [moduloscm.md](modulos/moduloscm.md#frontend-fase-atual--escopo-e-sub-fases))** |
+| E | Extras — Drone wrapper iframe+SSO (E.1) · Calendário (E.2) · SIL/PDCA/DMS/APS/Maps (E.3, aguarda backend) |
 | F | Dashboard de KPIs real substitui o hub (F.1) |
 | G | Paywall — medidores de quota, tratamento global do 402 e página de plano (§5.16). Independe de A–F: o backend já trava e já serve o medidor. |
 

@@ -17,6 +17,7 @@
 | `moduloerp` | **`erp_financeiro`** (+ papel `financeiro`) | [moduloerp.md](moduloerp.md) | Financeiro: contas a pagar/receber, NF, boletos, centros de custo |
 | `rh` | **`rh`** | [rh.md](rh.md) | Funcionários, cargos, folha, dados médicos/bancários |
 | `modulocrm` | **`crm`** | [modulocrm.md](modulocrm.md) | Funil: leads → contas → oportunidades |
+| `moduloscm` | **`scm`** | [moduloscm.md](moduloscm.md) | Suprimentos: catálogo → demanda → cotação → pedido → recebimento (backend ✅; sem UI) |
 | `moduloapi` | — (base) | [moduloapi.md](moduloapi.md) | Credenciais de APIs externas (Google OAuth) |
 | `nucleo` | — (base) | [nucleo.md](nucleo.md) | Identidade/tenancy/auditoria (espelho da IAM) |
 | `modulocalendar` | — (base) | [modulocalendar.md](modulocalendar.md) | Eventos/tarefas de calendário |
@@ -48,5 +49,6 @@
 
 ## Planejados (placeholders vazios)
 
-`moduloaps`, `modulodms`, `modulopdca`, `moduloscm`, `modulosil`, `modulomaps` — ver
-[modulos-planejados.md](modulos-planejados.md).
+`moduloaps`, `modulodms`, `modulopdca`, `modulosil`, `modulomaps` — ver
+[modulos-planejados.md](modulos-planejados.md). (`moduloscm` **saiu** desta lista: backend portado —
+[moduloscm.md](moduloscm.md).)

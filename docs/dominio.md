@@ -50,12 +50,19 @@ O **empreendimento** é o eixo. Quase tudo de negócio aponta para ele (direta o
 
 ## Cadeia de suprimentos (compra)
 
-`Fornecedor` → `ProdutoServicoFornecedor` (catálogo) → `CustoEmpreendimento` / `ContaPagar` /
-`NotaFiscal` (recebida).
+Registro financeiro do que foi comprado: `Fornecedor` → `ProdutoServicoFornecedor` (catálogo) →
+`CustoEmpreendimento` / `ContaPagar` / `NotaFiscal` (recebida).
 
 - `CustoEmpreendimento` liga empreendimento ↔ fornecedor ↔ produto/serviço, com XML da NF-e.
 - `ContaPagar` aponta para fornecedor, empreendimento e (opcional) `NotaFiscal`.
 - `NotaFiscal` (recebida) liga empreendimento ↔ fornecedor; `db_table = financeiro_notafiscal`.
+
+**Processo de compra (`moduloscm`, módulo `scm`):** o SCM modela o *fluxo* que antecede esse registro
+— catálogo próprio (`Produto` + `OfertaFornecedor`) → `Demanda` → `Cotacao`/`Proposta` → `PedidoCompra`
+(duas vias: compra direta de uma oferta **ou** adjudicação de cotação) → `Recebimento` → `AvaliacaoFornecedor`.
+Custo via `moduloscm.CentroCusto` (próprio, mapeia p/ o rateio do ERP). Multi-vertical e com *seams* de
+rede/marketplace — ver [modulos/moduloscm.md](modulos/moduloscm.md) e a visão em
+[expansão/modulos/moduloscm.md](expansão/modulos/moduloscm.md).
 
 ## Obra e execução
 
@@ -116,3 +123,4 @@ Toda entidade acima herda `tenant` do mixin `TenantScopedModel`.
 | Funcionário, Folha, etc. | [backend/rh/models.py](../backend/rh/models.py) |
 | Diário de obra | [backend/modulodiario/models.py](../backend/modulodiario/models.py) |
 | CRM | [backend/modulocrm/models.py](../backend/modulocrm/models.py) |
+| SCM (suprimentos): Produto, Oferta, Demanda, Cotação, Pedido, Recebimento | [backend/moduloscm/models.py](../backend/moduloscm/models.py) |

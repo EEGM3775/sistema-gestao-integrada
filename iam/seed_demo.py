@@ -42,6 +42,7 @@ for cod, nome in [
     ("erp_financeiro", "ERP Financeiro"),
     ("crm", "CRM"),
     ("rh", "Recursos Humanos"),
+    ("scm", "Suprimentos (SCM)"),
 ]:
     modulos[cod], _ = Modulo.objects.get_or_create(codigo=cod, defaults={"nome": nome})
 
@@ -101,10 +102,10 @@ call_command("sync_authz", all_tenants=True)
 
 # --- Usuários e seus papéis ---
 demo = upsert_user(
-    tenant, "demo", "demo123", ["drone", "erp_financeiro", "crm", "rh"],
-    # Power-user: papéis cobrindo todos os módulos do tenant (erp, crm, obras, drone, rh).
+    tenant, "demo", "demo123", ["drone", "erp_financeiro", "crm", "rh", "scm"],
+    # Power-user: papéis cobrindo todos os módulos do tenant (erp, crm, obras, drone, rh, scm).
     ["financeiro", "tesouraria", "fiscal", "comercial", "engenharia",
-     "drone_analista", "rh_gestor", "rh_medico", "rh_financeiro"],
+     "drone_analista", "rh_gestor", "rh_medico", "rh_financeiro", "suprimentos"],
 )
 semdrone = upsert_user(tenant, "semdrone", "semdrone123", ["erp_financeiro"], ["operacional"])
 acme = upsert_user(acme_tenant, "acme", "acme123", ["drone"], ["operacional"])

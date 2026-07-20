@@ -107,6 +107,29 @@ CATALOGO: tuple[Perm, ...] = (
     Perm("drone.processamento.executar", "Disparar processamento (ODM)", "drone"),
     Perm("drone.medicao.view", "Ver medições/anotações", "drone"),
     Perm("drone.medicao.edit", "Criar/editar medições/anotações", "drone"),
+    # --- SCM — suprimentos (módulo 'scm') — fatia 1: catálogo + centro de custo ---
+    #     (demanda/cotação/pedido/recebimento entram com suas fatias)
+    Perm("scm.produto.view", "Ver produtos do catálogo de suprimentos", "scm"),
+    Perm("scm.produto.edit", "Gerir produtos do catálogo de suprimentos", "scm"),
+    Perm("scm.oferta.view", "Ver ofertas/preços de fornecedores", "scm"),
+    Perm("scm.oferta.edit", "Gerir ofertas/preços de fornecedores", "scm"),
+    Perm("scm.centro_custo.view", "Ver centros de custo do SCM", "scm"),
+    Perm("scm.centro_custo.edit", "Gerir centros de custo do SCM", "scm"),
+    # fatia 2: demanda (pivô) + cotação/proposta, com verbos de domínio
+    Perm("scm.demanda.view", "Ver demandas de compra", "scm"),
+    Perm("scm.demanda.edit", "Criar/editar demandas de compra", "scm"),
+    Perm("scm.demanda.publicar", "Publicar demanda na rede (marketplace)", "scm"),
+    Perm("scm.cotacao.view", "Ver cotações e propostas", "scm"),
+    Perm("scm.cotacao.edit", "Gerir cotações e registrar propostas", "scm"),
+    Perm("scm.cotacao.adjudicar", "Adjudicar cotação (escolher vencedora)", "scm"),
+    # fatia 3: pedido (duas vias) → recebimento + avaliação
+    Perm("scm.pedido.view", "Ver pedidos de compra", "scm"),
+    Perm("scm.pedido.edit", "Editar pedidos de compra", "scm"),
+    Perm("scm.pedido.criar", "Gerar pedido (compra direta / de cotação)", "scm"),
+    Perm("scm.recebimento.view", "Ver recebimentos", "scm"),
+    Perm("scm.recebimento.edit", "Registrar recebimentos", "scm"),
+    Perm("scm.avaliacao.view", "Ver avaliações de fornecedores", "scm"),
+    Perm("scm.avaliacao.edit", "Avaliar fornecedores", "scm"),
     # --- Obras/empreendimentos e cadastros base (sem entitlement de módulo) ---
     Perm("obra.empreendimento.view", "Ver empreendimentos", "base"),
     Perm("obra.empreendimento.edit", "Gerir empreendimentos", "base"),
@@ -241,6 +264,8 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
         "obra.obra.view", "obra.diario.view",
         "cadastro.cliente.view", "cadastro.cliente_doc.view", "cadastro.fornecedor.view",
     ],
+    # Suprimentos: catálogo de produtos, ofertas de fornecedores e centros de custo.
+    "suprimentos": ["scm.*", "cadastro.fornecedor.view"],
     # Gestor da lixeira (exclusão reversível — ver arquitetura/lixo.md).
     "gestor_lixo": ["plataforma.lixo.*"],
     # Papel default de leitura básica (antes era morto).
@@ -265,6 +290,7 @@ DESCRICOES_TEMPLATE: dict[str, str] = {
     "campo": "Registro de diário de obra e envio de imagens de drone. Sem gestão.",
     "drone_analista": "Processamento, medições e anotações de projetos de drone.",
     "auditor": "Somente leitura ampla + trilha de auditoria e operações de titular (LGPD).",
+    "suprimentos": "Suprimentos: catálogo de produtos, ofertas/preços de fornecedores e centros de custo.",
     "gestor_lixo": "Restauração e expurgo de itens da lixeira (exclusão reversível).",
     "operacional": "Leitura básica de obras, diário, agenda e cadastros.",
 }

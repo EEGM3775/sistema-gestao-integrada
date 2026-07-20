@@ -2,6 +2,45 @@
 
 Todas as mudanças notáveis desta versão são documentadas aqui.
 
+## [1.0.12] - 2026-07-20
+
+### Visão geral
+
+Porte do módulo **SCM (Suprimentos)** da v01 para a v02 (Fase 7): de placeholder à cadeia completa
+de suprimentos, multi-vertical e com os *seams* de rede/marketplace já no modelo. Backend completo
+(fatias 1–3) + documentação.
+
+#### Backend — `moduloscm` (entitlement `scm`)
+- **Catálogo próprio:** `Produto` (mestre supplier-agnostic) + `OfertaFornecedor` (fonte única de
+  preço e estoque, a trava do CDC) + `FaixaPrecoOferta` (desconto por volume); `CentroCusto` próprio
+  do SCM (vertical-agnóstico — obra é só um dos tipos; mapeia p/ o rateio do ERP).
+- **Pivô publicável:** `Demanda` (+`ItemDemanda`) genérica (material|serviço), com
+  `visibilidade`/`ref_externa`/`origem` (seams de rede e do estoque); verbo `publicar`.
+- **Cotação:** `Cotacao` → `Proposta` (+`ItemProposta`), com `origem_tenant` (documento espelhado,
+  sem FK cruzada); verbo `adjudicar`.
+- **Pedido (duas vias):** `PedidoCompra` convergindo compra direta (`comprar_direto`) e cotação
+  (`gerar_de_cotacao`) → `Recebimento` (+`ItemRecebimento`) → `AvaliacaoFornecedor`; seams ERP
+  (`conta_pagar_ref`), SIL (`local_entrega`) e NF-e (`nota_fiscal_ref`).
+- Todos `TenantScopedModel`, uniques por-tenant e **RLS fail-closed** nas migrations 0001–0003.
+  Suíte `moduloscm/tests.py` **29/29** sobre Postgres.
+
+#### IAM
+- **19 permissões `scm.*`** (view/edit + verbos de domínio) no catálogo + persona de fábrica
+  `suprimentos`; módulo `scm` no seed (assinado pelo tenant demo).
+
+#### Documentação
+- Nova planta [docs/modulos/moduloscm.md](docs/modulos/moduloscm.md) (contrato de API + escopo de
+  frontend S.1–S.4) e a visão de expansão [docs/expansão/modulos/moduloscm.md](docs/expansão/modulos/moduloscm.md)
+  (marketplace reverso, compra direta na rede, rede social, lado vendedor).
+- `frontend.md` (§5.17 SCM + endpoints + fase D.4), `dominio.md`, `roadmap.md` e índices de módulos
+  atualizados.
+
+#### Outros
+- Normalização de fim de linha (LF) em arquivos do frontend (CRM) e de backend/docs tocados no
+  ambiente Windows.
+
+---
+
 ## [1.0.11] - 2026-07-19
 
 ### Visão geral
