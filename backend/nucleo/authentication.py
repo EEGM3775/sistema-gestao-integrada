@@ -1,7 +1,7 @@
 """
-Autenticação do ERP como *resource server* da IAM.
+Autenticação do backend como *resource server* da IAM.
 
-O ERP não emite mais identidade: ele valida o JWT assinado pela IAM (segredo
+O backend não emite mais identidade: ele valida o JWT assinado pela IAM (segredo
 compartilhado) e provisiona (JIT) um espelho local de Tenant/Usuário a partir
 das claims, preservando as FKs locais que apontam para `nucleo.Usuario`.
 Ver docs/arquitetura.md (Fase 0.3).
@@ -13,6 +13,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken
 
 from .models import Tenant
+from .revocation import is_session_revoked
 from .tenancy import arm_rls_for_request
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,13 @@ class IamJWTAuthentication(JWTAuthentication):
         if not username:
             raise InvalidToken("Token sem claim 'sub' (username).")
 
+        # Revogação imediata (Fase 9.E / 10.7): a IAM carimba `revoked_after` no
+        # Redis ao trocar/resetar senha ou desativar o usuário. Rejeita aqui o
+        # access residual (stateless) emitido antes do carimbo — fecha a janela de
+        # ≤ access TTL. Fail-open por padrão (ver nucleo/revocation.py).
+        if is_session_revoked(validated_token.get("user_id"), validated_token.get("iat")):
+            raise InvalidToken("Sessão revogada (senha alterada ou usuário desativado).")
+
         tenant = self._sync_tenant(validated_token)
 
         user, created = User.objects.get_or_create(
@@ -53,6 +61,14 @@ class IamJWTAuthentication(JWTAuthentication):
             user.set_unusable_password()  # autenticação é sempre via IAM
             user.save(update_fields=["password"])
 
+        # D12 — espelho local desativado não autentica. Este `get_user` substitui
+        # o do SimpleJWT, que barra usuário inativo; sem repetir a checagem aqui,
+        # desativar o espelho no backend não tinha efeito nenhum e a conta seguia
+        # entrando. (A desativação na IAM continua chegando pela revogação por
+        # época, acima; esta é a trava do lado de cá.)
+        if not user.is_active:
+            raise InvalidToken("Usuário inativo neste produto.")
+
         self._sync_user(user, validated_token, tenant)
 
         # Claims voláteis, disponíveis para permissões/escopo na request.
@@ -64,6 +80,18 @@ class IamJWTAuthentication(JWTAuthentication):
         user.iam_permissions = list(validated_token.get("permissions") or [])
         # Dono da plataforma (superuser da IAM) — confirma incidente LGPD (Fase 9.D).
         user.is_platform_admin = bool(validated_token.get("is_platform_admin"))
+        # D23 — teto de requisições/hora do tenant, derivado do plano contratado.
+        # Vem da IAM porque é ela que conhece os seats: o `Usuario` daqui é espelho
+        # JIT (só quem já logou), então contar localmente daria um teto menor que o
+        # contratado e crescente durante a implantação do cliente. Ausente (token de
+        # serviço, token legado) → o throttle cai no default do settings.
+        user.iam_rate_hora = validated_token.get("rate_hora")
+        user.iam_plano = validated_token.get("plano")
+        # D24 — quotas de objeto do plano contratado (`{"obras": 8, ...}`), pela
+        # mesma razão do `rate_hora`: a IAM é quem sabe o que foi contratado, o
+        # backend é quem sabe quanto já foi usado. Ausente → `nucleo/quotas.py`
+        # não trava nada (fail-open ruidoso; ver o módulo).
+        user.iam_quotas = validated_token.get("quotas")
         return user
 
     def _sync_tenant(self, validated_token):

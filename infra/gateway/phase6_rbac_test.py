@@ -4,11 +4,11 @@ demo     -> modulos: drone, erp_financeiro, crm, rh | papel: financeiro
 semdrone -> modulos: erp_financeiro                 | papel: operacional
 
 Prova: camada 1 (entitlement de módulo) e camada 2 (papel), com o MESMO
-mecanismo do drone, agora nos módulos internos do ERP.
+mecanismo do drone, agora nos módulos internos do backend.
 """
 import json, urllib.request, urllib.error
 
-GW = "http://localhost:8090"
+GW = __import__("os").environ.get("SGI_GW", "http://localhost:8090")  # SGI_GW aponta ao staging (10.7)
 
 def req(method, path, token=None, body=None):
     data = json.dumps(body).encode() if body is not None else None
@@ -49,6 +49,6 @@ print("== Camada 2: RBAC POR PAPEL (financeiro) ==")
 print("  (ambos têm o módulo erp_financeiro; só demo tem o papel 'financeiro')")
 row("financeiro /api/erp/faturas/",      "/api/erp/faturas/", 200, 403)
 
-print("== 6.1: login local do ERP foi APOSENTADO (404) ==")
+print("== 6.1: login local do backend foi APOSENTADO (404) ==")
 print("  POST /api/token/      ->", req("POST", "/api/token/", body={}), "(esperado 404)")
 print("  POST /api/auth/login/ ->", req("POST", "/api/auth/login/", body={}), "(esperado 404)")

@@ -1,14 +1,14 @@
 # ============================================================
-# Gateway de borda (Fase 2) — domínio único para ERP + drone + IAM.
+# Gateway de borda (Fase 2) — domínio único para backend + drone + IAM.
 #
 # Sobe SÓ o nginx do gateway, reaproveitando os containers do funcoesODM
-# (rede externa) e os serviços do host (ERP/IAM/React) via host.docker.internal.
+# (rede externa) e os serviços do host (backend/IAM/React) via host.docker.internal.
 # O compose unificado com todos os serviços é a Fase 4.
 #
 # Pré-requisitos (rodando à parte):
 #   - funcoesODM no ar:  cd ImgDrone/funcoesODM && docker compose up -d
 #   - IAM   no host:     cd iam     && ../.venv/bin/python manage.py runserver 8001
-#   - ERP   no host:     cd backend && ../.venv/bin/python manage.py runserver 8000
+#   - backend   no host:     cd backend && ../.venv/bin/python manage.py runserver 8000
 #   - React no host:     cd frontend && npm run dev    (vite em 5173)
 #
 # Uso:
@@ -33,7 +33,7 @@ services:
       - funcoesodm
     restart: unless-stopped
 
-  # Shell React (ERP) em container — o host não tem Node. Roda o vite dev
+  # Shell React (app) em container — o host não tem Node. Roda o vite dev
   # servindo a SPA; o browser fala com o gateway (mesma origem), não com este
   # container diretamente. node_modules é instalado no volume nomeado (rápido
   # e isolado do bind-mount do código).

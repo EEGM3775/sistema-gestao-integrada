@@ -1,12 +1,12 @@
 """Fase 5 — valida RS256/JWKS pelo gateway (8090).
 
-Prova: (a) a IAM assina RS256, (b) ERP e drone validam com a chave pública,
+Prova: (a) a IAM assina RS256, (b) backend e drone validam com a chave pública,
 (c) um token forjado com o ANTIGO segredo HS256 é REJEITADO — o buraco do
 segredo compartilhado (bug da Fase 2) está fechado.
 """
 import json, base64, urllib.request, urllib.error, hmac, hashlib, time, uuid
 
-GW = "http://localhost:8090"
+GW = __import__("os").environ.get("SGI_GW", "http://localhost:8090")  # SGI_GW aponta ao staging (10.7)
 
 def b64u_decode(s):
     return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
@@ -38,7 +38,7 @@ print("2) JWKS ->", s, "| kty =", kty, "(esperado RSA)")
 
 print("3) Token RS256 REAL da IAM:")
 print("   drone /odm-api/projects ->", req("GET", "/odm-api/projects", tok)[0], "(esperado 200)")
-print("   ERP   /api/clientes/    ->", req("GET", "/api/clientes/", tok)[0], "(esperado 200)")
+print("   backend   /api/clientes/    ->", req("GET", "/api/clientes/", tok)[0], "(esperado 200)")
 
 # 4) Ataque: forja um token HS256 com o antigo segredo compartilhado
 secret = None
@@ -54,4 +54,4 @@ si = b64u(json.dumps(h).encode()) + "." + b64u(json.dumps(p).encode())
 forged = si + "." + b64u(hmac.new(secret.encode(), si.encode(), hashlib.sha256).digest())
 print("4) Token FORJADO (HS256 com o segredo antigo) — deve ser REJEITADO:")
 print("   drone /odm-api/projects ->", req("GET", "/odm-api/projects", forged)[0], "(esperado 401)")
-print("   ERP   /api/clientes/    ->", req("GET", "/api/clientes/", forged)[0], "(esperado 401)")
+print("   backend   /api/clientes/    ->", req("GET", "/api/clientes/", forged)[0], "(esperado 401)")

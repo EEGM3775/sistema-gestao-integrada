@@ -1,0 +1,44 @@
+# Contexto de build da RAIZ — vale para as imagens do backend e da IAM, que
+# passaram a buildar daqui (e não de backend//iam/) para enxergar o pacote
+# compartilhado `funcoesemail/`. Sem estas exclusões, cada build arrastaria o
+# repositório inteiro: ImgDrone (drone + binários), node_modules e o .git.
+#
+# Regra prática ao mexer aqui: o contexto deve conter apenas backend/, iam/,
+# funcoesemail/ e payment/ (valores comerciais lidos pela IAM) — o resto é peso
+# morto que só faz o build demorar.
+
+# Nunca entram no contexto
+.git
+.github
+docs
+media
+ImgDrone
+frontend
+infra
+deploy
+.venv
+.runtime
+
+# Segredos e ambientes — nunca vão para dentro de imagem
+.env
+.env.*
+**/.env
+**/.env.*
+!**/*.env.example
+
+# Lixo de linguagem / build
+**/node_modules
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.pytest_cache
+**/.mypy_cache
+*.sqlite3
+db.sqlite3
+**/staticfiles
+
+# Saídas e logs
+nfe_xmls/
+**/*.log
+**/combined.log
+**/error.log

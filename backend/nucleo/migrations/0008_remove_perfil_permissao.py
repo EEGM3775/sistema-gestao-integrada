@@ -1,8 +1,8 @@
 """
-Remove os modelos legados Perfil e Permissao do ERP.
+Remove os modelos legados Perfil e Permissao do backend.
 
 Papéis (RBAC) e permissões são autoritativos na IAM e viajam no JWT
-(claims 'roles'). O ERP nunca teve lógica de negócio dependente desses
+(claims 'roles'). O backend nunca teve lógica de negócio dependente desses
 modelos — eram um espelho vazio. Ver docs/acesso-e-permissoes.md Fase 6.
 """
 from django.db import migrations

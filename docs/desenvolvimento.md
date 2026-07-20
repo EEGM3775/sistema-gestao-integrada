@@ -6,28 +6,28 @@
 ## Subir tudo com Docker (recomendado)
 
 ```bash
-cp .env.example .env
+cp deploy/env/dev.env.example .env
 bash infra/keys/generate.sh            # par de chaves RSA do JWT (RS256), em infra/keys/ (gitignored)
 docker compose --profile full up -d    # sobe os 11 serviços
 # abra http://localhost:8090/  → login demo/demo123
 ```
 
-Sem o perfil, sobe **só a infra** (PostgreSQL + Redis), útil para rodar ERP/IAM localmente:
+Sem o perfil, sobe **só a infra** (PostgreSQL + Redis), útil para rodar backend/IAM localmente:
 
 ```bash
 docker compose up -d                   # postgres + redis apenas
 ```
 
-O compose raiz ([docker-compose.yml](../docker-compose.yml)) usa **profiles**: `full` liga IAM, ERP,
+O compose ([deploy/compose/base.yml](../deploy/compose/base.yml), ver [deploy/README.md](../deploy/README.md)) usa **profiles**: `full` liga IAM, backend,
 React, funcoesODM (java-service, drone-nginx, nodeodm, potree-converter, funcoesodm-db) e o gateway,
-todos numa rede `sgi`. O gateway só sobe quando IAM/ERP/Java estão *healthy*.
+todos numa rede `sgi`. O gateway só sobe quando IAM/backend/Java estão *healthy*.
 
 ## Portas
 
 | Serviço | Porta | Observação |
 |---|---|---|
 | Gateway (borda) | **8090** | único ponto público; roteia tudo |
-| ERP (Django) | 8000 | resource server |
+| backend (Django) | 8000 | resource server |
 | IAM | 8001 | autoridade de identidade / SSO |
 | funcoesODM (Java) | 8080 | `/odm-api` → `/api/v1` |
 | PostgreSQL | 5432 | bancos `iam_db` e `erp_db` |
@@ -36,26 +36,41 @@ todos numa rede `sgi`. O gateway só sobe quando IAM/ERP/Java estão *healthy*.
 Rotas no gateway: `/`→React · `/api`→Django · `/auth`→IAM · `/drone`→Angular · `/odm-api`→Java ·
 `/ws`→Java (WebSocket). Ver [infra/gateway/nginx.unified.conf](../infra/gateway/nginx.unified.conf).
 
+## Staging (produção-like) — Fase 10.7
+
+Ambiente **idêntico a produção** (DEBUG=False, RS256, cookies `Secure`+HSTS, gateway com
+TLS, Celery assíncrono) com **dados separados**, para validar a leva 8→11 integrada antes
+do cutover. Coexiste com o dev na mesma máquina (projeto/containers/portas/banco próprios).
+Runbook + checklist de validação em [infra/staging/README.md](../infra/staging/README.md).
+
+```bash
+cp deploy/env/staging.env.example deploy/env/staging.env   # troque TODOS os TROQUE-* por segredos fortes
+bash infra/keys/generate.sh            # chaves RSA do JWT, se ainda não existirem
+bash infra/staging/up.sh               # gera o cert TLS, builda e sobe (https://localhost:8443/)
+bash infra/staging/seed.sh             # fixtures demo/acme (uma vez)
+bash infra/staging/validate.sh         # gate automático da leva 8→11 pelos E2E das fases
+```
+
 ## Rodar os serviços Python localmente
 
-> A plataforma tem **dois serviços Python**: o **ERP** ([backend/](../backend/)) e o **IAM**
+> A plataforma tem **dois serviços Python**: o **backend** ([backend/](../backend/)) e o **IAM**
 > ([iam/](../iam/)). Em **dev** eles compartilham o mesmo virtualenv `.venv` na raiz; em **produção**
 > cada um é isolado via Docker, com seu próprio `requirements.txt`.
 
 ```bash
 # 1. variáveis
-cp .env.example .env
+cp deploy/env/dev.env.example .env
 
 # 2. infra de dev
 docker compose up -d                   # postgres + redis
 
 # 3. virtualenv compartilhado (.venv na raiz)
 python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt        # deps do ERP
+.venv/bin/python -m pip install -r requirements.txt        # deps do backend
 .venv/bin/python -m pip install -r iam/requirements.txt    # deps do IAM
 
 # 4. migrar e rodar cada serviço
-cd backend && ../.venv/bin/python manage.py migrate && ../.venv/bin/python manage.py runserver        # ERP :8000
+cd backend && ../.venv/bin/python manage.py migrate && ../.venv/bin/python manage.py runserver        # backend :8000
 cd iam     && ../.venv/bin/python manage.py migrate && ../.venv/bin/python manage.py runserver 8001    # IAM :8001 (outro terminal)
 ```
 

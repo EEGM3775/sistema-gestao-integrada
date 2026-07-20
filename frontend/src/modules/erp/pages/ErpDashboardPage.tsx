@@ -1,8 +1,9 @@
 import { useMemo, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { Wallet, TrendingUp, TrendingDown, Scale, ArrowRight, ArrowDownCircle, ArrowUpCircle, FileText } from 'lucide-react'
+import { Wallet, TrendingUp, TrendingDown, Scale, ArrowRight, ArrowDownCircle, ArrowUpCircle, FileText, ScrollText, Lock } from 'lucide-react'
 import { useErpDashboard } from '../hooks/useErpDashboard'
 import { KpiCard } from '../components/shared/KpiCard'
+import { DivergenciasErpButton } from '../components/DivergenciasErpButton'
 import { FluxoCaixaChart } from '../components/charts/FluxoCaixaChart'
 import { AgingChart } from '../components/charts/AgingChart'
 import { formatBRL, apiDecimalToCents } from '@/utils/money'
@@ -20,6 +21,11 @@ const sumCents = (faixas: AgingFaixa[]) => faixas.reduce((acc, f) => acc + apiDe
 export default function ErpDashboardPage() {
   const { data, isLoading, isError, error } = useErpDashboard()
 
+  // Tem o módulo ERP mas não a permissão `erp.relatorio.view` → 403 no hub.
+  // Em vez do banner de erro cru, degrada amigavelmente: os atalhos de
+  // workspace acima seguem, só os indicadores consolidados ficam velados (F4).
+  const isForbidden = (error as { response?: { status?: number } } | null)?.response?.status === 403
+
   const kpis = useMemo(() => {
     if (!data) return null
     const aReceber = sumCents(data.agingContasAReceber)
@@ -34,18 +40,21 @@ export default function ErpDashboardPage() {
   return (
     <div className="px-6 py-8">
       {/* Cabeçalho */}
-      <div className="flex items-center gap-3 mb-6">
-        <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: '#dcfce7', color: 'var(--color-brand)' }}>
-          <Wallet size={22} />
+      <div className="flex items-center justify-between gap-3 mb-6">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: '#dcfce7', color: 'var(--color-brand)' }}>
+            <Wallet size={22} />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold" style={{ fontFamily: 'var(--font-heading)', color: 'var(--color-brand)' }}>
+              ERP Financeiro
+            </h1>
+            <p className="text-xs" style={{ fontFamily: 'var(--font-body)', color: 'var(--color-text-muted)' }}>
+              Visão consolidada do caixa, contas e documentos fiscais do tenant
+            </p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-xl font-bold" style={{ fontFamily: 'var(--font-heading)', color: 'var(--color-brand)' }}>
-            ERP Financeiro
-          </h1>
-          <p className="text-xs" style={{ fontFamily: 'var(--font-body)', color: 'var(--color-text-muted)' }}>
-            Visão consolidada do caixa, contas e documentos fiscais do tenant
-          </p>
-        </div>
+        <DivergenciasErpButton />
       </div>
 
       {/* Sub-rotas — workspaces de lançamento (D.1.1) */}
@@ -71,17 +80,42 @@ export default function ErpDashboardPage() {
           icon={<FileText size={20} />}
           accentBg="#e0f2fe" accentColor="#0369a1"
         />
+        <WorkspaceLinkCard
+          to="/app/erp/notas-fiscais"
+          label="Notas fiscais"
+          description="NFS-e emitidas (NFE.io), canceladas e notas recebidas de fornecedores: status, cancelamento e PDF/XML"
+          icon={<ScrollText size={20} />}
+          accentBg="#ede9fe" accentColor="#6d28d9"
+        />
       </div>
 
-      {isError && (
-        <div className="text-sm px-4 py-3 rounded-lg mb-4"
-          style={{ background: '#fff5f5', border: '1px solid #fed7d7', color: '#c53030', fontFamily: 'var(--font-body)' }}>
-          Não foi possível carregar os indicadores financeiros{error instanceof Error ? `: ${error.message}` : '.'}
+      {isForbidden ? (
+        <div className="rounded-xl px-5 py-6 flex items-start gap-3"
+          style={{ border: '1.5px solid #fde68a', background: '#fffbeb', fontFamily: 'var(--font-body)' }}>
+          <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: '#fef3c7', color: '#b45309' }}>
+            <Lock size={18} />
+          </div>
+          <div>
+            <h2 className="text-sm font-bold mb-1" style={{ fontFamily: 'var(--font-heading)', color: '#92400e' }}>
+              Indicadores financeiros indisponíveis
+            </h2>
+            <p className="text-xs" style={{ color: '#92400e', lineHeight: 1.5 }}>
+              Seu acesso não inclui a visão consolidada do caixa (permissão <span className="font-semibold">erp.relatorio.view</span>).
+              Os atalhos acima seguem disponíveis conforme seu acesso — fale com o administrador do tenant para liberar os indicadores.
+            </p>
+          </div>
         </div>
-      )}
+      ) : (
+        <>
+          {isError && (
+            <div className="text-sm px-4 py-3 rounded-lg mb-4"
+              style={{ background: '#fff5f5', border: '1px solid #fed7d7', color: '#c53030', fontFamily: 'var(--font-body)' }}>
+              Não foi possível carregar os indicadores financeiros{error instanceof Error ? `: ${error.message}` : '.'}
+            </div>
+          )}
 
-      {/* KPIs */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          {/* KPIs */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <KpiCard
           label="A receber (aging)"
           value={isLoading || !kpis ? '—' : formatBRL(kpis.aReceber)}
@@ -131,6 +165,8 @@ export default function ErpDashboardPage() {
           </ChartCard>
         </div>
       </div>
+        </>
+      )}
     </div>
   )
 }

@@ -504,7 +504,12 @@ COLUNA DIREITA (Tabs):
 - **`ErpDashboardPage`** (`/app/erp`, hub) ✅ — `KpiCard` (a receber/a pagar/saldo projetado/fluxo do
   mês) + `FluxoCaixaChart` (receitas x despesas mensais) + `AgingChart` (aging a receber/a pagar),
   todos sobre `useErpDashboard()` → `GET /api/erp/dashboard/` (cacheado, React Query); cards
-  `WorkspaceLinkCard` → `/app/erp/contas-a-{pagar,receber}`
+  `WorkspaceLinkCard` → `/app/erp/contas-a-{pagar,receber}`. No header, `DivergenciasErpButton` —
+  botão-alerta (colorido + contagem quando há divergências banco × Asaas) que abre modal com o
+  `DivergenciasAsaasPanel`; visível só com as permissões de usuário `erp.cobranca.view` + `cadastro.cliente.view`
+  (gate LGPD+escopo — `hasModule` não basta, é do tenant; reforçado no backend), documento mascarado sem
+  `cadastro.cliente_doc.view`. Sem `erp.relatorio.view`, os KPIs/gráficos degradam para um aviso amigável
+  (403 velado, F4)
 - **`ContasAPagarPage`/`ContasAReceberPage`** (`/app/erp/contas-a-{pagar,receber}`, rotas-irmãs) ✅ —
   arquétipo "Workspace de lista financeira" ([moduloerp.md §5.5](modulos/moduloerp.md#55-arquétipos-de-página-layouts-reutilizáveis)):
   `FilterBar`+`FinanceDataTable` (paginação/ordenação server-side) + `Sheet` lateral com 4 modos
@@ -595,6 +600,95 @@ Módulo completo. Rotas: `/app/rh` · `/app/rh/cargos` · `/app/rh/:id`.
 
 - Grade mensal de `CalendarEvent`
 - Eventos coloridos por tipo (obra, reunião, prazo financeiro)
+
+### 5.16 Plano e quotas (D24) — 📋 planejado
+
+O backend já **trava** a criação acima da quota do plano (402) e serve o medidor;
+falta a camada visual. O desenho abaixo é o contrato do frontend com o que já existe.
+
+**Princípio que organiza tudo:** o 402 tem de ser a **confirmação de algo já visível**, nunca a
+primeira notícia. Descobrir o limite depois de preencher um cadastro inteiro faz o produto parecer
+quebrado; descobrir antes faz o plano parecer pequeno — que é a leitura correta e a que vende
+upgrade. Daí a ordem de prioridade: **medidor → botão desabilitado → diálogo de upgrade**. Se só uma
+coisa for construída, que seja o medidor.
+
+#### 5.16.1 O contrato vindo do backend
+
+`GET /api/plano/` devolve plano vigente, medidores, próximo degrau e o catálogo inteiro:
+
+```jsonc
+{
+  "plano": { "slug": "free", "nome": "Free", "preco_mensal": 0, "publico": "..." },
+  "quotas": [
+    { "recurso": "obras", "rotulo": "obras", "limite": 2, "uso": 1,
+      "ilimitado": false, "restante": 1, "excedido": false, "fonte": "backend" },
+    { "recurso": "seats", "rotulo": "seats", "limite": 1, "uso": null,
+      "ilimitado": false, "restante": null, "excedido": false, "fonte": "iam" }
+  ],
+  "proximo_plano": { "slug": "essencial", "nome": "Essencial", "preco_mensal": 149 },
+  "catalogo": [ { "slug": "...", "nome": "...", "preco_mensal": 149, "quotas": { ... } } ]
+}
+```
+
+Três regras que não devem ser reinterpretadas na tela:
+
+- **Preço nunca é escrito no frontend.** Sai de `catalogo`, que vem de `payment/planos.py` — a mesma
+  tabela que a IAM usa para emitir os tetos. Um preço em código de frontend é um preço que vai
+  divergir da cobrança, e quem descobre a divergência é o cliente, na fatura.
+- **`limite: 0` ≠ `ilimitado`.** `0` significa "não incluído neste plano" (o `free` usa isso) e
+  `ilimitado: true` significa sem teto. Tratar os dois como "sem limite" mostraria como disponível
+  justamente o que o plano de entrada não vende.
+- **`uso: null` não é zero.** É o caso de `seats`, cuja `fonte` é `"iam"`: o backend não conta
+  usuários (o `Usuario` de lá é espelho JIT). A barra de seats se abastece de `GET /iam/usuarios/`,
+  ou mostra só o limite. Desenhar `null` como `0` diria ao cliente que ele tem todos os seats livres.
+
+#### 5.16.2 Tratamento global do 402
+
+O 402 chega de **qualquer** criação — quatro recursos no backend e o cadastro de usuário na IAM — e
+com **o mesmo corpo** nos dois serviços:
+
+```jsonc
+{ "detail": "…texto pronto para exibir…", "code": "quota_excedida",
+  "quota": "obras", "limite": 2, "uso": 2, "plano": "free" }
+```
+
+Por isso o tratamento é **um interceptor de resposta**, irmão do que já trata 401 em
+[`api/session.ts`](../frontend/src/api/session.ts) — e não um `catch` por formulário. Tratar por
+formulário significa repetir a lógica em cinco telas e esquecer na sexta, que é exatamente a tela
+nova que alguém vai escrever depois.
+
+O interceptor reconhece `code === "quota_excedida"`, abre o `UpgradeDialog` e **não** deixa o erro
+virar toast genérico. Ler `code`, nunca a string de `detail`: o texto muda, o código é contrato (é
+por isso que o backend devolve os dois).
+
+#### 5.16.3 Componentes
+
+| Componente | Papel |
+|---|---|
+| `usePlano()` | Hook sobre `GET /api/plano/`. Invalidado após criar/excluir qualquer recurso contado — senão o medidor mente até o F5. |
+| `QuotaMeter` | Barra uso/limite com rótulo. Estados: normal · atenção (≥80%) · esgotado. Trata `ilimitado` e `uso: null` sem inventar número. |
+| `QuotaBanner` | Aviso discreto no topo da listagem quando o recurso daquela tela está ≥80%. É o que transforma o 402 em confirmação. |
+| `UpgradeDialog` | Aberto pelo interceptor. Diz qual limite bateu, o uso atual, o plano vigente e o próximo com preço. Duas saídas: liberar espaço (link para a listagem) ou subir de plano. |
+| `NovoButton` desabilitado | Nas listagens dos 4 recursos contados: com `excedido`, o botão fica inativo com tooltip explicando — padrão de botão inativo já definido em [frontend-convencoes.md](frontend-convencoes.md). Evita a pior sequência possível, que é preencher tudo e perder no submit. |
+
+#### 5.16.4 Página `/app/admin/plano`
+
+Ao lado de `/app/admin/papeis` e `/app/admin/usuarios`, sob o mesmo guard de `is_tenant_admin`:
+
+- **Plano vigente** — nome, preço, público-alvo.
+- **Medidores** — um `QuotaMeter` por quota, os esgotados primeiro.
+- **Comparativo** — tabela do `catalogo`, plano atual destacado, quotas lado a lado.
+- **CTA de upgrade.**
+
+#### 5.16.5 O CTA enquanto não há checkout
+
+O autoserviço (landing → checkout → Asaas → provisionamento) é o **item 3** do faseamento do
+[monetizacao.md §10](arquitetura/monetizacao.md) e **não existe**. Até existir, o CTA abre um
+formulário de contato ou um `mailto` — e deve dizer isso com todas as letras ("solicitar upgrade",
+não "assinar agora"). Um botão que promete pagamento imediato e entrega um e-mail queima a conversão
+uma vez por cliente, e é a impressão que fica.
+
+Quando o checkout entrar, muda **só o destino do botão** — todo o resto desta seção continua valendo.
 
 ---
 
@@ -731,6 +825,7 @@ function useObra(obraId: number) {
 | Diário | `GET/POST /api/diario/diarios/` · `/api/diario/entradas/` · `/api/diario/documentos/` |
 | IA | `GET /api/ia/analises/` · `GET /api/ia/analises/:id/` |
 | Calendário | `GET/POST /api/calendar/events/` |
+| Plano/quotas | `GET /api/plano/` (plano vigente + medidores + catálogo). O **402** `quota_excedida` pode voltar de qualquer criação de empreendimento/obra/cliente/fornecedor e de `POST /iam/usuarios/` — ver §5.16 |
 
 ---
 
@@ -751,6 +846,8 @@ src/
 │   └── useFileUpload.ts              ✅ upload c/ progresso + download autenticado + config da API
 ├── components/
 │   ├── PrivateRoute.tsx              ✅ guard de autenticação
+│   ├── ModuleRoute.tsx               ✅ guard de entitlement de módulo (hasModule) — tela amigável se não contratado
+│   ├── AccessNotice.tsx              ✅ tela reutilizável de acesso negado (módulo/permissão)
 │   ├── layout/
 │   │   ├── LandingHeader.tsx         ✅ header fixo da landing (logo, nav, CTA)
 │   │   ├── LandingFooter.tsx         ✅ footer da landing
@@ -915,6 +1012,7 @@ aqui só a definição do escopo:
 | D | Módulos pagos — ERP `erp_financeiro` (D.1.x, sub-fases em [moduloerp.md §13](modulos/moduloerp.md#13-roadmap-em-sub-fases-fase-d1x)) · RH `rh` (D.2) · CRM `crm` (D.3) |
 | E | Extras — Drone wrapper iframe+SSO (E.1) · Calendário (E.2) · SCM/SIL/PDCA/DMS/APS/Maps (E.3, aguarda backend) |
 | F | Dashboard de KPIs real substitui o hub (F.1) |
+| G | Paywall — medidores de quota, tratamento global do 402 e página de plano (§5.16). Independe de A–F: o backend já trava e já serve o medidor. |
 
 ---
 

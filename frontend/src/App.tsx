@@ -1,9 +1,13 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import LandingPage from './pages/LandingPage'
 import LoginPage from './pages/LoginPage'
+import EsqueciSenhaPage from './pages/EsqueciSenhaPage'
+import RedefinirSenhaPage from './pages/RedefinirSenhaPage'
+import ConfirmarEmailPage from './pages/ConfirmarEmailPage'
 import AppShell from './components/layout/AppShell'
 import AppHomePage from './pages/app/AppHomePage'
 import PrivateRoute from './components/PrivateRoute'
+import ModuleRoute from './components/ModuleRoute'
 import EmpreendimentosListPage from './modules/empreendimentos/pages/EmpreendimentosListPage'
 import EmpreendimentoDetailPage from './modules/empreendimentos/pages/EmpreendimentoDetailPage'
 import ObrasListPage from './modules/obras/pages/ObrasListPage'
@@ -13,6 +17,7 @@ import ClienteDetailPage from './modules/clientes/pages/ClienteDetailPage'
 import FornecedoresListPage from './modules/fornecedores/pages/FornecedoresListPage'
 import FornecedorDetailPage from './modules/fornecedores/pages/FornecedorDetailPage'
 import DiarioObraPage from './modules/diario/pages/DiarioObraPage'
+import CalendarPage from './modules/calendar/pages/CalendarPage'
 import FuncionariosListPage from './modules/rh/pages/FuncionariosListPage'
 import FuncionarioDetailPage from './modules/rh/pages/FuncionarioDetailPage'
 import CargosPage from './modules/rh/pages/CargosPage'
@@ -28,6 +33,12 @@ function App() {
         {/* ── Públicas ── */}
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LoginPage />} />
+        {/* D11 — recuperação de conta. Públicas por necessidade: quem esqueceu a
+            senha não consegue se autenticar. Os caminhos batem com os links que
+            a IAM monta nos e-mails (FRONTEND_BASE_URL + estes paths). */}
+        <Route path="/esqueci-senha" element={<EsqueciSenhaPage />} />
+        <Route path="/redefinir-senha" element={<RedefinirSenhaPage />} />
+        <Route path="/confirmar-email" element={<ConfirmarEmailPage />} />
 
         {/* ── Área protegida (AppShell = sidebar + topbar + Outlet) ── */}
         <Route
@@ -60,10 +71,15 @@ function App() {
           {/* ── Diário de Obra & IA ── */}
           <Route path="diario" element={<DiarioObraPage />} />
 
-          {/* ── RH ── */}
-          <Route path="rh" element={<FuncionariosListPage />} />
-          <Route path="rh/cargos" element={<CargosPage />} />
-          <Route path="rh/:id" element={<FuncionarioDetailPage />} />
+          {/* ── Calendário (módulo base — sem entitlement) ── */}
+          <Route path="calendario" element={<CalendarPage />} />
+
+          {/* ── RH (entitlement `rh` — guard de módulo, F4) ── */}
+          <Route element={<ModuleRoute module="rh" />}>
+            <Route path="rh" element={<FuncionariosListPage />} />
+            <Route path="rh/cargos" element={<CargosPage />} />
+            <Route path="rh/:id" element={<FuncionarioDetailPage />} />
+          </Route>
 
           {/* ── Administração do tenant (papéis/personas + usuários) — guardado por is_tenant_admin ── */}
           <Route path="admin/papeis" element={<PersonasPage />} />

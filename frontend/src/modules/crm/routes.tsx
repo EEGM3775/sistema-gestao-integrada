@@ -1,5 +1,6 @@
 import { lazy, Suspense, type ReactNode } from 'react'
 import { Route } from 'react-router-dom'
+import ModuleRoute from '@/components/ModuleRoute'
 
 const CrmDashboardPage = lazy(() => import('./pages/CrmDashboardPage'))
 const LeadsPage = lazy(() => import('./pages/LeadsPage'))
@@ -20,14 +21,16 @@ function withCrmFallback(element: ReactNode) {
 }
 
 /**
- * Sub-rotas do CRM, registradas sob `/app/crm` em `App.tsx`.
+ * Sub-rotas do CRM, registradas sob `/app/crm` em `App.tsx`. Todas sob um
+ * `ModuleRoute` (F4): sem o entitlement `crm`, a navegação direta por URL cai
+ * numa tela amigável em vez de um 403 cru da API.
  */
 export const crmRoutes = (
-  <>
+  <Route element={<ModuleRoute module="crm" />}>
     <Route path="crm" element={withCrmFallback(<CrmDashboardPage />)} />
     <Route path="crm/leads" element={withCrmFallback(<LeadsPage />)} />
     <Route path="crm/accounts" element={withCrmFallback(<AccountsPage />)} />
     <Route path="crm/contacts" element={withCrmFallback(<ContactsPage />)} />
     <Route path="crm/opportunities" element={withCrmFallback(<OpportunitiesPage />)} />
-  </>
+  </Route>
 )

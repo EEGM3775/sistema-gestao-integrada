@@ -9,6 +9,7 @@ from .models import Usuario, LogAtividadeUsuario, ConfiguracaoArquivos
 from .permissions import IsDataAdminOrStaff
 from .tenancy import TenantScopedViewSetMixin
 from .serializers import UsuarioSerializer
+from . import upload_validation
 
 class UsuarioViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     """
@@ -33,22 +34,20 @@ class UsuarioViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
         serializer = self.get_serializer(request.user)
         return Response(serializer.data)
 
-# Perfil/Permissao saíram do ERP (Fase 6): a IAM é a autoridade de papéis e
-# permissões; o ERP os lê das claims do JWT (`request.user.iam_roles`). Os
+# Perfil/Permissao saíram do backend (Fase 6): a IAM é a autoridade de papéis e
+# permissões; o backend os lê das claims do JWT (`request.user.iam_roles`). Os
 # modelos locais nucleo.Perfil/Permissao ficam só como espelho legado.
 
 # LogAtividadeUsuarioViewSet removido na Fase 9.E: a trilha de auditoria sensível
 # é o AuditLog (GET /api/auditoria/, fail-closed). O LogAtividadeUsuario ficou
 # como telemetria operacional (Celery/microsserviços) — ver docstring do modelo.
 
-_DEFAULT_TIPOS = [
-    'application/pdf', 'image/jpeg', 'image/png',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-]
-
 class ConfiguracaoUploadView(APIView):
-    """Retorna a configuração de upload de arquivos para o tenant do usuário."""
+    """Retorna a configuração de upload de arquivos para o tenant do usuário.
+
+    A mesma config é imposta no servidor pela `UploadValidationMixin` (A4);
+    esta view apenas a expõe para o cliente adiantar a checagem na UI.
+    """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -59,10 +58,13 @@ class ConfiguracaoUploadView(APIView):
         if obj is None:
             obj = ConfiguracaoArquivos.objects.filter(tenant__isnull=True).first()
         if obj is None:
-            return Response({'max_tamanho_mb': 10, 'tipos_aceitos': _DEFAULT_TIPOS})
+            return Response({
+                'max_tamanho_mb': upload_validation.DEFAULT_MAX_MB,
+                'tipos_aceitos': upload_validation.DEFAULT_TIPOS,
+            })
         return Response({
             'max_tamanho_mb': obj.max_tamanho_mb,
-            'tipos_aceitos': obj.tipos_aceitos or _DEFAULT_TIPOS,
+            'tipos_aceitos': obj.tipos_aceitos or upload_validation.DEFAULT_TIPOS,
         })
 
 

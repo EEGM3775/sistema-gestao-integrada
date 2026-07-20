@@ -13,6 +13,8 @@ import logging
 import requests
 from django.conf import settings
 
+from nucleo.rate_limit import consumir
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,6 +37,11 @@ class AsaasClient:
         }
 
     def _request(self, method, path, **kwargs):
+        # Camada 2 (docs/arquitetura/rate-limiting.md): um token por CHAMADA real
+        # ao Asaas. Cada emissão tem custo no gateway, e o retry das tasks passa
+        # por aqui de novo — na view, uma ação conta 1 e pode virar 4 chamadas.
+        consumir("asaas")
+
         url = f"{self.base_url}{path}"
         response = requests.request(method, url, headers=self._headers(), timeout=20, **kwargs)
         try:

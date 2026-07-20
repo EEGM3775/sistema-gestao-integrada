@@ -1,0 +1,10 @@
+Olá, {{ nome }}.
+
+O administrador {{ autor }} alterou o e-mail da conta {{ conta }}:
+
+  de:   {{ email_antigo }}
+  para: {{ email_novo }}
+
+A partir de agora, a recuperação de senha desta conta passa a usar o endereço novo.
+
+Se essa mudança não foi combinada com você, fale com a administração da sua empresa imediatamente — quem controla o e-mail de uma conta consegue pedir a recuperação de senha dela.

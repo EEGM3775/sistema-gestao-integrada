@@ -1,0 +1,26 @@
+# ============================================================
+# Override de STAGING (Fase 10.7) — aplicado SOBRE deploy/compose/base.yml.
+#
+#   docker compose --env-file deploy/env/staging.env \
+#     -f deploy/compose/base.yml -f deploy/compose/staging.yml --profile full up -d
+#
+# (use o helper `bash infra/staging/up.sh`, que também gera o cert TLS).
+#
+# O staging é IDÊNTICO a produção: mesmas imagens, mesma topologia. Tudo que o
+# torna "produção" (DEBUG=False, RS256, cookies Secure, Celery assíncrono) vem do
+# deploy/env/staging.env. A ÚNICA diferença estrutural é o gateway terminar TLS na borda —
+# sem HTTPS, os cookies `Secure` do modo produção não voltariam e o fluxo de
+# sessão (10.6) não seria validável. O isolamento (projeto/containers/portas/
+# volumes/banco) vem de COMPOSE_PROJECT_NAME + SGI_PREFIX + portas no deploy/env/staging.env.
+# ============================================================
+
+services:
+  gateway:
+    volumes:
+      # Substitui a config do gateway (mesmo target → override) pela variante TLS,
+      # e adiciona os certs self-signed (target novo → montado a mais).
+      - ../../infra/gateway/nginx.staging.conf:/etc/nginx/nginx.conf:ro
+      - ../../infra/staging/certs:/etc/nginx/certs:ro
+    ports:
+      # A porta :80 (redirect) vem do base (${GATEWAY_PORT}); aqui publicamos o TLS.
+      - "${GATEWAY_HTTPS_PORT:-8443}:443"

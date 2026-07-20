@@ -30,7 +30,7 @@ Antes de documentar um campo, verificar se o modelo Python reflete o estado atua
 - Planta baixa: [docs/arquitetura.md](docs/arquitetura.md)
 - Roadmap (status de fases + plano): [docs/roadmap.md](docs/roadmap.md)
 - Pendências (achados de revisão abertos): [docs/pendencias.md](docs/pendencias.md)
-- Módulos do ERP em detalhe: [docs/modulos/](docs/modulos/)
+- Módulos do backend em detalhe: [docs/modulos/](docs/modulos/)
 - Frontend (React): [docs/frontend.md](docs/frontend.md) · convenções obrigatórias:
   [docs/frontend-convencoes.md](docs/frontend-convencoes.md)
 - Acesso e permissões: [docs/acesso-e-permissoes.md](docs/acesso-e-permissoes.md)

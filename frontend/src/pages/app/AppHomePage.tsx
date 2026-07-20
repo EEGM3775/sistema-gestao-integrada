@@ -69,7 +69,8 @@ const BASE_MODULES: ModuleDef[] = [
     icon: <CalendarDays size={28} />,
     color: '#fce7f3',
     description: 'Agenda integrada com eventos de obra, vencimentos e reuniões de toda a equipe.',
-    implemented: false,
+    implemented: true,
+    route: '/app/calendario',
   },
 ]
 

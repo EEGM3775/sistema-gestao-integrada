@@ -1,5 +1,5 @@
 """
-Utilitários de multi-tenancy do ERP.
+Utilitários de multi-tenancy do backend.
 
 - `TenantScopedModel`: base abstrata para entidades de negócio isoladas por
   tenant (adiciona o FK `tenant`).
@@ -44,6 +44,21 @@ def arm_rls_for_tenant(tenant_id):
     mesma transação (ex.: seed sob `rls_bypass()` num `TestCase`) vazaria."""
     _set_config("app.rls_bypass", "off")
     _set_config("app.current_tenant", str(tenant_id) if tenant_id else "")
+    # Observabilidade (Fase 10.1): este é o ponto único onde o tenant da
+    # requisição fica conhecido — registra-o no contexto de logging para que
+    # toda linha emitida depois carregue o `tenant_id` (correlação).
+    _set_log_tenant(tenant_id)
+
+
+def _set_log_tenant(tenant_id):
+    """Propaga o tenant para o contexto de logging sem acoplar a tenancy ao
+    módulo de observabilidade (import preguiçoso, tolerante)."""
+    try:
+        from .observability import set_tenant_id
+
+        set_tenant_id(tenant_id)
+    except Exception:  # noqa: BLE001 - logging nunca pode quebrar a tenancy
+        pass
 
 
 def arm_rls_bypass():

@@ -116,12 +116,23 @@ salvo aponta para outro cadastro). Dois consumidores:
    **`dar_baixa(origem='asaas')`** — o MESMO caminho único de baixa do D.1.1 (`Boleto`→`PAGO`,
    `ContaReceber`→`QUITADO`, lança `Transacao`). Pagamento repetido em título já quitado cai no guard
    `RevisaoBaixa`/`BaixaRequerRevisao` (fila do financeiro), exatamente como previsto no D.1.1. É assim
-   que o ERP sabe **quem já pagou**, sem moderação manual no caminho feliz.
+   que o backend sabe **quem já pagou**, sem moderação manual no caminho feliz.
+3. **Cancelamento:** `services.cancelar_cobranca_asaas(boleto)` faz `DELETE /payments/{id}` no Asaas,
+   marca `Boleto.CANCELADO` + `data_cancelamento` e guarda a resposta em `dados_retorno_api`
+   (acionado por `BoletoViewSet.cancelar`, síncrono). O webhook também reflete cancelamentos nascidos
+   fora do SGI: `EVENTOS_DE_CANCELAMENTO` (`PAYMENT_DELETED`) marca o boleto local como `CANCELADO`.
+4. **Erro visível:** se o Asaas recusa a emissão (4xx — ex.: CPF inválido), `gerar_cobranca_asaas`
+   persiste um `Boleto` status `ERRO` com o payload cru (códigos/mensagens) e levanta `CobrancaRejeitada`
+   (subclasse de `CobrancaBloqueada` → sem retry); 5xx/rede continua transitório (retry). O erro deixa de
+   morrer só na DLQ e aparece clicável na UI (lista de Boletos + na Conta a Receber).
+5. **Verificação ao vivo:** `services.verificar_cobranca_asaas(boleto)` (`GET /payments/{id}`) devolve o
+   estado atual do gateway ao abrir o documento — online = verdade do Asaas (status/URL atualizados);
+   offline = última versão local + `gateway_online=False` (a UI abre o guardado e avisa).
 
 ### Fora do escopo do MVP (slice 2 futura)
-`tasks.cancelar_cobranca` (`DELETE` no Asaas → `Boleto.CANCELADO`), `tasks.estornar` (`refund` → lança
-`Devolucao`), QR PIX e parcelamento (`installments`) — adiados por decisão do usuário (07/06/2026) para
-manter o MVP no golden path emitir+baixa.
+`tasks.estornar` (`refund` → lança `Devolucao`), QR PIX e parcelamento (`installments`) — adiados por
+decisão do usuário (07/06/2026) para manter o MVP no golden path emitir+baixa. Cancelamento de boleto:
+**entregue 18/07/2026** (botão na UI + webhook `PAYMENT_DELETED`).
 
 ### UI dedicada — telas de boletos (entregue 08/06/2026) ✅
 
@@ -209,6 +220,11 @@ script descartável, executado via `manage.py shell` e removido após confirmar)
 
 ### Reforço: teste com túnel real (ngrok) e sandbox Asaas de verdade — 08/06/2026 ✅
 
+> **Nota (andaime de dev):** o túnel **ngrok** + o proxy dedicado abaixo são de **desenvolvimento**,
+> não de produção. Em produção, o ingress público dos webhooks passa a ser uma solução profissional
+> (recomendado **Cloudflare Tunnel**) — ver [arquitetura/deploy-e-seguranca.md §3.1](../arquitetura/deploy-e-seguranca.md)
+> e a Fase **10.3.2** do [roadmap](../roadmap.md).
+
 A instalação automatizada do ngrok (via `snap`, e depois via download direto do binário) não foi
 possível durante a sessão — a primeira pediu senha sudo interativa e a segunda foi corretamente
 bloqueada pelas guardas de segurança do agente (fonte de download não autorizada pelo usuário). Em
@@ -271,13 +287,13 @@ dependências) que:
 
 1. **Só repassa `POST /api/erp/cobrancas/webhook/asaas/`** — qualquer outro caminho/método recebe
    `404` puro. Mesmo que a URL do túnel vaze, **nada além desse único endpoint fica alcançável** —
-   nem login, nem APIs do ERP/IAM, nada.
+   nem login, nem APIs do backend/IAM, nada.
 2. **Chamadas com o `asaas-access-token` correto passam direto** — é o tráfego real do Asaas,
    sem fricção nenhuma (mesmo guard que a view Django já valida — dupla checagem, mesma fonte de
    verdade `ASAAS_WEBHOOK_TOKEN`).
 3. **Chamadas sem o token correto caem num desafio HTTP Basic Auth genérico** (`401` +
    `WWW-Authenticate: Basic`, sem corpo, sem `Server: ... Django`) — um "muro de obscuridade": quem
-   ficar sondando essa URL (scanners de internet) não recebe nenhuma pista de que há um Django/DRF/ERP
+   ficar sondando essa URL (scanners de internet) não recebe nenhuma pista de que há um Django/DRF/backend
    por trás, só um 401 anônimo idêntico ao de qualquer servidor genérico.
 
 Aponte o ngrok para o proxy em vez do gateway: `ngrok http 8091` (em vez de `ngrok http 8090`) — o
@@ -309,7 +325,7 @@ Basic Auth errado → `401`; token do Asaas certo sem Basic Auth → repassa dir
 > Apontar o túnel direto para o gateway (`localhost:8090`) exporia **o gateway de desenvolvimento
 > inteiro na internet pública** — não só o endpoint do webhook:
 >
-> - **Login e todas as APIs do ERP/IAM/CRM/diário/etc.** — qualquer pessoa com a URL
+> - **Login e todas as APIs do backend/IAM/CRM/diário/etc.** — qualquer pessoa com a URL
 >   `*.ngrok-free.app` poderia tentar autenticar e navegar pelas rotas, igual a um usuário acessando
 >   de fora.
 > - **Credenciais reais do Asaas sandbox** (`ASAAS_API_KEY`/`ASAAS_WEBHOOK_TOKEN`) ficariam ao alcance
@@ -324,7 +340,7 @@ Basic Auth errado → `401`; token do Asaas certo sem Basic Auth → repassa dir
 > Com o **proxy dedicado** (`infra/ngrok-webhook-proxy/proxy.py`, `ngrok http 8091`) no lugar:
 >
 > - **Só um endpoint fica alcançável** — `POST /api/erp/cobrancas/webhook/asaas/`; login, demais APIs
->   do ERP/IAM/CRM/diário e tudo mais respondem `404` antes mesmo de chegar ao gateway. Mesmo que a
+>   do backend/IAM/CRM/diário e tudo mais respondem `404` antes mesmo de chegar ao gateway. Mesmo que a
 >   URL do túnel vaze, não há rota de navegação nem de autenticação por ali.
 > - **`ALLOWED_HOSTS` voltou a `localhost,127.0.0.1`, sem curinga** — o proxy refaz a chamada para
 >   `http://localhost:8090/...`, então o Django só enxerga `Host: localhost:8090` (já confiável em

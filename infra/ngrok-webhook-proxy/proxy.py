@@ -11,7 +11,7 @@ docs/modulos/funcoescobrancas.md, seção "Túnel ngrok persistente"):
   valida) passam direto — é o tráfego real do Asaas.
 - Chamadas SEM o token correto caem num desafio HTTP Basic Auth genérico:
   quem não tiver as credenciais recebe um 401 "Basic" anônimo, sem nenhuma
-  pista de que há um Django/DRF/ERP por trás (muro de obscuridade — reduz
+  pista de que há um Django/DRF/backend por trás (muro de obscuridade — reduz
   fingerprinting por scanners de internet).
 
 Aponte o ngrok para cá em vez do gateway inteiro:

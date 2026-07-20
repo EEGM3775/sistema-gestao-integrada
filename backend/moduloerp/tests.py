@@ -1,20 +1,23 @@
 """
 Testes da emissão de NF a partir de ContaReceber (achado L3): a NF herda o
 tenant do título e o snapshot do cliente traz os campos reais (`cpf_cnpj`,
-endereço completo com cidade/UF/CEP/IBGE) exigidos pelo funcoesnf.
+endereço completo com cidade/UF/CEP/IBGE) exigidos pela emissão de NFS-e.
+Também cobre a absorção do microsserviço Node `funcoesnf` (Fase 11.1): cliente
+REST da NFE.io (`nfe_client`) + Celery task (`moduloerp.tasks`).
 """
 from datetime import date
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
-import requests
+from django.test import TestCase, override_settings
 from rest_framework.test import APITestCase
 
 from clientes.models import Cliente
+from fornecedores.models import Fornecedor
 from nucleo.models import Tenant, Usuario
 from nucleo.tenancy import rls_bypass
 from .models import (
-    ContaReceber, NotaFiscalServico, StatusNFE,
+    ContaReceber, ContaPagar, LoteRemessa, NotaFiscalServico, StatusNFE,
     StatusConta, StatusRevisaoBaixa, RevisaoBaixa, Transacao, CentroCusto,
     Boleto,
 )
@@ -47,9 +50,8 @@ class EmitirNFSETests(APITestCase):
             tenant=cls.tenant,
         )
 
-    @patch("moduloerp.views.requests.post",
-           side_effect=requests.exceptions.ConnectionError("microserviço de NF fora do ar"))
-    def test_nfse_herda_tenant_e_snapshot_completo_do_cliente(self, _post):
+    @patch("moduloerp.views.emitir_nota_fiscal_servico.delay")
+    def test_nfse_herda_tenant_e_snapshot_completo_do_cliente(self, mock_delay):
         self.user.iam_modules = ["erp_financeiro"]
         self.user.iam_permissions = ["erp.nf.emitir"]  # verbo da action emitir-nfse
         self.client.force_authenticate(user=self.user)
@@ -59,13 +61,133 @@ class EmitirNFSETests(APITestCase):
             {}, format="json",
         )
 
-        self.assertEqual(resp.status_code, 201)
+        # Fase 11.1: a emissão é enfileirada (Celery task NFE.io), não mais 201 síncrono.
+        self.assertEqual(resp.status_code, 202)
         nf = NotaFiscalServico.objects.get()
+        self.assertEqual(nf.status, StatusNFE.PROCESSANDO)
+        mock_delay.assert_called_once_with(nf.id)  # a task recebeu o id da NF criada
         self.assertEqual(nf.tenant_id, self.tenant.id)
         self.assertEqual(nf.borrower_data["cpf_cnpj"], self.cliente.cpf_cnpj)
         self.assertEqual(nf.borrower_data["nome_completo"], self.cliente.nome_completo)
         for campo in ("cidade", "estado", "cep", "cidade_ibge"):
             self.assertEqual(nf.borrower_data[campo], getattr(self.cliente, campo))
+
+
+class NFeClientTests(TestCase):
+    """Cliente REST da NFE.io (Fase 11.1): payload, normalização e classificação de erro."""
+
+    def test_montar_payload_nfse_deriva_tipo_e_endereco(self):
+        from moduloerp.nfe_client import montar_payload_nfse
+
+        payload = montar_payload_nfse(
+            city_service_code="010701", description="Serviço",
+            services_amount=Decimal("1500.00"),
+            borrower_data={
+                "cpf_cnpj": "12345678000199", "nome_completo": "ACME LTDA",
+                "email": "acme@ex.com", "cep": "80000-000", "cidade_ibge": "4106902",
+                "cidade": "Curitiba", "estado": "pr", "endereco": "Rua X", "bairro": "Centro",
+            },
+        )
+        self.assertEqual(payload["servicesAmount"], 1500.0)
+        self.assertEqual(payload["borrower"]["type"], "LegalEntity")  # 14 dígitos
+        self.assertEqual(payload["borrower"]["federalTaxNumber"], 12345678000199)
+        self.assertEqual(payload["borrower"]["address"]["postalCode"], "80000000")
+        self.assertEqual(payload["borrower"]["address"]["state"], "PR")
+        self.assertEqual(payload["borrower"]["address"]["city"]["code"], "4106902")
+
+    def test_montar_payload_sem_dados_essenciais_e_erro_permanente(self):
+        from moduloerp.nfe_client import montar_payload_nfse, NFeErro
+
+        with self.assertRaises(NFeErro):
+            montar_payload_nfse(city_service_code="1", description="x",
+                                services_amount=Decimal("1"), borrower_data={"cpf_cnpj": ""})
+
+    @override_settings(NFE_IO_API_KEY="k", NFE_IO_COMPANY_ID="c")
+    @patch("moduloerp.nfe_client.requests.request")
+    def test_5xx_e_indisponivel_e_4xx_e_permanente(self, mock_req):
+        from moduloerp.nfe_client import NFeClient, NFeIndisponivel, NFeErro
+
+        resp = MagicMock(); resp.status_code = 503; resp.ok = False; resp.content = b""; resp.text = "down"
+        mock_req.return_value = resp
+        with self.assertRaises(NFeIndisponivel):
+            NFeClient().consultar_nfse("inv-1")
+
+        resp2 = MagicMock(); resp2.status_code = 422; resp2.ok = False
+        resp2.content = b'{"message": "cnpj invalido"}'; resp2.json.return_value = {"message": "cnpj invalido"}
+        mock_req.return_value = resp2
+        with self.assertRaises(NFeErro):
+            NFeClient().consultar_nfse("inv-1")
+
+    @override_settings(NFE_IO_API_KEY="", NFE_IO_COMPANY_ID="")
+    def test_sem_credencial_e_indisponivel(self):
+        from moduloerp.nfe_client import NFeClient, NFeIndisponivel
+
+        with self.assertRaises(NFeIndisponivel):
+            NFeClient().emitir_nfse({})
+
+    @override_settings(NFE_IO_API_KEY="k", NFE_IO_COMPANY_ID="c")
+    @patch("moduloerp.nfe_client.requests.get")
+    def test_resolver_url_arquivo_segue_o_302(self, mock_get):
+        # A NFE.io responde 302 no /pdf|/xml → o método devolve o Location (blob assinado).
+        from moduloerp.nfe_client import NFeClient
+
+        resp = MagicMock(); resp.is_redirect = True; resp.status_code = 302
+        resp.headers = {"Location": "https://api.nfe.io/v1/blob/download?b=x&s=y"}
+        mock_get.return_value = resp
+        self.assertEqual(
+            NFeClient().resolver_url_arquivo("inv-1", "pdf"),
+            "https://api.nfe.io/v1/blob/download?b=x&s=y",
+        )
+
+    @override_settings(NFE_IO_API_KEY="", NFE_IO_COMPANY_ID="")
+    def test_resolver_url_arquivo_sem_credencial_e_none(self):
+        from moduloerp.nfe_client import NFeClient
+        self.assertIsNone(NFeClient().resolver_url_arquivo("inv-1", "pdf"))
+
+
+class EmitirNFSETaskTests(TestCase):
+    """Celery task de emissão de NFS-e (Fase 11.1) — sucesso e falhas, cliente mockado."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.tenant = Tenant.objects.create(slug="task-nf", nome="Empresa Task")
+        cls.nf = NotaFiscalServico.objects.create(
+            tenant=cls.tenant, city_service_code="010701", description="Serviço",
+            services_amount=Decimal("1000"),
+            borrower_data={"cpf_cnpj": "11111111111", "nome_completo": "Cliente",
+                           "cep": "80000000", "cidade_ibge": "4106902", "cidade": "Curitiba",
+                           "estado": "PR"},
+        )
+
+    @patch("moduloerp.tasks._aplicar_retorno")
+    @patch("moduloerp.nfe_client.NFeClient.emitir_nfse")
+    def test_emissao_sucesso_chama_cliente_e_aplica_retorno(self, mock_emitir, mock_aplicar):
+        from moduloerp.tasks import emitir_nota_fiscal_servico
+
+        mock_emitir.return_value = {"nfe_io_id": "inv-9", "status": "Issued", "full_response": {}}
+        emitir_nota_fiscal_servico.apply(kwargs={"nf_id": self.nf.id})
+
+        self.assertTrue(mock_emitir.called)
+        self.assertTrue(mock_aplicar.called)  # o retorno normalizado foi gravado
+
+    @patch("moduloerp.nfe_client.NFeClient.emitir_nfse")
+    def test_erro_permanente_marca_erro_sem_retry(self, mock_emitir):
+        from moduloerp.tasks import emitir_nota_fiscal_servico
+        from moduloerp.nfe_client import NFeErro
+
+        mock_emitir.side_effect = NFeErro("cnpj invalido")
+        emitir_nota_fiscal_servico.apply(kwargs={"nf_id": self.nf.id})
+
+        with rls_bypass():
+            self.nf.refresh_from_db()
+        self.assertEqual(self.nf.status, StatusNFE.ERRO)
+        self.assertEqual(mock_emitir.call_count, 1)  # permanente: não repete
+
+    def test_nf_inexistente_e_noop(self):
+        from moduloerp.tasks import emitir_nota_fiscal_servico
+
+        # Não levanta e não cria nada — apenas loga e retorna.
+        emitir_nota_fiscal_servico.apply(kwargs={"nf_id": 999999})
 
 
 class S1TenantIsolationAPIViewTests(APITestCase):
@@ -429,3 +551,135 @@ class D7NfApiViewPermissionTests(APITestCase):
         with rls_bypass():
             self.nf.refresh_from_db()
         self.assertEqual(self.nf.status, StatusNFE.EMITIDA)
+
+
+class L9LoteRemessaTests(APITestCase):
+    """
+    Achado L9: `gerar-lote-remessa` somava o **valor cheio** dos títulos e
+    aceitava quitados/cancelados e títulos já em outro lote — inflando o lote e
+    remetendo ao banco valor que não é mais devido. Correção: soma o saldo em
+    aberto, filtra status e exclui os já vinculados a um lote ativo.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.tenant = Tenant.objects.create(slug="fin-l9", nome="Empresa L9")
+        cls.user = Usuario.objects.create(username="fin_l9", tenant=cls.tenant)
+        with rls_bypass():
+            cls.fornecedor = Fornecedor.objects.create(
+                tenant=cls.tenant, razao_social="Fornecedor L9", cnpj="11222333000181",
+            )
+
+    def setUp(self):
+        self.user.iam_modules = ["erp_financeiro"]
+        self.user.iam_permissions = ["erp.conta_pagar.view", "erp.lote_remessa.create"]
+        self.client.force_authenticate(user=self.user)
+
+    def _conta(self, valor, valor_pago="0", status=StatusConta.ABERTO):
+        with rls_bypass():
+            return ContaPagar.objects.create(
+                tenant=self.tenant, fornecedor=self.fornecedor, descricao="Pagar L9",
+                valor=Decimal(valor), valor_pago=Decimal(valor_pago), status=status,
+                data_vencimento=date(2026, 8, 1),
+            )
+
+    def _gerar_lote(self, ids, **extra):
+        return self.client.post(
+            "/api/erp/contas-a-pagar/gerar-lote-remessa/",
+            {"conta_pagar_ids": ids, **extra}, format="json",
+        )
+
+    def test_valor_total_usa_saldo_em_aberto_nao_o_valor_cheio(self):
+        # Título de 1000 com 300 já pagos → o lote deve remeter só 700.
+        conta = self._conta("1000", valor_pago="300", status=StatusConta.PARCIAL)
+        resp = self._gerar_lote([conta.conta_pagar_id])
+        self.assertEqual(resp.status_code, 201, resp.content)
+        self.assertEqual(Decimal(resp.json()["valor_total"]), Decimal("700.00"))
+        self.assertEqual(resp.json()["ignorados"], [])
+
+    def test_ignora_quitados_e_cancelados(self):
+        aberto = self._conta("500")
+        quitado = self._conta("1000", valor_pago="1000", status=StatusConta.QUITADO)
+        cancelado = self._conta("200", status=StatusConta.CANCELADO)
+        resp = self._gerar_lote([aberto.conta_pagar_id, quitado.conta_pagar_id, cancelado.conta_pagar_id])
+        self.assertEqual(resp.status_code, 201, resp.content)
+        self.assertEqual(Decimal(resp.json()["valor_total"]), Decimal("500.00"))
+        self.assertCountEqual(
+            resp.json()["ignorados"], [quitado.conta_pagar_id, cancelado.conta_pagar_id],
+        )
+        with rls_bypass():
+            lote = LoteRemessa.objects.get(pk=resp.json()["lote_id"])
+            self.assertEqual(list(lote.contas_pagar.values_list("conta_pagar_id", flat=True)), [aberto.conta_pagar_id])
+
+    def test_exclui_titulo_ja_em_lote_ativo(self):
+        conta = self._conta("500")
+        primeiro = self._gerar_lote([conta.conta_pagar_id])
+        self.assertEqual(primeiro.status_code, 201, primeiro.content)
+        # Segundo lote com o mesmo título já vinculado a um lote GERADO → nada elegível.
+        segundo = self._gerar_lote([conta.conta_pagar_id])
+        self.assertEqual(segundo.status_code, 400, segundo.content)
+
+    def test_lote_cancelado_libera_o_titulo(self):
+        conta = self._conta("500")
+        primeiro = self._gerar_lote([conta.conta_pagar_id])
+        self.assertEqual(primeiro.status_code, 201, primeiro.content)
+        with rls_bypass():
+            lote = LoteRemessa.objects.get(pk=primeiro.json()["lote_id"])
+            lote.status = LoteRemessa.StatusLote.CANCELADO
+            lote.save(update_fields=["status"])
+        # Lote anterior cancelado → o título volta a ser elegível.
+        segundo = self._gerar_lote([conta.conta_pagar_id])
+        self.assertEqual(segundo.status_code, 201, segundo.content)
+        self.assertEqual(Decimal(segundo.json()["valor_total"]), Decimal("500.00"))
+
+
+class CancelarNfseTests(APITestCase):
+    """
+    D.1.3 — cancelamento de NFS-e: a action `cancelar` exige `erp.nf.cancelar`,
+    só aceita NF **emitida** com `nfe_io_id` e **enfileira** a task (não chama a
+    NFE.io na thread do request).
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.tenant = Tenant.objects.create(slug="nf-cancel", nome="Empresa Cancel")
+        cls.user = Usuario.objects.create(username="fiscal_cancel", tenant=cls.tenant)
+
+    def _auth(self, permissions):
+        self.user.iam_modules = ["erp_financeiro"]
+        self.user.iam_permissions = list(permissions)
+        self.client.force_authenticate(user=self.user)
+
+    def _nf(self, status=StatusNFE.EMITIDA, nfe_io_id="inv-1"):
+        with rls_bypass():
+            return NotaFiscalServico.objects.create(
+                tenant=self.tenant, city_service_code="101", description="Serviço",
+                services_amount=Decimal("500"), borrower_data={"cpf_cnpj": "11111111111"},
+                status=status, nfe_io_id=nfe_io_id,
+            )
+
+    def test_sem_permissao_cancelar_nega(self):
+        self._auth(["erp.nf.view"])  # ver não autoriza cancelar
+        nf = self._nf()
+        resp = self.client.post(f"/api/erp/notas-fiscais-servico/{nf.id}/cancelar/")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_nf_sem_nfe_io_id_e_400(self):
+        self._auth(["erp.nf.cancelar"])
+        nf = self._nf(nfe_io_id=None)
+        resp = self.client.post(f"/api/erp/notas-fiscais-servico/{nf.id}/cancelar/")
+        self.assertEqual(resp.status_code, 400, resp.content)
+
+    def test_nf_nao_emitida_e_400(self):
+        self._auth(["erp.nf.cancelar"])
+        nf = self._nf(status=StatusNFE.AGUARDANDO)
+        resp = self.client.post(f"/api/erp/notas-fiscais-servico/{nf.id}/cancelar/")
+        self.assertEqual(resp.status_code, 400, resp.content)
+
+    @patch("moduloerp.views.cancelar_nota_fiscal_servico")
+    def test_emitida_enfileira_cancelamento(self, mock_task):
+        self._auth(["erp.nf.cancelar"])
+        nf = self._nf()
+        resp = self.client.post(f"/api/erp/notas-fiscais-servico/{nf.id}/cancelar/")
+        self.assertEqual(resp.status_code, 202, resp.content)
+        mock_task.delay.assert_called_once_with(nf.id)

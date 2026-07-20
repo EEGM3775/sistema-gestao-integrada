@@ -4,7 +4,7 @@ Pré: `docker compose --profile full up -d` e o seed da IAM (demo/semdrone).
 """
 import json, urllib.request, urllib.error
 
-GW = "http://localhost:8090"
+GW = __import__("os").environ.get("SGI_GW", "http://localhost:8090")  # SGI_GW aponta ao staging (10.7)
 
 def req(method, path, token=None, body=None):
     data = json.dumps(body).encode() if body is not None else None
@@ -40,7 +40,7 @@ print("  sem token        ->", req("GET", "/odm-api/projects")[0], "(401)")
 print("  demo (tem drone) ->", req("GET", "/odm-api/projects", tok_demo)[0], "(200)")
 print("  semdrone (sem)   ->", req("GET", "/odm-api/projects", tok_sem)[0], "(403)")
 
-print("== ERP como resource server da IAM (/api) ==")
+print("== backend como resource server da IAM (/api) ==")
 print("  sem token        -> /api/clientes/ ->", req("GET", "/api/clientes/")[0], "(401)")
 print("  demo (token IAM) -> /api/clientes/ ->", req("GET", "/api/clientes/", tok_demo)[0], "(200)")
 

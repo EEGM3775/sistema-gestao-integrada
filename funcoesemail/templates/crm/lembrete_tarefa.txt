@@ -1,0 +1,5 @@
+Olá, {{ nome }}!
+
+A tarefa "{{ assunto }}" está com o vencimento próximo: {{ vencimento }}.
+
+Notas: {{ notas }}

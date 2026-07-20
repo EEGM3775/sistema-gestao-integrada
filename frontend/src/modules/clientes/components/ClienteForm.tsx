@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { X } from 'lucide-react'
 import type { Cliente, ClienteFormData, EstadoCivil } from '@/types'
-import type { DivergenciaAsaas } from '../services/clientesService'
-import { DivergenciasAsaasPanel } from './DivergenciasAsaasPanel'
 import { FieldError, FormErrorBanner, parseApiErrors, type FieldErrors } from '@/utils/formErrors'
 import { maskCPFCNPJ, validateCPFCNPJ } from '@/utils/masks'
 import { minNascISO, maxTodayISO, validateISO_Nasc } from '@/utils/dates'
@@ -12,11 +10,6 @@ interface Props {
   onClose: () => void
   onSave: (data: ClienteFormData) => Promise<void>
   initial?: Cliente | null
-  /** Divergências banco × Asaas (auditadas ao abrir "Novo Cliente") — só no cadastro. */
-  divergencias?: DivergenciaAsaas[]
-  divergLoading?: boolean
-  /** Mensagem quando a auditoria não pôde rodar — evita o painel vazio silencioso (D3). */
-  divergError?: string | null
 }
 
 const ESTADO_CIVIL_OPTIONS: { value: EstadoCivil | ''; label: string }[] = [
@@ -82,7 +75,7 @@ const SectionTitle: React.FC<{ children: React.ReactNode }> = ({ children }) => 
 )
 
 
-const ClienteForm: React.FC<Props> = ({ open, onClose, onSave, initial, divergencias = [], divergLoading = false, divergError = null }) => {
+const ClienteForm: React.FC<Props> = ({ open, onClose, onSave, initial }) => {
   const [form, setForm]         = useState<ClienteFormData>(EMPTY)
   const [saving, setSaving]         = useState(false)
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
@@ -138,15 +131,6 @@ const ClienteForm: React.FC<Props> = ({ open, onClose, onSave, initial, divergen
 
         {/* Body */}
         <form id="cliente-form" onSubmit={handleSubmit} className="flex-1 overflow-y-auto px-6 py-4">
-
-          {!initial && (
-            <DivergenciasAsaasPanel
-              className="mb-4"
-              loading={divergLoading}
-              divergencias={divergencias}
-              error={divergError}
-            />
-          )}
 
           <SectionTitle>Dados Pessoais</SectionTitle>
 

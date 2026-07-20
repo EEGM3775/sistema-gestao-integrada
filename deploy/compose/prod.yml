@@ -1,0 +1,64 @@
+# ============================================================
+# Override de PRODUÇÃO — ESQUELETO, NUNCA EXECUTADO.
+#
+#   >>> ESTE ARQUIVO NÃO FOI VALIDADO CONTRA NENHUM AMBIENTE REAL. <<<
+#
+# Existe para (a) deixar explícito o contraste dev / staging / produção que hoje
+# só vivia na cabeça de quem escreveu, e (b) servir de checklist de cutover. O
+# ambiente validado mais próximo de produção é o STAGING (deploy/compose/staging.yml,
+# gate `infra/staging/validate.sh` 6/6) — comece por ele.
+#
+# Premissa central: em produção, **banco e Redis são serviços gerenciados**, não
+# containers. Por isso `postgres` e `redis` NÃO sobem aqui, e os endereços vêm do
+# deploy/env/prod.env. Rodar o banco de produção como container deste compose
+# (volume local, sem PITR, sem réplica) é o que a Fase 10.3 quer evitar.
+#
+# Antes do primeiro uso, resolver:
+#   - segredos fora de arquivo .env (Vault / Secrets Manager) — Fase 10.3
+#   - ingress dos webhooks sem ngrok (Cloudflare Tunnel) — Fase 10.3.2
+#   - backup/PITR + ensaio de restore — Fase 10.3
+#   - imagens versionadas por tag (não `build:`) — Fase 10.5.3
+# ============================================================
+
+services:
+  # --- Não existem em produção: são gerenciados fora do compose ---------------
+  # postgres / redis: ver DB_HOST e REDIS_URL no deploy/env/prod.env.
+  # mailpit: andaime de dev; produção usa SMTP/ESP real (MAIL_HOST).
+
+  iam:
+    # Em produção a imagem vem do registry (tag imutável), não de build local.
+    # image: ${REGISTRY}/sgi-iam:${TAG}
+    environment:
+      IAM_DEBUG: "False"
+      # TLS obrigatório no banco: o achado D14 era exatamente isto ser impossível.
+      # `verify-full` exige a CA em DB_SSLROOTCERT.
+      DB_SSLMODE: ${DB_SSLMODE:-verify-full}
+    restart: always
+
+  erp:
+    # image: ${REGISTRY}/sgi-backend:${TAG}
+    environment:
+      DEBUG: "False"
+      DB_SSLMODE: ${DB_SSLMODE:-verify-full}
+      # Produção emite cobrança de verdade.
+      ASAAS_BASE_URL: ${ASAAS_BASE_URL:-https://api.asaas.com/v3}
+    restart: always
+
+  worker:
+    environment:
+      DEBUG: "False"
+      DB_SSLMODE: ${DB_SSLMODE:-verify-full}
+      ASAAS_BASE_URL: ${ASAAS_BASE_URL:-https://api.asaas.com/v3}
+    restart: always
+
+  beat:
+    environment:
+      DEBUG: "False"
+      DB_SSLMODE: ${DB_SSLMODE:-verify-full}
+    restart: always
+
+  gateway:
+    volumes:
+      # Certificado real (ACME/Let's Encrypt ou o do LB), não o self-signed do staging.
+      - ../../infra/gateway/nginx.staging.conf:/etc/nginx/nginx.conf:ro
+    restart: always

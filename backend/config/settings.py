@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 import os
+import sys
 from dotenv import load_dotenv
 from django.utils.translation import gettext_lazy as _
 
@@ -20,6 +21,14 @@ load_dotenv() # Carrega variáveis do arquivo .env
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# `funcoesemail` (textos de e-mail) e `payment` (planos e quotas — D24) são
+# pacotes COMPARTILHADOS na raiz do repositório, importados também pela IAM, e
+# não apps deste serviço. Na imagem Docker os dois são copiados para dentro de
+# /app e o import funciona direto; rodando local (manage.py a partir de backend/)
+# a raiz não está no sys.path, então a acrescentamos.
+if (BASE_DIR.parent / 'funcoesemail').is_dir():
+    sys.path.insert(0, str(BASE_DIR.parent))
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
@@ -30,6 +39,11 @@ from django.core.exceptions import ImproperlyConfigured
 # PRODUÇÃO e se recusa a subir sem configuração explícita, em vez de subir
 # silenciosamente com segredos conhecidos e stack traces expostos.
 DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
+
+# Rodando sob `manage.py test`. Usado adiante para tornar a suíte INDEPENDENTE do
+# ambiente da máquina (cache isolada, throttle desligado, Celery in-process) —
+# senão o resultado dos testes muda conforme o .env de cada desenvolvedor.
+TESTING = 'test' in sys.argv
 
 
 def _config(name, dev_default):
@@ -62,6 +76,12 @@ if not DEBUG:
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
     SECURE_SSL_REDIRECT = os.getenv('SECURE_SSL_REDIRECT', 'False').lower() == 'true'
+    # O gateway (nginx) termina o TLS e faz o redirect http→https; ligar o
+    # SECURE_SSL_REDIRECT aqui causaria loop. Silenciamos só esse item do
+    # `check --deploy` (security.W008) — desvio arquitetural intencional — para
+    # o gate de CI (Fase 10.5.1) rodar com --fail-level WARNING sem falso positivo.
+    if not SECURE_SSL_REDIRECT:
+        SILENCED_SYSTEM_CHECKS = ['security.W008']
 
 # Application definition
 
@@ -78,6 +98,7 @@ INSTALLED_APPS = [
     "funcoescobrancas.apps.FuncoesCobrancasConfig",
     "moduloerp.apps.ModuloerpConfig",
     "modulocrm.apps.ModulocrmConfig",
+    "funcoeswhatsapp.apps.FuncoesWhatsappConfig",
     "modulocalendar.apps.ModulocalendarConfig",
     "moduloapi.apps.ModuloApiConfig",
     # Módulos planejados (placeholder com contrato de entitlement aplicado)
@@ -107,6 +128,9 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    # Observabilidade (Fase 10.1): request_id + timing + log de acesso + métricas.
+    # No topo para medir a requisição inteira (inclusive os demais middlewares).
+    "nucleo.middleware.ObservabilityMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     'corsheaders.middleware.CorsMiddleware',
@@ -165,7 +189,15 @@ DATABASES = {
         'ATOMIC_REQUESTS': True,
         'OPTIONS': {
             # TLS obrigatório em produção; em dev (localhost) use 'prefer'.
+            # `verify-full` (recomendado com Postgres gerenciado) exige a CA em
+            # DB_SSLROOTCERT — sem ela o modo cai em erro de verificação, não em
+            # conexão insegura silenciosa.
             'sslmode': os.getenv('DB_SSLMODE', 'prefer'),
+            **(
+                {'sslrootcert': os.getenv('DB_SSLROOTCERT')}
+                if os.getenv('DB_SSLROOTCERT')
+                else {}
+            ),
         },
     }
 }
@@ -248,10 +280,38 @@ CORS_ALLOW_HEADERS = [
     "x-requested-with",
 ]
 
+# --- D23: o teto do usuário DERIVA do teto da empresa ------------------------
+# Prática de mercado para SaaS multi-tenant: o limite individual é uma fração do
+# limite da empresa, não um número solto. Solto, ele mente nas duas pontas — 20
+# funcionários × 3000/h dão 60.000/h à empresa sem que ninguém tenha declarado
+# isso, e uma empresa de 3 pessoas fica com teto efetivo 7× menor sem motivo.
+# `THROTTLE_USER` continua existindo como escape hatch: definido no ambiente,
+# vence a derivação (para calibrar um caso específico sem mexer no teto da
+# empresa). A fração default (5%) preserva exatamente o teto de usuário vigente
+# antes do D23 — o eixo novo é somado, nenhum limite existente foi afrouxado.
+THROTTLE_TENANT = os.getenv('THROTTLE_TENANT', '60000/hour')
+
+
+def _fracao_do_teto(taxa, fracao):
+    """'60000/hour' + 0.05 → '3000/hour'. Formato do DRF: "N/periodo"."""
+    try:
+        quantidade, periodo = taxa.split('/')
+        derivado = max(1, int(float(quantidade) * fracao))
+        return f'{derivado}/{periodo}'
+    except (ValueError, AttributeError):
+        # Taxa mal formada no ambiente: o DRF é quem deve reclamar dela, com a
+        # mensagem dele. Silenciar aqui esconderia o erro de configuração.
+        return taxa
+
+
+THROTTLE_USER = os.getenv('THROTTLE_USER') or _fracao_do_teto(
+    THROTTLE_TENANT, float(os.getenv('THROTTLE_USER_FRACAO', '0.05'))
+)
+
 # REST Framework Configuration
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        # ERP como resource server: valida o JWT emitido pela IAM e
+        # backend como resource server: valida o JWT emitido pela IAM e
         # provisiona (JIT) o espelho local de tenant/usuário.
         'nucleo.authentication.IamJWTAuthentication',
         'rest_framework.authentication.SessionAuthentication',
@@ -268,13 +328,52 @@ REST_FRAMEWORK = {
         'rest_framework.parsers.MultiPartParser',
         'rest_framework.parsers.FormParser',
     ],
+    # S8 — teto de requisições. Até aqui só o login tinha limite (nginx), então
+    # qualquer credencial válida podia varrer a API à vontade: enumerar recursos,
+    # forçar relatório caro em laço, ou queimar cota de Asaas/NFE.io por
+    # repetição. `ScopedRateThrottle` fica disponível para endpoints que
+    # precisem de teto próprio (`throttle_scope` na view).
+    # D23 — eixo TENANT somado aos de IP e usuário (nucleo/throttling.py). As três
+    # classes locais são as do DRF + fail-open ruidoso: sem isso, Redis fora do ar
+    # vira 500 em toda requisição (django_redis devolve None e o DRF insere na
+    # lista) — o teto derrubaria o produto que existe para proteger.
+    'DEFAULT_THROTTLE_CLASSES': [
+        'nucleo.throttling.AnonimoRateThrottle',
+        'nucleo.throttling.UsuarioRateThrottle',
+        'nucleo.throttling.TenantRateThrottle',
+        'nucleo.throttling.EscopoRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        # Anônimo é quase tudo bloqueado por autenticação; o teto baixo serve
+        # contra varredura dos poucos endpoints públicos.
+        'anon': os.getenv('THROTTLE_ANON', '120/min'),
+        # Teto da EMPRESA (D23) — o eixo que faltava. Balde compartilhado por
+        # todos os usuários do tenant: é o que impede que uma empresa grande
+        # degrade a experiência das outras (noisy neighbor).
+        'tenant': THROTTLE_TENANT,
+        # Fração do teto da empresa, NÃO um valor independente (D23): um usuário
+        # sozinho não consome mais que `THROTTLE_USER_FRACAO` da cota dela.
+        # Folgado de propósito: uma tela do ERP dispara várias chamadas e os
+        # roteiros E2E fazem dezenas em sequência. É teto contra abuso, não
+        # controle de vazão — apertar isto sem medir gera 429 no uso legítimo.
+        'user': THROTTLE_USER,
+        # Escopos nomeados: verbos caros ou sensíveis (relatório consolidado,
+        # emissão de NF, geração de cobrança) podem declarar `throttle_scope`.
+        'relatorio': os.getenv('THROTTLE_RELATORIO', '120/hour'),
+        'integracao_externa': os.getenv('THROTTLE_INTEGRACAO', '300/hour'),
+    },
+    # Ver iam/iam_project/settings.py: sem NUM_PROXIES o DRF usa a cadeia inteira
+    # do X-Forwarded-For, e como o gateway ACRESCENTA o IP real ao header enviado
+    # pelo cliente, um XFF falso rotativo dava um balde de throttle novo a cada
+    # requisição — teto por IP contornável.
+    'NUM_PROXIES': int(os.getenv('NUM_PROXIES', '1')),
 }
 
 # JWT Configuration
 from datetime import timedelta
 
 # Validação do JWT da IAM. Fase 5: se houver chave pública RSA, valida RS256
-# (assimétrico — o ERP NÃO conhece a privada, só pode validar, nunca forjar).
+# (assimétrico — o backend NÃO conhece a privada, só pode validar, nunca forjar).
 # Sem a chave, usa HS256 com o segredo compartilhado (compat).
 def _read_public_key(path):
     if path and os.path.exists(path):
@@ -284,13 +383,23 @@ def _read_public_key(path):
 
 JWT_PUBLIC_KEY = _read_public_key(os.getenv('JWT_PUBLIC_KEY_PATH'))
 
+# O backend é resource server: NÃO emite token, só valida o `exp` que veio no
+# payload assinado pela IAM. Por isso não há ACCESS/REFRESH_TOKEN_LIFETIME aqui —
+# eles só valem na emissão e, quando existiam (24h/7d), contradiziam os valores
+# reais da IAM (access 5 min), induzindo a "ajustar o TTL" no lugar errado.
+# Fonte única dos tempos de sessão: iam/iam_project/settings.py.
 _SIMPLE_JWT_COMMON = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(hours=24),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
     'USER_ID_CLAIM': 'sub',
     'USER_ID_FIELD': 'username',
+    # S8 — `iss`/`aud` verificados, não só a assinatura. Sem isto, qualquer token
+    # assinado com a mesma chave é aceito aqui, venha de onde vier: um token
+    # emitido para outro produto da plataforma (ou por um emissor futuro que
+    # compartilhe a chave) passaria como se fosse desta API. Os valores têm de
+    # bater com os da IAM — fonte da emissão em iam/iam_project/settings.py.
+    'ISSUER': os.getenv('JWT_ISSUER', 'sgi-iam'),
+    'AUDIENCE': os.getenv('JWT_AUDIENCE', 'sgi'),
 }
 
 if JWT_PUBLIC_KEY:
@@ -298,7 +407,7 @@ if JWT_PUBLIC_KEY:
         **_SIMPLE_JWT_COMMON,
         'ALGORITHM': 'RS256',
         'VERIFYING_KEY': JWT_PUBLIC_KEY,
-        'SIGNING_KEY': '',  # o ERP não assina (resource server)
+        'SIGNING_KEY': '',  # o backend não assina (resource server)
     }
 elif DEBUG:
     # Dev: sem a chave pública, valida em HS256 com o segredo compartilhado.
@@ -308,26 +417,52 @@ elif DEBUG:
         'SIGNING_KEY': os.getenv('JWT_SECRET', SECRET_KEY),
     }
 else:
-    # S3 — em produção o ERP só valida RS256 (chave pública da IAM). HS256 usa um
+    # S3 — em produção o backend só valida RS256 (chave pública da IAM). HS256 usa um
     # segredo compartilhado: quem valida também assina → tokens forjáveis.
     raise ImproperlyConfigured(
-        "Em produção o ERP deve validar o JWT em RS256: defina JWT_PUBLIC_KEY_PATH "
+        "Em produção o backend deve validar o JWT em RS256: defina JWT_PUBLIC_KEY_PATH "
         "apontando para a chave pública RSA da IAM. HS256 (segredo compartilhado, "
         "falsificável) só é permitido com DEBUG=True."
     )
 
+# Observabilidade (Fase 10.1)
+# Nome do serviço nas métricas/labels e nos logs — distingue erp/worker/beat de
+# outros serviços num Prometheus/coletor compartilhado.
+OBSERVABILITY_SERVICE_NAME = os.getenv('OBSERVABILITY_SERVICE_NAME', 'erp')
+
 # Logging Configuration
+# Logs estruturados em JSON (uma linha por evento) com `request_id`/`tenant_id`
+# de correlação injetados pelo contexto de requisição (nucleo.observability).
+# `LOG_FORMAT=text` volta ao formato humano (útil no terminal de dev).
+LOG_FORMAT = os.getenv('LOG_FORMAT', 'json' if not DEBUG else 'text')
+LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+    'filters': {
+        'request_context': {
+            '()': 'nucleo.observability.RequestContextFilter',
+        },
+    },
+    'formatters': {
+        'json': {
+            '()': 'nucleo.observability.JsonLogFormatter',
+        },
+        'text': {
+            'format': '%(asctime)s %(levelname)s %(name)s [req=%(request_id)s tenant=%(tenant_id)s] %(message)s',
+        },
+    },
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
+            'filters': ['request_context'],
+            'formatter': LOG_FORMAT,
         },
     },
     'root': {
         'handlers': ['console'],
-        'level': 'INFO',
+        'level': LOG_LEVEL,
     },
 }
 
@@ -341,6 +476,15 @@ CELERY_TIMEZONE = TIME_ZONE
 # Em dev (sem worker/Redis), roda as tasks in-process — permite validar
 # integrações como o funcoescobrancas (D.1.2) sem subir infraestrutura extra.
 CELERY_TASK_ALWAYS_EAGER = os.getenv('CELERY_TASK_ALWAYS_EAGER', str(DEBUG)).lower() == 'true'
+if TESTING:
+    # A suíte roda as tasks in-process SEMPRE, independente do .env da máquina.
+    # Antes o valor vinha do ambiente e o default era `str(DEBUG)`: bastava alguém
+    # definir CELERY_TASK_ALWAYS_EAGER=False no .env local para 3 testes do
+    # funcoeswhatsapp quebrarem sem nenhuma mudança de código — a suíte não pode
+    # depender de como está a máquina de quem a roda.
+    # (Isto NÃO substitui exercitar o worker real: o achado D8 — cobrança sem
+    # contexto de tenant — só apareceu no worker, e é coberto por E2E no stack vivo.)
+    CELERY_TASK_ALWAYS_EAGER = True
 CELERY_TASK_EAGER_PROPAGATES = True
 # Tarefas periódicas — exigem um processo `celery beat` (pendência A1/Fase 10:
 # worker+beat no compose); sem beat, nada é disparado.
@@ -349,16 +493,34 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'modulocrm.tasks.notificar_tarefas_a_vencer',
         'schedule': 3600.0,
     },
+    # Feriados (Fatia F): re-sincroniza semanalmente o dataset municipal + o
+    # python-holidays (federal/estadual) e atualiza o carimbo do superuser.
+    'calendar-sincronizar-feriados': {
+        'task': 'modulocalendar.tasks.sincronizar_feriados_task',
+        'schedule': 7 * 24 * 3600.0,
+    },
+    # Lembretes de evento (Fatia C): varre os EventReminder vencendo a cada
+    # minuto e emite a Notificacao in-app (+ e-mail se configurado).
+    'calendar-despachar-lembretes': {
+        'task': 'modulocalendar.tasks.despachar_lembretes',
+        'schedule': 60.0,
+    },
 }
 
-# E-mail (notificações do CRM — portado do worker do funcoeslead, Fase 11.2).
-# Sem MAIL_HOST, o envio fica desabilitado (a task vira no-op).
+# E-mail — lembrete de tarefa do CRM e lembrete de evento do calendário, ambos
+# via `funcoesemail` (pacote compartilhado com a IAM). Sem MAIL_HOST o envio fica
+# desabilitado e as tasks viram no-op.
 EMAIL_HOST = os.getenv('MAIL_HOST', '')
 EMAIL_PORT = int(os.getenv('MAIL_PORT', '587'))
 EMAIL_HOST_USER = os.getenv('MAIL_USER', '')
 EMAIL_HOST_PASSWORD = os.getenv('MAIL_PASS', '')
 EMAIL_USE_SSL = EMAIL_PORT == 465
-EMAIL_USE_TLS = not EMAIL_USE_SSL
+# 1025 é o Mailpit (captura de dev/staging), que NÃO oferece STARTTLS: exigir TLS
+# ali fazia todo envio do backend morrer com `SMTPNotSupportedError`. O bug ficou
+# escondido porque o compose nunca passou MAIL_HOST ao backend — sem host, o envio
+# nem era tentado. A IAM já tratava esta porta; aqui faltava (corrigido 19/07/2026).
+EMAIL_USE_TLS = EMAIL_PORT not in (465, 1025)
+EMAIL_TIMEOUT = int(os.getenv('MAIL_TIMEOUT', '10'))
 DEFAULT_FROM_EMAIL = os.getenv('MAIL_FROM', 'Sistema de Gestão <noreply@sistemagestao.com>')
 
 # Asaas — cobrança/boletos (funcoescobrancas, D.1.2). Credencial GLOBAL nesta
@@ -369,6 +531,69 @@ ASAAS_BASE_URL = os.getenv('ASAAS_BASE_URL', 'https://api-sandbox.asaas.com/v3')
 ASAAS_API_KEY = os.getenv('ASAAS_API_KEY', '')
 ASAAS_WEBHOOK_TOKEN = os.getenv('ASAAS_WEBHOOK_TOKEN', '')
 
+# NFE.io — emissão/consulta de NFS-e (Fase 11.1: o microsserviço Node `funcoesnf`
+# + bridge PHP foi absorvido por uma Celery task Python `moduloerp.tasks` que
+# fala REST direto com a NFE.io via `moduloerp.nfe_client`). Credencial GLOBAL
+# nesta fase (mesma decisão do Asaas — uma conta para todos os tenants); migrar
+# para credencial por tenant junto com a gestão de segredos (Fase 5/10.3). Sem a
+# chave/company configuradas a emissão fica `ERRO` com mensagem clara, sem travar
+# o título. Ver docs/modulos/moduloerp.md e docs/roadmap.md (Fase 11.1).
+NFE_IO_BASE_URL = os.getenv('NFE_IO_BASE_URL', 'https://api.nfe.io/v1')
+NFE_IO_API_KEY = os.getenv('NFE_IO_API_KEY', '')
+NFE_IO_COMPANY_ID = os.getenv('NFE_IO_COMPANY_ID', '')
+# Timeout (conectar, ler) das chamadas à NFE.io — a emissão pode demorar.
+NFE_IO_TIMEOUT = (
+    int(os.getenv('NFE_IO_CONNECT_TIMEOUT', '5')),
+    int(os.getenv('NFE_IO_READ_TIMEOUT', '30')),
+)
+
+# --- Camada 2: limite de SAÍDA por fornecedor (docs/arquitetura/rate-limiting.md)
+# Token bucket no Redis, aplicado no cliente HTTP dentro do worker. Protege a cota
+# do TERCEIRO (e, no caso de cobrança/NF, dinheiro e documento fiscal) — coisa que
+# nenhum limite de entrada consegue fazer, porque a view enfileira e quem chama o
+# fornecedor é o worker, com retry multiplicando cada ação.
+#
+# CALIBRAÇÃO: `taxa_por_segundo` sai do CONTRATO com o fornecedor (use uma fração
+# do limite publicado, deixando folga para picos e outros consumidores da mesma
+# conta); `burst` sai do MAIOR LOTE legítimo — se o fechamento emite 200 notas de
+# uma vez, um balde menor que isso transforma operação normal em fila.
+# Fornecedor ausente deste dicionário passa SEM limite, de propósito: integração
+# nova não fica bloqueada por esquecimento de configuração.
+# DB 4, dedicado. NÃO reusar o DB 0 (broker do Celery): um `FLUSHDB` de manutenção
+# nos baldes apagaria a fila de tarefas. Mapa dos DBs em deploy/env/dev.env.example.
+RATE_LIMIT_REDIS_URL = os.getenv('RATE_LIMIT_REDIS_URL', 'redis://localhost:6379/4')
+RATE_LIMIT_DESLIGADO = os.getenv('RATE_LIMIT_DESLIGADO', 'False').lower() == 'true'
+
+
+def _fornecedor(nome, taxa_padrao, burst_padrao):
+    """Permite calibrar por ambiente sem editar código:
+    RATE_LIMIT_<NOME>_TAXA (tokens/s) e RATE_LIMIT_<NOME>_BURST."""
+    prefixo = f'RATE_LIMIT_{nome.upper()}'
+    return {
+        'taxa_por_segundo': float(os.getenv(f'{prefixo}_TAXA', taxa_padrao)),
+        'burst': float(os.getenv(f'{prefixo}_BURST', burst_padrao)),
+    }
+
+
+RATE_LIMIT_FORNECEDORES = {
+    # Emissão fiscal: cada token é uma NOTA. Burst alto para o lote de fechamento
+    # passar de uma vez; taxa contida porque emissão indevida é documento fiscal.
+    'nfe_io': _fornecedor('nfe_io', taxa_padrao=2, burst_padrao=200),
+    # Cobrança: cada token é um boleto/PIX no gateway — tem custo por emissão.
+    'asaas': _fornecedor('asaas', taxa_padrao=5, burst_padrao=100),
+    # Meta/WhatsApp aplica limite próprio e agressivo; estourar prejudica a
+    # reputação do número, não só a requisição.
+    'whatsapp': _fornecedor('whatsapp', taxa_padrao=10, burst_padrao=50),
+    # LLM de visão: chamada cara e lenta (análise de imagem do diário).
+    'llm_vision': _fornecedor('llm_vision', taxa_padrao=1, burst_padrao=10),
+    # SMTP/ESP: provedores cortam ou marcam como spam quem dispara em rajada.
+    'email': _fornecedor('email', taxa_padrao=10, burst_padrao=100),
+    # Serviços internos que ainda são "terceiros" do ponto de vista do worker.
+    'drone_odm': _fornecedor('drone_odm', taxa_padrao=10, burst_padrao=50),
+    'geo': _fornecedor('geo', taxa_padrao=5, burst_padrao=30),
+    'feriados': _fornecedor('feriados', taxa_padrao=2, burst_padrao=20),
+}
+
 # Cache Configuration (using Redis)
 CACHES = {
     "default": {
@@ -376,11 +601,79 @@ CACHES = {
         "LOCATION": os.getenv('REDIS_URL', 'redis://localhost:6379/1'), # DB 1 for cache
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            # Obrigatório a partir do S8: o throttle do DRF consulta a cache em
+            # TODA requisição. Sem tolerância a falha, um Redis indisponível
+            # deixaria de ser degradação de performance e passaria a ser API
+            # inteira fora do ar (parte do achado A8).
+            "IGNORE_EXCEPTIONS": True,
         }
     }
 }
 
+# --- Testes: throttle desligado e cache isolada (ver iam_project/settings.py) --
+# A contagem do throttle vive na cache (Redis real, compartilhado): sem isolar, um
+# teste consome a cota do seguinte e a suíte fica dependente de ordem e de quantas
+# vezes já rodou hoje. Quem exercita o throttle reativa a taxa com @override_settings.
+if TESTING:
+    CACHES = {'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}}
+    REST_FRAMEWORK['DEFAULT_THROTTLE_RATES'] = {
+        chave: None for chave in REST_FRAMEWORK['DEFAULT_THROTTLE_RATES']
+    }
 
-# IA Service Configuration
-IA_SERVICE_URL = os.getenv('IA_SERVICE_URL', 'http://localhost:3002/api/analise')
-IA_SERVICE_SECRET_TOKEN = os.getenv('IA_SERVICE_SECRET_TOKEN', 'um-token-secreto-forte-para-ia')
+# --- Revogação imediata de sessão por "época" (Fase 10.7) — lado resource server.
+# A IAM grava `revoked_after=<agora>` no Redis compartilhado ao trocar/resetar
+# senha ou desativar o usuário; aqui, o IamJWTAuthentication rejeita access tokens
+# com `iat` anterior (nucleo/revocation.py). DB dedicado (2), o mesmo da IAM.
+# FAIL-OPEN: se o Redis não responder, NÃO bloqueia (pior caso = janela de ≤ access
+# TTL enquanto o Redis estiver fora). Fail-closed derrubaria TODA a autenticação
+# do backend numa queda do Redis — trade-off documentado em docs/acesso-e-permissoes.md.
+SESSION_REVOCATION_ENABLED = os.getenv('SESSION_REVOCATION_ENABLED', 'True') == 'True'
+SESSION_REVOCATION_FAIL_OPEN = os.getenv('SESSION_REVOCATION_FAIL_OPEN', 'True') == 'True'
+SESSION_REVOKE_REDIS_URL = os.getenv('SESSION_REVOKE_REDIS_URL', 'redis://localhost:6379/2')
+SESSION_REVOKE_PREFIX = 'sess:revoked_after:'
+
+
+# S7 — sem fallback público em produção: `_config` exige a variável quando
+# DEBUG=False (o valor de dev nunca vale como segredo real). Ainda usado como
+# token serviço→serviço na chamada à LLM local de visão.
+IA_SERVICE_SECRET_TOKEN = _config('IA_SERVICE_SECRET_TOKEN', 'um-token-secreto-forte-para-ia-DEV')
+
+# LLM de visão (Fase 11.3 / plano de reintegração do Diário+IA): serviço Python
+# local (em desenvolvimento pelo cliente) que recebe imagem+tipo e devolve o
+# JSON do contrato de análise. Sem a URL configurada a análise fica em `erro`
+# com mensagem clara (não trava o registro do diário). Ver
+# docs/arquitetura/diario-ia-reintegracao.md.
+LLM_VISION_URL = os.getenv('LLM_VISION_URL', '')
+# Timeout (conectar, ler) da chamada à LLM — a inferência de visão pode demorar.
+LLM_VISION_TIMEOUT = (
+    int(os.getenv('LLM_VISION_CONNECT_TIMEOUT', '5')),
+    int(os.getenv('LLM_VISION_READ_TIMEOUT', '60')),
+)
+
+# --- Canal WhatsApp (Fase 11.3 / Fase C) --------------------------------------
+# O canal é multi-tenant: cada tenant tem seu número/credenciais Meta em
+# `funcoeswhatsapp.CanalWhatsApp` (resolvido na borda pelo `phone_number_id`).
+# Estes defaults são um ANDAIME DE DEV single-tenant (aposentado antes do
+# go-live): sem `CanalWhatsApp` no banco e só em DEBUG, o webhook resolve o
+# tenant por slug e usa estas credenciais. Ver docs/modulos/funcoeswhatsapp.md.
+WHATSAPP_DEFAULT_TENANT_SLUG = os.getenv('WHATSAPP_DEFAULT_TENANT_SLUG', '')
+WHATSAPP_DEFAULT_PHONE_NUMBER_ID = os.getenv('WHATSAPP_DEFAULT_PHONE_NUMBER_ID', '')
+WHATSAPP_DEFAULT_ACCESS_TOKEN = os.getenv('WHATSAPP_DEFAULT_ACCESS_TOKEN', '')
+WHATSAPP_DEFAULT_APP_SECRET = os.getenv('WHATSAPP_DEFAULT_APP_SECRET', '')
+WHATSAPP_DEFAULT_VERIFY_TOKEN = os.getenv('WHATSAPP_DEFAULT_VERIFY_TOKEN', '')
+
+# --- Integração serviço→serviço com o drone (Fase 10.8) -----------------------
+# Ao excluir uma obra/empreendimento, o backend desvincula (soft) no drone os
+# projetos órfãos daquele tenant (pendência da Fase 3). Não pode forjar token
+# (só a IAM assina): pede um JWT de serviço à IAM (`SERVICE_TOKEN_SECRET`, o
+# mesmo segredo do endpoint /auth/service-token/) e chama o drone com ele.
+# Sem `DRONE_SERVICE_URL` configurada a reconciliação é no-op (log em debug) —
+# ambientes sem o produto drone não pagam nada.
+IAM_INTERNAL_URL = os.getenv('IAM_INTERNAL_URL', 'http://iam:8000')
+DRONE_SERVICE_URL = os.getenv('DRONE_SERVICE_URL', '')
+SERVICE_TOKEN_SECRET = _config('SERVICE_TOKEN_SECRET', 'service-token-dev-secret-NAO-USAR-EM-PROD')
+# Timeout (conectar, ler) das chamadas serviço→serviço (IAM e drone).
+SERVICE_CALL_TIMEOUT = (
+    int(os.getenv('SERVICE_CALL_CONNECT_TIMEOUT', '5')),
+    int(os.getenv('SERVICE_CALL_READ_TIMEOUT', '15')),
+)

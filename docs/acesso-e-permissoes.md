@@ -2,7 +2,7 @@
 
 > Como a plataforma controla **quem entra**, **o que cada empresa contratou** e **o que cada
 > usuário pode acessar** — de forma **genérica, reutilizável por qualquer módulo** (nunca específica
-> do ERP). O módulo de drone (`funcoesODM`) é a **implementação de referência**.
+> do backend). O módulo de drone (`funcoesODM`) é a **implementação de referência**.
 > Roadmap de execução: ver [roadmap.md](roadmap.md), **Fase 6**.
 
 ## 1. Princípio
@@ -81,11 +81,11 @@ Angular) e ainda assim plugar na **mesma** identidade/entitlement — sem reimpl
 |---|---|---|---|---|
 | **IAM** | é a autoridade | emite os entitlements | dono do catálogo + papéis (personas por tenant) | dono dos tenants |
 | **Drone** (`funcoesODM`) | ✅ JWT IAM | ✅ `MODULE_drone` (403) | ⚠️ por owner | ✅ `tenant_id` |
-| **ERP — `modulocrm` (`crm`)** | ✅ JWT IAM | ✅ `RequireModule` (403) | ✅ `RequirePermission` por recurso (fecha o S5) | ✅ tenant-scope |
-| **ERP — `rh` (`rh`)** | ✅ | ✅ `RequireModule` | ✅ `RequirePermission` — `rh.dado_medico`/`rh.dado_bancario`/`rh.folha` (papéis provisionados, 403 destravado) | ✅ |
-| **ERP — `moduloerp` (`erp_financeiro`)** | ✅ | ✅ `RequireModule` | ✅ `RequireRole("financeiro")` (migra p/ permissão na 9.B) | ✅ |
-| **ERP — base** (`clientes`/`fornecedores`/`obras`/`empreendimentos`) | ✅ | n/a (sempre disponível) | ✅ `RequirePermission` por recurso (`cadastro.*`/`obra.*`) — 05/07/2026 | ✅ |
-| **ERP — `modulodiario`** | ✅ | n/a (base) | ✅ ABAC próprio (`PodeModerarDiario` + equipe/responsável) | ✅ |
+| **backend — `modulocrm` (`crm`)** | ✅ JWT IAM | ✅ `RequireModule` (403) | ✅ `RequirePermission` por recurso (fecha o S5) | ✅ tenant-scope |
+| **backend — `rh` (`rh`)** | ✅ | ✅ `RequireModule` | ✅ `RequirePermission` — `rh.dado_medico`/`rh.dado_bancario`/`rh.folha` (papéis provisionados, 403 destravado) | ✅ |
+| **backend — `moduloerp` (`erp_financeiro`)** | ✅ | ✅ `RequireModule` | ✅ `RequireRole("financeiro")` (migra p/ permissão na 9.B) | ✅ |
+| **backend — base** (`clientes`/`fornecedores`/`obras`/`empreendimentos`) | ✅ | n/a (sempre disponível) | ✅ `RequirePermission` por recurso (`cadastro.*`/`obra.*`) — 05/07/2026 | ✅ |
+| **backend — `modulodiario`** | ✅ | n/a (base) | ✅ ABAC próprio (`PodeModerarDiario` + equipe/responsável) | ✅ |
 | **Sistema de lixo** (`/api/lixo/`) — 📋 **planejado, não implementado** | 📋 JWT IAM | n/a (base) | 📋 `plataforma.lixo.*` | 📋 tenant-scope |
 
 **Leitura (após a Fase 9.A/9.B, 05/07/2026):** a **camada 1** segue genérica (`RequireModule` lê
@@ -112,6 +112,117 @@ rejeita na escrita (RH, clientes, fornecedores). Validado por `iam/identity/test
 > ⚠️ Numeração: "9.D" no [roadmap](roadmap.md) = **LGPD**; "fatia D" no AD-9 §6 = **ABAC por objeto**.
 > São coisas diferentes (herança de dois esquemas).
 
+## 5.1 Revogação imediata de sessão (época no Redis)
+
+O access token é **stateless**: os resource servers o validam só por
+assinatura+`exp`, sem consultar estado. Isso cria uma **janela de acesso
+residual**: depois de trocar/resetar a senha ou desativar um usuário, o access
+token que já estava emitido **continua válido até expirar** (≤ `ACCESS_TOKEN_LIFETIME`).
+Blacklistar o **refresh** não fecha essa janela — só impede a *renovação*.
+
+Para cortar na hora, a IAM mantém um **carimbo de época por usuário** num Redis
+compartilhado (DB dedicado `2`): `sess:revoked_after:<user_id> = <timestamp>`.
+
+- **Grava (IAM):** troca de senha (`ChangePasswordView`), reset por admin
+  (`UsuarioViewSet.redefinir-senha`) e **desativação** (`is_active` True→False)
+  chamam `bump_session_epoch()` ([iam/identity/revocation.py](../iam/identity/revocation.py)),
+  **junto** com o blacklist do refresh.
+- **Checa (resource server):** a cada requisição, o validador rejeita o access
+  cujo `iat` seja **anterior** ao carimbo (`iat < revoked_after`, estrito — o
+  token reemitido no mesmo instante para quem trocou a própria senha sobrevive).
+  No backend: `IamJWTAuthentication` → `is_session_revoked()`
+  ([backend/nucleo/revocation.py](../backend/nucleo/revocation.py)), com **circuit breaker** para não
+  pagar o custo de um Redis fora do ar em toda requisição (ver tabela de latência abaixo).
+- **Auto-limpeza:** o carimbo tem TTL = access TTL + margem; um token emitido
+  antes dele já terá expirado, então a chave some sozinha.
+
+O **access TTL** foi encurtado para **5 min** (`JWT_ACCESS_MINUTES`) como rede de
+segurança: se o Redis estiver fora, essa é a janela residual máxima. O usuário
+legítimo **não reloga** — o refresh silencioso renova em background.
+
+### Redis indisponível: **fail-open** (padrão) vs fail-closed
+
+Config `SESSION_REVOCATION_FAIL_OPEN` (backend). O padrão é **fail-open** — se o Redis
+não responder na checagem, a requisição **passa**. Consequências, exaustivas:
+
+| | **Fail-open (padrão)** | **Fail-closed** |
+|---|---|---|
+| Redis no ar | Revogação imediata (~40 ms, medido) | Revogação imediata (~40 ms, medido) |
+| Redis **fora** | Volta a valer a janela de ≤ **5 min** (o access TTL) para sessões já revogadas; **usuários legítimos seguem normais** | **TODA a autenticação do backend para** (todo request autenticado → 401), inclusive quem nada tem a ver com revogação |
+| Superfície de risco | Curta e limitada a quem acabou de ser revogado | Indisponibilidade total do produto |
+| Latência (Redis no ar) | 1 `GET` (~40 ms, timeout 0,25s) | idem |
+| Latência (Redis **fora**) | A 1ª sondagem após a queda custa **~4 s** (resolução DNS do host parado — o `socket_timeout` **não** cobre DNS). O **circuit breaker** então abre por 5 s e responde na hora (~0 ms); custo amortizado ≈ 1 sondagem lenta a cada 5 s **por worker** | mesma sondagem de ~4 s, mas ao abrir o breaker passa a **negar** na hora |
+| Reinício do Redis | Com **AOF ligado** (config atual: `--appendonly yes`), os carimbos **sobrevivem** ao restart → revogação **segue valendo** (medido). Só perda real de chaves (FLUSHDB/eviction) reabre a janela por ≤5 min | idem quanto às chaves |
+
+**Decisão:** fail-open. O objetivo é conter o funcionário descontente **sem** dar
+ao Redis o poder de derrubar o produto inteiro; e o access curto (5 min) já
+limita o pior caso. Trocar para fail-closed é 1 env var
+(`SESSION_REVOCATION_FAIL_OPEN=False`) — recomendado só onde contenção > disponibilidade
+e o Redis tenha HA.
+
+### Escopo e follow-ups
+
+- **Aplicado agora:** backend (resource server) + IAM (autoridade) + **drone**
+  (`funcoesODM`, Spring Boot): `SessionRevocationService` (Jedis, mesmo Redis DB 2
+  e chave `sess:revoked_after:<user_id>`) plugado no `JwtAuthenticationFilter` —
+  lê `user_id`+`iat`, e sessão revogada → **não autentica** → 401 no `SecurityConfig`;
+  mesmo fail-open + circuit breaker do backend. **E2E validado no stack vivo 13/07/2026**
+  (token com módulo drone → 200; carimbo no Redis DB2 → mesmo token 401; relogin → 200).
+- **Serviços Node (`funcoesia`/`funcoesnf`/`funcoeswhatsapp`) — fora de escopo:** o
+  gateway **não** os roteia (não têm porta de usuário na borda; são chamados só
+  serviço→serviço/webhook) e serão absorvidos em Python na **Fase 11**, quando
+  herdam a checagem do backend. Portar a revogação neles agora seria código
+  descartável contra exposição teórica.
+- **Editar papéis/permissões NÃO dispara revogação imediata** (decisão atual): a
+  mudança propaga no próximo refresh (≤5 min). Para torná-la imediata seria
+  preciso, ao salvar um `Perfil`, **carimbar a época de todos os usuários que têm
+  aquele papel** — ex.: no `PerfilViewSet.perform_update`, iterar
+  `perfil.usuarios.values_list("id")` e `bump_session_epoch(uid)` para cada um
+  (e idem ao (des)vincular papéis de um usuário em `UsuarioSerializer.update`).
+  Custo: um `bump` por usuário afetado a cada edição de papel; por isso ficou de
+  fora por ora.
+
+## 5.2 Duração da sessão (janela deslizante + teto absoluto)
+
+O **access** (5 min) é só o passe de curta duração; quem define por quanto tempo o
+usuário fica logado é o **refresh**, no cookie HttpOnly. Ele tem **dois limites
+independentes**, e confundi-los é fácil:
+
+| | Sem "manter conectado" | Com "manter conectado" |
+| ---------------------------- | ---------------------- | ---------------------- |
+| **Janela deslizante** (inatividade) | 2h | 7 dias |
+| **Teto absoluto** (desde o login) | 12h | 30 dias |
+| **Aviso antes de cair** | 15 min | 15 min |
+
+- **A janela desliza:** cada rotação do refresh reemite o token com `agora + janela`.
+  Quem está trabalhando não cai.
+- **O teto não desliza:** o `exp` é sempre aparado por `sst + teto` (`sst` = início da
+  sessão, preservado em toda rotação). Batido o teto, **nem a atividade renova** — tem
+  de relogar. É este limite que garante que uma sessão roubada morre sozinha.
+
+**Por que o teto é o controle de segurança que importa:** a rotação com detecção de
+reuso só desmascara o ladrão se o usuário legítimo usar o sistema **em paralelo** — um
+cookie copiado numa sexta à noite seria rotacionado sozinho o fim de semana inteiro sem
+disparar nada. O teto é a única barreira que não depende de ninguém notar. Por isso o
+teto do "manter conectado" foi reduzido de 90 → 30 dias: no caminho *default* uma
+invasão morre em ≤12h, e não fazia sentido o caminho opt-in tolerar 3 meses.
+
+**A rotação depende de interação real do usuário.** O front renova o access sozinho
+enquanto a aba está aberta; se essa renovação também rotacionasse o refresh, a janela de
+inatividade **nunca fecharia** — uma aba esquecida num notebook destravado seguraria a
+sessão até o teto. Por isso o `AuthContext` só renova quando houve interação
+(mouse/teclado) desde a última renovação; ocioso, deixa expirar.
+
+**Contrato com o front:** o refresh é HttpOnly (opaco ao JS), então o front não tem como
+saber quando a sessão cai. O login, o refresh e a troca de senha devolvem
+`session_expires_at` (época do `exp` do refresh) e `session_warn_seconds` — é com isso
+que o front agenda o modal de aviso. São instantes, não segredos.
+
+**Onde se configura** (`iam/iam_project/settings.py`, todos com env override):
+`JWT_SESSION_IDLE_HOURS` · `JWT_SESSION_IDLE_CAP_HOURS` · `JWT_SESSION_REMEMBER_DAYS` ·
+`JWT_SESSION_CAP_DAYS` · `JWT_SESSION_WARN_MINUTES`. **Não existe knob de "dias de
+refresh"**: o `REFRESH_TOKEN_LIFETIME` do SimpleJWT é sobrescrito por estes valores.
+
 ## 6. Fase 6 — implementada (02/06/2026)
 
 Enforcement **genérico e reutilizável** construído e aplicado:
@@ -119,7 +230,7 @@ Enforcement **genérico e reutilizável** construído e aplicado:
   [nucleo/permissions.py](../backend/nucleo/permissions.py) — espelho do `MODULE_drone`, lendo os
   claims `modules`/`roles` do JWT.
 - Aplicado a `crm`/`rh`/`erp_financeiro` (+ papel `financeiro`).
-- Legados removidos (login do ERP; endpoints `Perfil`/`Permissao`).
+- Legados removidos (login do backend; endpoints `Perfil`/`Permissao`).
 
 Pendências: mascaramento de campos por papel; remoção dos modelos `nucleo.Perfil`/`Permissao`;
 aplicar o contrato (§7) aos módulos hoje vazios. Detalhe e DoD em

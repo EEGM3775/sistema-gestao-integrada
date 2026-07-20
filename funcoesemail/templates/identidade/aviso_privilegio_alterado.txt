@@ -1,0 +1,7 @@
+Olá, {{ nome }}.
+
+O administrador {{ autor }} alterou os acessos da sua conta ({{ conta }}):
+
+{{ resumo }}
+
+Se essa mudança não foi combinada com você, avise a administração da sua empresa — alterações de acesso são um dos primeiros sinais de conta de administrador comprometida.

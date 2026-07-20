@@ -2,6 +2,7 @@
 from rest_framework import serializers
 from nucleo.tenant_validators import TenantScopedUniqueSerializerMixin
 from nucleo.field_masking import FieldMaskingSerializerMixin
+from nucleo.upload_validation import UploadValidationMixin
 from .models import (
     Cliente,
     ClienteEmpreendimento,
@@ -48,7 +49,7 @@ class ContratoClienteSerializer(TenantScopedUniqueSerializerMixin, serializers.M
         read_only_fields = ['contrato_cliente_id', 'tenant']
 
 
-class DocumentoClienteSerializer(serializers.ModelSerializer):
+class DocumentoClienteSerializer(UploadValidationMixin, serializers.ModelSerializer):
     cliente_nome = serializers.CharField(source='cliente.nome_completo', read_only=True)
     tipo_documento_display = serializers.CharField(source='get_tipo_documento_display', read_only=True)
 

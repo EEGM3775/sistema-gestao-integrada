@@ -5,6 +5,7 @@
 
 from rest_framework import serializers
 from nucleo.tenant_validators import TenantScopedUniqueSerializerMixin
+from nucleo.upload_validation import UploadValidationMixin
 from .models import (
     Empreendimento,
     ContaBancariaEmpreendimento,
@@ -30,7 +31,7 @@ class ContaBancariaEmpreendimentoSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['tenant']  # injetado pelo perform_create (Fase 8.2 / D3)
 
-class CustoEmpreendimentoSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
+class CustoEmpreendimentoSerializer(UploadValidationMixin, TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
     """
     Serializador para o modelo CustoEmpreendimento.
     Converte os dados de custos dos empreendimentos para JSON.

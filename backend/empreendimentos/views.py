@@ -5,6 +5,7 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
 from nucleo.tenancy import TenantScopedViewSetMixin
 from nucleo.permissions import RequirePermission
+from nucleo.quotas import QuotaEnforcedMixin
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from .models import Empreendimento, ContaBancariaEmpreendimento, CustoEmpreendimento
@@ -12,11 +13,12 @@ from .serializers import EmpreendimentoSerializer, ContaBancariaEmpreendimentoSe
 from obras.models import Obra
 from django.db.models import Q
 
-class EmpreendimentoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+class EmpreendimentoViewSet(QuotaEnforcedMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
     queryset = Empreendimento.objects.all()
     serializer_class = EmpreendimentoSerializer
     permission_classes = [IsAuthenticated, RequirePermission]
     required_resource = "obra.empreendimento"
+    quota_recurso = "empreendimentos"  # D24
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     search_fields = ['empreendimento', 'razao_social', 'cnpj']
 

@@ -5,7 +5,7 @@
 > detalhamento de execução está nas **pranchas** em [arquitetura/](arquitetura/). O acompanhamento de
 > obra (o que já foi entregue, o que falta) é o [roadmap.md](roadmap.md).
 >
-> **Stack:** IAM e ERP em **Django 5.2 + DRF** (SimpleJWT no IAM); shell em **React 19 + Vite + TS**;
+> **Stack:** IAM e backend em **Django 5.2 + DRF** (SimpleJWT no IAM); shell em **React 19 + Vite + TS**;
 > drone (`funcoesODM`) em **Spring Boot + Angular + NodeODM/Potree**; microsserviços em **Node.js**;
 > borda em **Nginx**; dados em **PostgreSQL 16** + **Redis**. Orquestração:
 > [docker-compose.yml](../docker-compose.yml) (`--profile full` → 11 serviços).
@@ -36,7 +36,7 @@ primeira classe, não detalhe de deploy.
 | AD-4 | **Entitlements por módulo** (assinatura tenant↔módulo e usuário↔módulo).                                                                                                         | Permite vender módulos à la carte (ex.: funcoesODM isolado).                                                                                                                                                                   |
 | AD-5 | **IAM é um serviço separado** (não dentro do Django).                                                                                                                               | Nenhum produto é dono da identidade; máxima independência.                                                                                                                                                                    |
 | AD-6 | **PostgreSQL** como banco de registro, endurecido (cluster gerenciado, backups, PITR, réplica, roles de menor privilégio).                                                           | Valor financeiro exige ACID, concorrência, constraints e recuperação.                                                                                                                                                         |
-| AD-7 | **Cada produto tem banco próprio** (IAM, ERP, funcoesODM).                                                                                                                            | Cada um é unidade destacável/vendável; isolamento de falhas.                                                                                                                                                                  |
+| AD-7 | **Cada produto tem banco próprio** (IAM, backend, funcoesODM).                                                                                                                        | Cada um é unidade destacável/vendável; isolamento de falhas.                                                                                                                                                                  |
 | AD-8 | **Estratégia de consolidação de stack**: Python e JAVA são a linguagem de aplicação padrão; Java permanece em recursos especificos; Node.js e PHP são eliminados gradualmente. | Cada linguagem adicional multiplica o custo de manutenção (auth reimplementada, builds separados, runtimes distintos). Java permanece onde Python tem limitação concreta. Ver[Seção 6](#6-estratégia-de-stack-tecnológica). |
 | AD-9 | **Camada 2 (dentro do tenant) evolui para RBAC + ABAC**: catálogo **global** de permissões (em código) + **papéis por tenant** que as agrupam + granularidade **ação/campo** (mascaramento de PII). Endpoints checam **permissão**, não nome de papel. *(Proposto; desenho em [arquitetura/rbac-abac.md](arquitetura/rbac-abac.md).)* | Checar nome de papel é imprevisível e inseguro (papel homônimo vazio passa) e não tem granularidade ver/editar/campo. O catálogo dá previsibilidade mesmo com papéis por tenant; o mascaramento de campo atende à LGPD (Fase 9). |
 
@@ -51,15 +51,15 @@ primeira classe, não detalhe de deploy.
                          └──────────────┬──────────────┘
             ┌───────────────┬───────────┼───────────────┬───────────────┐
      ┌──────▼─────┐  ┌──────▼─────┐  ┌──▼──────┐  ┌──────▼──────┐  ┌─────▼──────┐
-     │   IAM      │  │ ERP Django │  │ React   │  │ funcoesODM  │  │  Node µsvc │
-     │ (auth/     │  │  + DRF     │  │ (ERP UI)│  │ Java + Ang. │  │ nf/lead/wa │
+     │   IAM      │  │  backend   │  │ React   │  │ funcoesODM  │  │  Node µsvc │
+     │ (auth/     │  │ Django+DRF │  │ (app UI)│  │ Java + Ang. │  │ nf/lead/wa │
      │ tenants/   │  │            │  │         │  │ +NodeODM/   │  │            │
      │ RBAC/      │  │            │  │         │  │  Potree     │  │            │
      │ entitle.)  │  │            │  │         │  │             │  │            │
      └─────┬──────┘  └─────┬──────┘  └─────────┘  └──────┬──────┘  └────────────┘
            │ emite JWT     │ valida JWT                  │ valida JWT
      ┌─────▼──────┐  ┌─────▼──────┐               ┌──────▼──────┐
-     │  IAM DB    │  │  ERP DB    │               │ funcoesODM  │
+     │  IAM DB    │  │ backend DB │               │ funcoesODM  │
      │ (Postgres) │  │ (Postgres) │               │   DB (PG)   │
      └────────────┘  └────────────┘               └─────────────┘
               Cluster PostgreSQL (iam_db + erp_db)  +  Redis
@@ -69,13 +69,13 @@ primeira classe, não detalhe de deploy.
 
 - **IAM** ([iam/](../iam/)) — única autoridade de identidade. Dona de tenants, usuários,
   papéis/permissões e entitlements. Emite e assina os JWT.
-- **ERP (Django)** ([backend/](../backend/)) — **resource server**: valida o JWT da IAM e aplica
+- **backend (Django)** ([backend/](../backend/)) — **resource server**: valida o JWT da IAM e aplica
   isolamento de tenant + RBAC + entitlement nas queries. Apps de negócio em [modulos/](modulos/README.md).
 - **funcoesODM (Java/Angular)** ([ImgDrone/funcoesODM/](../ImgDrone/funcoesODM/)) — produto destacável;
   valida o JWT, exige o entitlement `drone`, escopa por tenant, faz **JIT provisioning**.
 - **Microsserviços Node** (`funcoesnf`, `funcoeswhatsapp` + o worker embutido em `funcoesia`) —
-  acionados pelo ERP; validam o JWT quando expõem endpoints. Stack em descontinuação
-  (AD-8 / Fase 11; o `funcoeslead` já foi absorvido pelo ERP na 11.2).
+  acionados pelo backend; validam o JWT quando expõem endpoints. Stack em descontinuação
+  (AD-8 / Fase 11; o `funcoeslead` já foi absorvido pelo backend na 11.2).
 
 ## 4. Macro por área (e onde está a prancha executiva)
 
@@ -108,7 +108,7 @@ Cada área tem uma **prancha** com o detalhamento construtivo:
 | -------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | Backend              | **Python — Django + DRF + Celery + Channels** | Domínio rico em dados, IA, LGPD; ORM + migrações + admin + signals em uma linguagem                   |
 | Backend              | **Java — Spring Boot**                        | Especifico caso a caso                                                                                   |
-| Frontend shell (ERP) | **TypeScript — React + Vite**                 | Componentes de negócio, auth, navegação condicional por entitlement                                   |
+| Frontend shell (app) | **TypeScript — React + Vite**                 | Componentes de negócio, auth, navegação condicional por entitlement                                   |
 | Frontend de drone    | **TypeScript — Angular**                      | Mantido enquanto o drone não precisar de reescrita; absorver no React quando houver manutenção pesada |
 | Banco de dados       | **PostgreSQL 16**                              | ACID, RLS nativa (isolamento multi-tenant), PITR, constraints, UUID                                      |
 | Cache / broker       | **Redis**                                      | Celery + cache Django; já presente no stack                                                             |
@@ -119,7 +119,7 @@ Cada área tem uma **prancha** com o detalhamento construtivo:
 
 | Linguagem         | Serviço(s)                                         | Destino                                                                           | Quando                                                   |
 | ----------------- | --------------------------------------------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| **Node.js** | `funcoesnf`, `funcoeswhatsapp`, worker de `funcoesia` (`funcoeslead` já absorvido — 11.2) | Celery tasks no Django ERP (Redis e Celery já existem) | Próxima manutenção significativa em qualquer um deles |
+| **Node.js** | `funcoesnf`, `funcoeswhatsapp`, worker de `funcoesia` (`funcoeslead` já absorvido — 11.2) | Celery tasks no backend (Redis e Celery já existem)    | Próxima manutenção significativa em qualquer um deles |
 | **PHP**     | `backend/funcoesnf/php-support`                   | Consolidar no serviço Python de emissão de NF                                   | Junto com a migração do Node                           |
 
 ### Regra para novos módulos e serviços
@@ -129,7 +129,7 @@ Novo módulo de negócio   → Django app (Python)
 Nova integração externa  → Celery task (Python)
 Novo webhook/bot         → Django view + Celery (Python)
 Nova feature de IA       → Python (ecossistema sem equivalente)
-Nova feature de drone    → Spring Boot (Java), se não couber no ERP
+Nova feature de drone    → Spring Boot (Java), se não couber no backend
 Novo componente de UI    → React (TypeScript)
 ```
 
@@ -144,7 +144,7 @@ demanda coordenação fina. Python resolve o mesmo problema com Django Channels 
 exigiria reescrita de código maduro sem ganho funcional imediato — custo não justificado agora.
 
 O critério para manter Java é **limitação concreta e mensurável**, não preferência geral.
-Para o ERP (I/O bound, domínio de negócio, IA), essa limitação não existe.
+Para o backend (I/O bound, domínio de negócio, IA), essa limitação não existe.
 
 ---
 

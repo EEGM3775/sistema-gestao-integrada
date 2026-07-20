@@ -20,10 +20,20 @@ Usuários:
 
 Rodar (no container):  docker compose exec -T iam python manage.py shell < iam/seed_demo.py
 """
+import uuid
+
 from django.core.management import call_command
 from identity.models import (
     Tenant, Modulo, Usuario, AssinaturaTenant, AcessoUsuarioModulo, Perfil,
 )
+
+# IDs determinísticos e ESTÁVEIS dos tenants de demonstração. O backend espelha o
+# tenant da IAM POR ID (nucleo.authentication._sync_tenant → get_or_create(id=<jwt.tenant_id>)):
+# num ambiente greenfield (staging/prod), se o backend nascer com outro id, o 1º login
+# colide em slug='demo' e responde 500. Derivar por uuid5 do MESMO nome garante o mesmo
+# valor aqui e no backend/seed_demo_data.py, sem literal duplicado que possa divergir.
+DEMO_TENANT_ID = uuid.uuid5(uuid.NAMESPACE_DNS, "sgi.tenant.demo")
+ACME_TENANT_ID = uuid.uuid5(uuid.NAMESPACE_DNS, "sgi.tenant.acme")
 
 # --- Catálogo de módulos vendáveis (global, compartilhado entre tenants) ---
 modulos = {}
@@ -64,10 +74,26 @@ def upsert_user(tenant, username, password, modulos_acesso, papeis, is_admin=Fal
 
 
 # --- Tenants (empresas) ---
-tenant, _ = Tenant.objects.get_or_create(slug="demo", defaults={"nome": "Empresa Demo"})
+# D24 — o `plano` é EXPLÍCITO desde o seed. Tenant sem plano cai no `free`
+# (1 seat, 2 obras) e, com a trava de quota ligada, o dev não conseguiria criar o
+# segundo usuário nem a terceira obra — a demo pareceria quebrada. Os dois seeds
+# (este e o do backend) têm de concordar, pela mesma razão do D10: quando eles
+# divergem, o defeito só aparece num ambiente greenfield.
+#
+# `demo` fica em `profissional` para exercitar o produto inteiro; `acme` fica no
+# `free` de propósito, para que exista sempre um tenant onde a parede de quota é
+# alcançável à mão, sem reconfigurar nada.
+tenant, _ = Tenant.objects.get_or_create(
+    slug="demo", defaults={"id": DEMO_TENANT_ID, "nome": "Empresa Demo", "plano": "profissional"}
+)
+if tenant.plano != "profissional":  # idempotente sobre banco já semeado
+    tenant.plano = "profissional"
+    tenant.save(update_fields=["plano"])
 assinar(tenant, modulos.keys())
 
-acme_tenant, _ = Tenant.objects.get_or_create(slug="acme", defaults={"nome": "Empresa Acme"})
+acme_tenant, _ = Tenant.objects.get_or_create(
+    slug="acme", defaults={"id": ACME_TENANT_ID, "nome": "Empresa Acme", "plano": "free"}
+)
 assinar(acme_tenant, ["drone"])
 
 # --- Catálogo de permissões + papéis de fábrica nos dois tenants (Fase 9.A) ---

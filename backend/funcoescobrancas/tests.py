@@ -8,12 +8,13 @@ endpoint síncrono `contas-a-receber/{id}/gerar-cobranca/`.
 from datetime import date
 from unittest.mock import patch, MagicMock
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 from rest_framework.test import APITestCase
 
 from clientes.models import Cliente
 from nucleo.models import Tenant, Usuario
-from moduloerp.models import ContaReceber
+from nucleo.tenancy import rls_bypass
+from moduloerp.models import ContaReceber, Boleto
 
 from .client import AsaasClient
 from . import services
@@ -143,12 +144,24 @@ class AnalisarDivergenciasTests(APITestCase):
 
     def test_endpoint_divergencias_asaas(self):
         user = Usuario.objects.create(username="u_c", tenant=self.tenant)
-        user.iam_permissions = ["cadastro.cliente.view"]  # action é GET em ClienteViewSet
+        # Gate: acesso aos clientes (viewset) + cobrança (dado financeiro).
+        user.iam_permissions = ["cadastro.cliente.view", "erp.cobranca.view"]
         self.client.force_authenticate(user=user)
         with patch.object(AsaasClient, "iterar_todos_customers", return_value=iter(self._asaas())):
             resp = self.client.get("/api/clientes/divergencias-asaas/")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data["total_divergencias"], 2)
+
+    def test_endpoint_exige_permissao_de_cobranca(self):
+        """Escopo (o caso `semdrone`/operacional): quem tem acesso aos clientes mas
+        NÃO tem `erp.cobranca.view` não vê as divergências (dado financeiro) → 403.
+        `hasModule` do tenant não basta — precisa da permissão do usuário."""
+        user = Usuario.objects.create(username="u_c_op", tenant=self.tenant)
+        user.iam_permissions = ["cadastro.cliente.view"]  # sem erp.cobranca.view
+        self.client.force_authenticate(user=user)
+        with patch.object(AsaasClient, "iterar_todos_customers", return_value=iter(self._asaas())):
+            resp = self.client.get("/api/clientes/divergencias-asaas/")
+        self.assertEqual(resp.status_code, 403)
 
     def _relatorio_como(self, permissoes):
         user = Usuario.objects.create(username=f"u_c_{'_'.join(permissoes)[:20]}", tenant=self.tenant)
@@ -162,13 +175,13 @@ class AnalisarDivergenciasTests(APITestCase):
     def test_endpoint_mascara_documento_sem_permissao_de_doc(self):
         """LGPD (D3): sem `cadastro.cliente_doc.view`, o relatório de divergências
         não vaza o CPF/CNPJ inteiro — devolve mascarado (2 últimos dígitos, como a 9.C)."""
-        doc = self._relatorio_como(["cadastro.cliente.view"])[self.diverge.pk]["documento"]
+        doc = self._relatorio_como(["cadastro.cliente.view", "erp.cobranca.view"])[self.diverge.pk]["documento"]
         self.assertIn("••••", doc)
         self.assertNotEqual(doc, "11111111111")
         self.assertTrue(doc.endswith("11"))
 
     def test_endpoint_documento_visivel_com_permissao_de_doc(self):
-        por_id = self._relatorio_como(["cadastro.cliente.view", "cadastro.cliente_doc.view"])
+        por_id = self._relatorio_como(["cadastro.cliente.view", "cadastro.cliente_doc.view", "erp.cobranca.view"])
         self.assertEqual(por_id[self.diverge.pk]["documento"], "11111111111")
 
 
@@ -220,3 +233,89 @@ class GerarCobrancaEndpointTests(APITestCase):
                 )
         self.assertEqual(resp.status_code, 202)
         delay.assert_called_once_with(self.conta.conta_receber_id)
+
+
+class WebhookAsaasTokenTests(SimpleTestCase):
+    """S7 — token do webhook conferido em tempo constante e fail-closed.
+
+    Sem tocar o banco: o caminho de rejeição não chega a `processar_evento_webhook`,
+    e o caminho feliz é mockado.
+    """
+
+    def _post(self, header_token):
+        from rest_framework.test import APIRequestFactory
+        from .views import WebhookAsaasView
+
+        extra = {}
+        if header_token is not None:
+            extra["HTTP_ASAAS_ACCESS_TOKEN"] = header_token
+        request = APIRequestFactory().post(
+            "/api/erp/cobrancas/webhook/asaas/",
+            {"id": "evt_1", "event": "PAYMENT_RECEIVED"},
+            format="json",
+            **extra,
+        )
+        return WebhookAsaasView.as_view()(request)
+
+    @override_settings(ASAAS_WEBHOOK_TOKEN="segredo-forte")
+    def test_token_errado_rejeitado(self):
+        self.assertEqual(self._post("errado").status_code, 401)
+
+    @override_settings(ASAAS_WEBHOOK_TOKEN="segredo-forte")
+    def test_sem_header_rejeitado(self):
+        self.assertEqual(self._post(None).status_code, 401)
+
+    @override_settings(ASAAS_WEBHOOK_TOKEN="")
+    def test_sem_token_configurado_nega_tudo(self):
+        # Fail-closed: segredo não configurado → nenhum webhook passa (nem header vazio).
+        self.assertEqual(self._post("").status_code, 401)
+
+    @override_settings(ASAAS_WEBHOOK_TOKEN="segredo-forte")
+    def test_token_correto_passa_do_guard(self):
+        with patch("funcoescobrancas.views.services.processar_evento_webhook") as proc:
+            proc.return_value = MagicMock(resultado="ok")
+            resp = self._post("segredo-forte")
+        self.assertEqual(resp.status_code, 200)
+        proc.assert_called_once()
+
+
+class TaskCriarCobrancaSemContextoTests(APITestCase):
+    """
+    Regressão: a task `criar_cobranca` roda no worker **sem** contexto de tenant.
+    Antes lia `ContaReceber.objects.get()` sem armar a RLS → a política
+    fail-closed escondia a linha (DoesNotExist) e nenhum Boleto era criado (nem
+    no Asaas, nem no banco). Agora arma `rls_bypass`→`tenant_context`. O teste
+    chama a task direto (como o worker), sem autenticar nenhum request.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.tenant = Tenant.objects.create(slug="task-cob", nome="Empresa Task")
+        cls.cliente = Cliente.objects.create(
+            nome_completo="Cliente Task", cpf_cnpj="11111111111", email="c@t.com",
+            data_nascimento=date(1990, 1, 1), tenant=cls.tenant,
+        )
+        cls.conta = ContaReceber.objects.create(
+            cliente=cls.cliente, descricao="Serviço Task", valor=1000,
+            data_vencimento=date(2026, 8, 1), tenant=cls.tenant,
+        )
+
+    def test_task_cria_boleto_sem_contexto_de_request(self):
+        from funcoescobrancas.tasks import criar_cobranca
+
+        pagamento = {"id": "pay_task", "bankSlipUrl": "https://x/b.pdf", "identificationField": "111"}
+        # Nenhum contexto de tenant armado aqui — como no worker real.
+        with patch.object(AsaasClient, "buscar_customer_por_cpf_cnpj", return_value=None), \
+             patch.object(AsaasClient, "criar_customer", return_value={"id": "cus_task"}), \
+             patch.object(AsaasClient, "criar_payment", return_value=pagamento):
+            resultado = criar_cobranca(self.conta.conta_receber_id)
+
+        with rls_bypass():
+            boleto = Boleto.objects.get(conta_receber=self.conta)
+        self.assertEqual(boleto.gateway_id, "pay_task")
+        self.assertEqual(boleto.tenant_id, self.tenant.pk)
+        self.assertEqual(resultado, boleto.boleto_id)
+
+    def test_task_conta_inexistente_e_noop(self):
+        from funcoescobrancas.tasks import criar_cobranca
+        self.assertIsNone(criar_cobranca(99999999))

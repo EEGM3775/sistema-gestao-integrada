@@ -1,0 +1,8 @@
+# Fase 10.4 — advisories Python triadas e aceitas pelo job security-scan
+# (pip-audit backend + iam). Uma ID por linha (PYSEC-/GHSA-/CVE-), com
+# JUSTIFICATIVA e DATA no comentário. Linhas em branco e '#' são ignoradas.
+# Só entra aqui o que foi analisado e NÃO tem correção aplicável — prefira o
+# bump via Dependabot a silenciar o achado.
+#
+# Exemplo:
+#   PYSEC-2026-XXXX  # sem release corrigido; caminho não exercido — triado DD/MM/AAAA

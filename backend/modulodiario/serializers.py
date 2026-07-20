@@ -1,5 +1,6 @@
 # backend/modulodiario/serializers.py
 from rest_framework import serializers
+from nucleo.upload_validation import UploadValidationMixin
 from .models import DiarioObra, EntradaDiario, DocumentoDiario
 from .permissions import get_funcionario, pode_moderar
 
@@ -16,7 +17,7 @@ class EntradaDiarioSerializer(serializers.ModelSerializer):
         read_only_fields = ['autor', 'origem', 'data_criacao', 'data_atualizacao']
 
 
-class DocumentoDiarioSerializer(serializers.ModelSerializer):
+class DocumentoDiarioSerializer(UploadValidationMixin, serializers.ModelSerializer):
     autor_nome = serializers.CharField(source='autor.nome_completo', read_only=True, default=None)
     analise_ia = serializers.SerializerMethodField()
 

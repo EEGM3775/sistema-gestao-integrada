@@ -8,6 +8,7 @@ import { Sheet } from '../components/shared/Sheet'
 import { MoneyDisplay } from '../components/shared/MoneyDisplay'
 import { StatusContaBadge } from '../components/shared/StatusContaBadge'
 import { StatusBoletoBadge } from '../components/shared/StatusBoletoBadge'
+import { BotaoErroGateway } from '../components/shared/GatewayErro'
 import { STATUS_CONTA_OPTIONS } from '../components/shared/statusConta'
 import { ContaReceberForm } from '../components/forms/ContaReceberForm'
 import { BaixaForm } from '../components/forms/BaixaForm'
@@ -308,16 +309,21 @@ function ContaReceberDetail({
           <ul className="flex flex-col gap-1.5 text-sm">
             {conta.boletos.map(b => (
               <li key={b.boleto_id} className="flex items-center justify-between">
-                <Link
-                  to={`/app/erp/boletos/${b.boleto_id}`}
-                  className="flex items-center gap-2"
-                  style={{ color: 'var(--color-text)', textDecoration: 'none' }}
-                  onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-brand)')}
-                  onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text)')}
-                >
-                  <span>{dateToBR(b.data_vencimento)}</span>
-                  <StatusBoletoBadge status={b.status} />
-                </Link>
+                <div className="flex items-center gap-2">
+                  <Link
+                    to={`/app/erp/boletos/${b.boleto_id}`}
+                    className="flex items-center gap-2"
+                    style={{ color: 'var(--color-text)', textDecoration: 'none' }}
+                    onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-brand)')}
+                    onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text)')}
+                  >
+                    <span>{dateToBR(b.data_vencimento)}</span>
+                  </Link>
+                  {/* "Erro" clicável abre os códigos do Asaas aqui também (decisão: Ambos). */}
+                  {b.status === 'ERRO'
+                    ? <BotaoErroGateway dados={b.dados_retorno_api} titulo="Erro na cobrança (Asaas)" />
+                    : <StatusBoletoBadge status={b.status} />}
+                </div>
                 <MoneyDisplay cents={apiDecimalToCents(b.valor)} />
               </li>
             ))}

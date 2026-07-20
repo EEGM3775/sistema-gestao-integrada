@@ -28,9 +28,10 @@ interface Props {
 
 /**
  * Painel de divergências de identidade banco × Asaas — cadastros cujo estado
- * impediria ou desviaria uma cobrança. Compartilhado entre o cadastro de cliente
- * ("Novo Cliente") e o fluxo de gerar cobrança do ERP (D3), para as duas telas
- * mostrarem a MESMA informação, da mesma forma.
+ * impediria ou desviaria uma cobrança. É **escopo financeiro (ERP)**: usado no
+ * fluxo de gerar cobrança ([GerarCobrancaDialog](../../erp/components/GerarCobrancaDialog.tsx)),
+ * sob demanda. Vive em `modules/clientes` por reusar o service/tipo do cliente,
+ * mas não é exibido no cadastro-base (que é escopo de dados pessoais, não cobrança).
  */
 export const DivergenciasAsaasPanel: React.FC<Props> = ({ loading, divergencias, error, className = '' }) => {
   if (loading) {

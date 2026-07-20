@@ -32,13 +32,17 @@ db.sqlite3-journal
 /static
 
 # Virtual Environment
+# ATENÇÃO: estes padrões são ANCORADOS na raiz ("/env/", não "env/"). Sem a
+# âncora, "env/" casa QUALQUER diretório chamado env em qualquer nível — e
+# passou a engolir o deploy/env/ inteiro, escondendo os modelos *.env.example
+# que precisam ser versionados.
 .env
 .venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
+/env/
+/venv/
+/ENV/
+/env.bak/
+/venv.bak/
 
 # IDEs
 .vscode/
@@ -73,6 +77,14 @@ secrets.env
 .env.development.local
 .env.test.local
 .env.production.local
+# Staging (Fase 10.7): env real e cert TLS self-signed nunca versionados
+# (versionamos só os *.env.example). O .env da linha acima casa nome exato.
+.env.staging
+infra/staging/certs/
+# Os .env REAIS agora moram em deploy/env/ (staging/produção) — versionamos
+# apenas os modelos `*.env.example`. A ordem importa: a exceção `!` vem depois.
+deploy/env/*.env
+!deploy/env/*.env.example
 
 # Cache directories
 .cache/
@@ -83,8 +95,11 @@ secrets.env
 *.temp
 
 #Arquivos de terminal
+# (o antigo terminal.txt da raiz virou docs/comandos.md — era guia útil, não lixo)
 terminal.txt
 lista_testes.txt
+# Despejos de verificação ad-hoc que já apareceram soltos na raiz (A10)
+_verify_*.txt
 
 #arquivos php
 vendor/

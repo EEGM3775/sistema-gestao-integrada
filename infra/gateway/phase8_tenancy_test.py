@@ -25,7 +25,7 @@ try:
 except Exception:
     pass
 
-GW = "http://localhost:8090"
+GW = __import__("os").environ.get("SGI_GW", "http://localhost:8090")  # SGI_GW aponta ao staging (10.7)
 
 def req(method, path, token=None, body=None):
     data = json.dumps(body).encode() if body is not None else None

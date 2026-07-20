@@ -1,0 +1,31 @@
+# Prometheus — configuração de scrape da plataforma SGI (Fase 10.1).
+# Sobe pelo perfil `observability` do docker-compose. Alvos são os serviços
+# Django que expõem /metrics na rede interna `sgi` (nunca públicos pelo gateway).
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  external_labels:
+    plataforma: sgi
+
+scrape_configs:
+  - job_name: erp
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["erp:8000"]
+        labels:
+          service: erp
+
+  - job_name: iam
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["iam:8001"]
+        labels:
+          service: iam
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+# Próximo passo (documentado no README): regras de alerta (erros 5xx e p95 de
+# latência) + Alertmanager, e Grafana com um dashboard mínimo (taxa de erro e
+# latência por serviço/rota).

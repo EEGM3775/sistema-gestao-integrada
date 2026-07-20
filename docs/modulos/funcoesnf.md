@@ -1,10 +1,10 @@
 # Microsserviço de Notas Fiscais (`funcoesnf`, Node)
 
 > Comunicação com a API de emissão/consulta de NF (NFE.io hoje; Asaas como destino). Chamado pelo
-> ERP nas actions `emitir-nfse`/`emitir-nfe` de `ContaReceber`.
+> backend nas actions `emitir-nfse`/`emitir-nfe` de `ContaReceber`.
 > Código: [backend/funcoesnf/](../../backend/funcoesnf/).
 >
-> ⚠️ O callback de status ao ERP usa o token estático legado (pré-Fase 6) — achado **D1**, ver
+> ⚠️ O callback de status ao backend usa o token estático legado (pré-Fase 6) — achado **D1**, ver
 > [../pendencias.md](../pendencias.md).
 
 > **Provedor: NFE.io → Asaas (sandbox → real).** A emissão de NFS-e migra para o **Asaas** (recurso

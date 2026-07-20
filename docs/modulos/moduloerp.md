@@ -65,9 +65,16 @@ Isolado por tenant. Ver [../acesso-e-permissoes.md](../acesso-e-permissoes.md).
 `gerar-cobranca` ✅ D.1.2 — enfileira `funcoescobrancas.tasks.criar_cobranca`, gera `Boleto` via Asaas,
 `emitir-nfse`, `emitir-nfe`, `emitir-lote-nfse`) · `/revisoes-baixa/` (somente leitura + `aprovar`,
 `rejeitar` — fila do financeiro para baixas em títulos já quitados/cancelados) · `/centros-custo/` ·
-`/lotes-remessa/` · `/transacoes/` · `/notas-fiscais-servico/` · `/notas-fiscais-produto/` ·
-`/notas-fiscais/` · `/cobrancas-cliente/` · `/boletos/` · `/dashboard/` (aging + fluxo de caixa) ·
+`/lotes-remessa/` · `/transacoes/` · `/notas-fiscais-servico/` (+ `cancelar`, `documento` — verifica a
+NFE.io ao vivo e resolve o PDF/XML atual, a versão CANCELADA quando cancelada; offline → última versão
+local + aviso) · `/notas-fiscais-produto/` · `/notas-fiscais/` · `/cobrancas-cliente/` ·
+`/boletos/` (+ `cancelar` → Asaas `cancelar_payment`, exige `erp.cobranca.emitir`; `documento` — verifica
+o Asaas ao vivo, mesmo contrato de fallback offline) · `/dashboard/` (aging + fluxo de caixa) ·
 `/atualizar-status-nf/` · `/nf/<id>/consultar/`.
+
+Erros ficam visíveis: NFS-e e `Boleto` guardam o retorno cru do gateway em `dados_retorno_api` (na falha,
+os códigos/mensagens); quando o Asaas recusa a cobrança, um `Boleto` status `ERRO` é persistido (o erro
+some da fila interna e aparece clicável na UI). `data_cancelamento` na NFS-e/NF-e e no `Boleto`.
 
 ### Integração externa hoje
 Emissão de NF chama o microsserviço Node [funcoesnf](funcoesnf.md) (NFE.io) em `localhost:3003`; em dev,
@@ -321,16 +328,17 @@ Mais rica que os módulos simples (`clientes/`, `rh/`), por causa do volume e da
 ```
 modules/erp/
 ├── routes.tsx                    ← sub-rotas lazy/Suspense, irmãs de /app/erp (não aninhadas)
-├── types.ts                      ← ContaPagar/ContaReceber/Boleto/EventoWebhookAsaas/Rateio/...
+├── types.ts                      ← ContaPagar/ContaReceber/Boleto/EventoWebhookAsaas/Rateio/NotaFiscalServico/NotaFiscalRecebida/...
 ├── api/        erpClient · queryKeys (erpKeys.*) · endpoints/ (contasAPagar, contasAReceber,
-│               centrosCusto, lotesRemessa, boletos, dashboard)
+│               centrosCusto, lotesRemessa, boletos, notasFiscais, dashboard)
 ├── hooks/      useContasAPagar · useContasAReceber (useQuery + useCreate/useUpdate/useDarBaixa) ·
 │               useCentrosCusto · useLotesRemessa · useEntityOptions · useErpDashboard ·
-│               useBoletos (useBoletos · useGerarCobrancaContaAReceber · useEventosWebhookAsaas)
+│               useBoletos (useBoletos · useGerarCobrancaContaAReceber · useEventosWebhookAsaas) ·
+│               useNotasFiscais (useNotasFiscaisServico/Recebidas · useConsultar/useCancelar/useEmitirNfse)
 ├── components/
 │   ├── shared/   FilterBar · FinanceDataTable (TanStack Table server-side) · Sheet (slide-over) ·
 │   │             MoneyInput · MoneyDisplay · KpiCard · StatusContaBadge (+ statusConta.ts) ·
-│   │             StatusBoletoBadge (+ statusBoleto.ts)
+│   │             StatusBoletoBadge (+ statusBoleto.ts) · StatusNfeBadge (+ statusNfe.ts)
 │   ├── forms/    ContaPagarForm · ContaReceberForm · BaixaForm · RateioField · FormField ·
 │   │             schemas.ts (zod) · formStyles.ts          ← RHF + zod, 1º uso no projeto
 │   └── charts/   FluxoCaixaChart · AgingChart (Recharts)
@@ -339,7 +347,8 @@ modules/erp/
     ├── ContasAPagarPage.tsx      ← workspace: FilterBar+FinanceDataTable+Sheet (criar/editar/baixa/ver)
     ├── ContasAReceberPage.tsx    ← idem, espelhado para cliente/NF — + botão "Gerar cobrança (Asaas)"
     ├── BoletosListPage.tsx       ← D.1.2 ✅: workspace só-leitura das cobranças emitidas via Asaas
-    └── BoletoDetailPage.tsx      ← D.1.2 ✅: dados do gateway + timeline de eventos do webhook
+    ├── BoletoDetailPage.tsx      ← D.1.2 ✅: dados do gateway + timeline de eventos do webhook
+    └── NotasFiscaisPage.tsx      ← D.1.3 ✅: abas emitidas/canceladas/recebidas · consultar/cancelar · PDF/XML
 ```
 
 > Telas dedicadas de boletos (`/app/erp/boletos`, `/app/erp/boletos/:id`) — decisão do usuário de
@@ -349,7 +358,6 @@ modules/erp/
 **Planejado (sub-fases seguintes)** — entram conforme o roadmap em [§13](#13-roadmap-em-sub-fases-fase-d1x):
 
 ```
-    ├── notas/    (NotasListPage [emitidas|recebidas|canceladas]) — D.1.3
     ├── obra/     (ObraFinanceiroPage — DRE da obra)             — D.1.4
     ├── caixa/    (CaixaPage, ConciliacaoPage)                   — D.1.6
     ├── fluxo/    (FluxoCaixaPage — realizado + projetado)       — D.1.7
@@ -409,7 +417,7 @@ A cobrança fala com o Asaas por um **Django app Python** novo, **`funcoescobran
 **Celery tasks** + view de webhook, tudo in-process no Django. **Não** é microsserviço Node nem Java:
 segue o **AD-8** ([arquitetura.md §6](../arquitetura.md#6-estratégia-de-stack-tecnológica)) — *"nova
 integração externa → Celery task (Python)"*, *"novo webhook → Django view + Celery"*, e Java fica
-restrito ao drone ("para o ERP, I/O-bound, essa limitação não existe"). O prefixo `funcoes*` não é de
+restrito ao drone ("para o backend, I/O-bound, essa limitação não existe"). O prefixo `funcoes*` não é de
 Node: o [funcoesia](funcoesia.md) já é Python. A **lógica e os models continuam no
 [moduloerp](moduloerp.md)** (`Boleto`, `ContaReceber`, `CobrancaCliente`); o app só adapta o protocolo
 Asaas e recebe o webhook. O [funcoesnf](funcoesnf.md) também passa a usar o Asaas (`invoices`) para NFS-e
@@ -555,7 +563,7 @@ Antes de operar com **dinheiro real**, o módulo depende das fases de fundação
 | **D.1.0** ✅ 07/06/2026 | **Fundação UI** do ERP ([§5](#5-frontend-do-erp--navegação-e-arquitetura)) | `_scope` (tenant) em todos os ViewSets financeiros; `ErpPageNumberPagination` (25/pág.) + `FilterSet`s + `SearchFilter`/`OrderingFilter` | camada de dados (`erpKeys` + `useErpDashboard` sobre TanStack Query), `FilterBar`+`FinanceDataTable` (TanStack Table, server-side, URL-friendly), `MoneyInput`/`MoneyDisplay` (centavos inteiros), `KpiCard` + `FluxoCaixaChart`/`AgingChart` (Recharts), `routes.tsx` com `lazy`/`Suspense` (code-splitting); shell `/app/erp` = `ErpDashboardPage` (hub com KPIs + gráficos) | ✅ dashboard abre em `/app/erp` com KPIs e gráficos reais do `/dashboard/` (aging a receber/pagar, fluxo de caixa mensal); cadeia de invalidação pronta para as mutações de D.1.1 |
 | **D.1.1** ✅ 07/06/2026 | **Contas a pagar/receber** | `Fatura` **consolidada** em `ContaPagar`/`ContaReceber` (status granular, `valor_pago`/juros/multa/desconto, `data_emissao`/`agendamento`); `CentroCusto` + `RateioContaPagar/Receber`; `LoteRemessa`; `Transacao` repontada (CHECK `conta_pagar` xor `conta_receber`); `dar_baixa()` único caminho de baixa (gera `Transacao`, preparado para webhook Asaas D.1.2); `dar-baixa`/`gerar-lote-remessa` (AP) e `dar-baixa`/`emitir-nfse`/`emitir-nfe`/`emitir-lote-nfse` (AR) como actions; `ERPDashboardView` recalculado direto de AP/AR | `Sheet` (slide-over, 1º uso no projeto); `ContaPagarForm`/`ContaReceberForm`/`BaixaForm` (RHF+zod, 1º uso, com `RateioField` em field array); `ContasAPagarPage`/`ContasAReceberPage` (workspace: `FilterBar`+`FinanceDataTable`+`Sheet` p/ criar/editar/ver/baixa); cards de navegação no hub + breadcrumb de volta | ✅ CRUD completo, baixa parcial→total, rateio por centro de custo, lote de remessa e aging do dashboard validados via API/gateway (golden path, 07/06/2026; dados de teste limpos). **Achado corrigido no mesmo dia:** `dar_baixa()` aceitava baixa repetida em título já `QUITADO`/`CANCELADO` — agora detecta e encaminha para revisão do financeiro via `RevisaoBaixa`/`BaixaRequerRevisao` + fila `/api/erp/revisoes-baixa/` (`aprovar`/`rejeitar`); ver "Dívidas técnicas" |
 | **D.1.2** ✅ MVP 08/06/2026 (backend) | **Boletos & Asaas** | Django app Python [funcoescobrancas](funcoescobrancas.md) — `AsaasClient` + `services`/`tasks` Celery + `WebhookAsaasView` idempotente + `EventoWebhookAsaas`; action `gerar-cobranca` em `ContaReceber`; baixa automática via `dar_baixa(origem='asaas')` (reaproveita o guard `RevisaoBaixa` do D.1.1) | ❌ telas de boletos (`BoletosListPage`/`BoletoDetailPage`) ainda não construídas | ✅ sandbox (mockado): emite, gera customer/payment, baixa automática por webhook, idempotência e guard `RevisaoBaixa` validados e2e (08/06/2026). Escopo MVP = golden path (emitir + baixa); cancelar/estornar/QR PIX/parcelamento ficam para slice 2; credencial **global** via `.env` (decisão do usuário) |
-| **D.1.3** | **Notas fiscais** | cancelamento, CC-e, consulta | abas emitidas/recebidas/canceladas, lote | emitir + cancelar + baixar PDF/XML |
+| **D.1.3** ✅ 16/07/2026 | **Notas fiscais** | action `cancelar` na NFS-e (Celery `cancelar_nota_fiscal_servico` → NFE.io) + permissão `erp.nf.cancelar`; `NotaFiscalServicoFilter` (`status`/`excluir_status` p/ as abas); consulta já existia (`nf/<id>/consultar/`) | `NotasFiscaisPage` (rota `/app/erp/notas-fiscais`): abas emitidas/canceladas/recebidas, `StatusNfeBadge`, download PDF/XML, ações consultar/cancelar, **`EmitirNfseDialog`** (emite a partir de uma conta a receber); card no hub | ✅ emitir (via conta a receber) + cancelar + baixar PDF/XML; suíte 35/35 (Postgres) + contrato NFE.io validado ao vivo (auth/payload/erro 4xx→`NFeErro`). **Emissão feliz pende empresa emitente na conta NFE.io.** **Falta:** UI de emissão em lote (`emitir-lote-nfse`) e CC-e |
 | **D.1.4** | **Financeiro por obra** | `CentroCusto`, rateio | DRE da obra, orçado x realizado | financeiro filtrado por obra |
 | **D.1.5** | **Devoluções/estornos** | `Devolucao`, refund Asaas, NF devolução | tela de devoluções | estorno reflete no caixa |
 | **D.1.6** | **Caixa, bancos & conciliação** | `ContaBancaria`, OFX/webhook | extrato + conciliação | extrato casa com títulos |

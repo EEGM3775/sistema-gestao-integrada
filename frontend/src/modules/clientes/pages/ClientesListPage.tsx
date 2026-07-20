@@ -4,7 +4,6 @@ import { Plus, Search, Users, RefreshCw } from 'lucide-react'
 import apiClient from '@/api/apiClient'
 import { useClientes } from '../hooks/useClientes'
 import { createCliente } from '../hooks/useCliente'
-import { getDivergenciasAsaas, type DivergenciaAsaas } from '../services/clientesService'
 import ClienteForm from '../components/ClienteForm'
 import type { ClienteFormData, Empreendimento } from '@/types'
 import { formatCPFCNPJ } from '@/utils/masks'
@@ -15,9 +14,6 @@ const ClientesListPage: React.FC = () => {
   const [empFiltro, setEmpFiltro]         = useState<number | ''>('')
   const [empreendimentos, setEmp]         = useState<Empreendimento[]>([])
   const [formOpen, setFormOpen]           = useState(false)
-  const [divergencias, setDivergencias]   = useState<DivergenciaAsaas[]>([])
-  const [divergLoading, setDivergLoading] = useState(false)
-  const [divergError, setDivergError]     = useState<string | null>(null)
 
   const { data, loading, error, refetch } = useClientes({ search, empreendimento: empFiltro })
 
@@ -27,20 +23,10 @@ const ClientesListPage: React.FC = () => {
       .catch(() => {})
   }, [])
 
-  // Ao abrir "Novo Cliente", audita as divergências banco × Asaas para o
-  // operador ver, antes de cadastrar, o que impediria/desviaria uma cobrança.
-  const openCreate = () => {
-    setFormOpen(true)
-    setDivergLoading(true)
-    setDivergencias([])
-    setDivergError(null)
-    getDivergenciasAsaas()
-      .then(r => setDivergencias(r.data.divergencias))
-      // D3: não engolir a falha — um painel vazio dava falsa sensação de "tudo
-      // certo". Avisa que a verificação não pôde rodar (Asaas fora/sem permissão).
-      .catch(() => setDivergError('Não foi possível verificar as divergências com o Asaas agora. Confira o cadastro antes de emitir boletos.'))
-      .finally(() => setDivergLoading(false))
-  }
+  // O cadastro-base de cliente é escopo de dados pessoais — nada de cobrança.
+  // A auditoria de divergências banco × Asaas é escopo financeiro (ERP) e vive
+  // no fluxo de gerar cobrança (GerarCobrancaDialog), onde de fato importa.
+  const openCreate = () => setFormOpen(true)
 
   const handleCreate = async (formData: ClienteFormData) => {
     await createCliente(formData)
@@ -200,9 +186,6 @@ const ClientesListPage: React.FC = () => {
         open={formOpen}
         onClose={() => setFormOpen(false)}
         onSave={handleCreate}
-        divergencias={divergencias}
-        divergLoading={divergLoading}
-        divergError={divergError}
       />
     </div>
   )

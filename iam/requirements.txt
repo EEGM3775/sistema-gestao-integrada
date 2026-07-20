@@ -6,4 +6,7 @@ psycopg2-binary
 python-dotenv
 django-cors-headers
 argon2-cffi
+redis
+django-redis
 gunicorn
+prometheus-client

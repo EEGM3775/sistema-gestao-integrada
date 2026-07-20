@@ -1,4 +1,4 @@
-# Build de produção do shell React (ERP) servido por nginx.
+# Build de produção do shell React (app) servido por nginx.
 # Usa `vite build` direto (sem `tsc -b`) para não quebrar por erros de tipo no
 # shell ainda incipiente — o esbuild do vite transpila sem type-check.
 FROM node:22-alpine AS build

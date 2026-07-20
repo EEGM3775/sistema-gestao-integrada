@@ -2,6 +2,41 @@
 
 Todas as mudanças notáveis desta versão são documentadas aqui.
 
+## [1.0.11] - 2026-07-19
+
+### Visão geral
+
+Versão de consolidação pós-Fase 10.6/F1 com ajustes de infraestrutura, documentação e organização do repositório.
+
+#### Infraestrutura e deploy
+- `docker-compose.yml` e `.env.example` movidos para `deploy/compose/` e `deploy/env/` com variants por ambiente (dev/staging/prod).
+- `.dockerignore` e `.trivyignore` adicionados na raiz.
+- `infra/serve_spa.py` centralizado (removido da raiz).
+- Gateway nginx com `resolver` dinâmico e configs de staging.
+
+#### Backend
+- Módulos Node legados (`funcoesia`, `funcoeslead`, `funcoesnf`, `funcoeswhatsapp`) removidos em favor das implementações Django integradas.
+- `funcoeswhatsapp` reescrito em Django (models, flows, router, tasks, security, tenant resolver).
+- `funcoesia` com `llm_client.py` e tasks Celery.
+- `modulocalendar`: recurrence, feriados, lembretes e management commands.
+- `moduloerp`: cancelamento/retorno gateway, `nfe_client`, tasks e migrações.
+- `nucleo`: notificações, quotas, rate limit, observability, geo/drone sync, upload validation, revocation, middleware.
+- `iam`: recuperação de senha, eventos de segurança, quotas, observability, signals, middleware, health views.
+
+#### Frontend
+- Recuperação de senha (esqueci/redefinir/confirmar e-mail).
+- Módulo de calendário.
+- Notas fiscais (ERP) com divergências e emissão NFS-e.
+- Notificações e avisos de acesso.
+- Session clock e warning de expiração.
+- AuthShell e ModuleRoute para roteamento protegido.
+
+#### Documentação
+- `docs/comandos.md`, `docs/arquitetura/rate-limiting.md` e seção de expansão adicionados.
+- Atualizações em arquitetura, módulos, desenvolvimento, domínio, frontend e roadmap.
+
+---
+
 ## [1.1.0] - 2026-07-11
 
 ### Sessão sem relogin — access curto + refresh em cookie HttpOnly (Fase 10.6 / F1)
@@ -192,7 +227,7 @@ vem da rotação/detecção de reuso e do cookie HttpOnly, não da inconveniênc
 - L1 - Calendário 500 em toda listagem
 - L2 - Dead Letter Queue nunca grava
 - L3 - NF emitida sem tenant e sem documento do tomador
-- L4 - Integração `funcoeslead` ↔ ERP morta
+- L4 - Integração `funcoeslead` ↔ backend morta
 - D2 - Boleto Asaas emitido no cliente errado
 - D3 - `tenant` obrigatório no POST (parcial - RH, fornecedores)
 - D4 - `RequirePermission` fail-open com `permissions` vazia (mitigado)
@@ -215,7 +250,7 @@ vem da rotação/detecção de reuso e do cookie HttpOnly, não da inconveniênc
 
 - Banco por env (PostgreSQL+Redis via compose)
 - Serviço IAM próprio
-- ERP como resource server com tenancy
+- backend como resource server com tenancy
 - SSO ponta a ponta
 - UI integrada (gateway, domínio único)
 - Vínculo drone ↔ obra/empreendimento

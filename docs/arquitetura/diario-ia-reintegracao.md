@@ -42,19 +42,29 @@ contrato estabilizar.
 - Web: form de contribuição (texto + foto + clima + ocorrência), timeline do dia com autoria, moderação
   para responsável técnico. IA fica "pendente" até a Fase B.
 
-### Fase B — Pipeline de IA 📋
+### Fase B — Pipeline de IA ✅ (14/07/2026, backend)
 
-- **Worker Celery** no `docker-compose.yml` (mesma imagem do ERP, `command: celery -A ... worker`).
-- `funcoesia` reescrito em **Python** (task Celery) chamando a **LLM local** (HTTP) e gravando `AnaliseImagemIA`.
-- Serviço da **LLM local** (Python/FastAPI) no compose quando pronto; contrato HTTP: entra imagem+tipo,
-  sai o JSON acima.
+- **Worker Celery** no `docker-compose.yml` já provido (A1/Fase 10.9).
+- `funcoesia` **reescrito em Python**: task `funcoesia.tasks.analisar_documento_ia` (base `DLQTask`) lê a
+  imagem do `DocumentoDiario` **in-process** (FileField local, sem download HTTP), chama a LLM local via
+  `funcoesia.llm_client` e grava `AnaliseImagemIA` no tenant correto (`rls_bypass` p/ achar o tenant →
+  `tenant_context` p/ gravar). Indisponibilidade → retry+DLQ; resposta malformada → `erro`. Os proxies FBV
+  (`iniciar`/`reprocessar`/`tipos`/`recomendacoes`) e o `modulodiario` deixaram de chamar o Node (fecha a
+  parte de IA do **D1**). Suíte `funcoesia/tests.py` 6/6 sobre Postgres.
+- **Pendente:** serviço da **LLM local** (Python/FastAPI) no compose — contrato HTTP `LLM_VISION_URL`
+  (entra imagem+tipo, sai o JSON acima); sem a URL a análise fica `erro` sem travar o diário.
 
 ### Fase C — Canal WhatsApp em Python 📋
 
 - `funcoeswhatsapp` reescrito como webhook Django + Celery (estado da conversa em Redis).
 - Identificação por **telefone** (filtro `/funcionarios/?telefone=` já existe e normaliza número).
-- **Auth serviço→serviço**: IAM emite **JWT de serviço de vida curta** (Fase 10.8). O webhook chama o
-  ERP com esse JWT; a **autoria** vem do telefone→funcionário. Substitui a `TokenAuth` legada da v01.
+- **Auth**: a borda usa a **assinatura HMAC da Meta**; a escrita roda **in-process** (padrão da Fase B,
+  sem auto-HTTP), com autoria via telefone→funcionário. O **JWT de serviço da Fase 10.8** fica como plano
+  B caso o canal seja mantido como processo separado — ver o refinamento no plano detalhado.
+
+> **Plano detalhado (desenho + fases C.0–C.5 + decisões):**
+> [../modulos/funcoeswhatsapp.md](../modulos/funcoeswhatsapp.md) — o canal WhatsApp é a **comunicação do
+> SaaS** (o diário é um dos seus fluxos). Esta seção é só o lugar dele na sequência A→B→C.
 
 ## Sequência
 

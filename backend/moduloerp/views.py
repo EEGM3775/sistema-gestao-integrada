@@ -1,5 +1,6 @@
 # backend/moduloerp/views.py
 import logging
+from urllib.parse import urlparse
 import requests
 from rest_framework import viewsets, permissions, views, filters, status as status_module
 from django_filters.rest_framework import DjangoFilterBackend
@@ -18,7 +19,7 @@ from os.path import basename
 from .models import (
     Transacao, NotaFiscalServico, NotaFiscalProduto,
     NotaFiscal, ContaPagar, ContaReceber, CobrancaCliente, Boleto,
-    CentroCusto, LoteRemessa, StatusConta, RevisaoBaixa, StatusRevisaoBaixa, BaixaRequerRevisao
+    CentroCusto, LoteRemessa, StatusConta, StatusNFE, RevisaoBaixa, StatusRevisaoBaixa, BaixaRequerRevisao
 )
 from .serializers import (
     TransacaoSerializer,
@@ -36,12 +37,19 @@ from .serializers import (
 )
 from .filters import (
     TransacaoFilter, ContaPagarFilter, ContaReceberFilter,
-    CobrancaClienteFilter, BoletoFilter,
+    CobrancaClienteFilter, BoletoFilter, NotaFiscalServicoFilter,
 )
 from .pagination import ErpPageNumberPagination
 from funcoescobrancas.tasks import criar_cobranca
 from funcoescobrancas.client import AsaasAPIError
-from funcoescobrancas.services import validar_cliente_para_cobranca, CobrancaBloqueada
+from funcoescobrancas.services import (
+    validar_cliente_para_cobranca, CobrancaBloqueada,
+    cancelar_cobranca_asaas, verificar_cobranca_asaas,
+)
+from .tasks import (
+    emitir_nota_fiscal_servico, consultar_nota_fiscal_servico,
+    cancelar_nota_fiscal_servico,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,19 +60,25 @@ def _registrar_arquivos_nf(nf_instance, url_pdf, url_xml):
     Downloads PDF and XML from URLs and saves them to the NotaFiscal instance.
     """
     try:
-        # Download and save PDF
+        # Download and save PDF (L8: timeout + nome derivado do path, sem query string).
+        # O nome pode não vir com extensão (ex.: blob assinado da NFE.io, path
+        # `/blob/download`) → garante a extensão certa para o download da UI.
         if url_pdf:
-            response_pdf = requests.get(url_pdf, stream=True)
+            response_pdf = requests.get(url_pdf, stream=True, timeout=(5, 30))
             response_pdf.raise_for_status()
-            pdf_name = basename(url_pdf)
+            pdf_name = basename(urlparse(url_pdf).path)
+            if not pdf_name.lower().endswith('.pdf'):
+                pdf_name = f"nf_{nf_instance.id}.pdf"
             nf_instance.arquivo_pdf.save(pdf_name, ContentFile(response_pdf.content))
             logger.info(f"Arquivo PDF da NF ID {nf_instance.id} salvo: {pdf_name}")
 
         # Download and save XML
         if url_xml:
-            response_xml = requests.get(url_xml, stream=True)
+            response_xml = requests.get(url_xml, stream=True, timeout=(5, 30))
             response_xml.raise_for_status()
-            xml_name = basename(url_xml)
+            xml_name = basename(urlparse(url_xml).path)
+            if not xml_name.lower().endswith('.xml'):
+                xml_name = f"nf_{nf_instance.id}.xml"
             nf_instance.arquivo_xml.save(xml_name, ContentFile(response_xml.content))
             logger.info(f"Arquivo XML da NF ID {nf_instance.id} salvo: {xml_name}")
         
@@ -75,11 +89,55 @@ def _registrar_arquivos_nf(nf_instance, url_pdf, url_xml):
         return False
 
 
+def _verificar_documento_nf(nf):
+    """
+    Verifica AO VIVO a NFS-e na NFE.io (espelha `verificar_cobranca_asaas`): é o
+    que a UI chama ao abrir o documento. **NFE.io no ar** → devolve a verdade do
+    provedor (status atual + link assinado do PDF/XML, já a versão CANCELADA se
+    foi cancelada) e atualiza a nota local; **fora do ar** → devolve a última
+    versão guardada e sinaliza `gateway_online=False`. Nunca levanta exceção.
+    """
+    from .nfe_client import NFeClient, NFeIndisponivel, NFeErro
+    from .tasks import _aplicar_retorno
+
+    def _local(mensagem, online=False):
+        return {
+            'gateway_online': online,
+            'status': nf.status,
+            'url_pdf': nf.arquivo_pdf.url if nf.arquivo_pdf else '',
+            'url_xml': nf.arquivo_xml.url if nf.arquivo_xml else '',
+            'mensagem': mensagem,
+        }
+
+    if not nf.nfe_io_id:
+        return _local('Nota sem ID na NFE.io — exibindo a versão local, se houver.')
+
+    client = NFeClient()
+    try:
+        dados = client.consultar_nfse(nf.nfe_io_id)
+    except NFeIndisponivel:
+        return _local('NFE.io fora do ar — exibindo a última versão conhecida da nota.')
+    except NFeErro as exc:
+        return _local(f'NFE.io recusou a consulta: {exc}')
+
+    _aplicar_retorno(nf, dados)   # atualiza status/arquivos locais (fallback)
+    nf.refresh_from_db()
+    url_pdf = dados.get('url_pdf') or client.resolver_url_arquivo(nf.nfe_io_id, 'pdf') or (nf.arquivo_pdf.url if nf.arquivo_pdf else '')
+    url_xml = dados.get('url_xml') or client.resolver_url_arquivo(nf.nfe_io_id, 'xml') or (nf.arquivo_xml.url if nf.arquivo_xml else '')
+    return {
+        'gateway_online': True,
+        'status': nf.status,
+        'url_pdf': url_pdf,
+        'url_xml': url_xml,
+        'mensagem': '',
+    }
+
+
 def _dados_cliente_para_nf(cliente):
     """
     Snapshot do tomador/comprador gravado na NF, com os nomes de campo do
-    model `Cliente` — contrato consumido pelo funcoesnf (`emitirNF.js` exige
-    `cpf_cnpj`, `cep` e `cidade_ibge` para emitir).
+    model `Cliente` — contrato consumido por `nfe_client.montar_payload_nfse`
+    (exige `cpf_cnpj`, `cep` e `cidade_ibge` para emitir a NFS-e).
     """
     if not cliente:
         return {}
@@ -108,6 +166,10 @@ def _emitir_nf_para_conta_receber(request, conta, tipo_nf):
     Migrado de FaturaViewSet._emitir_nf (consolidação Fatura → ContaPagar/
     ContaReceber, D.1.1): emissão de NF sempre foi exclusiva de títulos a
     receber, então a ação nasce direto no ContaReceberViewSet.
+
+    Fase 11.1: a emissão de NFS-e deixou de chamar o microsserviço Node
+    `funcoesnf` (`http://localhost:3003`) — agora enfileira a Celery task
+    Python `emitir_nota_fiscal_servico`, que fala REST direto com a NFE.io.
     """
     try:
         if tipo_nf == 'servico' and conta.nota_fiscal_servico:
@@ -115,25 +177,18 @@ def _emitir_nf_para_conta_receber(request, conta, tipo_nf):
         elif tipo_nf == 'produto' and conta.nota_fiscal_produto:
             return Response({'message': 'Nota Fiscal de Produto já existente para esta conta.'}, status=status_module.HTTP_400_BAD_REQUEST)
 
-        # Determine which model and microservice endpoint to use
-        if tipo_nf == 'servico':
-            nf_model = NotaFiscalServico
-            microservice_endpoint = '/api/emitir-nfse'
-        else:  # produto
-            nf_model = NotaFiscalProduto
-            microservice_endpoint = '/api/emitir-nfe'
-
         # Create the NotaFiscal instance with required data
         if tipo_nf == 'servico':
             descricao_servico = request.data.get('descricao') or conta.descricao or 'Prestação de Serviços'
 
-            nf = nf_model.objects.create(
+            nf = NotaFiscalServico.objects.create(
                 tenant=conta.tenant,
                 city_service_code=request.data.get('city_service_code', '010701'),
                 description=descricao_servico,
                 services_amount=conta.valor,
                 borrower_data=_dados_cliente_para_nf(conta.cliente)
             )
+            conta.nota_fiscal_servico = nf
         else:
             descricao_produto = request.data.get('descricao') or conta.descricao or 'Venda de Produtos'
 
@@ -144,16 +199,11 @@ def _emitir_nf_para_conta_receber(request, conta, tipo_nf):
                 'valor_total': float(conta.valor)
             }]
 
-            nf = nf_model.objects.create(
+            nf = NotaFiscalProduto.objects.create(
                 tenant=conta.tenant,
                 buyer_data=_dados_cliente_para_nf(conta.cliente),
                 items_data=items_data
             )
-
-        # Link it to the ContaReceber
-        if tipo_nf == 'servico':
-            conta.nota_fiscal_servico = nf
-        else:
             conta.nota_fiscal_produto = nf
         conta.save()
 
@@ -164,39 +214,28 @@ def _emitir_nf_para_conta_receber(request, conta, tipo_nf):
             detalhes={"tipo_nf": tipo_nf, "nf_id": nf.id, "valor": str(conta.valor)},
         )
 
-        # Trigger the microservice (optional in development)
-        microservice_url = f'http://localhost:3003{microservice_endpoint}'
-        try:
-            microservice_payload = {
-                'conta_receber_id': conta.conta_receber_id,
-                'nf_id': nf.id
-            }
-
-            if tipo_nf == 'servico':
-                microservice_payload['city_service_code'] = request.data.get('city_service_code', '010701')
-
-            response = requests.post(microservice_url, json=microservice_payload, timeout=5)
-            response.raise_for_status()
-            logger.info(f"Microserviço de NF acionado para Conta a Receber ID: {conta.conta_receber_id} e NF ID: {nf.id}")
-
-            nf.status = 'PROCESSANDO'
-            nf.save()
-
-        except requests.exceptions.RequestException as e:
-            logger.warning(f"Microserviço de NF não disponível: {e}. Modo desenvolvimento ativado.")
-
-            nf.status = 'AGUARDANDO'
-            nf.save()
-
-            serializer_class = NotaFiscalServicoSerializer if tipo_nf == 'servico' else NotaFiscalProdutoSerializer
-            return Response({
-                'message': 'Nota fiscal criada com sucesso. Microserviço de emissão não disponível (modo desenvolvimento).',
-                'data': serializer_class(nf).data,
-                'warning': 'Microserviço de emissão não está rodando'
-            }, status=status_module.HTTP_201_CREATED)
-
         serializer_class = NotaFiscalServicoSerializer if tipo_nf == 'servico' else NotaFiscalProdutoSerializer
-        return Response({'message': 'Processo de emissão iniciado.', 'data': serializer_class(nf).data}, status=status_module.HTTP_202_ACCEPTED)
+
+        if tipo_nf == 'servico':
+            # Enfileira a emissão na NFE.io (Celery task Python — Fase 11.1). O
+            # status vira EMITIDA/ERRO quando a task grava o retorno da NFE.io.
+            nf.status = StatusNFE.PROCESSANDO
+            nf.save(update_fields=['status', 'atualizado_em'])
+            emitir_nota_fiscal_servico.delay(nf.id)
+            return Response(
+                {'message': 'Emissão de NFS-e iniciada — o status é atualizado quando a NFE.io responder.',
+                 'data': serializer_class(nf).data},
+                status=status_module.HTTP_202_ACCEPTED,
+            )
+
+        # NF-e (produto): a emissão via NFE.io nunca foi implementada (o
+        # `funcoesnf` também recusava produto) — a NF fica registrada aguardando
+        # a integração de produto. Ver docs/modulos/moduloerp.md.
+        return Response(
+            {'message': 'Nota Fiscal de Produto registrada. Emissão de NF-e ainda não integrada.',
+             'data': serializer_class(nf).data},
+            status=status_module.HTTP_201_CREATED,
+        )
 
     except Exception as e:
         logger.error(f"Erro interno ao emitir nota fiscal: {e}")
@@ -223,9 +262,10 @@ class NotaFiscalServicoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
     required_resource = "erp.nf"
+    action_permission_map = {"cancelar": "erp.nf.cancelar"}   # cancelamento = verbo próprio
     pagination_class = ErpPageNumberPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['status']
+    filterset_class = NotaFiscalServicoFilter
     ordering_fields = ['data_emissao', 'criado_em', 'services_amount']
     ordering = ['-criado_em']
 
@@ -247,6 +287,46 @@ class NotaFiscalServicoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
             return Response({'message': 'Arquivos da nota fiscal registrados com sucesso.'}, status=status_module.HTTP_200_OK)
         else:
             return Response({'error': 'Falha ao baixar ou salvar os arquivos da nota fiscal.'}, status=status_module.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['get'], url_path='documento')
+    def documento(self, request, pk=None):
+        """
+        Verifica a nota AO VIVO na NFE.io e devolve os links atuais do PDF/XML
+        (a versão CANCELADA quando cancelada). Se a NFE.io estiver fora do ar,
+        devolve a última versão local e avisa. GET → exige apenas `erp.nf.view`.
+        """
+        nf = self.get_object()
+        return Response(_verificar_documento_nf(nf))
+
+    @action(detail=True, methods=['post'], url_path='cancelar')
+    def cancelar(self, request, pk=None):
+        """
+        Enfileira o cancelamento da NFS-e na NFE.io (D.1.3). Só uma NF **emitida**
+        e com `nfe_io_id` é cancelável; o status vira `CANCELADA` (ou `ERRO`)
+        quando a Celery task grava o retorno da NFE.io.
+        """
+        nf = self.get_object()
+        if not nf.nfe_io_id:
+            return Response(
+                {'error': 'NF sem ID externo (nfe_io_id) — nada a cancelar na NFE.io.'},
+                status=status_module.HTTP_400_BAD_REQUEST,
+            )
+        if nf.status != StatusNFE.EMITIDA:
+            return Response(
+                {'error': 'Só é possível cancelar uma NF emitida.'},
+                status=status_module.HTTP_400_BAD_REQUEST,
+            )
+        cancelar_nota_fiscal_servico.delay(nf.id)
+        # Auditoria (Fase 9.E): cancelamento de NF é evento fiscal sensível.
+        from nucleo.auditoria import registrar_auditoria
+        registrar_auditoria(
+            acao="cancelar_nf", instance=nf, usuario=getattr(request, "user", None),
+            detalhes={"nf_id": nf.id, "nfe_io_id": nf.nfe_io_id},
+        )
+        return Response(
+            {'message': 'Cancelamento enviado à NFE.io — o status é atualizado quando responder.'},
+            status=status_module.HTTP_202_ACCEPTED,
+        )
 
 
 class NotaFiscalProdutoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
@@ -288,8 +368,12 @@ class ERPDashboardView(TenantScopedAPIViewMixin, views.APIView):
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
     required_resource = "erp.relatorio"   # dashboard = relatório financeiro (GET→.view)
+    # Teto próprio (S8): o hub agrega vários somatórios sobre todo o financeiro do
+    # tenant — é a chamada mais cara da API e a que mais dói se alguém a repetir em
+    # laço. Muito mais apertado que o teto geral de usuário.
+    throttle_scope = "relatorio"
     def get(self, request, *args, **kwargs):
-        today = timezone.now().date()
+        today = timezone.localdate()
         one_year_ago = today - timedelta(days=365)
 
         # Allow filtering by empreendimento
@@ -442,6 +526,12 @@ class ContaPagarViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
         """
         Registra um lote de remessa bancária agrupando títulos selecionados.
 
+        Só entram títulos **elegíveis** (L9): em aberto/parcial (nunca quitados
+        ou cancelados) e ainda não vinculados a um lote ativo; o `valor_total`
+        soma o **saldo em aberto**, não o valor cheio (um título parcialmente
+        pago remete só o que falta). Títulos descartados voltam em `ignorados`
+        para o financeiro conferir, em vez de inflarem o lote silenciosamente.
+
         Apenas o registro do lote (status/valor_total/vínculo M2M) — a geração
         do arquivo CNAB em si fica para uma sub-fase futura (ver docstring de
         models.LoteRemessa e docs/modulos/moduloerp.md §13/§15).
@@ -450,19 +540,46 @@ class ContaPagarViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
         if not conta_ids:
             return Response({'error': 'Lista de conta_pagar_ids é obrigatória.'}, status=status_module.HTTP_400_BAD_REQUEST)
 
-        contas = self.get_queryset().filter(conta_pagar_id__in=conta_ids)
+        # Elegíveis: em aberto/parcial e fora de qualquer lote ainda ativo
+        # (GERADO/ENVIADO/PROCESSADO — um lote CANCELADO libera seus títulos).
+        contas = self.get_queryset().filter(
+            conta_pagar_id__in=conta_ids,
+            status__in=[StatusConta.ABERTO, StatusConta.PARCIAL],
+        ).exclude(
+            lotes_remessa__status__in=[
+                LoteRemessa.StatusLote.GERADO,
+                LoteRemessa.StatusLote.ENVIADO,
+                LoteRemessa.StatusLote.PROCESSADO,
+            ],
+        ).distinct()
         if not contas.exists():
-            return Response({'error': 'Nenhuma conta válida encontrada para o lote.'}, status=status_module.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'error': 'Nenhum título elegível: quitados/cancelados ou já em um lote ativo são ignorados.'},
+                status=status_module.HTTP_400_BAD_REQUEST,
+            )
 
-        valor_total = contas.aggregate(total=Sum('valor'))['total'] or Decimal('0')
+        # Saldo em aberto (não o valor cheio): título parcial remete só o que falta.
+        saldo_aberto = F('valor') + F('juros') + F('multa') - F('desconto') - F('valor_pago')
+        valor_total = contas.aggregate(
+            total=Sum(saldo_aberto, output_field=DecimalField(max_digits=15, decimal_places=2)),
+        )['total'] or Decimal('0')
+
+        # Materializa os elegíveis ANTES do `set()`: vincular ao lote (GERADO) faz o
+        # próprio queryset `contas` (que exclui títulos em lote ativo) voltar vazio.
+        elegiveis_ids = list(contas.values_list('conta_pagar_id', flat=True))
+
         lote = LoteRemessa.objects.create(
             tenant_id=getattr(request.user, 'tenant_id', None),
             banco=request.data.get('banco', ''),
             observacoes=request.data.get('observacoes', ''),
             valor_total=valor_total,
         )
-        lote.contas_pagar.set(contas)
-        return Response(LoteRemessaSerializer(lote).data, status=status_module.HTTP_201_CREATED)
+        lote.contas_pagar.set(elegiveis_ids)
+
+        elegiveis = {str(cid) for cid in elegiveis_ids}
+        data = LoteRemessaSerializer(lote).data
+        data['ignorados'] = [cid for cid in conta_ids if str(cid) not in elegiveis]
+        return Response(data, status=status_module.HTTP_201_CREATED)
 
 
 class ContaReceberViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
@@ -481,6 +598,24 @@ class ContaReceberViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
         "emitir_nota_fiscal_produto": "erp.nf.emitir",
         "emitir_lote_nfse": "erp.nf.emitir",
     }
+    # Ações que consomem cota de TERCEIRO (Asaas, NFE.io) e produzem efeito com
+    # custo real — boleto emitido, nota fiscal emitida. Ganham um teto próprio,
+    # bem menor que o do usuário: repetição em laço aqui não é só carga na nossa
+    # API, é fatura de terceiro e documento fiscal indevido.
+    ACOES_INTEGRACAO_EXTERNA = {
+        "gerar_cobranca",
+        "emitir_nota_fiscal_servico",
+        "emitir_nota_fiscal_produto",
+        "emitir_lote_nfse",
+    }
+
+    def get_throttles(self):
+        # `throttle_scope` é lido do VIEW pelo ScopedRateThrottle, e um ViewSet tem
+        # uma ação por requisição — então o escopo é definido aqui, por ação, em vez
+        # de um atributo fixo que valeria para o CRUD inteiro.
+        if getattr(self, "action", None) in self.ACOES_INTEGRACAO_EXTERNA:
+            self.throttle_scope = "integracao_externa"
+        return super().get_throttles()
     pagination_class = ErpPageNumberPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = ContaReceberFilter
@@ -776,16 +911,60 @@ class BoletoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
     required_resource = "erp.cobranca"   # boleto é o instrumento da cobrança
+    action_permission_map = {"cancelar": "erp.cobranca.emitir"}   # cancelar = gerir a cobrança
     pagination_class = ErpPageNumberPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_class = BoletoFilter
     ordering_fields = ['data_vencimento', 'valor', 'status']
     ordering = ['-data_vencimento']
 
+    @action(detail=True, methods=['get'], url_path='documento')
+    def documento(self, request, pk=None):
+        """
+        Verifica o boleto AO VIVO no Asaas e devolve o status + URL atuais. Se o
+        Asaas estiver fora do ar, devolve a última versão local e avisa. GET →
+        exige apenas `erp.cobranca.view`.
+        """
+        boleto = self.get_object()
+        return Response(verificar_cobranca_asaas(boleto))
+
+    @action(detail=True, methods=['post'], url_path='cancelar')
+    def cancelar(self, request, pk=None):
+        """
+        Cancela o boleto no Asaas (`cancelar_payment`) e marca-o como CANCELADO
+        com a data/retorno do gateway. Boleto já pago não é cancelável aqui.
+        """
+        boleto = self.get_object()
+        if boleto.status == Boleto.StatusBoleto.CANCELADO:
+            return Response({'detail': 'Boleto já está cancelado.', 'boleto': BoletoSerializer(boleto).data})
+        if boleto.status == Boleto.StatusBoleto.PAGO:
+            return Response(
+                {'detail': 'Não é possível cancelar um boleto já pago — use estorno.'},
+                status=status_module.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            cancelar_cobranca_asaas(boleto)
+        except AsaasAPIError as exc:
+            logger.warning("Asaas recusou o cancelamento do boleto #%s: %s", boleto.boleto_id, exc)
+            return Response(
+                {'detail': f'O Asaas não conseguiu cancelar o boleto agora: {exc}'},
+                status=status_module.HTTP_502_BAD_GATEWAY,
+            )
+        from nucleo.auditoria import registrar_auditoria
+        registrar_auditoria(
+            acao="cancelar_boleto", instance=boleto, usuario=getattr(request, "user", None),
+            detalhes={"boleto_id": boleto.boleto_id, "gateway_id": boleto.gateway_id},
+        )
+        return Response({'detail': 'Boleto cancelado no Asaas.', 'boleto': BoletoSerializer(boleto).data})
+
 
 class AtualizarStatusNFView(TenantScopedAPIViewMixin, views.APIView):
     """
-    Endpoint para o microserviço atualizar o status das Notas Fiscais.
+    Atualização manual do status de uma NF (escopada ao tenant do usuário).
+
+    Antes era o callback do microsserviço Node `funcoesnf`; com a absorção
+    (Fase 11.1) a Celery task grava o status direto, e este endpoint fica como
+    correção manual pelo financeiro (exige `erp.nf.edit`).
     """
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
@@ -796,13 +975,20 @@ class AtualizarStatusNFView(TenantScopedAPIViewMixin, views.APIView):
         nf_tipo = request.data.get('nf_tipo')  # 'servico' ou 'produto'
         status = request.data.get('status')
         dados_retorno = request.data.get('dados_retorno', {})
-        
+
         if not all([nf_id, nf_tipo, status]):
             return Response(
                 {'error': 'Campos obrigatórios: nf_id, nf_tipo, status'},
                 status=status_module.HTTP_400_BAD_REQUEST
             )
-        
+
+        # L8: só aceita status do vocabulário (não gravar valor arbitrário).
+        if status not in StatusNFE.values:
+            return Response(
+                {'error': f'status inválido: {status}. Válidos: {", ".join(StatusNFE.values)}'},
+                status=status_module.HTTP_400_BAD_REQUEST
+            )
+
         try:
             # Determinar qual modelo usar
             if nf_tipo == 'servico':
@@ -850,44 +1036,32 @@ class AtualizarStatusNFView(TenantScopedAPIViewMixin, views.APIView):
 
 class ConsultarStatusNFView(TenantScopedAPIViewMixin, views.APIView):
     """
-    View para o frontend solicitar a consulta de status de uma NF ao microserviço.
+    Dispara a consulta assíncrona do status de uma NFS-e na NFE.io.
+
+    Fase 11.1: em vez de chamar o microsserviço Node (`localhost:3003`),
+    enfileira a Celery task `consultar_nota_fiscal_servico`, que atualiza a NF
+    quando a NFE.io responder.
     """
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
-    # Consulta = leitura (não grava NF localmente, só dispara o refresh no
-    # microserviço); apesar do POST, exige apenas erp.nf.view — não .edit.
+    # Consulta = leitura (não grava NF localmente, só agenda o refresh via task);
+    # apesar do POST, exige apenas erp.nf.view — não .edit.
     required_permission = "erp.nf.view"
 
     def post(self, request, nf_id):
         try:
-            # Usamos NotaFiscalServico diretamente, mas poderia ser genérico
-            # (escopada ao tenant do usuário — S1)
+            # Escopada ao tenant do usuário (S1) antes de agendar a consulta.
             nf = self.scope_qs(NotaFiscalServico.objects.all()).get(pk=nf_id)
-            
+
             if not nf.nfe_io_id:
                 return Response({'error': 'Esta NF não possui um ID externo (nfe_io_id) para consulta.'}, status=status_module.HTTP_400_BAD_REQUEST)
 
-            # Payload para o microserviço
-            payload = {
-                'nf_id': nf.id,
-                'invoice_id': nf.nfe_io_id
-            }
-            
-            # Chama o microserviço Node.js
-            microservice_url = 'http://localhost:3003/api/consultar-nf'
-            response = requests.post(microservice_url, json=payload, timeout=10)
-            
-            if response.status_code == 202:
-                return Response({'message': 'Pedido de consulta de status enviado ao microserviço.'}, status=status_module.HTTP_202_ACCEPTED)
-            else:
-                logger.error(f"Erro ao chamar microserviço para consultar NF {nf_id}. Status: {response.status_code}, Resposta: {response.text}")
-                return Response({'error': 'Falha na comunicação com o serviço de notas fiscais.'}, status=status_module.HTTP_502_BAD_GATEWAY)
+            consultar_nota_fiscal_servico.delay(nf.id)
+            return Response({'message': 'Consulta de status agendada — a NF é atualizada quando a NFE.io responder.'},
+                            status=status_module.HTTP_202_ACCEPTED)
 
         except NotaFiscalServico.DoesNotExist:
             return Response({'error': 'Nota Fiscal de Serviço não encontrada.'}, status=status_module.HTTP_404_NOT_FOUND)
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Não foi possível conectar ao microserviço de NF para consulta da NF {nf_id}: {e}")
-            return Response({'error': 'Serviço de notas fiscais indisponível.'}, status=status_module.HTTP_503_SERVICE_UNAVAILABLE)
         except Exception as e:
             logger.error(f"Erro inesperado ao consultar status da NF {nf_id}: {e}")
             return Response({'error': 'Erro interno do servidor.'}, status=status_module.HTTP_500_INTERNAL_SERVER_ERROR)

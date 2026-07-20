@@ -56,6 +56,8 @@ Módulo em `frontend/src/modules/diario/` (Fase A — 06/06/2026):
 
 ## Status / pendências
 **Fase A concluída** (modelo do dia + autoria + web texto+foto). Pendente do plano de reintegração:
-**Fase B** (pipeline de IA: worker Celery + LLM local) e **Fase C** (canal WhatsApp reescrito em Python +
-auth de serviço da IAM). O pipeline WhatsApp→IA ainda **não está no `docker-compose.yml`**. Ver o plano
-em [arquitetura/diario-ia-reintegracao.md](../arquitetura/diario-ia-reintegracao.md).
+**Fase B** (pipeline de IA: worker Celery + LLM local) e **Fase C** (canal WhatsApp reescrito em Python).
+Ver o plano em [arquitetura/diario-ia-reintegracao.md](../arquitetura/diario-ia-reintegracao.md) e o
+desenho detalhado do canal WhatsApp (comunicação do SaaS, sendo o diário um dos seus fluxos) em
+[modulos/funcoeswhatsapp.md](funcoeswhatsapp.md) — inclui o refactor
+`modulodiario/services.py::registrar_contribuicao`, reusado pela web e pelo WhatsApp.

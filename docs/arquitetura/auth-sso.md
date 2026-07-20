@@ -29,7 +29,7 @@ nesse sentido, um *resource server*.
 ## 3. Assinatura do token
 
 - **RS256 + JWKS (padrão):** a IAM assina com **chave privada RSA** (`infra/keys/jwt_private.pem`) e
-  publica a **pública** em `GET /.well-known/jwks.json`. ERP e drone validam só com a pública (montada
+  publica a **pública** em `GET /.well-known/jwks.json`. backend e drone validam só com a pública (montada
   em `/keys`) — **não conhecem segredo e não podem forjar** token. Chaves geradas por
   [infra/keys/generate.sh](../../infra/keys/generate.sh) (não versionadas).
 - **HS256 (fallback):** sem chave RSA, os serviços usam HS256 com **segredo compartilhado** (só a IAM
@@ -89,7 +89,7 @@ React (shell)                         Angular (funcoesODM)
   │                                   interceptor anexa Bearer nas chamadas /odm-api
 ```
 
-### 6.3 Validação num resource server (ERP ou drone)
+### 6.3 Validação num resource server (backend ou drone)
 ```
 Cliente ──Bearer JWT──► Gateway ──► Resource server
                                      1. valida assinatura (chave pública / JWKS)
@@ -105,7 +105,7 @@ centralizada na IAM). O shell descarta o token local no logout.
 
 ## 7. Provisionamento JIT
 
-ERP e drone **não** têm cadastro próprio de usuários: na primeira requisição autenticada, criam um
+backend e drone **não** têm cadastro próprio de usuários: na primeira requisição autenticada, criam um
 **espelho local** do usuário a partir das claims (chave = `sub`/uuid), preservando FKs locais (ex.:
 `nucleo.Usuario`). Ver [dados-e-tenancy.md](dados-e-tenancy.md) §6.
 

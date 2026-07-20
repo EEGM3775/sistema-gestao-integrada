@@ -24,7 +24,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Clientes',        icon: <Users size={20} />,           to: '/app/clientes',        implemented: true },
   { label: 'Fornecedores',    icon: <Truck size={20} />,           to: '/app/fornecedores',    implemented: true },
   { label: 'RH',              icon: <UserCog size={20} />,         to: '/app/rh',              module: 'rh',             implemented: true },
-  { label: 'Calendário',      icon: <CalendarDays size={20} />,    to: '/app/calendario',      implemented: false },
+  { label: 'Calendário',      icon: <CalendarDays size={20} />,    to: '/app/calendario',      implemented: true },
   // ── Módulos pagos ──
   { label: 'ERP',             icon: <BarChart3 size={20} />,       to: '/app/erp',             module: 'erp_financeiro', implemented: true },
   { label: 'Diário / IA',    icon: <Brain size={20} />,            to: '/app/diario',          implemented: true },

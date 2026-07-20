@@ -2,7 +2,7 @@
 
 Plataforma **SaaS multi-tenant e modular** para **construção civil / incorporação imobiliária** —
 empreendimentos, obras, clientes, fornecedores, financeiro e RH — com **módulos vendidos à la carte**,
-identidade central (IAM) e SSO. Arquitetura de **microsserviços federados**: ERP (Django + DRF) +
+identidade central (IAM) e SSO. Arquitetura de **microsserviços federados**: backend (Django + DRF) +
 shell React + módulo de drone `funcoesODM` (Spring + Angular) + microsserviços Node, unificados por um
 gateway Nginx.
 
@@ -15,7 +15,7 @@ gateway Nginx.
 ## Como rodar
 
 ```bash
-cp .env.example .env
+cp deploy/env/dev.env.example .env
 bash infra/keys/generate.sh                 # par de chaves RSA do JWT (RS256)
 docker compose --profile full up -d         # sobe os 11 serviços
 # abra http://localhost:8090/  → login demo/demo123
@@ -28,8 +28,8 @@ Setup local (venvs, portas, seed) em [docs/desenvolvimento.md](docs/desenvolvime
 | Caminho | O quê |
 |---|---|
 | [iam/](iam/) | Serviço de identidade (autoridade única; emite os JWT) |
-| [backend/](backend/) | ERP em Django/DRF (resource server) — apps de negócio |
-| [frontend/](frontend/) | Shell React (UI do ERP) |
+| [backend/](backend/) | backend em Django/DRF (resource server) — apps de negócio |
+| [frontend/](frontend/) | Shell React (UI do app) |
 | [ImgDrone/funcoesODM/](ImgDrone/funcoesODM/) | Módulo de drone (produto destacável; docs próprias) |
 | [infra/](infra/) | Gateway Nginx, chaves do JWT, init do Postgres |
 | [docs/](docs/README.md) | Documentação da plataforma |

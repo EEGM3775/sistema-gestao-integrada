@@ -1,6 +1,9 @@
 import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { erpKeys } from '../api/queryKeys'
-import { fetchBoletos, fetchBoleto, gerarCobrancaContaAReceber } from '../api/endpoints/boletos'
+import {
+  fetchBoletos, fetchBoleto, gerarCobrancaContaAReceber,
+  cancelarBoleto, verificarDocumentoBoleto,
+} from '../api/endpoints/boletos'
 import { fetchEventosWebhookAsaasPorBoleto } from '../api/endpoints/eventosWebhookAsaas'
 import type { BoletoFiltros } from '../types'
 
@@ -47,6 +50,36 @@ export function useGerarCobrancaContaAReceber() {
       queryClient.invalidateQueries({ queryKey: erpKeys.contasAReceber.all })
       queryClient.invalidateQueries({ queryKey: erpKeys.boletos.all })
       queryClient.invalidateQueries({ queryKey: erpKeys.dashboard.all })
+    },
+  })
+}
+
+/**
+ * Cancela o boleto no Asaas (síncrono no backend — devolve o boleto já
+ * CANCELADO). Invalida boletos + contas a receber (a conta aninha `boletos[]`).
+ */
+export function useCancelarBoleto() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => cancelarBoleto(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: erpKeys.boletos.all })
+      queryClient.invalidateQueries({ queryKey: erpKeys.contasAReceber.all })
+      queryClient.invalidateQueries({ queryKey: erpKeys.dashboard.all })
+    },
+  })
+}
+
+/**
+ * Verifica o boleto AO VIVO no Asaas antes de abrir o documento. Como pode
+ * mudar o status/URL local, invalida a lista de boletos no sucesso.
+ */
+export function useVerificarDocumentoBoleto() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => verificarDocumentoBoleto(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: erpKeys.boletos.all })
     },
   })
 }

@@ -10,11 +10,12 @@ import unicodedata
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
+from django.db.models import Q
 from django.utils import timezone
 
 from nucleo.tenancy import rls_bypass, tenant_context
 
-from .client import AsaasClient
+from .client import AsaasClient, AsaasAPIError
 from .models import EventoWebhookAsaas
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,10 @@ logger = logging.getLogger(__name__)
 # demais (ex.: PAYMENT_OVERDUE, PAYMENT_DELETED) ficam registrados para
 # auditoria, mas não acionam `dar_baixa` nesta fatia.
 EVENTOS_DE_BAIXA = ('PAYMENT_RECEIVED', 'PAYMENT_CONFIRMED')
+
+# Eventos que sinalizam cancelamento/remoção da cobrança no Asaas → refletem o
+# boleto local como CANCELADO (o cancelamento pode nascer fora do SGI).
+EVENTOS_DE_CANCELAMENTO = ('PAYMENT_DELETED',)
 
 
 # ─── Trava de segurança de identidade ────────────────────────────────────────
@@ -60,6 +65,37 @@ class ClienteSemDocumento(CobrancaBloqueada):
 
 class ClienteDivergenteNoGateway(CobrancaBloqueada):
     code = 'cliente_divergente_no_gateway'
+
+
+class CobrancaRejeitada(CobrancaBloqueada):
+    """
+    O Asaas recusou a cobrança por erro **permanente** de dados (4xx — ex.: CPF
+    inválido). Como `CobrancaBloqueada`, a task NÃO reprocessa (retry não ajuda);
+    o erro já foi persistido num `Boleto` status ERRO, com os códigos do gateway,
+    para a UI abrir no popup de detalhes.
+    """
+    code = 'cobranca_rejeitada_gateway'
+
+    def __init__(self, mensagem, *, payload=None, status_code=None):
+        self.payload = payload
+        self.status_code = status_code
+        super().__init__(mensagem, contexto={'payload': payload, 'status_code': status_code})
+
+
+# Traduz o status cru de um payment do Asaas para o `StatusBoleto` local.
+# Usado pela verificação ao vivo (a UI abre o documento e confere o gateway).
+def _mapear_status_boleto(asaas_status):
+    from moduloerp.models import Boleto
+    return {
+        'PENDING': Boleto.StatusBoleto.EMITIDO,
+        'AWAITING_RISK_ANALYSIS': Boleto.StatusBoleto.EMITIDO,
+        'RECEIVED': Boleto.StatusBoleto.PAGO,
+        'CONFIRMED': Boleto.StatusBoleto.PAGO,
+        'RECEIVED_IN_CASH': Boleto.StatusBoleto.PAGO,
+        'OVERDUE': Boleto.StatusBoleto.VENCIDO,
+        'REFUNDED': Boleto.StatusBoleto.CANCELADO,
+        'DELETED': Boleto.StatusBoleto.CANCELADO,
+    }.get(asaas_status, Boleto.StatusBoleto.EMITIDO)
 
 
 def _somente_digitos(texto):
@@ -248,12 +284,55 @@ def garantir_customer_asaas(cliente):
     return customer_id
 
 
+def _registrar_boleto_erro(conta_receber, exc):
+    """
+    Persiste (ou atualiza) um `Boleto` status ERRO com o payload cru do Asaas —
+    é o que faz o erro APARECER no frontend (lista de Boletos + na própria Conta
+    a Receber, que aninha `boletos[]`), em vez de morrer só na fila interna.
+    Reaproveita um ERRO anterior da mesma conta para não empilhar boletos a cada
+    tentativa. Nunca sobrescreve um boleto já emitido (esse tem `gateway_id`).
+    """
+    from moduloerp.models import Boleto
+
+    detalhes = {
+        'erro': str(exc),
+        'status_code': getattr(exc, 'status_code', None),
+        'detalhes': getattr(exc, 'payload', None),
+    }
+    boleto = (
+        conta_receber.boletos
+        .filter(status=Boleto.StatusBoleto.ERRO)
+        .filter(Q(gateway_id__isnull=True) | Q(gateway_id=''))
+        .first()
+    )
+    if boleto:
+        boleto.status = Boleto.StatusBoleto.ERRO
+        boleto.valor = conta_receber.saldo_aberto
+        boleto.data_vencimento = conta_receber.data_vencimento
+        boleto.dados_retorno_api = detalhes
+        boleto.save(update_fields=['status', 'valor', 'data_vencimento', 'dados_retorno_api', 'atualizado_em'])
+        return boleto
+    return Boleto.objects.create(
+        tenant=conta_receber.tenant,
+        conta_receber=conta_receber,
+        status=Boleto.StatusBoleto.ERRO,
+        valor=conta_receber.saldo_aberto,
+        data_vencimento=conta_receber.data_vencimento,
+        dados_retorno_api=detalhes,
+    )
+
+
 def gerar_cobranca_asaas(conta_receber):
     """
     Cria a cobrança no Asaas para uma `ContaReceber` e grava/atualiza o
     `Boleto` correspondente (status `EMITIDO`, `gateway_id`, `url_pdf`,
     `linha_digitavel`). Idempotente por conta: reaproveita o `Boleto`
     existente em vez de duplicar a cobrança no gateway.
+
+    Se o Asaas recusar, o erro é PERSISTIDO num `Boleto` status ERRO (com os
+    códigos/mensagens do gateway) para a UI mostrar — não fica invisível. Erro
+    permanente (4xx, ex.: CPF inválido) → `CobrancaRejeitada` (sem retry);
+    indisponibilidade (5xx/rede) → propaga `AsaasAPIError` (a task reprocessa).
     """
     from moduloerp.models import Boleto  # import tardio: evita ciclo de apps
 
@@ -261,15 +340,23 @@ def gerar_cobranca_asaas(conta_receber):
     if boleto_existente:
         return boleto_existente
 
-    customer_id = garantir_customer_asaas(conta_receber.cliente)
-    client = AsaasClient()
-    pagamento = client.criar_payment(
-        customer_id=customer_id,
-        valor=conta_receber.saldo_aberto,
-        vencimento=conta_receber.data_vencimento,
-        descricao=conta_receber.descricao,
-        external_reference=conta_receber.conta_receber_id,
-    )
+    try:
+        customer_id = garantir_customer_asaas(conta_receber.cliente)
+        client = AsaasClient()
+        pagamento = client.criar_payment(
+            customer_id=customer_id,
+            valor=conta_receber.saldo_aberto,
+            vencimento=conta_receber.data_vencimento,
+            descricao=conta_receber.descricao,
+            external_reference=conta_receber.conta_receber_id,
+        )
+    except AsaasAPIError as exc:
+        _registrar_boleto_erro(conta_receber, exc)
+        status_code = getattr(exc, 'status_code', None)
+        if status_code and 400 <= status_code < 500:
+            # Dado inválido — repetir não ajuda; já está visível como Boleto ERRO.
+            raise CobrancaRejeitada(str(exc), payload=getattr(exc, 'payload', None), status_code=status_code) from exc
+        raise  # 5xx/rede: transitório → a task faz retry
 
     boleto = Boleto.objects.create(
         tenant=conta_receber.tenant,
@@ -280,8 +367,91 @@ def gerar_cobranca_asaas(conta_receber):
         gateway_id=pagamento.get('id', ''),
         url_pdf=pagamento.get('bankSlipUrl') or pagamento.get('invoiceUrl') or '',
         linha_digitavel=pagamento.get('identificationField') or '',
+        dados_retorno_api={'emissao': pagamento},
     )
     return boleto
+
+
+def cancelar_cobranca_asaas(boleto):
+    """
+    Cancela a cobrança no Asaas (DELETE /payments/{id}) e marca o `Boleto` como
+    CANCELADO, carimbando `data_cancelamento` e guardando a resposta do gateway.
+    Idempotente: um boleto já cancelado (ou sem `gateway_id`) só é normalizado
+    localmente, sem nova chamada. Propaga `AsaasAPIError` se o Asaas recusar.
+    """
+    from moduloerp.models import Boleto
+
+    if boleto.status == Boleto.StatusBoleto.CANCELADO:
+        return boleto
+    resposta = {}
+    if boleto.gateway_id:
+        resposta = AsaasClient().cancelar_payment(boleto.gateway_id)
+    boleto.status = Boleto.StatusBoleto.CANCELADO
+    boleto.data_cancelamento = timezone.now()
+    dados = boleto.dados_retorno_api if isinstance(boleto.dados_retorno_api, dict) else {}
+    dados = {**dados, 'cancelamento': resposta}
+    boleto.dados_retorno_api = dados
+    boleto.save(update_fields=['status', 'data_cancelamento', 'dados_retorno_api', 'atualizado_em'])
+    return boleto
+
+
+def verificar_cobranca_asaas(boleto):
+    """
+    Verifica AO VIVO o estado do boleto no Asaas (GET /payments/{id}) — é o que
+    a UI chama ao abrir o documento: **gateway no ar** → devolve a verdade do
+    Asaas (status + URL atual do boleto) e a persiste; **gateway fora do ar** →
+    devolve a última versão guardada e sinaliza `gateway_online=False` para a UI
+    avisar que o Asaas está indisponível. Nunca levanta exceção de rede.
+
+    Retorna: {'gateway_online', 'status', 'url_pdf', 'linha_digitavel',
+              'mensagem'}.
+    """
+    if not boleto.gateway_id:
+        return {
+            'gateway_online': False,
+            'status': boleto.status,
+            'url_pdf': boleto.url_pdf or '',
+            'linha_digitavel': boleto.linha_digitavel or '',
+            'mensagem': 'Boleto sem vínculo no gateway — exibindo a versão local.',
+        }
+    try:
+        pagamento = AsaasClient().buscar_payment(boleto.gateway_id)
+    except AsaasAPIError as exc:
+        logger.warning("Asaas indisponível ao verificar boleto #%s: %s", boleto.boleto_id, exc)
+        return {
+            'gateway_online': False,
+            'status': boleto.status,
+            'url_pdf': boleto.url_pdf or '',
+            'linha_digitavel': boleto.linha_digitavel or '',
+            'mensagem': 'Asaas fora do ar — exibindo a última versão conhecida do boleto.',
+        }
+
+    novo_status = _mapear_status_boleto(pagamento.get('status'))
+    url_pdf = pagamento.get('bankSlipUrl') or pagamento.get('invoiceUrl') or boleto.url_pdf or ''
+    linha = pagamento.get('identificationField') or boleto.linha_digitavel or ''
+    campos = []
+    if boleto.status != novo_status:
+        boleto.status = novo_status
+        campos.append('status')
+        from moduloerp.models import Boleto
+        if novo_status == Boleto.StatusBoleto.CANCELADO and not boleto.data_cancelamento:
+            boleto.data_cancelamento = timezone.now()
+            campos.append('data_cancelamento')
+    if url_pdf and boleto.url_pdf != url_pdf:
+        boleto.url_pdf = url_pdf
+        campos.append('url_pdf')
+    if linha and boleto.linha_digitavel != linha:
+        boleto.linha_digitavel = linha
+        campos.append('linha_digitavel')
+    if campos:
+        boleto.save(update_fields=[*campos, 'atualizado_em'])
+    return {
+        'gateway_online': True,
+        'status': boleto.status,
+        'url_pdf': url_pdf,
+        'linha_digitavel': linha,
+        'mensagem': '',
+    }
 
 
 def _parse_data_pagamento(payment):
@@ -344,6 +514,17 @@ def processar_evento_webhook(*, evento_id, tipo, payload):
 
     if not boleto:
         evento.resultado = f"nenhum Boleto encontrado para gateway_id={gateway_id!r}"
+    elif tipo in EVENTOS_DE_CANCELAMENTO:
+        # Cancelado direto no Asaas (ou por outro sistema): reflete o cancelamento
+        # no boleto local para que a UI mostre o estado correto (aba Cancelados).
+        with tenant_context(boleto.tenant_id):
+            if boleto.status != Boleto.StatusBoleto.CANCELADO:
+                boleto.status = Boleto.StatusBoleto.CANCELADO
+                boleto.data_cancelamento = timezone.now()
+                dados = boleto.dados_retorno_api if isinstance(boleto.dados_retorno_api, dict) else {}
+                boleto.dados_retorno_api = {**dados, 'cancelamento_webhook': payment}
+                boleto.save(update_fields=['status', 'data_cancelamento', 'dados_retorno_api', 'atualizado_em'])
+        evento.resultado = f"boleto cancelado via webhook ('{tipo}')"
     elif tipo not in EVENTOS_DE_BAIXA:
         evento.resultado = f"evento '{tipo}' registrado, sem ação automática nesta fase"
     elif not boleto.conta_receber:

@@ -9,8 +9,7 @@ from rest_framework.response import Response
 from django.http import JsonResponse
 from .models import AnaliseImagemIA
 from .serializers import AnaliseImagemIASerializer
-import requests
-from django.conf import settings
+from .tasks import analisar_documento_ia
 
 
 class _RequireIaAnalise(RequirePermission):
@@ -53,159 +52,79 @@ class AnaliseImagemIAViewSet(TenantScopedViewSetMixin,
         return queryset
 
 
-# Views de proxy para o microserviço de IA
+# ─── Disparo/consulta da análise de IA ────────────────────────────────────────
+# Fase 11.3: estes endpoints deixaram de fazer proxy HTTP para o microsserviço
+# Node `funcoesia` (que respondia 401 ao `Token` legado — D1). Agora enfileiram
+# a Celery task Python `analisar_documento_ia`, que roda a análise in-process.
+
+# Tipos de análise suportados (o prompt de cada tipo vive no serviço de LLM de
+# visão local; aqui só expomos o catálogo para a UI).
+TIPOS_ANALISE = [
+    {
+        'id': 'completa',
+        'nome': 'Análise Completa da Obra',
+        'descricao': 'Análise abrangente incluindo progresso, segurança, qualidade e produtividade',
+    },
+    {
+        'id': 'progresso_obra',
+        'nome': 'Análise de Progresso',
+        'descricao': 'Estimativa de avanço físico e observações do estágio da obra',
+    },
+    {
+        'id': 'qualidade_construcao',
+        'nome': 'Análise de Qualidade',
+        'descricao': 'Verificação da qualidade dos materiais e execução',
+    },
+    {
+        'id': 'seguranca_obra',
+        'nome': 'Análise de Segurança',
+        'descricao': 'Identificação de riscos e problemas de segurança (EPI, condições)',
+    },
+]
+
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated, _RequireIaAnalise])
 def tipos_analise(request):
-    """
-    Proxy para obter tipos de análise disponíveis no microserviço de IA
-    """
-    try:
-        # URL do microserviço de IA
-        ia_url = getattr(settings, 'IA_SERVICE_URL', 'http://localhost:3002/api/analise')
-        token = getattr(settings, 'IA_SERVICE_SECRET_TOKEN', 'um-token-secreto-forte-para-ia')
-        
-        response = requests.get(
-            f"{ia_url}/tipos",
-            headers={'X-Internal-Service-Token': token},
-            timeout=5
-        )
-        
-        if response.status_code == 200:
-            return JsonResponse(response.json(), safe=False)
-        else:
-            # Fallback se o serviço não responder adequadamente
-            raise requests.RequestException("Serviço indisponível")
-            
-    except requests.RequestException:
-        # Fallback com tipos básicos
-        tipos_basicos = [
-            {
-                'id': 'completa',
-                'nome': 'Análise Completa da Obra',
-                'descricao': 'Análise abrangente incluindo progresso, segurança, qualidade e produtividade'
-            },
-            {
-                'id': 'qualidade_construcao',
-                'nome': 'Análise de Qualidade',
-                'descricao': 'Verificação da qualidade dos materiais e execução'
-            },
-            {
-                'id': 'seguranca_obra',
-                'nome': 'Análise de Segurança',
-                'descricao': 'Identificação de riscos e problemas de segurança'
-            },
-            {
-                'id': 'completa',
-                'nome': 'Análise Completa',
-                'descricao': 'Análise abrangente incluindo progresso, qualidade e segurança'
-            }
-        ]
-        return JsonResponse(tipos_basicos, safe=False)
+    """Catálogo de tipos de análise disponíveis (servido localmente)."""
+    return JsonResponse(TIPOS_ANALISE, safe=False)
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated, _RequireIaAnalise])
 def recomendacoes_analise(request):
-    """
-    Proxy para obter recomendações de análise
-    """
-    try:
-        # URL do microserviço de IA
-        ia_url = getattr(settings, 'IA_SERVICE_URL', 'http://localhost:3002/api/analise')
-        token = getattr(settings, 'IA_SERVICE_SECRET_TOKEN', 'um-token-secreto-forte-para-ia')
-        
-        response = requests.get(
-            f"{ia_url.replace('/analise', '')}/api/analise/recomendacoes",
-            headers={'X-Internal-Service-Token': token},
-            timeout=5
-        )
-        
-        if response.status_code == 200:
-            return JsonResponse(response.json(), safe=False)
-        else:
-            raise requests.RequestException("Serviço indisponível")
-            
-    except requests.RequestException:
-        # Fallback básico
-        return JsonResponse({
-            'recomendacao': 'completa',
-            'motivo': 'Análise padrão recomendada para documentos de obra'
-        })
+    """Recomendação padrão de tipo de análise para documentos de obra."""
+    return JsonResponse({
+        'recomendacao': 'completa',
+        'motivo': 'Análise padrão recomendada para documentos de obra',
+    })
+
+
+def _enfileirar_analise(request):
+    """Valida o `documento_id` e enfileira a task Python de análise."""
+    documento_id = request.data.get('documento_id')
+    if not documento_id:
+        return JsonResponse({'error': 'documento_id é obrigatório'}, status=400)
+    tipo_analise = request.data.get('tipo_analise', 'completa')
+    analisar_documento_ia.delay(documento_id=documento_id, tipo_analise=tipo_analise)
+    return JsonResponse({
+        'success': True,
+        'message': 'Análise enfileirada.',
+        'documento_id': documento_id,
+        'tipo_analise': tipo_analise,
+        'status': 'processando',
+    }, status=202)
 
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated, _RequireIaAnalise])
 def iniciar_analise_proxy(request):
-    """
-    Proxy para iniciar análise no microserviço
-    """
-    try:
-        # URL do microserviço de IA
-        ia_url = getattr(settings, 'IA_SERVICE_URL', 'http://localhost:3002/api/analise')
-        token = getattr(settings, 'IA_SERVICE_SECRET_TOKEN', 'um-token-secreto-forte-para-ia')
-        
-        response = requests.post(
-            ia_url,
-            json=request.data,
-            headers={
-                'X-Internal-Service-Token': token,
-                'Content-Type': 'application/json'
-            },
-            timeout=10
-        )
-        
-        if response.status_code in [200, 201, 202]:
-            return JsonResponse(response.json(), status=response.status_code)
-        else:
-            return JsonResponse({
-                'error': 'Erro no serviço de IA',
-                'details': response.text
-            }, status=response.status_code)
-            
-    except requests.RequestException as e:
-        return JsonResponse({
-            'error': 'Serviço de IA indisponível',
-            'message': str(e)
-        }, status=503)
+    """Enfileira a análise de IA de um documento (task Python in-process)."""
+    return _enfileirar_analise(request)
 
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated, _RequireIaAnalise])
 def reprocessar_analise(request):
-    """
-    Proxy para reprocessar análise no microserviço
-    """
-    try:
-        documento_id = request.data.get('documento_id')
-        if not documento_id:
-            return JsonResponse({'error': 'documento_id é obrigatório'}, status=400)
-        
-        # URL do microserviço de IA
-        ia_url = getattr(settings, 'IA_SERVICE_URL', 'http://localhost:3002/api/analise')
-        token = getattr(settings, 'IA_SERVICE_SECRET_TOKEN', 'um-token-secreto-forte-para-ia')
-        
-        response = requests.post(
-            f"{ia_url}/reprocessar",
-            json={'documento_id': documento_id},
-            headers={
-                'X-Internal-Service-Token': token,
-                'Content-Type': 'application/json'
-            },
-            timeout=10
-        )
-        
-        if response.status_code in [200, 201, 202]:
-            return JsonResponse(response.json(), status=response.status_code)
-        else:
-            return JsonResponse({
-                'error': 'Erro ao reprocessar análise',
-                'details': response.text
-            }, status=response.status_code)
-            
-    except requests.RequestException as e:
-        return JsonResponse({
-            'error': 'Serviço de IA indisponível',
-            'message': str(e)
-        }, status=503)
+    """Reenfileira a análise de IA de um documento (reprocessamento)."""
+    return _enfileirar_analise(request)

@@ -16,6 +16,7 @@ from .serializers import (
     DocumentoDiarioSerializer,
 )
 from .tasks import disparar_analise_ia
+from .services import registrar_contribuicao
 from .permissions import (
     PodeModerarDiario,
     get_funcionario,
@@ -25,14 +26,6 @@ from .permissions import (
 
 def _str_to_bool(value):
     return str(value).strip().lower() in ('1', 'true', 'on', 'sim', 'yes')
-
-
-def _disparar_ia(documento):
-    """Enfileira a análise de IA para um documento de imagem recém-criado."""
-    disparar_analise_ia.delay(
-        documento_id=documento.documento_diario_id,
-        tipo_analise='completa',
-    )
 
 
 class DiarioObraViewSet(TenantScopedViewSetMixin,
@@ -69,7 +62,7 @@ class DiarioObraViewSet(TenantScopedViewSetMixin,
         obra_id = request.query_params.get('obra') or request.query_params.get('obra_id')
         if not obra_id:
             return Response({'error': 'obra é obrigatório'}, status=400)
-        diario = self.get_queryset().filter(obra_id=obra_id, data=timezone.now().date()).first()
+        diario = self.get_queryset().filter(obra_id=obra_id, data=timezone.localdate()).first()
         if diario is None:
             return Response({'exists': False, 'message': 'Nenhum diário para hoje'})
         return Response({'exists': True, 'diario': self.get_serializer(diario).data})
@@ -113,33 +106,22 @@ class DiarioObraViewSet(TenantScopedViewSetMixin,
             )
 
         tenant_id = getattr(request.user, 'tenant_id', None)
-        data = request.data.get('data') or timezone.now().date()
+        data = request.data.get('data') or timezone.localdate()
 
-        diario, _created = DiarioObra.objects.get_or_create(
-            obra=obra, data=data,
-            defaults={'criado_por': request.user, 'tenant_id': tenant_id},
+        # Caminho único de escrita (web + WhatsApp): modulodiario.services.
+        diario = registrar_contribuicao(
+            obra=obra,
+            funcionario=funcionario,
+            texto=texto or None,
+            arquivo=arquivo or None,
+            descricao=request.data.get('descricao') or '',
+            eh_ocorrencia=_str_to_bool(request.data.get('eh_ocorrencia')),
+            clima=request.data.get('condicoes_climaticas'),
+            origem='web',
+            data=data,
+            criado_por=request.user,
+            tenant_id=tenant_id,
         )
-
-        # Clima é do dia: atualiza se enviado.
-        clima = request.data.get('condicoes_climaticas')
-        if clima:
-            diario.condicoes_climaticas = clima
-            diario.save(update_fields=['condicoes_climaticas', 'data_atualizacao'])
-
-        if texto:
-            EntradaDiario.objects.create(
-                diario_obra=diario, autor=funcionario, origem='web',
-                texto=texto, eh_ocorrencia=_str_to_bool(request.data.get('eh_ocorrencia')),
-                tenant_id=tenant_id,
-            )
-
-        if arquivo:
-            documento = DocumentoDiario.objects.create(
-                diario_obra=diario, autor=funcionario, origem='web',
-                arquivo=arquivo, descricao=request.data.get('descricao') or '',
-                tenant_id=tenant_id,
-            )
-            _disparar_ia(documento)
 
         diario.refresh_from_db()
         serializer = self.get_serializer(diario)

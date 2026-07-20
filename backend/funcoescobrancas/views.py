@@ -1,4 +1,5 @@
 # backend/funcoescobrancas/views.py
+import hmac
 import logging
 
 from django.conf import settings
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 class WebhookAsaasView(APIView):
     """
     Endpoint público que recebe os eventos do Asaas (`PAYMENT_RECEIVED`,
-    `PAYMENT_CONFIRMED`, etc.) e dá a baixa automática — "como o ERP sabe quem
+    `PAYMENT_CONFIRMED`, etc.) e dá a baixa automática — "como o backend sabe quem
     já pagou" (moduloerp.md §6/funcoescobrancas.md).
 
     Sem autenticação de usuário (o Asaas não tem sessão/JWT do SGI): a defesa
@@ -33,7 +34,11 @@ class WebhookAsaasView(APIView):
 
     def post(self, request):
         token_recebido = request.headers.get('asaas-access-token', '')
-        if not settings.ASAAS_WEBHOOK_TOKEN or token_recebido != settings.ASAAS_WEBHOOK_TOKEN:
+        token_esperado = settings.ASAAS_WEBHOOK_TOKEN or ''
+        # Comparação em tempo constante (S7): `!=` vaza o nº de bytes corretos por
+        # timing. `compare_digest` não; token vazio é rejeitado antes (sem segredo
+        # configurado, nenhum webhook é aceito).
+        if not token_esperado or not hmac.compare_digest(token_recebido, token_esperado):
             logger.warning("Webhook Asaas rejeitado: token de validação ausente ou incorreto.")
             return Response({'detail': 'token de validação inválido'}, status=status.HTTP_401_UNAUTHORIZED)
 

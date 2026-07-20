@@ -9,7 +9,7 @@ from django.utils.translation import gettext_lazy as _
 class Tenant(models.Model):
     """
     Espelho local do tenant (empresa-cliente) cuja autoridade é a IAM.
-    O ERP é resource server: usuários e tenants são provisionados (JIT) a
+    O backend é resource server: usuários e tenants são provisionados (JIT) a
     partir das claims do JWT da IAM. Ver docs/arquitetura.md (Fase 0.3).
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -304,3 +304,52 @@ class AuditLog(TenantScopedModel):
 
     def delete(self, *args, **kwargs):
         raise IntegrityError("AuditLog é imutável: exclusão não permitida.")
+
+
+class Notificacao(TenantScopedModel):
+    """Notificação in-app do centro de notificações (sino do topbar) — Fase 9
+    (Calendário, Fatia C). Infra **de plataforma** (não é só do calendário): a
+    primeira origem são os lembretes de evento (`modulocalendar`), mas qualquer
+    módulo pode criar uma (ex.: vencimentos do ERP) chamando `criar_notificacao`.
+
+    Tenant-scoped (RLS fail-closed na migration companion) e endereçada a um
+    `user`; o `NotificacaoViewSet` lista/marca-lida só as do próprio usuário. É
+    criada por caminhos **fora de request** (task Celery) sob `rls_bypass()`,
+    com o `tenant` herdado explicitamente da origem.
+    """
+
+    class Tipo(models.TextChoices):
+        LEMBRETE = "lembrete", _("Lembrete de evento")
+        SISTEMA = "sistema", _("Sistema")
+
+    user = models.ForeignKey(
+        "nucleo.Usuario", on_delete=models.CASCADE, related_name="notificacoes",
+    )
+    titulo = models.CharField(_("Título"), max_length=200)
+    mensagem = models.TextField(_("Mensagem"), blank=True, default="")
+    tipo = models.CharField(max_length=20, choices=Tipo.choices, default=Tipo.SISTEMA)
+    # Rota do frontend para onde o clique leva (ex.: "/app/calendario"). Opcional.
+    url = models.CharField(_("Link"), max_length=300, blank=True, default="")
+    lida_em = models.DateTimeField(_("Lida em"), null=True, blank=True)
+    criado_em = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = _("Notificação")
+        verbose_name_plural = _("Notificações")
+        ordering = ["-criado_em"]
+        indexes = [
+            # Consulta quente: as do usuário, não-lidas primeiro, mais recentes.
+            models.Index(fields=["tenant", "user", "lida_em"], name="notif_user_lida_idx"),
+        ]
+
+    def __str__(self):
+        return f"[{self.tipo}] {self.titulo} → {self.user_id}"
+
+    @property
+    def lida(self):
+        return self.lida_em is not None
+
+    def marcar_lida(self):
+        if self.lida_em is None:
+            self.lida_em = timezone.now()
+            self.save(update_fields=["lida_em"])

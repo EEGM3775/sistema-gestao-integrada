@@ -1,0 +1,10 @@
+Olá, {{ nome }}.
+
+Recebemos um pedido para redefinir a senha da sua conta ({{ conta }}).
+Para escolher uma senha nova, acesse:
+
+{{ link }}
+
+O link vale por {{ minutos }} minutos e só pode ser usado uma vez.
+
+Se não foi você que pediu, ignore este e-mail: sua senha continua a mesma. Mas se isso se repetir, avise o administrador da sua empresa — pode ser sinal de que alguém está tentando entrar na sua conta.

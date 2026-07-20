@@ -1,4 +1,7 @@
-import type { BoletoFiltros, ContaPagarFiltros, ContaReceberFiltros } from '../types'
+import type {
+  BoletoFiltros, ContaPagarFiltros, ContaReceberFiltros,
+  NotaFiscalRecebidaFiltros, NotaFiscalServicoFiltros,
+} from '../types'
 
 /**
  * Fábrica de chaves do TanStack Query (D.1.0/D.1.1 — camada de dados).
@@ -44,6 +47,16 @@ export const erpKeys = {
     all: ['erp', 'lotes-remessa'] as const,
     list: () => ['erp', 'lotes-remessa', 'list'] as const,
     detail: (id: number) => ['erp', 'lotes-remessa', 'detail', id] as const,
+  },
+
+  notasFiscaisServico: {
+    all: ['erp', 'notas-fiscais-servico'] as const,
+    list: (filtros: NotaFiscalServicoFiltros = {}) => ['erp', 'notas-fiscais-servico', 'list', filtros] as const,
+  },
+
+  notasFiscaisRecebidas: {
+    all: ['erp', 'notas-fiscais'] as const,
+    list: (filtros: NotaFiscalRecebidaFiltros = {}) => ['erp', 'notas-fiscais', 'list', filtros] as const,
   },
 
   dashboard: {

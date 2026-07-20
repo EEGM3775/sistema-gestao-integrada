@@ -10,7 +10,7 @@
 
 | Fase | Tema                                                                             | Status                                               |
 | ---- | -------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| 0    | Fundação (banco, IAM, multi-tenancy no ERP)                                    | ✅                                                   |
+| 0    | Fundação (banco, IAM, multi-tenancy no backend)                                | ✅                                                   |
 | 1    | SSO ponta a ponta (entitlement por módulo)                                      | ✅ 31/05/2026                                        |
 | 2    | UI integrada (gateway, domínio único)                                          | ✅ 31/05/2026                                        |
 | 3    | Vínculo drone ↔ obra/empreendimento                                            | ✅ 31/05/2026                                        |
@@ -20,8 +20,8 @@
 | 7    | Migração v01 → v02 (frontend + backend dos módulos vazios)                   | 🚧 em andamento                                      |
 | 8    | Fundação de dados: Postgres real +`tenant` obrigatório + uniques por-tenant | ✅ 04/07/2026 (8.1–8.5)                             |
 | 9    | RBAC de campo — catálogo de permissões + mascaramento de PII                  | ✅ A–E (fatia E 12/07, suíte 76/76); D3/D4/D5 ✅ 11/07; D6 = extensão planejada |
-| 10   | Observabilidade & redução de superfície operacional                           | 📋 planejado                                         |
-| 11   | Consolidação de linguagens (Python como stack principal)                       | 🚧 11.2 ✅ 03/07/2026 (funcoeslead); resto planejado |
+| 10   | Observabilidade & redução de superfície operacional                           | 🚧 em andamento (10.1 base ✅ · 10.3.1/10.4/10.5.1-2/10.6/10.7/10.8/10.9/10.10 ✅ · **10.2 parcial ✅ 19/07: deploy/ unificado + funcoesemail**) |
+| 11   | Consolidação de linguagens (Python como stack principal)                       | 🚧 11.2 ✅ 03/07 (funcoeslead) · 11.3 IA ✅ 14/07 + WhatsApp Fase C.0–C.4 ✅ 15/07 · **11.1 NF ✅ 16/07 (funcoesnf + bridge PHP absorvidos → Celery task NFE.io, Node/PHP removidos)** · **11.4 ✅ 16/07 (resíduo Node limpo: dir `funcoeslead` + arquivos Node do `funcoesia` — zero `.js` no backend)**; resta só o LLM local no compose (11.3) + 11.5 Angular oportunístico |
 
 Cada fase concluída foi validada por um script E2E em [infra/gateway/](../infra/gateway/)
 (`phase4_e2e.py`, `phase5_rs256_test.py`, `phase6_rbac_test.py`).
@@ -30,7 +30,7 @@ Cada fase concluída foi validada por um script E2E em [infra/gateway/](../infra
 > travam o *cutover* da Fase 7 com dados de cliente. Prioridade: **8 → 9 → 10**. A Fase 10 é
 > transversal e absorve as pendências operacionais da Fase 5. Os **4 achados críticos** da revisão
 > v02 foram **corrigidos em 03/07/2026** (o L4 pela antecipação da Fase 11.2 — `funcoeslead`
-> absorvido pelo ERP); os demais achados seguem em [pendencias.md](pendencias.md).
+> absorvido pelo backend); os demais achados seguem em [pendencias.md](pendencias.md).
 
 ---
 
@@ -40,7 +40,7 @@ Narrativa completa de cada entrega (validações, bugs corrigidos) no histórico
 
 ### Fase 0 — Fundação
 
-Banco por env (PostgreSQL+Redis via compose), serviço **IAM** próprio ([iam/](../iam/)) e ERP como
+Banco por env (PostgreSQL+Redis via compose), serviço **IAM** próprio ([iam/](../iam/)) e o **backend** como
 **resource server** com tenancy (`TenantScopedModel` + `TenantScopedViewSetMixin` + RLS).
 **Pendências → Fase 8:** `tenant` nullable; `unique` globais; RLS validada só no SQLite/no-op.
 
@@ -49,7 +49,7 @@ Banco por env (PostgreSQL+Redis via compose), serviço **IAM** próprio ([iam/](
 funcoesODM valida o JWT da IAM (JIT por `sub`, entitlement `drone` → 403); Angular captura o token;
 middleware `iamAuth` nos serviços Node.
 **Pendências:** entidades-filhas do drone escopadas por owner, não tenant → **Fase 8.5**; auth do
-WebSocket → **Fase 10.8**.
+WebSocket → **✅ Fase 10.8** (CONNECT STOMP exige o token da IAM).
 
 ### Fase 2 — UI integrada
 
@@ -60,8 +60,8 @@ Gateway nginx em `:8090` roteia tudo (`/`, `/api`, `/auth`, `/drone`, `/odm-api`
 
 `Project` ganhou `empreendimentoId`/`obraId` + filtros + soft-unlink; contexto propagado
 React→iframe→Angular.
-**Pendências:** gatilho `post_delete` no ERP (auth serviço→serviço) → **Fase 10.8**; exibição na
-ficha da obra no React.
+**Pendências:** gatilho `post_delete` no backend (auth serviço→serviço) → **✅ Fase 10.8** (JWT de
+serviço da IAM → desvincula no drone via Celery); exibição na ficha da obra no React.
 
 ### Fase 4 — Deploy unificado
 
@@ -71,14 +71,14 @@ healthchecks e migrações no start.
 
 ### Fase 5 — Endurecimento (RS256/JWKS + borda)
 
-IAM assina RS256 (chave em `infra/keys/`, não versionada) e publica JWKS; ERP/drone validam só com a
+IAM assina RS256 (chave em `infra/keys/`, não versionada) e publica JWKS; backend/drone validam só com a
 pública; gateway com headers de segurança + rate limit no login.
 **Pendências operacionais → Fase 10:** JWK_URL + `kid` (rotação sem redeploy), LGPD, gestão de
 segredos, observabilidade, DR, pentest.
 
 ### Fase 6 — Consolidação de identidade & RBAC
 
-Login local do ERP removido; entitlement genérico `RequireModule("codigo")` + RBAC `RequireRole`
+Login local do backend removido; entitlement genérico `RequireModule("codigo")` + RBAC `RequireRole`
 ([nucleo/permissions.py](../backend/nucleo/permissions.py)); detalhe da política em
 [acesso-e-permissoes.md](acesso-e-permissoes.md).
 **Pendências:** remover modelos `nucleo.Perfil`/`Permissao` (migration); mascaramento de campos →
@@ -131,11 +131,12 @@ Arquitetura, design system e convenções em [frontend.md](frontend.md); fases d
 | C.5          | Fornecedores                                               | ✅ 05/06/2026                                                                  |
 | C.6          | Diário de Obra + IA                                       | ✅ 06/06/2026                                                                  |
 | D.1.0–D.1.1 | ERP: fundação UI + Contas a pagar/receber                | ✅ 07/06/2026                                                                  |
-| D.1.2        | ERP: Boletos & Asaas (telas + botão gerar cobrança)      | ✅ 08/06/2026                                                                  |
-| D.1.3+       | ERP: notas fiscais, financeiro por obra (DRE)              | ❌ ([moduloerp.md §13](modulos/moduloerp.md#13-roadmap-em-sub-fases-fase-d1x)) |
+| D.1.2        | ERP: Boletos & Asaas (telas + botão gerar cobrança)      | ✅ 08/06/2026 · **18/07: erro do Asaas persistido em Boleto `ERRO` (payload/códigos) e clicável na UI; cancelamento de boleto (botão → `cancelar_payment`) + aba Cancelados + webhook `PAYMENT_DELETED`; abrir documento verifica o Asaas ao vivo (online=verdade do gateway / offline=última versão + aviso)** |
+| D.1.3        | ERP: notas fiscais (**emitir NFS-e por diálogo**, abas emitidas/canceladas/recebidas, cancelar NFS-e, PDF/XML) | ✅ 16/07/2026 · **E2E de emissão feliz validado 17/07** (empresa real NFE.io de teste com Inscrição Municipal + certificado): emitir → `EMITIDA` (nº atribuído) → **PDF/XML baixam pelo gateway** (após D9: resolver do 302 + volume `media_data` compartilhado). NFS-e é **assíncrona** (fica `PROCESSANDO` até uma consulta atribuir o número). Suíte `moduloerp`/`funcoescobrancas`/`modulocrm` 69/69. **18/07: erro da NFE.io persiste o payload/códigos e vira botão clicável na UI; abrir documento verifica a NFE.io ao vivo (serve a versão CANCELADA quando cancelada); cancelamento carimba `data_cancelamento` e rebaixa PDF/XML.** Falta só UI de emissão em lote + auto-poll das PROCESSANDO |
+| D.1.4        | ERP: financeiro por obra (DRE)                             | ❌ ([moduloerp.md §13](modulos/moduloerp.md#13-roadmap-em-sub-fases-fase-d1x)) |
 | D.2          | RH                                                         | ✅ 06/06/2026                                                                  |
 | D.3          | CRM                                                        | ✅ 05/07/2026 (dashboard + leads + accounts + contacts + opportunities)                                           |
-| E.1–E.2     | Drone wrapper (iframe+SSO) · Calendário                  | ❌ Pendente                                                                    |
+| E.1–E.2     | Drone wrapper (iframe+SSO) · Calendário                  | 🚧 Calendário Fatia A (UI) + **Fatia B (recorrência RRULE) ✅ 13/07/2026** + **Fatia F (feriados federais/estaduais/municipais por localidade) ✅ 13/07/2026** (fed+est via python-holidays, mun via dataset MIT + comando `sincronizar_feriados`; seletor obra→estado→município; cor por escopo; carimbo de atualização p/ superuser; suíte 25/25) — **rebuild do sgi-react aplicado 13/07; Fatia B validada E2E 10/10 via gateway (expansão de série, override/exclusão "somente esta", exclusão total); polimento UX: cursor de ponteiro nos eventos, reticências em título longo, localidade persistida (localStorage), clique em evento não-editável (feriado/diário/CRM) abre diálogo de leitura com o nome inteiro** + **Fatia C (lembretes por evento + centro de notificações in-app) ✅ 14/07/2026** (`EventReminder` + `nucleo.Notificacao` tenant-scoped/RLS; task Celery `despachar_lembretes` a 60s → notificação in-app + e-mail opcional; sino no `AppTopbar` com badge/polling; chips de lembrete no diálogo; **validado 14/07: suíte 27/27 sobre Postgres, typecheck limpo na fatia, E2E do sino vivo pelo gateway** — beat@60s + worker despacham o lembrete → notificação in-app); D–E planejadas ([modulocalendar.md §6](modulos/modulocalendar.md)) |
 | E.3          | SCM / SIL / PDCA / DMS / APS / Maps                        | ❌ Aguarda backend                                                             |
 | F.1          | Dashboard de KPIs (substitui o hub)                        | ❌ Pendente                                                                    |
 
@@ -291,38 +292,140 @@ endpoint admin.
 observabilidade, incidente multi-serviço é difícil de diagnosticar. Fase **transversal**; absorve as
 pendências operacionais da Fase 5.
 
-- **10.1 Observabilidade:** logs estruturados com `request_id`/`tenant_id`; métricas de
-  latência/erro; healthchecks estendidos; tracing pelo gateway (opcional).
+- **10.1 Observabilidade:** 🚧 fatia base ✅ 15/07/2026 (backend+IAM+gateway) — logs **JSON** com
+  `request_id`/`tenant_id` correlacionados ponta a ponta (gateway gera/propaga `X-Request-ID`;
+  `ObservabilityMiddleware` cronometra + loga acesso; `tenant_id` vem do choke point da RLS);
+  **métricas Prometheus** (`sgi_http_requests_total`/`_duration_seconds`) em `GET /metrics`;
+  **healthchecks estendidos** `/healthz` (liveness) + `/readyz` (banco/cache/broker), com o compose
+  sondando `/readyz`; perfil `observability` sobe o Prometheus ([infra/observability/](../infra/observability/)).
+  **Falta:** Grafana + alertas (DoD), paridade no Java/Node, tracing (opcional).
 - **10.2 Reduzir superfície:** coabitar os microsserviços Node; unificar build/CI; runbook único.
+  **Parcial ✅ 19/07/2026 — deploy unificado:** compose e env saíram da raiz para
+  [deploy/](../deploy/README.md), com um arquivo por ambiente (`base` + `dev`/`staging`/`prod`) e os
+  modelos `*.env.example` correspondentes; `deploy/README.md` traz a tabela dev × staging × produção. O
+  **prod é esqueleto NÃO VALIDADO** (serve de contraste e checklist de cutover; premissa: banco e Redis
+  gerenciados, fora do compose). Dois pontos que a mudança expôs e exigiram correção: o Compose passou a
+  derivar o nome do projeto de `compose/` (renomeando rede e volumes — o dev subiria com banco e mídia
+  **vazios**), fechado com `name:` fixo no base; e o `COMPOSE_FILE` precisou de `COMPOSE_PATH_SEPARATOR=:`
+  para o mesmo `.env` valer no Windows e no WSL. O `.env` real segue na **raiz** de propósito — é de lá
+  que o compose e o `load_dotenv()` dos dois Djangos o leem.
+  **E-mail centralizado:** [funcoesemail/](../funcoesemail/README.md) — pacote na raiz, importado por IAM
+  **e** backend, com o texto de todo e-mail em `templates/`. Não virou app do backend nem serviço com hop
+  de rede porque recuperação de senha precisa funcionar com o backend fora do ar (é o que fazem Entra ID,
+  WSO2 e ForgeRock: o IdP entrega os próprios e-mails de segurança). Por isso as imagens de backend e IAM
+  agora buildam com **contexto na raiz** (+ `.dockerignore` raiz). `identity/emails.py` ficou só com a
+  tradução `Usuario`→contexto. Testes: `funcoesemail/tests.py` (9) + E2E d11 **17/17 no stack vivo**.
+  **Concluído 19/07:** `modulocrm/tasks.py` e `modulocalendar/tasks.py` migrados — **nenhum `send_mail`
+  fora do pacote** em backend e IAM. A migração destapou o **D20**: o compose nunca passava `MAIL_*` ao
+  backend e o STARTTLS era forçado na porta do Mailpit, ou seja, os lembretes de tarefa e de evento
+  **nunca saíram em nenhum ambiente** (o aviso in-app do calendário mascarava). Corrigido e provado com os
+  dois e-mails chegando ao Mailpit.
 - **10.3 Operacional (herdado da Fase 5):** segredos (Vault/Secrets Manager), DR (PITR + ensaios de
   restore), varredura de deps (`pip-audit`/`trivy`), pentest.
+- **10.3.2 Ingress público de webhooks (produção):** substituir o andaime de dev (túnel **ngrok** +
+  `infra/ngrok-webhook-proxy`) por solução profissional — recomendado **Cloudflare Tunnel** (sidecar do
+  compose, zero portas inbound, TLS+WAF, ingress só nos paths de webhook); alternativa: LB gerenciado +
+  WAF. Mesmo princípio para os demais andaimes de dev (sandbox Asaas, SQLite, segredos de dev, LLM stub):
+  aposentados antes do go-live. Desenho em [arquitetura/deploy-e-seguranca.md §3.1](arquitetura/deploy-e-seguranca.md).
 - **10.3.1 Config segura por padrão:** ✅ 12/07/2026 (antecipada, fecha **S3+S4**). `DEBUG`/`IAM_DEBUG`
   default **False** + fail-fast de `SECRET_KEY`/`ALLOWED_HOSTS` fora de DEBUG; **RS256 obrigatório em
-  produção** (HS256 só em dev); cookies seguros + HSTS quando não-DEBUG. Falta o gate `check --deploy` no CI (10.5).
-- **10.4 Supply chain (frontend):** `npm ci` + lockfile obrigatório nos Dockerfiles/CI (10.4.1);
-  `npm audit --audit-level=high` bloqueando build (10.4.2); revisão dos `postinstall` existentes
-  (10.4.3); política de adição de dependências com checklist versionado (10.4.4); varredura
-  `trivy fs` de vuln+secrets nos dois frontends (10.4.5); cobertura Maven/Angular + Dependabot nos
-  três ecossistemas (10.4.6).
-- **10.5 CI/CD mínimo:** pipeline a cada push (`pytest` + `mvn test` + `npm test`) (10.5.1); gates
-  de qualidade bloqueando merge em CVE alta (10.5.2); build e push de imagens em merge (10.5.3).
+  produção** (HS256 só em dev); cookies seguros + HSTS quando não-DEBUG. Gate `check --deploy` no CI ✅ 14/07 (10.5.1).
+- **10.4 Supply chain:** `npm ci` + lockfile obrigatório nos Dockerfiles/CI (10.4.1) ✅;
+  **10.4.2/10.4.5/10.4.6 ✅ 14/07/2026** — job `security-scan` no CI ([ci.yml](../.github/workflows/ci.yml)):
+  `npm audit --omit=dev --audit-level=high` (frontend), `pip-audit` (backend+iam) e `trivy fs`
+  (vuln com correção + **segredos**), todos **bloqueantes** em HIGH/CRITICAL, com allow-lists de
+  triagem ([.trivyignore](../.trivyignore), [.github/pip-audit-ignore.txt](../.github/pip-audit-ignore.txt));
+  **Dependabot** ([.github/dependabot.yml](../.github/dependabot.yml)) semanal nos ecossistemas
+  versionados (pip backend/iam, npm frontend, github-actions) como motor de remediação. Falta:
+  revisão dos `postinstall` (10.4.3), checklist de adição de deps (10.4.4), Maven/Angular (repo do drone).
+- **10.5 CI/CD mínimo:** pipeline a cada push/PR (10.5.1) ✅ 14/07/2026 — GitHub Actions
+  ([.github/workflows/ci.yml](../.github/workflows/ci.yml)): 3 jobs — **backend** (`manage.py test`
+  sobre Postgres 16 + role `erp_app` não-superuser/CREATEDB → RLS fail-closed real; Redis de serviço;
+  libs do WeasyPrint), **iam** (`manage.py test` no SQLite de dev) e **frontend** (`npm ci` bloqueante
+  + `lint`/`build` informativos até F5 limpar os 33 erros de `tsc` do shell legado). Inclui o **gate
+  `check --deploy`** (fecha S3/S4): o backend sobe em modo produção (DEBUG=False + RS256 efêmera) e passa
+  o checklist com `--fail-level WARNING` (só `security.W008`/SSL-redirect silenciado — TLS no gateway).
+  O drone (Java/Maven) fica no repo próprio. **10.5.2 ✅ 14/07/2026** — gates de CVE alta no job
+  `security-scan` (ver 10.4). **Falta:** build/push de imagens em merge (10.5.3).
 - **10.6 JWT em cookie HttpOnly:** ✅ 11/07/2026 (antecipada, fecha o **F1**). Ciclo de sessão padrão
-  SaaS: **access token de 15 min em memória** + **refresh em cookie HttpOnly** (`SameSite=Strict`,
+  SaaS: **access token em memória** + **refresh em cookie HttpOnly** (`SameSite=Strict`,
   path `/auth/`) renovado em silêncio (10.6.1/10.6.2). Rotação + blacklist com **detecção de reuso** e
-  **teto absoluto**; login com **"Lembrar de mim"** (12h vs 30d deslizante/cap 90d); o refresh
-  **recalcula as claims** (revogação/mudança de permissão vale em ≤15 min). Iframe do drone deixou o
+  **teto absoluto**; login com **"Lembrar de mim"**. O refresh
+  **recalcula as claims** (revogação/mudança de permissão vale em ≤ access TTL). *(Os tempos vigentes
+  não estão aqui de propósito — fonte única em [acesso-e-permissoes.md §5.2](acesso-e-permissoes.md);
+  este bullet cravava "15 min / 12h / 30d / 90d" e ficou defasado em silêncio.)* Iframe do drone deixou o
   `?token=` — recebe o token por **postMessage** do shell e o atualiza a cada rotação (10.6.3). CSRF:
   `SameSite=Strict` + checagem de `Origin` no refresh/logout (10.6.4). IAM
   ([tokens.py](../iam/identity/tokens.py)/[cookies.py](../iam/identity/cookies.py)/views) validado
   (19/19); React ([api/session.ts](../frontend/src/api/session.ts) + `attachAuth`/`tokenStore`) e Angular
   do drone (postMessage) exigem rebuild dos containers p/ validação E2E.
-- **10.7 Ambiente de staging:** idêntico ao de produção (mesmo compose, env e banco separados);
-  Fases 8, 9 e 11 validam nele antes do cutover real.
-- **10.8 Auth do WebSocket e serviço→serviço:** validar JWT no handshake STOMP do `/ws` (pendência
-  Fase 1); gatilho `post_delete` ERP→drone com JWT de serviço de vida curta emitido pela IAM
-  (pendência Fase 3).
+  - **10.6.5 Revogação imediata de sessão (época no Redis):** ✅ 13/07/2026 — access TTL 15→**5 min**;
+    troca/reset de senha e desativação carimbam `sess:revoked_after:<uid>` no Redis (DB 2) e o
+    `IamJWTAuthentication` do backend rejeita access com `iat` anterior (fecha a janela residual do access
+    stateless). Fail-open + **circuit breaker** (queda do Redis não deixa o request lento). **E2E backend+IAM
+    validado** (revogação imediata ~40 ms; fail-open/closed; persistência AOF sobrevive a restart).
+    **Drone replicado 13/07/2026:** `SessionRevocationService` (Jedis, mesmo Redis/DB2/chave) no
+    `JwtAuthenticationFilter` do funcoesODM — sessão revogada → não autentica → 401; fail-open + breaker,
+    testes unitários da decisão (`SessionRevocationServiceTest`, 7/7). Node (`funcoesia`/`nf`/`whatsapp`)
+    fora de escopo: sem rota de usuário na borda (gateway não os roteia) e absorvidos na Fase 11.
+    **E2E do drone validado no stack vivo 13/07/2026** (imagem Java rebuildada): token com módulo drone →
+    200; carimbo `sess:revoked_after:<uid>` no Redis DB2 → **mesmo token 401**; relogin (iat>carimbo) → 200.
+    Desenho: [acesso-e-permissoes.md §5.1](acesso-e-permissoes.md).
+- **10.7 Ambiente de staging:** ✅ 18/07/2026 — mesmo `docker-compose.yml` + override
+  ([docker-compose.staging.yml](../docker-compose.staging.yml)) + env de produção
+  ([.env.staging.example](../.env.staging.example), `DEBUG=False`/RS256/cookies Secure/Celery async),
+  gateway com **TLS** ([nginx.staging.conf](../infra/gateway/nginx.staging.conf)), isolamento do dev
+  (`COMPOSE_PROJECT_NAME`+`SGI_PREFIX`, banco/portas/volumes próprios) e runbook + **gate automático da
+  leva 8→11** reusando os E2E das fases ([infra/staging/](../infra/staging/): `up`/`seed`/`validate`/`down`).
+  **Validado 18/07/2026:** stack no Docker + `validate.sh` **6/6 verde** (phase4/5/6/8/9/C sob
+  TLS/RS256/DEBUG=False/Celery async). A 1ª subida **greenfield** expôs e corrigiu 7 defeitos de
+  modo-produção que o dev escondia (ver [pendencias.md](pendencias.md) D10). Fora do gate: **phase10_8
+  7/7** no staging (service-token na borda + WS CONNECT contra o `java-service`, rodado de dentro da rede
+  com o Origin do gateway); **falta** só a sessão 10.6 (refresh silencioso) no browser.
+  **Revalidado 18/07/2026** após a revisão do modelo de sessão (§5.2), a correção do cookie `Secure`
+  (D16) e o frontend de inatividade: **gate 6/6 + phase10_8 7/7**, com imagens IAM/React rebuildadas.
+- **10.10 Recuperação de senha e endurecimento de identidade (D11):** ✅ 18/07/2026 — fluxo "esqueci
+  minha senha" por token de e-mail (uso único, hash no banco, TTL 30 min, teto 5/h, resposta genérica
+  sem enumeração), **um caminho só**: o link vai para a caixa do próprio usuário e os admins do tenant
+  recebem **aviso sem o link** (supervisão sem poder de takeover). **`email` obrigatório e único** no
+  `Usuario` (migration 0004 com guarda legível); **troca de e-mail** saiu do PATCH genérico e passa a
+  confirmar no endereço **ANTIGO**, armando cooldown de 24 h na emissão de token — é o que fecha a
+  cadeia de takeover por admin comprometido; escalada de privilégio auditada; **`EventoSeguranca`**
+  append-only na IAM (trigger PG), que até aqui não auditava nada; IAM ganhou **SMTP próprio**
+  (`MAIL_HOST` obrigatório fora de DEBUG) e o compose, o **Mailpit** (perfil `mail`, UI `:8025`) como
+  caixa de captura de dev/staging. **UI React ✅** — link na tela de login + telas
+  esqueci/redefinir/confirmar-email sobre a moldura `AuthShell`. A troca de e-mail é **assimétrica**:
+  direta para funcionário (o admin é o dono da empresa e administra aquelas contas; exigir confirmação
+  num endereço morto travaria a pessoa), confirmada no endereço antigo quando o alvo é **admin**.
+  Suíte IAM **69/69** + **E2E 17/17 no dev e 17/17 no staging**
+  ([d11_recuperacao_senha_test.sh](../infra/gateway/d11_recuperacao_senha_test.sh) — parametrizável por
+  `SGI_GW`/`SGI_MP`/`SGI_IAM_CONTAINER`, restaura o ambiente ao final), imagens `iam`/`react`
+  rebuildadas nos **dois** ambientes. O `.env.staging` ganhou `MAIL_HOST=mailpit` (obrigatório com
+  `IAM_DEBUG=False`) e `FRONTEND_BASE_URL=https://localhost:8443`. Detalhe e modelo de ameaça em
+  [pendencias.md](pendencias.md#d11).
+- **10.8 Auth do WebSocket e serviço→serviço:** ✅ 15/07/2026 (fecha pendências das Fases 1 e 3).
+  **WebSocket:** o frame **STOMP CONNECT** do `/ws` passou a exigir o access token da IAM (o handshake
+  HTTP segue `permitAll` — o browser não manda header no upgrade nativo). Novo
+  `WebSocketAuthChannelInterceptor` (java-service) aplica o mesmo contrato do filtro REST — assinatura+
+  `exp`, entitlement `drone` e revogação por época — e **recusa** CONNECT sem token/sem módulo/revogado;
+  o cliente Angular (`websocket.service.ts`) manda o token no header STOMP `Authorization` (reavaliado a
+  cada reconexão, acompanha a rotação). Correlato descoberto na validação E2E: o CORS do drone
+  (`SecurityConfig`) não listava a origem do **gateway** (`localhost:8090`) → o browser do domínio único
+  era barrado (403) antes do handshake; agora a allowlist é configurável (`app.cors.allowed-origins`/
+  `APP_CORS_ALLOWED_ORIGINS`) e inclui o gateway. **Serviço→serviço:** a IAM emite **JWT de serviço** de vida curta
+  (`POST /auth/service-token/`, segredo compartilhado `SERVICE_TOKEN_SECRET`, tempo constante; **interno** —
+  bloqueado na borda) via `tokens.issue_service_token` (sem `user_id` → revogação no-op; só `tenant_id`+
+  `modules:[drone]`). O backend, em `post_delete` de **Obra/Empreendimento** ([nucleo/drone_sync.py](../backend/nucleo/drone_sync.py)),
+  enfileira uma Celery task que pede o token à IAM e chama o desvínculo do drone
+  (`DELETE /api/v1/projects/links/{obra,empreendimento}/{id}`, endpoints que já existiam). **Validado:**
+  IAM `ServiceTokenTests` (4/4) + backend `nucleo.test_drone_sync` (5/5) sobre Postgres; **E2E
+  [phase10_8_service_ws_test.py](../infra/gateway/phase10_8_service_ws_test.py) 7/7 no stack vivo pelo
+  gateway** (imagens IAM/java-service/drone-nginx rebuildadas): service-token bloqueado na borda (404),
+  desvínculo do drone gateado por módulo (sem token 401 / com token 200), WS CONNECT recusado sem token
+  (ERROR) e aceito com o token do demo (CONNECTED). **Correlato S10:** `/chunks/*/assets/*` segue download
+  público por UUID (intencional p/ o visualizador Potree/GeoTIFF, sem header de auth) — mantido.
 - **10.9 Executor Celery (worker+beat):** ✅ 12/07/2026 (antecipada, fecha o **A1**). Serviços
-  `worker` e `beat` no `docker-compose.yml` (perfil `full`), reusando a imagem do ERP; stack `full`
+  `worker` e `beat` no `docker-compose.yml` (perfil `full`), reusando a imagem do backend; stack `full`
   roda assíncrona (`CELERY_TASK_ALWAYS_EAGER=False`). Sem isto, o webhook Asaas e a geração de
   cobrança processavam síncrono e nada periódico (lembretes CRM) disparava. Validação E2E do fluxo
   enfileirado depende de subir o compose.
@@ -344,21 +447,49 @@ Os microsserviços Node são wrappers finos sobre APIs REST — não justificam 
 
 | Serviço Node                            | O que faz                                        | Equivalente Python                                                                                                                       |
 | ---------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `funcoesnf`                            | Chama NFE.io REST para emitir NF-e/NFS-e         | Celery task +`httpx`                                                                                                                   |
+| `funcoesnf`                            | Chama NFE.io REST para emitir NF-e/NFS-e         | ✅**Absorvido 16/07/2026** (11.1): cliente REST `moduloerp.nfe_client` + Celery tasks `emitir/consultar_nota_fiscal_servico`; Node + bridge PHP removidos                                        |
 | `funcoeslead`                          | Conversão/score de lead, agenda, notificações | ✅**Absorvido 03/07/2026**: `modulocrm/services.py` + actions, agenda in-process no `modulocalendar`, Celery task de lembretes |
-| `funcoeswhatsapp`                      | Webhook WhatsApp → pré-cadastro do diário     | Django view + Celery task                                                                                                                |
-| worker de`funcoesia` (embutido no app) | Chama o Gemini na análise de imagens            | Celery task (+ LLM local — ver[plano](arquitetura/diario-ia-reintegracao.md))                                                            |
+| `funcoeswhatsapp`                      | Webhook WhatsApp → pré-cadastro do diário     | ✅ **Fase C.0–C.4 15/07/2026**: app Django `funcoeswhatsapp` (webhook + Celery), canal multi-tenant, fluxos diário/lead in-process, Node removido, **E2E 13/13 pelo gateway**                                     |
+| worker de`funcoesia` (embutido no app) | Chama o Gemini na análise de imagens            | ✅**Absorvido 14/07/2026** (11.3): Celery task Python `analisar_documento_ia` lê a imagem in-process e chama a LLM local (`LLM_VISION_URL`) — [plano](arquitetura/diario-ia-reintegracao.md) |
 
 O Angular migra por último (Leaflet, Three.js/Potree, GeoTIFF, STOMP): o gatilho é **manutenção
 significativa do drone**, não uma data.
 
-- **11.1** `funcoesnf` → Celery task em `moduloerp` (pré-req: Fase 10, Celery observável).
+- **11.1** ✅ 16/07/2026 — `funcoesnf` (+ bridge PHP `NotaFiscalManager`) **absorvido** em
+  `moduloerp`: cliente REST fino da NFE.io ([nfe_client.py](../backend/moduloerp/nfe_client.py), sem ORM/
+  Celery, exceções tipadas `NFeIndisponivel`/`NFeErro`) + Celery tasks `emitir_nota_fiscal_servico`/
+  `consultar_nota_fiscal_servico` ([tasks.py](../backend/moduloerp/tasks.py), base `DLQTask`, `rls_bypass`→
+  `tenant_context`, retry/DLQ). As views deixaram de chamar `localhost:3003` (emissão enfileira → 202;
+  consulta enfileira). **Node + PHP removidos** (0 `.php`/`.js` de `funcoesnf` no repo). Fecha **D1**
+  (NF), **A2** (NF) e **L8** (status validado contra `StatusNFE.values` + timeout nos downloads de PDF/XML).
+  Suíte `moduloerp/tests.py` estendida (cliente + task, cliente mockado). **Falta:** credencial NFE.io real
+  (`NFE_IO_API_KEY`/`NFE_IO_COMPANY_ID`) + E2E no stack vivo — validação sob demanda.
 - **11.2** ✅ 03/07/2026 — `funcoeslead` absorvido em `modulocrm`/`modulocalendar` (antecipada
   pelo achado L4, sem esperar a 11.1).
-- **11.3** `funcoeswhatsapp` → endpoint Django em `modulodiario` + Celery, e o **worker Node do
-  `funcoesia`** → Celery task Python (junto com a troca Gemini → LLM local do
-  [plano de reintegração](arquitetura/diario-ia-reintegracao.md)) (pré-req: 11.2).
-- **11.4** Descomissionar os processos Node (containers e o worker embutido em `funcoesia`).
+- **11.3** worker de IA (`funcoesia`) → Celery task Python ✅ 14/07/2026 (task `analisar_documento_ia`:
+  lê a imagem in-process, chama a LLM local via `LLM_VISION_URL`, grava `AnaliseImagemIA`; fecha a parte de
+  IA do **D1**; suíte 6/6 sobre Postgres). **`funcoeswhatsapp` → Python (Fase C) ✅ C.0–C.3 15/07/2026:**
+  app Django `funcoeswhatsapp` — webhook (`/webhooks/whatsapp`, GET verify + POST HMAC → enfileira → `200`),
+  `CanalWhatsApp` multi-tenant (resolução por `phone_number_id`, credenciais Meta por tenant), idempotência +
+  estado da conversa no Redis, identidade telefone→pessoa tenant-scoped, roteador por papel e fluxos
+  **diário** e **lead** rodando **in-process** (padrão da Fase B; sem JWT de serviço no caminho feliz).
+  Escrita do diário unificada em `modulodiario.services.registrar_contribuicao` (web + WhatsApp). Suíte
+  `funcoeswhatsapp/tests.py` **19/19 sobre Postgres** (payload/HMAC/webhook/idempotência/identidade/serviço/
+  fluxos). **C.4 ✅ 15/07/2026:** servidor Node do WhatsApp **removido** (`.js`/`package.json`/`node_modules`
+  do app + monorepo `backend/package.json`); sem resíduo Node no `grep`; fecha o **A2** (WhatsApp) e a parte
+  WhatsApp do **D1**. **E2E ✅ 15/07/2026:** gateway passou a rotear `/webhooks/` → backend
+  ([nginx.unified.conf](../infra/gateway/nginx.unified.conf)) e
+  [phaseC_whatsapp_test.py](../infra/gateway/phaseC_whatsapp_test.py) **13/13 no stack vivo pelo gateway**
+  (handshake GET verify/challenge, número desconhecido descartado, HMAC inválida→403, status→200, conversa
+  de lead nos 3 passos → **Lead criado in-process** via worker Celery; canal demo no `seed_demo_data.py`).
+  **Falta:** só o serviço da **LLM local** no compose (`LLM_VISION_URL`, em dev pelo cliente) — ver
+  [plano](arquitetura/diario-ia-reintegracao.md) e [modulos/funcoeswhatsapp.md](modulos/funcoeswhatsapp.md).
+- **11.4** Descomissionar os processos Node. ✅ 16/07/2026 — `funcoeswhatsapp` removido (C.4, 15/07),
+  `funcoesnf` removido (11.1, 16/07, Node + bridge PHP), diretório Node do `funcoeslead` excluído
+  (incl. `client_secret` OAuth local, nunca versionado) e resíduo Node do `funcoesia` limpo
+  (`index/config/logger/package*` + `controllers/routes/services/prompts/middleware`; o app Django
+  permanece). Zero `.js`/`package.json` no backend; `IA_SERVICE_URL` legada removida do settings
+  (`manage.py check` limpo).
 - **11.5** Angular → React (oportunístico, sem dependência de 11.1–11.4).
 
 **DoD:** compose sem containers Node; os três serviços operando como Python com testes; `pip-audit`
@@ -377,19 +508,42 @@ Achados das revisões técnicas com status vivo: [pendencias.md](pendencias.md).
 - **RBAC fino / LGPD:** mascaramento de campos por papel, esquecimento, portabilidade, auditoria —
   **Fase 9**.
 - **Drone:** entidades-filhas escopadas por tenant (`tenant_id` NOT NULL + gate na borda) — **✅ 8.5**;
-  WebSocket e serviço→serviço — **10.8**.
+  WebSocket e serviço→serviço — **✅ 10.8** (CONNECT STOMP autenticado + JWT de serviço backend→drone).
 - **Módulos vazios:** `moduloaps`/`modulodms`/`modulopdca`/`moduloscm`/`modulosil`/`modulomaps` —
   porte da **Fase 7** ([plano](arquitetura/migracao-v01.md)).
-- **Monetização / paywall (planejado, sem código):** auto-serviço (landing → checkout → pagamento
-  Asaas → código de ativação), planos híbridos (planos + add-ons), **quotas** por plano (usuários,
+- **Monetização / paywall (catálogo ✅ 19/07 · trava de seats/objetos ✅ 19/07; checkout sem código):**
+  o modelo de planos vive **inteiro** em [payment/](../payment/README.md) — `planos.py`/`addons.py`
+  (valores, editáveis pelo dono) + `regras.py` (engenharia) —, com o plano **`free`** como default.
+  Aplicados hoje:
+  **requisições/hora** (D23) e a **trava dura de seats e de objetos** (D24 item 2 — quotas viajam na
+  claim `quotas`; objetos travam em [nucleo/quotas.py](../backend/nucleo/quotas.py), seats em
+  [identity/quotas.py](../iam/identity/quotas.py); medidor em `GET /api/plano/`). A família de COGS
+  (IA, NF, boleto, drone, storage) segue **declarada e inerte** por desenho — mede e cobra, não trava.
+  **Atenção no cutover:** tenant sem `plano` explícito é tratado como `free` (1 seat, 2 obras).
+  Falta: auto-serviço (landing → checkout → pagamento Asaas → código de ativação), medidores mensais
+  de consumo com excedente, e a UI (**fase G** do [frontend.md §5.16](frontend.md)).
+  Planos híbridos (planos + add-ons), **quotas** por plano (usuários,
   empreendimentos, obras, clientes, storage, processamento de drone, IA, NF, boletos), trial de 28
   dias. Vínculo **usuário↔funcionário** (seat = funcionário com login). Estudo do consultor +
   faseamento em [arquitetura/monetizacao.md](arquitetura/monetizacao.md); ABAC por objeto (acesso a
   empreendimento) é a **fatia D** do [AD-9](arquitetura/rbac-abac.md).
 - **Frontend pendente:** dashboard de KPIs, CRM, drone wrapper, calendário — tabela da Fase 7 acima.
-- **Operacional:** LGPD, secrets, observabilidade, DR, pentest — **Fase 10**.
-- **Supply chain:** nenhuma varredura automatizada (npm/Maven/pip) — **10.4**.
-- **CI/CD ausente:** testes manuais; gates pressupõem pipeline — **10.5**.
+- **Operacional:** LGPD, secrets, DR, pentest — **Fase 10**; observabilidade base (logs JSON
+  correlacionados + métricas Prometheus + health estendido) ✅ **10.1** (15/07); falta Grafana/alertas.
+- **Deploy e configuração:** compose/env por ambiente em [deploy/](../deploy/README.md) ✅ 19/07; TLS no
+  banco configurável (**D14**) ✅ 19/07 — falta validar contra um Postgres com TLS real.
+- **Borda da API:** `iss`/`aud` verificados + throttling no DRF (**S8**) ✅ 19/07.
+- **Limites (3 camadas — [arquitetura/rate-limiting.md](arquitetura/rate-limiting.md)):** camada 2
+  (saída, token bucket por fornecedor — protege cota de terceiro e dinheiro) ✅ 19/07 (**D22**);
+  camada 1 completa ✅ 19/07 (**D23**: eixo por **tenant** com teto **derivado do plano contratado**
+  (claim `rate_hora` da IAM), `limit_req` de `/api/` no gateway, `X-RateLimit-*` na resposta e
+  fail-open ruidoso nos quatro eixos). Camada 3 (cota por plano) 🟠 **D24 parcial** — trava de
+  seats/objetos ✅ 19/07; falta consumo/checkout. O modelo de planos vive inteiro em
+  [payment/](../payment/README.md) (valores + regras), com as quotas de COGS declaradas e inertes.
+- **Supply chain:** varredura automatizada (pip/npm/trivy + Dependabot) ✅ **10.4** (14/07); falta
+  Maven/Angular (repo do drone), `postinstall` e checklist de deps — **10.4.3/10.4.4**.
+- **CI/CD:** pipeline mínima (backend/iam/frontend) ✅ **10.5.1** + gates de CVE ✅ **10.5.2** (14/07);
+  falta build/push de imagens — **10.5.3**.
 - **JWT em `localStorage` e em query param (iframe):** ✅ **10.6** (11/07) — access em memória + refresh
   em cookie HttpOnly; iframe do drone via postMessage (sem `?token=`).
 - **Staging ausente:** validações vão direto para produção — **10.7**.

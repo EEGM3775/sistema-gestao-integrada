@@ -3,6 +3,7 @@
 from rest_framework import serializers
 from nucleo.tenant_validators import TenantScopedUniqueSerializerMixin
 from nucleo.field_masking import FieldMaskingSerializerMixin
+from nucleo.upload_validation import UploadValidationMixin
 from .models import (
     Cargo,
     Funcionario,
@@ -26,7 +27,7 @@ class CargoSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSerial
         # DRF o exigiria no payload); read-only para não travar a criação.
         read_only_fields = ['tenant']
 
-class FuncionarioSerializer(FieldMaskingSerializerMixin, TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
+class FuncionarioSerializer(UploadValidationMixin, FieldMaskingSerializerMixin, TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
     """Ficha do funcionário — PII mascarada por permissão (Fase 9.C).
 
     Substitui o hack ad-hoc do ``salario_base`` (que checava o nome do papel
@@ -67,7 +68,7 @@ class DadoMedicoFuncionarioSerializer(FieldMaskingSerializerMixin, serializers.M
         "observacoes_medicas": "rh.dado_medico.view",
     }
 
-class ASOFuncionarioSerializer(serializers.ModelSerializer):
+class ASOFuncionarioSerializer(UploadValidationMixin, serializers.ModelSerializer):
     """
     Serializador para o modelo ASOFuncionario (registros de exame ocupacional, 1 por ano).
     """
@@ -76,7 +77,7 @@ class ASOFuncionarioSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['tenant']
 
-class DocumentoFuncionarioSerializer(serializers.ModelSerializer):
+class DocumentoFuncionarioSerializer(UploadValidationMixin, serializers.ModelSerializer):
     """
     Serializador para o modelo DocumentoFuncionario.
     """
@@ -115,7 +116,7 @@ class PagamentoFuncionarioSerializer(FieldMaskingSerializerMixin, serializers.Mo
         "bonus": "rh.folha.view",
     }
 
-class FolhaPagamentoSerializer(FieldMaskingSerializerMixin, serializers.ModelSerializer):
+class FolhaPagamentoSerializer(UploadValidationMixin, FieldMaskingSerializerMixin, serializers.ModelSerializer):
     """Folha de pagamento — valores financeiros mascarados por ``rh.folha.view``."""
     class Meta:
         model = FolhaPagamento

@@ -1,0 +1,262 @@
+name: CI
+
+# Fase 10.5.1 — pipeline mínima a cada push/PR.
+# Cobre os ecossistemas deste repositório: backend (Django), IAM (Django) e
+# frontend (Vite/TS). O drone (funcoesODM, Java/Maven) vive em repositório
+# próprio — o `mvn test` do DoD roda lá, não aqui.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Um push novo cancela a execução anterior do mesmo ref (economiza runner).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Backend (Django) — suíte sobre Postgres real, com o role de app
+  # (não-superuser, não-BYPASSRLS) para a RLS fail-closed valer de fato.
+  # -------------------------------------------------------------------------
+  backend-tests:
+    name: backend (Django + Postgres)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # Dev-mode: HS256 e fallbacks de _config liberados (S4). O que importa
+      # aqui é a suíte, não a config de produção (essa é gate à parte — 10.5).
+      DEBUG: "True"
+      # Aponta para o Postgres do serviço, como o role de aplicação erp_app.
+      POSTGRES_DB: erp_db
+      POSTGRES_USER: erp_app
+      POSTGRES_PASSWORD: erp_app_ci
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_SSLMODE: disable
+      # Redis do serviço (cache DB1, revogação DB2); eager dispensa broker.
+      REDIS_URL: redis://localhost:6379/0
+      CELERY_TASK_ALWAYS_EAGER: "True"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      # Bibliotecas de sistema do WeasyPrint (geração de PDF) — sem elas o
+      # import do app quebra ao subir a suíte.
+      - name: Instalar libs de sistema (WeasyPrint)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 \
+            libcairo2 libgdk-pixbuf-2.0-0 libffi-dev
+
+      - name: Instalar dependências Python
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # O runner de testes cria o banco test_erp_db, então o role de app
+      # precisa de CREATEDB (dev/CI apenas — nunca em produção). O role é
+      # LOGIN comum, não-superuser: a RLS FORCE das migrations vale de fato.
+      - name: Provisionar role erp_app (não-superuser, CREATEDB)
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE erp_app WITH LOGIN PASSWORD 'erp_app_ci' CREATEDB;
+          SQL
+
+      - name: Rodar a suíte (manage.py test)
+        # `funcoesemail` é explícito porque mora na RAIZ do repositório (pacote
+        # compartilhado com o backend) — a descoberta automática roda a partir de
+        # iam/ e não o encontraria. Ver funcoesemail/README.md.
+        run: python manage.py test identity funcoesemail --verbosity 2
+
+      # Gate de config segura (fecha o cabo solto de S3/S4): o backend tem de subir
+      # em modo produção (DEBUG=False → exige SECRET_KEY/ALLOWED_HOSTS + RS256) e
+      # passar o checklist de deploy do Django. Reusa as deps já instaladas.
+      - name: Gerar chave RS256 efêmera (deploy check)
+        run: |
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out /tmp/jwt_private.pem
+          openssl rsa -in /tmp/jwt_private.pem -pubout -out /tmp/jwt_public.pem
+
+      - name: check --deploy (config de produção)
+        env:
+          DEBUG: "False"
+          SECRET_KEY: ci-deploy-check-chave-forte-com-mais-de-cinquenta-caracteres-aleatorios-x9q2
+          ALLOWED_HOSTS: erp.example.com
+          JWT_PUBLIC_KEY_PATH: /tmp/jwt_public.pem
+          # S7: segredo de serviço agora é obrigatório fora de DEBUG (fail-fast).
+          IA_SERVICE_SECRET_TOKEN: ci-deploy-check-ia-token-efemero
+          # Fase 10.8: segredo do token serviço→serviço (drone) também é fail-fast.
+          SERVICE_TOKEN_SECRET: ci-deploy-check-service-token-efemero
+        run: python manage.py check --deploy --fail-level WARNING
+
+  # -------------------------------------------------------------------------
+  # IAM — suíte própria; roda no SQLite de dev (sem RLS/role dedicada).
+  # -------------------------------------------------------------------------
+  iam-tests:
+    name: iam (Django)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: iam
+    env:
+      IAM_DEBUG: "True"
+      SECRET_KEY: ci-secret-nao-usar-em-producao
+      ALLOWED_HOSTS: localhost,127.0.0.1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: iam/requirements.txt
+
+      - name: Instalar dependências Python
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Rodar a suíte (manage.py test)
+        run: python manage.py test --verbosity 2
+
+  # -------------------------------------------------------------------------
+  # Frontend — instalação reprodutível (bloqueante) + lint/build informativos.
+  # O build (`tsc -b && vite build`) ainda acusa erros do shell legado (F5);
+  # enquanto não forem limpos, lint e build reportam status sem bloquear merge.
+  # Ao fechar F5, remover os `continue-on-error` para virar gate real.
+  # -------------------------------------------------------------------------
+  frontend:
+    name: frontend (Vite/TS)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Instalar dependências (npm ci)
+        run: npm ci
+
+      - name: Lint (informativo até F5)
+        continue-on-error: true
+        run: npm run lint
+
+      - name: Build + typecheck (informativo até F5)
+        continue-on-error: true
+        run: npm run build
+
+  # -------------------------------------------------------------------------
+  # Supply-chain / CVE — Fase 10.4 + 10.5.2. Gate BLOQUEANTE de vulnerabilidade
+  # HIGH/CRITICAL nos ecossistemas versionados aqui (Python: backend+iam; npm:
+  # frontend) + varredura de vuln e SEGREDOS no filesystem (trivy). O Dependabot
+  # (.github/dependabot.yml) é o motor de remediação; este job é a barreira.
+  #
+  # Ruído sob controle: só HIGH/CRITICAL, trivy só o que TEM correção
+  # (ignore-unfixed), npm só deps de produção. Advisory triada e sem fix
+  # aplicável vai para a allow-list (.github/pip-audit-ignore.txt / .trivyignore)
+  # com justificativa — nunca silenciar em massa.
+  #
+  # Os passos usam `if: '!cancelled()'` para TODOS reportarem antes de o job
+  # falhar (não para no primeiro achado).
+  # -------------------------------------------------------------------------
+  security-scan:
+    name: security-scan (CVE + segredos)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar pip-audit
+        run: python -m pip install --upgrade pip pip-audit
+
+      # pip-audit resolve os requirements num venv efêmero (o runner tem
+      # python3-venv) e falha em qualquer vuln conhecida. A allow-list vira
+      # flags --ignore-vuln.
+      - name: pip-audit — backend
+        if: ${{ !cancelled() }}
+        run: |
+          IGN=$(grep -vE '^[[:space:]]*#|^[[:space:]]*$' .github/pip-audit-ignore.txt \
+            | awk '{print "--ignore-vuln " $1}' | tr '\n' ' ')
+          python -m pip_audit -r backend/requirements.txt --desc off $IGN
+
+      - name: pip-audit — iam
+        if: ${{ !cancelled() }}
+        run: |
+          IGN=$(grep -vE '^[[:space:]]*#|^[[:space:]]*$' .github/pip-audit-ignore.txt \
+            | awk '{print "--ignore-vuln " $1}' | tr '\n' ' ')
+          python -m pip_audit -r iam/requirements.txt --desc off $IGN
+
+      - uses: actions/setup-node@v4
+        if: ${{ !cancelled() }}
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # Só dependências de produção em HIGH/CRITICAL — dev-deps são ruído de
+      # build, não superfície de runtime (e o Dependabot as atualiza à parte).
+      - name: npm audit — frontend (prod, high+)
+        if: ${{ !cancelled() }}
+        working-directory: frontend
+        run: |
+          npm ci
+          npm audit --omit=dev --audit-level=high
+
+      # Varredura de filesystem: vuln (só com correção) + SEGREDOS vazados.
+      # node_modules já existe (npm ci acima) — pulado para não escanear deps
+      # de terceiros duas vezes. ImgDrone é gitignored (fora do checkout).
+      - name: Trivy — vuln (fixáveis) + segredos
+        if: ${{ !cancelled() }}
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          trivyignores: .trivyignore
+          skip-dirs: frontend/node_modules

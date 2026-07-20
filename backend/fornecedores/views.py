@@ -3,6 +3,7 @@ from rest_framework import viewsets, permissions, filters
 from django_filters.rest_framework import DjangoFilterBackend
 from nucleo.tenancy import TenantScopedViewSetMixin
 from nucleo.permissions import RequirePermission
+from nucleo.quotas import QuotaEnforcedMixin
 from .models import (
     Fornecedor,
     DadoBancarioFornecedor,
@@ -15,7 +16,8 @@ from .serializers import (
 )
 
 
-class FornecedorViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+class FornecedorViewSet(QuotaEnforcedMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    quota_recurso = "fornecedores"  # D24
     queryset = Fornecedor.objects.all().order_by('razao_social')
     serializer_class = FornecedorSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]

@@ -1,9 +1,12 @@
 import { useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { ArrowLeft, Copy, Check, ExternalLink } from 'lucide-react'
-import { useBoleto, useEventosWebhookAsaas } from '../hooks/useBoletos'
+import { ArrowLeft, Copy, Check, ExternalLink, Ban, AlertTriangle } from 'lucide-react'
+import {
+  useBoleto, useEventosWebhookAsaas, useCancelarBoleto, useVerificarDocumentoBoleto,
+} from '../hooks/useBoletos'
 import { MoneyDisplay } from '../components/shared/MoneyDisplay'
 import { StatusBoletoBadge } from '../components/shared/StatusBoletoBadge'
+import { GatewayErroDialog } from '../components/shared/GatewayErro'
 import { buttonSecondaryStyle } from '../components/forms/formStyles'
 import { apiDecimalToCents } from '@/utils/money'
 import { dateToBR } from '@/utils/dates'
@@ -33,6 +36,35 @@ export default function BoletoDetailPage() {
 
   const { data: boleto, isLoading, isError } = useBoleto(boletoId)
   const { data: eventos, isLoading: isLoadingEventos } = useEventosWebhookAsaas(boletoId)
+  const cancelar = useCancelarBoleto()
+  const verificarDoc = useVerificarDocumentoBoleto()
+  const [mensagem, setMensagem] = useState<{ tom: 'ok' | 'erro'; texto: string } | null>(null)
+  const [erroAberto, setErroAberto] = useState(false)
+
+  /** Abre o PDF verificando o Asaas AO VIVO (aba aberta no clique p/ não bloquear popup). */
+  function aoAbrirDocumento() {
+    if (!boletoId) return
+    const win = window.open('', '_blank')
+    verificarDoc.mutate(boletoId, {
+      onSuccess: doc => {
+        if (doc.url_pdf && win) win.location.href = doc.url_pdf
+        else if (win) win.close()
+        if (!doc.gateway_online) setMensagem({ tom: 'erro', texto: doc.mensagem })
+        else if (!doc.url_pdf) setMensagem({ tom: 'erro', texto: 'Documento ainda indisponível no Asaas.' })
+      },
+      onError: () => { if (win) win.close(); setMensagem({ tom: 'erro', texto: 'Não foi possível verificar o documento no Asaas.' }) },
+    })
+  }
+
+  function aoCancelar() {
+    if (!boletoId || !window.confirm(`Cancelar o boleto #${boletoId} no Asaas? A ação não pode ser desfeita.`)) return
+    cancelar.mutate(boletoId, {
+      onSuccess: r => setMensagem({ tom: 'ok', texto: r.detail }),
+      onError: () => setMensagem({ tom: 'erro', texto: 'Não foi possível cancelar o boleto agora.' }),
+    })
+  }
+
+  const cancelavel = boleto ? ['EMITIDO', 'VENCIDO', 'AGUARDANDO'].includes(boleto.status) : false
 
   return (
     <div className="px-6 py-8">
@@ -75,7 +107,49 @@ export default function BoletoDetailPage() {
                   : 'Sem conta vinculada'}
               </p>
             </div>
+            {cancelavel && (
+              <button
+                type="button"
+                onClick={aoCancelar}
+                disabled={cancelar.isPending}
+                className="inline-flex items-center gap-1.5 rounded-lg font-semibold px-4 py-2 text-sm transition-opacity duration-150"
+                style={{ background: '#fee2e2', color: '#991b1b', border: 'none', cursor: cancelar.isPending ? 'wait' : 'pointer', fontFamily: 'var(--font-body)', opacity: cancelar.isPending ? 0.6 : 1 }}
+              >
+                <Ban size={15} /> {cancelar.isPending ? 'Cancelando…' : 'Cancelar boleto'}
+              </button>
+            )}
           </div>
+
+          {mensagem && (
+            <div className="text-sm px-4 py-3 rounded-lg mb-4"
+              style={mensagem.tom === 'ok'
+                ? { background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#166534', fontFamily: 'var(--font-body)' }
+                : { background: '#fff5f5', border: '1px solid #fed7d7', color: '#c53030', fontFamily: 'var(--font-body)' }}>
+              {mensagem.texto}
+            </div>
+          )}
+
+          {boleto.status === 'ERRO' && (
+            <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-lg mb-6"
+              style={{ background: '#fff5f5', border: '1px solid #fed7d7', fontFamily: 'var(--font-body)' }}>
+              <span className="text-sm flex items-center gap-2" style={{ color: '#991b1b' }}>
+                <AlertTriangle size={16} /> A cobrança foi recusada pelo Asaas.
+              </span>
+              <button type="button" onClick={() => setErroAberto(true)}
+                className="text-xs font-semibold px-3 py-1.5 rounded-lg"
+                style={{ background: '#991b1b', color: '#FFFFFF', border: 'none', cursor: 'pointer' }}>
+                Ver detalhes do erro
+              </button>
+            </div>
+          )}
+
+          {erroAberto && (
+            <GatewayErroDialog
+              dados={boleto.dados_retorno_api}
+              titulo="Erro na cobrança (Asaas)"
+              onClose={() => setErroAberto(false)}
+            />
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <section className="rounded-xl p-5" style={{ border: '1.5px solid #e2e8f0', background: '#FFFFFF' }}>
@@ -86,6 +160,9 @@ export default function BoletoDetailPage() {
                 <DetailItem label="Valor" value={<MoneyDisplay cents={apiDecimalToCents(boleto.valor)} />} />
                 <DetailItem label="Vencimento" value={dateToBR(boleto.data_vencimento)} />
                 <DetailItem label="Pagamento" value={boleto.data_pagamento ? dateToBR(boleto.data_pagamento) : '—'} />
+                {boleto.data_cancelamento && (
+                  <DetailItem label="Cancelamento" value={dateToBR(boleto.data_cancelamento)} />
+                )}
                 <DetailItem label="ID no gateway (Asaas)" value={boleto.gateway_id ?? '—'} />
               </dl>
 
@@ -94,16 +171,16 @@ export default function BoletoDetailPage() {
                   Cobrança (gateway)
                 </h3>
                 <LinhaDigitavel valor={boleto.linha_digitavel} />
-                {boleto.url_pdf ? (
-                  <a
-                    href={boleto.url_pdf}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                {boleto.gateway_id ? (
+                  <button
+                    type="button"
+                    onClick={aoAbrirDocumento}
+                    disabled={verificarDoc.isPending}
                     className="inline-flex items-center gap-2 self-start"
-                    style={buttonSecondaryStyle}
+                    style={{ ...buttonSecondaryStyle, cursor: verificarDoc.isPending ? 'wait' : 'pointer', opacity: verificarDoc.isPending ? 0.6 : 1 }}
                   >
-                    <ExternalLink size={14} /> Abrir PDF do boleto
-                  </a>
+                    <ExternalLink size={14} /> {verificarDoc.isPending ? 'Verificando no Asaas…' : 'Abrir PDF (verifica no Asaas)'}
+                  </button>
                 ) : (
                   <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>PDF ainda não disponível — aguardando confirmação do gateway.</p>
                 )}

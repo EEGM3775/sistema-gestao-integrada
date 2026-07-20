@@ -4,6 +4,8 @@ from rest_framework import serializers
 from decimal import Decimal
 from datetime import date
 
+from nucleo.upload_validation import UploadValidationMixin
+
 from .models import Obra, EtapaObra, DocumentoObra
 
 class ObraSerializer(serializers.ModelSerializer):
@@ -89,7 +91,7 @@ class EtapaObraSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['tenant']  # injetado pelo perform_create (Fase 8.2 / D3)
 
-class DocumentoObraSerializer(serializers.ModelSerializer):
+class DocumentoObraSerializer(UploadValidationMixin, serializers.ModelSerializer):
     """
     Serializador para o modelo DocumentoObra.
     """

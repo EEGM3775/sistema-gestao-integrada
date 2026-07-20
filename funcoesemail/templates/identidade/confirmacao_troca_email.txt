@@ -1,0 +1,14 @@
+Olá, {{ nome }}.
+
+Foi solicitada a troca do e-mail da conta {{ conta }}:
+
+  de:   {{ email_antigo }}
+  para: {{ email_novo }}
+
+A troca SÓ acontece se você confirmar por este link:
+
+{{ link }}
+
+O link vale por {{ horas }} horas.
+
+SE NÃO FOI VOCÊ, não clique — e avise o administrador da sua empresa. Trocar o e-mail é o primeiro passo de quem quer assumir uma conta: com o endereço trocado, a pessoa passaria a receber os pedidos de recuperação de senha. Enquanto você não confirmar, nada muda.

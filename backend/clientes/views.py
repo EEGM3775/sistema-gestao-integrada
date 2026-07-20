@@ -6,6 +6,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from nucleo.tenancy import TenantScopedViewSetMixin
 from nucleo.permissions import RequirePermission
 from nucleo.field_masking import mask_document_unless
+from nucleo.quotas import QuotaEnforcedMixin
 from funcoescobrancas.services import analisar_divergencias_asaas
 from funcoescobrancas.client import AsaasAPIError
 from .models import (
@@ -30,7 +31,8 @@ from .filters import (
 )
 
 
-class ClienteViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+class ClienteViewSet(QuotaEnforcedMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    quota_recurso = "clientes"  # D24
     queryset = Cliente.objects.all().order_by('nome_completo')
     serializer_class = ClienteSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -46,14 +48,24 @@ class ClienteViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
         """
         Relatório (só leitura) das divergências de identidade entre os clientes
         deste tenant e os customers do Asaas — o mesmo critério que barra a
-        emissão de cobrança. Consumido ao abrir "Novo Cliente" e ao gerar
-        cobrança (D3), para ver o que impediria/desviaria um boleto.
+        emissão de cobrança. Consumido no fluxo de gerar cobrança e no botão-alerta
+        do hub do ERP (D3), para ver o que impediria/desviaria um boleto.
 
-        **LGPD:** o relatório expõe CPF/CNPJ (PII documental) num dict cru, fora
-        do `FieldMaskingSerializerMixin`. Quem não tem `cadastro.cliente_doc.view`
-        recebe o documento **mascarado** (mesma regra da 9.C) — o nome basta para
-        localizar o cadastro a corrigir, sem vazar o documento inteiro.
+        **Gate (LGPD + escopo):** é dado **financeiro** que carrega **PII de
+        cliente**, logo exige as DUAS pontas — `cadastro.cliente.view` (acesso aos
+        clientes, já imposto pelo `RequirePermission` do viewset no GET) **e**
+        `erp.cobranca.view` (checado explícito aqui). `hasModule` não basta: é
+        entitlement do **tenant**, não permissão do **usuário** (um `operacional`
+        num tenant com ERP não deve ver isto). O documento (CPF/CNPJ) ainda vem
+        **mascarado** para quem não tem `cadastro.cliente_doc.view` (regra da 9.C).
         """
+        user = request.user
+        is_admin = getattr(user, "is_tenant_admin", False) or getattr(user, "is_superuser", False)
+        if not is_admin and "erp.cobranca.view" not in (getattr(user, "iam_permissions", None) or []):
+            return Response(
+                {'detail': 'Requer permissão de cobranças (erp.cobranca.view).'},
+                status=drf_status.HTTP_403_FORBIDDEN,
+            )
         try:
             relatorio = analisar_divergencias_asaas(self.get_queryset())
         except AsaasAPIError as exc:

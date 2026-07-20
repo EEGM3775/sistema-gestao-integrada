@@ -14,6 +14,7 @@ prancha descreve o desenho completo da sua área (não o status — status é o 
 | [lixo.md](lixo.md) | Sistema de exclusão segura — tabela genérica `Lixo`, papel `gestor_lixo`, garantia de ID, auto-purge |
 | [rbac-abac.md](rbac-abac.md) | **Proposto** — modelo-alvo da camada 2: catálogo de permissões + papéis por tenant + ABAC + mascaramento de campo (PII). Espinha da Fase 9 |
 | [diario-ia-reintegracao.md](diario-ia-reintegracao.md) | Plano de reintegração do canal WhatsApp → IA → Diário de Obra (contrato JSON da análise) |
+| [rate-limiting.md](rate-limiting.md) | Três camadas de limite: entrada (IP/usuário/tenant/endpoint), saída (token bucket por fornecedor, protege cota e dinheiro) e cota comercial de plano |
 
 Política de acesso (entitlement + RBAC) em [../acesso-e-permissoes.md](../acesso-e-permissoes.md);
 entidades de negócio em [../dominio.md](../dominio.md).

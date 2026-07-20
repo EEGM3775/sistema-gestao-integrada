@@ -1,0 +1,42 @@
+# ============================================================
+# Override de DESENVOLVIMENTO — aplicado SOBRE deploy/compose/base.yml.
+#
+#   docker compose -f deploy/compose/base.yml -f deploy/compose/dev.yml \
+#     --profile full up -d
+#
+# (com o COMPOSE_FILE do .env da raiz, basta `docker compose --profile full up -d`)
+#
+# Este arquivo existe para tornar EXPLÍCITO o que é andaime de desenvolvimento.
+# Antes, os valores de dev viviam como default embutido no base (`${VAR:-dev}`),
+# e não dava para olhar um arquivo e responder "o que muda de dev para produção?".
+# Os defaults continuam no base para não quebrar quem sobe sem override, mas o
+# que está aqui é a lista de coisas que NÃO PODEM ir para produção.
+# ============================================================
+
+services:
+  iam:
+    environment:
+      IAM_DEBUG: "True"
+      # Mailpit: captura todo e-mail e não entrega a ninguém. Ver perfil `mail`.
+      MAIL_HOST: mailpit
+      MAIL_PORT: "1025"
+
+  erp:
+    environment:
+      DEBUG: "True"
+      # Sandbox: cobranças não são reais. Em produção, api.asaas.com.
+      ASAAS_BASE_URL: https://api-sandbox.asaas.com/v3
+
+  worker:
+    environment:
+      DEBUG: "True"
+      ASAAS_BASE_URL: https://api-sandbox.asaas.com/v3
+
+  beat:
+    environment:
+      DEBUG: "True"
+
+  # Mailpit sobe junto no dev (no base ele exige o perfil `mail`), porque sem
+  # ele a recuperação de senha não tem para onde entregar e o fluxo fica mudo.
+  mailpit:
+    profiles: ["full", "mail", "dev"]

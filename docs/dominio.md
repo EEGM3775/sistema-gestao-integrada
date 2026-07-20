@@ -1,6 +1,6 @@
 # Domínio de negócio
 
-> Como as entidades do ERP se conectam. O negócio é **construção civil / incorporação imobiliária**:
+> Como as entidades do backend se conectam. O negócio é **construção civil / incorporação imobiliária**:
 > uma incorporadora toca **empreendimentos**, que se desdobram em **obras**, vende unidades a
 > **clientes**, compra de **fornecedores**, controla o **financeiro** e gerencia o **RH**. Tudo é
 > isolado por **tenant** (ver [arquitetura/dados-e-tenancy.md](arquitetura/dados-e-tenancy.md)). Detalhe campo a campo em cada
@@ -99,7 +99,7 @@ contatos) liga-se a lead/contato/oportunidade.
 
 ## Identidade (espelho local)
 
-O ERP **não** é dono da identidade (ver [acesso-e-permissoes.md](acesso-e-permissoes.md)). Em
+O backend **não** é dono da identidade (ver [acesso-e-permissoes.md](acesso-e-permissoes.md)). Em
 `nucleo` existem espelhos locais provisionados por JIT a partir do JWT da IAM: `Tenant` e `Usuario`
 (`Usuario.tenant`). `nucleo.Perfil`/`Permissao` são legado (a fonte de papéis é a IAM, via claims).
 Toda entidade acima herda `tenant` do mixin `TenantScopedModel`.

@@ -144,6 +144,7 @@ class NotaFiscalServico(TenantScopedModel):
     chave_acesso = models.CharField(_("Chave de Acesso"), max_length=44, null=True, blank=True)
     numero = models.CharField(_("Número da NF"), max_length=20, null=True, blank=True)
     data_emissao = models.DateTimeField(_("Data e Hora da Emissão"), null=True, blank=True)
+    data_cancelamento = models.DateTimeField(_("Data e Hora do Cancelamento"), null=True, blank=True)
     arquivo_pdf = models.FileField(_("Arquivo PDF"), upload_to=nf_file_path, null=True, blank=True)
     arquivo_xml = models.FileField(_("Arquivo XML"), upload_to=nf_file_path, null=True, blank=True)
     dados_retorno_api = models.JSONField(null=True, blank=True)
@@ -172,6 +173,7 @@ class NotaFiscalProduto(TenantScopedModel):
     chave_acesso = models.CharField(_("Chave de Acesso"), max_length=44, null=True, blank=True)
     numero = models.CharField(_("Número da NF"), max_length=20, null=True, blank=True)
     data_emissao = models.DateTimeField(_("Data e Hora da Emissão"), null=True, blank=True)
+    data_cancelamento = models.DateTimeField(_("Data e Hora do Cancelamento"), null=True, blank=True)
     arquivo_pdf = models.FileField(_("Arquivo PDF"), upload_to=nf_file_path, null=True, blank=True)
     arquivo_xml = models.FileField(_("Arquivo XML"), upload_to=nf_file_path, null=True, blank=True)
     dados_retorno_api = models.JSONField(null=True, blank=True)
@@ -718,11 +720,16 @@ class Boleto(TenantScopedModel):
     data_vencimento = models.DateField(_("Data de Vencimento"))
     data_emissao = models.DateTimeField(_("Data de Emissão"), auto_now_add=True)
     data_pagamento = models.DateTimeField(_("Data de Pagamento"), null=True, blank=True)
+    data_cancelamento = models.DateTimeField(_("Data de Cancelamento"), null=True, blank=True)
 
     # Dados específicos do boleto/gateway
     gateway_id = models.CharField(max_length=512, null=True, blank=True, db_index=True, verbose_name=_("ID no Gateway de Pagamento"))
     url_pdf = models.URLField(max_length=512, null=True, blank=True, verbose_name=_("Link do Boleto (PDF)"))
     linha_digitavel = models.CharField(max_length=100, null=True, blank=True, verbose_name=_("Linha Digitável"))
+    # Payloads crus do gateway: erro de emissão (códigos+descrições do Asaas),
+    # resposta de cancelamento e última verificação ao vivo. É o que a UI abre no
+    # popup de "detalhes do erro" e o que sustenta o fallback offline do documento.
+    dados_retorno_api = models.JSONField(_("Retorno do Gateway"), null=True, blank=True)
 
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)

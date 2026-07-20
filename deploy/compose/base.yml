@@ -1,0 +1,564 @@
+# ============================================================
+# Plataforma SGI — compose UNIFICADO (Fase 4).
+#
+# Perfis:
+#   (sem perfil)  -> só infra: postgres + redis
+#   --profile full -> plataforma inteira: IAM, backend, React, funcoesODM e gateway
+#
+# Uso:
+#   cp deploy/env/dev.env.example .env
+#   docker compose up -d                 # só infra (postgres + redis)
+#   docker compose --profile full up -d  # tudo; abra http://localhost:8090/
+#
+# Tudo numa rede só (sgi). Os nomes de serviço java-service / nodeodm /
+# drone-nginx / funcoesodm-db são referenciados em configs internas do drone.
+# ============================================================
+
+# Nome do projeto FIXO. Sem isto o Compose o deriva do diretório do arquivo — que
+# ao mover para deploy/compose/ passou a ser "compose", renomeando rede e volumes
+# (`compose_pg_data` em vez de `02sistema_gestao_integrada_pg_data`). Na prática o
+# ambiente de dev subiria com banco, Redis e mídia VAZIOS, como se os dados tivessem
+# sumido. O staging sobrescreve via COMPOSE_PROJECT_NAME no seu env-file.
+name: ${COMPOSE_PROJECT_NAME:-02sistema_gestao_integrada}
+
+services:
+  # ---------- INFRA (sempre) ----------
+
+  # PostgreSQL — cluster de registro do IAM e do backend (bancos iam_db e erp_db)
+  postgres:
+    image: postgres:16-alpine
+    container_name: ${SGI_PREFIX:-sgi}-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_SUPERUSER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPbackendASSWORD:-postgres}
+      POSTGRES_DB: postgres
+      backend_DB: ${POSTGRES_DB:-erp_db}
+      backend_USER: ${POSTGRES_USER:-erp_app}
+      backend_PASSWORD: ${POSTGRES_PASSWORD:-erp_app_senha_dev}
+      IAM_DB: ${IAM_POSTGRES_DB:-iam_db}
+      IAM_USER: ${IAM_POSTGRES_USER:-iam_app}
+      IAM_PASSWORD: ${IAM_POSTGRES_PASSWORD:-iam_app_senha_dev}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ../../infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_SUPERUSER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [sgi]
+    restart: unless-stopped
+
+  # Redis — cache do Django + broker/result do Celery
+  redis:
+    image: redis:7-alpine
+    container_name: ${SGI_PREFIX:-sgi}-redis
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "yes"]
+    ports:
+      # Porta de host parametrizável para o staging (SGI_PREFIX) coexistir com o dev.
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [sgi]
+    restart: unless-stopped
+
+  # ---------- Mailpit (SMTP de captura — dev/staging) ----------
+  # Andaime de desenvolvimento (mesma família do túnel ngrok e do sandbox Asaas):
+  # captura todo e-mail enviado pela IAM e o mostra numa UI web, SEM entregar a
+  # ninguém de verdade. É o que permite testar a recuperação de senha sem mandar
+  # e-mail para caixa real nem usar serviço de terceiro. Aposentado antes do
+  # go-live, quando MAIL_HOST passa a apontar para um SMTP real (ver 10.3.2).
+  mailpit:
+    image: axllent/mailpit:v1.20
+    container_name: ${SGI_PREFIX:-sgi}-mailpit
+    profiles: ["full", "mail"]
+    environment:
+      MP_MAX_MESSAGES: "500"
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+    ports:
+      # 8025 = UI web (leia os e-mails aqui). 1025 = SMTP (a IAM entrega aqui).
+      - "${MAILPIT_UI_PORT:-8025}:8025"
+      - "${MAILPIT_SMTP_PORT:-1025}:1025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [sgi]
+    restart: unless-stopped
+
+  # ---------- IAM (identidade / SSO) ----------
+  iam:
+    build:
+      # Contexto = raiz do repo para a imagem enxergar o pacote compartilhado
+      # `funcoesemail/`, que vive fora de iam/.
+      context: ../..
+      dockerfile: iam/Dockerfile
+    container_name: ${SGI_PREFIX:-sgi}-iam
+    profiles: ["full"]
+    environment:
+      IAM_SECRET_KEY: ${IAM_SECRET_KEY:-django-insecure-iam-dev}
+      IAM_DEBUG: ${IAM_DEBUG:-True}
+      IAM_ALLOWED_HOSTS: ${IAM_ALLOWED_HOSTS:-localhost,127.0.0.1,iam,gateway}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ACCESS_MINUTES: ${JWT_ACCESS_MINUTES:-5}
+      JWT_REFRESH_DAYS: ${JWT_REFRESH_DAYS:-30}
+      # Revogação imediata de sessão (Fase 10.7): Redis compartilhado (DB 2) onde a
+      # IAM carimba `revoked_after` ao trocar senha / desativar usuário.
+      SESSION_REVOKE_REDIS_URL: ${SESSION_REVOKE_REDIS_URL:-redis://redis:6379/2}
+      # Cache da IAM (DB 3) — é onde vive a contagem do throttle (S8). OBRIGATÓRIO
+      # aqui: o default do settings é `localhost`, que dentro do container é o
+      # próprio container. Sem esta linha a cache falha, o `IGNORE_EXCEPTIONS` a
+      # transforma em no-op e o throttle **deixa de contar sem avisar** — protetor
+      # que parece ligado e não está. Foi o que aconteceu até 19/07/2026.
+      IAM_CACHE_REDIS_URL: ${IAM_CACHE_REDIS_URL:-redis://redis:6379/3}
+      # Fase 10.8: segredo do endpoint /auth/service-token/ (JWT serviço→serviço).
+      SERVICE_TOKEN_SECRET: ${SERVICE_TOKEN_SECRET:-service-token-dev-secret}
+      # D11: e-mail de recuperação de senha. Em dev aponta para o Mailpit (perfil
+      # `mail`), que captura tudo e não entrega para fora — nenhum e-mail de teste
+      # sai da máquina. Antes do go-live troque MAIL_HOST por um SMTP real.
+      MAIL_HOST: ${MAIL_HOST:-mailpit}
+      MAIL_PORT: ${MAIL_PORT:-1025}
+      MAIL_USER: ${MAIL_USER:-}
+      MAIL_PASS: ${MAIL_PASS:-}
+      MAIL_FROM: ${MAIL_FROM:-Sistema de Gestão <noreply@sistemagestao.com>}
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://localhost:8090}
+      PASSWORD_RESET_TTL_MINUTES: ${PASSWORD_RESET_TTL_MINUTES:-30}
+      PASSWORD_RESET_COOLDOWN_TROCA_EMAIL_HORAS: ${PASSWORD_RESET_COOLDOWN_TROCA_EMAIL_HORAS:-24}
+      IAM_POSTGRES_DB: ${IAM_POSTGRES_DB:-iam_db}
+      IAM_POSTGRES_USER: ${IAM_POSTGRES_USER:-iam_app}
+      IAM_POSTGRES_PASSWORD: ${IAM_POSTGRES_PASSWORD:-iam_app_senha_dev}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_SSLMODE: ${DB_SSLMODE:-disable}
+      DB_SSLROOTCERT: ${DB_SSLROOTCERT:-}
+      # Fase 5: RS256. A IAM detém a chave privada (assina); a pública vira JWKS.
+      JWT_PRIVATE_KEY_PATH: /keys/jwt_private.pem
+      JWT_PUBLIC_KEY_PATH: /keys/jwt_public.pem
+    volumes:
+      - ../../infra/keys:/keys:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # Fase 10.1: readiness real (banco + Redis), não só "a porta responde".
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/readyz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks: [sgi]
+    restart: unless-stopped
+
+  # ---------- backend (Django, resource server da IAM) ----------
+  erp:
+    build:
+      context: ../..
+      dockerfile: backend/Dockerfile
+    container_name: ${SGI_PREFIX:-sgi}-erp
+    profiles: ["full"]
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-django-insecure-erp-dev}
+      DEBUG: ${DEBUG:-True}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1,erp,gateway}
+      JWT_SECRET: ${JWT_SECRET}
+      POSTGRES_DB: ${POSTGRES_DB:-erp_db}
+      POSTGRES_USER: ${POSTGRES_USER:-erp_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-erp_app_senha_dev}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_SSLMODE: ${DB_SSLMODE:-disable}
+      DB_SSLROOTCERT: ${DB_SSLROOTCERT:-}
+      REDIS_URL: redis://redis:6379/0
+      # Camada 2 (docs/arquitetura/rate-limiting.md): baldes de token que
+      # limitam a SAIDA para fornecedores (NFE.io, Asaas, Meta, LLM, SMTP).
+      # DB 4, dedicado: reusar o 0 faria um FLUSHDB de manutencao nos baldes
+      # apagar a fila de tarefas do Celery.
+      RATE_LIMIT_REDIS_URL: ${RATE_LIMIT_REDIS_URL:-redis://redis:6379/4}
+      # Revogação imediata de sessão (Fase 10.7): mesmo Redis/DB da IAM (DB 2). O
+      # IamJWTAuthentication rejeita access com `iat` anterior ao carimbo.
+      SESSION_REVOKE_REDIS_URL: ${SESSION_REVOKE_REDIS_URL:-redis://redis:6379/2}
+      # A1/Fase 10: com worker+beat reais na stack, as tasks vão para o broker
+      # em vez de rodarem in-process. Sem isto (default = DEBUG), o webhook do
+      # Asaas e a geração de cobrança processariam síncrono e o worker ficaria ocioso.
+      CELERY_TASK_ALWAYS_EAGER: ${CELERY_TASK_ALWAYS_EAGER:-False}
+      # Fase 5: valida RS256 com a chave pública da IAM (não conhece a privada).
+      JWT_PUBLIC_KEY_PATH: /keys/jwt_public.pem
+      # D.1.2: integração de cobrança Asaas (sandbox em dev) — services.py/client.py.
+      ASAAS_BASE_URL: ${ASAAS_BASE_URL:-https://api-sandbox.asaas.com/v3}
+      ASAAS_API_KEY: ${ASAAS_API_KEY:-}
+      ASAAS_WEBHOOK_TOKEN: ${ASAAS_WEBHOOK_TOKEN:-}
+      NFE_IO_BASE_URL: ${NFE_IO_BASE_URL:-https://api.nfe.io/v1}
+      NFE_IO_API_KEY: ${NFE_IO_API_KEY:-}
+      NFE_IO_COMPANY_ID: ${NFE_IO_COMPANY_ID:-}
+      # S7: segredo backend→IA obrigatório fora de DEBUG (sem fallback público).
+      IA_SERVICE_SECRET_TOKEN: ${IA_SERVICE_SECRET_TOKEN:-}
+      # E-mail (funcoesemail): lembrete de tarefa do CRM e lembrete de evento do
+      # calendário. Até 19/07/2026 SÓ a IAM recebia MAIL_*, então esses dois
+      # lembretes eram no-op silencioso em todo ambiente — o aviso in-app do
+      # calendário funcionava e escondia que o e-mail nunca saía.
+      MAIL_HOST: ${MAIL_HOST:-mailpit}
+      MAIL_PORT: ${MAIL_PORT:-1025}
+      MAIL_USER: ${MAIL_USER:-}
+      MAIL_PASS: ${MAIL_PASS:-}
+      MAIL_FROM: ${MAIL_FROM:-Sistema de Gestão <noreply@sistemagestao.com>}
+      # Fase 10.8: reconciliação serviço→serviço com o drone. Pede um JWT de
+      # serviço à IAM (SERVICE_TOKEN_SECRET) e desvincula projetos órfãos ao
+      # excluir obra/empreendimento. Sem DRONE_SERVICE_URL a reconciliação é no-op.
+      SERVICE_TOKEN_SECRET: ${SERVICE_TOKEN_SECRET:-service-token-dev-secret}
+      IAM_INTERNAL_URL: ${IAM_INTERNAL_URL:-http://iam:8001}
+      DRONE_SERVICE_URL: ${DRONE_SERVICE_URL:-http://java-service:8080}
+      # Camada 1 (D23): tetos de ENTRADA. Só o `erp` recebe — worker e beat não
+      # servem HTTP. Estas variáveis estavam no .env.example desde o S8 e NUNCA
+      # eram repassadas ao container (mesmo defeito do D20 com MAIL_*): o operador
+      # ajustava o teto no .env e nada mudava, porque valia sempre o default do
+      # settings. THROTTLE_USER fica sem default de propósito — vazio, o settings
+      # o DERIVA de THROTTLE_TENANT × THROTTLE_USER_FRACAO.
+      THROTTLE_ANON: ${THROTTLE_ANON:-120/min}
+      THROTTLE_TENANT: ${THROTTLE_TENANT:-60000/hour}
+      THROTTLE_USER_FRACAO: ${THROTTLE_USER_FRACAO:-0.05}
+      THROTTLE_USER: ${THROTTLE_USER:-}
+      THROTTLE_RELATORIO: ${THROTTLE_RELATORIO:-120/hour}
+      THROTTLE_INTEGRACAO: ${THROTTLE_INTEGRACAO:-300/hour}
+      # Quantos proxies confiáveis há entre cliente e app (hoje: só o gateway).
+      # Errado, o teto por IP fica contornável por X-Forwarded-For falso — ver
+      # docs/arquitetura/rate-limiting.md §2.2.
+      NUM_PROXIES: ${NUM_PROXIES:-1}
+    volumes:
+      - ../../infra/keys:/keys:ro
+      # Mídia compartilhada: o worker grava (PDF/XML de NF baixados da NFE.io) e o
+      # erp serve `/media/`. Sem volume comum, o arquivo escrito pelo worker não é
+      # visível ao erp → download 404.
+      - media_data:/app/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # Fase 10.1: readiness real (banco + Redis + broker), não só "a porta responde".
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks: [sgi]
+    restart: unless-stopped
+
+  # ---------- Celery worker (A1: executor das tasks assíncronas) ----------
+  # Sem este processo as tasks (baixa via webhook Asaas, geração de cobrança,
+  # emissão de NF, DLQ) enfileiravam para sempre em produção. Reusa a imagem do
+  # backend; consome do Redis. Ver docs/pendencias.md#A1.
+  worker:
+    build:
+      context: ../..
+      dockerfile: backend/Dockerfile
+    container_name: ${SGI_PREFIX:-sgi}-worker
+    profiles: ["full"]
+    command: ["celery", "-A", "config", "worker", "-l", "info", "--concurrency", "2"]
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-django-insecure-erp-dev}
+      DEBUG: ${DEBUG:-True}
+      # Settings roda a fail-fast de produção no import; mesmo sem servir HTTP, o
+      # worker/beat precisa de ALLOWED_HOSTS quando DEBUG=False (staging/produção).
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1,erp,gateway}
+      JWT_SECRET: ${JWT_SECRET}
+      POSTGRES_DB: ${POSTGRES_DB:-erp_db}
+      POSTGRES_USER: ${POSTGRES_USER:-erp_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-erp_app_senha_dev}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_SSLMODE: ${DB_SSLMODE:-disable}
+      DB_SSLROOTCERT: ${DB_SSLROOTCERT:-}
+      REDIS_URL: redis://redis:6379/0
+      # Camada 2 (docs/arquitetura/rate-limiting.md): baldes de token que
+      # limitam a SAIDA para fornecedores (NFE.io, Asaas, Meta, LLM, SMTP).
+      # DB 4, dedicado: reusar o 0 faria um FLUSHDB de manutencao nos baldes
+      # apagar a fila de tarefas do Celery.
+      RATE_LIMIT_REDIS_URL: ${RATE_LIMIT_REDIS_URL:-redis://redis:6379/4}
+      # O worker NUNCA pode ser eager — precisa consumir do broker.
+      CELERY_TASK_ALWAYS_EAGER: "False"
+      JWT_PUBLIC_KEY_PATH: /keys/jwt_public.pem
+      ASAAS_BASE_URL: ${ASAAS_BASE_URL:-https://api-sandbox.asaas.com/v3}
+      ASAAS_API_KEY: ${ASAAS_API_KEY:-}
+      ASAAS_WEBHOOK_TOKEN: ${ASAAS_WEBHOOK_TOKEN:-}
+      NFE_IO_BASE_URL: ${NFE_IO_BASE_URL:-https://api.nfe.io/v1}
+      NFE_IO_API_KEY: ${NFE_IO_API_KEY:-}
+      NFE_IO_COMPANY_ID: ${NFE_IO_COMPANY_ID:-}
+      # S7: segredo backend→IA obrigatório fora de DEBUG (sem fallback público).
+      IA_SERVICE_SECRET_TOKEN: ${IA_SERVICE_SECRET_TOKEN:-}
+      # E-mail (funcoesemail): lembrete de tarefa do CRM e lembrete de evento do
+      # calendário. Até 19/07/2026 SÓ a IAM recebia MAIL_*, então esses dois
+      # lembretes eram no-op silencioso em todo ambiente — o aviso in-app do
+      # calendário funcionava e escondia que o e-mail nunca saía.
+      MAIL_HOST: ${MAIL_HOST:-mailpit}
+      MAIL_PORT: ${MAIL_PORT:-1025}
+      MAIL_USER: ${MAIL_USER:-}
+      MAIL_PASS: ${MAIL_PASS:-}
+      MAIL_FROM: ${MAIL_FROM:-Sistema de Gestão <noreply@sistemagestao.com>}
+      # Fase 10.8: reconciliação serviço→serviço com o drone. Pede um JWT de
+      # serviço à IAM (SERVICE_TOKEN_SECRET) e desvincula projetos órfãos ao
+      # excluir obra/empreendimento. Sem DRONE_SERVICE_URL a reconciliação é no-op.
+      SERVICE_TOKEN_SECRET: ${SERVICE_TOKEN_SECRET:-service-token-dev-secret}
+      IAM_INTERNAL_URL: ${IAM_INTERNAL_URL:-http://iam:8001}
+      DRONE_SERVICE_URL: ${DRONE_SERVICE_URL:-http://java-service:8080}
+    volumes:
+      - ../../infra/keys:/keys:ro
+      # Mídia compartilhada: o worker grava (PDF/XML de NF baixados da NFE.io) e o
+      # erp serve `/media/`. Sem volume comum, o arquivo escrito pelo worker não é
+      # visível ao erp → download 404.
+      - media_data:/app/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A config inspect ping -d celery@$$(hostname) || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks: [sgi]
+    restart: unless-stopped
+
+  # ---------- Celery beat (A1: agendador de tarefas periódicas) ----------
+  # Dispara o CELERY_BEAT_SCHEDULE (hoje: lembrete de tarefas do CRM a vencer).
+  # Sem beat, nada periódico roda. Um único processo beat para todo o cluster.
+  beat:
+    build:
+      context: ../..
+      dockerfile: backend/Dockerfile
+    container_name: ${SGI_PREFIX:-sgi}-beat
+    profiles: ["full"]
+    command: ["celery", "-A", "config", "beat", "-l", "info"]
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-django-insecure-erp-dev}
+      DEBUG: ${DEBUG:-True}
+      # Settings roda a fail-fast de produção no import; mesmo sem servir HTTP, o
+      # worker/beat precisa de ALLOWED_HOSTS quando DEBUG=False (staging/produção).
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1,erp,gateway}
+      JWT_SECRET: ${JWT_SECRET}
+      POSTGRES_DB: ${POSTGRES_DB:-erp_db}
+      POSTGRES_USER: ${POSTGRES_USER:-erp_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-erp_app_senha_dev}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_SSLMODE: ${DB_SSLMODE:-disable}
+      DB_SSLROOTCERT: ${DB_SSLROOTCERT:-}
+      REDIS_URL: redis://redis:6379/0
+      # Camada 2 (docs/arquitetura/rate-limiting.md): baldes de token que
+      # limitam a SAIDA para fornecedores (NFE.io, Asaas, Meta, LLM, SMTP).
+      # DB 4, dedicado: reusar o 0 faria um FLUSHDB de manutencao nos baldes
+      # apagar a fila de tarefas do Celery.
+      RATE_LIMIT_REDIS_URL: ${RATE_LIMIT_REDIS_URL:-redis://redis:6379/4}
+      CELERY_TASK_ALWAYS_EAGER: "False"
+      JWT_PUBLIC_KEY_PATH: /keys/jwt_public.pem
+      # S7: segredo backend→IA obrigatório fora de DEBUG (sem fallback público).
+      IA_SERVICE_SECRET_TOKEN: ${IA_SERVICE_SECRET_TOKEN:-}
+      # E-mail (funcoesemail): lembrete de tarefa do CRM e lembrete de evento do
+      # calendário. Até 19/07/2026 SÓ a IAM recebia MAIL_*, então esses dois
+      # lembretes eram no-op silencioso em todo ambiente — o aviso in-app do
+      # calendário funcionava e escondia que o e-mail nunca saía.
+      MAIL_HOST: ${MAIL_HOST:-mailpit}
+      MAIL_PORT: ${MAIL_PORT:-1025}
+      MAIL_USER: ${MAIL_USER:-}
+      MAIL_PASS: ${MAIL_PASS:-}
+      MAIL_FROM: ${MAIL_FROM:-Sistema de Gestão <noreply@sistemagestao.com>}
+      # Fase 10.8: reconciliação serviço→serviço com o drone. Pede um JWT de
+      # serviço à IAM (SERVICE_TOKEN_SECRET) e desvincula projetos órfãos ao
+      # excluir obra/empreendimento. Sem DRONE_SERVICE_URL a reconciliação é no-op.
+      SERVICE_TOKEN_SECRET: ${SERVICE_TOKEN_SECRET:-service-token-dev-secret}
+      IAM_INTERNAL_URL: ${IAM_INTERNAL_URL:-http://iam:8001}
+      DRONE_SERVICE_URL: ${DRONE_SERVICE_URL:-http://java-service:8080}
+    volumes:
+      - ../../infra/keys:/keys:ro
+      # Mídia compartilhada: o worker grava (PDF/XML de NF baixados da NFE.io) e o
+      # erp serve `/media/`. Sem volume comum, o arquivo escrito pelo worker não é
+      # visível ao erp → download 404.
+      - media_data:/app/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [sgi]
+    restart: unless-stopped
+
+  # ---------- Shell React (app UI) ----------
+  react:
+    build: ../../frontend
+    container_name: ${SGI_PREFIX:-sgi}-react
+    profiles: ["full"]
+    networks: [sgi]
+    restart: unless-stopped
+
+  # ---------- funcoesODM: banco próprio ----------
+  funcoesodm-db:
+    image: postgres:15-alpine
+    container_name: ${SGI_PREFIX:-sgi}-odm-db
+    profiles: ["full"]
+    environment:
+      POSTGRES_DB: ${ODM_POSTGRES_DB:-funcoesodm}
+      POSTGRES_USER: ${ODM_POSTGRES_USER:-funcoesodm}
+      POSTGRES_PASSWORD: ${ODM_POSTGRES_PASSWORD:-funcoesodm_dev}
+    volumes:
+      - odm_db_data:/var/lib/postgresql/data
+      - ../../ImgDrone/funcoesODM/init-db:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ODM_POSTGRES_USER:-funcoesodm} -d ${ODM_POSTGRES_DB:-funcoesodm}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [sgi]
+    restart: unless-stopped
+
+  # ---------- funcoesODM: NodeODM (processamento) ----------
+  nodeodm:
+    build: ../../ImgDrone/funcoesODM/docker/nodeodm
+    image: funcoesodm/nodeodm:numpy-fix
+    container_name: ${SGI_PREFIX:-sgi}-nodeodm
+    profiles: ["full"]
+    volumes:
+      - nodeodm_data:/var/www/data
+      - potree_data:/potree/data
+    networks: [sgi]
+    restart: unless-stopped
+
+  # ---------- funcoesODM: Potree Converter ----------
+  potree-converter:
+    build: ../../ImgDrone/funcoesODM/docker/potree-converter
+    container_name: ${SGI_PREFIX:-sgi}-potree
+    profiles: ["full"]
+    environment:
+      - NODEODM_DATA=/nodeodm/data
+      - POTREE_OUTPUT=/potree/data
+      - PORT=5001
+    volumes:
+      - nodeodm_data:/nodeodm/data:ro
+      - potree_data:/potree/data
+    networks: [sgi]
+    restart: unless-stopped
+
+  # ---------- funcoesODM: backend Java (resource server da IAM) ----------
+  java-service:
+    build: ../../ImgDrone/funcoesODM/backend/java-service
+    container_name: ${SGI_PREFIX:-sgi}-odm-java
+    profiles: ["full"]
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://funcoesodm-db:5432/${ODM_POSTGRES_DB:-funcoesodm}
+      SPRING_DATASOURCE_USERNAME: ${ODM_POSTGRES_USER:-funcoesodm}
+      SPRING_DATASOURCE_PASSWORD: ${ODM_POSTGRES_PASSWORD:-funcoesodm_dev}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRATION: "3600000"
+      APP_MODULE_REQUIRED: drone
+      APP_LOCAL_LOGIN_ENABLED: "false"
+      # Fase 10.8: origens permitidas (CORS + handshake WebSocket). Precisa incluir
+      # o gateway de borda — senão o browser servido pelo domínio único é barrado
+      # no CORS antes do handshake do /ws. Em produção, o domínio real.
+      APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS:-http://localhost:4200,http://localhost:8088,http://nginx:80,http://localhost:8090}
+      # Fase 5: valida RS256 com a chave pública da IAM (não conhece a privada).
+      JWT_PUBLIC_KEY_PATH: /keys/jwt_public.pem
+      # Fase 10.6.5: revogação imediata de sessão (mesmo Redis/DB2/chave do backend).
+      SESSION_REVOKE_REDIS_URL: ${SESSION_REVOKE_REDIS_URL:-redis://redis:6379/2}
+    depends_on:
+      funcoesodm-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nodeodm:
+        condition: service_started
+      potree-converter:
+        condition: service_started
+    volumes:
+      - uploads_data:/app/uploads
+      - nodeodm_data:/nodeodm/data
+      - potree_data:/potree/data:ro
+      - ../../infra/keys:/keys:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    networks: [sgi]
+    restart: unless-stopped
+
+  # ---------- funcoesODM: frontend Angular (nginx interno, serve sob /drone/) ----------
+  drone-nginx:
+    build: ../../ImgDrone/funcoesODM/frontend
+    container_name: ${SGI_PREFIX:-sgi}-odm-nginx
+    profiles: ["full"]
+    depends_on:
+      java-service:
+        condition: service_healthy
+    volumes:
+      - potree_data:/potree/data:ro
+    networks: [sgi]
+    restart: unless-stopped
+
+  # ---------- Gateway de borda (domínio único) ----------
+  gateway:
+    image: nginx:alpine
+    container_name: ${SGI_PREFIX:-sgi}-gateway
+    profiles: ["full"]
+    ports:
+      - "${GATEWAY_PORT:-8090}:80"
+    volumes:
+      - ../../infra/gateway/nginx.unified.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      iam:
+        condition: service_healthy
+      erp:
+        condition: service_healthy
+      java-service:
+        condition: service_healthy
+      react:
+        condition: service_started
+      drone-nginx:
+        condition: service_started
+    networks: [sgi]
+    restart: unless-stopped
+
+  # ---------- Observabilidade (Fase 10.1) — perfil opcional ----------
+  # Sobe SÓ com `--profile observability` (não infla o `full`). Faz scrape dos
+  # /metrics do backend e da IAM. Dashboards/alertas (Grafana + Alertmanager) são o
+  # próximo passo — ver docs/../infra/observability/README.md.
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: ${SGI_PREFIX:-sgi}-prometheus
+    profiles: ["observability"]
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=15d"
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ../../infra/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prom_data:/prometheus
+    networks: [sgi]
+    restart: unless-stopped
+
+networks:
+  sgi:
+    driver: bridge
+
+volumes:
+  pg_data:
+  redis_data:
+  odm_db_data:
+  uploads_data:
+  media_data:
+  nodeodm_data:
+  potree_data:
+  prom_data:

@@ -1,0 +1,11 @@
+Olá, {{ nome }}.
+
+O usuário {{ alvo }}{% if alvo_nome_completo %} ({{ alvo_nome_completo }}){% endif %} solicitou recuperação de senha.
+
+  conta:    {{ alvo }}
+  e-mail:   {{ alvo_email }}
+  origem:   {{ origem }}
+
+O link de redefinição foi enviado para o e-mail da própria pessoa — você recebe apenas este aviso, não o link.
+
+Nada a fazer se o pedido faz sentido. Se NÃO faz — conta de alguém que saiu da empresa, rajada de pedidos, usuário que diz não ter solicitado — vale desativar a conta e apurar.

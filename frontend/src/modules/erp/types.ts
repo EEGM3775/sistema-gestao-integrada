@@ -35,16 +35,34 @@ export interface Boleto {
   valor: string
   data_vencimento: string
   data_pagamento: string | null
+  data_cancelamento: string | null
   gateway_id: string | null
   url_pdf: string | null
   linha_digitavel: string | null
   conta_receber: number | null
   conta_pagar: number | null
+  /** Payload cru do Asaas (erro de emissão, cancelamento, verificação) — abre no popup de detalhes. */
+  dados_retorno_api: Record<string, unknown> | null
+}
+
+/**
+ * Resposta da verificação AO VIVO do documento no gateway (Asaas/NFE.io) —
+ * `GET boletos/:id/documento/` e `notas-fiscais-servico/:id/documento/`.
+ * `gateway_online=false` → a UI abre a última versão local e avisa (`mensagem`).
+ */
+export interface DocumentoGateway {
+  gateway_online: boolean
+  status: string
+  url_pdf: string
+  url_xml?: string
+  linha_digitavel?: string
+  mensagem: string
 }
 
 /** Eixos de filtro do `BoletoFilter` (backend) — sem `search` (o model não tem campo de texto livre). */
 export interface BoletoFiltros {
   status?: StatusBoleto
+  excluir_status?: StatusBoleto
   conta_receber?: number
   conta_pagar?: number
   data_de?: string
@@ -153,6 +171,70 @@ export interface ContaReceberPayload {
 export interface EmitirNfPayload {
   descricao?: string
   city_service_code?: string
+}
+
+/** Espelha `StatusNFE` (backend) — ciclo de vida da NFS-e emitida. */
+export type StatusNFE = 'AGUARDANDO' | 'PROCESSANDO' | 'EMITIDA' | 'ERRO' | 'CANCELADA'
+
+/** Snapshot do tomador gravado na NF (subconjunto exibível — nunca renderizar CPF/CNPJ aqui). */
+export interface NfBorrower {
+  nome_completo?: string
+  razao_social?: string
+  [k: string]: unknown
+}
+
+/** NFS-e emitida (model `NotaFiscalServico`) — D.1.3. Arquivos são URLs de mídia (ou null). */
+export interface NotaFiscalServico {
+  id: number
+  status: StatusNFE
+  nfe_io_id: string | null
+  city_service_code: string
+  description: string
+  services_amount: string
+  borrower_data: NfBorrower
+  chave_acesso: string | null
+  numero: string | null
+  data_emissao: string | null
+  data_cancelamento: string | null
+  arquivo_pdf: string | null
+  arquivo_xml: string | null
+  /** Retorno cru da NFE.io (na falha: `{erro, detalhes}` com os códigos) — abre no popup de detalhes. */
+  dados_retorno_api: Record<string, unknown> | null
+  criado_em: string
+  atualizado_em: string
+}
+
+/** NF recebida de fornecedor (model `NotaFiscal`) — lançamento de entrada, sem ciclo de emissão. */
+export interface NotaFiscalRecebida {
+  nota_fiscal_id: number
+  empreendimento: number
+  fornecedor: number
+  numero_nota: string
+  chave_acesso: string
+  data_emissao: string
+  valor_total: string
+  arquivo_xml: string | null
+  arquivo_pdf: string | null
+  data_upload: string
+}
+
+/** Filtro de NFS-e emitidas: as abas usam `excluir_status`/`status` para separar emitidas × canceladas. */
+export interface NotaFiscalServicoFiltros {
+  status?: StatusNFE
+  excluir_status?: StatusNFE
+  page?: number
+  page_size?: number
+  ordering?: string
+}
+
+/** Filtro de NF recebidas de fornecedor (`NotaFiscalViewSet`: search por número/chave). */
+export interface NotaFiscalRecebidaFiltros {
+  fornecedor?: number
+  empreendimento?: number
+  search?: string
+  page?: number
+  page_size?: number
+  ordering?: string
 }
 
 export interface CentroCusto {

@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { LogOut, ChevronDown, User, KeyRound } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { ChangePasswordModal } from '@/components/ChangePasswordModal'
+import { NotificationBell } from '@/components/notifications/NotificationBell'
 
 export const AppTopbar: React.FC = () => {
   const { user, logout } = useAuth()
@@ -59,6 +60,9 @@ export const AppTopbar: React.FC = () => {
         >
           SGI Demo
         </span>
+
+        {/* Sino de notificações */}
+        <NotificationBell />
 
         {/* User dropdown */}
         <div className="relative" ref={menuRef}>

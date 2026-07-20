@@ -1,7 +1,7 @@
 """
-Confirmação do achado D1: o ERP rejeita o `Authorization: Token …` legado que
+Confirmação do achado D1: o backend rejeita o `Authorization: Token …` legado que
 os microsserviços Node (funcoesia/funcoesnf/funcoeswhatsapp) ainda enviam —
-todo callback Node→ERP morre com 401 até a absorção em Python (Fase 11) ou o
+todo callback Node→backend morre com 401 até a absorção em Python (Fase 11) ou o
 JWT de serviço (Fase 10.8).
 """
 from rest_framework.test import APITestCase

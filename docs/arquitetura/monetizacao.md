@@ -1,9 +1,15 @@
-# Monetização, planos e limites — estudo do consultor (PLANEJAMENTO, sem código)
+# Monetização, planos e limites
 
 > **Prancha de desenho — proposta v1, a validar.** Estuda o **paywall / auto-serviço**: como o
 > cliente descobre, paga, ativa e é limitado conforme o que pagou. Números em BRL são **proposta de
-> partida** (ajustar com dados reais de custo e mercado). Não há código aqui; a implementação é uma
-> fase futura do [roadmap](../roadmap.md). Camada de acesso *dentro* do tenant: [rbac-abac.md](rbac-abac.md).
+> partida** (ajustar com dados reais de custo e mercado).
+> Camada de acesso *dentro* do tenant: [rbac-abac.md](rbac-abac.md).
+>
+> **Deixou de ser só planejamento em 19/07/2026.** O checkout continua sendo fase futura
+> ([D24](../pendencias.md)), mas o **modelo de planos existe em código** e uma quota já é aplicada de
+> verdade — ver [§11](#11-onde-o-modelo-de-planos-vive-em-código-paywall-e-catálogo). Isso foi feito
+> antes do paywall de propósito: sem os planos declarados, o teto de requisições do **D23** não teria
+> de onde tirar o tamanho de cada empresa.
 
 ## 1. Visão — o módulo tem duas faces
 
@@ -34,10 +40,10 @@ Todo **usuário de login é vinculado a um Funcionário** (`rh.Funcionario`). Re
 - **Provisionamento:** na ficha do funcionário (RH), um botão **"criar acesso"** gera o `Usuario`
   vinculado (define username/e-mail), conta o seat e permite atribuir papéis. Desligar o acesso
   **libera o seat** sem apagar o funcionário.
-- **Desenho cruza serviços (decisão a registrar):** `Funcionario` vive no **ERP** (`TenantScopedModel`)
+- **Desenho cruza serviços (decisão a registrar):** `Funcionario` vive no **backend** (`TenantScopedModel`)
   e `Usuario` na **IAM** (autoridade de identidade). O vínculo precisa de uma **referência estável** —
   proposta: `Funcionario.usuario_ref` guarda o `sub`/UUID do usuário da IAM (a IAM continua dona da
-  identidade; o ERP só referencia). O provisionamento JIT já cria o `nucleo.Usuario` espelho a partir
+  identidade; o backend só referencia). O provisionamento JIT já cria o `nucleo.Usuario` espelho a partir
   do JWT — o vínculo se dá por esse `sub`.
 
 ---
@@ -114,6 +120,13 @@ Estes geram desembolso a cada uso; são o que protege a **margem**.
 
 Preços mensais; **anual = 10× o mensal** (2 meses grátis). Valores a calibrar com custo real + mercado
 (referências BR de gestão de obra: faixa ~R$150–1.500/mês).
+
+> **Plano `free` (decidido 19/07/2026), anterior ao Essencial.** É o degrau de aquisição *e* o
+> default de quem não tem assinatura: 1 usuário, 1 empreendimento, 2 obras, 20 clientes, 1 GB, sem
+> ERP/CRM/IA/drone. Restritivo em **objeto**, honesto em **experiência** — os módulos base funcionam
+> de verdade, porque quota apertada demais na experiência não converte, desinstala. Serve o caso "1
+> engenheiro validando o produto" e é o default **seguro**: tenant provisionado com erro cai no plano
+> menor, nunca em "sem limite".
 
 | Recurso | **Essencial** R$149/mês | **Profissional** R$449/mês | **Empresarial** R$1.199/mês |
 |---|---|---|---|
@@ -211,7 +224,147 @@ Trial: cria Tenant trial (sem pagamento) com limites de trial + expira_em
 
 ---
 
-## 11. Decisões em aberto (para você confirmar)
+## 11. Onde o modelo de planos vive em código (paywall e catálogo)
+
+Implementado em **19/07/2026** (junto do D23; consolidado no D24). **Todo o modelo comercial vive na
+pasta [`payment/`](../../payment/README.md)** — decisão explícita do dono do software, para quem faz
+manutenção abrir uma pasta só. Dentro dela, uma fronteira por arquivo:
+
+| Arquivo | O quê | Quem mexe |
+|---|---|---|
+| **`payment/planos.py`** | **valores**: planos, quotas, preços, parâmetros do teto e **quais quotas travam** (§4) | o **dono do software**, sem revisão de código |
+| **`payment/addons.py`** | **valores** dos add-ons | o **dono do software**, sem revisão de código |
+| **`payment/regras.py`** | **regras**: como o teto deriva dos seats, precedência, o que vale sem plano | engenharia |
+
+`payment/` é pacote na raiz pelo mesmo motivo do [`funcoesemail/`](../../funcoesemail/README.md): é
+importado pelos dois serviços e não é módulo de negócio de nenhum. É **Python puro (sem Django)**, e é
+isso que permite IAM e backend importarem sem hop de rede nem tabela de planos duplicada.
+
+**O enforcement fica nos serviços, por necessidade física, não escolha:** `iam/identity/quotas.py`
+(trava de seats) e `backend/nucleo/quotas.py` (trava de objetos) precisam do framework (a exceção HTTP)
+e precisam **contar linhas no banco de cada serviço** — são dois bancos, e o pacote compartilhado não
+alcança nenhum. A contagem roda onde o dado está, mas pergunta **todo limite** a `payment/regras.py`.
+Não há decisão comercial nesses dois arquivos; o dono não os edita.
+
+### 11.1 O que já é aplicado, e o que está declarado e inerte
+
+**Aplicado hoje:** só `requisicoes_hora`. A IAM calcula o teto do tenant e o emite como claim
+`rate_hora` do access token; o backend o usa como teto do eixo por tenant do throttle (D23). A IAM é
+quem calcula porque **só ela sabe quantos seats a empresa contratou** — o `Usuario` do backend é
+espelho JIT (só existe quem já logou), então contar lá daria um número menor que o contratado e
+crescente durante a implantação do cliente.
+
+**Declarado e inerte:** todas as demais quotas do §5 (obras, clientes, storage, IA, NF, boletos,
+processamentos de drone). Existem para serem lidas, exibidas e versionadas; nada as bloqueia até o
+**D24**. Declará-las antes de cobrá-las é o que permitiu testar o modelo de planos em **dev e staging
+sem checkout**, que foi o motivo de fazer isto agora.
+
+### 11.2 Como o teto de requisições deriva do plano
+
+```
+teto = min(RATE_BASE_HORA + seats × RATE_POR_SEAT_HORA, RATE_TETO_INFRA_HORA)
+```
+
+Precedência, do mais forte ao mais fraco: **`AssinaturaTenant.limites`** (o contratado de fato, onde o
+*Sob Medida* grava o negociado) → **o plano** (`Tenant.plano`) → **`free`** (o padrão).
+
+Três decisões que valem registro:
+
+- **Deriva de seats CONTRATADOS, não de usuários ativos.** O cliente recebe o que comprou mesmo antes
+  de cadastrar todo mundo, e o teto não muda sozinho durante a implantação. Consequência boa:
+  **comprar o add-on de usuário extra aumenta o teto automaticamente** — o limite acompanha a receita
+  em vez de brigar com ela. É o que Shopify faz por tier e o GitHub pelo tamanho da organização.
+- **Teto fixo não existe.** Um número só não serve para 1 e para 1000 funcionários: alto o bastante
+  para o cliente grande não protege contra o médio abusando; baixo o bastante para proteger inutiliza
+  o grande. Foi exatamente o defeito da primeira versão do D23.
+- **`RATE_TETO_INFRA_HORA` não é número comercial, é de capacidade.** Fica acima de qualquer plano,
+  inclusive do *Sob Medida* — "ilimitado" no contrato não pode virar ilimitado no eixo de requisições,
+  senão um tenant sozinho consome a capacidade dos outros. Todo grande mantém esse limite absoluto por
+  cima da fórmula (o GitHub para em 12.500/h) para ela não virar cheque em branco. Contrato que
+  precise de mais exige **projeto de capacidade** (réplicas), não cláusula.
+
+### 11.3 Propagação
+
+Mudar plano ou quota vale no **próximo refresh** do token (≤ TTL do access), igual à mudança de
+permissão — o refresh recalcula as claims. Não há migration: `Tenant.plano` guarda só o slug.
+
+### 11.4 Manual do dono — o que muda só em `payment/` e o que precisa de engenheiro
+
+A régua de bolso: **mexer nos números do modelo que já existe → só `payment/`. Criar uma capacidade
+nova de cobrança → o número é seu, o encanamento é do engenheiro (uma vez).**
+
+**Só `payment/`, sem revisão de código** (vale no próximo refresh do token, ≤ 5 min; sem migration,
+sem deploy de lógica):
+
+| O que você quer fazer | Arquivo | Onde exatamente |
+|---|---|---|
+| Mudar um **preço** | `payment/planos.py` | `PLANOS[<plano>]["preco_mensal"]` |
+| Mudar uma **quota** (ex.: `free` com 3 obras) | `payment/planos.py` | `PLANOS[<plano>]["obras"]` |
+| **Criar / remover um plano** inteiro | `payment/planos.py` | entrada em `PLANOS` **+** o slug em `ORDEM_PLANOS` (a régua de upgrade) |
+| **Criar / remover um add-on** | `payment/addons.py` | `ADDONS` |
+| Mudar o **preço de excedente** (COGS) | `payment/addons.py` | `EXCEDENTES` |
+| Afrouxar/apertar o **teto de requisições** | `payment/planos.py` | `RATE_BASE_HORA` · `RATE_POR_SEAT_HORA` · `RATE_TETO_INFRA_HORA` |
+| **Ligar/desligar** a trava de um recurso **que já é contado** | `payment/planos.py` | `QUOTAS_APLICADAS` / `QUOTAS_DE_OBJETO` (§4) |
+
+> **Recursos que já são contados hoje** (dá para ligar/desligar a trava sozinho): `seats`,
+> `empreendimentos`, `obras`, `clientes`, `fornecedores`. Só esses.
+
+**Precisa de um engenheiro** (o **número** ainda vai em `payment/`, mas o encanamento é código):
+
+| O que você quer fazer | Por que não é só `payment/` |
+|---|---|
+| **Travar um recurso novo** (ex.: "limitar entradas de diário/mês") | O código não sabe *qual tabela contar* até um engenheiro registrar o recurso em `backend/nucleo/quotas.py` (`RECURSOS_CONTADOS`). Se você puser o nome em `QUOTAS_APLICADAS` sem esse contador, **o teste de CI falha de propósito** — é a rede que impede cobrar por algo que ninguém sabe medir. |
+| **Cobrar excedente** de IA / NF / boleto / drone | Hoje esses limites estão **declarados e inertes**. Virar medição + fatura é uma *feature* (item 5 do §10), não uma edição de valor. |
+| **Checkout / auto-serviço** (landing → Asaas → provisionamento) | Não existe ainda (item 3 do §10). |
+| **UI do paywall** (medidor, aviso, tela de upgrade) | É a **fase G** do frontend ([frontend.md §5.16](../frontend.md)); o backend já serve os dados. |
+
+**Nem é código:** *colocar o cliente X no plano Empresarial* não toca `payment/`. O plano de cada
+empresa é **dado** (`Tenant.plano`), definido no provisionamento / admin da IAM. `payment/` define o
+que **cada plano é**; **quem está em qual plano** é banco. O negociado do "Sob Medida" mora em
+`AssinaturaTenant.limites` (também dado), que tem precedência sobre o plano.
+
+### 11.5 Mapa de arquivos — onde encontrar cada coisa
+
+Quatro camadas. O dono só edita a primeira; as outras três são engenharia e existem para **executar** a
+primeira.
+
+**1. Decisão comercial — `payment/` (o dono edita):**
+
+| Arquivo | Conteúdo |
+|---|---|
+| [`payment/planos.py`](../../payment/planos.py) | planos e suas quotas (`PLANOS`), régua de venda (`ORDEM_PLANOS`), plano padrão (`PLANO_PADRAO`), parâmetros do teto (`RATE_*`) e **quais quotas travam** (`QUOTAS_APLICADAS`/`QUOTAS_DE_OBJETO`/`QUOTA_SEATS`, §4) |
+| [`payment/addons.py`](../../payment/addons.py) | add-ons (`ADDONS`) e excedentes de COGS (`EXCEDENTES`) |
+| [`payment/regras.py`](../../payment/regras.py) | *engenharia dentro de `payment/`*: como o teto deriva dos seats, precedência do contrato, fallback (`teto_requisicoes_hora`, `quota_efetiva`, `quotas_efetivas`, `proximo_plano`, `plano_valido`) |
+| [`payment/README.md`](../../payment/README.md) | o guia do dono — a versão curta deste §11 |
+
+**2. Emissão — a IAM põe o plano no token (engenharia):**
+
+| Arquivo | Papel |
+|---|---|
+| [`iam/identity/tokens.py`](../../iam/identity/tokens.py) | `build_claims` emite as claims `plano`, `rate_hora` e `quotas` no access token, chamando `payment/regras.py` |
+| [`iam/identity/models.py`](../../iam/identity/models.py) | `Tenant.plano` (o slug contratado) e `Tenant.limites_contratados()` (funde `AssinaturaTenant.limites` das assinaturas ativas) |
+
+**3. Enforcement — cada serviço aplica, no seu banco (engenharia; o dono não toca):**
+
+| Arquivo | Trava o quê |
+|---|---|
+| [`iam/identity/quotas.py`](../../iam/identity/quotas.py) | **seats** — conta usuário ativo no banco da IAM (`checar_seats`); 402 ao criar/reativar acima do teto |
+| [`backend/nucleo/quotas.py`](../../backend/nucleo/quotas.py) | **objetos** — `QuotaEnforcedMixin` + `RECURSOS_CONTADOS` (qual tabela contar) + `checar_quota`; 402 na criação acima do teto |
+| [`backend/nucleo/authentication.py`](../../backend/nucleo/authentication.py) | lê as claims do token para `user.iam_plano` / `iam_quotas` / `iam_rate_hora` |
+| [`backend/nucleo/throttling.py`](../../backend/nucleo/throttling.py) | aplica `rate_hora` como teto do eixo por tenant (D23) |
+
+**4. Apresentação e provas:**
+
+| Arquivo | Papel |
+|---|---|
+| [`backend/nucleo/plano_views.py`](../../backend/nucleo/plano_views.py) | `GET /api/plano/` — plano vigente, medidores (uso × limite), próximo degrau e o catálogo com preços (tudo lido de `payment/`, nada hardcoded no front) |
+| [`backend/nucleo/test_quotas.py`](../../backend/nucleo/test_quotas.py) | testes da trava de objeto + **a rede que barra divergência** entre `QUOTAS_APLICADAS` e `RECURSOS_CONTADOS` |
+| [`iam/identity/test_quotas.py`](../../iam/identity/test_quotas.py) · [`test_planos.py`](../../iam/identity/test_planos.py) | testes da trava de seats e das regras/claim |
+| [frontend.md §5.16](../frontend.md) | a UI do paywall — planejada (**fase G**), ainda não construída |
+
+---
+
+## 12. Decisões em aberto (para você confirmar)
 
 - **Preços/limites** da tabela §5 — calibrar com seu **custo real** (quanto custa 1 processamento de
   drone? 1 GB/mês? 1 análise de IA?) e com o preço que o mercado-alvo topa.

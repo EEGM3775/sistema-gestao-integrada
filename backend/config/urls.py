@@ -28,6 +28,7 @@ from nucleo.views import (
     LogInternoView,
     ConfiguracaoUploadView,
 )
+from nucleo.geo_views import ResolverEnderecoView, MunicipiosView
 from obras.views import (
     ObraViewSet,
     EtapaObraViewSet,
@@ -52,6 +53,15 @@ from nucleo.lgpd_views import (
 # Trilha de auditoria (Fase 9.E)
 from nucleo.auditoria_views import AuditLogViewSet
 
+# Centro de notificações in-app (Calendário, Fase 9 — Fatia C)
+from nucleo.notificacoes_views import NotificacaoViewSet
+
+# Plano contratado + medidores de quota (D24)
+from nucleo.plano_views import PlanoView
+
+# Observabilidade (Fase 10.1): liveness/readiness/métricas
+from nucleo.health_views import HealthzView, ReadyzView, MetricsView
+
 # Cria o roteador da API, que gera as rotas automaticamente
 router = DefaultRouter()
 
@@ -60,6 +70,9 @@ router.register(r'lgpd/incidentes', IncidenteLGPDViewSet, basename='incidentelgp
 
 # --- Trilha de auditoria (Fase 9.E) ---
 router.register(r'auditoria', AuditLogViewSet, basename='auditlog')
+
+# --- Centro de notificações in-app (Calendário, Fatia C) ---
+router.register(r'notificacoes', NotificacaoViewSet, basename='notificacao')
 
 # --- Rotas do App 'clientes' ---
 router.register(r'clientes', ClienteViewSet, basename='cliente')
@@ -102,7 +115,13 @@ router.register(r'folhas-pagamento', FolhaPagamentoViewSet, basename='folhapagam
 urlpatterns = [
     path('admin/', admin.site.urls),
 
-    # Login/identidade são da IAM (SSO). O ERP é resource server: só valida o
+    # Observabilidade (Fase 10.1) — sondas de infra e métricas. Não roteadas
+    # publicamente pelo gateway (só alcançáveis dentro da rede do compose).
+    path('healthz', HealthzView.as_view(), name='healthz'),
+    path('readyz', ReadyzView.as_view(), name='readyz'),
+    path('metrics', MetricsView.as_view(), name='metrics'),
+
+    # Login/identidade são da IAM (SSO). O backend é resource server: só valida o
     # JWT da IAM — não há mais emissão de token local (Fase 6). Ver
     # docs/acesso-e-permissoes.md.
 
@@ -112,6 +131,13 @@ urlpatterns = [
     # Endpoint para log interno
     path('api/log-interno/', LogInternoView.as_view(), name='log_interno'),
     path('api/configuracoes/upload/', ConfiguracaoUploadView.as_view(), name='configuracao_upload'),
+
+    # Geo: resolução compartilhada de endereço → município (CEP ViaCEP ou nome→IBGE)
+    path('api/geo/resolver/', ResolverEnderecoView.as_view(), name='geo_resolver'),
+    path('api/geo/municipios/', MunicipiosView.as_view(), name='geo_municipios'),
+
+    # Plano e quotas (D24): medidor da UI e vitrine de upgrade
+    path('api/plano/', PlanoView.as_view(), name='plano'),
 
     # LGPD (Fase 9.D): portabilidade e esquecimento do titular
     path('api/lgpd/<str:tipo>/<int:pk>/exportar/', LgpdExportarView.as_view(), name='lgpd_exportar'),
@@ -123,6 +149,9 @@ urlpatterns = [
     path('api/erp/', include('moduloerp.urls')),
     path('api/erp/cobrancas/', include('funcoescobrancas.urls')),
     path('api/crm/', include('modulocrm.urls')),
+    # Webhook do WhatsApp (Fase C). Público (autentica pela assinatura HMAC da
+    # Meta, não por JWT). Ingresso restrito ao path — Cloudflare Tunnel (10.3.2).
+    path('webhooks/whatsapp', include('funcoeswhatsapp.urls')),
     path('api/api/', include('moduloapi.urls')),
     path('api/calendar/', include('modulocalendar.urls')),
     # Módulos planejados (stub — entitlement aplicado, endpoints de status disponíveis)

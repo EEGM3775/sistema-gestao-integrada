@@ -1,0 +1,57 @@
+# Fase 10.4.6 — atualização automática de dependências nos ecossistemas
+# versionados deste repositório. O drone (funcoesODM, Java/Maven) e o frontend
+# Angular vivem em repositório próprio — o Dependabot Maven/Angular fica lá.
+#
+# Motor de REMEDIAÇÃO: abre PRs de bump quando sai correção de CVE. O gate de
+# CI (job security-scan em ci.yml) é a barreira que BLOQUEIA vuln HIGH/CRITICAL;
+# os dois trabalham juntos — o scan acusa, o Dependabot conserta.
+version: 2
+updates:
+  # --- Python: backend ---
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "backend"]
+    groups:
+      # Agrupa patches num só PR para reduzir ruído de revisão.
+      backend-patches:
+        update-types: ["patch"]
+
+  # --- Python: IAM ---
+  - package-ecosystem: pip
+    directory: /iam
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "iam"]
+    groups:
+      iam-patches:
+        update-types: ["patch"]
+
+  # --- Frontend React (Vite/TS) ---
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "frontend"]
+    groups:
+      # Bumps de dev-deps raramente afetam produção — um PR só.
+      frontend-dev:
+        dependency-type: development
+      frontend-prod-patches:
+        dependency-type: production
+        update-types: ["patch"]
+
+  # --- Actions do próprio CI (pin de versões dos steps) ---
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels: ["dependencies", "ci"]

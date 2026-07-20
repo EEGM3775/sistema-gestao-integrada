@@ -72,6 +72,7 @@ CATALOGO: tuple[Perm, ...] = (
     Perm("erp.nf.view", "Ver notas fiscais", "erp_financeiro"),
     Perm("erp.nf.edit", "Lançar/editar nota fiscal (inclui atualização de status)", "erp_financeiro"),
     Perm("erp.nf.emitir", "Emitir nota fiscal", "erp_financeiro"),
+    Perm("erp.nf.cancelar", "Cancelar nota fiscal", "erp_financeiro"),
     Perm("erp.relatorio.view", "Ver relatórios financeiros (DRE, fluxo)", "erp_financeiro"),
     # --- Cobranças Asaas (entra via 'erp_financeiro') ---
     Perm("erp.cobranca.view", "Ver cobranças/boletos", "erp_financeiro"),

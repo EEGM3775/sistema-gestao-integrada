@@ -5,10 +5,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY requirements.txt .
+# ATENÇÃO: o contexto de build é a RAIZ do repositório (ver deploy/compose/base.yml),
+# não iam/. É o que permite copiar o pacote compartilhado `funcoesemail/`.
+COPY iam/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY iam/ .
+# Pacote compartilhado com o backend: textos e transporte de e-mail. A IAM entrega
+# pelo SMTP dela — recuperação de senha não pode depender do backend estar no ar.
+COPY funcoesemail/ ./funcoesemail/
+# Valores comerciais (planos, quotas, tetos). A IAM os lê para compor o claim do
+# teto de requisições (D23) — ver payment/README.md.
+COPY payment/ ./payment/
 
 EXPOSE 8001
 

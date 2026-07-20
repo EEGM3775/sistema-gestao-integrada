@@ -5,6 +5,7 @@ from rest_framework import permissions
 from django_filters.rest_framework import DjangoFilterBackend
 from nucleo.tenancy import TenantScopedViewSetMixin
 from nucleo.permissions import RequirePermission
+from nucleo.quotas import QuotaEnforcedMixin
 from .models import Obra, EtapaObra, DocumentoObra
 from .serializers import (
     ObraSerializer,
@@ -17,7 +18,7 @@ from rest_framework.response import Response
 from decimal import Decimal
 from datetime import date
 
-class ObraViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+class ObraViewSet(QuotaEnforcedMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
     """
     Endpoint da API para visualizar e editar obras.
     """
@@ -27,6 +28,7 @@ class ObraViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     filterset_class = ObraFilter
     permission_classes = [permissions.IsAuthenticated, RequirePermission]
     required_resource = "obra.obra"
+    quota_recurso = "obras"  # D24
 
     @action(detail=True, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def progresso(self, request, pk=None):

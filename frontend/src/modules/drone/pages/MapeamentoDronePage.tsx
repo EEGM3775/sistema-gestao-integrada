@@ -4,7 +4,7 @@ import { useAuth } from '../../../hooks/useAuth';
 import { getAccessToken, onAccessTokenChange } from '../../../api/tokenStore';
 
 /**
- * Mapeamento por Drone (funcoesODM) embutido no ERP.
+ * Mapeamento por Drone (funcoesODM) embutido no app.
  *
  * SSO sem segundo login (Fase 10.6): o shell **não** injeta mais o token na URL
  * (`?token=`). Em vez disso, entrega o access token da IAM ao Angular via

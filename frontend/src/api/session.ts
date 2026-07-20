@@ -3,6 +3,7 @@
 // HttpOnly do refresh. O access token volta no corpo e é guardado em memória.
 import axios from 'axios'
 import { getAccessToken, setAccessToken } from './tokenStore'
+import { atualizarRelogio, limparRelogio } from './sessionClock'
 
 const iamBaseURL = (import.meta.env.VITE_IAM_BASE_URL as string | undefined) ?? '/auth'
 
@@ -17,6 +18,10 @@ export interface LoginData {
   user: { id: string; username: string; email: string; is_tenant_admin?: boolean; is_platform_admin?: boolean }
   tenant: { id: string; slug: string; nome: string } | null
   modules: string[]
+  // Quando a sessão (refresh) cai e com quanta antecedência avisar. Vem da IAM
+  // porque o cookie do refresh é HttpOnly e o front não consegue lê-lo.
+  session_expires_at?: number
+  session_warn_seconds?: number
 }
 
 export async function loginSession(
@@ -26,6 +31,7 @@ export async function loginSession(
 ): Promise<LoginData> {
   const r = await raw.post('login/', { username, password, remember })
   setAccessToken(r.data.access as string)
+  atualizarRelogio(r.data)
   return r.data as LoginData
 }
 
@@ -40,10 +46,15 @@ export function refreshAccess(): Promise<string | null> {
       .then((r) => {
         const t = (r.data?.access as string) ?? null
         setAccessToken(t)
+        // Cada rotação estende a janela deslizante → reagenda o aviso de queda.
+        atualizarRelogio(r.data)
         return t
       })
       .catch(() => {
         setAccessToken(null)
+        // Refresh recusado (janela de inatividade fechou, teto atingido ou sessão
+        // revogada): não há mais o que agendar.
+        limparRelogio()
         return null
       })
       .finally(() => {
@@ -64,6 +75,7 @@ export async function changePassword(senhaAtual: string, novaSenha: string): Pro
     { headers: token ? { Authorization: `Bearer ${token}` } : undefined },
   )
   if (r.data?.access) setAccessToken(r.data.access as string)
+  atualizarRelogio(r.data) // a troca de senha reemite a sessão deste dispositivo
 }
 
 export async function logoutSession(): Promise<void> {
@@ -73,4 +85,5 @@ export async function logoutSession(): Promise<void> {
     /* mesmo se falhar no servidor, limpamos o estado local abaixo */
   }
   setAccessToken(null)
+  limparRelogio()
 }

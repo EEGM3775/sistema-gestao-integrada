@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useNavigate, useLocation, Link } from 'react-router-dom'
-import { Eye, EyeOff, LogIn, HardHat, BarChart3, Brain, ShieldCheck, ArrowLeft, Loader2 } from 'lucide-react'
+import { Eye, EyeOff, LogIn, HardHat, BarChart3, Brain, ArrowLeft, Loader2 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 
 const features = [
@@ -209,19 +209,29 @@ const LoginPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Lembrar de mim */}
-            <label
-              className="flex items-center gap-2 text-sm select-none cursor-pointer -mt-1"
-              style={{ fontFamily: 'var(--font-body)', color: 'var(--color-text-muted)' }}
-            >
-              <input
-                type="checkbox"
-                checked={remember}
-                onChange={(e) => setRemember(e.target.checked)}
-                style={{ width: 16, height: 16, accentColor: 'var(--color-brand)', cursor: 'pointer' }}
-              />
-              Manter conectado neste dispositivo
-            </label>
+            {/* Lembrar de mim + recuperação (D11) */}
+            <div className="flex items-center justify-between gap-3 -mt-1">
+              <label
+                className="flex items-center gap-2 text-sm select-none cursor-pointer"
+                style={{ fontFamily: 'var(--font-body)', color: 'var(--color-text-muted)' }}
+              >
+                <input
+                  type="checkbox"
+                  checked={remember}
+                  onChange={(e) => setRemember(e.target.checked)}
+                  style={{ width: 16, height: 16, accentColor: 'var(--color-brand)', cursor: 'pointer' }}
+                />
+                Manter conectado
+              </label>
+
+              <Link
+                to="/esqueci-senha"
+                className="text-sm font-medium shrink-0"
+                style={{ fontFamily: 'var(--font-body)', color: 'var(--color-brand)', textDecoration: 'none' }}
+              >
+                Esqueci minha senha
+              </Link>
+            </div>
 
             {/* Botão entrar */}
             <button
@@ -251,16 +261,11 @@ const LoginPage: React.FC = () => {
           </form>
 
           {/* Links auxiliares */}
+          {/* Havia aqui um `<a href="#">Esqueci minha senha</a>` — placeholder da
+              época em que não existia recuperação. Removido com o D11: o link de
+              verdade fica junto do "Manter conectado", acima. Dois links com o
+              mesmo texto, um deles morto, é pior que nenhum. */}
           <div className="mt-6 flex flex-col items-center gap-3">
-            <a
-              href="#"
-              className="text-sm transition-colors duration-150"
-              style={{ fontFamily: 'var(--font-body)', color: 'var(--color-text-muted)' }}
-              onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = 'var(--color-brand)')}
-              onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = 'var(--color-text-muted)')}
-            >
-              Esqueci minha senha
-            </a>
             <Link
               to="/"
               className="flex items-center gap-1.5 text-sm transition-colors duration-150"

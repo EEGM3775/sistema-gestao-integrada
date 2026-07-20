@@ -5,7 +5,7 @@
 > de acesso em [../acesso-e-permissoes.md](../acesso-e-permissoes.md); ligações de domínio em
 > [../dominio.md](../dominio.md).
 
-## ERP — apps Django
+## backend — apps Django
 
 | Módulo | Entitlement | Doc | O que faz |
 |---|---|---|---|
@@ -25,16 +25,16 @@
 
 ¹ `modulodiario` usa `IsResponsavelTecnicoDaObra` (permissão por objeto), não `RequireModule`.
 
-## Microsserviços Node (acionados pelo ERP)
+## Microsserviços Node (acionados pelo backend)
 
 > Stack em **descontinuação** (Fase 11 do [roadmap](../roadmap.md)): nenhuma feature nova nasce
-> aqui. A comunicação Node→ERP usa a auth legada, quebrada desde a Fase 6 — ver
+> aqui. A comunicação Node→backend usa a auth legada, quebrada desde a Fase 6 — ver
 > [../pendencias.md](../pendencias.md) (achado D1; confirmado por teste em 03/07/2026).
 
 | Serviço | Doc | O que faz |
 |---|---|---|
 | `funcoesnf` | [funcoesnf.md](funcoesnf.md) · [integração PHP](funcoesnf-integracao-php.md) | Emissão de NF-e/NFS-e (NFE.io → **Asaas** sandbox→real) |
-| `funcoeslead` | [funcoeslead.md](funcoeslead.md) | **Absorvido pelo ERP** (Fase 11.2): conversão/score/agenda/notificações em `modulocrm`/`modulocalendar` |
+| `funcoeslead` | [funcoeslead.md](funcoeslead.md) | **Absorvido pelo backend** (Fase 11.2): conversão/score/agenda/notificações em `modulocrm`/`modulocalendar` |
 | `funcoeswhatsapp` | [funcoeswhatsapp.md](funcoeswhatsapp.md) | Bot de WhatsApp (diário de obra por chat) |
 | worker de `funcoesia`² | [funcoesia.md](funcoesia.md) | Chama o Google Gemini na análise de imagens |
 

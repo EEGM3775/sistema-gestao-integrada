@@ -1,0 +1,8 @@
+# Fase 10.4.5 — advisories de vuln triadas e conscientemente aceitas pelo
+# job security-scan (trivy fs). Uma linha por CVE/ID, com JUSTIFICATIVA e DATA.
+# Vazio de propósito: só entra aqui o que foi analisado e não tem correção
+# aplicável no contexto. O objetivo é NÃO acumular exceções — prefira o bump
+# via Dependabot a silenciar o achado.
+#
+# Formato:
+#   CVE-2026-XXXXX  # sem fix upstream; não explorável (motivo) — triado DD/MM/AAAA

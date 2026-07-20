@@ -112,7 +112,7 @@ Campos de exibição adicionados (somente leitura):
 ### Observações técnicas
 
 - Upload de arquivos: `apiClient` detecta `FormData` automaticamente e omite `Content-Type: application/json`, deixando o browser definir `multipart/form-data; boundary=...`
-- URLs de mídia (`arquivo` em `DocumentoCliente`): servidas pelo gateway via `location /media/` → ERP Django; `Host` header preserva a porta (`$http_host`) para que Django gere URLs corretas (`http://localhost:8090/media/...`)
+- URLs de mídia (`arquivo` em `DocumentoCliente`): servidas pelo gateway via `location /media/` → backend Django; `Host` header preserva a porta (`$http_host`) para que Django gere URLs corretas (`http://localhost:8090/media/...`)
 - `arquivo_contrato` em `ContratoCliente` é `URLField` — armazena um link para documento externo (Google Drive, S3, etc.), não faz upload direto. Para upload direto, seria necessário migrar para `FileField`
 - Datas: campos datetime do Django (ex: `data_cadastro`) são ISO 8601 completos; a função `formatDate` usa `.slice(0, 10)` para extrair apenas a parte de data antes de formatar para `dd/mm/aaaa`
 

@@ -24,10 +24,24 @@ logger = logging.getLogger(__name__)
 def criar_cobranca(self, conta_receber_id):
     """ Garante o customer e cria o `payment`/`Boleto` no Asaas para a ContaReceber. """
     from moduloerp.models import ContaReceber
+    from nucleo.tenancy import rls_bypass, tenant_context
+
+    # A task roda fora de request (sem JWT/tenant): a própria conta carrega o
+    # tenant. Sem armar o contexto, a RLS fail-closed esconde a linha do worker
+    # (mesmo padrão da task de NF e do processamento de webhook Asaas).
+    with rls_bypass():
+        tenant_id = (
+            ContaReceber.objects.filter(pk=conta_receber_id)
+            .values_list('tenant_id', flat=True).first()
+        )
+    if tenant_id is None:
+        logger.warning("Geração de cobrança ignorada: ContaReceber #%s não existe.", conta_receber_id)
+        return None
 
     try:
-        conta = ContaReceber.objects.select_related('cliente').get(pk=conta_receber_id)
-        boleto = services.gerar_cobranca_asaas(conta)
+        with tenant_context(tenant_id):
+            conta = ContaReceber.objects.select_related('cliente').get(pk=conta_receber_id)
+            boleto = services.gerar_cobranca_asaas(conta)
         logger.info("Cobrança Asaas garantida para ContaReceber #%s — Boleto #%s (gateway_id=%s)",
                     conta_receber_id, boleto.boleto_id, boleto.gateway_id)
         return boleto.boleto_id

@@ -1,13 +1,71 @@
-CATÁLOGO DE TESTES DO BACKEND — para decidir o que manter/excluir
-==================================================================
-Gerado em 04/07/2026. 39 testes, todos rodando sobre PostgreSQL (banco único).
+=================================================================
+CATÁLOGO DE TESTES, SEEDS E DEMOS — SGI (backend + IAM + frontend)
+=================================================================
+Atualizado em 14/07/2026.
+
+Este catálogo lista TODOS os arquivos de teste, seed e demo do projeto,
+organizados por serviço. Use-o como referência para saber o que existe,
+onde rodar e o que cada arquivo cobre.
+
+COMO RODAR
+---------
+Backend (Django):
+  cd backend && ../.venv/bin/python manage.py test
+  (defaults já apontam para o Postgres de dev em localhost:5432)
+
+IAM:
+  cd iam && python manage.py test
+
+Seeds (populam dados de teste):
+  IAM:    Get-Content iam/seed_demo.py | docker compose exec -T iam python manage.py shell
+  backend: Get-Content backend/seed_demo_data.py | docker compose exec -T erp python manage.py shell
+
+
+=================================================================
+SEEDS E DEMOS
+=================================================================
+
+iam/seed_demo.py  — SEED DA IAM (identidade / SSO)
+-----------------------------------------------------------------
+Popula tenants, módulos, papéis de fábrica e usuários de demonstração.
+Idempotente (get_or_create). Roda dentro do container IAM.
+
+Tenants criados:
+  - demo (Empresa Demo) — módulos: drone, erp_financeiro, crm, rh
+  - acme (Empresa Acme) — módulos: drone
+
+Usuários criados:
+  - demo     / demo123     → tenant demo | 9 papéis | 90 permissões
+  - admin    / admin123     → tenant demo | tenant_admin | 101 permissões
+  - semdrone / semdrone123  → tenant demo | papel: operacional (mascaramento)
+  - acme     / acme123      → tenant acme | papel: operacional
+
+Comando interno: sync_authz (sincroniza catálogo de permissões + papéis de fábrica).
+
+backend/seed_demo_data.py  — SEED DO backend (dados de negócio)
+-----------------------------------------------------------------
+Popula dados de negócio no backend para o tenant "demo". Idempotente
+(get_or_create). Roda sob rls_bypass() para contornar a RLS do PostgreSQL.
+
+Itens criados:
+  - 2 Empreendimentos (Residencial Vista Verde, Comercial Centro Norte)
+  - 3 Obras com 9 etapas (Torre A — Fundações, Torre B — Alvenaria, Galeria)
+  - 4 Clientes com 4 aquisições e 4 contratos (João, Maria, Carlos, Ana)
+  - 3 Funcionários com 3 cargos (Pedro, Raimundo, Cláudia)
+  - 5 Eventos de calendário (reuniões, tarefas, lembretes)
+  - 4 Notificações (2 não-lidas, 2 lidas)
+
+backend/create_superuser.py  — Cria superusuário do backend
+-----------------------------------------------------------------
+Script auxiliar para criar um superuser local do Django (admin de plataforma).
+
+
+=================================================================
+TESTES DO BACKEND (Django) — 90+ testes sobre PostgreSQL
+=================================================================
 Coluna "AVALIAÇÃO": ESSENCIAL = trava uma regressão de bug real já corrigido ou
 o isolamento multi-tenant; ÚTIL = cobre fluxo de negócio; REVER = candidato a
 corte se quiser enxugar.
-
-Rodar: cd backend && ../.venv/bin/python manage.py test
-(defaults já apontam para o Postgres de dev em localhost:5432)
-
 
 nucleo/test_tenant_isolation.py  — ISOLAMENTO ENTRE TENANTS (núcleo do SaaS)
 ---------------------------------------------------------------------------
@@ -37,17 +95,6 @@ nucleo/test_rls_fail_closed.py  — RLS FAIL-CLOSED no PostgreSQL (S2/Fase 8.4)
 [ESSENCIAL] RLSFailClosedTests.test_nao_grava_em_outro_tenant
             Contexto do tenant A não insere linha do tenant B.
 
-moduloerp/tests.py  — NF + ISOLAMENTO EM APIView (S1, L3)
---------------------------------------------------------
-[ESSENCIAL] EmitirNFSETests.test_nfse_herda_tenant_e_snapshot_completo_do_cliente
-            Achado L3: NF herda tenant do título e snapshot completo do cliente.
-[ESSENCIAL] S1TenantIsolationAPIViewTests.test_dashboard_soma_apenas_o_proprio_tenant
-            Achado S1: dashboard soma só o tenant do usuário (não todos).
-[ESSENCIAL] S1TenantIsolationAPIViewTests.test_atualizar_status_nf_cross_tenant_da_404_e_nao_grava
-            Achado S1: atualizar NF de outro tenant → 404, sem gravar.
-[ESSENCIAL] S1TenantIsolationAPIViewTests.test_consultar_status_nf_cross_tenant_da_404
-            Achado S1: consultar NF de outro tenant → 404.
-
 nucleo/test_dlq.py  — Dead Letter Queue (L2)
 --------------------------------------------
 [ESSENCIAL] DLQTests.test_falha_permanente_grava_failedtask
@@ -58,17 +105,174 @@ nucleo/test_legacy_token.py  — Token legado rejeitado (D1)
 [ESSENCIAL] TokenLegadoRejeitadoTests.test_callbacks_node_para_erp_recebem_401
             Achado D1: header "Token" legado → 401 nos endpoints-alvo.
 
-modulocalendar/tests.py  — Agenda/Calendário (L1)
--------------------------------------------------
+nucleo/test_lgpd.py  — LGPD: portabilidade, esquecimento e incidentes (Fase 9.D)
+-------------------------------------------------------------------------------
+[ESSENCIAL] LgpdServiceTests.test_export_traz_a_pii_do_titular
+            Exportação LGPD traz os dados pessoais do titular.
+[ESSENCIAL] LgpdServiceTests.test_esquecimento_anonimiza_a_pii
+            Esquecimento LGPD anonimiza a PII do titular.
+[ESSENCIAL] LgpdEndpointTests.test_esquecer_exige_permissao
+            Endpoint de esquecimento exige permissão plataforma.lgpd.excluir.
+[ESSENCIAL] LgpdEndpointTests.test_esquecer_anonimiza_com_permissao
+            Com permissão, anonimiza o titular.
+[ESSENCIAL] LgpdEndpointTests.test_exportar_com_permissao
+            Com permissão, exporta os dados do titular.
+[ESSENCIAL] IncidenteLGPDTests.test_confirmacao_exige_o_dono_da_plataforma
+            Confirmar incidente exige superuser da IAM (dono da plataforma).
+[ESSENCIAL] IncidenteLGPDTests.test_dono_confirma_inicia_prazo_72h_e_notifica
+            Dono confirma → prazo de 72h para ANPD começa a correr.
+[ESSENCIAL] IncidenteLGPDTests.test_dono_descarta_falso_positivo
+            Dono descarta falso positivo sem notificar ANPD.
+
+nucleo/test_auditoria.py  — Trilha de auditoria imutável (Fase 9.E)
+-------------------------------------------------------------------
+[ESSENCIAL] AuditoriaHelperTests.test_registrar_grava_linha
+            Helper registra linha de auditoria com tenant e detalhes.
+[ESSENCIAL] AuditoriaHelperTests.test_sem_tenant_nao_grava_mas_nao_quebra
+            Fail-safe: sem tenant a auditoria é ignorada, sem erro.
+[ESSENCIAL] AuditoriaImutabilidadeTests.test_update_bloqueado
+            AuditLog é append-only: UPDATE é rejeitado.
+[ESSENCIAL] AuditoriaImutabilidadeTests.test_delete_bloqueado
+            AuditLog é append-only: DELETE é rejeitado.
+
+nucleo/test_geo.py  — Geocoding (parse de endereço + resolução ViaCEP/IBGE)
+---------------------------------------------------------------------------
+[ÚTIL]      GeoParseTests.test_parse_cidade_uf_formato_traco
+            Parse "Cidade - UF" do fim do endereço.
+[ÚTIL]      GeoParseTests.test_parse_cidade_uf_formato_barra
+            Parse "Cidade/UF" do fim do endereço.
+[ÚTIL]      GeoParseTests.test_parse_sem_uf_retorna_none
+            Endereço sem UF → (None, None).
+[ÚTIL]      GeoParseTests.test_parse_estado_por_extenso
+            "Bahia" no fim resolve para BA (não confunde com nome de via).
+[ÚTIL]      GeoParseTests.test_parse_estado_por_extenso_com_traco
+            "Salvador - Bahia" resolve para BA.
+[ÚTIL]      GeoParseTests.test_parse_estado_com_erro_de_digitacao
+            "Bahiaa" (typo) resolve para BA (fuzzy).
+[ÚTIL]      GeoParseTests.test_parse_nao_confunde_rua_homonima_de_estado
+            "Rua Bahia" no início não vira o estado.
+[ÚTIL]      GeoResolverTests.test_resolve_por_cep
+            Resolve coordenadas via CEP (ViaCEP).
+[ÚTIL]      GeoResolverTests.test_resolve_por_nome_sem_cep
+            Resolve via nome do endereço (IBGE).
+[ÚTIL]      GeoResolverTests.test_resolve_por_cidade_uf_explicitos
+            Resolve via cidade+UF explícitos.
+[ÚTIL]      GeoResolverTests.test_resolve_endereco_real_estado_por_extenso
+            Caso real: "Ba 026, Santo Antonio de Jesus/Bahia".
+[ÚTIL]      GeoResolverTests.test_resolve_endereco_com_cep_prefere_viacep
+            CEP embutido no texto → ViaCEP (mais confiável).
+[ÚTIL]      GeoResolverTests.test_resolve_cidade_com_erro_digitacao
+            "Santo Antonio de Jesuz" (typo) é corrigido.
+[ÚTIL]      GeoResolverTests.test_uf_sem_cidade_reconhecivel_devolve_so_estado
+            Cidade inexistente com UF → devolve só o estado.
+[ÚTIL]      GeoResolverTests.test_municipio_inexistente_sem_uf_retorna_none
+            Sem UF e cidade inexistente → None.
+[ÚTIL]      GeoEndpointTests.test_endpoint_resolve_por_cep
+            Endpoint /api/geo/resolver/ responde por CEP.
+[ÚTIL]      GeoEndpointTests.test_endpoint_exige_autenticacao
+            Endpoint exige autenticação.
+[ÚTIL]      GeoEndpointTests.test_endpoint_lista_municipios_por_uf
+            Endpoint lista municípios por UF.
+
+nucleo/test_runner.py  — Test runner ciente da RLS (Fase 8.1)
+-------------------------------------------------------------
+[ESSENCIAL] RLSAwareTestRunner — arma bypass de sessão da RLS durante os testes
+            para que setUpTestData/setUp (fora de request) não seja barrado pelo
+            WITH CHECK. Requests e testes de isolamento continuam fail-closed.
+
+moduloerp/tests.py  — NF + ISOLAMENTO EM APIView + Financeiro (S1, L3, L5, L6, L7, L8, D3, D7, Fase 11.1)
+------------------------------------------------------------------------------------------
+[ESSENCIAL] EmitirNFSETests.test_nfse_herda_tenant_e_snapshot_completo_do_cliente
+            L3: NF herda tenant + snapshot completo do cliente. 11.1: emissão enfileira
+            a Celery task da NFE.io (202), não mais chamada síncrona ao Node.
+[ESSENCIAL] NFeClientTests.test_montar_payload_nfse_deriva_tipo_e_endereco
+            11.1: payload NFE.io deriva PF/PJ pelo doc e monta endereço/estado.
+[ÚTIL]      NFeClientTests.test_montar_payload_sem_dados_essenciais_e_erro_permanente
+            11.1: sem CPF/CEP/IBGE → NFeErro (permanente, não repete).
+[ESSENCIAL] NFeClientTests.test_5xx_e_indisponivel_e_4xx_e_permanente
+            11.1: 5xx → NFeIndisponivel (retry); 4xx → NFeErro (permanente).
+[ÚTIL]      NFeClientTests.test_sem_credencial_e_indisponivel
+            11.1: sem NFE_IO_API_KEY/COMPANY_ID → NFeIndisponivel (não perde o pedido).
+[ESSENCIAL] EmitirNFSETaskTests.test_emissao_sucesso_chama_cliente_e_aplica_retorno
+            11.1: task chama a NFE.io e grava o retorno normalizado na NF.
+[ESSENCIAL] EmitirNFSETaskTests.test_erro_permanente_marca_erro_sem_retry
+            11.1: NFeErro → NF vira ERRO, sem retry.
+[ÚTIL]      EmitirNFSETaskTests.test_nf_inexistente_e_noop
+            11.1: NF inexistente → no-op (não levanta).
+[ESSENCIAL] S1TenantIsolationAPIViewTests.test_dashboard_soma_apenas_o_proprio_tenant
+            Achado S1: dashboard soma só o tenant do usuário (não todos).
+[ESSENCIAL] S1TenantIsolationAPIViewTests.test_atualizar_status_nf_cross_tenant_da_404_e_nao_grava
+            Achado S1: atualizar NF de outro tenant → 404, sem gravar.
+[ESSENCIAL] S1TenantIsolationAPIViewTests.test_consultar_status_nf_cross_tenant_da_404
+            Achado S1: consultar NF de outro tenant → 404.
+[ESSENCIAL] IntegridadeFinanceiraBaixaTests.test_transacao_usa_data_do_pagamento_como_competencia
+            Achado L7: transação usa data do pagamento como competência.
+[ESSENCIAL] IntegridadeFinanceiraBaixaTests.test_baixa_maior_que_saldo_vira_revisao_e_nao_aplica
+            Achado L6: baixa em excesso vira revisão, não aplica.
+[ESSENCIAL] IntegridadeFinanceiraBaixaTests.test_baixa_parcial_dentro_do_saldo_aplica_normalmente
+            Baixa parcial dentro do saldo aplica normalmente.
+[ESSENCIAL] IntegridadeFinanceiraBaixaTests.test_patch_nao_reduz_valor_abaixo_do_ja_baixado
+            Achado L6: PATCH não reduz valor abaixo do já baixado.
+[ESSENCIAL] IntegridadeFinanceiraBaixaTests.test_patch_valor_que_quebra_rateio_existente_e_rejeitado
+            PATCH que quebra rateio existente é rejeitado.
+[ESSENCIAL] IntegridadeFinanceiraBaixaTests.test_baixas_sequenciais_acumulam_sob_lock
+            Achado L5: baixas sequenciais acumulam sob lock (read-modify-write).
+[ESSENCIAL] D3BaixaPropagaBoletoTests.test_baixa_total_marca_boleto_como_pago
+            D3: baixa total marca boleto como pago.
+[ESSENCIAL] D3BaixaPropagaBoletoTests.test_baixa_parcial_mantem_boleto_emitido
+            D3: baixa parcial mantém boleto emitido.
+[ESSENCIAL] D3BaixaPropagaBoletoTests.test_boleto_cancelado_nao_e_reaberto_para_pago
+            D3: boleto cancelado não é reaberto para pago.
+[ESSENCIAL] D3DashboardPermissionTests.test_sem_relatorio_view_nega
+            D3: sem erp.relatorio.view → nega dashboard.
+[ESSENCIAL] D3DashboardPermissionTests.test_com_relatorio_view_passa
+            D3: com erp.relatorio.view → passa.
+[ESSENCIAL] D3DashboardPermissionTests.test_admin_de_tenant_faz_bypass
+            D3: admin de tenant faz bypass da permissão.
+[ESSENCIAL] D7NfApiViewPermissionTests.test_consultar_sem_view_nega
+            D7: consultar NF sem erp.nf.view → nega.
+[ESSENCIAL] D7NfApiViewPermissionTests.test_consultar_com_view_passa_do_gate
+            D7: consultar NF com erp.nf.view → passa.
+[ESSENCIAL] D7NfApiViewPermissionTests.test_atualizar_status_sem_edit_nega
+            D7: atualizar status sem erp.nf.edit → nega.
+[ESSENCIAL] D7NfApiViewPermissionTests.test_atualizar_status_com_edit_grava
+            D7: atualizar status com erp.nf.edit → grava.
+
+modulocalendar/tests.py  — Agenda/Calendário + Recorrência + Feriados (L1, Fatia B/C/F)
+---------------------------------------------------------------------------------------
 [ESSENCIAL] CalendarEventListTests.test_listagem_responde_200_com_id_nos_eventos_locais
             Achado L1: listagem não dá mais 500 e eventos locais têm id.
 [ÚTIL]      CalendarEventListTests.test_tarefas_do_crm_entram_na_agenda_in_process
             Tarefas do CRM aparecem na agenda (Fase 11.2, funcoeslead absorvido).
 [ÚTIL]      CalendarEventListTests.test_feriados_buscados_para_cada_ano_do_periodo
             Feriados cobrem todos os anos do intervalo (bug dez→jan do L1).
+[ESSENCIAL] CalendarRecurrenceTests.test_mestre_semanal_expande_em_ocorrencias_virtuais
+            Fatia B: ocorrências recorrentes são virtuais (expandidas no feed).
+[ESSENCIAL] CalendarRecurrenceTests.test_excluir_apenas_esta_some_a_ocorrencia
+            Fatia B: excluir "só esta" adiciona EXDATE.
+[ESSENCIAL] CalendarRecurrenceTests.test_editar_apenas_esta_cria_override
+            Fatia B: editar "só esta" cria evento override.
+[ESSENCIAL] CalendarRecurrenceTests.test_editar_todas_desloca_a_serie
+            Fatia B: editar "todas" desloca a série inteira.
+[ESSENCIAL] CalendarRecurrenceTests.test_excluir_todas_remove_o_mestre
+            Fatia B: excluir "todas" remove o evento mestre.
+[ESSENCIAL] CalendarRecurrenceTests.test_editar_futuras_divide_a_serie
+            Fatia B: editar "futuras" divide a série.
+[ÚTIL]      FeriadosSyncCommandTests.test_sincroniza_tres_escopos
+            Comando sincroniza feriados nacional/estadual/municipal.
+[ÚTIL]      FeriadosFeedTests.test_sem_localidade_so_nacional
+            Feed sem localidade traz só feriados nacionais.
+[ÚTIL]      FeriadosFeedTests.test_com_uf_inclui_estadual
+            Feed com UF inclui feriados estaduais.
+[ÚTIL]      FeriadosFeedTests.test_com_ibge_inclui_municipal_com_cidade
+            Feed com IBGE inclui feriados municipais.
+[ÚTIL]      FeriadosStatusTests.test_superuser_ve_status
+            Superuser vê status da sincronização de feriados.
+[ÚTIL]      FeriadosStatusTests.test_usuario_comum_recebe_403
+            Usuário comum recebe 403 no status de feriados.
 
-modulocrm/tests.py  — CRM: conversão de lead e agenda (L4/Fase 11.2)
---------------------------------------------------------------------
+modulocrm/tests.py  — CRM: conversão de lead, agenda e entitlement (L4/Fase 11.2/S5)
+-------------------------------------------------------------------------------------
 [ÚTIL]      ConvertLeadTests.test_convert_cria_account_contact_opportunity_e_marca_convertido
             Conversão de lead cria Account/Contact/Opportunity e marca convertido.
 [ÚTIL]      ConvertLeadTests.test_convert_exige_status_qualificado
@@ -79,6 +283,14 @@ modulocrm/tests.py  — CRM: conversão de lead e agenda (L4/Fase 11.2)
             Não-staff lista só o que é seu, sem 500.
 [ÚTIL]      InteractionListTests.test_filtros_da_agenda_funcionam
             Filtros da agenda (assigned_to/due_date) funcionam.
+[ESSENCIAL] S5EntitlementCrmTests.test_sem_o_modulo_crm_nega
+            S5: sem o módulo CRM no token → 403.
+[ESSENCIAL] S5EntitlementCrmTests.test_com_modulo_mas_sem_a_permissao_nega
+            S5: com módulo mas sem permissão → 403.
+[ESSENCIAL] S5EntitlementCrmTests.test_com_permissao_concede
+            S5: com módulo + permissão → 200.
+[ESSENCIAL] S5EntitlementCrmTests.test_sem_permissao_nega_fail_closed
+            Fatia E: token com módulo mas sem permissions (vazio) → 403.
 
 funcoescobrancas/tests.py  — Cobrança Asaas / trava de identidade (D2)
 ----------------------------------------------------------------------
@@ -106,17 +318,142 @@ funcoescobrancas/tests.py  — Cobrança Asaas / trava de identidade (D2)
             Relatório de divergências Asaas classifica cada caso.
 [ÚTIL]      AnalisarDivergenciasTests.test_endpoint_divergencias_asaas
             Endpoint de divergências responde.
+[ESSENCIAL] AnalisarDivergenciasTests.test_endpoint_exige_permissao_de_cobranca
+            Endpoint de divergências exige permissão de cobrança.
+[ESSENCIAL] AnalisarDivergenciasTests.test_endpoint_mascara_documento_sem_permissao_de_doc
+            LGPD: sem permissão de doc, o relatório mascara o documento.
+[ESSENCIAL] AnalisarDivergenciasTests.test_endpoint_documento_visivel_com_permissao_de_doc
+            Com permissão de doc, o documento é visível no relatório.
 [ESSENCIAL] GerarCobrancaEndpointTests.test_endpoint_bloqueia_e_nao_enfileira_quando_diverge
             D2: gerar-cobrança bloqueia (409) e NÃO enfileira quando diverge.
 [ÚTIL]      GerarCobrancaEndpointTests.test_endpoint_enfileira_quando_ok
             Gerar-cobrança enfileira quando tudo bate.
 
+rh/tests.py  — RH: permissões de prontuário médico (Fase 9.C)
+-------------------------------------------------------------
+[ESSENCIAL] RequirePermissionRHTests.test_permissao_de_leitura_concede_get
+            Com rh.dado_medico.view → GET concedido.
+[ESSENCIAL] RequirePermissionRHTests.test_sem_a_permissao_nega_get
+            Sem a permissão do prontuário → 403.
+[ESSENCIAL] RequirePermissionRHTests.test_leitura_nao_autoriza_escrita
+            Só .view; POST exige .edit → 403.
+[ESSENCIAL] RequirePermissionRHTests.test_sem_permissao_nega_fail_closed
+            Fatia E: conjunto de permissões vazio → 403.
+[ESSENCIAL] RequirePermissionRHTests.test_sem_o_modulo_nega_mesmo_com_permissao
+            Camada 1 (entitlement) independe da camada 2 (RBAC).
 
+rh/test_field_masking.py  — RH: mascaramento de PII (Fase 9.C)
+-------------------------------------------------------------
+[ESSENCIAL] FieldMaskingRHTests.test_sem_permissao_cpf_vem_mascarado_e_salario_null
+            Sem permissão: CPF mascarado, salário null.
+[ESSENCIAL] FieldMaskingRHTests.test_com_permissao_cpf_e_salario_visiveis
+            Com permissão: CPF e salário visíveis.
+[ESSENCIAL] FieldMaskingRHTests.test_admin_de_tenant_ve_tudo
+            Admin de tenant vê tudo (bypass da máscara).
+[ESSENCIAL] FieldMaskingRHTests.test_soh_cpf_sem_salario
+            Só rh.cpf.view (sem rh.folha.view): CPF visível, salário null.
+[ESSENCIAL] FieldMaskingRHTests.test_sem_contexto_mascara_tudo
+            Fail-closed: serialização sem request/user não vaza PII.
+[ESSENCIAL] FieldMaskingRHTests.test_cpf_nao_e_travado_no_serializer
+            CPF é sensível na leitura, mas a escrita é do cadastro.
+[ESSENCIAL] FieldMaskingRHTests.test_salario_sem_folha_edit_rejeita
+            Sem rh.folha.edit → PATCH de salário rejeitado.
+[ESSENCIAL] FieldMaskingRHTests.test_salario_com_folha_edit_ok
+            Com rh.folha.edit → PATCH de salário aceito.
+[ESSENCIAL] FieldMaskingRHTests.test_rh_gestor_cria_ficha_completa
+            Regressão: com funcionario.* + folha.edit, cria ficha inteira.
+[ESSENCIAL] FieldMaskingRHTests.test_admin_escreve_qualquer_campo
+            Admin de tenant escreve qualquer campo protegido.
+
+
+=================================================================
+TESTES DA IAM (identidade / SSO)
+=================================================================
+
+iam/identity/tests.py  — Catálogo, sync_authz, JWT, sessão e senhas
+-------------------------------------------------------------------
+[ESSENCIAL] CatalogoTests.test_codigos_unicos
+            Todos os códigos de permissão do catálogo são únicos.
+[ESSENCIAL] CatalogoTests.test_formato_modulo_recurso_acao
+            Cada permissão segue o formato modulo.recurso.acao.
+[ESSENCIAL] CatalogoTests.test_todo_template_subset_do_catalogo
+            Templates de papéis referenciam só códigos do catálogo.
+[ESSENCIAL] CatalogoTests.test_segregacao_medico_x_gestor
+            Papel rh_medico ≠ rh_gestor (PII médica só do médico).
+[ESSENCIAL] CatalogoTests.test_relatorio_financeiro_visivel_aos_papeis_de_dinheiro
+            D3: erp.relatorio.view alcança todos os papéis financeiros.
+[ESSENCIAL] SyncAuthzTests.test_sync_cria_permissoes_e_papeis_idempotente
+            sync_authz cria permissões e papéis de fábrica idempotente.
+[ESSENCIAL] SyncAuthzTests.test_permissao_filtrada_por_modulo_assinado
+            Papel financeiro sem módulo ERP → permissões não viajam no JWT.
+[ESSENCIAL] SyncAuthzTests.test_medico_desbloqueia_pii_medica
+            rh_medico desbloqueia PII médica no JWT.
+[ESSENCIAL] SyncAuthzTests.test_admin_recebe_catalogo_limitado_aos_modulos
+            Admin recebe só permissões dos módulos assinados.
+[ESSENCIAL] SyncAuthzTests.test_jwt_carrega_permissions
+            JWT carrega o array de permissions do usuário.
+[ESSENCIAL] CatalogoEndpointTests.test_admin_le_catalogo_agrupado
+            Admin lê catálogo de permissões agrupado por módulo.
+[ESSENCIAL] CatalogoEndpointTests.test_usuario_comum_nao_le_catalogo
+            Usuário comum não lê o catálogo (403).
+[ESSENCIAL] CatalogoEndpointTests.test_admin_cria_persona_dentro_do_plano
+            Admin cria persona dentro do plano de permissões.
+[ESSENCIAL] CatalogoEndpointTests.test_admin_nao_escala_para_modulo_nao_assinado
+            Admin não escala persona para módulo não assinado.
+[ESSENCIAL] AuthFlowTests.test_login_da_access_e_cookie_sem_refresh_no_corpo
+            Login devolve access + cookie HttpOnly (sem refresh no corpo).
+[ESSENCIAL] AuthFlowTests.test_refresh_pelo_cookie_gira_e_devolve_novo_access
+            Refresh pelo cookie gira e devolve novo access.
+[ESSENCIAL] AuthFlowTests.test_reuso_de_refresh_antigo_derruba_sessao
+            Reuso de refresh antigo derruba a sessão (revogação).
+[ESSENCIAL] AuthFlowTests.test_sem_lembrar_e_cookie_de_sessao
+            Sem "manter conectado" → cookie de sessão (morre ao fechar).
+[ESSENCIAL] AuthFlowTests.test_com_lembrar_e_cookie_persistente
+            Com "manter conectado" → cookie persistente ~30d.
+[ESSENCIAL] AuthFlowTests.test_refresh_sem_cookie_401
+            Refresh sem cookie → 401.
+[ESSENCIAL] AuthFlowTests.test_logout_limpa_cookie_e_invalida_sessao
+            Logout limpa o cookie e invalida a sessão.
+[ESSENCIAL] AuthFlowTests.test_troca_encerra_outras_sessoes_mantendo_a_atual
+            Troca de senha encerra outras sessões, mantém a atual.
+[ESSENCIAL] PasswordChangeTests.test_senha_atual_errada_400
+            Troca de senha com atual errada → 400.
+[ESSENCIAL] PasswordChangeTests.test_nova_senha_curta_400
+            Nova senha curta → 400.
+[ESSENCIAL] PasswordChangeTests.test_reset_com_senha_atual_correta
+            Reset com senha atual correta → 200.
+[ESSENCIAL] PasswordChangeTests.test_reset_com_senha_atual_errada_400
+            Reset com senha atual errada → 400.
+[ESSENCIAL] PasswordChangeTests.test_patch_comum_nao_troca_senha
+            Usuário comum não troca senha de outro via PATCH.
+
+
+=================================================================
+TESTES DO FRONTEND
+=================================================================
+Nenhum teste automatizado instalado. O frontend não possui framework de
+testes (Vitest/Jest/React Testing Library). Os arquivos de utilitários
+(masks.ts, money.ts, dates.ts, formErrors.ts) são candidatos naturais
+para testes unitários quando o framework for adicionado.
+
+
+=================================================================
 RESUMO
-------
-- ESSENCIAL: 22  — regressões de bugs corrigidos (L1,L2,L3,D1,D2,S1,S2) e o
-  isolamento multi-tenant (o coração do produto). Recomendo NÃO excluir.
-- ÚTIL: 17       — cobrem fluxo de negócio (CRM, agenda, cobrança). Corte só se
-  quiser suíte mínima; cada um ainda dá sinal real.
-- Nenhum teste redundante ou "de enfeite" foi identificado. A suíte roda em
-  ~0,6s inteira, então o custo de mantê-la é baixo.
+=================================================================
+Backend (Django):
+  - ESSENCIAL: ~60  — regressões de bugs corrigidos (L1-L7,D1-D3,D7,S1-S2,S5)
+    e isolamento multi-tenant/RLS/LGPD/auditoria/RH.
+  - ÚTIL: ~30 — cobrem fluxo de negócio (CRM, agenda, cobrança, geo, feriados).
+  - Total: ~90 testes em 12 arquivos.
+
+IAM:
+  - ESSENCIAL: ~25 — catálogo de permissões, sync_authz, JWT, sessão, senhas.
+  - Total: ~25 testes em 1 arquivo.
+
+Seeds/Demos:
+  - iam/seed_demo.py — usuários e tenants de demonstração.
+  - backend/seed_demo_data.py — dados de negócio (empreendimentos, obras, etc).
+  - backend/create_superuser.py — superuser local do backend.
+
+Frontend:
+  - Sem testes automatizados (framework não instalado).

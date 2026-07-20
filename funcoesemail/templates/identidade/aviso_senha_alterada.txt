@@ -1,0 +1,5 @@
+Olá, {{ nome }}.
+
+A senha da conta {{ conta }} acabou de ser alterada {{ por_quem }}. Todas as sessões abertas foram encerradas.
+
+Se não foi você, sua conta pode ter sido comprometida: recupere o acesso imediatamente e avise o administrador da sua empresa.
