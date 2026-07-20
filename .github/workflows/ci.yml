@@ -168,7 +168,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: npm
@@ -229,7 +229,7 @@ jobs:
             | awk '{print "--ignore-vuln " $1}' | tr '\n' ' ')
           python -m pip_audit -r iam/requirements.txt --desc off $IGN
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: ${{ !cancelled() }}
         with:
           node-version: "20"
