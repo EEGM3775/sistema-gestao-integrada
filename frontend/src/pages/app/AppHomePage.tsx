@@ -103,6 +103,15 @@ const PAID_MODULES: ModuleDef[] = [
     route: '/app/crm',
   },
   {
+    code: 'scm',
+    label: 'Suprimentos (SCM)',
+    icon: <Boxes size={28} />,
+    color: '#fef3c7',
+    description: 'Catálogo, cotação e compra direta. Da demanda ao recebimento, com avaliação de fornecedor.',
+    implemented: true,
+    route: '/app/scm',
+  },
+  {
     code: 'drone',
     label: 'Drone & Mapeamento',
     icon: <Plane size={28} />,
@@ -113,15 +122,6 @@ const PAID_MODULES: ModuleDef[] = [
 ]
 
 const COMING_SOON: ModuleDef[] = [
-  {
-    code: 'scm',
-    label: 'Supply Chain',
-    icon: <Boxes size={24} />,
-    color: '#f3f4f6',
-    description: 'Gestão de suprimentos e logística de materiais.',
-    implemented: false,
-    comingSoon: true,
-  },
   {
     code: 'dms',
     label: 'Gestão de Documentos',

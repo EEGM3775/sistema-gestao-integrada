@@ -2,43 +2,80 @@ import React, { useState, useEffect } from 'react'
 import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Building2, HardHat, Users, Truck,
-  BarChart3, UserCog, TrendingUp, Brain, Plane,
-  CalendarDays, PanelLeft, Lock, ShieldCheck,
+  BarChart3, UserCog, TrendingUp, Brain, Plane, Package,
+  CalendarDays, PanelLeft, Lock, ShieldCheck, Network,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
+import { Quarteirao } from '@/components/brand/Quarteirao'
+import { BairroRecorte } from '@/components/brand/BairroRecorte'
+
+type BadgeKind = 'amber' | 'soon'
 
 interface NavItem {
   label: string
   icon: React.ReactNode
   to: string
   module?: string       // entitlement code — se definido, item some se não tiver o módulo
-  adminOnly?: boolean   // só aparece para admin do tenant
-  implemented: boolean  // quando false: mostra o item mas não navega
+  adminOnly?: boolean    // só aparece para admin do tenant
+  implemented: boolean   // quando false: mostra o item mas não navega (cadeado)
+  badge?: { text: string; kind: BadgeKind }
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { label: 'Início',          icon: <LayoutDashboard size={20} />, to: '/app/dashboard',      implemented: false },
-  // ── Base ──
-  { label: 'Empreendimentos', icon: <Building2 size={20} />,       to: '/app/empreendimentos',implemented: true },
-  { label: 'Obras',           icon: <HardHat size={20} />,         to: '/app/obras',           implemented: true },
-  { label: 'Clientes',        icon: <Users size={20} />,           to: '/app/clientes',        implemented: true },
-  { label: 'Fornecedores',    icon: <Truck size={20} />,           to: '/app/fornecedores',    implemented: true },
-  { label: 'RH',              icon: <UserCog size={20} />,         to: '/app/rh',              module: 'rh',             implemented: true },
-  { label: 'Calendário',      icon: <CalendarDays size={20} />,    to: '/app/calendario',      implemented: true },
-  // ── Módulos pagos ──
-  { label: 'ERP',             icon: <BarChart3 size={20} />,       to: '/app/erp',             module: 'erp_financeiro', implemented: true },
-  { label: 'Diário / IA',    icon: <Brain size={20} />,            to: '/app/diario',          implemented: true },
-  { label: 'CRM',             icon: <TrendingUp size={20} />,      to: '/app/crm',             module: 'crm',            implemented: true },
-  { label: 'Drone',           icon: <Plane size={20} />,           to: '/app/drone',           module: 'drone',          implemented: false },
-  // ── Administração do tenant ──
-  { label: 'Papéis e Acessos', icon: <ShieldCheck size={20} />,    to: '/app/admin/papeis',    adminOnly: true,          implemented: true },
-  { label: 'Usuários',         icon: <Users size={20} />,          to: '/app/admin/usuarios',  adminOnly: true,          implemented: true },
+interface NavSection {
+  label: string
+  items: NavItem[]
+}
+
+// Seções endereçadas como no protótipo (docs/identidade-visual §9). A régua do
+// ciclo no topo é a assinatura de plataforma; cada item ativo vira "quarteirão aceso".
+const NAV_SECTIONS: NavSection[] = [
+  {
+    label: 'Operação',
+    items: [
+      { label: 'Início',          icon: <LayoutDashboard />, to: '/app/dashboard',       implemented: false },
+      { label: 'Empreendimentos', icon: <Building2 />,       to: '/app/empreendimentos', implemented: true },
+      { label: 'Obras',           icon: <HardHat />,         to: '/app/obras',           implemented: true },
+      { label: 'Clientes',        icon: <Users />,           to: '/app/clientes',        implemented: true },
+      { label: 'Fornecedores',    icon: <Truck />,           to: '/app/fornecedores',    implemented: true },
+    ],
+  },
+  {
+    label: 'Gestão',
+    items: [
+      { label: 'ERP / Financeiro', icon: <BarChart3 />,   to: '/app/erp',        module: 'erp_financeiro', implemented: true },
+      { label: 'RH',               icon: <UserCog />,     to: '/app/rh',         module: 'rh',             implemented: true },
+      { label: 'CRM',              icon: <TrendingUp />,  to: '/app/crm',        module: 'crm',            implemented: true },
+      { label: 'Diário + IA',      icon: <Brain />,       to: '/app/diario',                               implemented: true },
+      { label: 'Calendário',       icon: <CalendarDays />, to: '/app/calendario',                          implemented: true },
+      { label: 'Suprimentos',      icon: <Package />,     to: '/app/scm',        module: 'scm',            implemented: true },
+      { label: 'Drone',            icon: <Plane />,       to: '/app/drone',      module: 'drone',          implemented: false },
+    ],
+  },
+  {
+    label: 'Administração',
+    items: [
+      { label: 'Papéis e Acessos', icon: <ShieldCheck />, to: '/app/admin/papeis',   adminOnly: true, implemented: true },
+      { label: 'Usuários',         icon: <Users />,       to: '/app/admin/usuarios', adminOnly: true, implemented: true },
+    ],
+  },
+  {
+    label: 'Ecossistema',
+    items: [
+      { label: 'Esfera de Rede', icon: <Network />, to: '/app/rede', implemented: false, badge: { text: 'H2', kind: 'soon' } },
+    ],
+  },
 ]
 
-const SEPARATOR_BEFORE = new Set(['ERP', 'Papéis e Acessos'])
+const RAIL = 'linear-gradient(90deg,#3E9C6E 0 25%,#E79A22 25% 50%,#E4655F 50% 75%,#1D9AA6 75%)'
+
+function iniciais(nome: string): string {
+  const partes = nome.trim().split(/[\s._-]+/).filter(Boolean)
+  if (partes.length >= 2) return (partes[0][0] + partes[1][0]).toUpperCase()
+  return nome.slice(0, 2).toUpperCase()
+}
 
 export const AppSidebar: React.FC = () => {
-  const { hasModule, isTenantAdmin } = useAuth()
+  const { hasModule, isTenantAdmin, user } = useAuth()
   const [collapsed, setCollapsed] = useState(() =>
     localStorage.getItem('sgi_sidebar_collapsed') === 'true'
   )
@@ -47,108 +84,196 @@ export const AppSidebar: React.FC = () => {
     localStorage.setItem('sgi_sidebar_collapsed', String(collapsed))
   }, [collapsed])
 
-  const visibleItems = NAV_ITEMS.filter(
-    (item) => (!item.module || hasModule(item.module)) && (!item.adminOnly || isTenantAdmin)
-  )
+  const sections = NAV_SECTIONS
+    .map((sec) => ({
+      ...sec,
+      items: sec.items.filter(
+        (it) => (!it.module || hasModule(it.module)) && (!it.adminOnly || isTenantAdmin),
+      ),
+    }))
+    .filter((sec) => sec.items.length > 0)
+
+  const nome = user?.username ?? 'usuário'
 
   return (
     <aside
-      className="flex flex-col shrink-0 h-full transition-all duration-200"
+      className="flex flex-col shrink-0 h-full relative overflow-hidden transition-all duration-200"
       style={{
-        width: collapsed ? '56px' : '220px',
-        background: 'var(--color-brand-app)',
-        borderRight: '1px solid rgba(255,255,255,0.07)',
+        width: collapsed ? '60px' : '236px',
+        background: 'var(--surface)',
+        color: 'var(--ink-2)',
+        borderRight: '1px solid var(--line)',
       }}
     >
-      {/* Toggle */}
-      <div className="flex items-center h-14 px-3 shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
+      {/* Motivo gráfico "o Bairro" — recorte do quarteirão-empresa, fade no topo */}
+      {!collapsed && <BairroRecorte />}
+
+      {/* ── Marca: marco + lockup ── */}
+      <div
+        className="flex items-center gap-3 relative"
+        style={{ padding: collapsed ? '18px 0 12px' : '20px 20px 14px', zIndex: 1, justifyContent: collapsed ? 'center' : 'flex-start' }}
+      >
+        <Quarteirao size={collapsed ? 30 : 34} />
         {!collapsed && (
-          <span
-            className="flex-1 text-lg font-extrabold tracking-tight truncate"
-            style={{ fontFamily: 'var(--font-heading)', color: '#FFFFFF' }}
-          >
-            SGI
-          </span>
+          <div className="min-w-0 flex-1">
+            <div style={{ fontFamily: 'var(--display)', fontWeight: 700, fontSize: 15, color: 'var(--ink)', letterSpacing: '-0.02em', lineHeight: 1.1 }}>
+              SGI Plataforma
+            </div>
+            <div style={{ fontSize: 10.5, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--ink-3)', fontWeight: 600 }}>
+              Do terreno à cidade
+            </div>
+          </div>
         )}
-        <button
-          onClick={() => setCollapsed((v) => !v)}
-          className="p-1.5 rounded-lg transition-colors duration-150"
-          style={{ color: 'rgba(255,255,255,0.5)', background: 'none', border: 'none', cursor: 'pointer' }}
-          onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = '#FFFFFF')}
-          onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.5)')}
-          aria-label={collapsed ? 'Expandir menu' : 'Recolher menu'}
-        >
-          <PanelLeft size={18} />
-        </button>
+        {!collapsed && (
+          <button
+            onClick={() => setCollapsed(true)}
+            aria-label="Recolher menu"
+            style={{ color: 'var(--ink-3)', padding: 4, borderRadius: 6 }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--ink)')}
+            onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--ink-3)')}
+          >
+            <PanelLeft size={17} />
+          </button>
+        )}
       </div>
 
-      {/* Nav */}
-      <nav className="flex-1 overflow-y-auto py-3 flex flex-col gap-0.5 px-2">
-        {visibleItems.map((item) => (
-          <React.Fragment key={item.label}>
-            {SEPARATOR_BEFORE.has(item.label) && (
-              <div className="my-2 mx-1" style={{ borderTop: '1px solid rgba(255,255,255,0.1)' }} />
-            )}
-            <SidebarItem item={item} collapsed={collapsed} />
-          </React.Fragment>
+      {/* ── Régua do ciclo: assinatura de plataforma ── */}
+      <div
+        title="Originar · Construir · Negociar · Operar"
+        style={{ height: 3, margin: collapsed ? '0 12px 6px' : '0 20px 6px', borderRadius: 999, flex: 'none', background: RAIL, position: 'relative', zIndex: 1 }}
+      />
+
+      {collapsed && (
+        <button
+          onClick={() => setCollapsed(false)}
+          aria-label="Expandir menu"
+          className="flex items-center justify-center"
+          style={{ margin: '2px auto 6px', color: 'var(--ink-3)', padding: 6, borderRadius: 6, position: 'relative', zIndex: 1 }}
+          onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--ink)')}
+          onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--ink-3)')}
+        >
+          <PanelLeft size={17} style={{ transform: 'scaleX(-1)' }} />
+        </button>
+      )}
+
+      {/* ── Navegação ── */}
+      <nav className="flex-1 overflow-y-auto relative" style={{ padding: '6px 12px', zIndex: 1 }}>
+        {sections.map((sec) => (
+          <div key={sec.label}>
+            {!collapsed
+              ? <div style={{ fontSize: 10, letterSpacing: '0.13em', textTransform: 'uppercase', color: 'var(--ink-3)', fontWeight: 700, padding: '14px 10px 6px' }}>{sec.label}</div>
+              : <div style={{ height: 1, background: 'var(--line-2)', margin: '10px 8px' }} />}
+            <div className="flex flex-col gap-0.5">
+              {sec.items.map((item) => (
+                <SidebarItem key={item.label} item={item} collapsed={collapsed} />
+              ))}
+            </div>
+          </div>
         ))}
       </nav>
+
+      {/* ── Rodapé: usuário ── */}
+      <div
+        className="flex items-center gap-2.5 relative"
+        style={{ padding: 12, borderTop: '1px solid var(--line-2)', zIndex: 1, justifyContent: collapsed ? 'center' : 'flex-start' }}
+      >
+        <div style={{ width: 30, height: 30, borderRadius: 8, flex: 'none', background: 'linear-gradient(135deg,#274D8C,#12305F)', display: 'grid', placeItems: 'center', color: '#fff', fontWeight: 700, fontSize: 12 }}>
+          {iniciais(nome)}
+        </div>
+        {!collapsed && (
+          <div style={{ fontSize: 12, lineHeight: 1.25, minWidth: 0 }}>
+            <b style={{ color: 'var(--ink)', fontWeight: 600, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nome}</b>
+            <span style={{ color: 'var(--ink-3)', fontSize: 11 }}>{isTenantAdmin ? 'Administrador' : 'Operação'}</span>
+          </div>
+        )}
+      </div>
     </aside>
   )
 }
 
+const Badge: React.FC<{ badge: NavItem['badge'] }> = ({ badge }) => {
+  if (!badge) return null
+  const amber = badge.kind === 'amber'
+  return (
+    <span
+      className="mono"
+      style={{
+        marginLeft: 'auto',
+        fontWeight: 700,
+        borderRadius: 999,
+        ...(amber
+          ? { fontSize: 10.5, padding: '1px 7px', background: 'var(--accent)', color: '#1A1204' }
+          : { fontSize: 9, padding: '2px 6px', background: 'var(--net-soft)', color: 'var(--net-ink)', letterSpacing: '0.03em', textTransform: 'uppercase' as const }),
+      }}
+    >
+      {badge.text}
+    </span>
+  )
+}
+
 const SidebarItem: React.FC<{ item: NavItem; collapsed: boolean }> = ({ item, collapsed }) => {
-  const baseStyle: React.CSSProperties = {
+  const base: React.CSSProperties = {
     display: 'flex',
     alignItems: 'center',
-    gap: '10px',
-    padding: collapsed ? '8px' : '8px 10px',
-    borderRadius: '8px',
-    cursor: item.implemented ? 'pointer' : 'default',
-    transition: 'background 0.15s',
-    textDecoration: 'none',
-    color: item.implemented ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.35)',
-    fontFamily: 'var(--font-body)',
-    fontSize: '0.875rem',
+    gap: 11,
+    padding: collapsed ? '8px' : '8px 11px',
+    borderRadius: 8,
+    fontSize: 13.5,
     fontWeight: 500,
-    width: '100%',
-    opacity: item.implemented ? 1 : 0.6,
-    justifyContent: collapsed ? 'center' : 'flex-start',
     position: 'relative',
+    textDecoration: 'none',
+    justifyContent: collapsed ? 'center' : 'flex-start',
+    transition: 'background .14s, color .14s',
   }
 
-  const content = (
-    <>
-      <span className="shrink-0">{item.icon}</span>
-      {!collapsed && <span className="truncate flex-1">{item.label}</span>}
-      {!collapsed && !item.implemented && (
-        <Lock size={12} style={{ color: 'rgba(255,255,255,0.3)', flexShrink: 0 }} />
+  const icon = (
+    <span style={{ display: 'grid', placeItems: 'center', flex: 'none', width: 17, height: 17 }}>
+      {React.cloneElement(
+        item.icon as React.ReactElement<{ size?: number; strokeWidth?: number }>,
+        { size: 17, strokeWidth: 1.9 },
       )}
-    </>
+    </span>
   )
 
+  const label = !collapsed && <span className="truncate" style={{ flex: 1 }}>{item.label}</span>
+
+  // Item não construído: cadeado + opacidade, sem navegar.
   if (!item.implemented) {
     return (
       <span
-        style={baseStyle}
-        title={collapsed ? item.label : 'Em construção'}
+        style={{ ...base, color: 'var(--ink-3)', opacity: 0.72, cursor: 'default' }}
+        title={collapsed ? item.label : (item.badge?.kind === 'soon' ? 'Em breve' : 'Em construção')}
       >
-        {content}
+        {icon}
+        {label}
+        {!collapsed && (item.badge ? <Badge badge={item.badge} /> : <Lock size={12} style={{ color: 'var(--ink-3)', flexShrink: 0, marginLeft: 'auto' }} />)}
       </span>
     )
   }
 
   return (
-    <NavLink
-      to={item.to}
-      style={({ isActive }) => ({
-        ...baseStyle,
-        background: isActive ? 'rgba(255,255,255,0.12)' : 'transparent',
-        color: isActive ? '#FFFFFF' : 'rgba(255,255,255,0.75)',
-      })}
-      title={collapsed ? item.label : undefined}
-    >
-      {content}
+    <NavLink to={item.to} title={collapsed ? item.label : undefined} style={{ textDecoration: 'none', display: 'block', borderRadius: 8 }}>
+      {({ isActive }) => (
+        <span
+          style={{
+            ...base,
+            width: '100%',
+            background: isActive ? 'var(--accent-soft)' : 'transparent',
+            color: isActive ? 'var(--accent-ink)' : 'var(--ink-2)',
+            fontWeight: isActive ? 650 : 500,
+          }}
+          onMouseEnter={(e) => { if (!isActive) { e.currentTarget.style.background = 'var(--surface-2)'; e.currentTarget.style.color = 'var(--ink)' } }}
+          onMouseLeave={(e) => { if (!isActive) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--ink-2)' } }}
+        >
+          {/* quarteirão aceso: ponto âmbar à esquerda do item ativo */}
+          {isActive && !collapsed && (
+            <span style={{ position: 'absolute', left: -9, top: '50%', transform: 'translateY(-50%)', width: 8, height: 8, borderRadius: 2.5, background: 'var(--accent)', boxShadow: '0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent)' }} />
+          )}
+          {icon}
+          {label}
+          {item.badge && !collapsed && <Badge badge={item.badge} />}
+        </span>
+      )}
     </NavLink>
   )
 }

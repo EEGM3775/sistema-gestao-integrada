@@ -25,6 +25,7 @@ import PersonasPage from './modules/admin/pages/PersonasPage'
 import UsuariosPage from './modules/admin/pages/UsuariosPage'
 import { erpRoutes } from './modules/erp/routes'
 import { crmRoutes } from './modules/crm/routes'
+import { scmRoutes } from './modules/scm/routes'
 
 function App() {
   return (
@@ -90,6 +91,9 @@ function App() {
 
           {/* ── CRM (sub-rotas lazy — code-splitting) ── */}
           {crmRoutes}
+
+          {/* ── SCM / Suprimentos (sub-rotas lazy — primeiro módulo Malha) ── */}
+          {scmRoutes}
 
           {/* Fallback interno — caminho absoluto evita loop de append no splat (/app/x → /app/x/dashboard → …) */}
           <Route path="*" element={<Navigate to="/app/dashboard" replace />} />

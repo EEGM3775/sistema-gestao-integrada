@@ -13,6 +13,19 @@
 
 ## 1. Design Language
 
+> **Identidade visual — fonte única:** [identidade-visual.md](identidade-visual.md)
+> (Sistema **Malha v1**, "Do terreno à cidade"): marco Quarteirão, cores por estágio do ciclo
+> (a cor da edição é a do estágio que ela habita — o âmbar do produto atual é o estágio
+> *Construir*), tipografia Archivo/Inter/JetBrains Mono, tema claro/escuro e voz.
+> O **shell roda na Malha v1**: tokens de tema em [index.css](../frontend/src/index.css) (§1.2), fontes
+> Archivo/Inter/JetBrains (§1.3), sidebar/topbar de marca (§3) e primitivos em
+> [components/malha/](../frontend/src/components/malha/). Os **módulos legados** (ERP/RH/clientes…) usam
+> **aliases de compatibilidade** (`--color-*`/`--font-*` → tokens Malha) e por isso já acompanham o tema
+> sem reescrita — cada um migra para os tokens nativos na sua vez. O alvo visual é
+> [identidade-visual-prototipo.html](identidade-visual-prototipo.html) (replicar, não reinterpretar); o
+> padrão do **hub por edição** (módulos endereçados no ciclo + decisões + feed de fatos — alvo do
+> dashboard F.1) está em [identidade-visual.md §9](identidade-visual.md).
+
 ### 1.1 Inspiração e contexto
 
 O SGI atende incorporadoras e construtoras — ambiente de obra, engenharia, drone e IA.
@@ -28,35 +41,31 @@ Referências que norteiam as decisões visuais:
 
 ### 1.2 Paleta de cores
 
-A cor primária da marca já existe na v01: **navy `#0A2A5B`**. O sistema app (sidebar/topbar)
-usa uma variação escurecida desse mesmo tom, mantendo a identidade visual.
+**Fonte única: os tokens Malha em [index.css](../frontend/src/index.css)** — valores e semântica em
+[identidade-visual.md §5](identidade-visual.md). O produto tem **tema claro e escuro** (custom
+properties; `prefers-color-scheme` como default, o toggle do usuário carimba `data-theme` no `<html>` e
+vence). Regras que a UI não reinterpreta:
 
-```
-Marca / Navy    #0A2A5B   — logo, CTAs primários na landing, final CTA bg
-App primário    #0f1f3d   — sidebar, topbar (navy escuro para contraste)
-App superfície  #1a2f52   — sidebar itens ativos, hover
-Fundo app       #f0f2f5   — fundo da área de conteúdo (exato da v01)
-Fundo landing   #FFFFFF   — seções brancas da landing
-Fundo alt       #F0F2F5   — seções acinzentadas (modules, security)
-Accent          #f59e0b   — badges de status ativo, hover de item de menu (amber)
-Drone/IA        #3b82f6   — features de drone, IA, mapeamento (blue)
-Sucesso         #1AAB7B   — status concluído (exato da v01)
-Perigo          #ef4444   — erros, exclusão
-Texto           #495057   — body text (exato da v01)
-Texto muted     #64748b   — labels, metadados
-```
-
-> **Fonte da verdade:** `--color-primary: #0A2A5B` do CSS da v01. O navy é a identidade da marca.
-> Modo claro é o padrão; dark mode fica para fase futura.
+- **Superfícies/tinta:** `--ground` (fundo da área), `--surface`/`--surface-2`/`--inset` (cartões —
+  **nunca branco puro**), `--ink`/`--ink-2`/`--ink-3` (texto), `--line`/`--line-2` (bordas).
+- **Marca/acento:** `--brand` (Navy Cívico), `--accent` (âmbar — estágio **Construir** da Edição
+  Construtora); **um acento por tela** (o que "requer decisão / CTA primário").
+- **Semânticos de UI** (nunca reutilizam cor de estágio como significado): `--good`/`--info`/`--danger`/
+  `--net`, cada um com par `-soft`/`-ink`. Cores de estágio seguras para texto: `--st-orig/const/neg/oper`.
+- **Compatibilidade v01:** `--color-*` continuam existindo como **aliases theme-aware** dos tokens
+  Malha — os módulos legados acompanham o tema sem reescrita e migram para os nativos um a um.
 
 ### 1.3 Tipografia
 
-A v01 usa Montserrat (títulos) + Roboto (corpo) — fontes estabelecidas na identidade do produto.
+**Archivo** (letreiro/display) · **Inter** (produto/corpo) · **JetBrains Mono** (dados/instrumento) —
+carregadas em [index.html](../frontend/index.html); substituem Montserrat/Roboto da v01. Stacks em
+`--display`/`--sans`/`--mono`.
 
-- **Títulos**: Montserrat (via Google Fonts) — `font-heading`
-- **Corpo**: Roboto (via Google Fonts) — `font-body`
-- **Escala**: Tailwind padrão (`text-sm` tabelas/labels, `text-base` body, `text-lg/xl` títulos de página, `text-2xl–3xl` hero)
-- **Peso**: 400 body · 500 labels · 600 subtítulos · 700 títulos
+- **Títulos** (`h1..h6`, `--display` Archivo): peso 700–800, tracking fechado (−0.02em).
+- **Corpo** (`--sans` Inter): 400 body · 500 labels · 600 subtítulos.
+- **Dados** (`--mono` JetBrains, classe `.num`/`.mono`): **todo** preço/quantidade/código/prazo em
+  `tabular-nums`, alinhado à direita — "colunas como réguas" (§6). Componente [Num](../frontend/src/components/malha/Num.tsx).
+- Aliases `--font-heading`/`--font-body` apontam para `--display`/`--sans` (compat v01).
 
 ### 1.4 Iconografia
 
@@ -171,22 +180,33 @@ src/components/
 └────────────┴────────────────────────────────────────────────────┘
 ```
 
-### 3.2 Sidebar — comportamento
+### 3.2 Sidebar — sidebar de marca (Malha)
 
-- **Expandida** (padrão desktop): w-56, ícone + texto
-- **Colapsada** (toggle ou tela < lg): w-14, só ícone + tooltip
-- Estado guardado em `localStorage` (`sgi_sidebar_collapsed`)
-- Seções separadas por `<Separator>`: Base / Módulos pagos / Extras
-- Itens de Módulos pagos visíveis apenas via `hasModule(code)`
-- Itens sem rota ativa ficam ocultos, não desabilitados
+[AppSidebar](../frontend/src/components/layout/AppSidebar.tsx) **acompanha o tema** (fundo `--surface`,
+texto `--ink-*`, borda `--line`). De cima para baixo (identidade §9):
 
-### 3.3 Topbar
+- **Lockup:** marco [Quarteirão](../frontend/src/components/brand/Quarteirao.tsx) (praça em `--ink`) +
+  "SGI Plataforma / Do terreno à cidade" + **régua do ciclo** (filete com as 4 cores dos estágios).
+- **Navegação por seções endereçadas** (Operação / Gestão / Administração / Ecossistema); item ativo =
+  **quarteirão aceso** (ponto âmbar + fundo `--accent-soft`). Itens travados (não construídos ou de
+  fase futura, ex.: Suprimentos, Esfera de Rede `H2`) aparecem com cadeado/badge — **farol de expansão**.
+- **Rodapé:** recorte do Bairro ([BairroRecorte](../frontend/src/components/brand/BairroRecorte.tsx)) com o
+  quarteirão-empresa (dia masterplan / noite janelas acesas, via `--city-*`) + avatar e usuário.
+- **Colapsável** (`localStorage` `sgi_sidebar_collapsed`): expandida 236px / recolhida 60px (só ícones).
+- Itens de módulos pagos visíveis só via `hasModule(code)`; itens `adminOnly` só para `is_tenant_admin`.
 
-- Botão de colapso da sidebar (ícone `PanelLeft`)
-- Breadcrumb automático baseado na rota ativa
-- Badge do tenant atual (nome do tenant do JWT)
-- Ícone de notificações `Bell` (placeholder — conteúdo futuro)
-- Avatar + dropdown: `Perfil`, `Configurações`, `Sair`
+### 3.3 Topbar — glass (Malha)
+
+[AppTopbar](../frontend/src/components/layout/AppTopbar.tsx): faixa **glass** (`--glass` + `backdrop-filter`),
+borda `--line`.
+
+- **Breadcrumb** automático por rota (mapa de segmentos → rótulos; ignora ids numéricos).
+- **Chip de estágio** ([EdicaoChip](../frontend/src/components/brand/EdicaoChip.tsx)) "Edição Construtora ·
+  Construir" — toda tela declara seu endereço no ciclo.
+- **[ThemeToggle](../frontend/src/components/ThemeToggle.tsx)** claro/escuro (o gesto de tema é movimento de
+  marca §7); sino de notificações; avatar + dropdown (alterar senha, sair).
+- **Sem command palette (⌘K)** por ora — volta quando houver busca cross-entidade real (ver **F2** em
+  [pendencias.md](pendencias.md)); nenhuma navegação depende dela (a sidebar cobre tudo).
 
 ---
 
@@ -690,7 +710,7 @@ uma vez por cliente, e é a impressão que fica.
 
 Quando o checkout entrar, muda **só o destino do botão** — todo o resto desta seção continua valendo.
 
-### 5.17 SCM — Suprimentos (`hasModule: scm`) — 📋 próximo a construir (backend ✅)
+### 5.17 SCM — Suprimentos (`hasModule: scm`) — ✅ construído (S.1–S.4, 1º módulo Malha)
 
 > Módulo **grande** e o primeiro porte v01→v02 completo no backend. O **contrato de API, o modelo e o
 > escopo detalhado de UI (sub-fases S.1–S.4)** estão em
@@ -715,10 +735,15 @@ Telas por sub-fase (todas `hasModule('scm')` + gate por permissão `scm.*`):
 - **S.4 Hub SCM** — `ScmDashboardPage` (KPIs: demandas abertas, cotações a adjudicar, pedidos por
   status) — substitui o `status/` placeholder.
 
-Stack/padrões: os mesmos do projeto (TanStack Query + `<módulo>/hooks`, RHF+zod nos forms, `Sheet`
-para create/edit, `FinanceDataTable`/`FilterBar` reaproveitados do ERP, code-splitting por
-`modules/scm/routes.tsx`). Endpoints em §7.3; contrato completo em
-[moduloscm.md](modulos/moduloscm.md).
+Stack/padrões (como **construído**): TanStack Query com fábrica genérica de hooks CRUD
+(`modules/scm/hooks.ts` sobre `scmApi`), code-splitting por `modules/scm/routes.tsx`. Por decisão de
+projeto (21/07), **não** reaproveita os componentes legados do ERP (`FinanceDataTable`/`FilterBar`/
+`Sheet`, que serão migrados): o SCM nasce sobre a **fundação Malha** com **kit de UI próprio** em
+`modules/scm/components/ui.tsx` (`PageHeader`, `DataTable`, `Drawer`, `Modal`, inputs, `Pager`) +
+`AsyncEntitySelect` (select com **busca server-side** — fecha o F2 no SCM) + `seams.tsx` (chips
+read-only de rede/ERP/NF-e/estoque). Forms controlados com `@/utils/formErrors` (sem RHF/zod). É a
+**referência do padrão Malha** para os próximos módulos. Endpoints em §7.3; contrato completo e rotas
+em [moduloscm.md](modulos/moduloscm.md).
 
 ---
 
@@ -871,20 +896,25 @@ src/
 ├── api/
 │   └── apiClient.ts                  ✅ axios instance; interceptor Bearer
 ├── contexts/
-│   └── AuthContext.tsx               ✅ auth, modules, loading, login, logout, hasModule
+│   ├── AuthContext.tsx               ✅ auth, modules, loading, login, logout, hasModule
+│   └── ThemeContext.tsx              ✅ tema Malha: light/dark/system, data-theme, persistência (Malha v1)
 ├── hooks/
 │   ├── useAuth.ts                    ✅ consumer do AuthContext
+│   ├── useTheme.ts                   ✅ consumer do ThemeContext (preference/resolved/toggle)
 │   └── useFileUpload.ts              ✅ upload c/ progresso + download autenticado + config da API
 ├── components/
 │   ├── PrivateRoute.tsx              ✅ guard de autenticação
 │   ├── ModuleRoute.tsx               ✅ guard de entitlement de módulo (hasModule) — tela amigável se não contratado
 │   ├── AccessNotice.tsx              ✅ tela reutilizável de acesso negado (módulo/permissão)
+│   ├── ThemeToggle.tsx               ✅ botão claro/escuro (gesto de marca)
+│   ├── brand/                        ✅ marca Malha: Quarteirao (marco), BairroRecorte (motivo), EdicaoChip (estágio)
+│   ├── malha/                        ✅ design system: Card, Pill (estado), Num (mono tabular), KpiCard + index (barrel)
 │   ├── layout/
 │   │   ├── LandingHeader.tsx         ✅ header fixo da landing (logo, nav, CTA)
 │   │   ├── LandingFooter.tsx         ✅ footer da landing
 │   │   ├── AppShell.tsx              ✅ sidebar + topbar + <Outlet />
-│   │   ├── AppSidebar.tsx            ✅ collapsível, entitlement-aware, lock em não-implementados
-│   │   └── AppTopbar.tsx             ✅ tenant badge, user dropdown, logout
+│   │   ├── AppSidebar.tsx            ✅ sidebar de marca Malha (lockup+régua+Bairro, quarteirão aceso, colapsável)
+│   │   └── AppTopbar.tsx             ✅ topbar glass: breadcrumb + chip de estágio + ThemeToggle + sino + user
 │   ├── HomeSections/                 ✅ seções da landing page
 │   │   ├── HeroSection.tsx
 │   │   ├── ModulesSection.tsx

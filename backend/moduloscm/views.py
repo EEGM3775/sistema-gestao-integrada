@@ -10,6 +10,8 @@ from rest_framework.response import Response
 from nucleo.permissions import RequireModule, RequirePermission
 from nucleo.tenancy import TenantScopedViewSetMixin
 
+from .pagination import ScmPageNumberPagination
+
 from .models import (
     AvaliacaoFornecedor,
     CentroCusto,
@@ -60,6 +62,9 @@ class BaseScmViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
 
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "scm"
+    # Listas paginadas server-side (busca + página) — os selects do frontend
+    # buscam por `?search=&page_size=`; as tabelas-filhas desligam abaixo.
+    pagination_class = ScmPageNumberPagination
 
 
 class CentroCustoViewSet(BaseScmViewSet):
@@ -100,6 +105,7 @@ class FaixaPrecoOfertaViewSet(BaseScmViewSet):
     ordering_fields = ["quantidade_min", "preco_unitario"]
     # A faixa é parte da precificação da oferta → gateada pela mesma permissão.
     required_resource = "scm.oferta"
+    pagination_class = None  # lida por oferta (todas as faixas de uma vez)
 
 
 # --- Fatia 2 — Demanda (pivô) e Cotação → Proposta ---
@@ -140,6 +146,7 @@ class ItemDemandaViewSet(BaseScmViewSet):
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["demanda", "produto"]
     required_resource = "scm.demanda"
+    pagination_class = None  # itens lidos por demanda
 
 
 class CotacaoViewSet(BaseScmViewSet):
@@ -186,8 +193,10 @@ class ItemPropostaViewSet(BaseScmViewSet):
     queryset = ItemProposta.objects.all().order_by("item_proposta_id")
     serializer_class = ItemPropostaSerializer
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ["proposta", "item_demanda"]
+    # `proposta__cotacao` monta o mapa comparativo (itens × propostas) numa chamada.
+    filterset_fields = ["proposta", "item_demanda", "proposta__cotacao"]
     required_resource = "scm.cotacao"
+    pagination_class = None  # itens lidos por proposta
 
 
 # --- Fatia 3 — Pedido (duas vias) → Recebimento + Avaliação ---
@@ -285,6 +294,7 @@ class ItemPedidoViewSet(BaseScmViewSet):
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["pedido", "produto"]
     required_resource = "scm.pedido"
+    pagination_class = None  # itens lidos por pedido
 
 
 class RecebimentoViewSet(BaseScmViewSet):
@@ -314,6 +324,7 @@ class ItemRecebimentoViewSet(BaseScmViewSet):
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["recebimento", "item_pedido"]
     required_resource = "scm.recebimento"
+    pagination_class = None  # itens lidos por recebimento
 
 
 class AvaliacaoFornecedorViewSet(BaseScmViewSet):

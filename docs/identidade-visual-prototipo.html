@@ -1,0 +1,1023 @@
+<!doctype html>
+<html lang="pt-BR">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SGI · Identidade Malha v1</title></head>
+<body>
+<style>
+  /* ============ TOKENS ============ */
+  :root {
+    --ground:#E6EAF1; --surface:#F5F7FA; --surface-2:#ECF0F6; --inset:#E2E7F0;
+    --ink:#0C1A30; --ink-2:#3C4B64; --ink-3:#5D6B80;
+    --line:#DEE4EC; --line-2:#EAEEF4;
+    --brand:#0A2A5B; --brand-2:#123A75; --brand-ink:#FFFFFF;
+    --accent:#E79A22; --accent-strong:#A85F0D; --accent-soft:#FBEED5; --accent-ink:#6E4404;
+    --good:#1F9D74; --good-soft:#E2F3EC; --good-ink:#0C6448;
+    --info:#3B7DD8; --info-soft:#E5EDFA; --info-ink:#1E4E93;
+    --danger:#D8434B; --danger-soft:#FAE6E7; --danger-ink:#992A31;
+    --net:#0F8A93; --net-soft:#DFF0F1; --net-ink:#0A5A61;
+    --st-orig:#25714B; --st-const:#9A5E0B; --st-neg:#BE4038; --st-oper:#0F7280;
+    --city-block:#CBD5E4; --city-block2:#BDC9DB; --city-park:#AFD3BE; --city-tree:#8FBFA3;
+    --city-zorig:#93C3AA; --city-zconst:#EBBE7C; --city-zneg:#E8A29A; --city-zoper:#8CC2C9;
+    --city-window:0; --city-glow:0;
+    --city-shadowf:drop-shadow(5px 7px 0 rgba(44,66,101,.16));
+    --shadow-sm:0 1px 2px rgba(12,26,48,.06), 0 1px 3px rgba(12,26,48,.05);
+    --shadow-md:0 4px 12px rgba(12,26,48,.08), 0 2px 4px rgba(12,26,48,.05);
+    --shadow-lg:0 18px 44px rgba(12,26,48,.16), 0 4px 12px rgba(12,26,48,.08);
+    --glass:rgba(245,247,250,.8);
+    --r-sm:7px; --r-md:11px; --r-lg:16px; --r-xl:22px;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --ground:#0A1626; --surface:#13233C; --surface-2:#1B2F4E; --inset:#0E1C30;
+      --ink:#EDF2F9; --ink-2:#B7C3D6; --ink-3:#8797AE;
+      --line:#2C4265; --line-2:#213551;
+      --brand:#2E5EAE; --brand-2:#3A6DC0; --brand-ink:#FFFFFF;
+      --accent:#F2AC46; --accent-strong:#F2AC46; --accent-soft:#33280F; --accent-ink:#F7C879;
+      --good:#37C293; --good-soft:#102C24; --good-ink:#5FD9AE;
+      --info:#5C97E6; --info-soft:#122840; --info-ink:#8FBAF0;
+      --danger:#EF6169; --danger-soft:#331819; --danger-ink:#F49AA0;
+      --net:#2BB6BF; --net-soft:#0A2B2F; --net-ink:#63D2D9;
+      --st-orig:#6BCB9C; --st-const:#F2AC46; --st-neg:#F0918B; --st-oper:#54C6D1;
+      --city-block:#182A45; --city-block2:#1D3150; --city-park:#14302A; --city-tree:#1F4737;
+      --city-zorig:#3E9C6E; --city-zconst:#E79A22; --city-zneg:#E4655F; --city-zoper:#1D9AA6;
+      --city-window:.92; --city-glow:.42; --city-shadowf:none;
+      --shadow-sm:0 1px 2px rgba(0,0,0,.4);
+      --shadow-md:0 6px 18px rgba(0,0,0,.45);
+      --shadow-lg:0 22px 50px rgba(0,0,0,.55);
+      --glass:rgba(19,35,60,.78);
+    }
+  }
+  :root[data-theme="light"]{
+    --ground:#E6EAF1; --surface:#F5F7FA; --surface-2:#ECF0F6; --inset:#E2E7F0;
+    --ink:#0C1A30; --ink-2:#3C4B64; --ink-3:#5D6B80;
+    --line:#DEE4EC; --line-2:#EAEEF4;
+    --brand:#0A2A5B; --brand-2:#123A75; --brand-ink:#FFFFFF;
+    --accent:#E79A22; --accent-strong:#A85F0D; --accent-soft:#FBEED5; --accent-ink:#6E4404;
+    --good:#1F9D74; --good-soft:#E2F3EC; --good-ink:#0C6448;
+    --info:#3B7DD8; --info-soft:#E5EDFA; --info-ink:#1E4E93;
+    --danger:#D8434B; --danger-soft:#FAE6E7; --danger-ink:#992A31;
+    --net:#0F8A93; --net-soft:#DFF0F1; --net-ink:#0A5A61;
+    --st-orig:#25714B; --st-const:#9A5E0B; --st-neg:#BE4038; --st-oper:#0F7280;
+    --city-block:#CBD5E4; --city-block2:#BDC9DB; --city-park:#AFD3BE; --city-tree:#8FBFA3;
+    --city-zorig:#93C3AA; --city-zconst:#EBBE7C; --city-zneg:#E8A29A; --city-zoper:#8CC2C9;
+    --city-window:0; --city-glow:0;
+    --city-shadowf:drop-shadow(5px 7px 0 rgba(44,66,101,.16));
+    --glass:rgba(245,247,250,.8);
+  }
+  :root[data-theme="dark"]{
+    --ground:#0A1626; --surface:#13233C; --surface-2:#1B2F4E; --inset:#0E1C30;
+    --ink:#EDF2F9; --ink-2:#B7C3D6; --ink-3:#8797AE;
+    --line:#2C4265; --line-2:#213551;
+    --brand:#2E5EAE; --brand-2:#3A6DC0; --brand-ink:#FFFFFF;
+    --accent:#F2AC46; --accent-strong:#F2AC46; --accent-soft:#33280F; --accent-ink:#F7C879;
+    --good:#37C293; --good-soft:#102C24; --good-ink:#5FD9AE;
+    --info:#5C97E6; --info-soft:#122840; --info-ink:#8FBAF0;
+    --danger:#EF6169; --danger-soft:#331819; --danger-ink:#F49AA0;
+    --net:#2BB6BF; --net-soft:#0A2B2F; --net-ink:#63D2D9;
+      --st-orig:#6BCB9C; --st-const:#F2AC46; --st-neg:#F0918B; --st-oper:#54C6D1;
+      --city-block:#182A45; --city-block2:#1D3150; --city-park:#14302A; --city-tree:#1F4737;
+      --city-zorig:#3E9C6E; --city-zconst:#E79A22; --city-zneg:#E4655F; --city-zoper:#1D9AA6;
+      --city-window:.92; --city-glow:.42; --city-shadowf:none;
+    --glass:rgba(19,35,60,.78);
+  }
+
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--ground);color:var(--ink);font-family:var(--sans);
+    font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .num{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+  button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+  a{color:inherit;text-decoration:none}
+  ::selection{background:var(--accent-soft);color:var(--accent-ink)}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+
+  /* ============ APP SHELL ============ */
+  .app{display:grid;grid-template-columns:236px 1fr;min-height:100vh}
+  @media(max-width:900px){.app{grid-template-columns:1fr}.sidebar{display:none}}
+
+  .sidebar{background:var(--surface);color:var(--ink-2);display:flex;flex-direction:column;
+    position:sticky;top:0;height:100vh;overflow:hidden;border-right:1px solid var(--line)}
+  .sidebar__bg{position:absolute;inset:0;z-index:0;pointer-events:none}
+  .sidebar__bg .cidade{position:absolute;left:0;right:0;bottom:0;width:100%;height:240px;
+    -webkit-mask-image:linear-gradient(180deg,transparent,#000 36%);
+    mask-image:linear-gradient(180deg,transparent,#000 36%)}
+  .sidebar>:not(.sidebar__bg){position:relative;z-index:1}
+  .brand{display:flex;align-items:center;gap:11px;padding:20px 20px 16px}
+  .brand__mark{width:34px;height:34px;border-radius:9px;flex:none;
+    background:linear-gradient(135deg,var(--accent),var(--accent-strong));
+    display:grid;place-items:center;color:#1A1204;font-weight:800;font-size:16px;
+    box-shadow:0 2px 10px rgba(231,154,34,.4)}
+  .brand__name{font-weight:700;font-size:15px;color:var(--ink);letter-spacing:-.02em;line-height:1.1}
+  .brand__sub{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);font-weight:600}
+  .brand__rail{height:3px;margin:0 20px 6px;border-radius:999px;flex:none;
+    background:linear-gradient(90deg,#3E9C6E 0 25%,#E79A22 25% 50%,#E4655F 50% 75%,#1D9AA6 75%)}
+  .nav{padding:6px 12px;overflow-y:auto;flex:1;scrollbar-width:thin}
+  .nav__label{font-size:10px;letter-spacing:.13em;text-transform:uppercase;
+    color:var(--ink-3);font-weight:700;padding:14px 10px 6px}
+  .nav__item{display:flex;align-items:center;gap:11px;padding:8px 11px;border-radius:8px;
+    color:var(--ink-2);font-size:13.5px;font-weight:500;position:relative;transition:.14s}
+  .nav__item svg{width:17px;height:17px;flex:none;stroke-width:1.9}
+  .nav__item:hover{background:var(--surface-2);color:var(--ink)}
+  .nav__item--active{background:var(--accent-soft);color:var(--accent-ink);font-weight:650}
+  .nav__item--active::before{content:"";position:absolute;left:-9px;top:50%;
+    transform:translateY(-50%);width:8px;height:8px;border-radius:2.5px;background:var(--accent);
+    box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent)}
+  .nav__item--locked{opacity:.72}
+  .nav__badge{margin-left:auto;font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:999px;
+    font-family:var(--mono)}
+  .nav__badge--amber{background:var(--accent);color:#1A1204}
+  .nav__badge--soon{background:var(--net-soft);color:var(--net-ink);letter-spacing:.03em;
+    text-transform:uppercase;font-size:9px;padding:2px 6px}
+  .nav__foot{padding:12px;border-top:1px solid var(--line-2);display:flex;
+    align-items:center;gap:10px}
+  .nav__ava{width:30px;height:30px;border-radius:8px;flex:none;
+    background:linear-gradient(135deg,#274D8C,#12305F);display:grid;place-items:center;
+    color:#fff;font-weight:700;font-size:12px}
+  .nav__who{font-size:12px;line-height:1.25}
+  .nav__who b{color:var(--ink);font-weight:600;display:block}
+  .nav__who span{color:var(--ink-3);font-size:11px}
+
+  /* ============ MAIN ============ */
+  .main{display:flex;flex-direction:column;min-width:0}
+  .topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:14px;
+    padding:12px 26px;background:var(--glass);backdrop-filter:blur(14px);
+    border-bottom:1px solid var(--line)}
+  .crumb{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-3);font-weight:500}
+  .crumb b{color:var(--ink);font-weight:600}
+  .crumb svg{width:14px;height:14px;opacity:.5}
+  .spacer{flex:1}
+  .cmdk{display:flex;align-items:center;gap:9px;background:var(--surface-2);
+    border:1px solid var(--line);border-radius:9px;padding:7px 11px;min-width:200px;
+    color:var(--ink-3);font-size:13px;transition:.15s}
+  .cmdk:hover{border-color:var(--accent);color:var(--ink-2)}
+  .cmdk svg{width:15px;height:15px}
+  .cmdk kbd{margin-left:auto;font-family:var(--mono);font-size:11px;background:var(--surface);
+    border:1px solid var(--line);border-radius:5px;padding:1px 6px;color:var(--ink-3)}
+  .iconbtn{width:36px;height:36px;border-radius:9px;border:1px solid var(--line);
+    background:var(--surface);display:grid;place-items:center;color:var(--ink-2);transition:.15s}
+  .iconbtn:hover{border-color:var(--accent);color:var(--ink)}
+  .iconbtn svg{width:17px;height:17px}
+  .tenant{display:flex;align-items:center;gap:9px;padding:5px 11px 5px 6px;border-radius:9px;
+    border:1px solid var(--line);background:var(--surface)}
+  .tenant__logo{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,var(--brand-2),var(--brand));
+    display:grid;place-items:center;color:#fff;font-weight:700;font-size:11px}
+  .tenant__t{font-size:12.5px;font-weight:600;line-height:1.1}
+  .tenant__t span{display:block;font-size:10px;color:var(--ink-3);font-weight:500}
+
+  .content{padding:24px 26px 60px;max-width:1240px;width:100%;margin:0 auto}
+
+  /* module tabs */
+  .modhead{display:flex;align-items:flex-end;gap:20px;flex-wrap:wrap;margin-bottom:20px}
+  .modhead__t h1{font-family:var(--sans);font-size:23px;font-weight:750;letter-spacing:-.025em;
+    display:flex;align-items:center;gap:11px;text-wrap:balance}
+  .modhead__t .modico{width:32px;height:32px;border-radius:9px;background:var(--accent-soft);
+    color:var(--accent-ink);display:grid;place-items:center;flex:none}
+  .modhead__t .modico svg{width:19px;height:19px;stroke-width:2}
+  .modhead__t p{color:var(--ink-3);font-size:13px;margin-top:3px;margin-left:43px}
+  .tabs{display:flex;flex-wrap:wrap;gap:3px;background:var(--surface-2);border:1px solid var(--line);
+    padding:4px;border-radius:12px;margin-left:auto}
+  .tab{padding:7px 14px;border-radius:8px;font-size:13px;font-weight:600;color:var(--ink-2);
+    display:flex;align-items:center;gap:7px;transition:.15s;white-space:nowrap}
+  .tab svg{width:15px;height:15px}
+  .tab:hover{color:var(--ink);background:var(--surface)}
+  .tab--active{background:var(--surface);color:var(--ink);box-shadow:var(--shadow-sm)}
+  .tab--active svg{color:var(--accent-strong)}
+  .tab .dot{width:16px;height:16px;border-radius:999px;background:var(--accent);color:#1A1204;
+    font-size:10px;font-weight:800;display:grid;place-items:center;font-family:var(--mono)}
+
+  .screen{display:none;animation:rise .4s cubic-bezier(.2,.7,.2,1) both}
+  .screen--on{display:block}
+  @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  @media(prefers-reduced-motion:reduce){.screen,.screen--on{animation:none}*{transition:none!important}}
+
+  /* ============ CARDS / PRIMITIVES ============ */
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);
+    box-shadow:var(--shadow-sm)}
+  .sect-h{display:flex;align-items:center;gap:10px;margin:26px 0 13px}
+  .sect-h h2{font-size:13px;font-weight:700;letter-spacing:.02em;text-transform:uppercase;color:var(--ink-2)}
+  .sect-h .line{flex:1;height:1px;background:var(--line-2)}
+  .sect-h a{font-size:12.5px;color:var(--net-ink);font-weight:600}
+
+  .pill{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:650;
+    padding:3px 9px;border-radius:999px;white-space:nowrap;line-height:1.4}
+  .pill svg{width:12px;height:12px;stroke-width:2.4}
+  .pill--slate{background:var(--inset);color:var(--ink-2)}
+  .pill--info{background:var(--info-soft);color:var(--info-ink)}
+  .pill--amber{background:var(--accent-soft);color:var(--accent-ink)}
+  .pill--good{background:var(--good-soft);color:var(--good-ink)}
+  .pill--danger{background:var(--danger-soft);color:var(--danger-ink)}
+  .pill--net{background:var(--net-soft);color:var(--net-ink)}
+  .dotpulse{width:6px;height:6px;border-radius:999px;background:currentColor;position:relative}
+  .dotpulse::after{content:"";position:absolute;inset:-3px;border-radius:999px;
+    background:currentColor;opacity:.35;animation:pulse 2s ease-out infinite}
+  @keyframes pulse{0%{transform:scale(.6);opacity:.5}100%{transform:scale(2.2);opacity:0}}
+
+  .btn{display:inline-flex;align-items:center;gap:8px;font-size:13.5px;font-weight:650;
+    padding:9px 16px;border-radius:9px;transition:.15s;border:1px solid transparent}
+  .btn svg{width:16px;height:16px;stroke-width:2.2}
+  .btn--primary{background:var(--accent);color:#1A1204;box-shadow:0 2px 10px rgba(231,154,34,.35)}
+  .btn--primary:hover{background:var(--accent-strong);transform:translateY(-1px);
+    box-shadow:0 6px 18px rgba(231,154,34,.4)}
+  .btn--ghost{background:var(--surface);border-color:var(--line);color:var(--ink-2)}
+  .btn--ghost:hover{border-color:var(--ink-3);color:var(--ink)}
+  .btn--brand{background:var(--brand);color:var(--brand-ink)}
+  .btn--brand:hover{background:var(--brand-2)}
+
+  /* ============ FLOW RAIL ============ */
+  .rail{display:grid;grid-template-columns:repeat(4,1fr);gap:0;padding:4px}
+  @media(max-width:760px){.rail{grid-template-columns:1fr 1fr}}
+  .rail__step{padding:18px 20px;position:relative}
+  .rail__step:not(:last-child)::after{content:"";position:absolute;right:0;top:20px;bottom:20px;
+    width:1px;background:var(--line-2)}
+  .rail__ico{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;margin-bottom:12px}
+  .rail__ico svg{width:18px;height:18px;stroke-width:2}
+  .rail__k{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);font-weight:650}
+  .rail__v{font-size:30px;font-weight:700;letter-spacing:-.03em;margin-top:2px;font-family:var(--mono)}
+  .rail__meta{font-size:12px;color:var(--ink-3);margin-top:4px;display:flex;align-items:center;gap:5px}
+  .rail__arrow{position:absolute;right:-9px;top:50%;transform:translateY(-50%);z-index:2;
+    width:18px;height:18px;border-radius:999px;background:var(--surface);border:1px solid var(--line);
+    display:grid;place-items:center;color:var(--ink-3)}
+  .rail__arrow svg{width:11px;height:11px}
+
+  /* ============ KPI ============ */
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  @media(max-width:980px){.kpis{grid-template-columns:1fr 1fr}}
+  .kpi{padding:16px 18px;position:relative;overflow:hidden}
+  .kpi__k{font-size:12px;color:var(--ink-3);font-weight:600;display:flex;align-items:center;gap:7px}
+  .kpi__k svg{width:14px;height:14px}
+  .kpi__v{font-size:27px;font-weight:750;letter-spacing:-.03em;margin-top:8px;font-family:var(--mono)}
+  .kpi__v small{font-size:14px;font-weight:600;color:var(--ink-3);margin-right:1px}
+  .kpi__d{font-size:11.5px;margin-top:5px;display:flex;align-items:center;gap:5px;font-weight:600}
+  .kpi__d svg{width:13px;height:13px}
+  .up{color:var(--good-ink)} .down{color:var(--danger-ink)}
+  .kpi__spark{position:absolute;right:0;bottom:0;width:96px;height:44px;opacity:.9}
+  .kpi--accent{background:linear-gradient(135deg,var(--accent-soft),var(--surface));
+    border-color:color-mix(in srgb,var(--accent) 40%,var(--line))}
+
+  /* ============ TABLE ============ */
+  .tablewrap{overflow-x:auto;border-radius:var(--r-lg)}
+  table.data{width:100%;border-collapse:collapse;font-size:13.5px;min-width:640px}
+  table.data th{text-align:left;font-size:11px;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--ink-3);font-weight:650;padding:12px 16px;border-bottom:1px solid var(--line);
+    background:var(--surface-2)}
+  table.data td{padding:13px 16px;border-bottom:1px solid var(--line-2);vertical-align:middle}
+  table.data tr:last-child td{border-bottom:none}
+  table.data tbody tr{transition:.12s}
+  table.data tbody tr:hover{background:var(--surface-2)}
+  .t-num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .t-prod{font-weight:600}
+  .t-code{font-family:var(--mono);font-size:12px;color:var(--ink-3)}
+  .avatarc{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;font-weight:700;
+    font-size:11px;flex:none;font-family:var(--mono)}
+  .withco{display:flex;align-items:center;gap:9px}
+
+  /* progress */
+  .prog{height:6px;border-radius:999px;background:var(--inset);overflow:hidden;min-width:90px}
+  .prog>i{display:block;height:100%;border-radius:999px;background:var(--good)}
+
+  /* ============ COMPARISON MAP (HERO) ============ */
+  .cmp{display:grid;grid-template-columns:220px repeat(3,1fr);gap:0;
+    border:1px solid var(--line);border-radius:var(--r-lg);overflow:hidden;background:var(--surface)}
+  @media(max-width:900px){.cmp{display:block}.cmp .cmp__cell{display:flex;justify-content:space-between}}
+  .cmp__col{border-left:1px solid var(--line-2);position:relative}
+  .cmp__col--win{background:linear-gradient(180deg,var(--accent-soft),transparent 40%)}
+  .cmp__col--win::before{content:"";position:absolute;inset:0;border:2px solid var(--accent);
+    border-radius:2px;pointer-events:none}
+  .cmp__head{padding:16px 16px 14px;border-bottom:1px solid var(--line)}
+  .cmp__rowhead{padding:16px;border-bottom:1px solid var(--line);background:var(--surface-2);
+    font-weight:600;display:flex;flex-direction:column;justify-content:center}
+  .cmp__supp{display:flex;align-items:center;gap:9px;margin-bottom:8px}
+  .cmp__supp b{font-size:13.5px;font-weight:650}
+  .cmp__stars{font-size:11.5px;color:var(--ink-3);display:flex;align-items:center;gap:4px}
+  .cmp__stars svg{width:12px;height:12px;color:var(--accent);fill:var(--accent)}
+  .cmp__cell{padding:14px 16px;border-bottom:1px solid var(--line-2);font-family:var(--mono);
+    font-variant-numeric:tabular-nums;font-size:13.5px;text-align:right;position:relative}
+  .cmp__rowhead{font-family:var(--sans)}
+  .cmp__cell small{display:block;font-size:10.5px;color:var(--ink-3);font-family:var(--sans);
+    text-align:right;margin-top:2px;font-variant-numeric:normal}
+  .cmp__cell--best{color:var(--good-ink);font-weight:700}
+  .cmp__cell--best::after{content:"menor";position:absolute;left:16px;top:50%;transform:translateY(-50%);
+    font-family:var(--sans);font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+    color:var(--good-ink);background:var(--good-soft);padding:2px 6px;border-radius:5px}
+  .cmp__total{padding:16px;border-top:2px solid var(--line);background:var(--surface-2)}
+  .cmp__total .cmp__cell{border:none;padding:0;font-size:19px;font-weight:750;text-align:right}
+  .cmp__tk{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3);
+    font-weight:650;text-align:right;font-family:var(--sans)}
+  .cmp__delta{font-size:11px;text-align:right;font-family:var(--sans);margin-top:3px;font-weight:600}
+  .cmp__act{padding:14px 16px;border-top:1px solid var(--line-2)}
+
+  .ia{display:flex;gap:14px;padding:18px 20px;border-radius:var(--r-lg);margin-top:18px;
+    background:linear-gradient(120deg,var(--net-soft),var(--surface));
+    border:1px solid color-mix(in srgb,var(--net) 30%,var(--line))}
+  .ia__ico{width:38px;height:38px;border-radius:10px;flex:none;background:var(--net);color:#fff;
+    display:grid;place-items:center;box-shadow:0 3px 12px color-mix(in srgb,var(--net) 45%,transparent)}
+  .ia__ico svg{width:20px;height:20px}
+  .ia__t{font-weight:700;font-size:14px;display:flex;align-items:center;gap:9px;margin-bottom:5px}
+  .ia__t .pill{font-size:10px;padding:2px 7px}
+  .ia__b{font-size:13px;color:var(--ink-2);line-height:1.55}
+  .ia__b b{color:var(--ink);font-weight:650}
+  .ia__hint{margin-top:9px;font-size:12.5px;display:inline-flex;align-items:center;gap:7px;
+    padding:6px 11px;border-radius:8px;background:var(--surface);border:1px solid var(--line);font-weight:600}
+  .ia__hint svg{width:14px;height:14px;color:var(--good)}
+
+  /* two-column */
+  .grid2{display:grid;grid-template-columns:1.6fr 1fr;gap:18px;align-items:start}
+  @media(max-width:980px){.grid2{grid-template-columns:1fr}}
+
+  /* activity list */
+  .act{padding:6px 4px}
+  .act__i{display:flex;gap:12px;padding:11px 14px;border-radius:10px;transition:.12s}
+  .act__i:hover{background:var(--surface-2)}
+  .act__d{width:30px;height:30px;border-radius:8px;flex:none;display:grid;place-items:center}
+  .act__d svg{width:15px;height:15px;stroke-width:2}
+  .act__t{font-size:13px;line-height:1.45}.act__t b{font-weight:650}
+  .act__m{font-size:11.5px;color:var(--ink-3);margin-top:1px}
+
+  /* catalog cards */
+  .catgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  @media(max-width:980px){.catgrid{grid-template-columns:1fr 1fr}}
+  @media(max-width:640px){.catgrid{grid-template-columns:1fr}}
+  .prodcard{padding:16px;display:flex;flex-direction:column;gap:12px;transition:.15s}
+  .prodcard:hover{transform:translateY(-2px);box-shadow:var(--shadow-md);border-color:var(--accent)}
+  .prodcard__top{display:flex;align-items:flex-start;gap:12px}
+  .prodcard__ico{width:40px;height:40px;border-radius:10px;background:var(--inset);flex:none;
+    display:grid;place-items:center;color:var(--ink-2)}
+  .prodcard__ico svg{width:20px;height:20px}
+  .prodcard__n{font-weight:650;font-size:14px;line-height:1.3}
+  .prodcard__c{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);margin-top:2px}
+  .prodcard__row{display:flex;justify-content:space-between;align-items:baseline;
+    padding-top:10px;border-top:1px solid var(--line-2)}
+  .prodcard__lab{font-size:11px;color:var(--ink-3);font-weight:600}
+  .prodcard__price{font-family:var(--mono);font-weight:700;font-size:16px}
+  .prodcard__foot{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--ink-3)}
+  .stockbar{display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:12px}
+
+  /* ============ ROADMAP (REDE) ============ */
+  .redehero{padding:30px 30px 28px;border-radius:var(--r-xl);position:relative;overflow:hidden;
+    background:linear-gradient(125deg,var(--brand),#08203f 60%,#0a2c5e);color:#EAF1FC;
+    border:1px solid var(--brand-2)}
+  .redehero::after{content:"";position:absolute;right:-60px;top:-60px;width:260px;height:260px;
+    border-radius:999px;background:radial-gradient(circle,rgba(15,138,147,.5),transparent 65%)}
+  .redehero__tag{display:inline-flex;align-items:center;gap:7px;font-size:11px;font-weight:700;
+    letter-spacing:.1em;text-transform:uppercase;color:#7FE0E6;
+    background:rgba(15,138,147,.18);border:1px solid rgba(43,182,191,.35);
+    padding:5px 12px;border-radius:999px}
+  .redehero h2{font-size:26px;font-weight:750;letter-spacing:-.03em;margin:16px 0 8px;
+    max-width:560px;text-wrap:balance;position:relative;z-index:1}
+  .redehero p{color:#B3C6E4;font-size:14px;max-width:600px;line-height:1.6;position:relative;z-index:1}
+  .redehero__stats{display:flex;gap:28px;margin-top:22px;position:relative;z-index:1;flex-wrap:wrap}
+  .redehero__stat b{font-family:var(--mono);font-size:24px;font-weight:700;letter-spacing:-.02em;display:block}
+  .redehero__stat span{font-size:11.5px;color:#8DA6CE;letter-spacing:.04em}
+
+  .roadgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:18px}
+  @media(max-width:900px){.roadgrid{grid-template-columns:1fr}}
+  .roadcard{padding:20px;display:flex;flex-direction:column;gap:12px;position:relative}
+  .roadcard__h{display:flex;align-items:center;justify-content:space-between}
+  .roadcard__ico{width:40px;height:40px;border-radius:10px;background:var(--net-soft);color:var(--net-ink);
+    display:grid;place-items:center}
+  .roadcard__ico svg{width:20px;height:20px;stroke-width:2}
+  .roadcard h3{font-size:15px;font-weight:700;letter-spacing:-.01em}
+  .roadcard p{font-size:12.5px;color:var(--ink-2);line-height:1.55}
+  .roadcard__seam{font-size:11.5px;color:var(--ink-3);display:flex;align-items:center;gap:7px;
+    padding-top:11px;border-top:1px solid var(--line-2);margin-top:2px}
+  .roadcard__seam svg{width:13px;height:13px;color:var(--net)}
+  .roadcard__seam code{font-family:var(--mono);font-size:11px;background:var(--inset);
+    padding:1px 6px;border-radius:5px;color:var(--net-ink)}
+
+  .mirror{display:grid;grid-template-columns:1fr 44px 1fr;gap:0;align-items:stretch;margin-top:8px}
+  @media(max-width:640px){.mirror{grid-template-columns:1fr}}
+  .mirror__side{padding:18px;border-radius:var(--r-md);border:1px solid var(--line)}
+  .mirror__side b{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3);font-weight:700}
+  .mirror__side ul{list-style:none;margin-top:10px;display:flex;flex-direction:column;gap:8px}
+  .mirror__side li{display:flex;align-items:center;gap:9px;font-size:13px}
+  .mirror__side li .dt{width:7px;height:7px;border-radius:2px;flex:none}
+  .mirror__mid{display:grid;place-items:center;color:var(--net)}
+  .mirror__mid svg{width:22px;height:22px}
+
+  .callout{display:flex;gap:12px;padding:14px 16px;border-radius:var(--r-md);
+    background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 35%,var(--line));
+    font-size:12.5px;color:var(--accent-ink);line-height:1.55;margin-top:18px}
+  .callout svg{width:18px;height:18px;flex:none;margin-top:1px}
+  .callout b{font-weight:700}
+
+  /* ============ TOAST + CMD PALETTE ============ */
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);
+    background:var(--ink);color:var(--ground);padding:12px 18px;border-radius:11px;
+    font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:10px;z-index:100;
+    box-shadow:var(--shadow-lg);opacity:0;pointer-events:none;transition:.28s cubic-bezier(.2,.7,.2,1)}
+  .toast--on{opacity:1;transform:translateX(-50%) translateY(0)}
+  .toast svg{width:17px;height:17px;color:var(--good)}
+  :root[data-theme="dark"] .toast{background:#EAF1FC;color:#0A1322}
+
+  .overlay{position:fixed;inset:0;background:rgba(8,16,30,.5);backdrop-filter:blur(4px);
+    z-index:90;display:none;align-items:flex-start;justify-content:center;padding-top:14vh}
+  .overlay--on{display:flex}
+  .palette{width:min(560px,92vw);background:var(--surface);border:1px solid var(--line);
+    border-radius:var(--r-lg);box-shadow:var(--shadow-lg);overflow:hidden;
+    animation:rise .2s ease both}
+  .palette__in{display:flex;align-items:center;gap:11px;padding:15px 18px;border-bottom:1px solid var(--line)}
+  .palette__in svg{width:18px;height:18px;color:var(--ink-3)}
+  .palette__in input{flex:1;border:none;background:none;font-size:15px;color:var(--ink);outline:none;font-family:var(--sans)}
+  .palette__list{padding:8px;max-height:340px;overflow-y:auto}
+  .palette__g{font-size:10.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-3);
+    font-weight:700;padding:10px 12px 4px}
+  .palette__i{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:9px;
+    font-size:13.5px;font-weight:500}
+  .palette__i:hover,.palette__i--sel{background:var(--surface-2)}
+  .palette__i svg{width:16px;height:16px;color:var(--ink-2)}
+  .palette__i kbd{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink-3);
+    background:var(--inset);border-radius:5px;padding:1px 7px}
+
+  .footnote{margin-top:34px;padding:16px 18px;border-radius:var(--r-md);background:var(--surface-2);
+    border:1px dashed var(--line);font-size:12px;color:var(--ink-3);line-height:1.6;display:flex;gap:11px}
+  .footnote svg{width:16px;height:16px;flex:none;margin-top:1px;color:var(--accent-strong)}
+  .footnote b{color:var(--ink-2)}
+
+  /* ============ IDENTIDADE (marca) ============ */
+  .idhero{position:relative;overflow:hidden;border-radius:var(--r-xl);border:1px solid var(--line);
+    background-color:var(--surface);padding:52px 44px 42px;box-shadow:var(--shadow-sm);
+    background-image:linear-gradient(var(--line-2) 1px,transparent 1px),
+      linear-gradient(90deg,var(--line-2) 1px,transparent 1px);
+    background-size:44px 44px;background-position:center}
+  @media(max-width:700px){.idhero{padding:36px 22px 32px}}
+  .idhero__topo{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+  .id-eyebrow{display:inline-flex;align-items:center;gap:9px;font-family:var(--mono);font-size:11px;
+    letter-spacing:.16em;text-transform:uppercase;color:var(--accent-strong);font-weight:700;position:relative}
+  .id-eyebrow::before{content:"";width:24px;height:2px;background:var(--accent-strong)}
+  .stencil{position:relative;display:inline-block;font-weight:800;line-height:.95;
+    font-size:clamp(72px,13vw,148px);letter-spacing:-.015em;color:var(--brand);margin:20px 0 4px}
+  @supports((-webkit-background-clip:text) or (background-clip:text)){
+    .stencil{background:linear-gradient(180deg,var(--brand) 0 55%,transparent 55% 62.5%,var(--brand) 62.5% 100%);
+      -webkit-background-clip:text;background-clip:text;color:transparent}
+  }
+  .id-sub{font-size:clamp(16px,2.4vw,21px);font-weight:700;letter-spacing:-.02em;color:var(--ink);
+    max-width:620px;text-wrap:balance;position:relative}
+  .id-par{font-size:14px;color:var(--ink-2);line-height:1.65;max-width:640px;margin-top:12px;position:relative}
+  .id-par b{color:var(--ink);font-weight:650}
+  .id-coords{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);letter-spacing:.09em;
+    display:flex;gap:18px;margin-top:22px;flex-wrap:wrap;position:relative}
+  .id-coords span{display:inline-flex;align-items:center;gap:7px}
+  .id-coords i{width:8px;height:8px;border-radius:2px;font-style:normal;flex:none}
+
+  .idgrid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:900px){.idgrid{grid-template-columns:1fr}}
+  .idcard{padding:22px}
+  .idcard h3{font-size:14.5px;font-weight:750;letter-spacing:-.01em;margin-bottom:6px}
+  .idnote{font-size:12.5px;color:var(--ink-2);line-height:1.62}
+  .idnote b{color:var(--ink);font-weight:650}
+  .idrules{list-style:none;margin-top:12px;display:flex;flex-direction:column;gap:8px}
+  .idrules li{display:flex;gap:9px;font-size:12.5px;color:var(--ink-2);line-height:1.5}
+  .idrules li::before{content:"—";color:var(--accent-strong);font-weight:700;flex:none}
+  .clearwrap{display:grid;place-items:center;padding:30px;background:var(--surface-2);
+    border-radius:var(--r-md);margin-top:16px}
+  .clearbox{position:relative;padding:24px}
+  .clearbox::before{content:"";position:absolute;inset:0;border:1.5px dashed var(--ink-3);opacity:.5}
+  .clearlab{position:absolute;font-family:var(--mono);font-size:10px;color:var(--ink-3);letter-spacing:.05em}
+  .markrow{display:flex;gap:12px;flex-wrap:wrap;margin-top:16px;align-items:center}
+  .markchip{width:72px;height:72px;border-radius:12px;display:grid;place-items:center;
+    border:1px solid var(--line);flex:none}
+  .markchip small{display:none}
+  .marklab{font-family:var(--mono);font-size:10px;color:var(--ink-3);text-align:center;margin-top:5px;
+    letter-spacing:.05em;text-transform:uppercase}
+
+  .swgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  @media(max-width:860px){.swgrid{grid-template-columns:1fr 1fr}}
+  .sw{border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden;background:var(--surface)}
+  .sw__chip{height:70px;position:relative}
+  .sw__chip small{position:absolute;right:9px;bottom:7px;font-family:var(--mono);font-size:10px;
+    letter-spacing:.04em;opacity:.85}
+  .sw__body{padding:10px 12px 12px}
+  .sw__n{font-size:12.5px;font-weight:700}
+  .sw__hex{font-family:var(--mono);font-size:11px;color:var(--ink-3);margin-top:1px}
+  .sw__r{font-size:11px;color:var(--ink-2);margin-top:5px;line-height:1.5}
+  .ratio{display:flex;height:16px;border-radius:999px;overflow:hidden;margin-top:16px;
+    border:1px solid var(--line)}
+  .ratio i{display:block;height:100%}
+  .ratiolegend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-family:var(--mono);
+    font-size:11px;color:var(--ink-3)}
+  .ratiolegend span{display:inline-flex;align-items:center;gap:6px}
+  .ratiolegend i{width:9px;height:9px;border-radius:3px;flex:none}
+
+  .specrow{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  @media(max-width:860px){.specrow{grid-template-columns:1fr}}
+  .spec{padding:20px;display:flex;flex-direction:column;gap:10px}
+  .spec__k{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--ink-3);font-weight:700}
+  .spec__demo{min-height:78px;display:flex;flex-direction:column;justify-content:center;gap:4px}
+  .spec__note{font-size:11.5px;color:var(--ink-3);line-height:1.55;border-top:1px solid var(--line-2);
+    padding-top:10px}
+
+  .voicegrid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  @media(max-width:860px){.voicegrid{grid-template-columns:1fr}}
+  .voice{padding:18px;display:flex;flex-direction:column;gap:10px}
+  .voice h4{font-size:13px;font-weight:750}
+  .vrow{display:flex;gap:9px;align-items:flex-start;font-size:12.5px;line-height:1.5;
+    padding:9px 11px;border-radius:9px}
+  .vrow svg{width:14px;height:14px;flex:none;margin-top:2px}
+  .vrow--do{background:var(--good-soft);color:var(--good-ink)}
+  .vrow--dont{background:var(--danger-soft);color:var(--danger-ink);text-decoration:line-through}
+
+  .appsgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  @media(max-width:860px){.appsgrid{grid-template-columns:1fr}}
+  .appcard{padding:20px;display:flex;flex-direction:column;align-items:center;gap:14px;text-align:center}
+  .appcard h4{font-size:12.5px;font-weight:700}
+  .appcard p{font-size:11.5px;color:var(--ink-3);line-height:1.5}
+  .appicon{width:78px;height:78px;border-radius:19px;background:linear-gradient(150deg,#0A2A5B,#123A75);
+    display:grid;place-items:center;box-shadow:var(--shadow-md)}
+  .selo{display:inline-flex;align-items:center;gap:11px;background:#0A1322;color:#EAF1FC;
+    border-radius:11px;padding:11px 16px;border:1px solid #233650;text-align:left}
+  .selo b{font-size:11px;letter-spacing:.1em;display:block;line-height:1.35}
+  .selo small{font-family:var(--mono);font-size:10px;color:#8DA6CE;letter-spacing:.06em}
+
+  .carimbo{margin-top:28px;border:1.5px solid var(--ink-2);border-radius:4px;display:grid;
+    grid-template-columns:auto 1.5fr 1.1fr auto;font-family:var(--mono);font-size:10.5px;
+    letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);background:var(--surface)}
+  @media(max-width:760px){.carimbo{grid-template-columns:auto 1fr}}
+  .carimbo>div{padding:11px 15px;border-left:1.5px solid var(--ink-2);display:flex;
+    flex-direction:column;gap:2px;justify-content:center}
+  .carimbo>div:first-child{border-left:none;display:grid;place-items:center;padding:11px 13px}
+  .carimbo b{color:var(--ink);font-size:11.5px;letter-spacing:.04em}
+
+  /* ============ IDENTIDADE v2 — Sistema Malha ============ */
+  .cityhero{position:relative;overflow:hidden;border-radius:var(--r-xl);
+    background:linear-gradient(135deg,var(--surface),var(--surface-2));
+    border:1px solid var(--line);padding:56px 46px 44px;color:var(--ink)}
+  @media(max-width:700px){.cityhero{padding:38px 22px 34px}}
+  .hero-city{position:absolute;right:-70px;top:50%;transform:translateY(-50%);
+    width:min(58%,620px);height:auto;z-index:0;pointer-events:none;
+    -webkit-mask-image:linear-gradient(90deg,transparent,#000 24%);
+    mask-image:linear-gradient(90deg,transparent,#000 24%)}
+  @media(max-width:900px){.hero-city{display:none}}
+  .cityhero__in{position:relative;z-index:2;max-width:640px}
+  .roadmark{width:min(320px,72vw);height:auto;display:block;margin:24px 0 14px;color:var(--ink)}
+  .city-tag{font-size:clamp(26px,4.2vw,40px);font-weight:800;letter-spacing:-.03em;line-height:1.08;
+    max-width:600px;text-wrap:balance}
+  .city-par{color:var(--ink-2);font-size:14px;line-height:1.65;max-width:640px;margin-top:12px}
+  .city-par b{color:var(--ink);font-weight:650}
+  .city-legend{display:flex;gap:18px;flex-wrap:wrap;margin-top:22px;font-family:var(--mono);
+    font-size:11.5px;color:var(--ink-3);letter-spacing:.06em}
+  .city-legend span{display:inline-flex;align-items:center;gap:7px}
+  .city-legend i{width:8px;height:8px;border-radius:999px;flex:none}
+  .qstage{display:grid;place-items:center;padding:34px;background:var(--surface-2);
+    border-radius:var(--r-md);margin-top:16px;position:relative}
+  .qlab{position:absolute;font-family:var(--mono);font-size:10px;letter-spacing:.09em;
+    text-transform:uppercase;font-weight:700}
+  .edgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  @media(max-width:860px){.edgrid{grid-template-columns:1fr 1fr}}
+  @media(max-width:600px){.edgrid{grid-template-columns:1fr}}
+  .edchip{display:flex;gap:12px;align-items:center;padding:13px 15px;border:1px solid var(--line);
+    border-radius:var(--r-md);background:var(--surface)}
+  .edchip svg{flex:none}
+  .edchip b{font-size:13px;font-weight:700;display:block;line-height:1.2}
+  .edchip small{font-size:11px;color:var(--ink-3);line-height:1.35;display:block;margin-top:2px}
+  .idfoot{margin-top:28px;border-top:2px solid var(--ink-2);padding-top:12px;display:flex;
+    justify-content:space-between;gap:14px;flex-wrap:wrap;font-family:var(--mono);font-size:11px;
+    letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3)}
+  .idfoot b{color:var(--ink)}
+
+  </style>
+
+<!-- O BAIRRO v3 — tecido urbano figure-ground, desenhado (não gerado).
+     Ruas generosas (16px; boulevard 34px), praça-rotatória VERDE no centro exato
+     (nada a sobrepõe: os quarteirões centrais encurtam para lhe dar adro),
+     e os 4 distritos do ciclo em giro horário ao redor da praça — o cata-vento
+     do marco na escala da cidade. Dia: zoneamento com sombras de sol.
+     Noite: janelas acesas, guias do boulevard e anel da rotatória iluminados. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <filter id="softGlow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="12"/></filter>
+    <g id="cityFabric">
+      <rect x="352" y="78" width="126" height="103" style="fill:#F2AC46;opacity:var(--city-glow)" filter="url(#softGlow)"/>
+      <g style="filter:var(--city-shadowf)">
+        <path d="M0 0 H80 L92 12 V70 H0 Z" style="fill:var(--city-block)"/>
+        <path d="M108 0 H214 V44 H180 V70 H108 Z" style="fill:var(--city-block2)"/>
+        <path d="M246 0 H330 V70 H230 Z" style="fill:var(--city-block)"/>
+        <path d="M346 0 H426 V70 H358 L346 58 Z" style="fill:var(--city-block2)"/>
+        <path d="M442 0 H560 V70 H474 V44 H442 Z" style="fill:var(--city-block)"/>
+        <path d="M0 86 H70 V160 L58 173 H0 Z" style="fill:var(--city-block2)"/>
+        <path d="M86 86 H184 L200 102 V173 H86 Z" style="fill:var(--city-zorig)"/>
+        <path d="M216 86 H344 L330 138 H230 Z" style="fill:var(--city-block)"/>
+        <path d="M360 86 H470 V150 H446 V173 H360 Z" style="fill:var(--city-zconst)"/>
+        <path d="M500 86 H560 V173 H486 V100 Z" style="fill:var(--city-block2)"/>
+        <path d="M0 207 H58 L70 220 V294 H0 Z" style="fill:var(--city-block)"/>
+        <path d="M86 207 H200 V278 L186 294 H86 Z" style="fill:var(--city-zoper)"/>
+        <path d="M230 242 H330 L344 294 H216 Z" style="fill:var(--city-block2)"/>
+        <path d="M360 207 H470 V294 H386 V270 H360 Z" style="fill:var(--city-zneg)"/>
+        <path d="M486 207 H560 V294 H500 L486 280 Z" style="fill:var(--city-block)"/>
+        <path d="M0 310 H110 L122 322 V380 H0 Z" style="fill:var(--city-block2)"/>
+        <path d="M138 310 H252 V368 L240 380 H150 L138 368 Z" style="fill:var(--city-block)"/>
+        <path d="M268 310 H380 L366 380 H282 Z" style="fill:var(--city-block2)"/>
+        <path d="M410 310 H488 V380 H396 V324 Z" style="fill:var(--city-block)"/>
+        <path d="M504 310 H548 L560 322 V380 H504 Z" style="fill:var(--city-block2)"/>
+        <line x1="6" y1="190" x2="214" y2="190" style="stroke:var(--city-park)" stroke-width="3" stroke-dasharray="24 12"/>
+        <line x1="346" y1="190" x2="554" y2="190" style="stroke:var(--city-park)" stroke-width="3" stroke-dasharray="24 12"/>
+        <circle cx="280" cy="190" r="46" style="fill:var(--city-park)"/>
+        <circle cx="280" cy="190" r="16" style="fill:var(--ink)"/>
+        <g style="fill:#F2AC46;opacity:var(--city-window)">
+          <rect x="12" y="12" width="5" height="7" rx="1"/><rect x="26" y="12" width="5" height="7" rx="1"/>
+          <rect x="12" y="28" width="5" height="7" rx="1"/><rect x="44" y="18" width="5" height="7" rx="1"/>
+          <rect x="120" y="14" width="5" height="7" rx="1"/><rect x="134" y="14" width="5" height="7" rx="1"/>
+          <rect x="120" y="30" width="5" height="7" rx="1"/><rect x="150" y="20" width="5" height="7" rx="1"/>
+          <rect x="242" y="12" width="5" height="7" rx="1"/><rect x="256" y="12" width="5" height="7" rx="1"/>
+          <rect x="270" y="20" width="5" height="7" rx="1"/><rect x="242" y="28" width="5" height="7" rx="1"/>
+          <rect x="358" y="16" width="5" height="7" rx="1"/><rect x="372" y="16" width="5" height="7" rx="1"/>
+          <rect x="358" y="32" width="5" height="7" rx="1"/>
+          <rect x="454" y="12" width="5" height="7" rx="1"/><rect x="468" y="20" width="5" height="7" rx="1"/>
+          <rect x="482" y="12" width="5" height="7" rx="1"/>
+          <rect x="12" y="98" width="5" height="7" rx="1"/><rect x="26" y="106" width="5" height="7" rx="1"/>
+          <rect x="12" y="120" width="5" height="7" rx="1"/>
+          <rect x="98" y="100" width="5" height="7" rx="1"/><rect x="112" y="100" width="5" height="7" rx="1"/>
+          <rect x="98" y="116" width="5" height="7" rx="1"/><rect x="130" y="108" width="5" height="7" rx="1"/>
+          <rect x="228" y="96" width="5" height="7" rx="1"/><rect x="242" y="96" width="5" height="7" rx="1"/>
+          <rect x="256" y="104" width="5" height="7" rx="1"/><rect x="228" y="112" width="5" height="7" rx="1"/>
+          <rect x="372" y="100" width="5" height="7" rx="1"/><rect x="386" y="108" width="5" height="7" rx="1"/>
+          <rect x="498" y="98" width="5" height="7" rx="1"/><rect x="512" y="106" width="5" height="7" rx="1"/>
+          <rect x="498" y="120" width="5" height="7" rx="1"/>
+          <rect x="12" y="220" width="5" height="7" rx="1"/><rect x="26" y="228" width="5" height="7" rx="1"/>
+          <rect x="98" y="220" width="5" height="7" rx="1"/><rect x="112" y="228" width="5" height="7" rx="1"/>
+          <rect x="98" y="242" width="5" height="7" rx="1"/>
+          <rect x="228" y="254" width="5" height="7" rx="1"/><rect x="242" y="262" width="5" height="7" rx="1"/>
+          <rect x="256" y="254" width="5" height="7" rx="1"/>
+          <rect x="372" y="220" width="5" height="7" rx="1"/><rect x="386" y="228" width="5" height="7" rx="1"/>
+          <rect x="372" y="242" width="5" height="7" rx="1"/>
+          <rect x="498" y="220" width="5" height="7" rx="1"/><rect x="512" y="228" width="5" height="7" rx="1"/>
+          <rect x="498" y="242" width="5" height="7" rx="1"/>
+          <rect x="12" y="322" width="5" height="7" rx="1"/><rect x="26" y="330" width="5" height="7" rx="1"/>
+          <rect x="12" y="344" width="5" height="7" rx="1"/>
+          <rect x="150" y="322" width="5" height="7" rx="1"/><rect x="164" y="330" width="5" height="7" rx="1"/>
+          <rect x="280" y="322" width="5" height="7" rx="1"/><rect x="294" y="330" width="5" height="7" rx="1"/>
+          <rect x="280" y="344" width="5" height="7" rx="1"/>
+          <rect x="408" y="324" width="5" height="7" rx="1"/><rect x="422" y="332" width="5" height="7" rx="1"/>
+          <rect x="516" y="322" width="5" height="7" rx="1"/><rect x="530" y="330" width="5" height="7" rx="1"/>
+        </g>
+      </g>
+      <g stroke="#F2AC46" stroke-width="1.6" fill="none" style="opacity:var(--city-glow)">
+        <line x1="0" y1="173" x2="226" y2="173"/>
+        <line x1="334" y1="173" x2="560" y2="173"/>
+        <line x1="0" y1="207" x2="226" y2="207"/>
+        <line x1="334" y1="207" x2="560" y2="207"/>
+        <circle cx="280" cy="190" r="50"/>
+      </g>
+    </g>
+  </defs>
+</svg>
+<div class="app">
+  <!-- ============ SIDEBAR ============ -->
+  <aside class="sidebar">
+    <div class="sidebar__bg" aria-hidden="true">
+      <svg class="cidade" viewBox="196 30 334 350" preserveAspectRatio="xMidYMax slice"><use href="#cityFabric"/></svg>
+    </div>
+    <div class="brand">
+      <svg width="34" height="34" viewBox="0 0 96 96" style="flex:none" aria-label="Marco SGI">
+        <rect width="96" height="96" rx="20" fill="var(--inset)"/>
+        <rect x="14" y="14" width="14" height="48" fill="#3E9C6E"/>
+        <rect x="32" y="14" width="50" height="14" fill="#E79A22"/>
+        <rect x="68" y="32" width="14" height="50" fill="#E4655F"/>
+        <rect x="14" y="68" width="50" height="14" fill="#1D9AA6"/>
+        <rect x="42" y="42" width="12" height="12" fill="var(--ink)"/>
+      </svg>
+      <div>
+        <div class="brand__name">SGI Plataforma</div>
+        <div class="brand__sub">Do terreno à cidade</div>
+      </div>
+    </div>
+    <div class="brand__rail" title="Originar · Construir · Negociar · Operar"></div>
+    <nav class="nav">
+      <div class="nav__label">Operação</div>
+      <a class="nav__item nav__item--active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>Painel</a>
+      <a class="nav__item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4"/></svg>Empreendimentos</a>
+      <a class="nav__item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M2 20h20M4 20V8l8-5 8 5v12M9 20v-6h6v6"/></svg>Obras</a>
+      <a class="nav__item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="9" cy="7" r="3"/><path d="M3 21v-2a5 5 0 015-5h2M16 3.1a3 3 0 010 5.8M21 21v-2a5 5 0 00-4-4.9"/></svg>Clientes</a>
+      <a class="nav__item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M1 3h13v13H1zM14 8h5l3 3v5h-8"/><circle cx="5.5" cy="18.5" r="2"/><circle cx="17.5" cy="18.5" r="2"/></svg>Fornecedores</a>
+      <div class="nav__label">Gestão</div>
+      <a class="nav__item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 3v18h18M7 15l4-5 4 3 4-7"/></svg>ERP / Financeiro</a>
+      <a class="nav__item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0116 0"/></svg>RH</a>
+      <a class="nav__item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 17l6-6 4 4 8-8M21 7v5"/></svg>CRM</a>
+      <a class="nav__item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3a5 5 0 015 5c0 2-1 3-1 5H8c0-2-1-3-1-5a5 5 0 015-5zM9 18h6M10 21h4"/></svg>Diário + IA</a>
+      <a class="nav__item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 9l9-6 9 6v10a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><path d="M3 9h18M9 21V13h6v8"/></svg>Suprimentos<span class="nav__badge nav__badge--amber">5</span></a>
+      <a class="nav__item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><circle cx="12" cy="12" r="3"/><path d="M5 5l2.5 2.5M16.5 16.5L19 19M19 5l-2.5 2.5M7.5 16.5L5 19"/></svg>Drone</a>
+      <div class="nav__label">Ecossistema</div>
+      <a class="nav__item nav__item--locked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="2"/><circle cx="5" cy="6" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="18" r="2"/><path d="M7 7l3 3.5M17 7l-3 3.5M7 17l3-3.5M17 17l-3-3.5"/></svg>Esfera de Rede<span class="nav__badge nav__badge--soon">H2</span></a>
+    </nav>
+    <div class="nav__foot">
+      <div class="nav__ava">EG</div>
+      <div class="nav__who"><b>Edison Goes</b><span>Suprimentos · Admin</span></div>
+    </div>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <div class="main">
+    <header class="topbar">
+      <div class="crumb"><b>Construtora Aurora</b>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 6l6 6-6 6"/></svg>
+        <span>Suprimentos</span></div>
+      <div class="spacer"></div>
+      <button class="cmdk" onclick="openPal()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+        Buscar tela, módulo, ação…<kbd>⌘K</kbd></button>
+      <button class="iconbtn" id="themeBtn" title="Alternar tema" onclick="toggleTheme()">
+        <svg id="themeIco" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg></button>
+      <div class="tenant"><div class="tenant__logo">CA</div>
+        <div class="tenant__t">Aurora<span>Plano Obra Pro</span></div></div>
+    </header>
+
+    <main class="content">
+      <div class="modhead">
+        <div class="modhead__t">
+          <h1><span class="modico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="8"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></span>Identidade</h1>
+          <p>Sistema Malha v1 — a marca da plataforma, do marco à voz.</p>
+        </div>
+        
+      </div>
+
+      <!-- ========= IDENTIDADE ========= -->
+      <section class="screen screen--on" data-s="marca">
+        <div class="cityhero">
+          <svg class="hero-city" viewBox="0 0 560 380" aria-hidden="true"><use href="#cityFabric"/></svg>
+          <div class="cityhero__in">
+            <span class="id-eyebrow">Identidade visual · Sistema Malha v1</span>
+            <svg class="roadmark" viewBox="0 0 300 112" fill="none" role="img" aria-label="SGI">
+              <path d="M80 28 H48 Q28 28 28 46 Q28 62 48 62 H62 Q84 62 84 80 Q84 96 62 96 H30" stroke="currentColor" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M186 34 Q176 24 156 24 Q124 24 124 60 Q124 96 156 96 Q182 96 184 74 V66 H158" stroke="currentColor" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M224 24 V96" stroke="currentColor" stroke-width="15" stroke-linecap="round"/>
+              <circle cx="80" cy="28" r="6.5" fill="#E79A22"/>
+              <circle cx="30" cy="96" r="6.5" fill="#3E9C6E"/>
+              <circle cx="158" cy="66" r="6.5" fill="#E4655F"/>
+              <circle cx="224" cy="24" r="6.5" fill="#1D9AA6"/>
+            </svg>
+            <div class="city-tag">Do terreno à cidade.</div>
+            <p class="city-par">A marca não é a de um sistema de obra — é a da <b>plataforma onde o mercado
+              imobiliário inteiro opera</b>. A imagem-mãe é <b>o Bairro</b>: um tecido urbano desenhado como
+              os urbanistas desenham — <b>quarteirões cheios, ruas como vazios</b> (figure-ground). Os
+              <b>distritos nas cores do marco</b> cercam a praça — originar, construir, negociar, operar:
+              <b>o Bairro contém o logo</b>. E cada tema é um turno de verdade, não um filtro:
+              <b>de dia</b>, o mapa de zoneamento — distritos pastel e <b>sombras de sol</b> caindo nas ruas;
+              <b>à noite</b>, os distritos acendem nas cores vivas, as janelas brilham e as ruas ganham luz.
+              Alterne o tema e veja o bairro anoitecer.</p>
+            <div class="city-legend">
+              <span><i style="background:#3E9C6E"></i>ORIGINAR</span>
+              <span><i style="background:#E79A22"></i>CONSTRUIR</span>
+              <span><i style="background:#E4655F"></i>NEGOCIAR</span>
+              <span><i style="background:#1D9AA6"></i>OPERAR</span>
+              <span style="margin-left:auto">ALTERNE O TEMA — A CIDADE ANOITECE</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="sect-h"><h2>O marco — o Quarteirão</h2><div class="line"></div></div>
+        <div class="idgrid">
+          <div class="card idcard">
+            <h3>Quatro avenidas, uma praça</h3>
+            <p class="idnote">O marco é um <b>quarteirão de cidade planejada</b>: quatro avenidas girando ao
+              redor da praça central — e, ao mesmo tempo, o <b>flywheel</b> do ecossistema. Cada avenida é
+              um estágio do ciclo de vida do empreendimento (<b>originar → construir → negociar →
+              operar</b>, sempre em sentido horário); a praça é a plataforma, onde tudo se encontra.
+              Quando um módulo ou uma edição nova nascer, <b>ela já tem endereço</b> — a marca não
+              precisa mudar para caber no que vem.</p>
+            <div class="qstage">
+              <span class="qlab" style="top:12px;left:50%;transform:translateX(-50%);color:var(--st-const)">construir</span>
+              <span class="qlab" style="right:16px;top:50%;transform:translateY(-50%);color:var(--st-neg)">negociar</span>
+              <span class="qlab" style="bottom:12px;left:50%;transform:translateX(-50%);color:var(--st-oper)">operar</span>
+              <span class="qlab" style="left:16px;top:50%;transform:translateY(-50%);color:var(--st-orig)">originar</span>
+              <svg width="150" height="150" viewBox="0 0 96 96" role="img" aria-label="Marco Quarteirão">
+                <rect x="12" y="12" width="16" height="50" fill="#3E9C6E"/>
+                <rect x="32" y="12" width="52" height="16" fill="#E79A22"/>
+                <rect x="68" y="32" width="16" height="52" fill="#E4655F"/>
+                <rect x="12" y="68" width="52" height="16" fill="#1D9AA6"/>
+                <rect x="41" y="41" width="14" height="14" fill="var(--ink)"/>
+              </svg>
+            </div>
+          </div>
+          <div class="card idcard">
+            <h3>Variantes e regras</h3>
+            <div class="markrow">
+              <div>
+                <div class="markchip" style="background:#F5F7FA">
+                  <svg width="44" height="44" viewBox="0 0 96 96"><rect x="12" y="12" width="16" height="50" fill="#3E9C6E"/><rect x="32" y="12" width="52" height="16" fill="#E79A22"/><rect x="68" y="32" width="16" height="52" fill="#E4655F"/><rect x="12" y="68" width="52" height="16" fill="#1D9AA6"/><rect x="41" y="41" width="14" height="14" fill="#0A1626"/></svg>
+                </div><div class="marklab">plataforma</div>
+              </div>
+              <div>
+                <div class="markchip" style="background:#F5F7FA">
+                  <svg width="44" height="44" viewBox="0 0 96 96"><rect x="12" y="12" width="16" height="50" fill="#0A2A5B"/><rect x="32" y="12" width="52" height="16" fill="#0A2A5B"/><rect x="68" y="32" width="16" height="52" fill="#0A2A5B"/><rect x="12" y="68" width="52" height="16" fill="#0A2A5B"/><rect x="41" y="41" width="14" height="14" fill="#0A2A5B"/></svg>
+                </div><div class="marklab">institucional</div>
+              </div>
+              <div>
+                <div class="markchip" style="background:#0A1626;border-color:#1B2C44">
+                  <svg width="44" height="44" viewBox="0 0 96 96"><rect x="12" y="12" width="16" height="50" fill="#F5F7FA"/><rect x="32" y="12" width="52" height="16" fill="#F5F7FA"/><rect x="68" y="32" width="16" height="52" fill="#F5F7FA"/><rect x="12" y="68" width="52" height="16" fill="#F5F7FA"/><rect x="41" y="41" width="14" height="14" fill="#F2AC46"/></svg>
+                </div><div class="marklab">noturna</div>
+              </div>
+              <div>
+                <div class="markchip" style="background:var(--surface-2)">
+                  <svg width="17" height="17" viewBox="0 0 96 96"><rect x="6" y="6" width="20" height="58" fill="#3E9C6E"/><rect x="32" y="6" width="58" height="20" fill="#E79A22"/><rect x="70" y="32" width="20" height="58" fill="#E4655F"/><rect x="6" y="70" width="58" height="20" fill="#1D9AA6"/></svg>
+                </div><div class="marklab">micro 16px</div>
+              </div>
+            </div>
+            <ul class="idrules">
+              <li>O giro é sempre horário — o sentido do ciclo de vida.</li>
+              <li>A praça central é a plataforma: nunca recebe cor de edição.</li>
+              <li>Cada edição <b>acende a sua avenida</b>; as demais ficam em cinza-planta.</li>
+              <li>Sobre fotografia, variante noturna sobre véu meia-noite.</li>
+              <li>Micro (≤ 20px): sem praça, avenidas engrossadas.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="sect-h"><h2>Uma marca que já nasce inteira — as edições</h2><div class="line"></div></div>
+        <div class="edgrid">
+          <div class="edchip">
+            <svg width="36" height="36" viewBox="0 0 96 96"><rect x="12" y="12" width="16" height="50" fill="#C3CBD6"/><rect x="32" y="12" width="52" height="16" fill="#E79A22"/><rect x="68" y="32" width="16" height="52" fill="#C3CBD6"/><rect x="12" y="68" width="52" height="16" fill="#C3CBD6"/><rect x="41" y="41" width="14" height="14" fill="var(--ink)"/></svg>
+            <span><b>SGI Construtora</b><small>Construir · a edição-âncora — o produto de hoje</small></span>
+          </div>
+          <div class="edchip">
+            <svg width="36" height="36" viewBox="0 0 96 96"><rect x="12" y="12" width="16" height="50" fill="#C3CBD6"/><rect x="32" y="12" width="52" height="16" fill="#E79A22"/><rect x="68" y="32" width="16" height="52" fill="#C3CBD6"/><rect x="12" y="68" width="52" height="16" fill="#C3CBD6"/><rect x="41" y="41" width="14" height="14" fill="var(--ink)"/></svg>
+            <span><b>SGI Empreiteiro</b><small>Construir · medições, diário da frente, faturar</small></span>
+          </div>
+          <div class="edchip">
+            <svg width="36" height="36" viewBox="0 0 96 96"><rect x="12" y="12" width="16" height="50" fill="#C3CBD6"/><rect x="32" y="12" width="52" height="16" fill="#E79A22"/><rect x="68" y="32" width="16" height="52" fill="#C3CBD6"/><rect x="12" y="68" width="52" height="16" fill="#C3CBD6"/><rect x="41" y="41" width="14" height="14" fill="var(--ink)"/></svg>
+            <span><b>SGI Loja</b><small>Construir · orçamentos, estoque, NF-e — abastece a obra</small></span>
+          </div>
+          <div class="edchip">
+            <svg width="36" height="36" viewBox="0 0 96 96"><rect x="12" y="12" width="16" height="50" fill="#3E9C6E"/><rect x="32" y="12" width="52" height="16" fill="#C3CBD6"/><rect x="68" y="32" width="16" height="52" fill="#C3CBD6"/><rect x="12" y="68" width="52" height="16" fill="#C3CBD6"/><rect x="41" y="41" width="14" height="14" fill="var(--ink)"/></svg>
+            <span><b>SGI Escritório de Projeto</b><small>Originar · propostas, DMS, timesheet, RT</small></span>
+          </div>
+          <div class="edchip">
+            <svg width="36" height="36" viewBox="0 0 96 96"><rect x="12" y="12" width="16" height="50" fill="#C3CBD6"/><rect x="32" y="12" width="52" height="16" fill="#C3CBD6"/><rect x="68" y="32" width="16" height="52" fill="#E4655F"/><rect x="12" y="68" width="52" height="16" fill="#C3CBD6"/><rect x="41" y="41" width="14" height="14" fill="var(--ink)"/></svg>
+            <span><b>SGI Imobiliária</b><small>Negociar · carteira, espelho de vendas, comissões</small></span>
+          </div>
+          <div class="edchip">
+            <svg width="36" height="36" viewBox="0 0 96 96"><rect x="12" y="12" width="16" height="50" fill="#C3CBD6"/><rect x="32" y="12" width="52" height="16" fill="#C3CBD6"/><rect x="68" y="32" width="16" height="52" fill="#C3CBD6"/><rect x="12" y="68" width="52" height="16" fill="#1D9AA6"/><rect x="41" y="41" width="14" height="14" fill="var(--ink)"/></svg>
+            <span><b>SGI Administradora</b><small>Operar · condomínio, taxas, chamados, facility</small></span>
+          </div>
+          <div class="edchip" style="grid-column:1/-1;background:var(--surface-2)">
+            <svg width="36" height="36" viewBox="0 0 96 96"><rect x="12" y="12" width="16" height="50" fill="#C3CBD6"/><rect x="32" y="12" width="52" height="16" fill="#C3CBD6"/><rect x="68" y="32" width="16" height="52" fill="#C3CBD6"/><rect x="12" y="68" width="52" height="16" fill="#C3CBD6"/><rect x="41" y="41" width="14" height="14" fill="#F2AC46"/></svg>
+            <span><b>Portais do consumidor — comprador · investidor · morador</b><small>A praça acesa: quem não compra sistema entra pelo espaço público da plataforma — o portal do cliente, o feed, as páginas de obra</small></span>
+          </div>
+        </div>
+
+        <div class="sect-h"><h2>Cor — endereço, não decoração</h2><div class="line"></div></div>
+        <div class="swgrid">
+          <div class="sw"><div class="sw__chip" style="background:#0A1626"><small style="color:#8DA6CE">CÉU DA MARCA</small></div>
+            <div class="sw__body"><div class="sw__n">Meia-Noite</div><div class="sw__hex mono">#0A1626</div>
+            <div class="sw__r">O céu da cidade vista de cima. Fundo da marca, dos heros e das superfícies de rede. Evolução profunda do navy da v01.</div></div></div>
+          <div class="sw"><div class="sw__chip" style="background:#F5F7FA;border-bottom:1px solid var(--line)"><small style="color:#7A8699">DIA</small></div>
+            <div class="sw__body"><div class="sw__n">Papel de Planta</div><div class="sw__hex mono">#F5F7FA</div>
+            <div class="sw__r">O papel do trabalho diário. Neutros com viés de azul — nunca cinza puro. O produto opera de dia; a marca vive à noite.</div></div></div>
+          <div class="sw"><div class="sw__chip" style="background:#0A2A5B"><small style="color:#8DA6CE">HERANÇA v01</small></div>
+            <div class="sw__body"><div class="sw__n">Navy Cívico</div><div class="sw__hex mono">#0A2A5B</div>
+            <div class="sw__r">A instituição. Sidebar, CTAs institucionais, documentos. A ponte entre o que o produto é e o que vai ser.</div></div></div>
+          <div class="sw"><div class="sw__chip" style="background:#3E9C6E"><small style="color:#0E3B24">ESTÁGIO 1</small></div>
+            <div class="sw__body"><div class="sw__n">Verde Terreno</div><div class="sw__hex mono">#3E9C6E</div>
+            <div class="sw__r"><b>Originar</b> — terreno, viabilidade, projeto, licenciamento. A cor da Edição Escritório e do banco de terrenos.</div></div></div>
+          <div class="sw"><div class="sw__chip" style="background:#E79A22"><small style="color:#5C3A02">ESTÁGIO 2</small></div>
+            <div class="sw__body"><div class="sw__n">Âmbar Obra</div><div class="sw__hex mono">#E79A22</div>
+            <div class="sw__r"><b>Construir</b> — obra, suprimentos, diário, drone. A cor das Edições Construtora, Empreiteiro e Loja.</div></div></div>
+          <div class="sw"><div class="sw__chip" style="background:#E4655F"><small style="color:#571713">ESTÁGIO 3</small></div>
+            <div class="sw__body"><div class="sw__n">Coral Lançamento</div><div class="sw__hex mono">#E4655F</div>
+            <div class="sw__r"><b>Negociar</b> — venda, espelho, reserva, comissão. A cor da Edição Imobiliária — já reservada, antes de ela existir.</div></div></div>
+          <div class="sw"><div class="sw__chip" style="background:#1D9AA6"><small style="color:#04343A">ESTÁGIO 4</small></div>
+            <div class="sw__body"><div class="sw__n">Teal Operação</div><div class="sw__hex mono">#1D9AA6</div>
+            <div class="sw__r"><b>Operar</b> — entrega, assistência, condomínio, facility. A cor da Edição Administradora e dos portais de pós-obra.</div></div></div>
+          <div class="sw"><div class="sw__chip" style="background:linear-gradient(135deg,#3E9C6E 0 25%,#E79A22 25% 50%,#E4655F 50% 75%,#1D9AA6 75%)"><small style="color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.4)">A RÉGUA</small></div>
+            <div class="sw__body"><div class="sw__n">O espectro do ciclo</div><div class="sw__hex mono">4 estágios</div>
+            <div class="sw__r">Juntas, as quatro só aparecem em contexto de <b>plataforma</b> (marca, rede, feed). Dentro de uma edição, vale a cor dela.</div></div></div>
+        </div>
+        <div class="card" style="padding:18px 20px;margin-top:14px">
+          <div style="font-weight:700;font-size:13px;margin-bottom:6px">A regra que evita o rebrand</div>
+          <p class="idnote">A cor não é decoração — <b>é endereço no ciclo de vida</b>. A plataforma é meia-noite
+            e papel; cada edição usa a cor do estágio que habita. Por isso o acento do produto de hoje é o
+            âmbar: não porque "âmbar é a cor do SGI", mas porque <b>a Edição Construtora vive no estágio
+            Construir</b>. Quando a Edição Imobiliária lançar, ela nasce coral; a Administradora nasce teal —
+            <b>sem rebrand, sem discussão</b>: a identidade já estava pronta desde o primeiro dia. Os semânticos
+            de UI (aprovado, andamento, erro) seguem à parte, no design system do produto — nunca competem
+            com as cores de estágio.</p>
+        </div>
+
+        <div class="sect-h"><h2>Tipografia — letreiro e instrumento</h2><div class="line"></div></div>
+        <div class="specrow">
+          <div class="card spec">
+            <div class="spec__k">Display — o letreiro</div>
+            <div class="spec__demo"><div style="font-size:23px;font-weight:800;letter-spacing:-.015em;line-height:1.1">Do terreno<br>à cidade.</div></div>
+            <div class="spec__note">Face proposta: <b>Archivo</b> (Expanded no wordmark) — a letra dos letreiros urbanos, sólida e larga. Aposenta a Montserrat da v01 no lançamento. Aqui aproximada pela stack do sistema.</div>
+          </div>
+          <div class="card spec">
+            <div class="spec__k">Texto — o produto</div>
+            <div class="spec__demo"><div style="font-size:13.5px;line-height:1.6;color:var(--ink-2)">Uma família só, do portal do comprador ao ERP da construtora — a plataforma inteira fala com a mesma voz tipográfica.</div></div>
+            <div class="spec__note">Face proposta: <b>Inter</b> — neutra, densa quando precisa, excelente em tabela. Substitui a Roboto da v01.</div>
+          </div>
+          <div class="card spec">
+            <div class="spec__k">Dados — o instrumento</div>
+            <div class="spec__demo"><div class="mono" style="font-size:30px;font-weight:700;letter-spacing:-.02em">R$ 156.100<span style="font-size:13px;color:var(--good-ink);margin-left:8px">▼ menor</span></div></div>
+            <div class="spec__note"><b>Todo dado é mono tabular</b> (proposta: <b>JetBrains Mono</b>) — preço, prazo, código, quantidade. Colunas alinham como réguas; é o que separa plataforma séria de site bonito.</div>
+          </div>
+        </div>
+
+        <div class="sect-h"><h2>Voz — fato, não adorno</h2><div class="line"></div></div>
+        <div class="voicegrid">
+          <div class="card voice">
+            <h4>Número com unidade e origem</h4>
+            <div class="vrow vrow--do"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>R$ 47.320 economizados em 12 cotações — julho</div>
+            <div class="vrow vrow--dont"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>Economia incrível este mês!</div>
+          </div>
+          <div class="card voice">
+            <h4>Botão diz a ação</h4>
+            <div class="vrow vrow--do"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>Adjudicar → "Cotação #142 adjudicada"</div>
+            <div class="vrow vrow--dont"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>OK · Confirmar? · Deseja prosseguir?</div>
+          </div>
+          <div class="card voice">
+            <h4>Estado nomeado e medido</h4>
+            <div class="vrow vrow--do"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>recebido parcial · 60 de 120 kg conferidos</div>
+            <div class="vrow vrow--dont"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>pendente…</div>
+          </div>
+        </div>
+
+        <div class="sect-h"><h2>Aplicações</h2><div class="line"></div></div>
+        <div class="appsgrid">
+          <div class="card appcard">
+            <div class="appicon" style="background:linear-gradient(150deg,#0A1626,#122340)"><svg width="42" height="42" viewBox="0 0 96 96"><rect x="12" y="12" width="16" height="50" fill="#3E9C6E"/><rect x="32" y="12" width="52" height="16" fill="#E79A22"/><rect x="68" y="32" width="16" height="52" fill="#E4655F"/><rect x="12" y="68" width="52" height="16" fill="#1D9AA6"/><rect x="41" y="41" width="14" height="14" fill="#F5F7FA"/></svg></div>
+            <div><h4>Ícone do app / PWA</h4><p>O Quarteirão pleno sobre meia-noite. Cada app de edição acende só a sua avenida no mesmo tile.</p></div>
+          </div>
+          <div class="card appcard">
+            <div class="selo" style="background:#0A1626;border-color:#1B2C44">
+              <svg width="30" height="30" viewBox="0 0 96 96"><rect x="12" y="12" width="16" height="50" fill="#3F5573"/><rect x="32" y="12" width="52" height="16" fill="#F2AC46"/><rect x="68" y="32" width="16" height="52" fill="#3F5573"/><rect x="12" y="68" width="52" height="16" fill="#3F5573"/><rect x="41" y="41" width="14" height="14" fill="#F5F7FA"/></svg>
+              <div><b>OBRA AO VIVO NO SGI</b><small>RESIDENCIAL AURORA · 60% · UMA LUZ NA MALHA</small></div>
+            </div>
+            <div><h4>Selo público da obra</h4><p>O widget do flywheel: a construtora embute no site dela — cada visitante vê a cidade acesa por dentro.</p></div>
+          </div>
+          <div class="card appcard">
+            <div style="display:flex;flex-direction:column;gap:9px;align-items:center">
+              <div style="display:flex;align-items:center;gap:9px;padding:8px 14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)">
+                <svg width="22" height="22" viewBox="0 0 96 96"><rect x="12" y="12" width="16" height="50" fill="#C3CBD6"/><rect x="32" y="12" width="52" height="16" fill="#C3CBD6"/><rect x="68" y="32" width="16" height="52" fill="#E4655F"/><rect x="12" y="68" width="52" height="16" fill="#C3CBD6"/><rect x="41" y="41" width="14" height="14" fill="var(--ink)"/></svg>
+                <span style="font-weight:700;font-size:13px">SGI <span style="color:var(--st-neg)">Imobiliária</span></span>
+              </div>
+              <div style="display:flex;gap:7px"><span class="pill pill--amber"><span class="dotpulse"></span>a adjudicar</span><span class="pill pill--net">rede</span><span class="pill pill--good">recebido</span></div>
+            </div>
+            <div><h4>Sub-marca de edição</h4><p>Lockup pronto para toda edição futura: o nome + a avenida acesa. Lança-se uma vertical sem tocar na marca-mãe.</p></div>
+          </div>
+        </div>
+
+        <div class="idfoot">
+          <span><b>Sistema Malha v1</b> · identidade da plataforma SGI</span>
+          <span>Nasce completa no lançamento — as edições futuras já têm endereço · Rev B · 07/2026</span>
+        </div>
+      </section>
+
+      <div class="footnote" style="margin-top:40px;background:transparent;border-color:var(--line)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3l9 4.5v9L12 21l-9-4.5v-9z"/><path d="M12 12l9-4.5M12 12v9M12 12L3 7.5"/></svg>
+        <span><b>Protótipo da identidade Malha v1 · "Do terreno à cidade".</b> Uma tela só, de propósito: o sistema da identidade — marco, cores, tipografia, voz e aplicações — demonstrado dentro do shell que já veste a linguagem (sidebar de marca, topbar, temas claro/escuro). Telas de produto não vivem aqui: <b>cada edição terá o seu hub</b> e os seus módulos, todos formados sobre este corpo. Fontes propostas (Archivo/Inter/JetBrains Mono) aproximadas por stack de sistema — o CSP de artifact bloqueia webfonts.</span>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- toast + palette -->
+<div class="toast" id="toast"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M20 6L9 17l-5-5"/></svg><span id="toastmsg">ok</span></div>
+
+<div class="overlay" id="overlay" onclick="if(event.target===this)closePal()">
+  <div class="palette">
+    <div class="palette__in"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+      <input id="palInput" placeholder="Ir para… ou digite uma ação" autocomplete="off"></div>
+    <div class="palette__list">
+      <div class="palette__g">Ações</div>
+      <div class="palette__i" onclick="toggleTheme();closePal()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 12.8A9 9 0 1111 3a7 7 0 0010 9.8z"/></svg>Alternar tema claro/escuro</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const root=document.documentElement;
+  function setTheme(t){root.setAttribute('data-theme',t);
+    const dark=t==='dark';
+    document.getElementById('themeIco').innerHTML=dark
+      ?'<path d="M21 12.8A9 9 0 1111 3a7 7 0 0010 9.8z"/>'
+      :'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/>';
+  }
+  function currentTheme(){return root.getAttribute('data-theme')|| (matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');}
+  function toggleTheme(){setTheme(currentTheme()==='dark'?'light':'dark');}
+  setTheme(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+
+  
+
+  let toastTimer;
+  function toast(msg){const el=document.getElementById('toast');
+    document.getElementById('toastmsg').textContent=msg;el.classList.add('toast--on');
+    clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('toast--on'),2600);}
+
+  function openPal(){document.getElementById('overlay').classList.add('overlay--on');
+    setTimeout(()=>document.getElementById('palInput').focus(),40);}
+  function closePal(){document.getElementById('overlay').classList.remove('overlay--on');
+    document.getElementById('palInput').value='';filterPal('');}
+  function filterPal(q){q=q.toLowerCase();
+    document.querySelectorAll('.palette__i').forEach(i=>{
+      i.style.display=i.textContent.toLowerCase().includes(q)?'':'none';});}
+  document.getElementById('palInput').addEventListener('input',e=>filterPal(e.target.value));
+  document.addEventListener('keydown',e=>{
+    if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openPal();}
+    if(e.key==='Escape')closePal();});
+
+</script>
+
+</body>
+</html>

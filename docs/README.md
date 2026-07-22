@@ -24,6 +24,7 @@ A documentação tem **quatro naturezas** — saber qual você procura já resol
 | **O modelo de acesso** — entitlement de módulo + RBAC, genérico por módulo | [acesso-e-permissoes.md](acesso-e-permissoes.md) |
 | **Cada módulo** do backend em detalhe | [modulos/README.md](modulos/README.md) |
 | **O frontend** (shell React) — design system, páginas, rotas, dados | [frontend.md](frontend.md) |
+| **A identidade visual** (Sistema Malha: marca, cor, tipografia, voz — todas as superfícies) | [identidade-visual.md](identidade-visual.md) |
 | **As convenções de código do frontend** (obrigatórias para desenvolver) | [frontend-convencoes.md](frontend-convencoes.md) |
 | **Rodar / desenvolver** a plataforma | [desenvolvimento.md](desenvolvimento.md) |
 

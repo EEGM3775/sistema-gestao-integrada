@@ -60,7 +60,14 @@ verbos de domínio abaixo exigem a permissão dedicada (via `action_permission_m
 
 ## Endpoints (`/api/scm/`)
 
-CRUD REST em cada recurso (list/create/retrieve/update/partial_update/destroy), isolado por tenant:
+CRUD REST em cada recurso (list/create/retrieve/update/partial_update/destroy), isolado por tenant.
+As **listas paginam** server-side (`ScmPageNumberPagination`: `page`/`page_size`, `count`/`results`) e
+os viewsets de select aceitam `?search=` — é o contrato dos selects assíncronos do frontend (não se
+carrega o catálogo inteiro no cliente). As tabelas-filhas (`itens-*`, `faixas-preco`) **não** paginam
+(lidas por pai). Vários serializers expõem **rótulos denormalizados read-only** para as listas
+(ex.: `produto_descricao`/`fornecedor_nome` na oferta; `fornecedor_label` na proposta;
+`centro_custo_nome`/`itens_count` no pedido). `itens-proposta` aceita `?proposta__cotacao=` (monta o
+mapa comparativo itens × propostas numa chamada).
 
 | Rota | Recurso | Filtros úteis |
 |---|---|---|
@@ -122,8 +129,32 @@ UX-chave a acertar: **as duas vias de compra** (catálogo × cotação) num só 
 **mapa comparativo** de propostas na adjudicação; e deixar visível (sem editar) o que é *seam* de
 rede/estoque/ERP para não surpreender quando a expansão ligar.
 
+### Rotas do frontend (React — `modules/scm/`)
+
+Primeiro módulo sobre a **fundação Malha** ([identidade-visual.md](../identidade-visual.md) §10). Kit de
+UI próprio do módulo em `modules/scm/components/` (`ui.tsx`: PageHeader/DataTable/Drawer/Modal/inputs/
+Pager; `AsyncEntitySelect` = select com busca server-side; `seams.tsx` = chips read-only). Sob
+`ModuleRoute module="scm"`:
+
+| Rota | Tela | Sub-fase |
+|---|---|---|
+| `/app/scm` | `ScmDashboardPage` (hub de KPIs + atalhos) | S.4 |
+| `/app/scm/produtos` | `ProdutosPage` | S.1 |
+| `/app/scm/ofertas` | `OfertasPage` (+ editor de `FaixaPrecoOferta`) | S.1 |
+| `/app/scm/centros-custo` | `CentrosCustoPage` | S.1 |
+| `/app/scm/demandas` | `DemandasPage` | S.2 |
+| `/app/scm/demandas/:id` | `DemandaDetailPage` (itens + **Publicar** + abrir cotação) | S.2 |
+| `/app/scm/cotacoes/:id` | `CotacaoDetailPage` (mapa comparativo + **Adjudicar** + gerar pedido) | S.2/S.3 |
+| `/app/scm/pedidos` | `PedidosPage` (**Comprar direto**) | S.3 |
+| `/app/scm/pedidos/:id` | `PedidoDetailPage` (itens + recebimento + avaliação) | S.3 |
+
+**Seams na UI (read-only):** chips que só aparecem quando o campo está preenchido — `Rede`
+(`visibilidade=rede`), `ContaPagar #n` (`conta_pagar_ref`), `NF-e` (`nota_fiscal_ref`), `Estoque`
+(`local_entrega`/`origem=estoque`), `Da rede` (`origem_tenant`) — para não poluir o uso pré-expansão.
+Gate por **permissão de usuário** (`hasPermission('scm.*')`), não só entitlement do tenant.
+
 ## Status / pendências
 
-Backend **completo (fatias 1–3)** e testado (`moduloscm/tests.py`, 29/29 sobre Postgres). **Sem UI
-React ainda** — próximo passo (sub-fases S.1–S.4 acima). Status vivo no
+Backend **completo (fatias 1–3)** e testado (`moduloscm/tests.py`, 29/29 sobre Postgres). **Frontend
+S.1–S.4 implementado** (rotas acima) sobre a fundação Malha. Status vivo no
 [roadmap](../roadmap.md#estado-dos-módulos--backend-07062026).

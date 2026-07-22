@@ -33,6 +33,7 @@ Antes de documentar um campo, verificar se o modelo Python reflete o estado atua
 - Módulos do backend em detalhe: [docs/modulos/](docs/modulos/)
 - Frontend (React): [docs/frontend.md](docs/frontend.md) · convenções obrigatórias:
   [docs/frontend-convencoes.md](docs/frontend-convencoes.md)
+- Identidade visual (Sistema Malha — marca, cor, tipografia, voz): [docs/identidade-visual.md](docs/identidade-visual.md)
 - Acesso e permissões: [docs/acesso-e-permissoes.md](docs/acesso-e-permissoes.md)
 - Como rodar: [docs/desenvolvimento.md](docs/desenvolvimento.md)
 

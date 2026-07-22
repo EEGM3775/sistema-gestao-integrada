@@ -111,7 +111,7 @@ Login local do backend removido; entitlement genérico `RequireModule("codigo")`
 | moduloerp                                                                        | `erp_financeiro` | ✅ 07/06/2026 (`Fatura`→`ContaPagar`/`ContaReceber`; +`CentroCusto`/`Rateio*`/`LoteRemessa`/`RevisaoBaixa`) |
 | modulocrm                                                                        | `crm`            | ✅ Completo                                                                                                                |
 | funcoescobrancas (Asaas)                                                         | via`moduloerp`   | ✅ MVP 08/06/2026 ([doc](modulos/funcoescobrancas.md))                                                                      |
-| moduloscm                                                                        | `scm`            | ✅ Backend (fatias 1–3) 20/07/2026. F1: catálogo (`Produto`/`OfertaFornecedor`/`FaixaPrecoOferta`) + `CentroCusto` próprio. F2: pivô `Demanda`(+`ItemDemanda`) publicável + `Cotacao`→`Proposta`(+`ItemProposta`), verbos `publicar`/`adjudicar`. F3: `PedidoCompra`→`Recebimento`+`AvaliacaoFornecedor` com as **duas vias** (`comprar_direto`/`gerar_de_cotacao`) e seams ERP/SIL/NF-e. Seams de rede (`ref_externa`/`origem_tenant`) prontos; lado vendedor + marketplace → Esfera de Rede. 19 perms `scm.*`; suíte **29/29** sobre PG. Desenho em [expansão/modulos/moduloscm.md](../expansão/modulos/moduloscm.md). Falta: **UI React** (etapa C do porte) |
+| moduloscm                                                                        | `scm`            | ✅ Backend (fatias 1–3) 20/07/2026. F1: catálogo (`Produto`/`OfertaFornecedor`/`FaixaPrecoOferta`) + `CentroCusto` próprio. F2: pivô `Demanda`(+`ItemDemanda`) publicável + `Cotacao`→`Proposta`(+`ItemProposta`), verbos `publicar`/`adjudicar`. F3: `PedidoCompra`→`Recebimento`+`AvaliacaoFornecedor` com as **duas vias** (`comprar_direto`/`gerar_de_cotacao`) e seams ERP/SIL/NF-e. Seams de rede (`ref_externa`/`origem_tenant`) prontos; lado vendedor + marketplace → Esfera de Rede. 19 perms `scm.*`; suíte **29/29** sobre PG. Desenho em [expansão/modulos/moduloscm.md](../expansão/modulos/moduloscm.md). **Frontend React ✅ 22/07/2026** (S.1–S.4 sobre a fundação Malha) |
 | moduloaps · modulodms · modulopdca · modulosil · modulomaps                  | próprio           | 📋 Placeholder (alvos do porte v01)                                                                                        |
 
 > Rotas de apps simples registradas direto em `config/urls.py` (padrão correto, sem `urls.py` local).
@@ -122,6 +122,36 @@ Login local do backend removido; entitlement genérico `RequireModule("codigo")`
 
 Arquitetura, design system e convenções em [frontend.md](frontend.md); fases de construção
 (A/B/C/D/E/F) definidas lá na §10 equivalem às linhas abaixo.
+
+> **Identidade visual Malha v1** ✅ 20/07/2026 — definida, **aplicada ao shell no protótipo**
+> (sidebar/corpo, uma tela só — telas de produto ficam fora por decisão: **hub é um por edição**,
+> padrão na planta §9) e com passe de contraste (tokens §5.3); planta em
+> [identidade-visual.md](identidade-visual.md) + [protótipo](identidade-visual-prototipo.html).
+> **Migração React em partes (decisão 21/07): fundação do shell primeiro, protótipo como alvo, marca
+> completa, claro+escuro desde já** — módulos v01 migram um a um. **Parte 1 ✅ 21/07/2026:** tokens
+> Malha (dois temas + `data-theme`) em [index.css](../frontend/src/index.css), fontes Archivo/Inter/
+> JetBrains, `ThemeProvider`/`useTheme`/`ThemeToggle` (default `prefers-color-scheme` + toggle, anti-flash
+> no index.html) e aliases de compatibilidade v01 theme-aware (app inteiro acompanha o tema sem reescrita);
+> `tsc` limpo. **Parte 2 ✅ 21/07/2026:** sidebar da marca — marco [Quarteirão](../frontend/src/components/brand/Quarteirao.tsx)
+> + lockup + régua do ciclo, seções endereçadas, item ativo = quarteirão aceso (ponto âmbar), recorte do
+> [Bairro](../frontend/src/components/brand/BairroRecorte.tsx) no rodapé (dia/noite via `--city-*`), acompanha o tema;
+> [AppSidebar](../frontend/src/components/layout/AppSidebar.tsx) reescrito (colapso preservado; Suprimentos/Esfera de
+> Rede como itens-farol travados). `tsc` limpo, imagem `react` rebuildada. **Parte 3 ✅ 21/07/2026:** topbar glass
+> ([AppTopbar](../frontend/src/components/layout/AppTopbar.tsx)) — breadcrumb por rota, [chip de estágio](../frontend/src/components/brand/EdicaoChip.tsx)
+> "Edição Construtora · Construir" (§9), [ThemeToggle](../frontend/src/components/ThemeToggle.tsx) (o gesto de tema é
+> movimento de marca §7), sino de notificações e menu do usuário nos tokens Malha. **⌘K dispensado por ora**: command
+> palette exige busca cross-entidade que não existe (ver **F2** em pendencias) — volta quando houver busca real. `tsc`
+> limpo, imagem `react` rebuildada. **Parte 4 ✅ 21/07/2026 — fundação do shell fechada:** design system Malha
+> em [components/malha/](../frontend/src/components/malha/) — `Card` (superfície `--surface`), `Pill` (estado nomeado,
+> 6 kinds semânticos + ponto pulsante), `Num` (leitura de instrumento mono tabular) e `KpiCard` (valor mono + delta nos
+> `--*-ink` + variante `accent`). Biblioteca para o SCM e os próximos módulos; legados migram um a um. `tsc` limpo,
+> imagem `react` rebuildada. **Shell Malha v1 pronto**. **Frontend do SCM ✅ 22/07/2026** — 1º módulo nascido sobre a fundação
+> ([modules/scm/](../frontend/src/modules/scm/)): S.1 catálogo (Produtos/Ofertas+faixas/Centros de
+> custo), S.2 demanda→cotação (mapa comparativo de propostas + adjudicar), S.3 pedido (duas vias:
+> comprar direto/gerar de cotação)→recebimento+avaliação, S.4 hub de KPIs. Kit de UI Malha próprio do
+> módulo (DataTable/Drawer/Modal/inputs/Pager), **selects com busca server-side** (`AsyncEntitySelect`
+> + paginação nos viewsets — fecha o F2 dentro do SCM) e **chips de seam read-only**
+> (rede/ERP/NF-e/estoque) que aparecem só quando preenchidos. `tsc` dos arquivos SCM limpo.
 
 | Fase         | Módulo / componente                                       | Status                                                                         |
 | ------------ | ---------------------------------------------------------- | ------------------------------------------------------------------------------ |
@@ -138,7 +168,7 @@ Arquitetura, design system e convenções em [frontend.md](frontend.md); fases d
 | D.2          | RH                                                         | ✅ 06/06/2026                                                                  |
 | D.3          | CRM                                                        | ✅ 05/07/2026 (dashboard + leads + accounts + contacts + opportunities)                                           |
 | E.1–E.2     | Drone wrapper (iframe+SSO) · Calendário                  | 🚧 Calendário Fatia A (UI) + **Fatia B (recorrência RRULE) ✅ 13/07/2026** + **Fatia F (feriados federais/estaduais/municipais por localidade) ✅ 13/07/2026** (fed+est via python-holidays, mun via dataset MIT + comando `sincronizar_feriados`; seletor obra→estado→município; cor por escopo; carimbo de atualização p/ superuser; suíte 25/25) — **rebuild do sgi-react aplicado 13/07; Fatia B validada E2E 10/10 via gateway (expansão de série, override/exclusão "somente esta", exclusão total); polimento UX: cursor de ponteiro nos eventos, reticências em título longo, localidade persistida (localStorage), clique em evento não-editável (feriado/diário/CRM) abre diálogo de leitura com o nome inteiro** + **Fatia C (lembretes por evento + centro de notificações in-app) ✅ 14/07/2026** (`EventReminder` + `nucleo.Notificacao` tenant-scoped/RLS; task Celery `despachar_lembretes` a 60s → notificação in-app + e-mail opcional; sino no `AppTopbar` com badge/polling; chips de lembrete no diálogo; **validado 14/07: suíte 27/27 sobre Postgres, typecheck limpo na fatia, E2E do sino vivo pelo gateway** — beat@60s + worker despacham o lembrete → notificação in-app); D–E planejadas ([modulocalendar.md §6](modulos/modulocalendar.md)) |
-| D.4          | **SCM** (`scm`) — suprimentos                              | ❌ Pendente (backend ✅; **próximo a construir**) — sub-fases S.1–S.4 em [modulos/moduloscm.md](modulos/moduloscm.md#frontend-fase-atual--escopo-e-sub-fases) |
+| D.4          | **SCM** (`scm`) — suprimentos                              | ✅ 22/07/2026 (S.1–S.4: catálogo, demanda/cotação, pedido/recebimento, hub) — 1º módulo sobre a fundação Malha; sub-fases em [modulos/moduloscm.md](modulos/moduloscm.md#frontend-fase-atual--escopo-e-sub-fases) |
 | E.3          | SIL / PDCA / DMS / APS / Maps                              | ❌ Aguarda backend                                                             |
 | F.1          | Dashboard de KPIs (substitui o hub)                        | ❌ Pendente                                                                    |
 

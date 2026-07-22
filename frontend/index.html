@@ -8,7 +8,17 @@
     <title>SGI — Sistema de Gestão Integrada</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=Roboto:wght@400;500;700&display=swap" rel="stylesheet" />
+    <!-- Identidade Malha v1 (docs/identidade-visual.md §6): Archivo (letreiro) · Inter (produto) · JetBrains Mono (instrumento) -->
+    <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+    <!-- Aplica o tema antes do primeiro paint (evita flash claro→escuro) -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('sgi_theme');
+          if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+/* ==========================================================================
+   Identidade Malha v1 — fonte única: docs/identidade-visual.md
+   Tokens replicados de docs/identidade-visual-prototipo.html (alvo visual).
+   Tema claro é o default; `prefers-color-scheme: dark` é o sinal automático;
+   o toggle do usuário carimba `data-theme` no <html> e vence nos dois sentidos.
+   ========================================================================== */
+
 /* Esconde o "olho"/"x" nativos do Edge/IE em campos de senha — usamos um botão
    de exibir/ocultar próprio (consistente e que não some em re-render). */
 input::-ms-reveal,
@@ -7,39 +14,124 @@ input::-ms-clear {
   display: none;
 }
 
-@layer base {
+:root {
+  /* superfícies / texto / linhas */
+  --ground:#E6EAF1; --surface:#F5F7FA; --surface-2:#ECF0F6; --inset:#E2E7F0;
+  --ink:#0C1A30; --ink-2:#3C4B64; --ink-3:#5D6B80;
+  --line:#DEE4EC; --line-2:#EAEEF4;
+  /* marca / acento */
+  --brand:#0A2A5B; --brand-2:#123A75; --brand-ink:#FFFFFF;
+  --accent:#E79A22; --accent-strong:#A85F0D; --accent-soft:#FBEED5; --accent-ink:#6E4404;
+  /* semânticos de UI (nunca reutilizam cor de estágio como significado) */
+  --good:#1F9D74; --good-soft:#E2F3EC; --good-ink:#0C6448;
+  --info:#3B7DD8; --info-soft:#E5EDFA; --info-ink:#1E4E93;
+  --danger:#D8434B; --danger-soft:#FAE6E7; --danger-ink:#992A31;
+  --net:#0F8A93; --net-soft:#DFF0F1; --net-ink:#0A5A61;
+  /* cores de estágio seguras para texto (§5.3) */
+  --st-orig:#25714B; --st-const:#9A5E0B; --st-neg:#BE4038; --st-oper:#0F7280;
+  /* motivo gráfico "o Bairro" (dia) */
+  --city-block:#CBD5E4; --city-block2:#BDC9DB; --city-park:#AFD3BE; --city-tree:#8FBFA3;
+  --city-zorig:#93C3AA; --city-zconst:#EBBE7C; --city-zneg:#E8A29A; --city-zoper:#8CC2C9;
+  --city-window:0; --city-glow:0;
+  --city-shadowf:drop-shadow(5px 7px 0 rgba(44,66,101,.16));
+  /* elevação / raio / vidro */
+  --shadow-sm:0 1px 2px rgba(12,26,48,.06), 0 1px 3px rgba(12,26,48,.05);
+  --shadow-md:0 4px 12px rgba(12,26,48,.08), 0 2px 4px rgba(12,26,48,.05);
+  --shadow-lg:0 18px 44px rgba(12,26,48,.16), 0 4px 12px rgba(12,26,48,.08);
+  --glass:rgba(245,247,250,.8);
+  --r-sm:7px; --r-md:11px; --r-lg:16px; --r-xl:22px;
+  /* tipografia — Archivo (letreiro) · Inter (produto) · JetBrains Mono (instrumento) */
+  --display:Archivo,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --sans:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
+}
+
+@media (prefers-color-scheme: dark) {
   :root {
-    /* Marca */
-    --color-brand:        #0A2A5B;
-    --color-brand-dark:   #082247;
-    --color-brand-app:    #0f1f3d;
-    --color-brand-surface:#1a2f52;
-
-    /* Superfícies */
-    --color-bg:           #FFFFFF;
-    --color-bg-alt:       #F0F2F5;
-
-    /* Texto */
-    --color-text:         #495057;
-    --color-text-light:   #FFFFFF;
-    --color-text-muted:   #6c757d;
-
-    /* Feedback */
-    --color-success:      #1AAB7B;
-    --color-danger:       #ef4444;
-    --color-accent:       #f59e0b;
-
-    /* Tipografia */
-    --font-heading: 'Montserrat', sans-serif;
-    --font-body:    'Roboto', sans-serif;
-
-    /* Misc */
-    --border-radius: 8px;
-    --shadow-sm: 0 2px 8px rgba(0,0,0,0.06);
-    --shadow-md: 0 4px 16px rgba(0,0,0,0.10);
-    --shadow-lg: 0 10px 30px rgba(0,0,0,0.12);
+    --ground:#0A1626; --surface:#13233C; --surface-2:#1B2F4E; --inset:#0E1C30;
+    --ink:#EDF2F9; --ink-2:#B7C3D6; --ink-3:#8797AE;
+    --line:#2C4265; --line-2:#213551;
+    --brand:#2E5EAE; --brand-2:#3A6DC0; --brand-ink:#FFFFFF;
+    --accent:#F2AC46; --accent-strong:#F2AC46; --accent-soft:#33280F; --accent-ink:#F7C879;
+    --good:#37C293; --good-soft:#102C24; --good-ink:#5FD9AE;
+    --info:#5C97E6; --info-soft:#122840; --info-ink:#8FBAF0;
+    --danger:#EF6169; --danger-soft:#331819; --danger-ink:#F49AA0;
+    --net:#2BB6BF; --net-soft:#0A2B2F; --net-ink:#63D2D9;
+    --st-orig:#6BCB9C; --st-const:#F2AC46; --st-neg:#F0918B; --st-oper:#54C6D1;
+    --city-block:#182A45; --city-block2:#1D3150; --city-park:#14302A; --city-tree:#1F4737;
+    --city-zorig:#3E9C6E; --city-zconst:#E79A22; --city-zneg:#E4655F; --city-zoper:#1D9AA6;
+    --city-window:.92; --city-glow:.42; --city-shadowf:none;
+    --shadow-sm:0 1px 2px rgba(0,0,0,.4);
+    --shadow-md:0 6px 18px rgba(0,0,0,.45);
+    --shadow-lg:0 22px 50px rgba(0,0,0,.55);
+    --glass:rgba(19,35,60,.78);
   }
+}
 
+:root[data-theme="light"] {
+  --ground:#E6EAF1; --surface:#F5F7FA; --surface-2:#ECF0F6; --inset:#E2E7F0;
+  --ink:#0C1A30; --ink-2:#3C4B64; --ink-3:#5D6B80;
+  --line:#DEE4EC; --line-2:#EAEEF4;
+  --brand:#0A2A5B; --brand-2:#123A75; --brand-ink:#FFFFFF;
+  --accent:#E79A22; --accent-strong:#A85F0D; --accent-soft:#FBEED5; --accent-ink:#6E4404;
+  --good:#1F9D74; --good-soft:#E2F3EC; --good-ink:#0C6448;
+  --info:#3B7DD8; --info-soft:#E5EDFA; --info-ink:#1E4E93;
+  --danger:#D8434B; --danger-soft:#FAE6E7; --danger-ink:#992A31;
+  --net:#0F8A93; --net-soft:#DFF0F1; --net-ink:#0A5A61;
+  --st-orig:#25714B; --st-const:#9A5E0B; --st-neg:#BE4038; --st-oper:#0F7280;
+  --city-block:#CBD5E4; --city-block2:#BDC9DB; --city-park:#AFD3BE; --city-tree:#8FBFA3;
+  --city-zorig:#93C3AA; --city-zconst:#EBBE7C; --city-zneg:#E8A29A; --city-zoper:#8CC2C9;
+  --city-window:0; --city-glow:0;
+  --city-shadowf:drop-shadow(5px 7px 0 rgba(44,66,101,.16));
+  --glass:rgba(245,247,250,.8);
+}
+
+:root[data-theme="dark"] {
+  --ground:#0A1626; --surface:#13233C; --surface-2:#1B2F4E; --inset:#0E1C30;
+  --ink:#EDF2F9; --ink-2:#B7C3D6; --ink-3:#8797AE;
+  --line:#2C4265; --line-2:#213551;
+  --brand:#2E5EAE; --brand-2:#3A6DC0; --brand-ink:#FFFFFF;
+  --accent:#F2AC46; --accent-strong:#F2AC46; --accent-soft:#33280F; --accent-ink:#F7C879;
+  --good:#37C293; --good-soft:#102C24; --good-ink:#5FD9AE;
+  --info:#5C97E6; --info-soft:#122840; --info-ink:#8FBAF0;
+  --danger:#EF6169; --danger-soft:#331819; --danger-ink:#F49AA0;
+  --net:#2BB6BF; --net-soft:#0A2B2F; --net-ink:#63D2D9;
+  --st-orig:#6BCB9C; --st-const:#F2AC46; --st-neg:#F0918B; --st-oper:#54C6D1;
+  --city-block:#182A45; --city-block2:#1D3150; --city-park:#14302A; --city-tree:#1F4737;
+  --city-zorig:#3E9C6E; --city-zconst:#E79A22; --city-zneg:#E4655F; --city-zoper:#1D9AA6;
+  --city-window:.92; --city-glow:.42; --city-shadowf:none;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.4);
+  --shadow-md:0 6px 18px rgba(0,0,0,.45);
+  --shadow-lg:0 22px 50px rgba(0,0,0,.55);
+  --glass:rgba(19,35,60,.78);
+}
+
+/* --------------------------------------------------------------------------
+   Aliases de compatibilidade v01 → Malha.
+   Os módulos herdados (ERP/RH/clientes…) usam estes nomes; mapeá-los para os
+   tokens Malha faz o app inteiro acompanhar o tema SEM reescrita — cada módulo
+   migra para os tokens nativos na sua vez (ver memory: migracao-malha-frontend).
+   -------------------------------------------------------------------------- */
+:root {
+  --color-brand:         var(--brand);
+  --color-brand-dark:    var(--brand);
+  --color-brand-app:     #0f1f3d;   /* sidebar navy fixo — substituído na Parte 2 */
+  --color-brand-surface: #1a2f52;   /* idem */
+  --color-bg:            var(--surface);
+  --color-bg-alt:        var(--ground);
+  --color-text:         var(--ink-2);
+  --color-text-light:    #FFFFFF;
+  --color-text-muted:    var(--ink-3);
+  --color-success:       var(--good);
+  --color-danger:        var(--danger);
+  --color-accent:        var(--accent);
+  --font-heading:        var(--display);
+  --font-body:           var(--sans);
+  --border-radius:       var(--r-md);
+  --shadow-sm:           0 1px 2px rgba(12,26,48,.06), 0 1px 3px rgba(12,26,48,.05);
+}
+
+@layer base {
   * {
     box-sizing: border-box;
     margin: 0;
@@ -51,18 +143,20 @@ input::-ms-clear {
   }
 
   body {
-    font-family: var(--font-body);
-    color: var(--color-text);
-    background-color: var(--color-bg);
+    font-family: var(--sans);
+    color: var(--ink);
+    background-color: var(--ground);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    line-height: 1.6;
+    text-rendering: optimizeLegibility;
+    line-height: 1.5;
   }
 
   h1, h2, h3, h4, h5, h6 {
-    font-family: var(--font-heading);
-    color: var(--color-brand);
+    font-family: var(--display);
+    color: var(--ink);
     line-height: 1.2;
+    letter-spacing: -0.02em;
   }
 
   a {
@@ -74,4 +168,28 @@ input::-ms-clear {
     max-width: 100%;
     display: block;
   }
+
+  ::selection {
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
 }
+
+/* Leitura de instrumento (§6): todo dado em mono tabular — "colunas como réguas" */
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.num  { font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+
+/* Ponto de estado pulsante (pílulas "em andamento" — §8 estado nomeado e medido) */
+@keyframes malha-pulse { 0% { transform: scale(.6); opacity: .5 } 100% { transform: scale(2.2); opacity: 0 } }
+.malha-dot { width: 6px; height: 6px; border-radius: 999px; background: currentColor; position: relative; flex: none; }
+.malha-dot::after {
+  content: ""; position: absolute; inset: -3px; border-radius: 999px;
+  background: currentColor; opacity: .35; animation: malha-pulse 2s ease-out infinite;
+}
+@media (prefers-reduced-motion: reduce) { .malha-dot::after { animation: none } }
