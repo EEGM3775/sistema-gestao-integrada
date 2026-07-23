@@ -129,11 +129,16 @@ valor monetário.
 
 ## 6. Botões inativos — como funciona e como ativar um módulo
 
-Módulos ainda não implementados aparecem como **itens inativos** — visíveis mas não clicáveis.
-Intencional: mostra o que existe na plataforma sem enganar sobre o que está disponível.
+Itens sem acesso aparecem **inativos** — visíveis mas não clicáveis. Intencional: mostra o alcance
+da edição sem enganar sobre o que está disponível.
 
-- **Sidebar (`AppSidebar.tsx`):** item com `implemented: false` renderiza como `<span>` com cadeado
-  `<Lock>` e opacidade 60%; com `implemented: true`, vira `<NavLink>` navegável.
+- **Sidebar (`AppSidebar.tsx`) — farol da edição:** a sidebar mostra **sempre todos os itens da
+  edição atual** (nunca esconde por falta de entitlement). Um item é navegável (`<NavLink>`) só quando
+  `interativo = implemented && (sem module || hasModule(module)) && (não adminOnly || isTenantAdmin)`;
+  caso contrário vira `<span>` travado (`<Lock>`, opacidade ~72%) com o motivo no `title`
+  (`Módulo não contratado` / `Somente administradores` / `Em breve`/`Em construção`). **O farol é por
+  edição/tipo:** a Construtora não lista módulos exclusivos de outra vertical (Loja, Imobiliária) e
+  vice-versa — cada edição tem o seu conjunto de itens ([frontend.md §3.2](frontend.md)).
 - **Hub (`AppHomePage.tsx`):** `implemented: false` → botão "Acessar" `disabled`; módulo pago não
   contratado (`!hasModule(code)`) → "Contratar módulo", independente de `implemented`.
 

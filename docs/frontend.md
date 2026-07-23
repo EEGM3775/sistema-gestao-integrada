@@ -188,12 +188,19 @@ texto `--ink-*`, borda `--line`). De cima para baixo (identidade §9):
 - **Lockup:** marco [Quarteirão](../frontend/src/components/brand/Quarteirao.tsx) (praça em `--ink`) +
   "SGI Plataforma / Do terreno à cidade" + **régua do ciclo** (filete com as 4 cores dos estágios).
 - **Navegação por seções endereçadas** (Operação / Gestão / Administração / Ecossistema); item ativo =
-  **quarteirão aceso** (ponto âmbar + fundo `--accent-soft`). Itens travados (não construídos ou de
-  fase futura, ex.: Suprimentos, Esfera de Rede `H2`) aparecem com cadeado/badge — **farol de expansão**.
+  **quarteirão aceso** (ponto âmbar + fundo `--accent-soft`).
+- **Farol da edição — mostra SEMPRE todos os itens, nunca esconde.** O que o usuário não pode acessar
+  aparece **travado** (cadeado, sem interação), com o motivo no `title`: `Módulo não contratado`
+  (item pago sem `hasModule`), `Somente administradores` (`adminOnly` sem `is_tenant_admin`) ou
+  `Em breve`/`Em construção` (`implemented: false`). É `interativo = implemented && (sem module ||
+  hasModule) && (não adminOnly || isTenantAdmin)`; falso → `<span>` travado, verdadeiro → `NavLink`.
+  **O farol é por edição/tipo, não pela plataforma inteira:** cada edição (Construtora, Imobiliária,
+  Loja, …) define **o seu próprio conjunto de itens** — a Construtora não lista os módulos exclusivos
+  da Loja ou da Imobiliária, e vice-versa (§4/§9 da identidade: *cada edição tem o seu hub*). O farol
+  revela o alcance **daquela** vertical, sem poluir com módulos de outra.
 - **Rodapé:** recorte do Bairro ([BairroRecorte](../frontend/src/components/brand/BairroRecorte.tsx)) com o
   quarteirão-empresa (dia masterplan / noite janelas acesas, via `--city-*`) + avatar e usuário.
 - **Colapsável** (`localStorage` `sgi_sidebar_collapsed`): expandida 236px / recolhida 60px (só ícones).
-- Itens de módulos pagos visíveis só via `hasModule(code)`; itens `adminOnly` só para `is_tenant_admin`.
 
 ### 3.3 Topbar — glass (Malha)
 
