@@ -84,14 +84,16 @@ export const AppSidebar: React.FC = () => {
     localStorage.setItem('sgi_sidebar_collapsed', String(collapsed))
   }, [collapsed])
 
-  const sections = NAV_SECTIONS
-    .map((sec) => ({
-      ...sec,
-      items: sec.items.filter(
-        (it) => (!it.module || hasModule(it.module)) && (!it.adminOnly || isTenantAdmin),
-      ),
-    }))
-    .filter((sec) => sec.items.length > 0)
+  // A sidebar mostra SEMPRE todos os itens (farol da plataforma — docs/identidade
+  // §3.2). O que o usuário não pode acessar aparece sem interação (cadeado): item
+  // não construído, módulo não contratado (`module` sem entitlement) ou item de
+  // admin para não-admin. `interativo` decide NavLink × <span> travado.
+  const acesso = (it: NavItem): { interativo: boolean; motivo?: string } => {
+    if (!it.implemented) return { interativo: false, motivo: it.badge?.kind === 'soon' ? 'Em breve' : 'Em construção' }
+    if (it.module && !hasModule(it.module)) return { interativo: false, motivo: 'Módulo não contratado' }
+    if (it.adminOnly && !isTenantAdmin) return { interativo: false, motivo: 'Somente administradores' }
+    return { interativo: true }
+  }
 
   const nome = user?.username ?? 'usuário'
 
@@ -158,15 +160,16 @@ export const AppSidebar: React.FC = () => {
 
       {/* ── Navegação ── */}
       <nav className="flex-1 overflow-y-auto relative" style={{ padding: '6px 12px', zIndex: 1 }}>
-        {sections.map((sec) => (
+        {NAV_SECTIONS.map((sec) => (
           <div key={sec.label}>
             {!collapsed
               ? <div style={{ fontSize: 10, letterSpacing: '0.13em', textTransform: 'uppercase', color: 'var(--ink-3)', fontWeight: 700, padding: '14px 10px 6px' }}>{sec.label}</div>
               : <div style={{ height: 1, background: 'var(--line-2)', margin: '10px 8px' }} />}
             <div className="flex flex-col gap-0.5">
-              {sec.items.map((item) => (
-                <SidebarItem key={item.label} item={item} collapsed={collapsed} />
-              ))}
+              {sec.items.map((item) => {
+                const { interativo, motivo } = acesso(item)
+                return <SidebarItem key={item.label} item={item} collapsed={collapsed} interativo={interativo} motivo={motivo} />
+              })}
             </div>
           </div>
         ))}
@@ -211,7 +214,7 @@ const Badge: React.FC<{ badge: NavItem['badge'] }> = ({ badge }) => {
   )
 }
 
-const SidebarItem: React.FC<{ item: NavItem; collapsed: boolean }> = ({ item, collapsed }) => {
+const SidebarItem: React.FC<{ item: NavItem; collapsed: boolean; interativo: boolean; motivo?: string }> = ({ item, collapsed, interativo, motivo }) => {
   const base: React.CSSProperties = {
     display: 'flex',
     alignItems: 'center',
@@ -237,12 +240,13 @@ const SidebarItem: React.FC<{ item: NavItem; collapsed: boolean }> = ({ item, co
 
   const label = !collapsed && <span className="truncate" style={{ flex: 1 }}>{item.label}</span>
 
-  // Item não construído: cadeado + opacidade, sem navegar.
-  if (!item.implemented) {
+  // Item sem acesso (não construído, módulo não contratado ou só-admin):
+  // cadeado + opacidade, visível mas sem navegar.
+  if (!interativo) {
     return (
       <span
         style={{ ...base, color: 'var(--ink-3)', opacity: 0.72, cursor: 'default' }}
-        title={collapsed ? item.label : (item.badge?.kind === 'soon' ? 'Em breve' : 'Em construção')}
+        title={collapsed ? item.label : (motivo ?? item.label)}
       >
         {icon}
         {label}
