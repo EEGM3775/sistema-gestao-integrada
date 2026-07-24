@@ -13,6 +13,7 @@ from fornecedores.models import Fornecedor
 from nucleo.models import Tenant, Usuario
 
 from .models import (
+    AvaliacaoFornecedor,
     CentroCusto,
     Cotacao,
     Demanda,
@@ -365,3 +366,78 @@ class AvaliacaoTests(ScmTestBase):
             "nota_qualidade": 6, "nota_pontualidade": 4, "nota_atendimento": 5,
         })
         self.assertEqual(resp.status_code, 400)
+
+
+class ReputacaoNaPropostaTests(ScmTestBase):
+    """As estrelas do mapa comparativo: média das três notas + nº de avaliações,
+    escopadas ao tenant; `None`/0 quando o fornecedor não tem avaliação."""
+
+    def setUp(self):
+        self.demanda = Demanda.objects.create(tenant=self.tenant, tipo=Demanda.Tipo.MATERIAL)
+        self.cotacao = Cotacao.objects.create(tenant=self.tenant, demanda=self.demanda)
+        self.f_com = Fornecedor.objects.create(tenant=self.tenant, razao_social="Com Nota", email="c@ex.com")
+        self.f_sem = Fornecedor.objects.create(tenant=self.tenant, razao_social="Sem Nota", email="s@ex.com")
+        Proposta.objects.create(tenant=self.tenant, cotacao=self.cotacao, fornecedor=self.f_com, valor_total=100)
+        Proposta.objects.create(tenant=self.tenant, cotacao=self.cotacao, fornecedor=self.f_sem, valor_total=90)
+        # Duas avaliações do f_com: médias por linha (4,5,3)→4 e (5,5,5)→5 ⇒ média geral 4.5
+        AvaliacaoFornecedor.objects.create(tenant=self.tenant, fornecedor=self.f_com, nota_qualidade=4, nota_pontualidade=5, nota_atendimento=3)
+        AvaliacaoFornecedor.objects.create(tenant=self.tenant, fornecedor=self.f_com, nota_qualidade=5, nota_pontualidade=5, nota_atendimento=5)
+
+    def test_lista_propostas_traz_media_e_contagem(self):
+        self.autenticar()
+        resp = self.client.get(f"/api/scm/propostas/?cotacao={self.cotacao.cotacao_id}")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        data = resp.data["results"] if isinstance(resp.data, dict) else resp.data
+        por_forn = {p["fornecedor"]: p for p in data}
+        com = por_forn[self.f_com.fornecedor_id]
+        self.assertEqual(float(com["fornecedor_avaliacao_media"]), 4.5)
+        self.assertEqual(com["fornecedor_avaliacao_count"], 2)
+        sem = por_forn[self.f_sem.fornecedor_id]
+        self.assertIsNone(sem["fornecedor_avaliacao_media"])
+        self.assertEqual(sem["fornecedor_avaliacao_count"], 0)
+
+    def test_avaliacao_de_outro_tenant_nao_conta(self):
+        # Avaliação do mesmo fornecedor-id porém em outro tenant não deve vazar.
+        AvaliacaoFornecedor.objects.create(tenant=self.tenant_b, fornecedor=self.f_com, nota_qualidade=1, nota_pontualidade=1, nota_atendimento=1)
+        self.autenticar()
+        resp = self.client.get(f"/api/scm/propostas/?cotacao={self.cotacao.cotacao_id}")
+        data = resp.data["results"] if isinstance(resp.data, dict) else resp.data
+        com = next(p for p in data if p["fornecedor"] == self.f_com.fornecedor_id)
+        self.assertEqual(com["fornecedor_avaliacao_count"], 2)  # segue 2, sem contar o tenant B
+
+
+class DashboardTests(ScmTestBase):
+    def test_dashboard_traz_contagens_e_respeita_tenant(self):
+        Demanda.objects.create(tenant=self.tenant, tipo=Demanda.Tipo.MATERIAL, status=Demanda.Status.ABERTA)
+        Demanda.objects.create(tenant=self.tenant_b, tipo=Demanda.Tipo.MATERIAL, status=Demanda.Status.ABERTA)
+        Produto.objects.create(tenant=self.tenant, codigo_interno="P1", descricao="X", unidade="un", ativo=True)
+        self.autenticar()
+        resp = self.client.get("/api/scm/dashboard/")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.data["demandasAbertas"], 1)  # só o tenant A
+        self.assertEqual(resp.data["produtosAtivos"], 1)
+        for chave in ("valorCompradoMes", "valorCompradoMesAnterior", "mesReferencia", "fornecedoresAvaliados"):
+            self.assertIn(chave, resp.data)
+
+    def test_dashboard_sem_modulo_recebe_403(self):
+        self.autenticar(modules=[])
+        resp = self.client.get("/api/scm/dashboard/")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_valor_comprado_por_mes_escolhido(self):
+        from datetime import date
+
+        fornecedor = Fornecedor.objects.create(tenant=self.tenant, razao_social="Alfa", email="a@ex.com")
+        PedidoCompra.objects.create(
+            tenant=self.tenant, origem=PedidoCompra.Origem.MANUAL, fornecedor=fornecedor,
+            status=PedidoCompra.Status.APROVADO, valor_total=Decimal("500.00"), data_pedido=date(2026, 3, 10),
+        )
+        self.autenticar()
+        resp = self.client.get("/api/scm/dashboard/?mes=2026-03")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.data["mesReferencia"], "2026-03")
+        self.assertEqual(Decimal(resp.data["valorCompradoMes"]), Decimal("500.00"))
+        # Fora do mês escolhido não soma:
+        resp2 = self.client.get("/api/scm/dashboard/?mes=2026-04")
+        self.assertEqual(Decimal(resp2.data["valorCompradoMes"]), Decimal("0"))
+        self.assertEqual(Decimal(resp2.data["valorCompradoMesAnterior"]), Decimal("500.00"))

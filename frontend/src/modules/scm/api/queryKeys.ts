@@ -1,30 +1,29 @@
-// Fábrica de chaves do TanStack Query para o SCM. Uma raiz por recurso; a raiz
-// serve de alvo de invalidação após create/update/delete e verbos de domínio.
-
+// Chaves de cache do React Query para o SCM. Raiz única `['scm']` — os verbos de
+// domínio invalidam a raiz inteira (afetam vários recursos).
 type Params = Record<string, unknown>
 
-function resourceKeys(name: string) {
+function root(name: string) {
   return {
     all: ['scm', name] as const,
-    list: (params: Params = {}) => ['scm', name, 'list', params] as const,
+    list: (p: Params = {}) => ['scm', name, 'list', p] as const,
     detail: (id: number) => ['scm', name, 'detail', id] as const,
   }
 }
 
 export const scmKeys = {
   all: ['scm'] as const,
-  produtos: resourceKeys('produtos'),
-  centrosCusto: resourceKeys('centros-custo'),
-  ofertas: resourceKeys('ofertas'),
-  faixas: resourceKeys('faixas'),
-  demandas: resourceKeys('demandas'),
-  itensDemanda: resourceKeys('itens-demanda'),
-  cotacoes: resourceKeys('cotacoes'),
-  propostas: resourceKeys('propostas'),
-  itensProposta: resourceKeys('itens-proposta'),
-  pedidos: resourceKeys('pedidos'),
-  itensPedido: resourceKeys('itens-pedido'),
-  recebimentos: resourceKeys('recebimentos'),
-  avaliacoes: resourceKeys('avaliacoes'),
-  dashboard: ['scm', 'dashboard'] as const,
+  dashboard: (mes?: string) => ['scm', 'dashboard', mes ?? 'atual'] as const,
+  produtos: root('produtos'),
+  centrosCusto: root('centros-custo'),
+  ofertas: root('ofertas'),
+  faixas: root('faixas'),
+  demandas: root('demandas'),
+  itensDemanda: root('itens-demanda'),
+  cotacoes: root('cotacoes'),
+  propostas: root('propostas'),
+  itensProposta: root('itens-proposta'),
+  pedidos: root('pedidos'),
+  itensPedido: root('itens-pedido'),
+  recebimentos: root('recebimentos'),
+  avaliacoes: root('avaliacoes'),
 }

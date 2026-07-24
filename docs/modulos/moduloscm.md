@@ -112,49 +112,59 @@ mapa comparativo itens × propostas numa chamada).
 ## Frontend (fase atual) — escopo e sub-fases
 
 > **Este frontend não é o da expansão.** Cobre o SCM **interno** de um tenant (a construtora compra
-> para a obra; financeiro cota e compra). A rede/marketplace, o lado vendedor e a compra na vitrine
-> pública ficam para a Esfera de Rede — a UI só **não esconde** os campos-seam quando fizer sentido.
-> Convenções gerais no [frontend.md](../frontend.md); este roteiro estende, não substitui.
+> para a obra; financeiro cota e compra). É **enxuto e direto**: ver o orçamento comparado e comprar.
+> Rede/marketplace, lado vendedor e vitrine pública ficam para a Esfera de Rede: **sem feature nem
+> dado de rede dentro do módulo** — nada de "publicar na rede", visibilidade ou chips de rede em
+> registros. Existe só uma aba **"Esfera de Rede" bloqueada (cadeado)** — teaser de visão, que
+> destrava quando construída. Os campos-seam de rede seguem no backend, inertes. Os **seams internos**
+> (NF-e no recebimento; ContaPagar/estoque quando integrados) são integrações reais. Convenções gerais
+> no [frontend.md](../frontend.md).
+> **O frontend do SCM é a referência da régua de módulo** ([frontend.md §1.6](../frontend.md)): a
+> profundidade, a facilidade de uso e o *arquitetado-para-graduar* que todo módulo de frontend herda
+> — cockpit com fila de decisão, loop ponta a ponta com verbos, dados honestos e seams de rede
+> prontos no modelo (sem UI de rede aqui). Página única com abas em
+> [frontend/src/modules/scm/pages/SuprimentosPage.tsx](../../frontend/src/modules/scm/pages/SuprimentosPage.tsx).
 
 Sub-fases sugeridas (uma fatia de UI por vez, `hasModule('scm')` + gate por permissão):
 
 | Sub-fase | Telas | Consome |
 |---|---|---|
-| **S.1 Catálogo** | `ProdutosPage` (lista+form), `OfertasPage`/aba de ofertas por produto (com `FaixaPrecoOferta`), `CentrosCustoPage` | `produtos/`, `ofertas/`, `faixas-preco/`, `centros-custo/` |
-| **S.2 Demanda & Cotação** | `DemandasPage` (lista+form+itens), botão **Publicar**; `CotacaoDetail` (propostas lado a lado + **Adjudicar**) | `demandas/`(+`publicar`), `itens-demanda/`, `cotacoes/`(+`adjudicar`), `propostas/`, `itens-proposta/` |
+| **S.1 Catálogo** | `ProdutosPage` (lista+form); `OfertasPage` em **cards** (preço direto + barra de estoque + **Comprar direto**) ou tabela, com editor de `FaixaPrecoOferta`; `CentrosCustoPage` | `produtos/`, `ofertas/`, `faixas-preco/`, `centros-custo/` |
+| **S.2 Demanda & Cotação** | `DemandasPage` (lista+form+itens); `CotacaoDetail` = **mapa comparativo** (itens × propostas, **estrelas** do fornecedor, marcador **menor** por item, **delta** vs. menor total, moldura da coluna recomendada/vencedora, barra de **IA inerte**) + **Adjudicar** | `demandas/`, `itens-demanda/`, `cotacoes/`(+`adjudicar`), `propostas/`, `itens-proposta/` |
 | **S.3 Pedido & Recebimento** | `PedidosPage` com as **duas vias**: "Comprar direto" (de uma oferta com `compra_direta`) e "Gerar de cotação"; `PedidoDetail` (itens, status, **registrar recebimento**); `AvaliacaoForm` | `pedidos/`(+`comprar_direto`/`gerar_de_cotacao`), `itens-pedido/`, `recebimentos/`, `avaliacoes/` |
-| **S.4 Hub SCM** | `ScmDashboardPage` (KPIs: demandas abertas, cotações a adjudicar, pedidos por status; atalhos) | agregação das listas |
+| **S.4 Hub SCM** | `ScmDashboardPage`: **trilho de fluxo** (Demanda→Cotação→Pedido→Recebimento com contagens), KPI **Compras no mês** (valor real + delta vs. mês anterior, mês selecionável), cotações a adjudicar, fornecedores avaliados; atalhos | `dashboard/` (agregado) |
 
-UX-chave a acertar: **as duas vias de compra** (catálogo × cotação) num só `PedidoCompra`; o
-**mapa comparativo** de propostas na adjudicação; e deixar visível (sem editar) o que é *seam* de
-rede/estoque/ERP para não surpreender quando a expansão ligar.
+UX-chave: **as duas vias de compra** (catálogo × cotação) num só `PedidoCompra`; o **mapa
+comparativo** como coração da adjudicação (estrelas/menor/delta/moldura); a **barra de IA inerte**
+("em breve", sem dados fabricados) reservando o lugar do assistente; e mostrar só os *seams*
+**internos** (ERP/NF-e/estoque). A **reputação** (estrelas) vem de `AvaliacaoFornecedor` agregada no
+`PropostaSerializer` (`fornecedor_avaliacao_media`/`_count`); sem avaliação → "sem avaliação".
 
-### Rotas do frontend (React — `modules/scm/`)
+### Rotas e estrutura do frontend (React — `modules/scm/`)
 
-Primeiro módulo sobre a **fundação Malha** ([identidade-visual.md](../identidade-visual.md) §10). Kit de
-UI próprio do módulo em `modules/scm/components/` (`ui.tsx`: PageHeader/DataTable/Drawer/Modal/inputs/
-Pager; `AsyncEntitySelect` = select com busca server-side; `seams.tsx` = chips read-only). Sob
-`ModuleRoute module="scm"`:
+Primeiro módulo sobre a **fundação Malha** ([identidade-visual.md](../identidade-visual.md) §10).
+**Página única com abas**, self-contained (primitivos Malha embutidos: `Pill`/`Card`/`Kpi`/`Avatar`/
+modais), sob `ModuleRoute module="scm"`. As sub-fases S.1–S.4 viram **abas de uma só tela**; os
+drill-downs (cotação, pedido) e os verbos (adjudicar, comprar direto, gerar de cotação, receber,
+avaliar) abrem em detalhe/modal na própria aba.
 
-| Rota | Tela | Sub-fase |
+| Rota | Tela | Abas |
 |---|---|---|
-| `/app/scm` | `ScmDashboardPage` (hub de KPIs + atalhos) | S.4 |
-| `/app/scm/produtos` | `ProdutosPage` | S.1 |
-| `/app/scm/ofertas` | `OfertasPage` (+ editor de `FaixaPrecoOferta`) | S.1 |
-| `/app/scm/centros-custo` | `CentrosCustoPage` | S.1 |
-| `/app/scm/demandas` | `DemandasPage` | S.2 |
-| `/app/scm/demandas/:id` | `DemandaDetailPage` (itens + **Publicar** + abrir cotação) | S.2 |
-| `/app/scm/cotacoes/:id` | `CotacaoDetailPage` (mapa comparativo + **Adjudicar** + gerar pedido) | S.2/S.3 |
-| `/app/scm/pedidos` | `PedidosPage` (**Comprar direto**) | S.3 |
-| `/app/scm/pedidos/:id` | `PedidoDetailPage` (itens + recebimento + avaliação) | S.3 |
+| `/app/scm` | `SuprimentosPage` | **Cockpit** (S.4: trilho de fluxo + KPIs + fila de decisão + atividade), **Catálogo** (S.1: ofertas em cards + Comprar direto), **Cotação** (S.2: lista + mapa comparativo + Adjudicar + gerar pedido), **Pedidos** (S.3: duas vias + recebimento + avaliação), **Esfera de Rede** (bloqueada 🔒) |
 
-**Seams na UI (read-only):** chips que só aparecem quando o campo está preenchido — `Rede`
-(`visibilidade=rede`), `ContaPagar #n` (`conta_pagar_ref`), `NF-e` (`nota_fiscal_ref`), `Estoque`
-(`local_entrega`/`origem=estoque`), `Da rede` (`origem_tenant`) — para não poluir o uso pré-expansão.
-Gate por **permissão de usuário** (`hasPermission('scm.*')`), não só entitlement do tenant.
+**Aba Esfera de Rede — bloqueada (cadeado):** teaser de visão (RFQ na rede, índice de preço regional,
+reputação portátil, documento espelhado comprador↔vendedor). **Sem feature nem dado de rede** — os
+campos-seam seguem inertes no backend. Marca o lugar; destrava quando a Esfera de Rede for construída.
+
+**Seams na UI:** só os **internos** — a NF-e (`nota_fiscal_ref`) é capturada no recebimento;
+ContaPagar (`conta_pagar_ref`) e estoque (`local_entrega`) aparecem quando as integrações graduarem.
+Os *seams de rede* (`visibilidade`, `origem_tenant`, `ref_externa`) **não têm UI** de feature. Gate por
+**permissão de usuário** (`hasPermission('scm.*')`), não só entitlement do tenant.
 
 ## Status / pendências
 
-Backend **completo (fatias 1–3)** e testado (`moduloscm/tests.py`, 29/29 sobre Postgres). **Frontend
-S.1–S.4 implementado** (rotas acima) sobre a fundação Malha. Status vivo no
-[roadmap](../roadmap.md#estado-dos-módulos--backend-07062026).
+Backend **completo (fatias 1–3)** + agregação de reputação e endpoint `dashboard/`, testado
+(`moduloscm/tests.py`, 34/34 sobre Postgres). **Frontend S.1–S.4 reconstruído sobre o protótipo Malha**
+(página única com abas: mapa comparativo, catálogo em cards, hub com trilho de fluxo, IA inerte; aba
+Esfera de Rede bloqueada — cadeado, teaser de visão, sem feature de rede). Status vivo
+no [roadmap](../roadmap.md#estado-dos-módulos--backend-07062026).

@@ -93,6 +93,105 @@ carregadas em [index.html](../frontend/index.html); substituem Montserrat/Roboto
 
 ---
 
+## 1.6 A régua de módulo — grandioso e expansível (o SCM como referência)
+
+> **O mandato que abre todo módulo.** A construção do frontend começou com um pedido explícito:
+> *"faça um módulo grandioso, compatível com o escopo do projeto e expansível conforme a pasta
+> [expansão](expansão/README.md)"*. O **SCM** ([§5.17](#517-scm--suprimentos-hasmodule-scm--✅-construído-s1s4-1º-módulo-malha))
+> foi construído a essa régua. **Todo módulo de frontend — novo ou migrado — herda a mesma régua.**
+> Não os mesmos KPIs, cards ou nomes (isso é do domínio de cada um), mas a mesma **profundidade,
+> facilidade de uso e costura com a expansão**. E um **norte inegociável**: o próprio nome do projeto
+> — ***sistema de gestão integrada*** — exige que os módulos que conversam no backend **conversem
+> também na tela**; o fim do projeto é essa sensação de sistema único, não de N produtos ao lado.
+
+### Não é CRUD — é o trabalho do usuário resolvido
+
+Um módulo não é "listas + formulários". É um **workspace** que resolve o *job diário* de quem vive
+naquele módulo, do começo ao fim do fluxo, e já **aponta para onde ele gradua na rede**. A tabela é
+o piso, nunca o teto. Se a entrega é só um CRUD, ela não está pronta.
+
+### As qualidades transferíveis (a régua é o espírito, não a forma)
+
+1. **Cockpit de entrada** — o estado do módulo num relance, uma fila **"requer sua decisão"** (o que
+   exige ação *agora*) e um feed de **fatos reais** (não posts). *(SCM: flow rail do fluxo, KPIs
+   agregados, cotações a adjudicar, atividade de recebimentos/adjudicações/avaliações.)*
+2. **O loop do domínio ponta a ponta** — o fluxo central inteiro com os **verbos de decisão**, não só
+   o cadastro. *(SCM: demanda → cotação → pedido → recebimento → avaliação, com adjudicar / comprar
+   direto / registrar recebimento / avaliar.)*
+3. **Ferramenta de decisão onde há escolha** — comparar, priorizar, recomendar quando o domínio pede
+   julgamento. *(SCM: mapa comparativo de propostas, menor por item, recomendação.)*
+4. **Dados honestos** — agregados **reais** (computados no backend quando exigem *join*/soma);
+   placeholder rotulado **"em breve"** onde ainda não há fonte; **nunca número fabricado**. *(SCM:
+   economia/prazo médio vindos do `dashboard/`; assistente de IA inerte e rotulado.)*
+5. **Arquitetado para graduar** — o módulo privado é **enxuto e direto** (resolve o job do tenant),
+   mas **nasce com os *seams* de rede no modelo** (`visibilidade`/`ref_externa`/`origem_tenant` no
+   SCM) e o loop desenhado para que o marketplace/portal seja só a **publicação** dele depois
+   ([mapa §regra de ouro](expansão/03-mapa-de-modulos.md)). A vitrine/feed da rede é **da fase de
+   expansão**, não uma aba dentro do módulo. *(SCM interno: UI enxuta, sem chips de rede; seams
+   inertes no backend.)*
+6. **Integração visível — um sistema, não silos** — quando dois módulos conversam no backend (FK,
+   *seam*, evento), essa conversa **aparece para o usuário** no frontend, não fica só no banco:
+   **referências clicáveis que atravessam o módulo** (do pedido → à ContaPagar do ERP → à NF-e; do
+   centro de custo → à obra; do cliente → ao contrato → às cobranças), **contexto do outro módulo
+   embutido** onde ajuda, o **breadcrumb do domínio** (empreendimento › obra › etapa) e **agregados
+   que cruzam módulos** (ex.: DRE por obra puxa SCM + ERP + medições). É o que realiza o nome do
+   projeto — *sistema de gestão **integrada***: o usuário navega **um** sistema, e cada módulo é uma
+   porta para o resto, não um silo. *(SCM: o recebimento exibe a NF-e conciliada e o pedido mostra o
+   centro de custo → obra e a origem — demanda/oferta; o vínculo clicável com a ContaPagar do ERP é o
+   próximo passo natural dessa integração.)*
+7. **Facilidade de uso Malha** — tema claro/escuro, **um acento por tela**, dado em **mono tabular**,
+   **master-detail in-place** (sem trocar de rota para ver o detalhe), estados de **vazio/carregando**,
+   ações **gateadas por permissão**, navegação por abas/atalhos. Ver [identidade-visual.md](identidade-visual.md).
+
+### Como dar escopo a um módulo (as perguntas, não as telas)
+
+Antes de desenhar qualquer tela, responder — é a versão operacional das
+[seis perguntas de plataforma](expansão/README.md):
+
+- Qual é a **decisão diária** de quem vive neste módulo? → vira o *"requer sua decisão"* do cockpit.
+- Qual é o **loop** do domínio (o ciclo que se repete)? → vira o fluxo ponta a ponta com verbos.
+- Onde há **julgamento/escolha**? → vira a ferramenta de comparação/priorização/recomendação.
+- Que **fatos** o módulo produz? → viram o feed + os agregados do cockpit + (depois) o feed público da rede.
+- Com que **outros módulos** este conversa (FK/*seam*/evento)? → essas conversas viram **referências
+  clicáveis e contexto embutido** na tela (o pedido leva à conta a pagar; a obra puxa suprimentos,
+  medições e financeiro) — o usuário nunca "sai do sistema" para ver o lado que se integra.
+- Onde o módulo **gradua** para rede/portal ([04](expansão/04-rede-e-marketplaces.md) ·
+  [05](expansão/05-portais-e-apps.md) · [09](expansão/09-verticais-por-participante.md))? → define os
+  *seams* no modelo **desde já**; a vitrine/portal público é construído **depois**, na fase de
+  expansão (o módulo privado fica enxuto).
+
+### O job diário e a graduação de rede por módulo (direção, sem prescrever)
+
+Fonte: [mapa de módulos](expansão/03-mapa-de-modulos.md) + [verticais](expansão/09-verticais-por-participante.md).
+Não são telas a copiar — é **o que cada cockpit precisa resolver** e **onde ele gradua**:
+
+| Módulo | Job diário que o cockpit/loop deve resolver | Gradua para (expansão) |
+|---|---|---|
+| **SCM** ✅ | necessidade → cotar → comparar → comprar → receber → avaliar | Marketplace de cotações · Edição Loja |
+| **ERP/Financeiro** | o que vence/entra hoje, o que decidir (baixar, cobrar, emitir NF), saúde por obra (DRE) | Fintech: antecipação, conciliação, repasse ([07](expansão/07-monetizacao-da-expansao.md)) |
+| **CRM** | a próxima ação do funil, leads que esfriam, forecast de VGV | Espelho de vendas → distribuição à Edição Imobiliária |
+| **RH** | quem precisa de ação (ASO, contrato, ponto), folha do mês, PII protegida | Rede de profissionais · medições de empreiteiro |
+| **Obras / Diário / Drone** | o dia da obra num relance, pendências, avanço × previsto, ortofoto | Página pública da obra + feed de marcos ([10](expansão/10-rede-social-do-setor.md)) |
+| **Clientes** | a carteira e o que cada cliente precisa (2ª via, andamento) | **Portal do cliente** (H1) |
+| **SIL — estoque** (`modulosil`) | saldo por local, mínimos, o que repor | Estoque mínimo → **RFQ automática** no SCM (E6) |
+| **DMS** (`modulodms`) | o que vence/falta assinar, versões, documento por obra | Documento espelhado + assinatura por doc (receita medida) |
+| **APS / PDCA** (`moduloaps`/`modulopdca`) | cronograma vs. real, não-conformidades a tratar | IA de previsão de atraso / detecção em foto do diário |
+| **MAPS / Terrenos** (`modulomaps`) | terrenos por status, viabilidade, camadas GIS | Marketplace de terrenos · banco de terrenos |
+| **Assistência / Condomínio** (pós-obra) | chamados por SLA, técnico em campo / taxas e reservas | Portal do proprietário/morador · **novo mercado** (H3) |
+
+### Definition of done à régua SCM (checklist)
+
+Um frontend de módulo só está "pronto" quando: **(1)** tem cockpit com fila de decisão + fatos reais;
+**(2)** cobre o loop do domínio com os verbos, não só cadastro; **(3)** oferece a ferramenta de decisão
+onde o domínio tem escolha; **(4)** não exibe **nenhum** dado fabricado (agregado real ou "em breve"
+rotulado); **(5)** nasce com os *seams* de expansão no modelo e o loop pronto para graduar (a rede/portal é
+publicação **posterior**, não aba do módulo); **(6)** **torna visíveis as integrações** com outros
+módulos (FK/*seams*/eventos → referências clicáveis e contexto embutido; o usuário sente um sistema, não
+silos); **(7)** segue a Malha (tema, acento único, mono, master-detail, vazio/carregando, permissões);
+**(8)** typecheck limpo e um seed de demonstração que enche as telas.
+
+---
+
 ## 2. Biblioteca de Componentes — shadcn/ui
 
 ### Por que shadcn/ui

@@ -16,6 +16,7 @@ from .views import (
     ProdutoViewSet,
     PropostaViewSet,
     RecebimentoViewSet,
+    ScmDashboardView,
     ScmStatusView,
 )
 
@@ -37,5 +38,6 @@ router.register(r"avaliacoes", AvaliacaoFornecedorViewSet, basename="scm-avaliac
 
 urlpatterns = [
     path("status/", ScmStatusView.as_view(), name="scm-status"),
+    path("dashboard/", ScmDashboardView.as_view(), name="scm-dashboard"),
     path("", include(router.urls)),
 ]

@@ -486,3 +486,28 @@ class AvaliacaoFornecedor(TenantScopedModel):
 
     def __str__(self):
         return f"Avaliação de {self.fornecedor} ({self.data})"
+
+    @classmethod
+    def agg_por_fornecedor(cls, tenant_id, fornecedor_ids):
+        """Reputação agregada: `{fornecedor_id: (media, count)}` para os
+        fornecedores dados. A média é a das três notas (qualidade/pontualidade/
+        atendimento) sobre todas as avaliações do fornecedor no tenant. Uma
+        query (não N+1) — usada para as estrelas do mapa comparativo."""
+        ids = [f for f in set(fornecedor_ids) if f]
+        if not ids:
+            return {}
+        rows = (
+            cls.objects.filter(tenant_id=tenant_id, fornecedor_id__in=ids)
+            .values("fornecedor_id")
+            .annotate(
+                mq=models.Avg("nota_qualidade"),
+                mp=models.Avg("nota_pontualidade"),
+                ma=models.Avg("nota_atendimento"),
+                n=models.Count("avaliacao_id"),
+            )
+        )
+        out = {}
+        for r in rows:
+            media = (r["mq"] + r["mp"] + r["ma"]) / 3
+            out[r["fornecedor_id"]] = (round(media, 2), r["n"])
+        return out

@@ -92,6 +92,10 @@ class CotacaoSerializer(TenantScopedModelSerializer):
 class PropostaSerializer(TenantScopedModelSerializer):
     # Rótulo do fornecedor: interno usa a razão social; da rede usa o nome-cópia.
     fornecedor_label = serializers.SerializerMethodField()
+    # Reputação p/ as estrelas do mapa comparativo: média (1–5) e nº de avaliações.
+    # `None`/0 quando o fornecedor ainda não tem avaliação ("sem avaliação").
+    fornecedor_avaliacao_media = serializers.SerializerMethodField()
+    fornecedor_avaliacao_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Proposta
@@ -103,6 +107,23 @@ class PropostaSerializer(TenantScopedModelSerializer):
         if obj.fornecedor_id and obj.fornecedor:
             return obj.fornecedor.razao_social
         return obj.fornecedor_nome or "Fornecedor externo"
+
+    def _avaliacao(self, obj):
+        """(media, count) do fornecedor. Lê o cache do contexto (montado pelo
+        viewset, uma query por lista); sem cache, cai numa consulta pontual."""
+        if not obj.fornecedor_id:
+            return (None, 0)
+        cache = self.context.get("avaliacao_agg")
+        if cache is not None:
+            return cache.get(obj.fornecedor_id, (None, 0))
+        agg = AvaliacaoFornecedor.agg_por_fornecedor(obj.tenant_id, [obj.fornecedor_id])
+        return agg.get(obj.fornecedor_id, (None, 0))
+
+    def get_fornecedor_avaliacao_media(self, obj):
+        return self._avaliacao(obj)[0]
+
+    def get_fornecedor_avaliacao_count(self, obj):
+        return self._avaliacao(obj)[1]
 
 
 class ItemPropostaSerializer(TenantScopedModelSerializer):

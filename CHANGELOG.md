@@ -2,6 +2,43 @@
 
 Todas as mudanças notáveis desta versão são documentadas aqui.
 
+## [1.0.13] - 2026-07-24
+
+### Visão geral
+
+Frontend do módulo **SCM (Suprimentos)** sobre a fundação Malha (Fase 7 / D.4), reconstruído para
+resolutivo: **página única com abas**, self-contained, substituindo a arquitetura multi-página
+anterior. Full-stack; suíte `moduloscm` **34/34** sobre Postgres; typecheck do SCM limpo (os 33 erros
+de `tsc` restantes são todos do shell legado v01, conhecidos e informativos no CI).
+
+#### Frontend — `modules/scm/SuprimentosPage.tsx`
+- **Página única com abas** (Cockpit · Catálogo · Cotação · Pedidos · Esfera de Rede), primitivos
+  Malha embutidos (`Pill`/`Card`/`Kpi`/`Avatar`/modais). Substitui as 9 páginas + o kit
+  `components/ui.tsx`/`seams.tsx`/`AsyncEntitySelect` e os componentes `components/malha/*`, removidos.
+- **Cockpit:** trilho de fluxo (Demanda→Cotação→Pedido→Recebendo), KPIs reais do endpoint `dashboard/`
+  (economia, cotações a adjudicar, pedidos em trânsito, prazo médio de entrega), fila "Requer sua
+  decisão" e atividade recente.
+- **Cotação:** mapa comparativo itens × propostas — estrelas de fornecedor (`AvaliacaoFornecedor`
+  agregada), marcador "menor" por item, delta vs. menor total, moldura da recomendada/vencedora e
+  barra de **IA inerte** ("em breve"); **Adjudicar** e **gerar pedido**.
+- **Catálogo** de ofertas em cards (preço + barra de estoque) com **Comprar direto**; **Pedidos** com
+  as duas vias (compra direta / gerar de cotação), **recebimento** (captura NF-e) e **avaliação**.
+- **Aba Esfera de Rede bloqueada (cadeado):** teaser de visão (RFQ na rede, índice de preço, reputação
+  portátil, documento espelhado comprador↔vendedor). Sem feature nem dado de rede — os campos-seam
+  seguem inertes no backend. Destrava quando a Esfera de Rede for construída.
+
+#### Backend — `moduloscm`
+- Endpoint **`GET dashboard/`** (agregado do cockpit, camelCase) e os verbos **`comprar_direto`** /
+  **`gerar_de_cotacao`**; agregação de reputação (`fornecedor_avaliacao_media`/`_count`) no
+  `PropostaSerializer`. Seed demo populado (catálogo, demandas, cotações, pedidos, recebimentos,
+  avaliações). Suíte `moduloscm/tests.py` **34/34** sobre Postgres.
+
+#### Documentação
+- [docs/modulos/moduloscm.md](docs/modulos/moduloscm.md) e [docs/roadmap.md](docs/roadmap.md)
+  reconciliados com a página única + aba de rede bloqueada; `frontend.md` atualizado.
+
+---
+
 ## [1.0.12] - 2026-07-20
 
 ### Visão geral

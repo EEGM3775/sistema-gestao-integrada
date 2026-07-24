@@ -43,3 +43,8 @@ Antes de documentar um campo, verificar se o modelo Python reflete o estado atua
 - Entitlement de módulo via `RequireModule("codigo")` em `backend/nucleo/permissions.py`.
 - Todo model de negócio herda `TenantScopedModel` de `nucleo.tenancy`.
 - Novos módulos de negócio → Django app (Python). Nunca novo microsserviço Node.js.
+- **Frontend de módulo segue a régua do SCM** (grandioso + expansível): cockpit com fila de decisão,
+  loop do domínio ponta a ponta, dados honestos (agregado real ou "em breve", nunca fabricado),
+  **integração visível entre módulos** (o que conversa no backend conversa na tela — um *sistema de
+  gestão integrada*, não silos) e seams de expansão prontos. Não é CRUD. Régua completa em
+  [docs/frontend.md §1.6](docs/frontend.md).

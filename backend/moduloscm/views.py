@@ -1,7 +1,10 @@
 # backend/moduloscm/views.py
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
+from django.db.models import Q, Sum
+from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, permissions, status, views, viewsets
 from rest_framework.decorators import action
@@ -65,6 +68,9 @@ class BaseScmViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     # Listas paginadas server-side (busca + página) — os selects do frontend
     # buscam por `?search=&page_size=`; as tabelas-filhas desligam abaixo.
     pagination_class = ScmPageNumberPagination
+
+    def _tenant_id(self):
+        return getattr(getattr(self.request, "user", None), "tenant_id", None)
 
 
 class CentroCustoViewSet(BaseScmViewSet):
@@ -188,6 +194,18 @@ class PropostaViewSet(BaseScmViewSet):
     # A proposta é registrada no fluxo da cotação → gateada pela permissão dela.
     required_resource = "scm.cotacao"
 
+    def get_serializer_context(self):
+        """Pré-computa a reputação (média/nº) dos fornecedores das propostas
+        listadas numa só query, para as estrelas do comparativo (sem N+1)."""
+        ctx = super().get_serializer_context()
+        try:
+            qs = self.filter_queryset(self.get_queryset())
+            forn_ids = qs.values_list("fornecedor_id", flat=True)
+            ctx["avaliacao_agg"] = AvaliacaoFornecedor.agg_por_fornecedor(self._tenant_id(), forn_ids)
+        except Exception:  # pragma: no cover - contexto é otimização, nunca bloqueia
+            pass
+        return ctx
+
 
 class ItemPropostaViewSet(BaseScmViewSet):
     queryset = ItemProposta.objects.all().order_by("item_proposta_id")
@@ -211,9 +229,6 @@ class PedidoCompraViewSet(BaseScmViewSet):
         "comprar_direto": "scm.pedido.criar",
         "gerar_de_cotacao": "scm.pedido.criar",
     }
-
-    def _tenant_id(self):
-        return getattr(getattr(self.request, "user", None), "tenant_id", None)
 
     @action(detail=False, methods=["post"])
     def comprar_direto(self, request):
@@ -334,3 +349,160 @@ class AvaliacaoFornecedorViewSet(BaseScmViewSet):
     filterset_fields = ["fornecedor", "pedido"]
     ordering_fields = ["data", "nota_qualidade"]
     required_resource = "scm.avaliacao"
+
+
+def _mes_bounds(ref):
+    """(início, fim) do mês da data `ref` (dia 1 → último dia)."""
+    inicio = ref.replace(day=1)
+    fim = (date(inicio.year + 1, 1, 1) if inicio.month == 12 else date(inicio.year, inicio.month + 1, 1)) - timedelta(days=1)
+    return inicio, fim
+
+
+class ScmDashboardView(views.APIView):
+    """Hub do SCM numa só resposta (substitui as ~8 idas do frontend). Só
+    contagens/somas dos dados do próprio tenant — gateado pelo módulo, sem
+    permissão nova no catálogo (é o que o usuário já lista). O contexto RLS já
+    foi armado na autenticação; filtra-se por `tenant_id` por robustez (e p/ o
+    SQLite, onde a RLS é no-op).
+
+    O valor comprado é **por mês escolhido**: `?mes=AAAA-MM` (default: mês
+    corrente). Retorna o valor do mês escolhido e o do mês anterior a ele (delta
+    real no frontend). As contagens (demandas/pedidos abertos) são estado atual,
+    não do mês."""
+
+    permission_classes = [permissions.IsAuthenticated, RequireModule]
+    required_module = "scm"
+
+    def _ref_mes(self, request, hoje):
+        raw = (request.query_params.get("mes") or "").strip()
+        if raw:
+            try:
+                ano, mes = raw.split("-")
+                return date(int(ano), int(mes), 1)
+            except (ValueError, TypeError):
+                pass
+        return hoje.replace(day=1)
+
+    def get(self, request):
+        tid = getattr(request.user, "tenant_id", None)
+
+        def dcount(**flt):
+            return Demanda.objects.filter(tenant_id=tid, **flt).count()
+
+        def pcount(**flt):
+            return PedidoCompra.objects.filter(tenant_id=tid, **flt).count()
+
+        hoje = timezone.localdate()
+        ref = self._ref_mes(request, hoje)
+        inicio_mes, fim_mes = _mes_bounds(ref)
+        inicio_mes_ant, fim_mes_ant = _mes_bounds(inicio_mes - timedelta(days=1))
+        nao_cancelado = ~Q(status=PedidoCompra.Status.CANCELADO)
+
+        def valor_periodo(ini, fim):
+            v = (
+                PedidoCompra.objects.filter(tenant_id=tid, data_pedido__gte=ini, data_pedido__lte=fim)
+                .filter(nao_cancelado)
+                .aggregate(s=Sum("valor_total"))["s"]
+            )
+            return str(v if v is not None else Decimal("0"))
+
+        fornecedores_avaliados = (
+            AvaliacaoFornecedor.objects.filter(tenant_id=tid)
+            .values("fornecedor_id")
+            .distinct()
+            .count()
+        )
+
+        # Economia em cotações adjudicadas: Σ (maior proposta − vencedora).
+        economia = Decimal("0")
+        cotacoes_adjudicadas = 0
+        for cot in Cotacao.objects.filter(tenant_id=tid, status=Cotacao.Status.ADJUDICADA).prefetch_related("propostas"):
+            propostas = list(cot.propostas.all())
+            valores = [p.valor_total for p in propostas if p.valor_total is not None]
+            venc = next((p for p in propostas if p.status == Proposta.Status.VENCEDORA), None)
+            if valores and venc and venc.valor_total is not None:
+                economia += max(valores) - venc.valor_total
+                cotacoes_adjudicadas += 1
+
+        # Cotações abertas vencendo hoje ou já vencidas.
+        cotacoes_vencem_hoje = Cotacao.objects.filter(
+            tenant_id=tid, status=Cotacao.Status.ABERTA, data_limite__lte=hoje
+        ).count()
+
+        # Pedidos em trânsito (aprovado/enviado/recebido parcial): valor, nº e fornecedores.
+        transito = PedidoCompra.objects.filter(
+            tenant_id=tid,
+            status__in=[PedidoCompra.Status.APROVADO, PedidoCompra.Status.ENVIADO, PedidoCompra.Status.RECEBIDO_PARCIAL],
+        )
+        transito_valor = transito.aggregate(s=Sum("valor_total"))["s"] or Decimal("0")
+        transito_count = transito.count()
+        transito_fornecedores = transito.values("fornecedor_id").distinct().count()
+
+        # Prazo médio de entrega (dias entre o pedido e o recebimento total).
+        difs = []
+        for ped in PedidoCompra.objects.filter(tenant_id=tid, status=PedidoCompra.Status.RECEBIDO_TOTAL).prefetch_related("recebimentos"):
+            rec = ped.recebimentos.filter(tipo=Recebimento.Tipo.TOTAL).order_by("data").first()
+            if rec and ped.data_pedido:
+                difs.append((rec.data - ped.data_pedido).days)
+        prazo_medio = round(sum(difs) / len(difs), 1) if difs else None
+
+        # Atividade recente — fatos variados (recebimento, adjudicação, compra direta, avaliação).
+        atividade = []
+        for r in Recebimento.objects.filter(tenant_id=tid).select_related("pedido__fornecedor").order_by("-criado_em")[:6]:
+            atividade.append({
+                "tipo": "recebimento",
+                "titulo": f"Recebimento {r.get_tipo_display().lower()} — Pedido #{r.pedido_id}",
+                "meta": f"{r.pedido.fornecedor.razao_social} · {r.data.strftime('%d/%m/%Y')}",
+                "quando": r.criado_em.isoformat(),
+            })
+        for c in Cotacao.objects.filter(tenant_id=tid, status=Cotacao.Status.ADJUDICADA).prefetch_related("propostas__fornecedor").order_by("-criado_em")[:4]:
+            venc = next((p for p in c.propostas.all() if p.status == Proposta.Status.VENCEDORA), None)
+            rotulo = (venc.fornecedor.razao_social if venc and venc.fornecedor_id else (venc.fornecedor_nome if venc else "")) or "fornecedor"
+            atividade.append({
+                "tipo": "adjudicacao",
+                "titulo": f"Cotação adjudicada — #{c.cotacao_id}",
+                "meta": f"{rotulo}" + (f" · R$ {venc.valor_total}" if venc and venc.valor_total is not None else ""),
+                "quando": c.criado_em.isoformat(),
+            })
+        for p in PedidoCompra.objects.filter(tenant_id=tid, origem=PedidoCompra.Origem.COMPRA_DIRETA).select_related("fornecedor").order_by("-criado_em")[:4]:
+            atividade.append({
+                "tipo": "compra_direta",
+                "titulo": f"Compra direta — Pedido #{p.pedido_id}",
+                "meta": f"{p.fornecedor.razao_social}" + (f" · R$ {p.valor_total}" if p.valor_total is not None else ""),
+                "quando": p.criado_em.isoformat(),
+            })
+        for a in AvaliacaoFornecedor.objects.filter(tenant_id=tid).select_related("fornecedor").order_by("-avaliacao_id")[:4]:
+            media = round((a.nota_qualidade + a.nota_pontualidade + a.nota_atendimento) / 3, 1)
+            atividade.append({
+                "tipo": "avaliacao",
+                "titulo": f"Fornecedor avaliado — {a.fornecedor.razao_social}",
+                "meta": f"nota {media}",
+                "quando": a.data.isoformat() if a.data else "",
+            })
+        atividade.sort(key=lambda e: e["quando"], reverse=True)
+        atividade = atividade[:6]
+
+        return Response(
+            {
+                "demandasAbertas": dcount(status=Demanda.Status.ABERTA),
+                "demandasEmCotacao": dcount(status=Demanda.Status.EM_COTACAO),
+                "cotacoesAbertas": Cotacao.objects.filter(tenant_id=tid, status=Cotacao.Status.ABERTA).count(),
+                "pedidosAprovados": pcount(status=PedidoCompra.Status.APROVADO),
+                "pedidosEnviados": pcount(status=PedidoCompra.Status.ENVIADO),
+                "pedidosRecebidosParcial": pcount(status=PedidoCompra.Status.RECEBIDO_PARCIAL),
+                "produtosAtivos": Produto.objects.filter(tenant_id=tid, ativo=True).count(),
+                "ofertasDiretas": OfertaFornecedor.objects.filter(tenant_id=tid, compra_direta=True, ativo=True).count(),
+                "mesReferencia": inicio_mes.strftime("%Y-%m"),
+                "valorCompradoMes": valor_periodo(inicio_mes, fim_mes),
+                "valorCompradoMesAnterior": valor_periodo(inicio_mes_ant, fim_mes_ant),
+                "fornecedoresAvaliados": fornecedores_avaliados,
+                "economiaAdjudicadas": str(economia),
+                "cotacoesAdjudicadas": cotacoes_adjudicadas,
+                "cotacoesVencemHoje": cotacoes_vencem_hoje,
+                "pedidosTransitoValor": str(transito_valor),
+                "pedidosTransitoCount": transito_count,
+                "pedidosTransitoFornecedores": transito_fornecedores,
+                "prazoMedioEntregaDias": prazo_medio,
+                "atividade": atividade,
+            }
+        )

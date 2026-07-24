@@ -29,6 +29,21 @@ from clientes.models import Cliente, ClienteEmpreendimento, ContratoCliente
 from rh.models import Cargo, Funcionario
 from modulocalendar.models import CalendarEvent
 from funcoeswhatsapp.models import CanalWhatsApp
+from fornecedores.models import Fornecedor
+from moduloscm.models import (
+    CentroCusto as ScmCentroCusto,
+    Produto as ScmProduto,
+    OfertaFornecedor,
+    Demanda,
+    ItemDemanda,
+    Cotacao,
+    Proposta,
+    ItemProposta,
+    PedidoCompra,
+    ItemPedido,
+    Recebimento,
+    AvaliacaoFornecedor,
+)
 
 # Canal WhatsApp de demonstração (Fase 11.3 / Fase C). Estas credenciais de dev
 # são também usadas pelo E2E infra/gateway/phaseC_whatsapp_test.py para assinar o
@@ -475,6 +490,150 @@ def seed_notificacoes(tenant, usuario):
             print(f"  Notificação criada: {n.titulo}")
 
 
+def seed_scm(tenant, obras):
+    """Suprimentos (SCM): fornecedores, catálogo, uma cotação aberta com 3
+    propostas (o mapa comparativo), pedidos com recebimentos e avaliações."""
+    D = Decimal
+
+    # Fornecedores (a FK de ofertas/propostas/pedidos/avaliações).
+    forn_defs = [
+        ("Aço Forte Distribuidora", "10000000000101"),
+        ("Casa do Construtor", "10000000000102"),
+        ("Depósito União", "10000000000103"),
+        ("Cimento Sul", "10000000000104"),
+        ("Madeireira Central", "10000000000105"),
+        ("Britagem Central", "10000000000106"),
+    ]
+    forn = {}
+    for razao, cnpj in forn_defs:
+        f, created = Fornecedor.objects.get_or_create(
+            tenant=tenant, razao_social=razao,
+            defaults={"cnpj": cnpj, "email": f"contato@{razao.split()[0].lower()}.com.br"},
+        )
+        forn[razao] = f
+        if created:
+            print(f"  Fornecedor: {razao}")
+
+    # Centros de custo (vinculados a obras quando possível).
+    cc_est, _ = ScmCentroCusto.objects.get_or_create(
+        tenant=tenant, codigo="CC-AUR-EST",
+        defaults={"nome": "Estrutura — Residencial Aurora", "tipo": "obra", "obra": obras[0] if obras else None},
+    )
+    cc_acab, _ = ScmCentroCusto.objects.get_or_create(
+        tenant=tenant, codigo="CC-HRZ-ACAB",
+        defaults={"nome": "Acabamento — Edifício Horizonte", "tipo": "obra", "obra": obras[1] if len(obras) > 1 else None},
+    )
+
+    # Produtos (catálogo mestre, supplier-agnostic).
+    prod_defs = [
+        ("AC-125", "Aço CA-50 12,5mm", "barra", "material", "Aços"),
+        ("CM-32", "Cimento CP-II-E-32 50kg", "saco", "material", "Aglomerantes"),
+        ("AR-18", "Arame recozido nº 18", "kg", "material", "Ferragens"),
+        ("BR-01", "Brita nº 1", "m³", "material", "Agregados"),
+        ("CU-25", "Concreto usinado FCK-25", "m³", "material", "Concreto"),
+        ("SV-IMP", "Impermeabilização (serviço)", "m²", "servico", "Serviços"),
+    ]
+    prod = {}
+    for cod, desc, un, tipo, cat in prod_defs:
+        p, _ = ScmProduto.objects.get_or_create(
+            tenant=tenant, codigo_interno=cod,
+            defaults={"descricao": desc, "unidade": un, "tipo_item": tipo, "categoria": cat},
+        )
+        prod[cod] = p
+
+    # Ofertas (preço/estoque por fornecedor; algumas p/ compra direta e na rede).
+    oferta_defs = [
+        # produto, fornecedor, preco, estoque, compra_direta, visibilidade
+        ("AC-125", "Depósito União", "52.40", "3200", True, "rede"),
+        ("AC-125", "Aço Forte Distribuidora", "53.90", "5000", True, "rede"),
+        ("AC-125", "Casa do Construtor", "55.20", "1800", False, "privada"),
+        ("CM-32", "Cimento Sul", "34.50", "1240", True, "rede"),
+        ("CM-32", "Casa do Construtor", "32.80", "600", True, "privada"),
+        ("AR-18", "Depósito União", "13.20", "480", True, "privada"),
+        ("BR-01", "Britagem Central", "118.00", "90", True, "privada"),
+        ("CU-25", "Cimento Sul", "398.00", "0", False, "privada"),
+        ("SV-IMP", "Casa do Construtor", "46.00", "0", False, "privada"),
+    ]
+    for cod, razao, preco, est, direta, vis in oferta_defs:
+        OfertaFornecedor.objects.get_or_create(
+            tenant=tenant, produto=prod[cod], fornecedor=forn[razao],
+            defaults={
+                "preco_direto": D(preco), "estoque_disponivel": D(est),
+                "compra_direta": direta, "visibilidade": vis, "ativo": True,
+            },
+        )
+
+    # Avaliações (reputação → estrelas do mapa + KPI). Uma vez só.
+    aval_defs = [
+        ("Aço Forte Distribuidora", 5, 5, 5, "Entrega pontual, produto conforme."),
+        ("Casa do Construtor", 4, 5, 4, "Prazo excelente."),
+        ("Depósito União", 4, 4, 3, "Preço bom, atendimento pode melhorar."),
+        ("Cimento Sul", 5, 4, 5, "Fornecedor de confiança."),
+    ]
+    for razao, q, pt, at, com in aval_defs:
+        AvaliacaoFornecedor.objects.get_or_create(
+            tenant=tenant, fornecedor=forn[razao], comentario=com,
+            defaults={"nota_qualidade": q, "nota_pontualidade": pt, "nota_atendimento": at},
+        )
+
+    # Fluxo transacional rico — idempotente pela demanda-marca (3º pavimento).
+    if not Demanda.objects.filter(tenant=tenant, observacao__icontains="3º pavimento").exists():
+        demanda = Demanda.objects.create(
+            tenant=tenant, tipo="material", status="em_cotacao", origem="manual",
+            centro_custo=cc_est, categoria="Estrutura", observacao="Estrutura do 3º pavimento — Residencial Aurora.",
+        )
+        it_aco = ItemDemanda.objects.create(tenant=tenant, demanda=demanda, produto=prod["AC-125"], quantidade=D("2400"), unidade="barra")
+        it_cim = ItemDemanda.objects.create(tenant=tenant, demanda=demanda, produto=prod["CM-32"], quantidade=D("800"), unidade="saco")
+        it_ara = ItemDemanda.objects.create(tenant=tenant, demanda=demanda, produto=prod["AR-18"], quantidade=D("120"), unidade="kg")
+
+        cot = Cotacao.objects.create(
+            tenant=tenant, demanda=demanda, status="aberta", data_limite=HOJE + datetime.timedelta(days=2),
+        )
+        # (fornecedor, [preço aço, preço cimento, preço arame], total, prazo)
+        prop_defs = [
+            ("Aço Forte Distribuidora", ["53.90", "34.50", "13.20"], "158544.00", 5),
+            ("Casa do Construtor", ["55.20", "32.80", "12.90"], "160268.00", 3),
+            ("Depósito União", ["52.40", "35.90", "13.50"], "156100.00", 8),
+        ]
+        for razao, (pa, pc, par), total, prazo in prop_defs:
+            prop = Proposta.objects.create(
+                tenant=tenant, cotacao=cot, fornecedor=forn[razao],
+                valor_total=D(total), prazo_entrega_dias=prazo, status="recebida",
+            )
+            for item, preco in ((it_aco, pa), (it_cim, pc), (it_ara, par)):
+                ItemProposta.objects.create(
+                    tenant=tenant, proposta=prop, item_demanda=item,
+                    preco_unitario=D(preco), quantidade=item.quantidade,
+                )
+        print(f"  Demanda #{demanda.demanda_id} + cotação #{cot.cotacao_id} (3 propostas)")
+
+        # Pedidos com recebimentos (para as telas de Pedidos ficarem cheias).
+        p1 = PedidoCompra.objects.create(
+            tenant=tenant, origem="compra_direta", fornecedor=forn["Depósito União"], centro_custo=cc_est,
+            status="recebido_parcial", valor_total=D("1584.00"), data_pedido=HOJE - datetime.timedelta(days=3),
+        )
+        ItemPedido.objects.create(tenant=tenant, pedido=p1, produto=prod["AR-18"], quantidade=D("120"), preco_unitario=D("13.20"))
+        Recebimento.objects.create(tenant=tenant, pedido=p1, tipo="parcial", nota_fiscal_ref="000.114.208")
+
+        p2 = PedidoCompra.objects.create(
+            tenant=tenant, origem="cotacao", fornecedor=forn["Cimento Sul"], centro_custo=cc_est,
+            status="recebido_total", valor_total=D("27600.00"), data_pedido=HOJE - datetime.timedelta(days=6),
+        )
+        ItemPedido.objects.create(tenant=tenant, pedido=p2, produto=prod["CM-32"], quantidade=D("800"), preco_unitario=D("34.50"))
+        Recebimento.objects.create(tenant=tenant, pedido=p2, tipo="total", nota_fiscal_ref="000.118.771")
+        AvaliacaoFornecedor.objects.get_or_create(
+            tenant=tenant, fornecedor=forn["Cimento Sul"], pedido=p2,
+            defaults={"nota_qualidade": 5, "nota_pontualidade": 5, "nota_atendimento": 4, "comentario": "Recebimento total no prazo."},
+        )
+
+        p3 = PedidoCompra.objects.create(
+            tenant=tenant, origem="manual", fornecedor=forn["Britagem Central"], centro_custo=cc_est,
+            status="aprovado", valor_total=D("14160.00"), data_pedido=HOJE - datetime.timedelta(days=1),
+        )
+        ItemPedido.objects.create(tenant=tenant, pedido=p3, produto=prod["BR-01"], quantidade=D("120"), preco_unitario=D("118.00"))
+        print(f"  Pedidos: #{p1.pedido_id} (direta), #{p2.pedido_id} (cotação), #{p3.pedido_id} (manual)")
+
+
 # ─── Execução ────────────────────────────────────────────────────────────────
 
 print("=" * 60)
@@ -506,6 +665,9 @@ with rls_bypass():
     print("\n→ Canal WhatsApp:")
     seed_canal_whatsapp(tenant)
 
+    print("\n→ Suprimentos (SCM):")
+    seed_scm(tenant, obras)
+
     print("\n" + "=" * 60)
     print("SEED OK")
     print(f"  Empreendimentos: {Empreendimento.objects.count()}")
@@ -517,4 +679,6 @@ with rls_bypass():
     print(f"  Funcionários: {Funcionario.objects.count()}")
     print(f"  Eventos: {CalendarEvent.objects.count()}")
     print(f"  Notificações: {Notificacao.objects.count()}")
+    print(f"  SCM · Fornecedores: {Fornecedor.objects.count()} · Produtos: {ScmProduto.objects.count()} · Ofertas: {OfertaFornecedor.objects.count()}")
+    print(f"  SCM · Cotações: {Cotacao.objects.count()} · Propostas: {Proposta.objects.count()} · Pedidos: {PedidoCompra.objects.count()} · Avaliações: {AvaliacaoFornecedor.objects.count()}")
     print("=" * 60)
