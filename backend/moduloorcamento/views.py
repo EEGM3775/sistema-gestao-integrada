@@ -12,7 +12,15 @@ base: escreve no `catalogo.Item` **do tenant**. Por isso exige permissão própr
 """
 from django.db.models import Count, Q
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework import exceptions, filters, permissions, status, views, viewsets
+from rest_framework import (
+    exceptions,
+    filters,
+    permissions,
+    serializers,
+    status,
+    views,
+    viewsets,
+)
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
@@ -20,7 +28,7 @@ from catalogo.models import Item
 from nucleo.permissions import RequireModule, RequirePermission
 from nucleo.tenancy import TenantScopedViewSetMixin
 
-from . import planilha, precificacao, services
+from . import controle, planilha, precificacao, services
 from .models import (
     BaseReferencial,
     ComposicaoBDI,
@@ -28,6 +36,7 @@ from .models import (
     InsumoReferencia,
     ItemOrcado,
     Orcamento,
+    ParcelaEtapa,
     RevisaoOrcamento,
 )
 from .pagination import OrcamentoPageNumberPagination
@@ -38,6 +47,7 @@ from .serializers import (
     InsumoReferenciaSerializer,
     ItemOrcadoSerializer,
     OrcamentoSerializer,
+    ParcelaEtapaSerializer,
     RevisaoOrcamentoSerializer,
 )
 
@@ -237,6 +247,15 @@ class BaseReferencialResumoView(views.APIView):
 # ---------------------------------------------------------------------------
 
 
+class _PeriodoSerializer(serializers.Serializer):
+    """Entrada da distribuição do cronograma. Serializer em vez de leitura crua
+    do `request.data` para a data inválida virar 400 com mensagem de campo."""
+
+    inicio = serializers.DateField()
+    fim = serializers.DateField()
+    etapa = serializers.IntegerField(required=False, allow_null=True)
+
+
 class DocumentoFechado(exceptions.APIException):
     """**409**, não 403: não falta permissão, o documento é que não está aberto.
 
@@ -278,7 +297,14 @@ class OrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.
         "revisar": "orcamento.orcamento.revisar",
         "recalcular": "orcamento.orcamento.edit",
         "arvore": "orcamento.orcamento.view",
+        # Relatórios de controle sob `relatorio.view`; mexer no cronograma é
+        # editar o orçamento. Os dois reusam as 9 permissões do catálogo em vez
+        # de criar `orcamento.cronograma.*` — permissão nova exige rebuild da
+        # imagem da IAM + re-seed, e o recorte aqui não pedia granularidade nova.
         "curva_abc": "orcamento.relatorio.view",
+        "cronograma": "orcamento.relatorio.view",
+        "curva_s": "orcamento.relatorio.view",
+        "distribuir_cronograma": "orcamento.orcamento.edit",
     }
 
     def perform_update(self, serializer):
@@ -339,6 +365,53 @@ class OrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.
         aplicado querem dizer a mesma coisa.
         """
         return Response(precificacao.curva_abc(self.get_object()))
+
+    # --- ORC.3: cronograma e curva S ---
+
+    @action(detail=True, methods=["get"], url_path="cronograma")
+    def cronograma(self, request, pk=None):
+        """A grade do cronograma físico-financeiro + conferência dos 100%."""
+        orcamento = self.get_object()
+        dados = controle.cronograma(orcamento)
+        dados["validacao"] = controle.validar_cronograma(orcamento)
+        return Response(dados)
+
+    @action(detail=True, methods=["post"], url_path="distribuir-cronograma")
+    def distribuir_cronograma(self, request, pk=None):
+        """Gera o cronograma linear de partida entre duas competências.
+
+        Ponto de partida editável, não verdade — é assim que as ferramentas do
+        mercado funcionam: gera-se o linear e o planejador ajusta.
+        """
+        orcamento = self.get_object()
+        _exigir_editavel(orcamento)
+        serializer = _PeriodoSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        etapa_id = serializer.validated_data.get("etapa")
+
+        etapa = None
+        if etapa_id:
+            etapa = ParcelaEtapa.etapa.field.related_model.objects.filter(
+                tenant_id=self._tenant_id(), pk=etapa_id, obra_id=orcamento.obra_id
+            ).first()
+            if etapa is None:
+                return Response(
+                    {"etapa": "Etapa não encontrada nesta obra."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+        try:
+            controle.distribuir_linear(
+                orcamento, inicio=serializer.validated_data["inicio"],
+                fim=serializer.validated_data["fim"], etapa=etapa,
+            )
+        except controle.CronogramaInvalido as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(controle.cronograma(orcamento), status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["get"], url_path="curva-s")
+    def curva_s(self, request, pk=None):
+        """Previsto acumulado × realizado acumulado, mês a mês."""
+        return Response(controle.curva_s(self.get_object()))
 
     @action(detail=True, methods=["post"], url_path="revisar")
     def revisar(self, request, pk=None):
@@ -544,6 +617,64 @@ class ComposicaoBDIViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, views
         except precificacao.ComposicaoInvalida as exc:
             raise exceptions.ValidationError({"detail": str(exc)}) from exc
         planilha.recalcular_orcamento(composicao.orcamento)
+
+
+class ParcelaEtapaViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    """Células do cronograma — edição fina depois da distribuição linear.
+
+    Cada escrita reconverte percentuais em dinheiro. Não travamos a soma em
+    100%: um cronograma em construção passa por estados inconsistentes, e a
+    conferência é informada em `cronograma/`, não imposta na digitação.
+    """
+
+    queryset = ParcelaEtapa.objects.select_related("orcamento", "etapa").all()
+    serializer_class = ParcelaEtapaSerializer
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ["orcamento", "etapa", "competencia"]
+    ordering_fields = ["competencia", "percentual"]
+    required_resource = "orcamento.item"
+
+    def perform_create(self, serializer):
+        _exigir_editavel(serializer.validated_data.get("orcamento"))
+        super().perform_create(serializer)
+        controle.recalcular_parcelas(serializer.instance.orcamento)
+
+    def perform_update(self, serializer):
+        _exigir_editavel(serializer.instance.orcamento)
+        super().perform_update(serializer)
+        controle.recalcular_parcelas(serializer.instance.orcamento)
+
+    def perform_destroy(self, instance):
+        orcamento = instance.orcamento
+        _exigir_editavel(orcamento)
+        instance.delete()
+        controle.recalcular_parcelas(orcamento)
+
+
+class ControleDeCustoView(views.APIView):
+    """As quatro colunas: orçado × comprometido × aplicado × realizado.
+
+    O cockpit do módulo — e o lugar onde a integração entre SCM, SIL, ERP e
+    Orçamento aparece num número só. `?obra=` filtra uma obra.
+    """
+
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
+    required_module = MODULO
+    required_permission = "orcamento.relatorio.view"
+
+    def get(self, request):
+        tenant_id = getattr(getattr(request, "user", None), "tenant_id", None)
+        obra = request.query_params.get("obra")
+        linhas = controle.quatro_colunas(tenant_id, obra or None)
+        return Response({
+            "obras": linhas,
+            # A tela precisa saber o que a coluna cobre para não apresentar um
+            # número parcial como total — ver a nota em controle.py.
+            "nota_realizado": (
+                "Realizado cobre despesa originada de pedido de compra (SCM → ERP). "
+                "Lançamento feito direto no ERP ainda não tem dimensão de obra."
+            ),
+        })
 
 
 class RevisaoOrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ReadOnlyModelViewSet):

@@ -614,3 +614,71 @@ class ItemOrcadoInsumo(TenantScopedModel):
 
     def __str__(self):
         return f"{self.descricao} ×{self.coeficiente}"
+
+
+# ---------------------------------------------------------------------------
+# ORC.3 — cronograma físico-financeiro (a curva S)
+# ---------------------------------------------------------------------------
+
+
+class ParcelaEtapa(TenantScopedModel):
+    """Quanto de uma etapa cai em cada mês — a célula do cronograma.
+
+    O cronograma físico-financeiro é uma grade: linhas são etapas, colunas são
+    meses, células são percentuais. A **curva S** é o acumulado dessa grade no
+    tempo, e o nome vem do formato — obra começa devagar, acelera no miolo e
+    desacelera no acabamento.
+
+    Guardamos **percentual e valor**: o percentual é o que o planejador digita
+    e o que sobrevive a uma mudança de preço; o valor é derivado
+    (`controle.recalcular_parcelas`) e existe para a leitura não precisar
+    recalcular a grade inteira a cada abertura de tela.
+
+    `etapa` nula significa "o orçamento inteiro" — útil para obra pequena, que
+    não vale quebrar em etapas só para ter cronograma.
+    """
+
+    parcela_id = models.AutoField(primary_key=True)
+    orcamento = models.ForeignKey(
+        Orcamento, on_delete=models.CASCADE, related_name="parcelas", verbose_name=_("Orçamento"),
+    )
+    etapa = models.ForeignKey(
+        "obras.EtapaObra", on_delete=models.CASCADE, null=True, blank=True,
+        related_name="parcelas_orcamento", verbose_name=_("Etapa"),
+    )
+    competencia = models.DateField(
+        verbose_name=_("Competência"), help_text=_("Dia 1 do mês da parcela."),
+    )
+    percentual = models.DecimalField(
+        max_digits=7, decimal_places=4, default=Decimal("0"), verbose_name=_("Percentual do mês"),
+    )
+    valor_previsto = models.DecimalField(
+        max_digits=18, decimal_places=2, default=Decimal("0"), verbose_name=_("Valor previsto"),
+    )
+    observacao = models.CharField(max_length=255, blank=True, verbose_name=_("Observação"))
+
+    class Meta:
+        verbose_name = _("Parcela do cronograma")
+        verbose_name_plural = _("Parcelas do cronograma")
+        ordering = ["orcamento", "etapa", "competencia"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["orcamento", "etapa", "competencia"],
+                name="orcamento_parcela_unica_por_mes",
+            ),
+            # A de cima não cobre `etapa IS NULL`: no Postgres NULL ≠ NULL, então
+            # duas parcelas "do orçamento inteiro" no mesmo mês passariam. Esta
+            # constraint parcial fecha o caso, sem depender do `nulls_distinct`
+            # (que exige PG 15+).
+            models.UniqueConstraint(
+                fields=["orcamento", "competencia"],
+                condition=models.Q(etapa__isnull=True),
+                name="orcamento_parcela_unica_sem_etapa",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["orcamento", "competencia"], name="orcamento_parcela_mes_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.competencia:%m/%Y} — {self.percentual}%"

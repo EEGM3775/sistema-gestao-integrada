@@ -21,6 +21,7 @@ from .models import (
     ItemOrcado,
     ItemOrcadoInsumo,
     Orcamento,
+    ParcelaEtapa,
     RevisaoOrcamento,
 )
 
@@ -200,3 +201,34 @@ class ItemOrcadoInsumoSerializer(TenantScopedModelSerializer):
     class Meta:
         model = ItemOrcadoInsumo
         fields = "__all__"
+
+
+# ---------------------------------------------------------------------------
+# ORC.3 — cronograma físico-financeiro
+# ---------------------------------------------------------------------------
+
+
+class ParcelaEtapaSerializer(TenantScopedModelSerializer):
+    """Célula do cronograma. O valor é derivado do percentual — o planejador
+    digita percentual, que é o que sobrevive a uma mudança de preço."""
+
+    etapa_nome = serializers.CharField(source="etapa.nome_etapa", read_only=True, default=None)
+    valor_previsto = serializers.DecimalField(max_digits=18, decimal_places=2, read_only=True)
+
+    class Meta:
+        model = ParcelaEtapa
+        fields = "__all__"
+
+    def validate(self, attrs):
+        orcamento = attrs.get("orcamento") or getattr(self.instance, "orcamento", None)
+        etapa = attrs.get("etapa") or getattr(self.instance, "etapa", None)
+        if etapa is not None and orcamento is not None and etapa.obra_id != orcamento.obra_id:
+            raise serializers.ValidationError(
+                {"etapa": "A etapa precisa pertencer à obra do orçamento."}
+            )
+        competencia = attrs.get("competencia")
+        if competencia is not None and competencia.day != 1:
+            # Normaliza em vez de recusar: a tela manda o mês, e exigir o dia 1
+            # seria burocracia sem ganho.
+            attrs["competencia"] = competencia.replace(day=1)
+        return attrs
