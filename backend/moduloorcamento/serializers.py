@@ -20,9 +20,13 @@ from .models import (
     InsumoReferencia,
     ItemOrcado,
     ItemOrcadoInsumo,
+    MemorialNBR,
     Orcamento,
+    ParametroObra,
     ParcelaEtapa,
+    PavimentoObra,
     RevisaoOrcamento,
+    UnidadeAutonoma,
 )
 
 
@@ -232,3 +236,73 @@ class ParcelaEtapaSerializer(TenantScopedModelSerializer):
             # seria burocracia sem ganho.
             attrs["competencia"] = competencia.replace(day=1)
         return attrs
+
+
+# ---------------------------------------------------------------------------
+# ORC.4 — paramétrico e NBR 12721
+# ---------------------------------------------------------------------------
+
+
+class ParametroObraSerializer(TenantScopedModelSerializer):
+    """Paramétrico. O custo é derivado — a tela informa área, CUB e adicionais."""
+
+    custo_estimado = serializers.DecimalField(max_digits=18, decimal_places=2, read_only=True)
+    projeto_padrao_nome = serializers.CharField(source="get_projeto_padrao_display", read_only=True)
+    obra_nome = serializers.CharField(source="obra.nome_obra", read_only=True)
+
+    class Meta:
+        model = ParametroObra
+        fields = "__all__"
+
+
+class PavimentoObraSerializer(TenantScopedModelSerializer):
+    """Pavimento do Quadro I. As áreas derivadas são propriedades do modelo."""
+
+    area_real = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    area_equivalente = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+
+    class Meta:
+        model = PavimentoObra
+        fields = "__all__"
+
+
+class UnidadeAutonomaSerializer(TenantScopedModelSerializer):
+    """Unidade autônoma dos Quadros II e IV.
+
+    `coeficiente_proporcionalidade` e `custo_estimado` são **read-only**: saem
+    do cálculo dos quadros. Aceitá-los do cliente permitiria um rateio que não
+    fecha com o custo global — exatamente o que gera exigência no cartório.
+    A `fracao_ideal` **é** editável: é decisão jurídica do incorporador, não
+    resultado de conta.
+    """
+
+    coeficiente_proporcionalidade = serializers.DecimalField(
+        max_digits=12, decimal_places=8, read_only=True
+    )
+    custo_estimado = serializers.DecimalField(max_digits=18, decimal_places=2, read_only=True)
+    area_real_privativa = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    area_equivalente_privativa = serializers.DecimalField(
+        max_digits=12, decimal_places=2, read_only=True
+    )
+    pavimento_nome = serializers.CharField(source="pavimento.nome", read_only=True, default=None)
+
+    class Meta:
+        model = UnidadeAutonoma
+        fields = "__all__"
+
+    def validate(self, attrs):
+        obra = attrs.get("obra") or getattr(self.instance, "obra", None)
+        pavimento = attrs.get("pavimento") or getattr(self.instance, "pavimento", None)
+        if pavimento is not None and obra is not None and pavimento.obra_id != obra.pk:
+            raise serializers.ValidationError(
+                {"pavimento": "O pavimento precisa ser da mesma obra."}
+            )
+        return attrs
+
+
+class MemorialNBRSerializer(TenantScopedModelSerializer):
+    quadro_nome = serializers.CharField(source="get_quadro_display", read_only=True)
+
+    class Meta:
+        model = MemorialNBR
+        fields = "__all__"

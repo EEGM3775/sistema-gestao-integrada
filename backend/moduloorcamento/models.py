@@ -682,3 +682,303 @@ class ParcelaEtapa(TenantScopedModel):
 
     def __str__(self):
         return f"{self.competencia:%m/%Y} — {self.percentual}%"
+
+
+# ---------------------------------------------------------------------------
+# ORC.4 — orçamento paramétrico (CUB) e os quadros da NBR 12721
+# ---------------------------------------------------------------------------
+#
+# Duas coisas diferentes que compartilham o mesmo vocabulário de áreas:
+#
+# 1. **Paramétrico** — estimativa por m², feita na *viabilidade*, antes de
+#    existir planilha analítica. É o que responde "esse terreno comporta um
+#    prédio que se paga?" com a informação que existe nessa hora: área e padrão.
+# 2. **NBR 12721** — os oito quadros que instruem o **registro de incorporação**
+#    em cartório. Não é relatório gerencial: é condição legal para vender
+#    unidade na planta (Lei 4.591/64), e todo o resto da documentação da
+#    incorporação deriva desses números.
+#
+# O elo entre eles é a **área equivalente de construção**: área real convertida
+# para "m² de custo padrão" por coeficientes (garagem e área descoberta custam
+# menos que apartamento). É sobre a equivalente que o CUB multiplica e é por ela
+# que o custo global se rateia entre as unidades.
+
+
+class ProjetoPadrao(models.TextChoices):
+    """Projetos-padrão da NBR 12721 — a chave do CUB.
+
+    O CUB é publicado mensalmente pelos SINDUSCON estaduais **por
+    projeto-padrão**: um R-1 (residência unifamiliar) e um R-16 (prédio de 16
+    andares) têm custos por m² bem diferentes. Aplicar CUB de padrão normal num
+    empreendimento de padrão alto subestima o custo global e distorce o rateio
+    entre as unidades — por isso o padrão é campo obrigatório, não observação.
+    """
+
+    R1_BAIXO = "r1_b", _("R-1 Baixo")
+    R1_NORMAL = "r1_n", _("R-1 Normal")
+    R1_ALTO = "r1_a", _("R-1 Alto")
+    PP4_BAIXO = "pp4_b", _("PP-4 Baixo")
+    PP4_NORMAL = "pp4_n", _("PP-4 Normal")
+    R8_BAIXO = "r8_b", _("R-8 Baixo")
+    R8_NORMAL = "r8_n", _("R-8 Normal")
+    R8_ALTO = "r8_a", _("R-8 Alto")
+    R16_NORMAL = "r16_n", _("R-16 Normal")
+    R16_ALTO = "r16_a", _("R-16 Alto")
+    PIS = "pis", _("PIS — Projeto de Interesse Social")
+    RP1Q = "rp1q", _("RP-1Q — Residência Popular")
+    CAL8_NORMAL = "cal8_n", _("CAL-8 Normal — Comercial Andares Livres")
+    CAL8_ALTO = "cal8_a", _("CAL-8 Alto — Comercial Andares Livres")
+    CSL8_NORMAL = "csl8_n", _("CSL-8 Normal — Comercial Salas e Lojas")
+    CSL8_ALTO = "csl8_a", _("CSL-8 Alto — Comercial Salas e Lojas")
+    CSL16_NORMAL = "csl16_n", _("CSL-16 Normal")
+    CSL16_ALTO = "csl16_a", _("CSL-16 Alto")
+    GI = "gi", _("GI — Galpão Industrial")
+
+
+class ParametroObra(TenantScopedModel):
+    """Orçamento **paramétrico**: área equivalente × CUB + adicionais.
+
+    Vive pendurado na **obra**, não no `Orcamento`, porque acontece antes dele:
+    na viabilidade ainda não há planilha para pendurar nada. Quando o analítico
+    fica pronto, os dois convivem — e a diferença entre eles é uma informação
+    valiosa (o paramétrico errou para mais ou para menos?), não um conflito.
+
+    **O CUB não cobre tudo.** A própria NBR lista o que fica de fora: fundações
+    especiais, elevadores, instalações especiais, projetos, licenças, terreno,
+    lucro do incorporador. Por isso os adicionais são campo explícito — um
+    paramétrico só com CUB × área subestima sistematicamente, e é assim que
+    incorporação entra em obra sem caixa.
+    """
+
+    parametro_id = models.AutoField(primary_key=True)
+    obra = models.ForeignKey(
+        "obras.Obra", on_delete=models.CASCADE, related_name="parametros_orcamento",
+        verbose_name=_("Obra"),
+    )
+    descricao = models.CharField(max_length=200, verbose_name=_("Descrição"))
+    projeto_padrao = models.CharField(
+        max_length=8, choices=ProjetoPadrao.choices, verbose_name=_("Projeto-padrão"),
+    )
+    cub_m2 = models.DecimalField(
+        max_digits=12, decimal_places=2, default=Decimal("0"), verbose_name=_("CUB (R$/m²)"),
+        help_text=_("Publicado pelo SINDUSCON do estado, para este projeto-padrão."),
+    )
+    cub_uf = models.CharField(max_length=2, blank=True, verbose_name=_("UF do CUB"))
+    cub_mes = models.DateField(
+        null=True, blank=True, verbose_name=_("Mês do CUB"),
+        help_text=_("Data-base da publicação — o CUB é mensal."),
+    )
+    area_real = models.DecimalField(
+        max_digits=12, decimal_places=2, default=Decimal("0"), verbose_name=_("Área real (m²)"),
+    )
+    area_equivalente = models.DecimalField(
+        max_digits=12, decimal_places=2, default=Decimal("0"),
+        verbose_name=_("Área equivalente (m²)"),
+        help_text=_("É sobre ela que o CUB multiplica, não sobre a área real."),
+    )
+    percentual_adicionais = models.DecimalField(
+        max_digits=6, decimal_places=2, default=Decimal("0"),
+        verbose_name=_("Adicionais (%)"),
+        help_text=_("Fundação especial, elevador, projetos — o que o CUB não cobre."),
+    )
+    valor_adicionais = models.DecimalField(
+        max_digits=18, decimal_places=2, default=Decimal("0"),
+        verbose_name=_("Adicionais (R$)"), help_text=_("Adicionais conhecidos em valor fechado."),
+    )
+    custo_estimado = models.DecimalField(
+        max_digits=18, decimal_places=2, default=Decimal("0"),
+        verbose_name=_("Custo estimado"), help_text=_("Derivado — não editável."),
+    )
+    observacao = models.TextField(blank=True, verbose_name=_("Observação"))
+    criado_em = models.DateTimeField(auto_now_add=True, verbose_name=_("Criado em"))
+
+    class Meta:
+        verbose_name = _("Orçamento paramétrico")
+        verbose_name_plural = _("Orçamentos paramétricos")
+        ordering = ["obra", "-criado_em"]
+
+    def __str__(self):
+        return f"{self.descricao} ({self.get_projeto_padrao_display()})"
+
+
+class PavimentoObra(TenantScopedModel):
+    """Um pavimento e suas áreas — insumo do **Quadro I** da NBR 12721.
+
+    As áreas se separam em três naturezas porque custam diferente, e a norma
+    converte cada uma em área equivalente por um coeficiente próprio:
+    o pavimento-tipo é o padrão (coeficiente 1), garagem/área de padrão
+    diferente custa menos, área descoberta custa menos ainda.
+    """
+
+    pavimento_id = models.AutoField(primary_key=True)
+    obra = models.ForeignKey(
+        "obras.Obra", on_delete=models.CASCADE, related_name="pavimentos", verbose_name=_("Obra"),
+    )
+    nome = models.CharField(max_length=120, verbose_name=_("Pavimento"))
+    ordem = models.PositiveIntegerField(default=0, verbose_name=_("Ordem"))
+    area_coberta_padrao = models.DecimalField(
+        max_digits=12, decimal_places=2, default=Decimal("0"),
+        verbose_name=_("Área coberta padrão (m²)"),
+    )
+    area_coberta_diferente = models.DecimalField(
+        max_digits=12, decimal_places=2, default=Decimal("0"),
+        verbose_name=_("Área coberta de padrão diferente (m²)"),
+    )
+    coeficiente_coberta_diferente = models.DecimalField(
+        max_digits=5, decimal_places=4, default=Decimal("0.5000"),
+        verbose_name=_("Coeficiente da área de padrão diferente"),
+    )
+    area_descoberta = models.DecimalField(
+        max_digits=12, decimal_places=2, default=Decimal("0"),
+        verbose_name=_("Área descoberta (m²)"),
+    )
+    coeficiente_descoberta = models.DecimalField(
+        max_digits=5, decimal_places=4, default=Decimal("0.3000"),
+        verbose_name=_("Coeficiente da área descoberta"),
+    )
+
+    class Meta:
+        verbose_name = _("Pavimento (NBR 12721)")
+        verbose_name_plural = _("Pavimentos (NBR 12721)")
+        ordering = ["obra", "ordem", "pavimento_id"]
+        constraints = [
+            models.UniqueConstraint(fields=["obra", "nome"], name="orcamento_pavimento_unico"),
+        ]
+
+    def __str__(self):
+        return self.nome
+
+    @property
+    def area_real(self) -> Decimal:
+        return self.area_coberta_padrao + self.area_coberta_diferente + self.area_descoberta
+
+    @property
+    def area_equivalente(self) -> Decimal:
+        return (
+            self.area_coberta_padrao
+            + self.area_coberta_diferente * self.coeficiente_coberta_diferente
+            + self.area_descoberta * self.coeficiente_descoberta
+        )
+
+
+class UnidadeAutonoma(TenantScopedModel):
+    """Uma unidade autônoma (apartamento, loja, vaga) — **Quadros II e IV**.
+
+    Guarda dois números que **não são a mesma coisa**, e confundi-los é erro
+    clássico de incorporação:
+
+    - **`coeficiente_proporcionalidade`** — o rateio do **custo** da obra entre
+      as unidades, derivado da área equivalente. É o termo que a NBR usa nos
+      quadros I a VIII, e é o que responde "quanto desta obra é desta unidade".
+    - **`fracao_ideal`** — a quota **do terreno e das coisas de uso comum** que
+      cabe à unidade. É conceito do direito civil, entra na matrícula e pode ser
+      definida por outro critério que não a área equivalente.
+
+    Frequentemente têm o mesmo valor, e é exatamente por isso que um campo só
+    passaria despercebido até o dia em que não têm — quando o registro sai
+    errado e a incorporação trava no cartório.
+    """
+
+    unidade_id = models.AutoField(primary_key=True)
+    obra = models.ForeignKey(
+        "obras.Obra", on_delete=models.CASCADE, related_name="unidades_autonomas",
+        verbose_name=_("Obra"),
+    )
+    pavimento = models.ForeignKey(
+        PavimentoObra, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="unidades", verbose_name=_("Pavimento"),
+    )
+    designacao = models.CharField(max_length=60, verbose_name=_("Designação"))  # "Apto 101"
+    tipo = models.CharField(max_length=60, blank=True, verbose_name=_("Tipo"))  # "2 dormitórios"
+    area_privativa_padrao = models.DecimalField(
+        max_digits=12, decimal_places=2, default=Decimal("0"),
+        verbose_name=_("Área privativa padrão (m²)"),
+    )
+    area_privativa_diferente = models.DecimalField(
+        max_digits=12, decimal_places=2, default=Decimal("0"),
+        verbose_name=_("Área privativa de padrão diferente (m²)"),
+    )
+    coeficiente_privativa_diferente = models.DecimalField(
+        max_digits=5, decimal_places=4, default=Decimal("0.5000"),
+        verbose_name=_("Coeficiente da área privativa diferente"),
+    )
+    area_uso_comum = models.DecimalField(
+        max_digits=12, decimal_places=2, default=Decimal("0"),
+        verbose_name=_("Área de uso comum (m²)"),
+    )
+    coeficiente_proporcionalidade = models.DecimalField(
+        max_digits=12, decimal_places=8, default=Decimal("0"),
+        verbose_name=_("Coeficiente de proporcionalidade"),
+        help_text=_("Rateio do custo. Derivado da área equivalente."),
+    )
+    fracao_ideal = models.DecimalField(
+        max_digits=12, decimal_places=8, default=Decimal("0"),
+        verbose_name=_("Fração ideal do terreno"),
+        help_text=_("Quota legal do terreno — NÃO é o coeficiente de proporcionalidade."),
+    )
+    custo_estimado = models.DecimalField(
+        max_digits=18, decimal_places=2, default=Decimal("0"),
+        verbose_name=_("Custo da unidade"), help_text=_("Quadro IV-A. Derivado."),
+    )
+
+    class Meta:
+        verbose_name = _("Unidade autônoma (NBR 12721)")
+        verbose_name_plural = _("Unidades autônomas (NBR 12721)")
+        ordering = ["obra", "pavimento", "designacao"]
+        constraints = [
+            models.UniqueConstraint(fields=["obra", "designacao"], name="orcamento_unidade_unica"),
+        ]
+
+    def __str__(self):
+        return self.designacao
+
+    @property
+    def area_real_privativa(self) -> Decimal:
+        return self.area_privativa_padrao + self.area_privativa_diferente
+
+    @property
+    def area_equivalente_privativa(self) -> Decimal:
+        return (
+            self.area_privativa_padrao
+            + self.area_privativa_diferente * self.coeficiente_privativa_diferente
+        )
+
+    @property
+    def area_real_total(self) -> Decimal:
+        return self.area_real_privativa + self.area_uso_comum
+
+
+class MemorialNBR(TenantScopedModel):
+    """Linha de um dos **quadros descritivos** — V, VI, VII e VIII.
+
+    Estes quatro quadros não são cálculo: são **memoriais descritivos**
+    preenchidos pelo projetista (informações gerais do empreendimento,
+    equipamentos, acabamentos das áreas privativas e das comuns). Modelá-los
+    como linhas de texto é o que eles são — inventar fórmula aqui produziria
+    documento errado num processo de cartório.
+    """
+
+    class Quadro(models.TextChoices):
+        V = "v", _("Quadro V — Informações gerais")
+        VI = "vi", _("Quadro VI — Memorial dos equipamentos")
+        VII = "vii", _("Quadro VII — Acabamentos das dependências de uso privado")
+        VIII = "viii", _("Quadro VIII — Acabamentos das dependências de uso comum")
+
+    memorial_id = models.AutoField(primary_key=True)
+    obra = models.ForeignKey(
+        "obras.Obra", on_delete=models.CASCADE, related_name="memoriais_nbr", verbose_name=_("Obra"),
+    )
+    quadro = models.CharField(max_length=4, choices=Quadro.choices, verbose_name=_("Quadro"))
+    ordem = models.PositiveIntegerField(default=0, verbose_name=_("Ordem"))
+    dependencia = models.CharField(
+        max_length=120, blank=True, verbose_name=_("Dependência / item"),
+    )
+    descricao = models.TextField(verbose_name=_("Descrição"))
+
+    class Meta:
+        verbose_name = _("Memorial da NBR 12721")
+        verbose_name_plural = _("Memoriais da NBR 12721")
+        ordering = ["obra", "quadro", "ordem", "memorial_id"]
+
+    def __str__(self):
+        return f"{self.get_quadro_display()} — {self.dependencia or self.descricao[:40]}"

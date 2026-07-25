@@ -28,16 +28,20 @@ from catalogo.models import Item
 from nucleo.permissions import RequireModule, RequirePermission
 from nucleo.tenancy import TenantScopedViewSetMixin
 
-from . import controle, planilha, precificacao, services
+from . import controle, nbr12721, planilha, precificacao, services
 from .models import (
     BaseReferencial,
     ComposicaoBDI,
     ComposicaoReferenciaItem,
     InsumoReferencia,
     ItemOrcado,
+    MemorialNBR,
     Orcamento,
+    ParametroObra,
     ParcelaEtapa,
+    PavimentoObra,
     RevisaoOrcamento,
+    UnidadeAutonoma,
 )
 from .pagination import OrcamentoPageNumberPagination
 from .serializers import (
@@ -46,9 +50,13 @@ from .serializers import (
     ComposicaoReferenciaItemSerializer,
     InsumoReferenciaSerializer,
     ItemOrcadoSerializer,
+    MemorialNBRSerializer,
     OrcamentoSerializer,
+    ParametroObraSerializer,
     ParcelaEtapaSerializer,
+    PavimentoObraSerializer,
     RevisaoOrcamentoSerializer,
+    UnidadeAutonomaSerializer,
 )
 
 MODULO = "orcamento"
@@ -675,6 +683,159 @@ class ControleDeCustoView(views.APIView):
                 "Lançamento feito direto no ERP ainda não tem dimensão de obra."
             ),
         })
+
+
+# ---------------------------------------------------------------------------
+# ORC.4 — paramétrico e NBR 12721
+# ---------------------------------------------------------------------------
+
+
+class ParametroObraViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    """Orçamento paramétrico da viabilidade (área equivalente × CUB)."""
+
+    queryset = ParametroObra.objects.select_related("obra").all()
+    serializer_class = ParametroObraSerializer
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ["obra", "projeto_padrao"]
+    ordering_fields = ["criado_em", "custo_estimado"]
+    required_resource = "orcamento.orcamento"
+    action_permission_map = {"comparar": "orcamento.relatorio.view"}
+
+    def perform_create(self, serializer):
+        super().perform_create(serializer)
+        self._calcular(serializer.instance)
+
+    def perform_update(self, serializer):
+        super().perform_update(serializer)
+        self._calcular(serializer.instance)
+
+    def _calcular(self, parametro):
+        sincronizar = self.request.data.get("sincronizar_area", False) in (True, "true", "1", 1)
+        nbr12721.calcular_parametrico(parametro, sincronizar_area=sincronizar)
+
+    @action(detail=True, methods=["get"], url_path="comparar")
+    def comparar(self, request, pk=None):
+        """Paramétrico × analítico aprovado — o que calibra a próxima estimativa."""
+        return Response(nbr12721.comparar_parametrico_com_analitico(self.get_object()))
+
+
+class PavimentoObraViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    """Pavimentos e suas áreas — a base do Quadro I."""
+
+    queryset = PavimentoObra.objects.select_related("obra").all()
+    serializer_class = PavimentoObraSerializer
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ["obra"]
+    ordering_fields = ["ordem", "nome"]
+    required_resource = "orcamento.item"
+
+
+class UnidadeAutonomaViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    """Unidades autônomas — base dos Quadros II e IV."""
+
+    queryset = UnidadeAutonoma.objects.select_related("obra", "pavimento").all()
+    serializer_class = UnidadeAutonomaSerializer
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["obra", "pavimento", "tipo"]
+    search_fields = ["designacao", "tipo"]
+    ordering_fields = ["designacao", "coeficiente_proporcionalidade"]
+    required_resource = "orcamento.item"
+
+
+class MemorialNBRViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    """Linhas dos quadros descritivos V a VIII."""
+
+    queryset = MemorialNBR.objects.select_related("obra").all()
+    serializer_class = MemorialNBRSerializer
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["obra", "quadro"]
+    search_fields = ["dependencia", "descricao"]
+    ordering_fields = ["quadro", "ordem"]
+    required_resource = "orcamento.item"
+
+
+class QuadrosNBRView(views.APIView):
+    """Os oito quadros da NBR 12721 de uma obra — o dossiê de incorporação.
+
+    `GET /api/orcamento/nbr12721/?obra=<id>[&quadro=I|II|III|IV|v|vi|vii|viii]`
+    `POST …/?obra=<id>` com `{"acao": "coeficientes"|"ratear"}` recalcula.
+
+    Uma `APIView` e não um ViewSet porque isto não é um recurso CRUD: é uma
+    **leitura composta** sobre pavimentos, unidades e a base de custo. Os
+    recursos que a alimentam têm seus próprios endpoints.
+    """
+
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
+    required_module = MODULO
+    # Chaves do contrato do `RequirePermission`: "view" p/ métodos seguros,
+    # "write" para os demais.
+    permission_map = {"view": "orcamento.relatorio.view", "write": "orcamento.item.edit"}
+
+    def _obra(self, request):
+        obra = request.query_params.get("obra") or request.data.get("obra")
+        if not obra:
+            raise exceptions.ValidationError({"obra": "Informe a obra."})
+        return obra
+
+    @staticmethod
+    def _tenant(request):
+        return getattr(getattr(request, "user", None), "tenant_id", None)
+
+    def _parametro(self, tenant_id, obra_id):
+        """Paramétrico mais recente da obra — base de custo quando não há
+        planilha analítica aprovada."""
+        return (
+            ParametroObra.objects.filter(tenant_id=tenant_id, obra_id=obra_id)
+            .order_by("-criado_em").first()
+        )
+
+    def get(self, request):
+        tenant_id, obra_id = self._tenant(request), self._obra(request)
+        parametro = self._parametro(tenant_id, obra_id)
+        quadro = (request.query_params.get("quadro") or "").strip()
+
+        try:
+            if not quadro:
+                return Response(nbr12721.dossie(tenant_id, obra_id, parametro=parametro))
+            if quadro == "I":
+                return Response(nbr12721.quadro_i(tenant_id, obra_id))
+            if quadro == "II":
+                return Response(nbr12721.quadro_ii(tenant_id, obra_id))
+            if quadro == "III":
+                return Response(nbr12721.quadro_iii(tenant_id, obra_id, parametro=parametro))
+            if quadro == "IV":
+                return Response(
+                    nbr12721.quadro_iv(tenant_id, obra_id, parametro=parametro, gravar=False)
+                )
+            if quadro.lower() in MemorialNBR.Quadro.values:
+                return Response(
+                    nbr12721.quadros_descritivos(tenant_id, obra_id, quadro.lower())
+                )
+        except nbr12721.DadosInsuficientes as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        return Response(
+            {"quadro": f"Use I, II, III, IV ou {MemorialNBR.Quadro.values}."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    def post(self, request):
+        tenant_id, obra_id = self._tenant(request), self._obra(request)
+        acao = request.data.get("acao")
+        try:
+            if acao == "coeficientes":
+                replicar = request.data.get("replicar_na_fracao_ideal", False) in (True, "true", "1", 1)
+                nbr12721.calcular_coeficientes(
+                    tenant_id, obra_id, replicar_na_fracao_ideal=replicar
+                )
+                return Response(nbr12721.quadro_ii(tenant_id, obra_id))
+            if acao == "ratear":
+                parametro = self._parametro(tenant_id, obra_id)
+                return Response(nbr12721.quadro_iv(tenant_id, obra_id, parametro=parametro))
+        except nbr12721.DadosInsuficientes as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        return Response(
+            {"acao": "Use 'coeficientes' ou 'ratear'."}, status=status.HTTP_400_BAD_REQUEST
+        )
 
 
 class RevisaoOrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ReadOnlyModelViewSet):
