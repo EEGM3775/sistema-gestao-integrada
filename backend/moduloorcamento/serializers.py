@@ -15,9 +15,11 @@ from nucleo.tenant_validators import TenantScopedModelSerializer
 
 from .models import (
     BaseReferencial,
+    ComposicaoBDI,
     ComposicaoReferenciaItem,
     InsumoReferencia,
     ItemOrcado,
+    ItemOrcadoInsumo,
     Orcamento,
     RevisaoOrcamento,
 )
@@ -165,4 +167,36 @@ class RevisaoOrcamentoSerializer(TenantScopedModelSerializer):
 
     class Meta:
         model = RevisaoOrcamento
+        fields = "__all__"
+
+
+# ---------------------------------------------------------------------------
+# ORC.2 — BDI analítico e memória de cálculo
+# ---------------------------------------------------------------------------
+
+
+class ComposicaoBDISerializer(TenantScopedModelSerializer):
+    """As parcelas do BDI. O resultado é derivado — nunca aceito do cliente.
+
+    Se o percentual viesse do corpo da requisição, a composição analítica
+    poderia contradizer o número aplicado, que é justamente o que a peça
+    obrigatória de licitação existe para impedir.
+    """
+
+    percentual_calculado = serializers.DecimalField(max_digits=7, decimal_places=4, read_only=True)
+    tributos = serializers.DecimalField(max_digits=6, decimal_places=3, read_only=True)
+
+    class Meta:
+        model = ComposicaoBDI
+        fields = "__all__"
+
+
+class ItemOrcadoInsumoSerializer(TenantScopedModelSerializer):
+    """Linha da memória de cálculo."""
+
+    categoria_nome = serializers.CharField(source="get_categoria_display", read_only=True)
+    custo_no_item = serializers.DecimalField(max_digits=16, decimal_places=4, read_only=True)
+
+    class Meta:
+        model = ItemOrcadoInsumo
         fields = "__all__"

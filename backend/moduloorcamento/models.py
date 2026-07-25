@@ -380,6 +380,13 @@ class ItemOrcado(TenantScopedModel):
     )
     codigo_referencia = models.CharField(max_length=30, blank=True, verbose_name=_("Código na fonte"))
     data_base_preco = models.DateField(null=True, blank=True, verbose_name=_("Data-base do preço"))
+    # BDI diferenciado (ORC.2): nulo = usa o BDI padrão do orçamento. O TCU
+    # admite BDI próprio para fornecimento de equipamentos, onde não cabem a
+    # mesma administração central e o mesmo risco de um serviço executado.
+    bdi = models.ForeignKey(
+        "ComposicaoBDI", on_delete=models.SET_NULL, null=True, blank=True, related_name="itens",
+        verbose_name=_("BDI diferenciado"),
+    )
     # --- Derivados (services.recalcular_orcamento) ---
     total_custo_direto = models.DecimalField(
         max_digits=18, decimal_places=2, default=Decimal("0"), verbose_name=_("Total (custo direto)"),
@@ -455,3 +462,155 @@ class RevisaoOrcamento(TenantScopedModel):
     @property
     def delta(self) -> Decimal:
         return self.valor_novo - self.valor_anterior
+
+
+# ---------------------------------------------------------------------------
+# ORC.2 — composição analítica, encargos e BDI
+# ---------------------------------------------------------------------------
+#
+# O que separa um orçamento **analítico** de uma lista de preços: cada serviço
+# se abre em insumos com coeficiente de produtividade, e o custo unitário passa
+# a ter **memória de cálculo** — dá para responder "por que este m³ custa
+# R$ 412,80?". É o que a SINAPI publica, o que edital exige e o que o TCU
+# audita.
+#
+# Duas camadas por cima do custo direto, nesta ordem:
+#   1. **Encargos sociais** — só sobre mão de obra (onerado × desonerado).
+#   2. **BDI** — sobre o custo direto total, transformando custo em preço.
+
+
+class ComposicaoBDI(TenantScopedModel):
+    """BDI analítico pela fórmula do **Acórdão 2622/2013-TCU**.
+
+        BDI = [ (1+AC+S+R+G) × (1+DF) × (1+L) / (1−I) ] − 1
+
+    Guardar as parcelas em vez de só o percentual final é o que permite emitir a
+    *composição analítica do BDI* — peça obrigatória em licitação, e a primeira
+    coisa que um auditor pede. O percentual resultante é derivado, nunca digitado.
+
+    **IRPJ e CSLL ficam de fora** por vedação expressa do TCU (Acórdãos 325/2007
+    e 2622/2013): são tributos sobre o lucro da empresa, não sobre o faturamento
+    da obra, e embuti-los no preço faz o contratante pagar o imposto de renda do
+    contratado. Por isso não existe campo para eles — a ausência é a regra.
+
+    Um orçamento pode ter mais de um BDI (o TCU admite **BDI diferenciado** para
+    fornecimento de equipamentos, onde não cabe a mesma administração central e
+    o mesmo risco de um serviço executado). O marcado como `padrao` vale para as
+    linhas que não apontam BDI próprio.
+    """
+
+    bdi_id = models.AutoField(primary_key=True)
+    orcamento = models.ForeignKey(
+        Orcamento, on_delete=models.CASCADE, related_name="composicoes_bdi",
+        verbose_name=_("Orçamento"),
+    )
+    nome = models.CharField(max_length=120, default="BDI padrão", verbose_name=_("Nome"))
+    padrao = models.BooleanField(
+        default=True, verbose_name=_("BDI padrão do orçamento"),
+        help_text=_("Vale para as linhas que não apontam um BDI próprio."),
+    )
+    # Parcelas (%) — nomes da fórmula do acórdão.
+    administracao_central = models.DecimalField(
+        max_digits=6, decimal_places=3, default=Decimal("0"), verbose_name=_("Administração central (AC) %"),
+    )
+    seguro = models.DecimalField(
+        max_digits=6, decimal_places=3, default=Decimal("0"), verbose_name=_("Seguro (S) %"),
+    )
+    risco = models.DecimalField(
+        max_digits=6, decimal_places=3, default=Decimal("0"), verbose_name=_("Risco (R) %"),
+    )
+    garantia = models.DecimalField(
+        max_digits=6, decimal_places=3, default=Decimal("0"), verbose_name=_("Garantia (G) %"),
+    )
+    despesas_financeiras = models.DecimalField(
+        max_digits=6, decimal_places=3, default=Decimal("0"), verbose_name=_("Despesas financeiras (DF) %"),
+    )
+    lucro = models.DecimalField(
+        max_digits=6, decimal_places=3, default=Decimal("0"), verbose_name=_("Lucro (L) %"),
+    )
+    # Tributos (I) — sobre o faturamento. Separados porque a alíquota de ISS é
+    # municipal e a CPRB depende da desoneração da folha; juntá-los num campo só
+    # impediria a composição analítica de mostrar de onde veio cada ponto.
+    pis = models.DecimalField(max_digits=6, decimal_places=3, default=Decimal("0"), verbose_name=_("PIS %"))
+    cofins = models.DecimalField(max_digits=6, decimal_places=3, default=Decimal("0"), verbose_name=_("COFINS %"))
+    iss = models.DecimalField(max_digits=6, decimal_places=3, default=Decimal("0"), verbose_name=_("ISS %"))
+    cprb = models.DecimalField(
+        max_digits=6, decimal_places=3, default=Decimal("0"), verbose_name=_("CPRB %"),
+        help_text=_("Contribuição previdenciária sobre receita bruta (regime desonerado)."),
+    )
+    percentual_calculado = models.DecimalField(
+        max_digits=7, decimal_places=4, default=Decimal("0"), verbose_name=_("BDI resultante (%)"),
+        help_text=_("Derivado da fórmula. Não editável."),
+    )
+    observacao = models.TextField(blank=True, verbose_name=_("Observação"))
+
+    class Meta:
+        verbose_name = _("Composição de BDI")
+        verbose_name_plural = _("Composições de BDI")
+        ordering = ["orcamento", "-padrao", "nome"]
+
+    def __str__(self):
+        return f"{self.nome} — {self.percentual_calculado}%"
+
+    @property
+    def tributos(self) -> Decimal:
+        """I da fórmula — a soma das alíquotas sobre faturamento."""
+        return self.pis + self.cofins + self.iss + self.cprb
+
+
+class ItemOrcadoInsumo(TenantScopedModel):
+    """Uma linha da **memória de cálculo**: o insumo dentro do serviço orçado.
+
+    Resultado da explosão da composição do `catalogo.Item`, achatada em folhas
+    com o coeficiente acumulado. Também é **snapshot** — pelo mesmo motivo da
+    linha-pai (`ItemOrcado`): mexer na composição do catálogo depois não pode
+    mudar o custo de um orçamento já montado.
+
+    `categoria` existe porque **encargos sociais só incidem sobre mão de obra**.
+    Sem distinguir a natureza do insumo, ou se aplica encargo sobre cimento (e o
+    orçamento incha), ou não se aplica sobre o pedreiro (e o orçamento fica
+    irreal).
+    """
+
+    class Categoria(models.TextChoices):
+        MATERIAL = "material", _("Material")
+        MAO_DE_OBRA = "mao_de_obra", _("Mão de obra")
+        EQUIPAMENTO = "equipamento", _("Equipamento")
+        OUTRO = "outro", _("Outro")
+
+    insumo_id = models.AutoField(primary_key=True)
+    item_orcado = models.ForeignKey(
+        ItemOrcado, on_delete=models.CASCADE, related_name="insumos", verbose_name=_("Linha orçada"),
+    )
+    item = models.ForeignKey(
+        "catalogo.Item", on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+        verbose_name=_("Insumo do catálogo"),
+    )
+    descricao = models.CharField(max_length=255, verbose_name=_("Descrição"))
+    unidade = models.CharField(max_length=20, blank=True, verbose_name=_("Unidade"))
+    categoria = models.CharField(
+        max_length=12, choices=Categoria.choices, default=Categoria.MATERIAL, verbose_name=_("Categoria"),
+    )
+    coeficiente = models.DecimalField(
+        max_digits=16, decimal_places=6, default=Decimal("0"), verbose_name=_("Coeficiente"),
+        help_text=_("Consumo por unidade do serviço, já acumulado pela explosão."),
+    )
+    custo_unitario = models.DecimalField(
+        max_digits=16, decimal_places=4, default=Decimal("0"), verbose_name=_("Custo unitário do insumo"),
+    )
+    custo_no_item = models.DecimalField(
+        max_digits=16, decimal_places=4, default=Decimal("0"),
+        verbose_name=_("Custo no serviço"),
+        help_text=_("coeficiente × custo unitário, com encargos quando é mão de obra."),
+    )
+
+    class Meta:
+        verbose_name = _("Insumo do item orçado")
+        verbose_name_plural = _("Insumos dos itens orçados")
+        ordering = ["item_orcado", "categoria", "insumo_id"]
+        indexes = [
+            models.Index(fields=["item_orcado"], name="orcamento_insumo_linha_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.descricao} ×{self.coeficiente}"

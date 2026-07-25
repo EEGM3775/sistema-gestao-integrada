@@ -5,6 +5,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     BaseReferencialResumoView,
     BaseReferencialViewSet,
+    ComposicaoBDIViewSet,
     InsumoReferenciaViewSet,
     ItemOrcadoViewSet,
     OrcamentoStatusView,
@@ -18,6 +19,7 @@ router.register(r"referencias", InsumoReferenciaViewSet, basename="orcamento-ref
 router.register(r"orcamentos", OrcamentoViewSet, basename="orcamento-orcamento")
 router.register(r"itens", ItemOrcadoViewSet, basename="orcamento-item")
 router.register(r"revisoes", RevisaoOrcamentoViewSet, basename="orcamento-revisao")
+router.register(r"bdi", ComposicaoBDIViewSet, basename="orcamento-bdi")
 
 urlpatterns = [
     path("status/", OrcamentoStatusView.as_view(), name="orcamento-status"),

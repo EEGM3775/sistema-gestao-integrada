@@ -76,7 +76,16 @@ def recalcular_orcamento(orcamento: Orcamento) -> Orcamento:
     """
     itens = list(ItemOrcado.objects.filter(orcamento=orcamento))
     filhos = _arvore(itens)
-    fator_bdi = Decimal("1") + (orcamento.bdi_percentual / CEM)
+    fator_padrao = Decimal("1") + (orcamento.bdi_percentual / CEM)
+    # BDI diferenciado por linha (ORC.2): o TCU admite BDI próprio para
+    # fornecimento de equipamentos. Carregado de uma vez — a alternativa seria
+    # um SELECT por linha da planilha.
+    fatores = {
+        bdi_id: Decimal("1") + (percentual / CEM)
+        for bdi_id, percentual in orcamento.composicoes_bdi.values_list(
+            "bdi_id", "percentual_calculado"
+        )
+    }
 
     visitados: set[int] = set()
     alterados: list[ItemOrcado] = []
@@ -93,7 +102,7 @@ def recalcular_orcamento(orcamento: Orcamento) -> Orcamento:
 
         if item.custa and not meus_filhos:
             direto = dinheiro(item.quantidade * item.custo_unitario)
-            com_bdi = dinheiro(direto * fator_bdi)
+            com_bdi = dinheiro(direto * fatores.get(item.bdi_id, fator_padrao))
         else:
             # Sintético — ou analítico que ganhou filhos, e aí passa a valer
             # como agrupador (o custo está nas folhas).

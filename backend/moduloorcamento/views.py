@@ -20,9 +20,10 @@ from catalogo.models import Item
 from nucleo.permissions import RequireModule, RequirePermission
 from nucleo.tenancy import TenantScopedViewSetMixin
 
-from . import planilha, services
+from . import planilha, precificacao, services
 from .models import (
     BaseReferencial,
+    ComposicaoBDI,
     ComposicaoReferenciaItem,
     InsumoReferencia,
     ItemOrcado,
@@ -32,6 +33,7 @@ from .models import (
 from .pagination import OrcamentoPageNumberPagination
 from .serializers import (
     BaseReferencialSerializer,
+    ComposicaoBDISerializer,
     ComposicaoReferenciaItemSerializer,
     InsumoReferenciaSerializer,
     ItemOrcadoSerializer,
@@ -276,6 +278,7 @@ class OrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.
         "revisar": "orcamento.orcamento.revisar",
         "recalcular": "orcamento.orcamento.edit",
         "arvore": "orcamento.orcamento.view",
+        "curva_abc": "orcamento.relatorio.view",
     }
 
     def perform_update(self, serializer):
@@ -327,6 +330,16 @@ class OrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.
         orcamento.refresh_from_db()
         return Response(self.get_serializer(orcamento).data)
 
+    @action(detail=True, methods=["get"], url_path="curva-abc")
+    def curva_abc(self, request, pk=None):
+        """Onde está o dinheiro do orçamento — ~20% dos itens, ~80% do custo.
+
+        Mesma leitura que o SIL faz do estoque, agora do lado do planejado: as
+        duas telas usam a mesma convenção de classe, então A no orçado e A no
+        aplicado querem dizer a mesma coisa.
+        """
+        return Response(precificacao.curva_abc(self.get_object()))
+
     @action(detail=True, methods=["post"], url_path="revisar")
     def revisar(self, request, pk=None):
         """Gera a versão seguinte a partir da aprovada (aditivo/supressão)."""
@@ -371,6 +384,13 @@ class ItemOrcadoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets
     search_fields = ["descricao", "codigo_referencia", "codigo_eap"]
     ordering_fields = ["codigo_eap", "ordem", "total_custo_direto"]
     required_resource = "orcamento.item"
+    action_permission_map = {
+        "memoria": "orcamento.item.view",
+        "preco_real": "orcamento.item.view",
+        "explodir": "orcamento.item.edit",
+        "aplicar_preco_real": "orcamento.item.edit",
+        "do_catalogo": "orcamento.item.edit",
+    }
 
     def perform_create(self, serializer):
         # `super()` é quem injeta o `tenant_id` (TenantScopedViewSetMixin) —
@@ -429,6 +449,101 @@ class ItemOrcadoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets
         planilha.recalcular_orcamento(orcamento)
         linha.refresh_from_db()
         return Response(ItemOrcadoSerializer(linha).data, status=status.HTTP_201_CREATED)
+
+    # --- ORC.2: composição analítica ---
+
+    @action(detail=True, methods=["post"], url_path="explodir")
+    def explodir(self, request, pk=None):
+        """Abre a composição do item em insumos e refaz o custo unitário.
+
+        Depois disto o preço da linha deixa de ser digitado e passa a ser a
+        soma dos insumos — é o que torna o orçamento auditável.
+        """
+        linha = self.get_object()
+        _exigir_editavel(linha.orcamento)
+        atualizar = request.data.get("atualizar_custo", True) not in (False, "false", "0", 0)
+        try:
+            precificacao.explodir_item(linha, atualizar_custo=atualizar)
+        except precificacao.ComposicaoInvalida as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        planilha.recalcular_orcamento(linha.orcamento)
+        linha.refresh_from_db()
+        return Response(precificacao.memoria_de_calculo(linha))
+
+    @action(detail=True, methods=["get"], url_path="memoria")
+    def memoria(self, request, pk=None):
+        """A memória de cálculo da linha: insumos, pesos e resumo por categoria."""
+        return Response(precificacao.memoria_de_calculo(self.get_object()))
+
+    @action(detail=True, methods=["get"], url_path="preco-real")
+    def preco_real(self, request, pk=None):
+        """Preço de tabela × o que a empresa pagou (SCM) × o que carrega (SIL).
+
+        A integração fica visível aqui: a mesma tela que orça mostra o histórico
+        real dos outros dois módulos, porque o item é o mesmo `catalogo.Item`.
+        """
+        linha = self.get_object()
+        if linha.item_id is None:
+            return Response(
+                {"detail": "A linha não aponta item do catálogo."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        dados = precificacao.preco_real_do_item(self._tenant_id(), linha.item_id)
+        dados["orcado"] = {
+            "custo_unitario": str(linha.custo_unitario),
+            "fonte": linha.fonte_referencia or "propria",
+            "data_base": linha.data_base_preco,
+        }
+        return Response(dados)
+
+    @action(detail=True, methods=["post"], url_path="aplicar-preco-real")
+    def aplicar_preco_real(self, request, pk=None):
+        """Troca o preço de tabela pelo histórico real (`origem`: scm | sil)."""
+        linha = self.get_object()
+        _exigir_editavel(linha.orcamento)
+        origem = request.data.get("origem") or "scm"
+        if origem not in ("scm", "sil"):
+            return Response({"origem": "Use 'scm' ou 'sil'."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            precificacao.aplicar_preco_real(linha, origem=origem)
+        except precificacao.ComposicaoInvalida as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        planilha.recalcular_orcamento(linha.orcamento)
+        linha.refresh_from_db()
+        return Response(ItemOrcadoSerializer(linha).data)
+
+
+class ComposicaoBDIViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    """BDI analítico (Acórdão 2622/2013-TCU).
+
+    Toda escrita passa por `precificacao.salvar_bdi`, que recalcula o
+    percentual, garante um único `padrao` por orçamento e propaga o número para
+    o cabeçalho — o percentual jamais é aceito do cliente.
+    """
+
+    queryset = ComposicaoBDI.objects.select_related("orcamento").all()
+    serializer_class = ComposicaoBDISerializer
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ["orcamento", "padrao"]
+    required_resource = "orcamento.orcamento"
+
+    def perform_create(self, serializer):
+        _exigir_editavel(serializer.validated_data.get("orcamento"))
+        super().perform_create(serializer)
+        self._salvar(serializer.instance)
+
+    def perform_update(self, serializer):
+        _exigir_editavel(serializer.instance.orcamento)
+        super().perform_update(serializer)
+        self._salvar(serializer.instance)
+
+    @staticmethod
+    def _salvar(composicao):
+        try:
+            precificacao.salvar_bdi(composicao)
+        except precificacao.ComposicaoInvalida as exc:
+            raise exceptions.ValidationError({"detail": str(exc)}) from exc
+        planilha.recalcular_orcamento(composicao.orcamento)
 
 
 class RevisaoOrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ReadOnlyModelViewSet):
