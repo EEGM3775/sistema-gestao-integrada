@@ -12,3 +12,4 @@
 | Página | Módulo | Do que trata |
 |---|---|---|
 | [moduloscm.md](moduloscm.md) | SCM — suprimentos | As duas vias de aquisição (cotação/RFQ + compra direta), estoque como fonte única, documentos espelhados comprador↔vendedor, o que fica para a Esfera de Rede |
+| [modulosil.md](modulosil.md) | SIL — estoque & logística interna | O laço interno com o SCM (recebimento→entrada; mínimo→demanda), catálogo-mestre como contrato, e o que gradua depois (RFQ automática, benchmark de giro, app móvel) |

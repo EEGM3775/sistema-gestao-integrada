@@ -13,6 +13,8 @@ from rest_framework.response import Response
 from nucleo.permissions import RequireModule, RequirePermission
 from nucleo.tenancy import TenantScopedViewSetMixin
 
+from catalogo.models import Item
+
 from .pagination import ScmPageNumberPagination
 
 from .models import (
@@ -27,7 +29,6 @@ from .models import (
     ItemRecebimento,
     OfertaFornecedor,
     PedidoCompra,
-    Produto,
     Proposta,
     Recebimento,
 )
@@ -43,7 +44,6 @@ from .serializers import (
     ItemRecebimentoSerializer,
     OfertaFornecedorSerializer,
     PedidoCompraSerializer,
-    ProdutoSerializer,
     PropostaSerializer,
     RecebimentoSerializer,
 )
@@ -81,16 +81,6 @@ class CentroCustoViewSet(BaseScmViewSet):
     search_fields = ["nome", "codigo"]
     ordering_fields = ["nome", "codigo"]
     required_resource = "scm.centro_custo"
-
-
-class ProdutoViewSet(BaseScmViewSet):
-    queryset = Produto.objects.all().order_by("descricao")
-    serializer_class = ProdutoSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ["tipo_item", "categoria", "ativo"]
-    search_fields = ["codigo_interno", "descricao", "categoria", "gtin"]
-    ordering_fields = ["descricao", "codigo_interno"]
-    required_resource = "scm.produto"
 
 
 class OfertaFornecedorViewSet(BaseScmViewSet):
@@ -490,7 +480,7 @@ class ScmDashboardView(views.APIView):
                 "pedidosAprovados": pcount(status=PedidoCompra.Status.APROVADO),
                 "pedidosEnviados": pcount(status=PedidoCompra.Status.ENVIADO),
                 "pedidosRecebidosParcial": pcount(status=PedidoCompra.Status.RECEBIDO_PARCIAL),
-                "produtosAtivos": Produto.objects.filter(tenant_id=tid, ativo=True).count(),
+                "produtosAtivos": Item.objects.filter(tenant_id=tid, ativo=True).count(),
                 "ofertasDiretas": OfertaFornecedor.objects.filter(tenant_id=tid, compra_direta=True, ativo=True).count(),
                 "mesReferencia": inicio_mes.strftime("%Y-%m"),
                 "valorCompradoMes": valor_periodo(inicio_mes, fim_mes),

@@ -13,11 +13,14 @@
 | `obras` | — (base) | [obras.md](obras.md) | Obras, etapas, documentos |
 | `clientes` | — (base) | [clientes.md](clientes.md) | Clientes-compradores, aquisições, contratos |
 | `fornecedores` | — (base) | [fornecedores.md](fornecedores.md) | Fornecedores e catálogo de produtos/serviços |
+| `catalogo` | — (base) | [catalogo.md](catalogo.md) | **Item mestre de plataforma** (bem/serviço/equip./ativo/composição) — compartilhado por SCM, SIL e futuros (planejado, Fase 7) |
 | `modulodiario` | — (base)¹ | [modulodiario.md](modulodiario.md) | Diário de obra + mídia → análise de IA |
 | `moduloerp` | **`erp_financeiro`** (+ papel `financeiro`) | [moduloerp.md](moduloerp.md) | Financeiro: contas a pagar/receber, NF, boletos, centros de custo |
 | `rh` | **`rh`** | [rh.md](rh.md) | Funcionários, cargos, folha, dados médicos/bancários |
 | `modulocrm` | **`crm`** | [modulocrm.md](modulocrm.md) | Funil: leads → contas → oportunidades |
 | `moduloscm` | **`scm`** | [moduloscm.md](moduloscm.md) | Suprimentos: catálogo → demanda → cotação → pedido → recebimento (backend ✅; sem UI) |
+| `modulosil` | **`sil`** | [modulosil.md](modulosil.md) | Estoque & logística interna (full-stack ✅): saldo valorado, requisição, inventário, **EPI/NR-6**, **ferramentaria**, **curva ABC**, **aplicado por obra/etapa** (Operação × Gestão) |
+| `moduloorcamento` | **`orcamento`** (planejado) | [moduloorcamento.md](moduloorcamento.md) | Planilha orçamentária de insumos (orçado × comprado × estocado × aplicado) — preenche o *orçado* do SIL 📋 |
 | `moduloapi` | — (base) | [moduloapi.md](moduloapi.md) | Credenciais de APIs externas (Google OAuth) |
 | `nucleo` | — (base) | [nucleo.md](nucleo.md) | Identidade/tenancy/auditoria (espelho da IAM) |
 | `modulocalendar` | — (base) | [modulocalendar.md](modulocalendar.md) | Eventos/tarefas de calendário |
@@ -49,6 +52,6 @@
 
 ## Planejados (placeholders vazios)
 
-`moduloaps`, `modulodms`, `modulopdca`, `modulosil`, `modulomaps` — ver
+`moduloaps`, `modulodms`, `modulopdca`, `modulomaps` — ver
 [modulos-planejados.md](modulos-planejados.md). (`moduloscm` **saiu** desta lista: backend portado —
-[moduloscm.md](moduloscm.md).)
+[moduloscm.md](moduloscm.md); `modulosil` **saiu**: porte planejado — [modulosil.md](modulosil.md).)

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   Building2, HardHat, Users, Truck, Brain, CalendarDays,
   BarChart3, UserCog, TrendingUp, Plane,
-  Package, FileText, ClipboardList, Boxes, Map, Wrench,
+  FileText, ClipboardList, Boxes, Map, Wrench, Warehouse,
   Lock, Construction,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
@@ -112,6 +112,15 @@ const PAID_MODULES: ModuleDef[] = [
     route: '/app/scm',
   },
   {
+    code: 'sil',
+    label: 'Estoque & Logística (SIL)',
+    icon: <Warehouse size={28} />,
+    color: '#dbeafe',
+    description: 'Saldo valorado, movimentações, requisição da obra e inventário. Recebimento vira entrada; falta vira demanda.',
+    implemented: true,
+    route: '/app/sil',
+  },
+  {
     code: 'drone',
     label: 'Drone & Mapeamento',
     icon: <Plane size={28} />,
@@ -146,15 +155,6 @@ const COMING_SOON: ModuleDef[] = [
     icon: <Wrench size={24} />,
     color: '#f3f4f6',
     description: 'Planejamento avançado de produção e recursos.',
-    implemented: false,
-    comingSoon: true,
-  },
-  {
-    code: 'sil',
-    label: 'Sinalização / SIL',
-    icon: <Package size={24} />,
-    color: '#f3f4f6',
-    description: 'Gestão de sinalização e conformidade de canteiro.',
     implemented: false,
     comingSoon: true,
   },

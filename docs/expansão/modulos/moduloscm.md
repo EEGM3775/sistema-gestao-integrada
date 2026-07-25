@@ -78,7 +78,7 @@ prontos (`ref_externa` UUID estável, `origem_tenant` como cópia). **O que grad
 
 | Agora (Fase 7 — backend `moduloscm`) | Depois (Esfera de Rede, H2/H3) |
 |---|---|
-| Catálogo próprio do SCM (`Produto` + `OfertaFornecedor`) com *seam* de catálogo global (`item_rede_id`, categoria, GTIN) | Catálogo global compartilhado da rede; navegação/busca por categoria+região |
+| Catálogo **compartilhado da plataforma** (`catalogo.Item`, extraído do SCM na Fase 7/SIL.0) + `OfertaFornecedor` do SCM, com *seam* de catálogo global (`item_rede_id`, categoria, GTIN) | Catálogo global compartilhado da rede; navegação/busca por categoria+região |
 | Demanda genérica (material\|serviço) + Cotação + Proposta — **lado comprador** | Publicação da Demanda como RFQ na rede; propostas de tenants externos |
 | `OfertaFornecedor` como fonte única de preço/estoque, com *flags* de publicação | Vitrine do marketplace de compra direta; **Pedido de venda** espelhado |
 | `PedidoCompra` (origem `compra_direta`/`cotacao`/`manual`) + Recebimento, **seams** para SIL, ERP e NF-e | Carrinho/checkout, pagamento online (trilhos Asaas), *take rate* no pedido ([../07](../07-monetizacao-da-expansao.md)) |

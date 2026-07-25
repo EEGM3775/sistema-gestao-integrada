@@ -64,46 +64,6 @@ class CentroCusto(TenantScopedModel):
         return f"{self.codigo} — {self.nome}" if self.codigo else self.nome
 
 
-class Produto(TenantScopedModel):
-    """Item mestre do catálogo do SCM, **supplier-agnostic** (padrão Amazon ASIN /
-    Nimbi Private: identidade do produto separada da oferta do fornecedor). A
-    oferta de preço por fornecedor é `OfertaFornecedor`. `gtin`/`item_rede_id`
-    são o seam para o catálogo global da rede (cotações comparáveis entre
-    tenants) — ver docs/expansão/modulos/moduloscm.md §5."""
-
-    class TipoItem(models.TextChoices):
-        MATERIAL = "material", _("Material")
-        SERVICO = "servico", _("Serviço")
-
-    produto_id = models.AutoField(primary_key=True)
-    codigo_interno = models.CharField(max_length=40, verbose_name=_("Código interno (SKU)"))
-    descricao = models.CharField(max_length=255, verbose_name=_("Descrição"))
-    unidade = models.CharField(max_length=20, verbose_name=_("Unidade"))  # un, kg, m³, m...
-    categoria = models.CharField(max_length=80, blank=True, verbose_name=_("Categoria"))
-    tipo_item = models.CharField(
-        max_length=10, choices=TipoItem.choices, default=TipoItem.MATERIAL, verbose_name=_("Tipo"),
-    )
-    gtin = models.CharField(max_length=14, blank=True, verbose_name=_("GTIN/EAN"))
-    item_rede_id = models.CharField(
-        max_length=64, blank=True, verbose_name=_("ID no catálogo da rede"),
-        help_text=_("Seam do catálogo global compartilhado (marketplace)."),
-    )
-    ativo = models.BooleanField(default=True, verbose_name=_("Ativo"))
-
-    class Meta:
-        verbose_name = _("Produto (SCM)")
-        verbose_name_plural = _("Produtos (SCM)")
-        ordering = ["descricao"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["tenant", "codigo_interno"], name="scm_produto_codigo_por_tenant",
-            ),
-        ]
-
-    def __str__(self):
-        return f"{self.codigo_interno} — {self.descricao}"
-
-
 class OfertaFornecedor(TenantScopedModel):
     """Oferta de um fornecedor para um `Produto` — **fonte única de preço E de
     estoque** para as DUAS vias de aquisição (cotação e compra direta). Não
@@ -118,7 +78,7 @@ class OfertaFornecedor(TenantScopedModel):
         REDE = "rede", _("Publicada na rede")
 
     oferta_id = models.AutoField(primary_key=True)
-    produto = models.ForeignKey(Produto, on_delete=models.CASCADE, related_name="ofertas", verbose_name=_("Produto"))
+    produto = models.ForeignKey("catalogo.Item", on_delete=models.CASCADE, related_name="ofertas", verbose_name=_("Item"))
     fornecedor = models.ForeignKey(
         "fornecedores.Fornecedor", on_delete=models.PROTECT, related_name="ofertas_scm", verbose_name=_("Fornecedor"),
     )
@@ -245,7 +205,7 @@ class ItemDemanda(TenantScopedModel):
 
     item_demanda_id = models.AutoField(primary_key=True)
     demanda = models.ForeignKey(Demanda, on_delete=models.CASCADE, related_name="itens", verbose_name=_("Demanda"))
-    produto = models.ForeignKey(Produto, on_delete=models.SET_NULL, null=True, blank=True, related_name="itens_demanda", verbose_name=_("Produto"))
+    produto = models.ForeignKey("catalogo.Item", on_delete=models.SET_NULL, null=True, blank=True, related_name="itens_demanda", verbose_name=_("Item"))
     descricao_servico = models.CharField(max_length=255, blank=True, verbose_name=_("Descrição (serviço/item livre)"))
     quantidade = models.DecimalField(max_digits=14, decimal_places=3, verbose_name=_("Quantidade"))
     unidade = models.CharField(max_length=20, blank=True, verbose_name=_("Unidade"))
@@ -406,7 +366,7 @@ class ItemPedido(TenantScopedModel):
 
     item_pedido_id = models.AutoField(primary_key=True)
     pedido = models.ForeignKey(PedidoCompra, on_delete=models.CASCADE, related_name="itens", verbose_name=_("Pedido"))
-    produto = models.ForeignKey(Produto, on_delete=models.SET_NULL, null=True, blank=True, related_name="itens_pedido", verbose_name=_("Produto"))
+    produto = models.ForeignKey("catalogo.Item", on_delete=models.SET_NULL, null=True, blank=True, related_name="itens_pedido", verbose_name=_("Item"))
     descricao = models.CharField(max_length=255, blank=True, verbose_name=_("Descrição (serviço/item livre)"))
     quantidade = models.DecimalField(max_digits=14, decimal_places=3, verbose_name=_("Quantidade"))
     preco_unitario = models.DecimalField(max_digits=15, decimal_places=2, verbose_name=_("Preço unitário"))

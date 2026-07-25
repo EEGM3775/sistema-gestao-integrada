@@ -35,8 +35,8 @@ Compra direta de uma Oferta ─────────────────�
 | Modelo | Papel | Guarda-permissão (view/edit) |
 |---|---|---|
 | `CentroCusto` | Destino de custo **próprio do SCM** (mapeia p/ o rateio do ERP). `tipo` (obra/empreendimento/almoxarifado/filial/administrativo/outro) + vínculo opcional a `obra`/`empreendimento` + `local_estoque_ref` (seam SIL). Vertical-agnóstico | `scm.centro_custo` |
-| `Produto` | Item mestre do catálogo, **supplier-agnostic** (`codigo_interno` único por-tenant, `unidade`, `categoria`, `tipo_item` material\|serviço, `gtin`/`item_rede_id` = seam do catálogo global) | `scm.produto` |
-| `OfertaFornecedor` | Oferta de um fornecedor p/ um `Produto` — **fonte única de preço e estoque** das duas vias. `preco_direto` (compra direta), `estoque_disponivel`/`estoque_reservado` (`estoque_reservado` read-only), `compra_direta` (habilita a via direta), `visibilidade` (privada\|rede) | `scm.oferta` |
+| `catalogo.Item` ⤴ | **Item mestre — extraído para o app-fundação [`catalogo`](catalogo.md)** (Fase 7, sub-fatia SIL.0): o antigo `Produto` do SCM virou o **cadastro-mestre compartilhado** (bem/serviço/equip./ativo/composição). O SCM passa a **referenciar** `catalogo.Item`, não a possuí-lo. Gerido por `cadastro.item.{view,edit}` | `cadastro.item` |
+| `OfertaFornecedor` | Oferta de um fornecedor p/ um `catalogo.Item` — **fonte única de preço e estoque (do fornecedor)** das duas vias. `preco_direto` (compra direta), `estoque_disponivel`/`estoque_reservado` (`estoque_reservado` read-only), `compra_direta` (habilita a via direta), `visibilidade` (privada\|rede). Não confundir com o `SaldoEstoque` do [SIL](modulosil.md) (nosso estoque interno) | `scm.oferta` |
 | `FaixaPrecoOferta` | Desconto por quantidade da oferta — só na **cotação** (`quantidade_min` → `preco_unitario`) | `scm.oferta` |
 | `Demanda` | **Pivô publicável**. `tipo` material\|serviço, `status` (rascunho→aberta→em_cotacao→atendida/cancelada), `visibilidade` (privada\|rede, read-only — muda por `publicar`), `origem` (manual\|estoque), `centro_custo`, `solicitante`, `ref_externa` (UUID auto = id do gêmeo na rede) | `scm.demanda` |
 | `ItemDemanda` | Linha da demanda. `produto` **ou** `descricao_servico` (serviço/item livre) + `quantidade`/`unidade` | `scm.demanda` |
@@ -49,11 +49,15 @@ Compra direta de uma Oferta ─────────────────�
 | `ItemRecebimento` | Quantidade recebida por item do pedido | `scm.recebimento` |
 | `AvaliacaoFornecedor` | Notas 1–5 (qualidade/pontualidade/atendimento) + comentário, opcionalmente ligada a um pedido | `scm.avaliacao` |
 
-## Catálogo de permissões (`scm.*`, 19)
+## Catálogo de permissões (`scm.*`, 17)
 
-`scm.produto.{view,edit}` · `scm.oferta.{view,edit}` · `scm.centro_custo.{view,edit}` ·
+`scm.oferta.{view,edit}` · `scm.centro_custo.{view,edit}` ·
 `scm.demanda.{view,edit,publicar}` · `scm.cotacao.{view,edit,adjudicar}` ·
 `scm.pedido.{view,edit,criar}` · `scm.recebimento.{view,edit}` · `scm.avaliacao.{view,edit}`.
+
+> **Nota (SIL.0):** os antigos `scm.produto.{view,edit}` **saíram** — a gestão do item mestre passou
+> para o app-fundação [`catalogo`](catalogo.md) sob `cadastro.item.{view,edit}` (disponível a todos os
+> tenants, não só aos que assinam `scm`). A persona `suprimentos` ganha `cadastro.item.view`.
 
 Regra do `RequirePermission`: **GET → `.view`**, **escrita (POST/PUT/PATCH/DELETE) → `.edit`**; os
 verbos de domínio abaixo exigem a permissão dedicada (via `action_permission_map`).
@@ -72,7 +76,7 @@ mapa comparativo itens × propostas numa chamada).
 | Rota | Recurso | Filtros úteis |
 |---|---|---|
 | `centros-custo/` | `CentroCusto` | `tipo`, `ativo`, `empreendimento`, `obra` · busca `nome`/`codigo` |
-| `produtos/` | `Produto` | `tipo_item`, `categoria`, `ativo` · busca `codigo_interno`/`descricao`/`gtin` |
+| ~~`produtos/`~~ → **`/api/catalogo/itens/`** | `catalogo.Item` (movido p/ o app catálogo — SIL.0) | `tipo`, `categoria`, `ativo` · busca `codigo_interno`/`descricao`/`gtin` |
 | `ofertas/` | `OfertaFornecedor` | `produto`, `fornecedor`, `compra_direta`, `visibilidade`, `ativo` |
 | `faixas-preco/` | `FaixaPrecoOferta` | `oferta` |
 | `demandas/` | `Demanda` | `tipo`, `status`, `visibilidade`, `origem`, `centro_custo` |
@@ -129,7 +133,7 @@ Sub-fases sugeridas (uma fatia de UI por vez, `hasModule('scm')` + gate por perm
 
 | Sub-fase | Telas | Consome |
 |---|---|---|
-| **S.1 Catálogo** | `ProdutosPage` (lista+form); `OfertasPage` em **cards** (preço direto + barra de estoque + **Comprar direto**) ou tabela, com editor de `FaixaPrecoOferta`; `CentrosCustoPage` | `produtos/`, `ofertas/`, `faixas-preco/`, `centros-custo/` |
+| **S.1 Catálogo** | `ProdutosPage` (lista+form, lê o item mestre); `OfertasPage` em **cards** (preço direto + barra de estoque + **Comprar direto**) ou tabela, com editor de `FaixaPrecoOferta`; `CentrosCustoPage` | `catalogo/itens/`, `ofertas/`, `faixas-preco/`, `centros-custo/` |
 | **S.2 Demanda & Cotação** | `DemandasPage` (lista+form+itens); `CotacaoDetail` = **mapa comparativo** (itens × propostas, **estrelas** do fornecedor, marcador **menor** por item, **delta** vs. menor total, moldura da coluna recomendada/vencedora, barra de **IA inerte**) + **Adjudicar** | `demandas/`, `itens-demanda/`, `cotacoes/`(+`adjudicar`), `propostas/`, `itens-proposta/` |
 | **S.3 Pedido & Recebimento** | `PedidosPage` com as **duas vias**: "Comprar direto" (de uma oferta com `compra_direta`) e "Gerar de cotação"; `PedidoDetail` (itens, status, **registrar recebimento**); `AvaliacaoForm` | `pedidos/`(+`comprar_direto`/`gerar_de_cotacao`), `itens-pedido/`, `recebimentos/`, `avaliacoes/` |
 | **S.4 Hub SCM** | `ScmDashboardPage`: **trilho de fluxo** (Demanda→Cotação→Pedido→Recebimento com contagens), KPI **Compras no mês** (valor real + delta vs. mês anterior, mês selecionável), cotações a adjudicar, fornecedores avaliados; atalhos | `dashboard/` (agregado) |
@@ -164,7 +168,10 @@ Os *seams de rede* (`visibilidade`, `origem_tenant`, `ref_externa`) **não têm 
 ## Status / pendências
 
 Backend **completo (fatias 1–3)** + agregação de reputação e endpoint `dashboard/`, testado
-(`moduloscm/tests.py`, 34/34 sobre Postgres). **Frontend S.1–S.4 reconstruído sobre o protótipo Malha**
+(`moduloscm/tests.py`, 34/34 sobre Postgres). **Mudança planejada (Fase 7, SIL.0):** o `Produto` do
+SCM é **extraído** para o app-fundação [`catalogo`](catalogo.md) (`catalogo.Item`) — o SCM passa a
+referenciá-lo; ver a migração em [catalogo.md](catalogo.md#migração-moduloscmproduto--catalogoitem).
+**Frontend S.1–S.4 reconstruído sobre o protótipo Malha**
 (página única com abas: mapa comparativo, catálogo em cards, hub com trilho de fluxo, IA inerte; aba
 Esfera de Rede bloqueada — cadeado, teaser de visão, sem feature de rede). Status vivo
 no [roadmap](../roadmap.md#estado-dos-módulos--backend-07062026).

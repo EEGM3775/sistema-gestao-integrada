@@ -91,6 +91,7 @@ INSTALLED_APPS = [
     "clientes",
     "empreendimentos",
     "fornecedores",
+    "catalogo",
     "obras",
     "rh",
     "modulodiario",

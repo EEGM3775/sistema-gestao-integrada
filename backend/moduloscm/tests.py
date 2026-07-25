@@ -9,6 +9,7 @@ from decimal import Decimal
 
 from rest_framework.test import APITestCase
 
+from catalogo.models import Item
 from fornecedores.models import Fornecedor
 from nucleo.models import Tenant, Usuario
 
@@ -21,13 +22,11 @@ from .models import (
     ItemProposta,
     OfertaFornecedor,
     PedidoCompra,
-    Produto,
     Proposta,
     Recebimento,
 )
 
 SCM_PERMS_FULL = [
-    "scm.produto.view", "scm.produto.edit",
     "scm.oferta.view", "scm.oferta.edit",
     "scm.centro_custo.view", "scm.centro_custo.edit",
     "scm.demanda.view", "scm.demanda.edit", "scm.demanda.publicar",
@@ -56,86 +55,29 @@ class ScmTestBase(APITestCase):
 class EntitlementTests(ScmTestBase):
     def test_sem_modulo_scm_recebe_403(self):
         self.autenticar(modules=[])
-        resp = self.client.get("/api/scm/produtos/")
+        resp = self.client.get("/api/scm/centros-custo/")
         self.assertEqual(resp.status_code, 403)
 
     def test_com_modulo_sem_permissao_recebe_403(self):
         self.autenticar(modules=["scm"], perms=[])
-        resp = self.client.get("/api/scm/produtos/")
+        resp = self.client.get("/api/scm/centros-custo/")
         self.assertEqual(resp.status_code, 403)
 
     def test_com_modulo_e_permissao_recebe_200(self):
         self.autenticar()
-        resp = self.client.get("/api/scm/produtos/")
+        resp = self.client.get("/api/scm/centros-custo/")
         self.assertEqual(resp.status_code, 200)
-
-
-class ProdutoCrudTests(ScmTestBase):
-    def test_post_injeta_tenant_do_usuario(self):
-        self.autenticar()
-        resp = self.client.post("/api/scm/produtos/", {
-            "codigo_interno": "CIM-50", "descricao": "Cimento CPII 50kg", "unidade": "sc",
-        })
-        self.assertEqual(resp.status_code, 201, resp.content)
-        produto = Produto.objects.get(codigo_interno="CIM-50")
-        self.assertEqual(produto.tenant_id, self.tenant.id)
-
-    def test_tenant_no_payload_e_ignorado(self):
-        self.autenticar()
-        resp = self.client.post("/api/scm/produtos/", {
-            "codigo_interno": "VER-10", "descricao": "Vergalhão CA-50 10mm", "unidade": "m",
-            "tenant": self.tenant_b.id,  # deve ser ignorado (read-only)
-        })
-        self.assertEqual(resp.status_code, 201, resp.content)
-        self.assertEqual(Produto.objects.get(codigo_interno="VER-10").tenant_id, self.tenant.id)
-
-
-class IsolamentoTenantTests(ScmTestBase):
-    def test_lista_nao_vaza_produto_de_outro_tenant(self):
-        Produto.objects.create(tenant=self.tenant, codigo_interno="A-1", descricao="Item A", unidade="un")
-        Produto.objects.create(tenant=self.tenant_b, codigo_interno="B-1", descricao="Item B", unidade="un")
-        self.autenticar()
-        resp = self.client.get("/api/scm/produtos/")
-        self.assertEqual(resp.status_code, 200)
-        data = resp.data["results"] if isinstance(resp.data, dict) else resp.data
-        codigos = {p["codigo_interno"] for p in data}
-        self.assertIn("A-1", codigos)
-        self.assertNotIn("B-1", codigos)
-
-    def test_nao_acessa_detalhe_de_outro_tenant(self):
-        alheio = Produto.objects.create(tenant=self.tenant_b, codigo_interno="B-2", descricao="Item B", unidade="un")
-        self.autenticar()
-        resp = self.client.get(f"/api/scm/produtos/{alheio.produto_id}/")
-        self.assertEqual(resp.status_code, 404)
-
-
-class UnicidadePorTenantTests(ScmTestBase):
-    def test_codigo_interno_duplicado_no_mesmo_tenant_da_400(self):
-        Produto.objects.create(tenant=self.tenant, codigo_interno="DUP", descricao="X", unidade="un")
-        self.autenticar()
-        resp = self.client.post("/api/scm/produtos/", {
-            "codigo_interno": "DUP", "descricao": "Y", "unidade": "un",
-        })
-        self.assertEqual(resp.status_code, 400)
-
-    def test_mesmo_codigo_em_tenants_distintos_e_permitido(self):
-        Produto.objects.create(tenant=self.tenant_b, codigo_interno="COMPART", descricao="X", unidade="un")
-        self.autenticar()
-        resp = self.client.post("/api/scm/produtos/", {
-            "codigo_interno": "COMPART", "descricao": "Y", "unidade": "un",
-        })
-        self.assertEqual(resp.status_code, 201, resp.content)
 
 
 class OfertaTests(ScmTestBase):
     def setUp(self):
-        self.produto = Produto.objects.create(tenant=self.tenant, codigo_interno="P1", descricao="Item", unidade="un")
+        self.produto = Item.objects.create(tenant=self.tenant, codigo_interno="P1", descricao="Item", unidade="un")
         self.fornecedor = Fornecedor.objects.create(tenant=self.tenant, razao_social="Fornecedora Alfa", email="alfa@ex.com")
 
     def test_estoque_reservado_e_read_only(self):
         self.autenticar()
         resp = self.client.post("/api/scm/ofertas/", {
-            "produto": self.produto.produto_id, "fornecedor": self.fornecedor.fornecedor_id,
+            "produto": self.produto.item_id, "fornecedor": self.fornecedor.fornecedor_id,
             "preco_direto": "10.00", "estoque_disponivel": "100.000",
             "estoque_reservado": "50.000",  # deve ser ignorado (system-managed)
         })
@@ -150,7 +92,7 @@ class OfertaTests(ScmTestBase):
         )
         self.autenticar()
         resp = self.client.post("/api/scm/ofertas/", {
-            "produto": self.produto.produto_id, "fornecedor": self.fornecedor.fornecedor_id,
+            "produto": self.produto.item_id, "fornecedor": self.fornecedor.fornecedor_id,
             "preco_direto": "12.00",
         })
         self.assertEqual(resp.status_code, 400)
@@ -255,7 +197,7 @@ class CotacaoAdjudicacaoTests(ScmTestBase):
 # ------------------------- Fatia 3 -------------------------
 class CompraDiretaTests(ScmTestBase):
     def setUp(self):
-        self.produto = Produto.objects.create(tenant=self.tenant, codigo_interno="P1", descricao="Cimento", unidade="sc")
+        self.produto = Item.objects.create(tenant=self.tenant, codigo_interno="P1", descricao="Cimento", unidade="sc")
         self.fornecedor = Fornecedor.objects.create(tenant=self.tenant, razao_social="Alfa", email="a@ex.com")
 
     def _oferta(self, compra_direta=True):
@@ -290,7 +232,7 @@ class CompraDiretaTests(ScmTestBase):
 
 class GerarPedidoDeCotacaoTests(ScmTestBase):
     def setUp(self):
-        self.produto = Produto.objects.create(tenant=self.tenant, codigo_interno="P1", descricao="Cimento", unidade="sc")
+        self.produto = Item.objects.create(tenant=self.tenant, codigo_interno="P1", descricao="Cimento", unidade="sc")
         self.fornecedor = Fornecedor.objects.create(tenant=self.tenant, razao_social="Alfa", email="a@ex.com")
         self.demanda = Demanda.objects.create(tenant=self.tenant, tipo=Demanda.Tipo.MATERIAL)
         self.item = ItemDemanda.objects.create(tenant=self.tenant, demanda=self.demanda, produto=self.produto, quantidade=5, unidade="sc")
@@ -410,7 +352,7 @@ class DashboardTests(ScmTestBase):
     def test_dashboard_traz_contagens_e_respeita_tenant(self):
         Demanda.objects.create(tenant=self.tenant, tipo=Demanda.Tipo.MATERIAL, status=Demanda.Status.ABERTA)
         Demanda.objects.create(tenant=self.tenant_b, tipo=Demanda.Tipo.MATERIAL, status=Demanda.Status.ABERTA)
-        Produto.objects.create(tenant=self.tenant, codigo_interno="P1", descricao="X", unidade="un", ativo=True)
+        Item.objects.create(tenant=self.tenant, codigo_interno="P1", descricao="X", unidade="un", ativo=True)
         self.autenticar()
         resp = self.client.get("/api/scm/dashboard/")
         self.assertEqual(resp.status_code, 200, resp.content)

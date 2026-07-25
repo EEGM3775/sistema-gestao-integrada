@@ -86,7 +86,7 @@ Lead→Account→Contact→Opportunity muito mais rico), `obras`, `clientes`, `e
 | App | v01 (modelos) | Decisão | Entitlement |
 |---|---|---|---|
 | `moduloscm` (suprimentos) | `PedidoCompra`, `ItemPedido`, `AvaliacaoFornecedor` | **Portar adaptando** (liga a `fornecedores`) | `scm` |
-| `modulosil` (estoque) | `ItemCatalogo`, `Estoque`, `ItemEstoque`, `MovimentacaoEstoque` | **Portar adaptando** | `sil` |
+| `modulosil` (estoque & logística interna) | `ItemCatalogo`, `Estoque`, `ItemEstoque`, `MovimentacaoEstoque` | **Portar adaptando + ampliar** (WMS-lite: requisição, transferência, devolução, rastreabilidade, inventário). O `ItemCatalogo` v01 (que FK-ava `fornecedores.ProdutoServicoFornecedor`) **não** vira um catálogo próprio: o item mestre é o **`catalogo.Item`** compartilhado (ver nota abaixo) | `sil` |
 | `modulopdca` (planejamento/risco) | `Tarefa`, `Marco`, `Risco` | **Portar adaptando** | `pdca` |
 | `modulodms` (documentos) | `Documento`, `VersaoDocumento` | **Avaliar** — pode colidir com mídia/`modulodiario` | `dms` |
 | `moduloaps` (BIM/Autodesk) | `APSModel` + proxy de token OAuth | **Portar adaptando** (ver §5.3) | `aps` |
@@ -95,6 +95,16 @@ Lead→Account→Contact→Opportunity muito mais rico), `obras`, `clientes`, `e
 > Os códigos de entitlement (`scm`, `sil`, …) ainda **não existem** no catálogo da IAM —
 > registrá-los é o passo 1 do contrato ([modulos-planejados.md](../modulos/modulos-planejados.md)).
 > Ordem sugerida: `scm` → `sil` → `pdca` → `dms` → `aps` → `maps`.
+
+> **Catálogo-mestre compartilhado (decisão do porte do SIL):** vários módulos precisam do **mesmo**
+> cadastro de item (SCM compra, SIL estoca, comercial/orçamento vendem/orçam) — e haverá **serviços
+> como itens** (Edição Prestador). Em vez de um catálogo por módulo (a duplicação que a régua
+> proíbe), o item mestre vira um **app-fundação `catalogo`** (sem entitlement, como
+> `fornecedores`/`clientes`), no padrão MDM/PIM dos grandes players (SAP Material/Product Master;
+> Oracle Item Master com taxonomia + flags por aplicação). O porte do SIL **promove o `Produto` do
+> `moduloscm` para `catalogo.Item`** (migração preservando PKs + repontar as 3 FKs do SCM) — é a
+> sub-fatia **SIL.0**. Plantas: [../modulos/catalogo.md](../modulos/catalogo.md) e
+> [../modulos/modulosil.md](../modulos/modulosil.md).
 
 ### 5.3 Detalhe — `moduloaps` (Autodesk Platform Services / BIM)
 

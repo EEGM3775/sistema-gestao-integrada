@@ -130,6 +130,36 @@ CATALOGO: tuple[Perm, ...] = (
     Perm("scm.recebimento.edit", "Registrar recebimentos", "scm"),
     Perm("scm.avaliacao.view", "Ver avaliações de fornecedores", "scm"),
     Perm("scm.avaliacao.edit", "Avaliar fornecedores", "scm"),
+    # --- SIL — estoque & logística interna (módulo 'sil') ---
+    #     locais, saldo valorado, ledger de movimentação, requisição da obra,
+    #     transferência, devolução, rastreabilidade (lote) e inventário.
+    Perm("sil.local.view", "Ver locais de estoque (almoxarifado/canteiro)", "sil"),
+    Perm("sil.local.edit", "Gerir locais de estoque", "sil"),
+    Perm("sil.saldo.view", "Ver saldo valorado de estoque", "sil"),
+    Perm("sil.saldo.edit", "Definir ponto de reposição / gerar demanda de reposição", "sil"),
+    Perm("sil.movimentacao.view", "Ver o ledger de movimentações", "sil"),
+    Perm("sil.movimentacao.edit", "Registrar entrada/saída/ajuste", "sil"),
+    Perm("sil.requisicao.view", "Ver requisições de material", "sil"),
+    Perm("sil.requisicao.edit", "Criar/editar requisições de material", "sil"),
+    Perm("sil.requisicao.aprovar", "Aprovar requisição (reserva o saldo)", "sil"),
+    Perm("sil.requisicao.atender", "Atender requisição (baixa o saldo)", "sil"),
+    Perm("sil.transferencia.view", "Ver transferências entre locais", "sil"),
+    Perm("sil.transferencia.edit", "Criar/editar transferências entre locais", "sil"),
+    Perm("sil.transferencia.executar", "Executar transferência entre locais", "sil"),
+    Perm("sil.devolucao.view", "Ver devoluções", "sil"),
+    Perm("sil.devolucao.edit", "Criar/editar devoluções", "sil"),
+    Perm("sil.devolucao.executar", "Executar devolução (ao fornecedor/estoque)", "sil"),
+    Perm("sil.lote.view", "Ver lotes/validade (rastreabilidade)", "sil"),
+    Perm("sil.lote.edit", "Gerir lotes/validade", "sil"),
+    Perm("sil.inventario.view", "Ver inventários", "sil"),
+    Perm("sil.inventario.edit", "Criar/editar inventário (contagem)", "sil"),
+    Perm("sil.inventario.fechar", "Fechar inventário (gera ajustes)", "sil"),
+    # EPI (NR-6), ferramentaria (comodato) e relatórios de gestão (curva ABC, aplicado).
+    Perm("sil.epi.view", "Ver entregas de EPI (NR-6)", "sil"),
+    Perm("sil.epi.edit", "Registrar/devolver EPI (NR-6)", "sil"),
+    Perm("sil.ferramenta.view", "Ver ferramentaria (ferramentas/empréstimos)", "sil"),
+    Perm("sil.ferramenta.edit", "Gerir ferramentaria (emprestar/devolver/manutenção)", "sil"),
+    Perm("sil.relatorio.view", "Ver relatórios de estoque (curva ABC, aplicado por obra)", "sil"),
     # --- Obras/empreendimentos e cadastros base (sem entitlement de módulo) ---
     Perm("obra.empreendimento.view", "Ver empreendimentos", "base"),
     Perm("obra.empreendimento.edit", "Gerir empreendimentos", "base"),
@@ -160,6 +190,9 @@ CATALOGO: tuple[Perm, ...] = (
     Perm("cadastro.fornecedor.edit", "Gerir fornecedores (produtos/serviços)", "base"),
     Perm("cadastro.fornecedor_banco.view", "Ver dados bancários do fornecedor (PII)", "base"),
     Perm("cadastro.fornecedor_banco.edit", "Editar dados bancários do fornecedor (PII)", "base"),
+    # Catálogo-mestre de plataforma (app-fundação `catalogo`; item bem/serviço/etc.)
+    Perm("cadastro.item.view", "Ver itens do catálogo-mestre", "base"),
+    Perm("cadastro.item.edit", "Gerir itens do catálogo-mestre", "base"),
     # --- Plataforma / governança (transversal, sem módulo vendável) ---
     Perm("plataforma.papel.gerir", "Criar/editar/excluir papéis e permissões (personas)", "plataforma"),
     Perm("plataforma.config.view", "Ver configurações do tenant (uploads etc.)", "plataforma"),
@@ -265,7 +298,15 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
         "cadastro.cliente.view", "cadastro.cliente_doc.view", "cadastro.fornecedor.view",
     ],
     # Suprimentos: catálogo de produtos, ofertas de fornecedores e centros de custo.
-    "suprimentos": ["scm.*", "cadastro.fornecedor.view"],
+    "suprimentos": ["scm.*", "cadastro.fornecedor.view", "cadastro.item.*"],
+    # Almoxarife: estoque & logística interna. `sil.*` + leitura do item-mestre
+    # (o que se estoca) e dos selects do domínio (obra do canteiro/requisição,
+    # fornecedor da devolução/lote).
+    "almoxarife": [
+        "sil.*", "cadastro.item.view",
+        "obra.obra.view", "cadastro.fornecedor.view",
+        "rh.funcionario.view",  # picker de colaborador em EPI/ferramentaria
+    ],
     # Gestor da lixeira (exclusão reversível — ver arquitetura/lixo.md).
     "gestor_lixo": ["plataforma.lixo.*"],
     # Papel default de leitura básica (antes era morto).
@@ -291,6 +332,7 @@ DESCRICOES_TEMPLATE: dict[str, str] = {
     "drone_analista": "Processamento, medições e anotações de projetos de drone.",
     "auditor": "Somente leitura ampla + trilha de auditoria e operações de titular (LGPD).",
     "suprimentos": "Suprimentos: catálogo de produtos, ofertas/preços de fornecedores e centros de custo.",
+    "almoxarife": "Estoque e logística interna: saldos, movimentações, requisições, transferências, devoluções, lotes e inventário.",
     "gestor_lixo": "Restauração e expurgo de itens da lixeira (exclusão reversível).",
     "operacional": "Leitura básica de obras, diário, agenda e cadastros.",
 }

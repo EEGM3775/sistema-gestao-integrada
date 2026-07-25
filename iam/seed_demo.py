@@ -14,7 +14,7 @@ Papéis de fábrica: criados por `sync_authz` a partir dos templates do catálog
 comercial, engenharia, campo, drone_analista, auditor, gestor_lixo, operacional).
 
 Usuários:
-  demo     / demo123     -> tenant demo | módulos: drone,erp,crm,rh | papéis: financeiro + RH (gestor/médico/financeiro)
+  demo     / demo123     -> tenant demo | módulos: drone,erp,crm,rh,scm,sil | papéis: financeiro + RH + suprimentos + almoxarife
   semdrone / semdrone123 -> tenant demo | módulos: erp_financeiro    | papel: operacional (restrito — exercita mascaramento)
   acme     / acme123     -> tenant acme | módulos: drone             | papel: operacional
 
@@ -43,6 +43,7 @@ for cod, nome in [
     ("crm", "CRM"),
     ("rh", "Recursos Humanos"),
     ("scm", "Suprimentos (SCM)"),
+    ("sil", "Estoque & Logística (SIL)"),
 ]:
     modulos[cod], _ = Modulo.objects.get_or_create(codigo=cod, defaults={"nome": nome})
 
@@ -102,10 +103,10 @@ call_command("sync_authz", all_tenants=True)
 
 # --- Usuários e seus papéis ---
 demo = upsert_user(
-    tenant, "demo", "demo123", ["drone", "erp_financeiro", "crm", "rh", "scm"],
-    # Power-user: papéis cobrindo todos os módulos do tenant (erp, crm, obras, drone, rh, scm).
+    tenant, "demo", "demo123", ["drone", "erp_financeiro", "crm", "rh", "scm", "sil"],
+    # Power-user: papéis cobrindo todos os módulos do tenant (erp, crm, obras, drone, rh, scm, sil).
     ["financeiro", "tesouraria", "fiscal", "comercial", "engenharia",
-     "drone_analista", "rh_gestor", "rh_medico", "rh_financeiro", "suprimentos"],
+     "drone_analista", "rh_gestor", "rh_medico", "rh_financeiro", "suprimentos", "almoxarife"],
 )
 semdrone = upsert_user(tenant, "semdrone", "semdrone123", ["erp_financeiro"], ["operacional"])
 acme = upsert_user(acme_tenant, "acme", "acme123", ["drone"], ["operacional"])

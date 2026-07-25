@@ -158,6 +158,7 @@ urlpatterns = [
     path('api/aps/', include('moduloaps.urls')),
     path('api/dms/', include('modulodms.urls')),
     path('api/pdca/', include('modulopdca.urls')),
+    path('api/catalogo/', include('catalogo.urls')),
     path('api/scm/', include('moduloscm.urls')),
     path('api/sil/', include('modulosil.urls')),
     path('api/maps/', include('modulomaps.urls')),

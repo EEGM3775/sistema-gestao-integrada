@@ -17,7 +17,12 @@
 | `moduloaps` | §2 Engenharia & Obra — planejamento e programação (APS) |
 | `modulopdca` | §2 Engenharia & Obra — qualidade/melhoria contínua |
 | `modulomaps` | §7 Terrenos & Incorporação — GIS/geolocalização |
-| `modulosil` | a definir com o produto — candidato natural: SIL = suprimentos/logística interna (almoxarifado, §3) |
+| `modulosil` | **definido:** §3 Suprimentos — **estoque & logística interna** (almoxarifado central + canteiros, saldo valorado, movimentações, requisição, rastreabilidade, inventário). Planta em [../modulos/modulosil.md](../modulos/modulosil.md) |
+
+> **Catálogo-mestre de plataforma (novo, fundação):** o porte do SIL extrai o `Produto` do SCM para
+> um app-fundação **`catalogo`** (sem entitlement) — o **item mestre único** (bem/serviço/equip./
+> ativo/composição) compartilhado por SCM, SIL e futuros (comercial, orçamento). Padrão MDM/PIM
+> (SAP Material Master / Oracle Item Master). Planta em [../modulos/catalogo.md](../modulos/catalogo.md).
 
 ## 1. Núcleo (existente — a fortaleza)
 
@@ -44,7 +49,7 @@ bancária (ver §5).
 | Módulo | Status | O que faz | Depende de | Efeito de rede / IA |
 |---|---|---|---|---|
 | SCM — compras | 📦 `moduloscm` | Requisição → cotação → mapa comparativo → pedido → recebimento (casa com XML NF-e já lido) | fornecedores, moduloerp, obras | **A ponte para o marketplace de cotações** ([04](04-rede-e-marketplaces.md) §2) |
-| Estoque / almoxarifado | 🧭 (`modulosil`?) | Estoque por obra/central, mínimos, transferências, inventário | SCM, obras | Estoque mínimo → RFQ automática (E6) |
+| Estoque / almoxarifado & logística interna | 📦 `modulosil` | Estoque por obra/central, saldo valorado, movimentações, requisição da obra, transferências, devoluções, rastreabilidade (lote/validade), inventário | catálogo, SCM, obras, ERP | Estoque mínimo → RFQ automática (E6); benchmark de giro (E4) |
 | Contratos de fornecimento | 🧭 | Acordos de preço, entregas programadas, aditivos | SCM, fornecedores | Preço histórico alimenta benchmark |
 
 ## 4. Comercial & Vendas

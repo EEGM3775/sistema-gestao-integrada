@@ -13,7 +13,6 @@ from .views import (
     ItemRecebimentoViewSet,
     OfertaFornecedorViewSet,
     PedidoCompraViewSet,
-    ProdutoViewSet,
     PropostaViewSet,
     RecebimentoViewSet,
     ScmDashboardView,
@@ -22,7 +21,6 @@ from .views import (
 
 router = DefaultRouter()
 router.register(r"centros-custo", CentroCustoViewSet, basename="scm-centrocusto")
-router.register(r"produtos", ProdutoViewSet, basename="scm-produto")
 router.register(r"ofertas", OfertaFornecedorViewSet, basename="scm-oferta")
 router.register(r"faixas-preco", FaixaPrecoOfertaViewSet, basename="scm-faixapreco")
 router.register(r"demandas", DemandaViewSet, basename="scm-demanda")

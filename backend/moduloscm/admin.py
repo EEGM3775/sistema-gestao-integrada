@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import CentroCusto, FaixaPrecoOferta, OfertaFornecedor, Produto
+from .models import CentroCusto, FaixaPrecoOferta, OfertaFornecedor
 
 
 @admin.register(CentroCusto)
@@ -8,13 +8,6 @@ class CentroCustoAdmin(admin.ModelAdmin):
     list_display = ["centro_custo_id", "nome", "codigo", "tipo", "ativo", "tenant"]
     list_filter = ["tipo", "ativo"]
     search_fields = ["nome", "codigo"]
-
-
-@admin.register(Produto)
-class ProdutoAdmin(admin.ModelAdmin):
-    list_display = ["produto_id", "codigo_interno", "descricao", "unidade", "tipo_item", "ativo", "tenant"]
-    list_filter = ["tipo_item", "ativo"]
-    search_fields = ["codigo_interno", "descricao", "gtin"]
 
 
 class FaixaPrecoOfertaInline(admin.TabularInline):

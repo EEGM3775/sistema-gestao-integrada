@@ -15,7 +15,6 @@ from .models import (
     ItemRecebimento,
     OfertaFornecedor,
     PedidoCompra,
-    Produto,
     Proposta,
     Recebimento,
 )
@@ -24,13 +23,6 @@ from .models import (
 class CentroCustoSerializer(TenantScopedModelSerializer):
     class Meta:
         model = CentroCusto
-        fields = "__all__"
-        read_only_fields = ["tenant"]
-
-
-class ProdutoSerializer(TenantScopedModelSerializer):
-    class Meta:
-        model = Produto
         fields = "__all__"
         read_only_fields = ["tenant"]
 

@@ -2,6 +2,64 @@
 
 Todas as mudanças notáveis desta versão são documentadas aqui.
 
+## [1.0.14] - 2026-07-25
+
+### Visão geral
+
+Módulo **SIL (Estoque & Logística interna)** full-stack sobre um novo app-fundação **`catalogo`**
+(item mestre de plataforma), Fase 7 / E.3. Fecha o laço do SCM: *recebimento vira estoque* e *falta
+no estoque vira demanda de compra*. Entregue em seis sub-fatias (SIL.0–SIL.6), a última
+reenquadrando o módulo como **construtora-native** (EPI/NR-6, ferramentaria, apropriação por etapa,
+curva ABC, orçado×aplicado). Suíte `modulosil` **23/23**, **60/60** com `catalogo`+`moduloscm` sobre
+Postgres; IAM **115/115**; `vite build` limpo.
+
+#### Fundação — `catalogo` (novo app, sem entitlement)
+
+- **`catalogo.Item`** como cadastro-mestre único (bem/serviço/equipamento/EPI/ativo/composição) +
+  `ComponenteComposicao`; permissões `cadastro.item.*`; RLS fail-closed.
+- **`Produto` do SCM migrado preservando PKs** (`catalogo/0002_migrar_produto_do_scm.py`), 3 FKs do
+  SCM repontadas (`moduloscm/0004`) e o modelo `Produto` removido. O mesmo item que o SCM compra, o
+  SIL estoca e o futuro Orçamento orça — sem tradução entre módulos.
+
+#### Backend — `modulosil`
+
+- **Núcleo:** `LocalEstoque`, `SaldoEstoque`/`SaldoLote`, `Lote` (rastreabilidade/validade),
+  `MovimentacaoEstoque` (ledger), `Requisicao`, `Transferencia`, `Devolucao`, `Inventario` — com
+  **custo médio ponderado móvel** na valoração e RLS fail-closed.
+- **Construtora-native:** `EntregaEPI` (NR-6 — CA, validade, comprovante), `Ferramenta` /
+  `EmprestimoFerramenta` (comodato + calibração) e **apropriação por etapa** (`obras.EtapaObra` em
+  movimentações e requisições).
+- **Laço vivo com o SCM:** Recebimento → **ENTRADA** por signal idempotente (`signals.py`); saldo
+  abaixo do mínimo → verbo `gerar_demanda` que cria a Demanda no SCM. Eventos em `events.py`.
+- **Relatórios:** endpoints `dashboard/`, `curva-abc/` e `aplicado/` (custo por obra/etapa). O lado
+  **orçado** volta `None` por ora — é o [módulo Orçamento](docs/modulos/moduloorcamento.md),
+  planejado, que preenche.
+- **IAM:** entitlement `sil`, **26 permissões `sil.*`** e a persona de fábrica **`almoxarife`**
+  (`sil.*` + `cadastro.item.view`); seed demo populado. Exige rebuild da imagem `sgi-iam` + re-seed.
+
+#### Frontend — `modules/sil/`
+
+- [LogisticaPage](frontend/src/modules/sil/pages/LogisticaPage.tsx) no padrão Malha, **página única**
+  com seletor de topo **Operação × Gestão** (dois públicos, uma tela).
+- **Operação** (almoxarife): cockpit com fila de decisão e alertas de obra (EPI vencendo, ferramenta
+  em atraso), almoxarifados **clicáveis** → ficha do local, **kardex do item** em drawer,
+  movimentações com etapa, requisições, transferências/devoluções, inventário, EPI e ferramentaria.
+- **Gestão** (engenheiro/gestor): curva ABC (Pareto), custo por obra **orçado × aplicado**, giro &
+  ruptura, e **Esfera de Rede 🔒** como teaser (sem feature nem dado de rede).
+- Cada verbo gateado por **permissão de usuário** (`hasPermission('sil.*')`), não só por entitlement.
+  Colaborador integra ao RH.
+
+#### Documentação
+
+- Novas plantas [modulos/modulosil.md](docs/modulos/modulosil.md),
+  [modulos/catalogo.md](docs/modulos/catalogo.md) e
+  [modulos/moduloorcamento.md](docs/modulos/moduloorcamento.md) (planejado, nasce do lado *orçado*),
+  + visão de expansão do SIL. Roadmap e mapa de módulos reconciliados.
+- Corrigidas as plantas de `modulosil`/`catalogo`, que ainda se declaravam "não implementado" —
+  planta não carrega status (o status vive no roadmap).
+
+---
+
 ## [1.0.13] - 2026-07-24
 
 ### Visão geral

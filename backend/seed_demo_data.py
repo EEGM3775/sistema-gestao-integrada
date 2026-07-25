@@ -30,9 +30,9 @@ from rh.models import Cargo, Funcionario
 from modulocalendar.models import CalendarEvent
 from funcoeswhatsapp.models import CanalWhatsApp
 from fornecedores.models import Fornecedor
+from catalogo.models import Item as ScmProduto
 from moduloscm.models import (
     CentroCusto as ScmCentroCusto,
-    Produto as ScmProduto,
     OfertaFornecedor,
     Demanda,
     ItemDemanda,
@@ -43,6 +43,19 @@ from moduloscm.models import (
     ItemPedido,
     Recebimento,
     AvaliacaoFornecedor,
+)
+from modulosil import services as sil_services
+from modulosil.models import (
+    LocalEstoque,
+    SaldoEstoque,
+    MovimentacaoEstoque,
+    Requisicao,
+    ItemRequisicao,
+    Inventario,
+    ItemInventario,
+    EntregaEPI,
+    Ferramenta,
+    EmprestimoFerramenta,
 )
 
 # Canal WhatsApp de demonstração (Fase 11.3 / Fase C). Estas credenciais de dev
@@ -537,7 +550,10 @@ def seed_scm(tenant, obras):
     for cod, desc, un, tipo, cat in prod_defs:
         p, _ = ScmProduto.objects.get_or_create(
             tenant=tenant, codigo_interno=cod,
-            defaults={"descricao": desc, "unidade": un, "tipo_item": tipo, "categoria": cat},
+            defaults={
+                "descricao": desc, "unidade": un, "tipo": tipo, "categoria": cat,
+                "estocavel": tipo == "material", "consumivel": tipo == "material",
+            },
         )
         prod[cod] = p
 
@@ -634,6 +650,175 @@ def seed_scm(tenant, obras):
         print(f"  Pedidos: #{p1.pedido_id} (direta), #{p2.pedido_id} (cotação), #{p3.pedido_id} (manual)")
 
 
+def seed_sil(tenant, obras, usuario):
+    """Estoque & Logística (SIL): almoxarifado central + canteiro, saldos honestos
+    construídos pelo **ledger** (via services → custo médio real), um item abaixo do
+    mínimo (fila do cockpit), uma requisição pendente e um inventário aberto.
+
+    Fecha o laço com o SCM na tela: o que entra por Recebimento vira ENTRADA aqui;
+    o que cai abaixo do mínimo vira Demanda lá."""
+    D = Decimal
+
+    # Itens estocáveis do catálogo-mestre (promovidos do SCM). Re-consultados por
+    # código p/ desacoplar do seed_scm (funciona mesmo rodando isolado depois dele).
+    itens = {i.codigo_interno: i for i in ScmProduto.objects.filter(
+        tenant=tenant, codigo_interno__in=["AC-125", "CM-32", "AR-18", "BR-01"]
+    )}
+    if not itens:
+        print("  (SIL) sem itens estocáveis no catálogo — rode o seed do SCM antes.")
+        return
+
+    # Locais: almoxarifado central + canteiro vinculado à 1ª obra.
+    central, _ = LocalEstoque.objects.get_or_create(
+        tenant=tenant, nome="Almoxarifado Central",
+        defaults={"tipo": LocalEstoque.Tipo.CENTRAL, "endereco": "Sede — Feira de Santana, BA"},
+    )
+    canteiro, _ = LocalEstoque.objects.get_or_create(
+        tenant=tenant, nome="Canteiro — Torre A",
+        defaults={"tipo": LocalEstoque.Tipo.CANTEIRO, "obra": obras[0] if obras else None},
+    )
+
+    # Ledger não é idempotente (toda entrada soma) — guarda o abastecimento inteiro.
+    if not MovimentacaoEstoque.objects.filter(tenant=tenant).exists():
+        # Entradas iniciais (custo médio nasce daqui). AR-18 entra abaixo do mínimo.
+        estoque_inicial = [
+            (central, "AC-125", "2400", "52.40"),
+            (central, "CM-32", "800", "34.50"),
+            (central, "AR-18", "40", "13.20"),
+            (central, "BR-01", "90", "118.00"),
+            (canteiro, "CM-32", "50", "34.50"),
+        ]
+        for local, cod, qtd, custo in estoque_inicial:
+            item = itens.get(cod)
+            if item is None:
+                continue
+            sil_services.aplicar_entrada(
+                tenant.id, item.item_id, local.local_id, D(qtd), D(custo),
+                usuario=usuario if getattr(usuario, "pk", None) else None,
+                observacao="Estoque inicial (seed de demonstração).",
+            )
+
+        # Ponto de reposição: AR-18 fica abaixo do mínimo → entra na fila de decisão.
+        SaldoEstoque.objects.filter(
+            tenant=tenant, item=itens["AR-18"], local=central
+        ).update(ponto_reposicao=D("120"))
+
+        # Requisição pendente (fila "a aprovar"): a Torre A pede cimento do central.
+        req = Requisicao.objects.create(
+            tenant=tenant, local=central, obra=obras[0] if obras else None,
+            solicitante=usuario if getattr(usuario, "pk", None) else None,
+            status=Requisicao.Status.PENDENTE,
+            observacao="Cimento para a laje do 3º pavimento — Torre A.",
+        )
+        ItemRequisicao.objects.create(tenant=tenant, requisicao=req, item=itens["CM-32"], quantidade=D("120"))
+
+        # Inventário aberto (fila "inventários abertos"): contagem cíclica do arame.
+        inv = Inventario.objects.create(
+            tenant=tenant, local=central, tipo=Inventario.Tipo.CICLICA,
+            status=Inventario.Status.ABERTO,
+            usuario=usuario if getattr(usuario, "pk", None) else None,
+        )
+        saldo_ar = SaldoEstoque.objects.get(tenant=tenant, item=itens["AR-18"], local=central)
+        ItemInventario.objects.create(
+            tenant=tenant, inventario=inv, item=itens["AR-18"],
+            quantidade_sistema=saldo_ar.quantidade, quantidade_contada=D("38"),
+        )
+        print(f"  Locais: {central.nome}, {canteiro.nome} · entradas: {len(estoque_inicial)} · 1 requisição, 1 inventário aberto")
+
+    # Consumo aplicado à obra E etapa (físico-financeiro → aba Gestão). Guard próprio
+    # (por movimento com etapa) p/ semear mesmo em banco já com ledger. Simula material
+    # já aplicado na Torre A: aço nas Fundações, cimento na concretagem.
+    if not MovimentacaoEstoque.objects.filter(tenant=tenant, etapa__isnull=False).exists():
+        etapas = list(EtapaObra.objects.filter(obra=obras[0]).order_by("ordem")) if obras else []
+        et_fund = etapas[1] if len(etapas) > 1 else (etapas[0] if etapas else None)
+        for cod, quant, obs in (("AC-125", "600", "armadura das fundações"), ("CM-32", "200", "concretagem")):
+            item = itens.get(cod)
+            saldo = SaldoEstoque.objects.filter(tenant=tenant, item=item, local=central).first() if item else None
+            if obras and et_fund and item and saldo and saldo.quantidade >= D(quant):
+                sil_services.aplicar_saida(
+                    tenant.id, item.item_id, central.local_id, D(quant),
+                    usuario=usuario if getattr(usuario, "pk", None) else None,
+                    obra_id=obras[0].obra_id, etapa_id=et_fund.etapa_id,
+                    observacao=f"Aplicação na obra — {obs}.",
+                )
+        print(f"  Consumo apropriado à etapa '{et_fund.nome_etapa if et_fund else '—'}' (aplicado × orçado)")
+
+    _seed_sil_epi_ferramentaria(tenant, central, obras, usuario)
+
+
+def _seed_sil_epi_ferramentaria(tenant, central, obras, usuario):
+    """EPI (NR-6) e ferramentaria (comodato) — construtora-native. Idempotente."""
+    D = Decimal
+    funcionarios = list(Funcionario.objects.filter(tenant=tenant).order_by("funcionario_id")[:3])
+    fmt = lambda i: funcionarios[i] if i < len(funcionarios) else None
+
+    # EPIs no catálogo-mestre (tipo=epi) + estoque + entregas (uma vencendo).
+    epi_defs = [
+        ("EPI-CAP", "Capacete de segurança branco", "un", "34521"),
+        ("EPI-LUV", "Luva de vaqueta (par)", "par", "28190"),
+        ("EPI-BOT", "Bota de segurança com biqueira", "par", "41007"),
+    ]
+    epi_itens = {}
+    for cod, desc, un, _ca in epi_defs:
+        it, _ = ScmProduto.objects.get_or_create(
+            tenant=tenant, codigo_interno=cod,
+            defaults={"descricao": desc, "unidade": un, "tipo": "epi", "categoria": "EPI", "estocavel": True, "consumivel": True},
+        )
+        epi_itens[cod] = it
+
+    if not EntregaEPI.objects.filter(tenant=tenant).exists():
+        for cod, _desc, _un, _ca in epi_defs:
+            sil_services.aplicar_entrada(
+                tenant.id, epi_itens[cod].item_id, central.local_id, D("40"), D("18.50"),
+                usuario=usuario if getattr(usuario, "pk", None) else None, observacao="Estoque inicial de EPI.",
+            )
+        entregas = [
+            ("EPI-CAP", 0, "34521", HOJE + datetime.timedelta(days=400), None),
+            ("EPI-LUV", 1, "28190", HOJE + datetime.timedelta(days=300), HOJE + datetime.timedelta(days=15)),  # troca em 15d
+            ("EPI-BOT", 2, "41007", HOJE - datetime.timedelta(days=5), None),  # CA vencido → fila
+        ]
+        for cod, fi, ca, ca_val, troca in entregas:
+            func = fmt(fi)
+            EntregaEPI.objects.create(
+                tenant=tenant, item=epi_itens[cod], colaborador=func,
+                colaborador_nome="" if func else "Colaborador terceirizado",
+                local=central, obra=obras[0] if obras else None, quantidade=D("1"),
+                ca_numero=ca, ca_validade=ca_val, data_prevista_troca=troca,
+                status=EntregaEPI.Status.ENTREGUE, assinado=True, baixou_estoque=True,
+            )
+            sil_services.aplicar_saida(
+                tenant.id, epi_itens[cod].item_id, central.local_id, D("1"),
+                usuario=usuario if getattr(usuario, "pk", None) else None,
+                obra_id=obras[0].obra_id if obras else None, observacao=f"Entrega de EPI ({cod}).",
+            )
+
+    # Ferramentaria: bens + um empréstimo em atraso, um item a calibrar.
+    ferr_defs = [
+        ("Furadeira de impacto Bosch", "FER-001", False, None, HOJE + datetime.timedelta(days=60)),
+        ("Betoneira 400L", "FER-002", False, None, HOJE - datetime.timedelta(days=3)),  # manutenção vencida
+        ("Nível a laser", "FER-003", True, HOJE + datetime.timedelta(days=20), None),   # calibração vencendo
+    ]
+    ferramentas = {}
+    for nome, patr, calib, prox_cal, prox_man in ferr_defs:
+        f, _ = Ferramenta.objects.get_or_create(
+            tenant=tenant, patrimonio=patr,
+            defaults={"nome": nome, "local": central, "calibravel": calib, "proxima_calibracao": prox_cal, "proxima_manutencao": prox_man, "valor": D("850.00")},
+        )
+        ferramentas[patr] = f
+
+    if not EmprestimoFerramenta.objects.filter(tenant=tenant).exists():
+        func = fmt(1)
+        emp = EmprestimoFerramenta.objects.create(
+            tenant=tenant, ferramenta=ferramentas["FER-001"], colaborador=func,
+            colaborador_nome="" if func else "Pedreiro", obra=obras[0] if obras else None,
+            data_emprestimo=HOJE - datetime.timedelta(days=10),
+            data_prevista_devolucao=HOJE - datetime.timedelta(days=2),  # atrasada
+            status=EmprestimoFerramenta.Status.EMPRESTADA,
+        )
+        Ferramenta.objects.filter(pk=emp.ferramenta_id).update(estado=Ferramenta.Estado.EMPRESTADA)
+    print(f"  EPI: {EntregaEPI.objects.filter(tenant=tenant).count()} entregas · Ferramentas: {Ferramenta.objects.filter(tenant=tenant).count()} · Empréstimos: {EmprestimoFerramenta.objects.filter(tenant=tenant).count()}")
+
+
 # ─── Execução ────────────────────────────────────────────────────────────────
 
 print("=" * 60)
@@ -668,6 +853,9 @@ with rls_bypass():
     print("\n→ Suprimentos (SCM):")
     seed_scm(tenant, obras)
 
+    print("\n→ Estoque & Logística (SIL):")
+    seed_sil(tenant, obras, usuario_demo)
+
     print("\n" + "=" * 60)
     print("SEED OK")
     print(f"  Empreendimentos: {Empreendimento.objects.count()}")
@@ -681,4 +869,6 @@ with rls_bypass():
     print(f"  Notificações: {Notificacao.objects.count()}")
     print(f"  SCM · Fornecedores: {Fornecedor.objects.count()} · Produtos: {ScmProduto.objects.count()} · Ofertas: {OfertaFornecedor.objects.count()}")
     print(f"  SCM · Cotações: {Cotacao.objects.count()} · Propostas: {Proposta.objects.count()} · Pedidos: {PedidoCompra.objects.count()} · Avaliações: {AvaliacaoFornecedor.objects.count()}")
+    print(f"  SIL · Locais: {LocalEstoque.objects.count()} · Saldos: {SaldoEstoque.objects.count()} · Movimentações: {MovimentacaoEstoque.objects.count()} · Requisições: {Requisicao.objects.count()} · Inventários: {Inventario.objects.count()}")
+    print(f"  SIL · EPI: {EntregaEPI.objects.count()} · Ferramentas: {Ferramenta.objects.count()} · Empréstimos: {EmprestimoFerramenta.objects.count()}")
     print("=" * 60)
