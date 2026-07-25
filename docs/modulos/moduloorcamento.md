@@ -114,39 +114,66 @@ de custo de cada insumo = memória de cálculo), `bases-resumo/` e o verbo `refe
 
 | Modelo | Papel |
 |---|---|
-| `Orcamento` | Orçamento de uma **obra**: `tipo` (paramétrico/estimado/executivo), `versao`/`revisao`, `status` (rascunho→aprovado→revisado→substituído), data-base, base referencial, encargos (onerado/desonerado, %), **BDI** (%), moeda |
-| `ItemOrcado` | Linha da planilha: `etapa` (`obras.EtapaObra`), `item` (`catalogo.Item`), `quantidade`, `custo_unitario`, `fonte` (SINAPI/ORSE/própria/**histórico do SCM**), `memoria_calculo`, ordem/nível na EAP |
-| `RevisaoOrcamento` | Trilha da revisão: o que mudou (quantidade/preço/escopo), motivo, autor, aditivo × supressão — o histórico que licitação e contrato exigem |
-| `CronogramaOrcamento` (`ParcelaEtapa`) | Distribuição do custo de cada etapa no tempo (% por mês) → curva S e desembolso previsto |
-| `ParametroObra` | Só do orçamento **paramétrico**: área equivalente, padrão de acabamento, CUB da data-base, R$/m² |
+| `Orcamento` | Orçamento de uma **obra**, **versionado**: `versao` + `orcamento_origem`, `status` (rascunho→aprovado→superado/cancelado), data-base, base referencial, regime de encargos, encargos (%), **BDI** (%), totais desnormalizados |
+| `ItemOrcado` | Linha da planilha, nó da **árvore EAP** (`pai`, `codigo_eap`, `tipo_linha` sintético×analítico): `etapa` (`obras.EtapaObra`), `item` (`catalogo.Item`) e o **snapshot** (descrição, unidade, quantidade, custo unitário, fonte, código na fonte, data-base) |
+| `RevisaoOrcamento` | Trilha da revisão: tipo (aditivo/supressão/reequilíbrio/atualização/correção), motivo, valores das duas pontas — o histórico que licitação e contrato exigem |
+| `ComposicaoBDI` | BDI **analítico** (Acórdão 2622/2013-TCU): AC, seguro, risco, garantia, despesas financeiras, lucro e tributos (PIS/COFINS/ISS/CPRB) → percentual derivado. Um por orçamento como `padrao`, outros p/ **BDI diferenciado** por linha |
+| `ItemOrcadoInsumo` | **Memória de cálculo**: a composição explodida em folhas, com coeficiente acumulado, `categoria` (material/mão de obra/equipamento) e custo no serviço |
+| `ParcelaEtapa` | Célula do cronograma: etapa × mês × percentual → valor previsto, curva S e desembolso |
+| `ParametroObra` | Orçamento **paramétrico**: `projeto_padrao` (R-1…GI), CUB da data-base, áreas real e equivalente, adicionais que o CUB não cobre |
+| `PavimentoObra` · `UnidadeAutonoma` · `MemorialNBR` | Base dos quadros da **NBR 12721** — áreas por pavimento, unidades autônomas (coeficiente de proporcionalidade **e** fração ideal, que não são a mesma coisa) e os memoriais descritivos dos quadros V–VIII |
 
 Verbos de decisão (não CRUD): **aprovar** orçamento (congela a régua), **revisar** (nova versão com
 trilha), **explodir composição** (serviço → insumos, usando `ComponenteComposicao`), **precificar
 pelo histórico** (puxa o preço real do SCM/custo médio do SIL no lugar do referencial),
-**gerar demanda de compra** (linha orçada → `Demanda` do SCM) e **distribuir no cronograma**.
+**distribuir no cronograma**, **calcular coeficientes** e **ratear** (NBR 12721).
+Falta: **gerar demanda de compra** (linha orçada → `Demanda` do SCM) — ver §7.
+
+### 4.3 Organização dos serviços
+
+O módulo tem lógica demais para um `services.py` só. Os módulos são achatados na raiz do app
+(não é pacote), separados por **concern**, não por tamanho:
+
+| Arquivo | Responsabilidade |
+|---|---|
+| `services.py` | as duas travessias de catálogo: base referencial → `catalogo.Item` (adoção) e `catalogo.Item` → linha da planilha (snapshot) |
+| `planilha.py` | recálculo bottom-up, numeração EAP, aprovação, revisão, orçado por etapa (o seam do SIL) |
+| `precificacao.py` | BDI do TCU, explosão da composição, encargos, curva ABC, preço real do SCM/SIL |
+| `controle.py` | quatro colunas, cronograma, curva S |
+| `nbr12721.py` | paramétrico por CUB e os oito quadros |
 
 ## 5. A tela que justifica o módulo — as quatro colunas
 
 Por obra, etapa e item, numa só tela (o que o topo do mercado vende):
 
-| Coluna | Fonte | Já existe? |
+| Coluna | Pergunta que responde | Fonte |
 |---|---|---|
-| **Orçado** | `ItemOrcado` (este módulo) | ❌ é o que falta |
-| **Comprometido** | `PedidoCompra`/`ItemPedido` do SCM | ✅ |
-| **Aplicado** | `MovimentacaoEstoque` por obra+etapa, a custo médio (SIL) | ✅ |
-| **Realizado** | `ContaPagar`/`Transacao` + rateio por centro de custo (ERP) | ✅ |
+| **Orçado** | quanto eu planejei gastar? | `Orcamento` aprovado vigente da obra |
+| **Comprometido** | quanto eu já me obriguei a pagar? | `PedidoCompra` do SCM, obra via centro de custo |
+| **Aplicado** | quanto já virou obra de fato? | `MovimentacaoEstoque` de saída por obra+etapa, a custo (SIL) |
+| **Realizado** | quanto já saiu do caixa? | `ContaPagar` alcançada pelo `conta_pagar_ref` do pedido (ERP) |
 
-Derivados: **saldo orçamentário** (orçado − comprometido), **desvio** (aplicado − orçado),
-**projeção de estouro** (desvio ÷ avanço físico da etapa) e **alerta** quando o comprometido
-ultrapassa o orçado da etapa — o momento em que ainda dá para agir.
+As quatro **não se somam** — são quatro ângulos sobre o mesmo dinheiro, e é a distância entre elas
+que informa: comprometido acima do orçado é estouro contratado antes de acontecer; aplicado muito
+acima do realizado é passivo a pagar; realizado acima do aplicado é adiantamento a fornecedor.
+
+Derivados: **saldo orçamentário** (orçado − comprometido, porque o que já foi pedido não está mais
+disponível), **% consumido** e **alerta de estouro**. O confronto por etapa (orçado × aplicado) vive
+no `aplicado/` do SIL, que apropria movimentação na mesma dimensão.
+
+> **Limite da coluna "realizado".** O `moduloerp` amarra despesa a **empreendimento**, não a obra
+> (`ContaPagar.empreendimento`, `CentroCusto` do ERP idem). O único vínculo preciso com a obra é
+> pelo SCM (`PedidoCompra.conta_pagar_ref`), então *realizado* cobre **o que passou por pedido de
+> compra**; lançamento feito direto no ERP não é rateado por aproximação. A resposta declara isso em
+> `realizado_cobertura`/`nota_realizado`. Fechar a lacuna é a fatia **D.1.4** do ERP.
 
 ## 6. Integrações (o "tudo se conecta")
 
 | Conecta com | Como |
 |---|---|
-| [SIL](modulosil.md) | `orcado` real no `GET /api/sil/aplicado/` (hoje `None`); a aba Custo por obra passa a mostrar orçado × aplicado com estouro; curva ABC do orçado × ABC do consumo |
-| [SCM](moduloscm.md) | **compra nasce da planilha** (linha orçada → `Demanda`); **comprometido** por etapa; e o caminho de volta: preço real das propostas alimenta o custo unitário do próximo orçamento |
-| [moduloerp](moduloerp.md) | curva **físico-financeira** (previsto × realizado) e desembolso previsto → alimenta a **DRE por obra** (D.1.4) e o fluxo de caixa projetado |
+| [SIL](modulosil.md) | `orcado`/`saldo`/`estourado` no `GET /api/sil/aplicado/`, do orçamento aprovado vigente, confrontando **custo direto** (material sai a custo; comparar com preço+BDI faria toda obra parecer economia). Import tardio e tolerante: sem o módulo assinado, `orcado` segue `None`. Curva ABC do orçado usa a mesma convenção de classe do ABC do consumo |
+| [SCM](moduloscm.md) | **comprometido** por obra (pedido → centro de custo → obra); e o caminho de volta: `preco-real/` traz o preço médio pago e `aplicar-preco-real/` o adota no lugar do referencial. Falta: compra nascer da planilha (linha orçada → `Demanda`) |
+| [moduloerp](moduloerp.md) | **realizado** pela `ContaPagar` alcançada do pedido (ver o limite em §5); a curva S e o desembolso previsto alimentam a **DRE por obra** (D.1.4) e o fluxo de caixa projetado |
 | [obras](obras.md) | planilha por obra/etapa (EAP); `percentual_conclusao` pondera o avanço físico da curva S |
 | [empreendimentos](empreendimentos.md) | custo global do empreendimento; paramétrico na viabilidade; NBR 12721 (se entrar no escopo) |
 | [catalogo](catalogo.md) | item e composição; `fonte_referencia` precisa ganhar ORSE/SICRO/SEINFRA se as bases entrarem |
@@ -253,10 +280,20 @@ empresa, de dado que **não é da empresa** — é dado público do governo. Ent
 | **ORC.1** | `Orcamento` + `ItemOrcado` (com snapshot) + `RevisaoOrcamento`, RLS fail-closed, verbos aprovar/revisar; **fecha o seam do SIL** (`orcado` real no `aplicado/`, alerta de estouro) |
 | **ORC.2** | Composição analítica (explosão), encargos onerado/desonerado, **BDI**, curva ABC do orçado, memória de cálculo, precificar pelo histórico real do SCM/SIL |
 | **ORC.3** | **Quatro colunas** (orçado × comprometido × aplicado × realizado) + cronograma financeiro e **curva S** (`ParcelaEtapa`) |
-| **ORC.4** | **Paramétrico** (`ParametroObra`, CUB, R$/m²) + **quadros da NBR 12721** |
+| **ORC.4** | **Paramétrico** (`ParametroObra`, CUB, R$/m²) + **quadros da NBR 12721** (I–IV calculados; V–VIII descritivos) |
 | **ORC.5** | Frontend Malha (**Orçar × Controlar**) com integração clicável SCM/SIL/ERP |
 | **ORC.6** | E2E vivo pelo gateway + sincronização de docs |
 
+### 12.1 Permissões: as 9 do catálogo bastam até aqui
+
+ORC.1–ORC.4 **não criaram permissão nova**. Cronograma e NBR 12721 reusam as existentes
+(`orcamento.orcamento.edit` para mexer no cronograma, `orcamento.item.edit` para áreas/unidades,
+`orcamento.relatorio.view` para os quadros, curva ABC, curva S e as quatro colunas). O motivo é de
+operação, não de modelagem: permissão nova exige **rebuild da imagem `sgi-iam` + re-seed**, e o
+recorte destas fatias não pediu granularidade que as 9 não dessem. Se o frontend (ORC.5) mostrar que
+"quem monta a planilha" e "quem planeja o cronograma" são papéis distintos na prática, aí sim vale
+`orcamento.cronograma.*` e `orcamento.nbr.*`.
+
 ## 13. Status
 
-Planejado. Fase a definir. Ver [roadmap](../roadmap.md).
+Ver [roadmap](../roadmap.md).

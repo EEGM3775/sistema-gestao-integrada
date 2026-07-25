@@ -132,7 +132,10 @@ export interface CurvaABC {
 }
 export interface AplicadoLinha {
   obra: number | null; obra_nome: string | null; etapa: number | null; etapa_nome: string
-  aplicado: string; orcado: string | null
+  aplicado: string
+  // Vêm do módulo Orçamento (orçamento aprovado vigente da obra). Nulos quando
+  // a obra não tem régua aprovada ou o tenant não assina `orcamento`.
+  orcado: string | null; saldo: string | null; estourado: boolean
 }
 
 // Opções leves para selects (cadastros-base + RH).

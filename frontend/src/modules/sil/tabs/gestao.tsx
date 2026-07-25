@@ -81,7 +81,7 @@ export function CustoPorObra() {
     <>
       <div style={{ display: 'flex', gap: 12, padding: '14px 16px', borderRadius: 'var(--r-md)', background: 'linear-gradient(120deg,var(--accent-soft),var(--surface) 80%)', border: '1px solid color-mix(in srgb,var(--accent) 30%,var(--line))', marginBottom: 4 }}>
         <TrendingUp size={20} style={{ color: 'var(--accent-ink)', flex: 'none' }} />
-        <span style={{ fontSize: 12.5, color: 'var(--ink-2)', lineHeight: 1.55 }}>O <b>físico-financeiro</b> da obra: quanto de material foi <b>aplicado</b> (consumido, valorizado pelo custo médio) por obra e etapa. O <b>orçado</b> — o outro lado da comparação — vem do <b>módulo Orçamento</b> (planejado); aqui aparece como <i>em breve</i>. É a base do "a obra está estourando o material?".</span>
+        <span style={{ fontSize: 12.5, color: 'var(--ink-2)', lineHeight: 1.55 }}>O <b>físico-financeiro</b> da obra: quanto de material foi <b>aplicado</b> (consumido, valorizado pelo custo médio) contra o <b>orçado</b> do <b>módulo Orçamento</b>, por obra e etapa. O orçado é o <b>custo direto</b> do orçamento aprovado vigente — material sai do estoque a custo, então comparar com preço+BDI faria toda obra parecer economia. Etapa sem régua aprovada aparece sem orçado, não com zero. É a resposta para "a obra está estourando o material?".</span>
       </div>
       <SectHead right={<select value={obra} onChange={e => setObra(e.target.value)} style={{ ...inp, width: 'auto', padding: '7px 10px' }}><option value="">Todas as obras</option>{(obras ?? []).map(o => <option key={o.obra_id} value={o.obra_id}>{o.nome_obra}</option>)}</select>}>Aplicado por obra e etapa</SectHead>
       {isLoading ? <Loading /> : grupos.length === 0 ? <Empty>Nenhum consumo apropriado a obra ainda. Atenda uma requisição ou registre uma saída com obra/etapa.</Empty> : (
@@ -102,8 +102,12 @@ export function CustoPorObra() {
                   <tr key={i} style={{ borderBottom: i < g.etapas.length - 1 ? '1px solid var(--line-2)' : undefined }}>
                     <td style={{ padding: '10px 16px', color: 'var(--ink)' }}>{e.etapa_nome}</td>
                     <td style={{ ...mono, padding: '10px 16px', textAlign: 'right', fontWeight: 600, color: 'var(--ink)' }}>{brl(e.aplicado)}</td>
-                    <td style={{ padding: '10px 16px', textAlign: 'right' }}><Pill kind="net">em breve · Orçamento</Pill></td>
-                    <td style={{ ...mono, padding: '10px 16px', textAlign: 'right', color: 'var(--ink-3)' }}>—</td>
+                    <td style={{ ...mono, padding: '10px 16px', textAlign: 'right', color: 'var(--ink)' }}>
+                      {e.orcado === null ? <Pill kind="net">sem orçamento aprovado</Pill> : brl(e.orcado)}
+                    </td>
+                    <td style={{ ...mono, padding: '10px 16px', textAlign: 'right', fontWeight: e.estourado ? 700 : 500, color: e.saldo === null ? 'var(--ink-3)' : e.estourado ? 'var(--danger-ink)' : 'var(--good-ink)' }}>
+                      {e.saldo === null ? '—' : brl(e.saldo)}
+                    </td>
                   </tr>
                 ))}</tbody>
               </table>

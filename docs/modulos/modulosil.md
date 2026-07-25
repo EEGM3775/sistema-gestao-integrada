@@ -22,8 +22,11 @@ almoxarifado, apurado da pesquisa de mercado (Sienge/TOTVS):
 - **Ferramentaria (comodato):** ferramentas com patrimônio, **empréstimo→devolução** por colaborador,
   alerta de atraso e controle de **calibração/manutenção**.
 - **Físico-financeiro (orçado × aplicado):** o consumo é apropriado a **obra E etapa**
-  (`obras.EtapaObra`); a Gestão mostra o **aplicado** por etapa/insumo. O **orçado** é o seam do
-  futuro [módulo Orçamento](moduloorcamento.md).
+  (`obras.EtapaObra`); a Gestão mostra o **aplicado** por etapa/insumo. O **orçado** vem do
+  [módulo Orçamento](moduloorcamento.md) — orçamento aprovado vigente da obra, agregado na mesma
+  chave `(obra, etapa)`, confrontando **custo direto** (material sai do estoque a custo; comparar
+  com preço+BDI faria toda obra parecer economia). Sem régua aprovada ou sem o módulo assinado,
+  `orcado` fica `null` em vez de zero.
 - **Curva ABC** de materiais (A≈80% do valor) e **ruptura** para priorizar o controle.
 
 A tela separa **Operação** (almoxarife: alta frequência) de **Gestão** (engenheiro: curva ABC, custo
@@ -91,7 +94,7 @@ CRUD REST isolado por tenant; **listas paginam** server-side e os viewsets de se
 | `emprestimos/` | `EmprestimoFerramenta` | `ferramenta`, `colaborador`, `status` |
 | `dashboard/` | agregado do cockpit (inclui EPI vencendo, ferramenta atrasada/manutenção, recebimentos a conferir) | — |
 | `curva-abc/` | classificação A/B/C por valor em estoque (Gestão) | — |
-| `aplicado/` | consumo aplicado por **obra/etapa/insumo** (físico-financeiro); `orcado=null` (→ Orçamento) | `obra` |
+| `aplicado/` | consumo aplicado por **obra/etapa/insumo** (físico-financeiro) + `orcado`/`saldo`/`estourado` do [Orçamento](moduloorcamento.md) aprovado (`null` sem régua ou sem o módulo) | `obra` |
 
 **Verbos de domínio** (POST, permissão dedicada): `requisicoes/{id}/aprovar/` · `.../atender/` ·
 `transferencias/{id}/executar/` · `devolucoes/{id}/executar/` · `inventarios/{id}/fechar/` ·
@@ -152,7 +155,7 @@ ledger), dentro das abas — sem abas soltas.
 | Aba | Cobre |
 |---|---|
 | **Curva ABC** | classifica itens A/B/C por valor (Pareto), resumo por classe, tabela com % acumulado |
-| **Custo por obra** | **Orçado × Aplicado** por obra/etapa; aplicado real, orçado = *em breve* ([Orçamento](moduloorcamento.md)) |
+| **Custo por obra** | **Orçado × Aplicado** por obra/etapa, ambos reais — o orçado vem do orçamento aprovado vigente ([Orçamento](moduloorcamento.md)), com saldo e marca de estouro |
 | **Giro & Ruptura** | valor imobilizado, itens em ruptura (com Repor→Demanda); giro histórico → Esfera de Rede |
 | **Esfera de Rede** | 🔒 teaser (RFQ automática, benchmark de giro, marketplace de ocioso) — sem feature de rede |
 
