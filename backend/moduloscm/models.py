@@ -383,7 +383,7 @@ class ItemPedido(TenantScopedModel):
 class Recebimento(TenantScopedModel):
     """Entrega (parcial/total) de um Pedido — ponto de conciliação com a NF-e
     (`nota_fiscal_ref`, seam do moduloerp.nfe_client) e origem da entrada de
-    estoque (`local_entrega`, seam do modulosil, que ainda não existe)."""
+    estoque (`local_entrega`, resolvido pelo modulosil, que dá ENTRADA por signal)."""
 
     class Tipo(models.TextChoices):
         PARCIAL = "parcial", _("Parcial")
