@@ -12,20 +12,31 @@ base: escreve no `catalogo.Item` **do tenant**. Por isso exige permissão própr
 """
 from django.db.models import Count, Q
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework import filters, permissions, status, views, viewsets
+from rest_framework import exceptions, filters, permissions, status, views, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from catalogo.models import Item
 from nucleo.permissions import RequireModule, RequirePermission
+from nucleo.tenancy import TenantScopedViewSetMixin
 
-from . import services
-from .models import BaseReferencial, ComposicaoReferenciaItem, InsumoReferencia
+from . import planilha, services
+from .models import (
+    BaseReferencial,
+    ComposicaoReferenciaItem,
+    InsumoReferencia,
+    ItemOrcado,
+    Orcamento,
+    RevisaoOrcamento,
+)
 from .pagination import OrcamentoPageNumberPagination
 from .serializers import (
     BaseReferencialSerializer,
     ComposicaoReferenciaItemSerializer,
     InsumoReferenciaSerializer,
+    ItemOrcadoSerializer,
+    OrcamentoSerializer,
+    RevisaoOrcamentoSerializer,
 )
 
 MODULO = "orcamento"
@@ -217,3 +228,220 @@ class BaseReferencialResumoView(views.APIView):
             }
             for b in bases
         ])
+
+
+# ---------------------------------------------------------------------------
+# ORC.1 — planilha orçamentária
+# ---------------------------------------------------------------------------
+
+
+class DocumentoFechado(exceptions.APIException):
+    """**409**, não 403: não falta permissão, o documento é que não está aberto.
+
+    A distinção importa para a tela — 403 manda o usuário procurar o admin, 409
+    manda ele criar uma revisão, que é o caminho real.
+    """
+
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "Orçamento não editável."
+    default_code = "documento_fechado"
+
+
+def _exigir_editavel(orcamento) -> None:
+    """Ponte entre a exceção de domínio e o vocabulário HTTP."""
+    try:
+        planilha.exigir_editavel(orcamento)
+    except planilha.OrcamentoNaoEditavel as exc:
+        raise DocumentoFechado(str(exc)) from exc
+
+
+class OrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    """A planilha: CRUD + os verbos que mudam o **estado** da régua de custo.
+
+    `aprovar` e `revisar` são permissões próprias (`orcamento.orcamento.aprovar`
+    /`.revisar`), não o `.edit` do recurso: congelar o custo de uma obra é
+    decisão de quem responde por ela, e quem digita a planilha (persona
+    `orcamentista`) não é necessariamente quem assina embaixo.
+    """
+
+    queryset = Orcamento.objects.select_related("obra", "base_referencial").all()
+    serializer_class = OrcamentoSerializer
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["obra", "status", "versao", "base_referencial"]
+    search_fields = ["descricao", "obra__nome_obra"]
+    ordering_fields = ["criado_em", "valor_total", "versao"]
+    required_resource = "orcamento.orcamento"
+    action_permission_map = {
+        "aprovar": "orcamento.orcamento.aprovar",
+        "revisar": "orcamento.orcamento.revisar",
+        "recalcular": "orcamento.orcamento.edit",
+        "arvore": "orcamento.orcamento.view",
+    }
+
+    def perform_update(self, serializer):
+        _exigir_editavel(self.get_object())
+        super().perform_update(serializer)
+
+    def perform_destroy(self, instance):
+        """Aprovado não se apaga — é a régua contra a qual medições já foram
+        feitas. Cancele (ou revise) em vez de apagar."""
+        _exigir_editavel(instance)
+        instance.delete()
+
+    @action(detail=True, methods=["get"], url_path="arvore")
+    def arvore(self, request, pk=None):
+        """A planilha inteira numa resposta, já ordenada pela EAP.
+
+        A tela de orçamento é uma árvore que se lê de cima a baixo; paginar
+        linha a linha quebraria a hierarquia (um filho poderia cair numa página
+        sem o pai). Quem precisa de fatia usa o `itens/` filtrado.
+        """
+        orcamento = self.get_object()
+        itens = (
+            ItemOrcado.objects.filter(orcamento=orcamento)
+            .select_related("etapa", "item")
+            .order_by("codigo_eap", "ordem", "item_orcado_id")
+        )
+        return Response({
+            "orcamento": self.get_serializer(orcamento).data,
+            "itens": ItemOrcadoSerializer(itens, many=True).data,
+        })
+
+    @action(detail=True, methods=["post"], url_path="recalcular")
+    def recalcular(self, request, pk=None):
+        """Renumera a EAP e refaz os totais de baixo para cima."""
+        orcamento = self.get_object()
+        planilha.recalcular_orcamento(orcamento)
+        orcamento.refresh_from_db()
+        return Response(self.get_serializer(orcamento).data)
+
+    @action(detail=True, methods=["post"], url_path="aprovar")
+    def aprovar(self, request, pk=None):
+        orcamento = self.get_object()
+        try:
+            planilha.aprovar_orcamento(
+                orcamento, usuario_nome=self._nome_do_usuario(request)
+            )
+        except planilha.OrcamentoNaoEditavel as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        orcamento.refresh_from_db()
+        return Response(self.get_serializer(orcamento).data)
+
+    @action(detail=True, methods=["post"], url_path="revisar")
+    def revisar(self, request, pk=None):
+        """Gera a versão seguinte a partir da aprovada (aditivo/supressão)."""
+        orcamento = self.get_object()
+        tipo = request.data.get("tipo") or RevisaoOrcamento.Tipo.ADITIVO
+        motivo = (request.data.get("motivo") or "").strip()
+        if not motivo:
+            return Response(
+                {"motivo": "Informe o motivo da revisão — é o que justifica o aditivo."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if tipo not in RevisaoOrcamento.Tipo.values:
+            return Response({"tipo": f"Tipo inválido. Use um de {RevisaoOrcamento.Tipo.values}."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        try:
+            nova = planilha.revisar_orcamento(
+                orcamento, tipo=tipo, motivo=motivo,
+                usuario_nome=self._nome_do_usuario(request),
+            )
+        except planilha.RevisaoInvalida as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        return Response(self.get_serializer(nova).data, status=status.HTTP_201_CREATED)
+
+    @staticmethod
+    def _nome_do_usuario(request) -> str:
+        user = getattr(request, "user", None)
+        return getattr(user, "get_full_name", lambda: "")() or getattr(user, "username", "") or ""
+
+
+class ItemOrcadoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    """As linhas da planilha.
+
+    Toda escrita recalcula o orçamento — a alternativa (recalcular só quando o
+    usuário pedir) deixaria a planilha exibindo um total que não corresponde às
+    linhas, que é o pior defeito possível num sistema de orçamento.
+    """
+
+    queryset = ItemOrcado.objects.select_related("orcamento", "etapa", "item").all()
+    serializer_class = ItemOrcadoSerializer
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["orcamento", "pai", "etapa", "item", "tipo_linha"]
+    search_fields = ["descricao", "codigo_referencia", "codigo_eap"]
+    ordering_fields = ["codigo_eap", "ordem", "total_custo_direto"]
+    required_resource = "orcamento.item"
+
+    def perform_create(self, serializer):
+        # `super()` é quem injeta o `tenant_id` (TenantScopedViewSetMixin) —
+        # salvar direto aqui gravaria a linha sem tenant e a RLS a rejeitaria.
+        _exigir_editavel(serializer.validated_data.get("orcamento"))
+        super().perform_create(serializer)
+        planilha.recalcular_orcamento(serializer.instance.orcamento)
+
+    def perform_update(self, serializer):
+        _exigir_editavel(serializer.instance.orcamento)
+        super().perform_update(serializer)
+        planilha.recalcular_orcamento(serializer.instance.orcamento)
+
+    def perform_destroy(self, instance):
+        orcamento = instance.orcamento
+        _exigir_editavel(orcamento)
+        instance.delete()
+        planilha.recalcular_orcamento(orcamento)
+
+    @action(detail=False, methods=["post"], url_path="do-catalogo")
+    def do_catalogo(self, request):
+        """Cria a linha a partir de um `catalogo.Item`, **tirando o snapshot**.
+
+        É o caminho normal de montar planilha: escolher o item do catálogo (que
+        veio da SINAPI pela adoção, ou é próprio da empresa) e informar a
+        quantidade. Descrição, unidade e código de referência são copiados
+        agora e congelam aqui — mudar o item no catálogo depois não mexe neste
+        orçamento.
+
+        O preço vem da base referencial quando o item foi adotado dela; senão o
+        cliente informa. Nunca inventamos preço: sem preço conhecido a linha
+        nasce zerada e visível como pendência, em vez de com um número plausível.
+        """
+        orcamento_id = request.data.get("orcamento")
+        item_id = request.data.get("item")
+        orcamento = Orcamento.objects.filter(
+            tenant_id=self._tenant_id(), pk=orcamento_id
+        ).select_related("base_referencial").first()
+        if orcamento is None:
+            return Response({"orcamento": "Orçamento não encontrado."}, status=status.HTTP_404_NOT_FOUND)
+        _exigir_editavel(orcamento)
+
+        item = Item.objects.filter(tenant_id=self._tenant_id(), pk=item_id).first()
+        if item is None:
+            return Response({"item": "Item não encontrado no catálogo."}, status=status.HTTP_404_NOT_FOUND)
+
+        linha = services.linha_a_partir_do_item(
+            orcamento=orcamento,
+            item=item,
+            quantidade=request.data.get("quantidade") or 0,
+            custo_unitario=request.data.get("custo_unitario"),
+            pai_id=request.data.get("pai"),
+            etapa_id=request.data.get("etapa"),
+            ordem=request.data.get("ordem") or 0,
+        )
+        planilha.recalcular_orcamento(orcamento)
+        linha.refresh_from_db()
+        return Response(ItemOrcadoSerializer(linha).data, status=status.HTTP_201_CREATED)
+
+
+class RevisaoOrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ReadOnlyModelViewSet):
+    """Histórico de aditivos/supressões — read-only.
+
+    A revisão nasce como **efeito** de `orcamentos/{id}/revisar/`, nunca por
+    POST direto: um registro de revisão sem a versão nova correspondente seria
+    rastro falso.
+    """
+
+    queryset = RevisaoOrcamento.objects.select_related("orcamento", "orcamento_anterior").all()
+    serializer_class = RevisaoOrcamentoSerializer
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ["orcamento", "tipo", "orcamento__obra"]
+    ordering_fields = ["criado_em", "numero"]
+    required_permission = "orcamento.orcamento.view"

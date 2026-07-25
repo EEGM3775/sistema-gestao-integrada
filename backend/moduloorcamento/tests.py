@@ -29,6 +29,7 @@ from .models import BaseReferencial, ComposicaoReferenciaItem, Fonte, InsumoRefe
 ORC_PERMS_FULL = [
     "orcamento.base.view", "orcamento.base.adotar",
     "orcamento.orcamento.view", "orcamento.orcamento.edit",
+    "orcamento.orcamento.aprovar", "orcamento.orcamento.revisar",
     "orcamento.item.view", "orcamento.item.edit",
     "orcamento.relatorio.view",
 ]

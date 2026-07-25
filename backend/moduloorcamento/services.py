@@ -20,6 +20,8 @@ Três propriedades que o chamador pode assumir:
 - **Sob RLS.** Escreve `catalogo.Item`, que é tenant-scoped e fail-closed; roda
   no contexto já armado pela autenticação (ou sob `tenant_context` em job).
 """
+from decimal import Decimal
+
 from django.db import transaction
 
 from catalogo.models import ComponenteComposicao, Item
@@ -142,3 +144,63 @@ def _adotar_componentes(referencia: InsumoReferencia, item_pai: Item, tenant_id)
 def adotar_muitos(referencias, tenant_id, *, recursivo: bool = True) -> list[Item]:
     """Adoção em lote (a tela adota a seleção da busca de uma vez)."""
     return [adotar_no_catalogo(r, tenant_id, recursivo=recursivo) for r in referencias]
+
+
+# ---------------------------------------------------------------------------
+# ORC.1 — a outra travessia: catálogo do tenant → linha da planilha
+# ---------------------------------------------------------------------------
+
+
+def custo_de_referencia(item: Item, base) -> Decimal | None:
+    """Preço do item na publicação escolhida pelo orçamento, se houver.
+
+    Só encontra quando o item **veio** daquela fonte (foi adotado dela): a
+    chave é o par (fonte, código na fonte) que a adoção gravou. Item próprio da
+    empresa não tem preço na SINAPI, e devolver `None` aqui é o comportamento
+    certo — quem informa o preço é o orçamentista.
+    """
+    if base is None or not item.codigo_referencia or item.fonte_referencia != base.fonte:
+        return None
+    referencia = InsumoReferencia.objects.filter(
+        base=base, codigo=item.codigo_referencia
+    ).only("custo_unitario").first()
+    return referencia.custo_unitario if referencia else None
+
+
+def linha_a_partir_do_item(
+    *, orcamento, item: Item, quantidade, custo_unitario=None,
+    pai_id=None, etapa_id=None, ordem=0,
+):
+    """Cria o `ItemOrcado` **tirando o snapshot** do item do catálogo.
+
+    O que é copiado (descrição, unidade, fonte, código) para de acompanhar o
+    catálogo a partir daqui — ver `models.ItemOrcado`. A FK `item` fica, e é ela
+    que depois deixa o SCM/SIL casarem comprado e aplicado com o orçado.
+
+    Precedência do preço: o informado pelo cliente ganha do de referência. Quem
+    está montando a planilha pode ter cotação melhor que a SINAPI, e o sistema
+    não tem por que discordar — mas registra de onde veio o número.
+    """
+    from .models import ItemOrcado  # import tardio: evita ciclo com models
+
+    preco = custo_unitario
+    if preco in (None, ""):
+        preco = custo_de_referencia(item, orcamento.base_referencial)
+    veio_da_base = custo_unitario in (None, "") and preco is not None
+
+    return ItemOrcado.objects.create(
+        tenant_id=orcamento.tenant_id,
+        orcamento=orcamento,
+        pai_id=pai_id or None,
+        etapa_id=etapa_id or None,
+        item=item,
+        tipo_linha=ItemOrcado.TipoLinha.ANALITICO,
+        ordem=ordem or 0,
+        descricao=item.descricao,
+        unidade=item.unidade,
+        quantidade=Decimal(str(quantidade or 0)),
+        custo_unitario=Decimal(str(preco or 0)),
+        fonte_referencia=item.fonte_referencia or "",
+        codigo_referencia=item.codigo_referencia or "",
+        data_base_preco=orcamento.data_base if veio_da_base else None,
+    )

@@ -24,8 +24,13 @@ empresa usa — e o item orçado é o mesmo que o SCM compra e o SIL estoca.
 
 Desenho em docs/modulos/moduloorcamento.md §11.1.
 """
+from decimal import Decimal
+
+from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils.translation import gettext_lazy as _
+
+from nucleo.tenancy import TenantScopedModel
 
 
 class Fonte(models.TextChoices):
@@ -186,3 +191,267 @@ class ComposicaoReferenciaItem(models.Model):
 
     def __str__(self):
         return f"{self.composicao_id} ⊃ {self.filho_id} ×{self.coeficiente}"
+
+
+# ---------------------------------------------------------------------------
+# ORC.1 — a planilha orçamentária (daqui para baixo, tudo é do tenant)
+# ---------------------------------------------------------------------------
+#
+# A partir daqui os modelos são `TenantScopedModel` com RLS fail-closed: é o
+# orçamento **da empresa**, não mais dado público. A fronteira entre as duas
+# metades deste arquivo é a **adoção** (services.py): a base pública vira item
+# do catálogo do tenant, e é esse item que a planilha orça.
+#
+# Estrutura espelhando o que Sienge, Orçafascio e OrçaFácil fazem — e o que os
+# editais de obra pública exigem:
+#
+#   Orçamento (obra, data-base, BDI, encargos)
+#     └── ItemOrcado — árvore EAP, código "1.2.3"
+#           ├── SINTÉTICO  → agrupa, não custa: total = Σ filhos
+#           └── ANALÍTICO  → custa: quantidade × custo unitário
+#
+# A distinção sintético × analítico não é decoração: é o que separa "1.2
+# Estrutura" (um título) de "1.2.1 Concretagem de pilares fck 25, 120 m³ ×
+# R$ 412,80" (uma linha de custo). Somar as duas contaria o custo duas vezes.
+
+
+class Orcamento(TenantScopedModel):
+    """Planilha orçamentária de uma obra, **versionada**.
+
+    Três decisões de desenho que vêm do domínio, não da conveniência:
+
+    1. **Versão, não edição.** Orçamento aprovado é a régua contra a qual o
+       custo real é medido; revisar não sobrescreve — cria a versão seguinte e
+       marca a anterior como `SUPERADO` (`RevisaoOrcamento` guarda o porquê).
+       É como Sienge trata reprogramação e como o TCU exige em obra pública:
+       aditivo precisa de rastro.
+    2. **Data-base é do orçamento, não da base.** `data_base` é copiada da
+       publicação escolhida e fica aqui mesmo que a `BaseReferencial` seja
+       desativada depois. Comparar orçado com realizado sem saber de que mês é
+       o preço é comparar coisas diferentes.
+    3. **BDI e encargos moram no cabeçalho.** O custo direto vive nas linhas; o
+       que transforma custo em **preço** é do orçamento inteiro. ORC.2 detalha a
+       composição do BDI (`ComposicaoBDI`); aqui fica o percentual resultante,
+       que é o que multiplica.
+    """
+
+    class Status(models.TextChoices):
+        RASCUNHO = "rascunho", _("Rascunho")
+        APROVADO = "aprovado", _("Aprovado")
+        SUPERADO = "superado", _("Superado por revisão")
+        CANCELADO = "cancelado", _("Cancelado")
+
+    orcamento_id = models.AutoField(primary_key=True)
+    obra = models.ForeignKey(
+        "obras.Obra", on_delete=models.PROTECT, related_name="orcamentos", verbose_name=_("Obra"),
+    )
+    descricao = models.CharField(max_length=200, verbose_name=_("Descrição"))
+    versao = models.PositiveIntegerField(default=1, verbose_name=_("Versão"))
+    orcamento_origem = models.ForeignKey(
+        "self", on_delete=models.SET_NULL, null=True, blank=True, related_name="revisoes_geradas",
+        verbose_name=_("Versão que esta revisa"),
+    )
+    base_referencial = models.ForeignKey(
+        BaseReferencial, on_delete=models.SET_NULL, null=True, blank=True, related_name="orcamentos",
+        verbose_name=_("Base referencial de preço"),
+    )
+    data_base = models.DateField(
+        null=True, blank=True, verbose_name=_("Data-base"),
+        help_text=_("Mês de referência dos preços. Copiada da base; sobrevive a ela."),
+    )
+    regime_encargos = models.CharField(
+        max_length=10, choices=BaseReferencial.Regime.choices, default=BaseReferencial.Regime.ONERADO,
+        verbose_name=_("Regime de encargos"),
+    )
+    encargos_sociais_percentual = models.DecimalField(
+        max_digits=6, decimal_places=2, default=Decimal("0"),
+        validators=[MinValueValidator(Decimal("0"))],
+        verbose_name=_("Encargos sociais (%)"),
+        help_text=_("Incide só sobre mão de obra. Detalhe em ORC.2."),
+    )
+    bdi_percentual = models.DecimalField(
+        max_digits=6, decimal_places=2, default=Decimal("0"),
+        validators=[MinValueValidator(Decimal("0"))],
+        verbose_name=_("BDI (%)"),
+        help_text=_("Percentual resultante. A composição analítica fica em ComposicaoBDI."),
+    )
+    status = models.CharField(
+        max_length=10, choices=Status.choices, default=Status.RASCUNHO, verbose_name=_("Status"),
+    )
+    # Totais desnormalizados: recalculados por `services.recalcular_orcamento`.
+    # Guardados porque a lista de orçamentos e o cockpit precisam do total sem
+    # explodir a árvore de itens a cada leitura.
+    custo_direto_total = models.DecimalField(
+        max_digits=18, decimal_places=2, default=Decimal("0"), verbose_name=_("Custo direto total"),
+    )
+    valor_total = models.DecimalField(
+        max_digits=18, decimal_places=2, default=Decimal("0"), verbose_name=_("Valor total (com BDI)"),
+    )
+    aprovado_em = models.DateTimeField(null=True, blank=True, verbose_name=_("Aprovado em"))
+    aprovado_por_nome = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Aprovado por"),
+        help_text=_("Rótulo durável de quem aprovou (não é FK — o registro sobrevive ao usuário)."),
+    )
+    observacao = models.TextField(blank=True, verbose_name=_("Observação"))
+    criado_em = models.DateTimeField(auto_now_add=True, verbose_name=_("Criado em"))
+    atualizado_em = models.DateTimeField(auto_now=True, verbose_name=_("Atualizado em"))
+
+    class Meta:
+        verbose_name = _("Orçamento")
+        verbose_name_plural = _("Orçamentos")
+        ordering = ["obra", "-versao"]
+        constraints = [
+            # `obra` já é tenant-scoped, então a FK-pai amarra o tenant (mesma
+            # convenção dos `unique_together` mantidos na Fase 8.3).
+            models.UniqueConstraint(fields=["obra", "versao"], name="orcamento_versao_unica_por_obra"),
+        ]
+        indexes = [
+            models.Index(fields=["tenant", "status"], name="orcamento_tenant_status_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.descricao} (v{self.versao})"
+
+    @property
+    def editavel(self) -> bool:
+        """Só rascunho aceita escrita. Aprovado é régua congelada; superado e
+        cancelado são história. A API traduz isso em 409, não em 403 — não falta
+        permissão, o documento é que não está mais aberto."""
+        return self.status == self.Status.RASCUNHO
+
+
+class ItemOrcado(TenantScopedModel):
+    """Linha da planilha — nó da árvore EAP.
+
+    **O snapshot é o ponto.** `descricao`, `unidade`, `custo_unitario`,
+    `codigo_referencia` e `data_base_preco` são copiados do
+    `catalogo.Item`/base no momento em que a linha é criada e **não seguem** o
+    item depois. Um orçamento aprovado em julho não pode mudar de valor porque
+    a SINAPI de agosto saiu ou porque alguém corrigiu a descrição no catálogo.
+    A FK `item` continua ali para navegar (e para o SCM/SIL casarem o que foi
+    comprado com o que foi orçado), mas quem manda no número é o snapshot.
+
+    `etapa` é o que faz o orçado casar com o **aplicado** do SIL, que apropria
+    movimentação por `obras.EtapaObra` — mesma dimensão, comparação direta.
+    """
+
+    class TipoLinha(models.TextChoices):
+        SINTETICO = "sintetico", _("Sintético (agrupador)")
+        ANALITICO = "analitico", _("Analítico (custa)")
+
+    item_orcado_id = models.AutoField(primary_key=True)
+    orcamento = models.ForeignKey(
+        Orcamento, on_delete=models.CASCADE, related_name="itens", verbose_name=_("Orçamento"),
+    )
+    pai = models.ForeignKey(
+        "self", on_delete=models.CASCADE, null=True, blank=True, related_name="filhos",
+        verbose_name=_("Linha-pai"),
+    )
+    codigo_eap = models.CharField(
+        max_length=40, blank=True, verbose_name=_("Código EAP"),
+        help_text=_("Hierárquico: 1, 1.1, 1.1.2. Recalculado a partir da árvore."),
+    )
+    ordem = models.PositiveIntegerField(default=0, verbose_name=_("Ordem entre irmãos"))
+    tipo_linha = models.CharField(
+        max_length=10, choices=TipoLinha.choices, default=TipoLinha.ANALITICO,
+        verbose_name=_("Tipo de linha"),
+    )
+    etapa = models.ForeignKey(
+        "obras.EtapaObra", on_delete=models.SET_NULL, null=True, blank=True, related_name="itens_orcados",
+        verbose_name=_("Etapa da obra"),
+    )
+    item = models.ForeignKey(
+        "catalogo.Item", on_delete=models.SET_NULL, null=True, blank=True, related_name="itens_orcados",
+        verbose_name=_("Item do catálogo"),
+    )
+    # --- Snapshot (a régua histórica) ---
+    descricao = models.CharField(max_length=255, verbose_name=_("Descrição"))
+    unidade = models.CharField(max_length=20, blank=True, verbose_name=_("Unidade"))
+    quantidade = models.DecimalField(
+        max_digits=16, decimal_places=4, default=Decimal("0"), verbose_name=_("Quantidade"),
+    )
+    custo_unitario = models.DecimalField(
+        max_digits=16, decimal_places=4, default=Decimal("0"),
+        verbose_name=_("Custo unitário direto"),
+        help_text=_("Sem BDI. Congelado na data-base do orçamento."),
+    )
+    fonte_referencia = models.CharField(
+        max_length=10, choices=Fonte.choices, blank=True, verbose_name=_("Fonte do preço"),
+    )
+    codigo_referencia = models.CharField(max_length=30, blank=True, verbose_name=_("Código na fonte"))
+    data_base_preco = models.DateField(null=True, blank=True, verbose_name=_("Data-base do preço"))
+    # --- Derivados (services.recalcular_orcamento) ---
+    total_custo_direto = models.DecimalField(
+        max_digits=18, decimal_places=2, default=Decimal("0"), verbose_name=_("Total (custo direto)"),
+    )
+    total_com_bdi = models.DecimalField(
+        max_digits=18, decimal_places=2, default=Decimal("0"), verbose_name=_("Total (com BDI)"),
+    )
+    observacao = models.CharField(max_length=255, blank=True, verbose_name=_("Observação"))
+
+    class Meta:
+        verbose_name = _("Item orçado")
+        verbose_name_plural = _("Itens orçados")
+        ordering = ["orcamento", "codigo_eap", "ordem", "item_orcado_id"]
+        indexes = [
+            models.Index(fields=["orcamento", "pai"], name="orcamento_item_arvore_idx"),
+            models.Index(fields=["orcamento", "etapa"], name="orcamento_item_etapa_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.codigo_eap} {self.descricao}".strip()
+
+    @property
+    def custa(self) -> bool:
+        """Linha que entra na soma direta. Sintético tem total, mas é o total
+        dos filhos — somá-lo junto com eles contaria duas vezes."""
+        return self.tipo_linha == self.TipoLinha.ANALITICO
+
+
+class RevisaoOrcamento(TenantScopedModel):
+    """Por que a régua mudou — aditivo, supressão ou reequilíbrio.
+
+    Não é log genérico: é o documento que justifica a diferença entre duas
+    versões aprovadas, que em obra pública precisa de motivo declarado e em obra
+    privada é o que responde "por que estourou". Um registro por revisão,
+    apontando as duas pontas.
+    """
+
+    class Tipo(models.TextChoices):
+        ADITIVO = "aditivo", _("Aditivo (acréscimo de escopo)")
+        SUPRESSAO = "supressao", _("Supressão (redução de escopo)")
+        REEQUILIBRIO = "reequilibrio", _("Reequilíbrio econômico-financeiro")
+        ATUALIZACAO = "atualizacao", _("Atualização de preços (nova data-base)")
+        CORRECAO = "correcao", _("Correção de erro de orçamento")
+
+    revisao_id = models.AutoField(primary_key=True)
+    orcamento = models.ForeignKey(
+        Orcamento, on_delete=models.CASCADE, related_name="revisoes", verbose_name=_("Nova versão"),
+    )
+    orcamento_anterior = models.ForeignKey(
+        Orcamento, on_delete=models.SET_NULL, null=True, blank=True, related_name="revisoes_originadas",
+        verbose_name=_("Versão anterior"),
+    )
+    numero = models.PositiveIntegerField(default=1, verbose_name=_("Número da revisão"))
+    tipo = models.CharField(max_length=13, choices=Tipo.choices, verbose_name=_("Tipo"))
+    motivo = models.TextField(verbose_name=_("Motivo"))
+    valor_anterior = models.DecimalField(
+        max_digits=18, decimal_places=2, default=Decimal("0"), verbose_name=_("Valor anterior"),
+    )
+    valor_novo = models.DecimalField(
+        max_digits=18, decimal_places=2, default=Decimal("0"), verbose_name=_("Valor novo"),
+    )
+    criado_em = models.DateTimeField(auto_now_add=True, verbose_name=_("Criado em"))
+    criado_por_nome = models.CharField(max_length=150, blank=True, verbose_name=_("Revisado por"))
+
+    class Meta:
+        verbose_name = _("Revisão de orçamento")
+        verbose_name_plural = _("Revisões de orçamento")
+        ordering = ["-criado_em"]
+
+    def __str__(self):
+        return f"Revisão {self.numero} ({self.get_tipo_display()})"
+
+    @property
+    def delta(self) -> Decimal:
+        return self.valor_novo - self.valor_anterior

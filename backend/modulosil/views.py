@@ -472,8 +472,19 @@ class CurvaABCView(views.APIView):
 
 class AplicadoView(views.APIView):
     """Físico-financeiro: material **aplicado** (consumido) por obra e etapa,
-    valorizado pelo custo da saída. O lado **orçado** vem do futuro módulo
-    Orçamento (planta) — aqui devolvido como `None`."""
+    valorizado pelo custo da saída, confrontado com o **orçado**.
+
+    O lado orçado vem do módulo Orçamento (ORC.1), pelo orçamento **aprovado**
+    vigente da obra, agregado na mesma chave `(obra, etapa)` que o SIL usa para
+    apropriar movimentação. Duas escolhas conscientes:
+
+    - **Confronta custo direto, não preço.** Material sai do estoque a custo; o
+      valor com BDI é preço de venda. Comparar consumo contra preço faria toda
+      obra parecer economia.
+    - **`orcado` continua `None` quando não há régua** — obra sem orçamento
+      aprovado, ou tenant que não assina o módulo. Melhor um campo vazio e
+      honesto do que um zero que se lê como "orçamento estourado em 100%".
+    """
 
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "sil"
@@ -491,11 +502,34 @@ class AplicadoView(views.APIView):
             .annotate(aplicado=Coalesce(Sum(F("quantidade") * F("custo_unitario"), output_field=dec), Decimal("0"), output_field=dec))
             .order_by("obra__nome_obra", "etapa__nome_etapa")
         )
-        return Response([{
-            "obra": l["obra_id"], "obra_nome": l["obra__nome_obra"],
-            "etapa": l["etapa_id"], "etapa_nome": l["etapa__nome_etapa"] or "— sem etapa —",
-            "aplicado": str(l["aplicado"]), "orcado": None,  # ← módulo Orçamento (em breve)
-        } for l in linhas])
+        orcado = self._orcado_por_etapa(request, tid, obra)
+        resposta = []
+        for l in linhas:
+            chave = (l["obra_id"], l["etapa_id"])
+            previsto = orcado.get(chave, {}).get("orcado")
+            aplicado = l["aplicado"]
+            resposta.append({
+                "obra": l["obra_id"], "obra_nome": l["obra__nome_obra"],
+                "etapa": l["etapa_id"], "etapa_nome": l["etapa__nome_etapa"] or "— sem etapa —",
+                "aplicado": str(aplicado),
+                "orcado": str(previsto) if previsto is not None else None,
+                "saldo": str(previsto - aplicado) if previsto is not None else None,
+                "estourado": bool(previsto is not None and aplicado > previsto),
+            })
+        return Response(resposta)
+
+    @staticmethod
+    def _orcado_por_etapa(request, tenant_id, obra_id):
+        """Seam com o Orçamento — import tardio e tolerante.
+
+        Tardio para o SIL não depender do Orçamento em tempo de import (os dois
+        módulos são vendidos separados); tolerante porque um tenant que não
+        assina `orcamento` simplesmente não tem régua, e isso não é erro."""
+        if "orcamento" not in (getattr(request.user, "iam_modules", None) or []):
+            return {}
+        from moduloorcamento.planilha import orcado_por_etapa
+
+        return orcado_por_etapa(tenant_id, obra_id or None)
 
 
 class SilDashboardView(views.APIView):
