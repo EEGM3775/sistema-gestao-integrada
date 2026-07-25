@@ -108,6 +108,7 @@ INSTALLED_APPS = [
     "modulopdca.apps.ModuloPdcaConfig",
     "moduloscm.apps.ModuloScmConfig",
     "modulosil.apps.ModuloSilConfig",
+    "moduloorcamento.apps.ModuloOrcamentoConfig",
     "modulomaps.apps.ModuloMapsConfig",
 
     # Apps do Django

@@ -160,6 +160,20 @@ CATALOGO: tuple[Perm, ...] = (
     Perm("sil.ferramenta.view", "Ver ferramentaria (ferramentas/empréstimos)", "sil"),
     Perm("sil.ferramenta.edit", "Gerir ferramentaria (emprestar/devolver/manutenção)", "sil"),
     Perm("sil.relatorio.view", "Ver relatórios de estoque (curva ABC, aplicado por obra)", "sil"),
+    # --- Orçamento — planilha orçamentária e controle de custo (módulo 'orcamento') ---
+    #     A base referencial (SINAPI/ORSE) é catálogo PÚBLICO de plataforma: só
+    #     leitura pela API e escrita por comando de importação, daí não haver
+    #     `.edit` nela. Adotar um item da base ESCREVE no catálogo do tenant, então
+    #     é permissão própria (quem consulta preço não necessariamente cadastra).
+    Perm("orcamento.base.view", "Consultar bases referenciais (SINAPI/ORSE/SICRO)", "orcamento"),
+    Perm("orcamento.base.adotar", "Adotar item da base referencial no catálogo da empresa", "orcamento"),
+    Perm("orcamento.orcamento.view", "Ver orçamentos de obra", "orcamento"),
+    Perm("orcamento.orcamento.edit", "Criar/editar orçamentos de obra", "orcamento"),
+    Perm("orcamento.orcamento.aprovar", "Aprovar orçamento (congela a régua de custo)", "orcamento"),
+    Perm("orcamento.orcamento.revisar", "Revisar orçamento aprovado (aditivo/supressão)", "orcamento"),
+    Perm("orcamento.item.view", "Ver as linhas da planilha orçamentária", "orcamento"),
+    Perm("orcamento.item.edit", "Editar as linhas da planilha orçamentária", "orcamento"),
+    Perm("orcamento.relatorio.view", "Ver curva ABC, curva S e orçado × realizado", "orcamento"),
     # --- Obras/empreendimentos e cadastros base (sem entitlement de módulo) ---
     Perm("obra.empreendimento.view", "Ver empreendimentos", "base"),
     Perm("obra.empreendimento.edit", "Gerir empreendimentos", "base"),
@@ -307,6 +321,17 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
         "obra.obra.view", "cadastro.fornecedor.view",
         "rh.funcionario.view",  # picker de colaborador em EPI/ferramentaria
     ],
+    # Orçamentista: monta e revisa a planilha orçamentária. Precisa GERIR o
+    # item-mestre (adotar da base referencial cria item no catálogo) e LER o que
+    # dá custo real — compras do SCM e consumo/custo médio do SIL —, porque é
+    # disso que sai o preço honesto do próximo orçamento. Aprovar orçamento fica
+    # FORA: congelar a régua de custo é decisão de quem responde pela obra.
+    "orcamentista": [
+        "orcamento.base.*", "orcamento.orcamento.view", "orcamento.orcamento.edit",
+        "orcamento.item.*", "orcamento.relatorio.view",
+        "cadastro.item.*", "obra.obra.view", "obra.empreendimento.view",
+        "scm.oferta.view", "scm.pedido.view", "sil.saldo.view", "sil.relatorio.view",
+    ],
     # Gestor da lixeira (exclusão reversível — ver arquitetura/lixo.md).
     "gestor_lixo": ["plataforma.lixo.*"],
     # Papel default de leitura básica (antes era morto).
@@ -333,6 +358,7 @@ DESCRICOES_TEMPLATE: dict[str, str] = {
     "auditor": "Somente leitura ampla + trilha de auditoria e operações de titular (LGPD).",
     "suprimentos": "Suprimentos: catálogo de produtos, ofertas/preços de fornecedores e centros de custo.",
     "almoxarife": "Estoque e logística interna: saldos, movimentações, requisições, transferências, devoluções, lotes e inventário.",
+    "orcamentista": "Planilha orçamentária da obra: bases referenciais (SINAPI/ORSE), composições, curva ABC e orçado × realizado. Não aprova orçamento.",
     "gestor_lixo": "Restauração e expurgo de itens da lixeira (exclusão reversível).",
     "operacional": "Leitura básica de obras, diário, agenda e cadastros.",
 }

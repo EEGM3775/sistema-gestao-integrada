@@ -20,7 +20,7 @@
 | `modulocrm` | **`crm`** | [modulocrm.md](modulocrm.md) | Funil: leads → contas → oportunidades |
 | `moduloscm` | **`scm`** | [moduloscm.md](moduloscm.md) | Suprimentos: catálogo → demanda → cotação → pedido → recebimento (backend ✅; sem UI) |
 | `modulosil` | **`sil`** | [modulosil.md](modulosil.md) | Estoque & logística interna (full-stack ✅): saldo valorado, requisição, inventário, **EPI/NR-6**, **ferramentaria**, **curva ABC**, **aplicado por obra/etapa** (Operação × Gestão) |
-| `moduloorcamento` | **`orcamento`** (planejado) | [moduloorcamento.md](moduloorcamento.md) | Planilha orçamentária de insumos (orçado × comprado × estocado × aplicado) — preenche o *orçado* do SIL 📋 |
+| `moduloorcamento` | **`orcamento`** | [moduloorcamento.md](moduloorcamento.md) | Orçamento de obra: **base referencial de plataforma** (SINAPI/ORSE, importada por comando) + adoção no catálogo do tenant ✅; planilha, composição/BDI, curva S e as quatro colunas (orçado × comprometido × aplicado × realizado) 🚧 |
 | `moduloapi` | — (base) | [moduloapi.md](moduloapi.md) | Credenciais de APIs externas (Google OAuth) |
 | `nucleo` | — (base) | [nucleo.md](nucleo.md) | Identidade/tenancy/auditoria (espelho da IAM) |
 | `modulocalendar` | — (base) | [modulocalendar.md](modulocalendar.md) | Eventos/tarefas de calendário |

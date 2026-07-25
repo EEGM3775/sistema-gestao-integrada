@@ -28,7 +28,15 @@ class Item(TenantScopedModel):
         COMPOSICAO = "composicao", _("Composição")
 
     class Fonte(models.TextChoices):
+        """Bases de referência de custo. Espelha `moduloorcamento.models.Fonte`
+        (a adoção de um item da base copia a fonte para cá) — as duas listas
+        precisam continuar compatíveis."""
+
         SINAPI = "sinapi", _("SINAPI")
+        ORSE = "orse", _("ORSE")
+        SICRO = "sicro", _("SICRO")
+        SEINFRA = "seinfra", _("SEINFRA")
+        SEDOP = "sedop", _("SEDOP")
         TCPO = "tcpo", _("TCPO")
         PROPRIA = "propria", _("Própria")
 

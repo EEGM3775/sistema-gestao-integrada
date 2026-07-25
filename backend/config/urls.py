@@ -161,6 +161,7 @@ urlpatterns = [
     path('api/catalogo/', include('catalogo.urls')),
     path('api/scm/', include('moduloscm.urls')),
     path('api/sil/', include('modulosil.urls')),
+    path('api/orcamento/', include('moduloorcamento.urls')),
     path('api/maps/', include('modulomaps.urls')),
 ]
 

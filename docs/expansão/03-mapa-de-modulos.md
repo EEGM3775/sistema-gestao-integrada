@@ -37,7 +37,7 @@ bancária (ver §5).
 | Módulo | Status | O que faz | Depende de | Efeito de rede / IA |
 |---|---|---|---|---|
 | Planejamento de obra (APS) | 📦 `moduloaps` | Cronograma físico (EAP, Gantt, linha de balanço), avanço × previsto | obras, diário | IA: previsão de atraso com histórico do diário ([06](06-dados-ia-automacao.md)) |
-| Orçamento de obra | 🧭 | Composições de custo (SINAPI/TCPO), curva ABC, orçado × realizado | empreendimentos, moduloerp, SCM | Benchmark de custo/m² entre tenants (E4) |
+| Orçamento de obra | ✅ `moduloorcamento` | Planilha orçamentária (EAP × insumos), composições de custo (SINAPI/ORSE/TCPO), BDI/encargos, curva ABC, curva S e **orçado × comprometido × aplicado × realizado**. Planta em [../modulos/moduloorcamento.md](../modulos/moduloorcamento.md) | catálogo, obras, SCM, SIL, moduloerp | Benchmark de custo/m² entre tenants (E4); banco de composições da rede |
 | Medições & empreiteiros | 🧭 | Contratos de empreitada, boletins de medição, retenções, liberação de pagamento | obras, moduloerp, fornecedores | Boletim espelhado com a **Edição Empreiteiro** ([09](09-verticais-por-participante.md)) |
 | Qualidade / PDCA / ISO | 📦 `modulopdca` | Checklists de serviço (FVS), não-conformidades, planos de ação, auditorias ISO 9001/PBQP-H | obras, diário | IA: detectar não-conformidade em foto do diário |
 | SST (segurança do trabalho) | 🧭 | NRs, treinamentos, EPIs, inspeções, CAT/acidentes | rh, obras | IA: detecção de EPI em fotos; premium compliance |
