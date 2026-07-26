@@ -13,7 +13,10 @@ const PersonasEditor: React.FC<{
   const [sel, setSel] = useState<Set<number>>(new Set(usuario.perfis))
   const [saving, setSaving] = useState(false)
   const toggle = (id: number) => setSel(prev => {
-    const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n
+    const n = new Set(prev)
+    if (n.has(id)) n.delete(id)
+    else n.add(id)
+    return n
   })
   const salvar = async () => { setSaving(true); try { await onSave([...sel]) } finally { setSaving(false) } }
 

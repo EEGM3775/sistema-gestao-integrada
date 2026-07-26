@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useState } from 'react'
 import {
   ShieldCheck, Plus, Check, Wrench, Hammer, AlertTriangle, RotateCcw, PackageMinus,
 } from 'lucide-react'
@@ -7,11 +7,14 @@ import {
   entregasEpiHooks, ferramentasHooks, emprestimosHooks, itensHooks, locaisHooks,
   useFuncionarios, useObras, useDevolverEpi, useAlterarEstadoFerramenta, useDevolverEmprestimo,
 } from '../hooks'
-import { brl, qty, dataBR, num, epiEstado, ferramentaEstado } from '../lib'
+import { dataBR, epiEstado, ferramentaEstado } from '../lib'
 import {
-  mono, CAPS, inp, errBox, Pill, EstadoPill, Card, Btn, SectHead, Loading, Empty, Modal, Field, th, type Say,
+  mono, inp, errBox, Pill, EstadoPill, Card, Btn, SectHead, Loading, Empty, Modal, Field, th, type Say,
 } from '../ui'
 import type { Item, LocalEstoque, EntregaEPI, Ferramenta, EmprestimoFerramenta, FuncionarioOpt } from '../types'
+
+/** Estados de ferramenta que se escolhem à mão — `emprestada` é do fluxo de empréstimo. */
+type EstadoAlteravel = 'disponivel' | 'manutencao' | 'baixada'
 
 /* ── campo de colaborador: usa o RH quando há; senão, texto livre ── */
 function ColaboradorField({ funcionarios, colaborador, setColaborador, nome, setNome }: {
@@ -240,11 +243,13 @@ function EmprestarModal({ ferramenta, onClose, onDone }: { ferramenta: Ferrament
 }
 function EstadoFerramentaModal({ ferramenta, onClose, onDone }: { ferramenta: Ferramenta; onClose: () => void; onDone: () => void }) {
   const alterar = useAlterarEstadoFerramenta()
-  const [estado, setEstado] = useState(ferramenta.estado === 'emprestada' ? 'disponivel' : ferramenta.estado)
+  // `emprestada` não é estado que se escolhe à mão (quem empresta é o fluxo de
+  // empréstimo), então o seletor oferece só os três alteráveis.
+  const [estado, setEstado] = useState<EstadoAlteravel>(ferramenta.estado === 'emprestada' ? 'disponivel' : ferramenta.estado)
   const [proxCal, setProxCal] = useState(ferramenta.proxima_calibracao ?? ''), [proxMan, setProxMan] = useState(ferramenta.proxima_manutencao ?? '')
   const salvar = async () => { await alterar.mutateAsync({ id: ferramenta.ferramenta_id, estado, proxima_calibracao: proxCal || null, proxima_manutencao: proxMan || null }); onDone() }
   return <Modal title={`Estado — ${ferramenta.nome}`} onClose={onClose} footer={<><Btn onClick={onClose}>Cancelar</Btn><Btn variant="primary" onClick={salvar} disabled={alterar.isPending}>Salvar</Btn></>}>
-    <Field label="Estado"><select style={inp} value={estado} onChange={e => setEstado(e.target.value)}><option value="disponivel">Disponível</option><option value="manutencao">Em manutenção</option><option value="baixada">Baixada</option></select></Field>
+    <Field label="Estado"><select style={inp} value={estado} onChange={e => setEstado(e.target.value as EstadoAlteravel)}><option value="disponivel">Disponível</option><option value="manutencao">Em manutenção</option><option value="baixada">Baixada</option></select></Field>
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
       <Field label="Próxima calibração"><input style={inp} type="date" value={proxCal} onChange={e => setProxCal(e.target.value)} /></Field>
       <Field label="Próxima manutenção"><input style={inp} type="date" value={proxMan} onChange={e => setProxMan(e.target.value)} /></Field>

@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import {
-  LayoutDashboard, Boxes, ArrowLeftRight, ClipboardList, ClipboardCheck, Network,
+  LayoutDashboard, ArrowLeftRight, ClipboardList, ClipboardCheck, Network,
   Warehouse, RotateCcw, ShieldCheck, Hammer, Layers, TrendingUp, Activity, Check, Lock,
 } from 'lucide-react'
 import { SilStyles, type Say } from '../ui'

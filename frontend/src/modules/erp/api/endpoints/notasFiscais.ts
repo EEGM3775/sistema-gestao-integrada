@@ -5,8 +5,12 @@ import type {
   NotaFiscalServico, NotaFiscalServicoFiltros, PaginatedResponse,
 } from '../../types'
 
-/** Remove chaves vazias — o axios não deve mandar `?status=&fornecedor=` para o DRF. */
-function cleanParams(filtros: Record<string, unknown>): Record<string, string | number> {
+/** Remove chaves vazias — o axios não deve mandar `?status=&fornecedor=` para o DRF.
+ *
+ * Genérico porque este arquivo serve DOIS tipos de filtro (NFS-e emitida e NF
+ * recebida). `Record<string, unknown>` não aceita interface sem index signature,
+ * então os dois call sites falhavam no `tsc`. */
+function cleanParams<T extends object>(filtros: T): Record<string, string | number> {
   const out: Record<string, string | number> = {}
   for (const [k, v] of Object.entries(filtros)) {
     if (v !== undefined && v !== null && v !== '') out[k] = v as string | number

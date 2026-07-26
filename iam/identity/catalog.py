@@ -338,13 +338,20 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
         "obra.obra.view", "cadastro.fornecedor.view",
         "rh.funcionario.view",  # picker de colaborador em EPI/ferramentaria
     ],
-    # Orçamentista: monta e revisa a planilha orçamentária. Precisa GERIR o
-    # item-mestre (adotar da base referencial cria item no catálogo) e LER o que
+    # Orçamentista: monta, aprova e revisa a planilha orçamentária. Precisa GERIR
+    # o item-mestre (adotar da base referencial cria item no catálogo) e LER o que
     # dá custo real — compras do SCM e consumo/custo médio do SIL —, porque é
-    # disso que sai o preço honesto do próximo orçamento. Aprovar orçamento fica
-    # FORA: congelar a régua de custo é decisão de quem responde pela obra.
+    # disso que sai o preço honesto do próximo orçamento.
+    #
+    # `aprovar`/`revisar` entraram aqui em 26/07/2026 por decisão do dono do
+    # produto (D28). Até então a régua dizia que congelar o custo era "de quem
+    # responde pela obra" e a permissão ficava de fora — só que ela não estava em
+    # NENHUMA persona de fábrica, e o efeito prático era que apenas o
+    # administrador do tenant conseguia aprovar (ele bypassa o RequirePermission).
+    # Alçada é decisão do dono; quem quiser separar de novo cria uma persona só
+    # de aprovação e tira as duas linhas daqui.
     "orcamentista": [
-        "orcamento.base.*", "orcamento.orcamento.view", "orcamento.orcamento.edit",
+        "orcamento.base.*", "orcamento.orcamento.*",
         "orcamento.item.*", "orcamento.relatorio.view",
         "cadastro.item.*", "obra.obra.view", "obra.empreendimento.view",
         "scm.oferta.view", "scm.pedido.view", "sil.saldo.view", "sil.relatorio.view",
@@ -375,7 +382,7 @@ DESCRICOES_TEMPLATE: dict[str, str] = {
     "auditor": "Somente leitura ampla + trilha de auditoria e operações de titular (LGPD).",
     "suprimentos": "Suprimentos: catálogo de produtos, ofertas/preços de fornecedores e centros de custo.",
     "almoxarife": "Estoque e logística interna: saldos, movimentações, requisições, transferências, devoluções, lotes e inventário.",
-    "orcamentista": "Planilha orçamentária da obra: bases referenciais (SINAPI/ORSE), composições, curva ABC e orçado × realizado. Não aprova orçamento.",
+    "orcamentista": "Planilha orçamentária da obra: bases referenciais (SINAPI/ORSE), composições, curva ABC e orçado × realizado. Aprova e revisa o orçamento.",
     "gestor_lixo": "Restauração e expurgo de itens da lixeira (exclusão reversível).",
     "operacional": "Leitura básica de obras, diário, agenda e cadastros.",
 }

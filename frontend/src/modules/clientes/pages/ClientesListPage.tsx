@@ -120,7 +120,8 @@ export default function ClientesListPage() {
     const chave = no.chaves.join('␟')
     setAbertos(atual => {
       const proximo = new Set(atual)
-      proximo.has(chave) ? proximo.delete(chave) : proximo.add(chave)
+      if (proximo.has(chave)) proximo.delete(chave)
+      else proximo.add(chave)
       return proximo
     })
   }, [])

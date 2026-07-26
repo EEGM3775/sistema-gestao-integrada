@@ -40,19 +40,6 @@ function parseSalary(v: string): number | null {
   return isNaN(n) || n < 0 ? null : n
 }
 
-// ─── Labels PT-BR para erros do backend ──────────────────────────────────────
-
-const FIELD_LABELS: Record<string, string> = {
-  nome_completo: 'Nome completo', cpf: 'CPF', rg: 'RG',
-  data_nascimento: 'Data de nascimento', genero: 'Gênero', estado_civil: 'Estado civil',
-  telefone_pessoal: 'Telefone pessoal', telefone_celular: 'Celular',
-  email_pessoal: 'E-mail pessoal', endereco_completo: 'Endereço',
-  cargo: 'Cargo', empreendimento_vinculado: 'Empreendimento vinculado',
-  data_admissao: 'Data de admissão', data_demissao: 'Data de demissão',
-  salario_base: 'Salário base', status_contrato: 'Status do contrato',
-  numero_ctps: 'Nº CTPS', serie_ctps: 'Série CTPS', pis_pasep: 'PIS/PASEP',
-}
-
 // ─── Constantes de form ───────────────────────────────────────────────────────
 
 const EMPTY: FuncionarioFormData = {

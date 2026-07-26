@@ -1,8 +1,7 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
-import { ArrowLeft, Plus, Search, RefreshCw } from 'lucide-react'
+import { Plus, Search, RefreshCw } from 'lucide-react'
 import { useLeads, useCreateLead, useUpdateLead, useDeleteLead, useConvertLead } from '../hooks/useLeads'
-import type { Lead, LeadFiltros, StatusLead, PaginatedResponse } from '../types'
+import type { Lead, StatusLead } from '../types'
 
 const STATUS_OPTIONS: StatusLead[] = ['NOVO', 'CONTATADO', 'QUALIFICADO', 'CONVERTIDO', 'PERDIDO']
 

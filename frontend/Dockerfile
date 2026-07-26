@@ -1,6 +1,4 @@
 # Build de produção do shell React (app) servido por nginx.
-# Usa `vite build` direto (sem `tsc -b`) para não quebrar por erros de tipo no
-# shell ainda incipiente — o esbuild do vite transpila sem type-check.
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY package*.json ./
@@ -12,7 +10,13 @@ COPY package*.json ./
 # grafo quando o projeto passou a usar `zod`; sem ele o `npm ci` resolve limpo.
 RUN npm ci --no-audit --no-fund
 COPY . .
-RUN npx vite build
+# `npm run build` = `tsc -b && vite build`. Era `npx vite build` puro, e o
+# comentário original explicava por quê: o shell tinha erro de tipo demais. Só
+# que o esbuild do Vite transpila SEM type-check — com o CI marcando o build como
+# informativo (D27), erro de tipo não aparecia em lugar nenhum da esteira, e foi
+# assim que o SIL v2 subiu com 10 erros de contrato entre backend e front. Zerados
+# em 26/07/2026, o type-check voltou para o caminho que todo mundo percorre.
+RUN npm run build
 
 FROM nginx:alpine
 COPY --from=build /app/dist /usr/share/nginx/html

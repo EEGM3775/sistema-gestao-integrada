@@ -163,24 +163,27 @@ jobs:
         run: python manage.py test --verbosity 2
 
   # -------------------------------------------------------------------------
-  # Frontend — instalação reprodutível (bloqueante) + lint/build informativos.
+  # Frontend — instalação e TYPE-CHECK bloqueantes; lint ainda informativo.
   #
   # O `npm ci` voltou a passar em 26/07/2026 (F6): o lock estava sem os seis
   # `@fullcalendar/*` do package.json, então este job — e o `security-scan`, que
   # também roda `npm ci` — falhavam antes de qualquer verificação. O defeito
-  # sobreviveu 7 dias porque o frontend/Dockerfile usa `npm install
+  # sobreviveu 7 dias porque o frontend/Dockerfile usava `npm install
   # --legacy-peer-deps`, que ignora o lock: a imagem buildava, o CI não.
   #
-  # `continue-on-error` AINDA é necessário, mas NÃO por causa do F5 (fechado em
-  # 26/07). Medido nesta data, em clone limpo: `npm run lint` = 51 erros,
-  # `tsc -b` = 45 erros em 19 arquivos. E a maioria não é do "shell legado" — o
-  # topo é o SIL v2 (operacao.tsx 13, pessoas.tsx 6), entregue em 25/07 sem
-  # nenhum gate rodando. Há também um import de `react-hot-toast` que não está
-  # no package.json (src/modules/obras/ObraDetailPage.tsx, arquivo órfão — o
-  # roteado é o de pages/); passa no `vite build` só porque está fora do grafo.
+  # `Build + typecheck` virou GATE em 26/07/2026 (D27): os 45 erros de `tsc`
+  # foram a zero — 34 corrigidos no código vivo (10 deles contratos reais do SIL
+  # v2, que subiu em 25/07 sem gate nenhum rodando) e 11 morreram com a limpeza
+  # do código morto (F5). O `frontend/Dockerfile` passou a rodar `npm run build`
+  # no mesmo movimento: com `npx vite build` puro, o esbuild transpilava sem
+  # type-check e erro de tipo não aparecia em NENHUM ponto da esteira.
   #
-  # Virar gate real exige zerar os 45 erros de tipo primeiro. Ao fazê-lo,
-  # remover os dois `continue-on-error` abaixo.
+  # `Lint` segue informativo por uma decisão pendente, não por dívida solta: dos
+  # 23 erros restantes, 22 são `react-refresh/only-export-components`, que
+  # reclama de arquivo exportando componente + constante — exatamente como os
+  # quatro kits de UI foram escritos (malha/, kit do SCM, sil/ui.tsx,
+  # orcamento/ui.tsx). Fechar exige partir os kits em dois arquivos cada OU
+  # rebaixar a regra a `warn`; é a dívida do F12 em pendencias.md.
   # -------------------------------------------------------------------------
   frontend:
     name: frontend (Vite/TS)
@@ -200,12 +203,11 @@ jobs:
       - name: Instalar dependências (npm ci)
         run: npm ci
 
-      - name: Lint (informativo — ver bloco acima)
+      - name: Lint (informativo — decisão do F12 pendente, ver bloco acima)
         continue-on-error: true
         run: npm run lint
 
-      - name: Build + typecheck (informativo — ver bloco acima)
-        continue-on-error: true
+      - name: Build + typecheck (BLOQUEANTE — tsc -b && vite build)
         run: npm run build
 
   # -------------------------------------------------------------------------

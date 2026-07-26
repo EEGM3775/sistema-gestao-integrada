@@ -8,7 +8,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   useSilDashboard, saldosHooks, movimentacoesHooks, requisicoesHooks, itensRequisicaoHooks,
-  transferenciasHooks, itensTransferenciaHooks, devolucoesHooks, itensDevolucaoHooks,
+  transferenciasHooks, devolucoesHooks,
   inventariosHooks, itensInventarioHooks, locaisHooks, itensHooks, useObras, useFornecedores, useEtapas,
   useRegistrarMov, useDefinirMinimo, useGerarDemanda, useAprovarRequisicao, useAtenderRequisicao,
   useExecutarTransferencia, useExecutarDevolucao, useFecharInventario,
@@ -17,7 +17,7 @@ import {
   requisicoes as requisicoesApi, itensRequisicao as itensRequisicaoApi,
   transferencias as transferenciasApi, itensTransferencia as itensTransferenciaApi,
   devolucoes as devolucoesApi, itensDevolucao as itensDevolucaoApi,
-  inventarios as inventariosApi, itensInventario as itensInventarioApi,
+  itensInventario as itensInventarioApi,
 } from '../api/silApi'
 import { silKeys } from '../api/queryKeys'
 import {

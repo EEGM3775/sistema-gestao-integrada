@@ -313,7 +313,7 @@ empresa, de dado que **não é da empresa** — é dado público do governo. Ent
 | **ORC.4** | **Paramétrico** (`ParametroObra`, CUB, R$/m²) + **quadros da NBR 12721** (I–IV calculados; V–VIII descritivos) |
 | **ORC.5** | Frontend Malha (hub + 5 páginas) com integração clicável SCM/SIL/ERP |
 | **ORC.5b** | Bancos próprios do tenant, importação com conferência, duplicar/copiar, reprecificação e exportação |
-| **ORC.6** | E2E vivo pelo gateway + sincronização de docs |
+| **ORC.6** | E2E vivo pelo gateway + sincronização de docs — [orc6_orcamento_test.py](../../infra/gateway/orc6_orcamento_test.py), 17 blocos / 55 checks |
 
 ### 12.3 Onde o ORC.5b mora no código
 

@@ -18,6 +18,10 @@ import { ChevronLeft, ChevronRight, ChevronsUpDown, ChevronUp, ChevronDown } fro
 
 interface FinanceDataTableProps<T> {
   data: T[]
+  // `any` no TValue é o idioma do TanStack Table para coluna heterogênea: cada
+  // coluna acessa um campo de tipo diferente, e `ColumnDef<T, string>` não é
+  // atribuível a `ColumnDef<T, unknown>`. Estreitar aqui quebraria as telas.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   columns: ColumnDef<T, any>[]
   /** Linha única da resposta paginada do DRF — dispensa recalcular `pageCount` em cada tela. */
   count: number

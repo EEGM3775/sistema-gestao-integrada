@@ -298,8 +298,15 @@ linha_obra = next((l for l in (aplicado or [])
                    if str(l.get("obra")) == str(obra_id) and str(l.get("etapa")) == str(etapa_id)), None)
 check(f"a obra/etapa aparece com valor aplicado > 0 -> {linha_obra and linha_obra['aplicado']}",
       linha_obra is not None and D(linha_obra["aplicado"]) > 0)
-check("orcado ainda é nulo (módulo Orçamento não existe)",
-      linha_obra is not None and linha_obra.get("orcado") is None)
+# O seam do orçado: até 25/07 este check exigia `orcado is None` "porque o módulo
+# Orçamento não existe". O módulo existe desde a ORC.1 e preenche a coluna quando
+# a obra/etapa tem régua aprovada — a asserção antiga passava por sorte (depende de
+# qual obra o loop acima escolhe) e viraria vermelha na primeira obra com orçamento.
+# O contrato que vale nos dois mundos: a chave existe; o valor é o orçado ou nulo.
+# Quem prova o lado cheio é o orc6_orcamento_test.py (passo 10).
+check("a linha declara a coluna `orcado` (nula sem régua aprovada, preenchida com ela) -> "
+      f"{linha_obra and linha_obra.get('orcado')}",
+      linha_obra is not None and "orcado" in linha_obra)
 
 print()
 ok = sum(1 for p in passed if p)

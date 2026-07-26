@@ -451,13 +451,17 @@ dias sem sintoma — a imagem buildava e só o CI quebrava. Trocado por `npm ci`
 lock divergir; é o que a Fase **10.4.1** já declarava ("`npm ci` + lockfile obrigatório nos
 Dockerfiles/CI") e não valia para o frontend. Imagem rebuildada e validada.
 
-### F7 — Rotas de administração sem guard de `is_tenant_admin` · 🔴 aberto
+### F7 — Rotas de administração sem guard de `is_tenant_admin` · ✅ corrigido 26/07/2026
 
 Em [App.tsx](../frontend/src/App.tsx), `admin/papeis` e `admin/usuarios` têm o comentário
 "guardado por `is_tenant_admin`", mas **não há guard na rota** — só a sidebar trava o link. URL
 digitada direto entra na tela (a API barra depois, mas a UI já montou). O RH, na mesma página, usa
 `<ModuleRoute module="rh">` corretamente.
-**Correção:** um `<AdminRoute>` irmão do `ModuleRoute`, reusando o `AccessNotice`.
+**Corrigido:** [`AdminRoute`](../frontend/src/components/AdminRoute.tsx) — irmão do `ModuleRoute`,
+mesmo formato (layout route com `<Outlet/>`, `AccessNotice` na negativa, estado de `loading` para não
+piscar a tela de acesso negado antes de a sessão resolver). A diferença de critério é a que importa e
+está no docstring: o `ModuleRoute` pergunta o **entitlement do tenant**, o `AdminRoute` pergunta o
+**papel do usuário**. As duas rotas de `admin/` passaram a viver dentro dele.
 
 ### F8 — Item "Início" travado na sidebar · ✅ corrigido 25/07/2026
 
@@ -836,7 +840,60 @@ lint` dá **51 erros** e `tsc -b` dá **45** em 19 arquivos, e o topo **não** �
 comentário do `ci.yml` culpava, é o **SIL v2** (`operacao.tsx` 13, `pessoas.tsx` 6), de 25/07. Ver
 **D27**.
 
-### D27 — 45 erros de tipo no frontend, e um import de dependência que não existe · 🔴 aberto
+### D27 — 45 erros de tipo no frontend, e um import de dependência que não existe · ✅ corrigido 26/07/2026
+
+> **Fechado 26/07/2026: `tsc -b` = ZERO e o type-check virou gate.** O `frontend/Dockerfile` passou a
+> rodar `npm run build` (`tsc -b && vite build`) em vez de `npx vite build`, e o passo
+> **Build + typecheck** do [ci.yml](../.github/workflows/ci.yml) perdeu o `continue-on-error`. Era o
+> buraco central do achado: o esbuild do Vite transpila **sem** type-check, então, com o CI
+> informativo, erro de tipo não aparecia em ponto nenhum da esteira — foi assim que o SIL v2 subiu com
+> 10 erros de contrato. Imagem `react` rebuildada com o gate no caminho e app servindo pelo gateway.
+>
+> **O `lint` continua informativo**, e agora por uma decisão declarada em vez de dívida solta: dos 23
+> erros restantes, **22 são `react-refresh/only-export-components`** — a regra reclama de arquivo que
+> exporta componente *e* constante, que é como os quatro kits de UI foram escritos (`malha/`, kit do
+> SCM, `sil/ui.tsx`, `orcamento/ui.tsx`). Fechar exige partir os kits em dois arquivos cada ou rebaixar
+> a regra a `warn` — é a dívida do **F12**, não deste achado.
+>
+> **Como foi (o caminho, que vale mais que o número).**
+> Medido numa imagem que reproduz o job do CI (`npm ci` a partir do lock + `tsc -b` + `eslint`, com o
+> `node_modules` local fora pelo `.dockerignore`): **`tsc` 45 → 11** e **`eslint` 51 → 41 problemas
+> (34 → 30 erros)**. Os **11 erros restantes estão todos na ilha de obras** inventariada no `F5` da
+> tabela de Baixas — nenhum em código alcançável.
+>
+> Antes de mexer, a inalcançabilidade foi **provada** com um grafo de imports a partir de `main.tsx`
+> (resolvendo o alias `@` → `src/` do [vite.config.ts](../frontend/vite.config.ts), sem o qual quase
+> todo o código vivo aparece como morto): **50 dos 313 arquivos de `src/` não são alcançáveis**, e a
+> lista confirma o inventário do `F5` item a item.
+>
+> **Corrigido no código vivo** — os de contrato primeiro, como a ordem recomendada pedia:
+> - **SIL, apropriação por etapa:** `MovimentacaoEstoque` ganhou `etapa`/`obra_nome`/`etapa_nome` e
+>   `Requisicao` ganhou `etapa`/`etapa_nome` em [types.ts](../frontend/src/modules/sil/types.ts). O
+>   backend manda os cinco (conferido nos serializers), o tipo do front não acompanhou — eram **10**
+>   dos 45 erros.
+> - **`User.id` era `number` e a IAM manda UUID** ([types/index.ts](../frontend/src/types/index.ts)):
+>   `identity.Usuario.id` é `UUIDField`, e `api/session.ts` já declarava `string`. Os dois pontos que
+>   preenchem o usuário (login e `/auth/me/`) atribuíam string a number.
+> - **`FornecedorFormData.cnpj` era `string`** mas o formulário manda `null` quando se marca "sem
+>   documento" — e o model permite (`null=True`). Virou `string | null`.
+> - **`cleanParams` de `notasFiscais.ts`** ficou genérico: servia dois tipos de filtro e
+>   `Record<string, unknown>` não aceita interface sem index signature.
+> - **`pessoas.tsx` do SIL:** o estado do seletor de ferramenta virou o tipo `EstadoAlteravel`
+>   (`emprestada` não se escolhe à mão — quem empresta é o fluxo de empréstimo).
+> - Ruído: imports/constantes não usados em `LeadsPage`, `OpportunitiesPage`, `PersonaForm`,
+>   `FuncionarioForm` (o `FIELD_LABELS` de rótulos PT-BR estava declarado e **nunca consumido** —
+>   `parseApiErrors` não aceita mapa de rótulos; saiu, e fica registrado aqui que a intenção existia),
+>   `LogisticaPage`, `operacao.tsx` e o parâmetro de `th` em `ui.tsx`.
+> - **Lint em código vivo:** três `cond ? set.delete(x) : set.add(x)` usados como statement viraram
+>   `if/else` (`Grade.tsx`, `ClientesListPage.tsx`, `UsuariosPage.tsx` — não eram bug, os efeitos
+>   aconteciam, mas a regra está certa: statement disfarçado de expressão) e o `any` de
+>   `FinanceDataTable` ganhou `eslint-disable` com o motivo (é o idioma do TanStack para coluna
+>   heterogênea; estreitar quebraria as telas).
+>
+> **Os 11 últimos morreram com a limpeza do código morto** (o `F5` da tabela de Baixas, feito no mesmo
+> dia): 2 deles eram **dependências que sequer estão no `package.json`** (`leaflet`/`react-leaflet` no
+> `InteractiveMap`, `react-hot-toast` no `ObraDetailPage` órfão) — corrigi-los seria instalar
+> dependência para código que ninguém alcança. Apagar era a correção, não o atalho.
 
 Medido ao tentar transformar lint/build em gate (D26): `tsc -b` acusa **45 erros** em 19 arquivos e
 `npm run lint` **51**. Enquanto isso vale, o build do CI não pode bloquear merge — e o `vite build`
@@ -886,6 +943,43 @@ zelo e é fácil de encurtar quando "só mexi numa view".
 do comando. Provado depois pelo E2E
 [ie_impexp_test.py](../infra/gateway/ie_impexp_test.py) (16/16), que exercita justamente o caminho
 de job que o bug escondia.
+
+### D28 — Aprovar/revisar orçamento não está em nenhuma persona: só o admin do tenant aprova · ✅ corrigido 26/07/2026
+
+Achado ao escrever o **ORC.6** (E2E vivo), e é achado que só aparece com o **token real da IAM** — a
+suíte unitária concede permissão direto no teste, então nunca esbarra nisto.
+
+`orcamento.orcamento.aprovar` e `orcamento.orcamento.revisar` existem no catálogo
+([catalog.py](../iam/identity/catalog.py)) e são exigidas pelo `action_permission_map` do
+`OrcamentoViewSet`, mas **nenhuma persona de fábrica as contém**:
+
+- **`orcamentista` não tem, de propósito** — está escrito no catálogo: *"Aprovar orçamento fica FORA:
+  congelar a régua de custo é decisão de quem responde pela obra"*. Correto.
+- **mas nenhuma outra persona tem** — `diretoria` (a que representa quem responde pela empresa) só
+  recebeu permissões `.view`; `engenharia` (que gere obra) não recebeu nada de `orcamento`.
+
+Consequência medida no stack vivo: `demo` (orçamentista) → **403** em `aprovar`; `admin`
+(`is_tenant_admin`, que **bypassa** o `RequirePermission`) → **200**. Ou seja, na prática **o único
+caminho para aprovar um orçamento é ser o administrador do tenant** — e isso não está declarado em
+lugar nenhum como o desenho pretendido. É a mesma classe do órfão `erp.lote_remessa.*` do **D5**:
+permissão criada, verbo gateado, ninguém com a chave.
+
+Impacto prático: numa construtora com orçamentista e engenheiro-gestor, o dono acaba tendo de aprovar
+toda planilha, ou o admin de TI ganha alçada financeira que não deveria ter.
+
+**Decisão do dono (26/07/2026): a alçada é do próprio `orcamentista`.** O template passou a
+`orcamento.orcamento.*` (view+edit+aprovar+revisar) em [catalog.py](../iam/identity/catalog.py), e
+tanto o comentário do template quanto a descrição legível da persona foram reescritos — antes diziam
+o contrário ("Não aprova orçamento"), e documento que contradiz o código é pior que documento nenhum.
+
+Aplicado sem passo manual: imagem `sgi-iam` rebuildada e o `sync_authz --all-tenants` do boot
+propagou **aditivamente** (`Permissões: 0 criadas, 161 atualizadas; tenants demo e acme: 17 papéis
+sincronizados`). Usuários pegam a permissão no próximo **refresh** do token.
+
+**Provado ao vivo:** o [orc6_orcamento_test.py](../infra/gateway/orc6_orcamento_test.py) deixou de
+precisar do `admin` — o `demo` (que não é `is_tenant_admin`) aprova e revisa com o próprio token, e a
+suíte segue **55/55**. IAM **115/115**. Quem quiser separar de novo cria uma persona só de aprovação
+e tira as duas ações de `orcamento.orcamento.*` aqui.
 
 ### D17 — Duas trilhas de auditoria sem leitura unificada · 🟠 aberto
 
@@ -1357,7 +1451,7 @@ obra, que a planilha nascerá como v*N*.
 | A10 | Higiene do repo:`nul`, `terminal*.txt`, scripts soltos na raiz → remover + `.gitignore` *(v01-G1)*. **Parcial 19/07:** o que tinha valor foi movido em vez de apagado — `terminal.txt` (guia de comandos atualizado) → [docs/comandos.md](comandos.md), `test_browser.py` → `infra/gateway/browser_smoke_test.py`, `serve_spa.py` → `infra/`. Docker e env saíram da raiz para [deploy/](../deploy/README.md). `.gitignore` ganhou `_verify_*.txt` e — achado no caminho — teve os padrões de virtualenv **ancorados** (`/env/` em vez de `env/`): sem a âncora, `env/` casava qualquer diretório com esse nome e escondia o `deploy/env/` inteiro, incluindo os modelos que precisam ser versionados. **Falta (exige decisão/ação do dono do repo):** (a) apagar 4 arquivos mortos na raiz — `nul` (um 502 do nginx capturado por engano), `_verify_testes.txt` (resíduo do bridge PHP removido) e `package.json`/`package-lock.json` (vestígio do monorepo Node; **nada os referencia** — o CI usa `frontend/package-lock.json`); (b) decidir o `requirements.txt` da RAIZ — não é usado por CI nem por Dockerfile algum (esses usam `backend/` e `iam/`), mas é plausível que seja o manifesto do `.venv` que roda as duas suítes localmente, e por isso **não foi tocado**. Se for isso, vale torná-lo explícito (`requirements-dev.txt`, somando backend+iam, hoje desatualizado: falta `django-redis`); se não, pode sair.                                                                                                                             | 🟠 parcial 19/07/2026   |
 | A11 | Sem testes/CI — o L1 seria pego por um smoke test de 1 linha → pipeline mínima (Fase 10.5)*(v01-G2)*. **Corrigido 14/07:** GitHub Actions ([.github/workflows/ci.yml](../.github/workflows/ci.yml)) roda backend (Django+Postgres, RLS real), iam e frontend a cada push/PR.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | ✅ corrigido 14/07/2026 |
 | A12 | Modelagem: validador CPF/CNPJ sem dígito verificador no backend;`Boleto.VENCIDO` nunca setado; rota duplicada `/api/api/`; duplicata no fallback de tipos de IA *(v01-B8)*                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | 🔴 aberto               |
-| F5  | Código morto/duplicado no frontend (duas gerações de páginas, dois`ObraDetailPage`) → remover a geração antiga *(v01-F4)*. **Inventário confirmado 25/07/2026** (nada disto é alcançável a partir de [App.tsx](../frontend/src/App.tsx)): (a) **ilha de obras** — `modules/obras/ObraDetailPage.tsx` e `ObrasListPage.tsx` na raiz do módulo (duplicatas das versões em `pages/`, que são as roteadas) + os `.module.css` de ambas; elas são as **únicas** consumidoras de todo `components/obra/**` (blueprint · documentslist · finances · ganttchart · interactivemap · kpidashboard · obratimeline · storage, com CSS) e de `hooks/useObraData.ts` — ~18 arquivos que só se referenciam entre si; (b) **avulsos** — `pages/AppStubPage.tsx`, `pages/Clientes.tsx`, `pages/Login.tsx` (a viva é `LoginPage.tsx`), `components/layout/MainLayout.tsx` + `Sidebar.tsx` (+CSS, substituídos pelo `AppShell`), `components/clientes/ClienteForm.tsx` (a viva é `modules/clientes/components/ClienteForm.tsx`), `modules/empreendimentos/pages/EmpreendimentosPage.tsx`, `modules/drone/pages/MapeamentoDronePage.tsx`. Sintoma de que a ilha está mesmo morta: `GanttChart.tsx` importa **`frappe-gantt`, que não consta do `package.json`** — só não quebra porque o `types/frappe-gantt.d.ts` satisfaz o `tsc` e o Vite nunca chega a resolver o módulo (nada o alcança). Esse `.d.ts` sai junto. *(Este `F5` é o da tabela — não confundir com o `### F5` da seção Altas, do `.gitignore`; colisão de IDs herdada dos dois laudos.)* | 🔴 aberto               |
+| F5  | Código morto/duplicado no frontend (duas gerações de páginas, dois`ObraDetailPage`) → remover a geração antiga *(v01-F4)*. **Inventário confirmado 25/07/2026** (nada disto é alcançável a partir de [App.tsx](../frontend/src/App.tsx)): (a) **ilha de obras** — `modules/obras/ObraDetailPage.tsx` e `ObrasListPage.tsx` na raiz do módulo (duplicatas das versões em `pages/`, que são as roteadas) + os `.module.css` de ambas; elas são as **únicas** consumidoras de todo `components/obra/**` (blueprint · documentslist · finances · ganttchart · interactivemap · kpidashboard · obratimeline · storage, com CSS) e de `hooks/useObraData.ts` — ~18 arquivos que só se referenciam entre si; (b) **avulsos** — `pages/AppStubPage.tsx`, `pages/Clientes.tsx`, `pages/Login.tsx` (a viva é `LoginPage.tsx`), `components/layout/MainLayout.tsx` + `Sidebar.tsx` (+CSS, substituídos pelo `AppShell`), `components/clientes/ClienteForm.tsx` (a viva é `modules/clientes/components/ClienteForm.tsx`), `modules/empreendimentos/pages/EmpreendimentosPage.tsx`, `modules/drone/pages/MapeamentoDronePage.tsx`. Sintoma de que a ilha está mesmo morta: `GanttChart.tsx` importa **`frappe-gantt`, que não consta do `package.json`** — só não quebra porque o `types/frappe-gantt.d.ts` satisfaz o `tsc` e o Vite nunca chega a resolver o módulo (nada o alcança). Esse `.d.ts` sai junto. *(Este `F5` é o da tabela — não confundir com o `### F5` da seção Altas, do `.gitignore`; colisão de IDs herdada dos dois laudos.)* **Corrigido 26/07/2026:** os 24 arquivos do inventário removidos (ilha de obras + avulsos + o `types/frappe-gantt.d.ts`). Antes de apagar, a inalcançabilidade foi **provada** por um grafo de imports a partir de `main.tsx` — resolvendo o alias `@`→`src/` do `vite.config.ts`, sem o qual quase todo o código vivo aparece como morto — que apontou **50 dos 313 arquivos** de `src/` fora do grafo e confirmou o inventário item a item. Efeito colateral que era o objetivo: **11 dos 45 erros de tipo do D27** morreram junto. `npm run build` (tsc+vite) limpo e imagem `react` rebuildada e servindo. **Sobraram fora do inventário** (inalcançáveis pelo grafo, NÃO removidos por não terem sido vetados no laudo): `App.css`, `assets/react.svg`, `components/common/{Button,Input,Modal,Table}`, `hooks/useFileUpload.ts`+`utils/fileUpload.ts`, `modules/clientes/hooks/useClientes.ts`, `modules/crm/{api/endpoints/interactions.ts,hooks/useInteractions.ts}` e — este merece decisão, não deleção — `modules/erp/{api/endpoints/lotesRemessa.ts,hooks/useLotesRemessa.ts}`, que é **feature pronta e nunca ligada na UI** (o backend do lote de remessa existe e foi corrigido no L9). | ✅ corrigido 26/07/2026 |
 | F6  | Sem`ErrorBoundary` nem padrão de loading/erro/vazio; i18n ausente → padronizar componentes de estado                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | 🔴 aberto               |
 | C1  | **Calendário Fatia C (14/07):** lembretes de **série recorrente** só definidos na criação — editar "só esta"/"série" não os altera. **Corrigido 14/07/2026:** `update-recurrence` sincroniza `reminders` nos três escopos — `all` substitui os do mestre (valem p/ todas as ocorrências virtuais), `future` abastece o novo mestre e o truncado conserva os seus, `this` no override; ausência de `reminders` no payload **herda os do mestre** (novo `_reminders_for`), não perde aviso. Front parou de fazer `delete payload.reminders`. Testes `CalendarRecurrenceTests` (4 novos, suíte 25/25) + E2E vivo pelo gateway (all/this/future). Canal **WhatsApp** segue adiado (hoje in-app + e-mail).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | ✅ corrigido 14/07/2026 |
 | C2  | **Calendário Fatia C (14/07):** suíte DB-backed + E2E/typecheck do sino pendentes na entrega (Postgres/Docker fora). **Validado 14/07/2026:** suíte **27/27** sobre Postgres (role `erp_app`, RLS real) — `modulocalendar` (reminders CRUD + `LembreteDispatchTests`) + `nucleo.test_notificacoes`; **typecheck** `tsc -b` limpo nos arquivos da Fatia C (os 33 erros restantes são do shell legado, fora da fatia); **E2E vivo pelo gateway** — evento com lembrete `[0]` → beat@60s + worker `despachar_lembretes` → `Notificacao` in-app (badge, texto, `marcar-todas-lidas`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | ✅ validado 14/07/2026  |

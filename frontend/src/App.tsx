@@ -8,6 +8,7 @@ import AppShell from './components/layout/AppShell'
 import AppHomePage from './pages/app/AppHomePage'
 import PrivateRoute from './components/PrivateRoute'
 import ModuleRoute from './components/ModuleRoute'
+import AdminRoute from './components/AdminRoute'
 import EmpreendimentosListPage from './modules/empreendimentos/pages/EmpreendimentosListPage'
 import EmpreendimentoDetailPage from './modules/empreendimentos/pages/EmpreendimentoDetailPage'
 import ObrasListPage from './modules/obras/pages/ObrasListPage'
@@ -84,9 +85,12 @@ function App() {
             <Route path="rh/:id" element={<FuncionarioDetailPage />} />
           </Route>
 
-          {/* ── Administração do tenant (papéis/personas + usuários) — guardado por is_tenant_admin ── */}
-          <Route path="admin/papeis" element={<PersonasPage />} />
-          <Route path="admin/usuarios" element={<UsuariosPage />} />
+          {/* ── Administração do tenant (papéis/personas + usuários) — guard de
+               is_tenant_admin, F7. Antes só a sidebar travava o link. ── */}
+          <Route element={<AdminRoute />}>
+            <Route path="admin/papeis" element={<PersonasPage />} />
+            <Route path="admin/usuarios" element={<UsuariosPage />} />
+          </Route>
 
           {/* ── ERP Financeiro (sub-rotas lazy — code-splitting, docs/modulos/moduloerp.md §5.6) ── */}
           {erpRoutes}

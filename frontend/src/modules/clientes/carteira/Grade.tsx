@@ -134,7 +134,8 @@ export function Grade({
     }
     if (e.ctrlKey || e.metaKey) {
       const proxima = new Set(selecao)
-      proxima.has(indice) ? proxima.delete(indice) : proxima.add(indice)
+      if (proxima.has(indice)) proxima.delete(indice)
+      else proxima.add(indice)
       setSelecao(proxima)
       setAncora(indice)
       return

@@ -28,16 +28,22 @@ export type TipoMov = 'entrada' | 'saida' | 'ajuste' | 'transf_saida' | 'transf_
 export interface MovimentacaoEstoque {
   mov_id: number; item: number; local: number; tipo: TipoMov
   quantidade: string; custo_unitario: string; lote: number | null; obra: number | null
+  // Apropriação por etapa (SIL v2): `etapa` é FK de obras.EtapaObra, nula quando
+  // a movimentação não é apropriada ou a obra não tem etapas.
+  etapa: number | null
   recebimento_scm_ref: number | null; requisicao: number | null; transferencia: number | null
   devolucao: number | null; inventario: number | null; observacao: string; criado_em: string
   item_descricao?: string; item_codigo?: string; local_nome?: string; tipo_display?: string; usuario_nome?: string | null
+  obra_nome?: string | null; etapa_nome?: string | null
 }
 
 export type StatusRequisicao = 'rascunho' | 'pendente' | 'aprovada' | 'atendida' | 'parcial' | 'cancelada'
 export interface Requisicao {
-  requisicao_id: number; local: number; obra: number | null; solicitante: number | null
+  requisicao_id: number; local: number; obra: number | null; etapa: number | null
+  solicitante: number | null
   aprovador: number | null; status: StatusRequisicao; observacao: string; criado_em: string
-  local_nome?: string; obra_nome?: string | null; solicitante_nome?: string | null; itens_count?: number
+  local_nome?: string; obra_nome?: string | null; etapa_nome?: string | null
+  solicitante_nome?: string | null; itens_count?: number
 }
 export interface ItemRequisicao {
   item_requisicao_id: number; requisicao: number; item: number; quantidade: string; quantidade_atendida: string

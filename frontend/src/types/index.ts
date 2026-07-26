@@ -204,7 +204,11 @@ export interface CustoEmpreendimentoFormData {
 // ─── Usuário ──────────────────────────────────────────────────────────────────
 
 export interface User {
-  id: number;
+  // UUID: `identity.Usuario.id` é `UUIDField` na IAM, não inteiro. Era `number`
+  // aqui e os dois pontos que preenchem o usuário (login e /auth/me/) recebiam
+  // string — o `tsc` acusava nos dois, e ninguém via porque o gate estava
+  // desligado (D27). `api/session.ts` já declarava `string`.
+  id: string;
   username: string;
   email: string;
 }
@@ -655,7 +659,9 @@ export interface Fornecedor {
 
 export interface FornecedorFormData {
   razao_social: string
-  cnpj: string
+  // `null` quando o formulário marca "sem documento" — o model permite
+  // (`cnpj = models.CharField(null=True)`), e é o que o FornecedorForm envia.
+  cnpj: string | null
   contato: string
   email: string
   telefone: string

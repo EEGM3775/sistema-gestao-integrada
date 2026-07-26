@@ -39,7 +39,9 @@ export const Spinner = () => <span style={{ width: 26, height: 26, borderRadius:
 export const Loading = () => <div style={{ display: 'grid', placeItems: 'center', padding: 60 }}><Spinner /></div>
 export function Empty({ children }: { children: ReactNode }) { return <Card style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: 44, color: 'var(--ink-3)' }}><Inbox size={32} style={{ opacity: 0.7 }} /><span style={{ fontSize: 13, textAlign: 'center' }}>{children}</span></Card> }
 
-export const th = (h: string, i: number, right?: (n: number) => boolean): CSSProperties => ({ ...CAPS, fontSize: 10.5, textAlign: right?.(i) ? 'right' : 'left', padding: '11px 16px', borderBottom: '1px solid var(--line)', background: 'var(--surface-2)' })
+// `_h` (o rótulo) entra na assinatura porque `th` é usado como callback de map
+// sobre a lista de cabeçalhos; o estilo só depende do índice.
+export const th = (_h: string, i: number, right?: (n: number) => boolean): CSSProperties => ({ ...CAPS, fontSize: 10.5, textAlign: right?.(i) ? 'right' : 'left', padding: '11px 16px', borderBottom: '1px solid var(--line)', background: 'var(--surface-2)' })
 
 export function Modal({ title, onClose, children, footer, wide }: { title: string; onClose: () => void; children: ReactNode; footer: ReactNode; wide?: boolean }) {
   return <div onMouseDown={e => { if (e.target === e.currentTarget) onClose() }} style={{ position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(6,14,26,.5)', backdropFilter: 'blur(3px)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: '8vh 16px', overflowY: 'auto' }}>

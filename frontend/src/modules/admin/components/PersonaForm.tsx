@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { Lock } from 'lucide-react'
 import { FieldError, FormErrorBanner, parseApiErrors, type FieldErrors } from '@/utils/formErrors'
-import type { Perfil, PerfilFormData, CatalogoResposta } from '../types'
+import type { PerfilFormData, CatalogoResposta } from '../types'
 
 interface Props {
   open: boolean

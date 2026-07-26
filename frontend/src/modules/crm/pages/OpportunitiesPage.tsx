@@ -2,10 +2,8 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, Search, RefreshCw, BarChart3 } from 'lucide-react'
 import { useOpportunities, useCreateOpportunity, useUpdateOpportunity, useDeleteOpportunity } from '../hooks/useOpportunities'
-import { formatBRL, apiDecimalToCents } from '@/utils/money'
-import type { Opportunity, OpportunityPayload, StageOportunidade } from '../types'
-
-const STAGE_OPTIONS: StageOportunidade[] = ['QUALIFICACAO', 'PROPOSTA', 'NEGOCIACAO', 'GANHO', 'PERDIDO']
+import { formatBRL } from '@/utils/money'
+import type { Opportunity, OpportunityPayload } from '../types'
 
 /**
  * Lista de Oportunidades - /app/crm/opportunities
