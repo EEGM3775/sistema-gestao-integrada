@@ -1,0 +1,44 @@
+<!--
+  Tabela genérica em PDF (R9): cabeçalho de procedência repetido por página,
+  numeração no rodapé e quebra que não parte linha ao meio. Serve a qualquer
+  recurso — as colunas vêm da declaração, não do template.
+-->
+<meta charset="utf-8">
+<style>
+  @page {
+    size: A4 landscape;
+    margin: 12mm 10mm 14mm 10mm;
+    @bottom-right { content: "página " counter(page) " de " counter(pages); font: 8pt "DejaVu Sans", sans-serif; color: #64748b; }
+  }
+  body { font-family: "DejaVu Sans", sans-serif; font-size: 8pt; color: #0f172a; }
+  h1 { font-size: 13pt; margin: 0 0 2mm; }
+  .procedencia { color: #475569; font-size: 7.5pt; margin-bottom: 4mm; line-height: 1.5; }
+  .procedencia b { color: #0f172a; }
+  table { width: 100%; border-collapse: collapse; }
+  thead { display: table-header-group; }
+  tr { page-break-inside: avoid; }
+  th {
+    background: #e8edf5; text-align: left; padding: 1.6mm 1.4mm;
+    border-bottom: 0.4mm solid #c9d2e0; font-size: 7.5pt;
+  }
+  td { padding: 1.2mm 1.4mm; border-bottom: 0.15mm solid #e2e8f0; }
+  td.num, th.num { text-align: right; }
+</style>
+
+<h1>{{ procedencia.recurso_rotulo }}</h1>
+<div class="procedencia">
+  {% if procedencia.recorte %}<b>Recorte:</b> {{ procedencia.recorte }}<br>{% endif %}
+  <b>Emitido por</b> {{ procedencia.usuario }} <b>em</b> {{ procedencia.emitido_em }}
+  · <b>{{ procedencia.linhas }}</b> linha{{ procedencia.linhas|pluralize }}
+</div>
+
+<table>
+  <thead>
+    <tr>{% for coluna in colunas %}<th{% if coluna.numerica %} class="num"{% endif %}>{{ coluna.rotulo }}</th>{% endfor %}</tr>
+  </thead>
+  <tbody>
+    {% for linha in linhas %}
+    <tr>{% for celula in linha %}<td{% if celula.numerica %} class="num"{% endif %}>{{ celula.texto }}</td>{% endfor %}</tr>
+    {% endfor %}
+  </tbody>
+</table>

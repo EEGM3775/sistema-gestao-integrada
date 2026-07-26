@@ -71,6 +71,27 @@ export function useCliente(clienteId: number) {
     setAquisicoes(prev => prev.filter(a => a.cliente_empreendimento_id !== id))
   }
 
+  /** Materializa o carnê como contas a receber. **Não emite boleto** — cobrar é
+   *  passo separado, no ERP, unitário ou por lote. O backend recusa a segunda
+   *  chamada (409), então o botão some assim que o carnê existe. */
+  const gerarParcelas = async (id: number) => {
+    const r = await apiClient.post(`/clientes-empreendimentos/${id}/gerar-parcelas/`)
+    setAquisicoes(prev => prev.map(a => (
+      a.cliente_empreendimento_id === id
+        ? { ...a, parcelas_geradas_em: r.data.geradasEm }
+        : a
+    )))
+    return r.data as { geradas: number; total: string; geradasEm: string }
+  }
+
+  /** Correção monetária do carnê. `aplicar: false` é prévia — nada grava. Prévia
+   *  primeiro porque reajuste mexe em valor já prometido ao comprador. */
+  const corrigirParcelas = async (id: number, aplicar: boolean) => {
+    const url = `/clientes-empreendimentos/${id}/corrigir/`
+    const r = aplicar ? await apiClient.post(url) : await apiClient.get(url)
+    return r.data as import('@/types').RespostaCorrecao
+  }
+
   // ── Contratos ─────────────────────────────────────────────────────────────
 
   const createContrato = async (formData: ContratoClienteFormData) => {
@@ -126,7 +147,7 @@ export function useCliente(clienteId: number) {
     data, aquisicoes, contratos, documentos, dadosBancarios,
     loading, error, refetch: fetch,
     updateCliente, deleteCliente,
-    createAquisicao, updateAquisicao, deleteAquisicao,
+    createAquisicao, updateAquisicao, deleteAquisicao, gerarParcelas, corrigirParcelas,
     createContrato, updateContrato, deleteContrato,
     uploadDocumento, deleteDocumento,
     createDadoBancario, updateDadoBancario, deleteDadoBancario,

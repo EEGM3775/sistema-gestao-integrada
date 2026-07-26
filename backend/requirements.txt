@@ -16,5 +16,10 @@ Pillow
 pandas
 openpyxl
 weasyprint
+# Extração de tabela de PDF na importação de preços (ORC.5b). O código faz import
+# tardio e degrada com mensagem clara se faltar — prefeitura que só publica PDF é
+# o caso real, e a conferência linha a linha existe justamente porque a extração
+# é frágil.
+pdfplumber
 django-cors-headers
 prometheus-client

@@ -160,6 +160,24 @@ def aprovar_orcamento(orcamento: Orcamento, *, usuario_nome: str = "") -> Orcame
     return orcamento
 
 
+def proxima_versao(obra_id) -> int:
+    """Próximo número de versão livre da obra.
+
+    Quem numera é o servidor, nunca o cliente: a unicidade `(obra, versao)` é
+    constraint de banco, então deixar o número vir do payload transformaria uma
+    regra de domínio em erro de formulário. Os três caminhos que criam orçamento
+    (POST, `revisar_orcamento`, `duplicar_orcamento`) passam por aqui — antes,
+    cada um numerava por conta própria e o POST não numerava, nascia sempre v1.
+    """
+    maior = (
+        Orcamento.objects.filter(obra_id=obra_id)
+        .order_by("-versao")
+        .values_list("versao", flat=True)
+        .first()
+    )
+    return (maior or 0) + 1
+
+
 @transaction.atomic
 def revisar_orcamento(
     orcamento: Orcamento, *, tipo: str, motivo: str, usuario_nome: str = ""
@@ -176,19 +194,11 @@ def revisar_orcamento(
             "Só orçamento aprovado gera revisão — rascunho é editado direto."
         )
 
-    proxima_versao = (
-        Orcamento.objects.filter(obra=orcamento.obra)
-        .order_by("-versao")
-        .values_list("versao", flat=True)
-        .first()
-        or orcamento.versao
-    ) + 1
-
     nova = Orcamento.objects.create(
         tenant_id=orcamento.tenant_id,
         obra=orcamento.obra,
         descricao=orcamento.descricao,
-        versao=proxima_versao,
+        versao=proxima_versao(orcamento.obra_id),
         orcamento_origem=orcamento,
         base_referencial=orcamento.base_referencial,
         data_base=orcamento.data_base,

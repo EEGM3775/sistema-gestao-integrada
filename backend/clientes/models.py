@@ -1,4 +1,6 @@
 # clientes/models.py
+from decimal import Decimal
+
 from django.db import models
 from django.core.validators import RegexValidator
 from nucleo.tenancy import TenantScopedModel
@@ -69,23 +71,160 @@ class ClienteEmpreendimento(TenantScopedModel):
         ('outro', _('Outro')),
     ]
 
+    SISTEMA_AMORTIZACAO_CHOICES = [
+        ('price', _('Price — parcela fixa')),
+        ('sac', _('SAC — amortização constante, parcela decrescente')),
+    ]
+
+    PERIODICIDADE_BALAO_CHOICES = [
+        ('anual', _('Anual')),
+        ('semestral', _('Semestral')),
+    ]
+
+    PERIODICIDADE_CORRECAO_CHOICES = [
+        ('anual', _('Anual (aniversário do contrato)')),
+        ('mensal', _('Mensal')),
+    ]
+
     cliente_empreendimento_id = models.AutoField(primary_key=True)
     cliente = models.ForeignKey(Cliente, on_delete=models.RESTRICT, verbose_name=_("Cliente"))
+    # Denormalizado de propósito (a unidade já sabe o empreendimento): a carteira,
+    # a ContaReceber e os filtros por empreendimento leem daqui sem um join a
+    # mais. `save()` mantém em dia a partir da unidade — não é campo de digitação.
     empreendimento = models.ForeignKey('empreendimentos.Empreendimento', on_delete=models.RESTRICT, verbose_name=_("Empreendimento"))
-    unidade_comprada = models.CharField(max_length=50, verbose_name=_("Unidade Comprada"))
-    endereco_unidade = models.CharField(max_length=255, verbose_name=_("Endereço da Unidade"))
+    # A unidade vendida. **Único lugar** onde a identificação mora: quadra, lote,
+    # bloco, andar, apto e endereço são do cadastro do empreendimento, não da
+    # venda. Antes eram digitados aqui, em paralelo a um rótulo livre — os dois
+    # podiam divergir e o mesmo lote podia ser vendido duas vezes.
+    unidade = models.ForeignKey(
+        'empreendimentos.Unidade', on_delete=models.RESTRICT, related_name='aquisicoes',
+        verbose_name=_("Unidade"),
+    )
     data_compra = models.DateField(verbose_name=_("Data da Compra"))
-    valor_compra = models.DecimalField(max_digits=20, decimal_places=2, verbose_name=_("Valor da Compra"))
     condicoes_pagamento = models.CharField(max_length=50, choices=CONDICOES_PAGAMENTO_CHOICES, verbose_name=_("Condições de Pagamento"))
     observacoes_compra = models.TextField(null=True, blank=True, verbose_name=_("Observações da Compra"))
 
+    # ─── Proposta: da tabela ao que o cliente paga ────────────────────────────
+    # O preço de tabela entra como **snapshot**: a unidade pode ser reprecificada
+    # amanhã, e o contrato assinado hoje não muda por causa disso.
+    valor_tabela = models.DecimalField(
+        max_digits=15, decimal_places=2, default=Decimal('0'),
+        verbose_name=_("Valor de tabela na venda"),
+    )
+    desconto_percentual = models.DecimalField(
+        max_digits=6, decimal_places=3, default=Decimal('0'), verbose_name=_("Desconto (%)"),
+    )
+    desconto_valor = models.DecimalField(
+        max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name=_("Desconto (R$)"),
+    )
+    # O valor negociado à vista — tabela menos desconto. Mantém o nome histórico
+    # porque é o "valor da compra" que a carteira e as quotas já leem.
+    valor_compra = models.DecimalField(max_digits=20, decimal_places=2, verbose_name=_("Valor negociado (à vista)"))
+
+    entrada_valor = models.DecimalField(
+        max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name=_("Entrada / ATO (R$)"),
+    )
+    entrada_parcelas = models.PositiveSmallIntegerField(
+        default=1, verbose_name=_("Parcelas da entrada"),
+        help_text=_("A entrada parcelada não rende juros — é sinal, não financiamento."),
+    )
+    entrada_primeiro_vencimento = models.DateField(
+        null=True, blank=True, verbose_name=_("1º vencimento da entrada"),
+    )
+
+    sistema_amortizacao = models.CharField(
+        max_length=10, choices=SISTEMA_AMORTIZACAO_CHOICES, default='price',
+        verbose_name=_("Sistema de amortização"),
+    )
+    juros_mensal = models.DecimalField(
+        max_digits=6, decimal_places=4, default=Decimal('0'), verbose_name=_("Juros (% ao mês)"),
+        help_text=_("Zero é venda sem juros: a parcela vira o saldo dividido pelo prazo."),
+    )
+    num_parcelas = models.PositiveSmallIntegerField(default=0, verbose_name=_("Nº de parcelas do saldo"))
+    primeiro_vencimento = models.DateField(
+        null=True, blank=True, verbose_name=_("1º vencimento das parcelas"),
+    )
+
+    # Balão/intercalada: parcela extra periódica, prática corrente em loteamento.
+    # Soma-se à mensal que vence no mesmo mês, não a substitui.
+    balao_valor = models.DecimalField(
+        max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name=_("Valor do balão (R$)"),
+    )
+    balao_quantidade = models.PositiveSmallIntegerField(default=0, verbose_name=_("Quantidade de balões"))
+    balao_periodicidade = models.CharField(
+        max_length=10, choices=PERIODICIDADE_BALAO_CHOICES, default='anual',
+        verbose_name=_("Periodicidade do balão"),
+    )
+    balao_primeiro_vencimento = models.DateField(
+        null=True, blank=True, verbose_name=_("1º vencimento do balão"),
+    )
+
+    valor_total_plano = models.DecimalField(
+        max_digits=15, decimal_places=2, default=Decimal('0'),
+        verbose_name=_("Total do plano (desembolso)"),
+        help_text=_("Entrada + parcelas + balões. Maior que o negociado quando há juros."),
+    )
+    # Carimbo do botão "Gerar parcelas": impede gerar o mesmo carnê duas vezes e
+    # diz na tela que o financeiro já existe.
+    parcelas_geradas_em = models.DateTimeField(
+        null=True, blank=True, verbose_name=_("Parcelas geradas em"),
+    )
+
+    # ─── Correção monetária ───────────────────────────────────────────────────
+    # Contrato longo sem índice é desconto silencioso: a parcela de 2033 vale, em
+    # poder de compra, uma fração da de 2026. Por isso o mercado corrige — e
+    # corrige **no aniversário do contrato**, não na data do boleto: a data-base
+    # é a da compra, e a partir dela o saldo devedor é reajustado a cada 12 meses
+    # (anual) ou a cada mês (mensal, o padrão do INCC durante a obra). O boleto
+    # não é a âncora, é só o portador: ele carrega o valor **já corrigido** pelo
+    # que estava publicado quando foi lançado.
+    indice_correcao = models.ForeignKey(
+        'nucleo.IndiceEconomico', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='aquisicoes', verbose_name=_("Índice de correção"),
+        help_text=_("Vazio = contrato sem correção monetária."),
+    )
+    periodicidade_correcao = models.CharField(
+        max_length=10, choices=PERIODICIDADE_CORRECAO_CHOICES, default='anual',
+        verbose_name=_("Periodicidade da correção"),
+    )
+    data_base_correcao = models.DateField(
+        null=True, blank=True, verbose_name=_("Data-base da correção"),
+        help_text=_("De onde o índice começa a contar. Vazio = a data da compra."),
+    )
+
+    @property
+    def data_base_efetiva(self):
+        """A âncora do reajuste. Cai na data da compra quando não foi negociada
+        outra — é o que o comprador entende por 'aniversário do contrato'."""
+        return self.data_base_correcao or self.data_compra
+
+    @property
+    def rotulo_unidade(self) -> str:
+        """Atalho para o rótulo da unidade — a fonte é o cadastro dela."""
+        return self.unidade.rotulo
+
+    def save(self, *args, **kwargs):
+        # O empreendimento da venda é o da unidade, sempre. Deixar o cliente
+        # informar os dois abriria a porta para uma aquisição apontando para um
+        # empreendimento e uma unidade de outro.
+        if self.unidade_id and self.unidade.empreendimento_id != self.empreendimento_id:
+            self.empreendimento_id = self.unidade.empreendimento_id
+        super().save(*args, **kwargs)
+
     def __str__(self):
-        return f"{self.cliente} - {self.empreendimento} (Unidade {self.unidade_comprada})"
+        return f"{self.cliente} - {self.empreendimento} ({self.rotulo_unidade})"
 
     class Meta:
         verbose_name = _("Aquisição de Empreendimento")
         verbose_name_plural = _("Aquisições de Empreendimentos")
-        unique_together = ('empreendimento', 'unidade_comprada')
+        constraints = [
+            # Uma unidade, um dono. Era o papel do `unique_together` antigo sobre
+            # o texto livre — que não valia nada, porque "Apto 101" e "apto 101"
+            # passavam como unidades diferentes.
+            models.UniqueConstraint(
+                fields=['tenant', 'unidade'], name='aquisicao_unica_por_unidade',
+            ),
+        ]
 
 
 class ContratoCliente(TenantScopedModel):

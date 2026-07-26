@@ -30,9 +30,8 @@ Exemplos::
 from __future__ import annotations
 
 import csv
-import unicodedata
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
@@ -47,76 +46,17 @@ from moduloorcamento.models import (
 
 LOTE = 1_000
 
-# Sinônimos de cabeçalho por campo lógico, já normalizados (sem acento, minúsculo).
-# A ordem importa: o primeiro alias que casar vence, então os mais específicos
-# vêm antes ("codigo da composicao" antes de "codigo").
-ALIASES: dict[str, tuple[str, ...]] = {
-    "codigo": ("codigo do insumo", "codigo insumo", "codigo", "cod", "cod insumo"),
-    "descricao": ("descricao do insumo", "descricao insumo", "descricao", "descricao do item"),
-    "unidade": ("unidade", "unid", "und", "un", "unidade de medida"),
-    "preco": (
-        "preco mediano", "preco mediano r$", "custo unitario", "preco unitario",
-        "custo total", "preco", "valor", "custo",
-    ),
-    "grupo": ("grupo", "classe", "descricao da classe", "grupo classe", "categoria"),
-    # --- analítica (composição → item) ---
-    "codigo_composicao": ("codigo da composicao", "codigo composicao", "cod composicao", "codigo"),
-    "descricao_composicao": ("descricao da composicao", "descricao composicao"),
-    "unidade_composicao": ("unidade da composicao", "unidade composicao", "unidade"),
-    "codigo_item": ("codigo do item", "codigo item", "cod item", "codigo do insumo", "codigo insumo"),
-    "descricao_item": ("descricao do item", "descricao item", "descricao do insumo", "descricao insumo"),
-    "unidade_item": ("unidade do item", "unidade item", "und item"),
-    "tipo_item": ("tipo de item", "tipo item", "tipo"),
-    "coeficiente": ("coeficiente", "coef", "consumo", "quantidade"),
-}
-
-OBRIGATORIOS = {
-    "insumos": ("codigo", "descricao", "unidade", "preco"),
-    "composicoes": ("codigo", "descricao", "unidade", "preco"),
-    "analitica": ("codigo_composicao", "codigo_item", "coeficiente"),
-}
-
-
-def normalizar(texto) -> str:
-    """"Preço Mediano R$" → "preco mediano r$" (comparável entre publicações)."""
-    if texto is None:
-        return ""
-    sem_acento = unicodedata.normalize("NFKD", str(texto))
-    sem_acento = "".join(c for c in sem_acento if not unicodedata.combining(c))
-    return " ".join(sem_acento.lower().replace("\n", " ").split())
-
-
-def para_decimal(valor) -> Decimal:
-    """Aceita float do XLSX e texto no formato brasileiro ("1.234,56")."""
-    if valor is None or valor == "":
-        return Decimal("0")
-    if isinstance(valor, (int, float, Decimal)):
-        return Decimal(str(valor))
-    texto = str(valor).strip().replace("R$", "").replace(" ", "")
-    if "," in texto and "." in texto:
-        texto = texto.replace(".", "").replace(",", ".")  # 1.234,56
-    elif "," in texto:
-        texto = texto.replace(",", ".")  # 1234,56
-    try:
-        return Decimal(texto)
-    except InvalidOperation:
-        return Decimal("0")
-
-
-def detectar_delimitador(amostra: str) -> str:
-    """Delimitador de CSV com preferência brasileira: **`;` vence**.
-
-    `csv.Sniffer` não serve aqui. Numa linha como
-    ``1379;CIMENTO;KG;0,58`` ele elege a vírgula (que é o separador **decimal**)
-    e parte a última coluna em duas — sem erro, só com dado silenciosamente
-    errado. Como toda base oficial brasileira exporta com `;`, a ordem de
-    preferência é fixa e previsível; `--delimitador` cobre a exceção.
-    """
-    primeira = next((l for l in amostra.splitlines() if l.strip()), "")
-    for candidato in (";", "\t", "|"):
-        if candidato in primeira:
-            return candidato
-    return ","
+# Heurística de leitura compartilhada com a importação pela API (ORC.5b). Os
+# nomes seguem reexportados aqui porque o comando é a interface pública deles
+# desde a ORC.0 — mover sem manter o nome quebraria quem já importa daqui.
+from moduloorcamento.leitura import (  # noqa: E402  (posição deliberada: depois dos models)
+    ALIASES,
+    OBRIGATORIOS,
+    detectar_colunas,
+    detectar_delimitador,
+    normalizar,
+    para_decimal,
+)
 
 
 def ler_planilha(caminho: Path, aba: str | None = None, delimitador: str | None = None):
@@ -144,36 +84,6 @@ def ler_planilha(caminho: Path, aba: str | None = None, delimitador: str | None 
             yield list(linha)
     finally:
         wb.close()
-
-
-def detectar_colunas(linhas, obrigatorios: tuple[str, ...], limite: int = 25):
-    """Procura, nas primeiras `limite` linhas, a que serve de cabeçalho.
-
-    Devolve `(mapa, indice_da_linha, cabecalhos_vistos)`. `mapa` leva campo
-    lógico → índice de coluna. Falha explícita é melhor que adivinhação: quem
-    chama imprime `cabecalhos_vistos` para o operador decidir o `--colunas`.
-    """
-    vistos: list[list[str]] = []
-    for indice, linha in enumerate(linhas[:limite]):
-        celulas = [normalizar(c) for c in linha]
-        if not any(celulas):
-            continue
-        vistos.append([c for c in celulas if c])
-        mapa: dict[str, int] = {}
-        usados: set[int] = set()
-        for campo in obrigatorios + tuple(c for c in ALIASES if c not in obrigatorios):
-            for alias in ALIASES[campo]:
-                for pos, celula in enumerate(celulas):
-                    if pos in usados or celula != alias:
-                        continue
-                    mapa[campo] = pos
-                    usados.add(pos)
-                    break
-                if campo in mapa:
-                    break
-        if all(campo in mapa for campo in obrigatorios):
-            return mapa, indice, vistos
-    return None, -1, vistos
 
 
 def parsear_colunas_manuais(spec: str) -> dict[str, int]:

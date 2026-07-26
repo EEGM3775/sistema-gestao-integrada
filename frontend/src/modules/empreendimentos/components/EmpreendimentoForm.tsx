@@ -43,6 +43,8 @@ const EMPTY: EmpreendimentoFormData = {
   cnpj: '',
   telefone: '',
   endereco: '',
+  cidade: '',
+  estado: '',
   data_inicio_prevista: '',
   data_fim_prevista: '',
   orcamento_total: '',
@@ -87,6 +89,8 @@ export const EmpreendimentoForm: React.FC<Props> = ({ open, onClose, onSave, ini
         cnpj:                  initial.cnpj.replace(/\D/g, ''),
         telefone:              initial.telefone,
         endereco:              initial.endereco,
+        cidade:                initial.cidade ?? '',
+        estado:                initial.estado ?? '',
         data_inicio_prevista:  initial.data_inicio_prevista ?? '',
         data_fim_prevista:     initial.data_fim_prevista ?? '',
         orcamento_total:       initial.orcamento_total
@@ -230,10 +234,34 @@ export const EmpreendimentoForm: React.FC<Props> = ({ open, onClose, onSave, ini
             <label style={labelStyle}>Endereço</label>
             <input style={inputStyle} value={form.endereco}
               onChange={e => set('endereco', e.target.value)}
-              placeholder="Rua, nº, Bairro, Cidade - UF"
+              placeholder="Rua, nº, Bairro"
               onFocus={e => (e.currentTarget.style.borderColor = 'var(--color-brand)')}
               onBlur={e => (e.currentTarget.style.borderColor = '#e2e8f0')} />
             <FieldError msg={fieldErrors.endereco} />
+          </div>
+
+          {/* Cidade/UF separados do endereço: é por eles que a carteira de
+              clientes filtra e agrupa ("clientes por cidade"), o que texto
+              livre não permite. */}
+          <div className="grid grid-cols-[1fr_100px] gap-4">
+            <div>
+              <label style={labelStyle}>Cidade do empreendimento</label>
+              <input style={inputStyle} value={form.cidade}
+                onChange={e => set('cidade', e.target.value)}
+                placeholder="Palhoça"
+                onFocus={e => (e.currentTarget.style.borderColor = 'var(--color-brand)')}
+                onBlur={e => (e.currentTarget.style.borderColor = '#e2e8f0')} />
+              <FieldError msg={fieldErrors.cidade} />
+            </div>
+            <div>
+              <label style={labelStyle}>UF</label>
+              <input style={inputStyle} value={form.estado} maxLength={2}
+                onChange={e => set('estado', e.target.value.toUpperCase())}
+                placeholder="SC"
+                onFocus={e => (e.currentTarget.style.borderColor = 'var(--color-brand)')}
+                onBlur={e => (e.currentTarget.style.borderColor = '#e2e8f0')} />
+              <FieldError msg={fieldErrors.estado} />
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">

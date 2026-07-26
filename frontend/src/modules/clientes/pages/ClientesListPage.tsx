@@ -1,194 +1,238 @@
-import React, { useState, useEffect } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Search, Users, RefreshCw } from 'lucide-react'
-import apiClient from '@/api/apiClient'
-import { useClientes } from '../hooks/useClientes'
-import { createCliente } from '../hooks/useCliente'
+import { Plus, Users } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
+import { Empty, Loading } from '@/components/malha'
 import ClienteForm from '../components/ClienteForm'
-import type { ClienteFormData, Empreendimento } from '@/types'
-import { formatCPFCNPJ } from '@/utils/masks'
+import { createCliente } from '../hooks/useCliente'
+import type { ClienteFormData } from '@/types'
+import { BarraCarteira } from '../carteira/BarraCarteira'
+import { Grade, montarArvore, type ItemGrade, type NoGrupo } from '../carteira/Grade'
+import { COLUNA_ANCORA, colunasDisponiveis, colunasVisiveis } from '../carteira/colunas'
+import { useCarteira, useGruposCarteira, useLinhasDeGrupos, useOpcoesCarteira } from '../carteira/hooks'
+import { usePreferenciasCarteira } from '../carteira/preferencias'
+import type { FiltrosCarteira, LinhaCarteira } from '../carteira/types'
 
-const ClientesListPage: React.FC = () => {
-  const navigate   = useNavigate()
-  const [search, setSearch]               = useState('')
-  const [empFiltro, setEmpFiltro]         = useState<number | ''>('')
-  const [empreendimentos, setEmp]         = useState<Empreendimento[]>([])
-  const [formOpen, setFormOpen]           = useState(false)
+/**
+ * Carteira de clientes — a folha única da tela de Clientes.
+ *
+ * A tela antiga baixava a tabela inteira e refazia a requisição a cada tecla:
+ * com milhares de cadastros isso é insustentável. Aqui a lista é paginada com
+ * rolagem infinita, a busca é debounced, e o usuário escolhe **o que é uma
+ * linha** (cliente ou unidade) e **como as linhas se juntam** (agrupar por
+ * empreendimento, quadra, cidade, faixa de atraso…) — o modelo de *row
+ * grouping* dos grids corporativos, que é o mais perto de Excel que uma tela
+ * ligada a um banco multiusuário consegue ser sem mentir sobre os números.
+ */
+export default function ClientesListPage() {
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const { visao, prefs, alterar, trocarVisao } = usePreferenciasCarteira()
+  const [filtros, setFiltros] = useState<FiltrosCarteira>({})
+  const [buscaDigitada, setBuscaDigitada] = useState('')
+  const [abertos, setAbertos] = useState<ReadonlySet<string>>(new Set())
+  const [formAberto, setFormAberto] = useState(false)
 
-  const { data, loading, error, refetch } = useClientes({ search, empreendimento: empFiltro })
+  const { data: opcoes } = useOpcoesCarteira()
 
+  // Debounce: sem isso cada tecla vira uma consulta ao banco inteiro.
   useEffect(() => {
-    apiClient.get('/empreendimentos/')
-      .then(r => setEmp(r.data.results ?? r.data))
-      .catch(() => {})
+    const t = setTimeout(() => setFiltros(f => ({ ...f, busca: buscaDigitada || undefined })), 300)
+    return () => clearTimeout(t)
+  }, [buscaDigitada])
+
+  const agrupado = prefs.agrupamento.length > 0
+
+  const lista = useCarteira({ visao, filtros, ordenar: prefs.ordenar, ativo: !agrupado })
+  const grupos = useGruposCarteira({ visao, filtros, niveis: prefs.agrupamento, ativo: agrupado })
+
+  const arvore = useMemo(
+    () => (agrupado ? montarArvore(grupos.grupos, prefs.agrupamento.length) : []),
+    [agrupado, grupos.grupos, prefs.agrupamento.length],
+  )
+
+  // Só os grupos-folha abertos puxam linhas — abrir um nível intermediário
+  // apenas revela os filhos, que já vieram no mesmo GROUP BY.
+  const folhasAbertas = useMemo(() => {
+    const saida: NoGrupo[] = []
+    const andar = (nos: NoGrupo[]) => {
+      for (const no of nos) {
+        const chave = no.chaves.join('␟')
+        if (!abertos.has(chave)) continue
+        if (no.folha) saida.push(no)
+        else andar(no.filhos)
+      }
+    }
+    andar(arvore)
+    return saida
+  }, [arvore, abertos])
+
+  const linhasDeGrupo = useLinhasDeGrupos({
+    visao, filtros, ordenar: prefs.ordenar, abertos: folhasAbertas,
+  })
+
+  const podeFinanceiro = agrupado ? grupos.podeFinanceiro : lista.podeFinanceiro
+  const podeDocumento = agrupado ? grupos.podeDocumento : lista.podeDocumento
+  const colunas = useMemo(
+    () => colunasVisiveis(visao, prefs.colunas, podeFinanceiro),
+    [visao, prefs.colunas, podeFinanceiro],
+  )
+
+  /** A lista achatada que a grade desenha: grupos, linhas e avisos, em ordem. */
+  const itens = useMemo<ItemGrade[]>(() => {
+    if (!agrupado) return lista.linhas.map(linha => ({ tipo: 'linha', linha, nivel: 0 }))
+
+    const saida: ItemGrade[] = []
+    const andar = (nos: NoGrupo[], nivel: number) => {
+      for (const no of nos) {
+        const chave = no.chaves.join('␟')
+        const aberto = abertos.has(chave)
+        saida.push({ tipo: 'grupo', no, nivel, aberto })
+        if (!aberto) continue
+        if (!no.folha) {
+          andar(no.filhos, nivel + 1)
+          continue
+        }
+        const carregado = linhasDeGrupo.get(chave)
+        if (!carregado || carregado.carregando) {
+          saida.push({ tipo: 'aviso', texto: 'Carregando as linhas do grupo…', nivel: nivel + 1 })
+          continue
+        }
+        carregado.linhas.forEach(linha => saida.push({ tipo: 'linha', linha, nivel: nivel + 1 }))
+        if (carregado.total > carregado.linhas.length) {
+          saida.push({
+            tipo: 'aviso',
+            texto: `Mostrando ${carregado.linhas.length} de ${carregado.total} — refine o filtro para ver o restante.`,
+            nivel: nivel + 1,
+          })
+        }
+      }
+    }
+    andar(arvore, 0)
+    return saida
+  }, [agrupado, lista.linhas, arvore, abertos, linhasDeGrupo])
+
+  const totalLinhas = agrupado
+    ? arvore.reduce((soma, no) => soma + no.contagem, 0)
+    : lista.total
+
+  const alternarGrupo = useCallback((no: NoGrupo) => {
+    const chave = no.chaves.join('␟')
+    setAbertos(atual => {
+      const proximo = new Set(atual)
+      proximo.has(chave) ? proximo.delete(chave) : proximo.add(chave)
+      return proximo
+    })
   }, [])
 
-  // O cadastro-base de cliente é escopo de dados pessoais — nada de cobrança.
-  // A auditoria de divergências banco × Asaas é escopo financeiro (ERP) e vive
-  // no fluxo de gerar cobrança (GerarCobrancaDialog), onde de fato importa.
-  const openCreate = () => setFormOpen(true)
+  const ordenarPor = useCallback((chave: string, sentido: 'asc' | 'desc') => {
+    alterar('ordenar', sentido === 'desc' ? `-${chave}` : chave)
+  }, [alterar])
 
-  const handleCreate = async (formData: ClienteFormData) => {
-    await createCliente(formData)
-    refetch()
+  /** A âncora da visão (Cliente / Unidade) não sai do lugar: é a coluna
+   *  congelada, a que abre a ficha e a que dá sentido à visão escolhida. */
+  const reordenarColunas = useCallback((de: string, para: string) => {
+    const ancora = COLUNA_ANCORA[visao]
+    if (de === ancora || para === ancora) return
+    const atual = colunas.map(c => c.chave)
+    const origem = atual.indexOf(de)
+    const destino = atual.indexOf(para)
+    if (origem < 0 || destino < 0) return
+    atual.splice(destino, 0, ...atual.splice(origem, 1))
+    alterar('colunas', atual)
+  }, [colunas, alterar, visao])
+
+  const criar = async (dados: ClienteFormData) => {
+    await createCliente(dados)
+    queryClient.invalidateQueries({ queryKey: ['clientes', 'carteira'] })
   }
 
-  return (
-    <div className="px-6 py-8">
+  const carregando = agrupado ? grupos.carregando : lista.carregando
+  const vazio = !carregando && itens.length === 0
 
-      {/* Cabeçalho */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center"
-            style={{ background: '#dcfce7', color: 'var(--color-brand)' }}>
-            <Users size={22} />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold"
-              style={{ fontFamily: 'var(--font-heading)', color: 'var(--color-brand)' }}>
-              Clientes
-            </h1>
-            <p className="text-xs" style={{ fontFamily: 'var(--font-body)', color: 'var(--color-text-muted)' }}>
-              {loading ? 'Carregando…' : `${data.length} registro${data.length !== 1 ? 's' : ''}`}
-            </p>
-          </div>
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--ground)' }}>
+      <header
+        style={{
+          display: 'flex', alignItems: 'center', gap: 12, padding: '14px 18px',
+          background: 'var(--surface)', borderBottom: '1px solid var(--line)',
+        }}
+      >
+        <span
+          style={{
+            width: 34, height: 34, borderRadius: 'var(--r-sm)', display: 'grid', placeItems: 'center',
+            background: 'color-mix(in srgb, var(--st-neg) 14%, var(--surface-2))', color: 'var(--st-neg)',
+          }}
+        >
+          <Users size={18} strokeWidth={1.9} />
+        </span>
+        <div style={{ minWidth: 0 }}>
+          <h1 style={{ fontSize: 17, fontWeight: 700, color: 'var(--ink)', letterSpacing: '-0.02em' }}>
+            Clientes
+          </h1>
+          <p style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>
+            Carteira de compradores — unidades, contratos e situação de pagamento
+          </p>
         </div>
         <button
-          onClick={openCreate}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold"
-          style={{ background: 'var(--color-brand)', color: '#FFFFFF', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-body)' }}
-          onMouseEnter={e => ((e.currentTarget as HTMLElement).style.background = 'var(--color-brand-dark)')}
-          onMouseLeave={e => ((e.currentTarget as HTMLElement).style.background = 'var(--color-brand)')}>
-          <Plus size={16} /> Novo Cliente
+          onClick={() => setFormAberto(true)}
+          style={{
+            marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 7,
+            padding: '8px 14px', borderRadius: 'var(--r-sm)', border: 'none', cursor: 'pointer',
+            background: 'var(--accent)', color: '#1A1204', fontSize: 13, fontWeight: 650,
+          }}
+        >
+          <Plus size={15} /> Novo cliente
         </button>
-      </div>
+      </header>
 
-      {/* Filtros */}
-      <div className="flex flex-col sm:flex-row gap-3 mb-6">
-        <div className="relative flex-1">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2"
-            style={{ color: 'var(--color-text-muted)' }} />
-          <input
-            type="text"
-            placeholder="Buscar por nome, CPF/CNPJ ou e-mail…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="w-full pl-9 pr-4 py-2.5 rounded-lg text-sm outline-none"
-            style={{ border: '1.5px solid #e2e8f0', fontFamily: 'var(--font-body)', color: 'var(--color-text)', background: '#FFFFFF' }}
-            onFocus={e => (e.currentTarget.style.borderColor = 'var(--color-brand)')}
-            onBlur={e => (e.currentTarget.style.borderColor = '#e2e8f0')}
-          />
-        </div>
-        <select
-          value={empFiltro}
-          onChange={e => setEmpFiltro(e.target.value ? Number(e.target.value) : '')}
-          className="px-4 py-2.5 rounded-lg text-sm outline-none"
-          style={{ border: '1.5px solid #e2e8f0', fontFamily: 'var(--font-body)', color: 'var(--color-text)', background: '#FFFFFF', cursor: 'pointer', minWidth: '200px' }}>
-          <option value="">Todos os empreendimentos</option>
-          {empreendimentos.map(emp => (
-            <option key={emp.empreendimento_id} value={emp.empreendimento_id}>{emp.empreendimento}</option>
-          ))}
-        </select>
-        <button onClick={refetch}
-          className="p-2.5 rounded-lg border transition-colors duration-150" title="Atualizar"
-          style={{ border: '1.5px solid #e2e8f0', background: '#FFFFFF', cursor: 'pointer', color: 'var(--color-text-muted)' }}
-          onMouseEnter={e => ((e.currentTarget as HTMLElement).style.borderColor = 'var(--color-brand)')}
-          onMouseLeave={e => ((e.currentTarget as HTMLElement).style.borderColor = '#e2e8f0')}>
-          <RefreshCw size={16} />
-        </button>
-      </div>
+      <BarraCarteira
+        visao={visao}
+        onVisao={v => { trocarVisao(v); setAbertos(new Set()) }}
+        busca={buscaDigitada}
+        onBusca={setBuscaDigitada}
+        agrupamento={prefs.agrupamento}
+        onAgrupamento={n => { alterar('agrupamento', n); setAbertos(new Set()) }}
+        colunas={colunasDisponiveis(visao, podeFinanceiro)}
+        colunasVisiveis={colunas.map(c => c.chave)}
+        ancora={COLUNA_ANCORA[visao]}
+        onColunas={c => alterar('colunas', c)}
+        filtros={filtros}
+        onFiltros={setFiltros}
+        opcoes={opcoes}
+        total={totalLinhas}
+        podeFinanceiro={podeFinanceiro}
+      />
 
-      {/* Erro */}
-      {error && (
-        <div className="text-sm px-4 py-3 rounded-lg mb-4"
-          style={{ background: '#fff5f5', border: '1px solid #fed7d7', color: '#c53030', fontFamily: 'var(--font-body)' }}>
-          {error}
+      {carregando ? (
+        <Loading o={agrupado ? 'os grupos da carteira' : 'a carteira'} />
+      ) : vazio ? (
+        <div style={{ padding: 24 }}>
+          <Empty>
+            {filtros.busca || Object.values(filtros).some(Boolean)
+              ? 'Nenhum resultado para os filtros aplicados.'
+              : 'Nenhum cliente cadastrado ainda. O primeiro cadastro abre a carteira.'}
+          </Empty>
         </div>
+      ) : (
+        <Grade
+          itens={itens}
+          colunas={colunas}
+          larguras={prefs.larguras}
+          ordenar={prefs.ordenar}
+          podeFinanceiro={podeFinanceiro}
+          podeDocumento={podeDocumento}
+          carregando={lista.buscandoMais}
+          onOrdenar={ordenarPor}
+          onLargura={(chave, largura) => alterar('larguras', { ...prefs.larguras, [chave]: largura })}
+          onReordenar={reordenarColunas}
+          onAbrir={(linha: LinhaCarteira) => navigate(`/app/clientes/${linha.clienteId}`)}
+          onAlternarGrupo={alternarGrupo}
+          onFimDaLista={() => { if (!agrupado && lista.temMais && !lista.buscandoMais) lista.proximaPagina() }}
+        />
       )}
 
-      {/* Tabela */}
-      <div className="rounded-xl overflow-hidden"
-        style={{ background: '#FFFFFF', boxShadow: 'var(--shadow-sm)', border: '1px solid #e2e8f0' }}>
-        {loading ? (
-          <div className="flex items-center justify-center py-16">
-            <div className="w-8 h-8 rounded-full border-2 animate-spin"
-              style={{ borderColor: 'var(--color-brand)', borderTopColor: 'transparent' }} />
-          </div>
-        ) : data.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 gap-3">
-            <Users size={40} style={{ color: '#cbd5e1' }} />
-            <p className="text-sm" style={{ fontFamily: 'var(--font-body)', color: 'var(--color-text-muted)' }}>
-              {search || empFiltro
-                ? 'Nenhum resultado para os filtros aplicados.'
-                : 'Nenhum cliente cadastrado ainda.'}
-            </p>
-            {!search && !empFiltro && (
-              <button onClick={openCreate} className="text-sm font-semibold"
-                style={{ color: 'var(--color-brand)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-body)' }}>
-                + Cadastrar primeiro cliente
-              </button>
-            )}
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full" style={{ borderCollapse: 'collapse', fontFamily: 'var(--font-body)' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid #e2e8f0', background: '#f8fafc' }}>
-                  {['Nome', 'CPF / CNPJ', 'E-mail', 'Telefone', 'Cidade / UF'].map(h => (
-                    <th key={h} className="text-left text-xs font-semibold uppercase tracking-wide px-5 py-3"
-                      style={{ color: 'var(--color-text-muted)' }}>
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {data.map((c, i) => (
-                  <tr
-                    key={c.cliente_id}
-                    onClick={() => navigate(`/app/clientes/${c.cliente_id}`)}
-                    className="transition-colors duration-100 cursor-pointer"
-                    style={{ borderBottom: i < data.length - 1 ? '1px solid #f1f5f9' : 'none' }}
-                    onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
-                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-                    <td className="px-5 py-3.5">
-                      <span className="text-sm font-semibold" style={{ color: 'var(--color-brand)' }}>
-                        {c.nome_completo}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3.5">
-                      <span className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-                        {formatCPFCNPJ(c.cpf_cnpj)}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3.5">
-                      <span className="text-sm" style={{ color: 'var(--color-text)' }}>{c.email}</span>
-                    </td>
-                    <td className="px-5 py-3.5">
-                      <span className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-                        {c.telefone || '—'}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3.5">
-                      <span className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-                        {c.cidade && c.estado ? `${c.cidade} / ${c.estado}` : c.cidade || c.estado || '—'}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      <ClienteForm
-        open={formOpen}
-        onClose={() => setFormOpen(false)}
-        onSave={handleCreate}
-      />
+      <ClienteForm open={formAberto} onClose={() => setFormAberto(false)} onSave={criar} />
     </div>
   )
 }
-
-export default ClientesListPage

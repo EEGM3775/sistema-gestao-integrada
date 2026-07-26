@@ -1,0 +1,30 @@
+/**
+ * Primitivos-base da Malha v1 — a camada compartilhada descrita em
+ * [docs/frontend.md §1.2/§1.3](../../../../docs/frontend.md) e
+ * [docs/identidade-visual.md §10](../../../../docs/identidade-visual.md).
+ *
+ * Regra: nada aqui usa cor fixa. Tudo sai dos tokens de `index.css`, e por isso
+ * acompanha tema claro/escuro sem reescrita. Módulos novos consomem daqui em vez
+ * de recriar o kit — SCM e SIL têm cópias locais anteriores a este arquivo e
+ * migram para cá na vez de cada um.
+ */
+export { Card } from './Card'
+export { Pill } from './Pill'
+export type { PillKind } from './Pill'
+export { Num } from './Num'
+export { KpiTile } from './KpiTile'
+export { SectionHead } from './SectionHead'
+export { Spinner, Loading, Empty, EmBreve } from './States'
+export { Btn } from './Btn'
+export { Modal } from './Modal'
+
+/**
+ * IE.0c — importação e exportação, os dois componentes que **todo módulo**
+ * consome ([docs/modulos/funcoesimpexp.md §10](../../../../docs/modulos/funcoesimpexp.md)).
+ * Ambos somem sozinhos quando a pessoa não tem acesso total ao recurso: quem
+ * decide é o backend, não uma prop de permissão.
+ */
+export { BotaoExportar } from './impexp/BotaoExportar'
+export { WizardImportacao } from './impexp/WizardImportacao'
+export { useRecursos, useRecurso } from './impexp/hooks'
+export type { RecursoImpExp, ResumoImportacao } from './impexp/api'

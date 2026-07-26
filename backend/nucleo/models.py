@@ -353,3 +353,80 @@ class Notificacao(TenantScopedModel):
         if self.lida_em is None:
             self.lida_em = timezone.now()
             self.save(update_fields=["lida_em"])
+
+
+# ─── Índices econômicos (dado público, sem tenant) ────────────────────────────
+# IPCA, INCC e IGP-M são séries **publicadas** — o mesmo número para todo mundo.
+# Ficam fora do `TenantScopedModel` pelo mesmo motivo que a base referencial do
+# orçamento: replicar a série por tenant criaria N verdades para um dado que tem
+# uma só, e o primeiro tenant a digitar errado passaria a ter um IPCA próprio.
+# Sem tenant, sem RLS — e a escrita é do administrador da plataforma.
+
+class IndiceEconomico(models.Model):
+    """Um índice de correção monetária. A série mensal vive em `ValorIndice`."""
+
+    class Codigo(models.TextChoices):
+        IPCA = "ipca", _("IPCA")
+        INCC = "incc", _("INCC")
+        IGPM = "igpm", _("IGP-M")
+        INPC = "inpc", _("INPC")
+
+    codigo = models.CharField(
+        max_length=10, choices=Codigo.choices, unique=True, verbose_name=_("Código"),
+    )
+    nome = models.CharField(max_length=120, verbose_name=_("Nome"))
+    fonte = models.CharField(
+        max_length=120, blank=True, verbose_name=_("Fonte"),
+        help_text=_("Quem publica — IBGE, FGV, Sinduscon."),
+    )
+    ativo = models.BooleanField(default=True, verbose_name=_("Ativo"))
+
+    class Meta:
+        verbose_name = _("Índice econômico")
+        verbose_name_plural = _("Índices econômicos")
+        ordering = ["codigo"]
+
+    def __str__(self):
+        return self.nome or self.get_codigo_display()
+
+
+class ValorIndice(models.Model):
+    """A variação de **um mês** do índice, em pontos percentuais.
+
+    Guarda a variação do mês, não o número-índice acumulado: é assim que IBGE e
+    FGV publicam, e é o que permite compor qualquer intervalo sem depender de uma
+    base arbitrária. O acumulado sai da composição em `clientes/correcao.py`.
+
+    `competencia` é sempre o **dia 1** do mês — mesma convenção da data-base do
+    orçamento. Guardar o dia da divulgação misturaria "mês a que se refere" com
+    "dia em que saiu", e o reajuste usa o primeiro.
+    """
+
+    indice = models.ForeignKey(
+        IndiceEconomico, on_delete=models.CASCADE, related_name="valores",
+        verbose_name=_("Índice"),
+    )
+    competencia = models.DateField(
+        verbose_name=_("Competência"),
+        help_text=_("Dia 1 do mês a que a variação se refere."),
+    )
+    variacao_percentual = models.DecimalField(
+        max_digits=9, decimal_places=4, verbose_name=_("Variação no mês (%)"),
+        help_text=_("Pode ser negativa — deflação existe e o contrato a acompanha."),
+    )
+
+    class Meta:
+        verbose_name = _("Valor de índice")
+        verbose_name_plural = _("Valores de índice")
+        ordering = ["indice", "-competencia"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["indice", "competencia"], name="indice_competencia_unica",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["indice", "competencia"], name="indice_serie_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.indice.codigo} {self.competencia:%m/%Y}: {self.variacao_percentual}%"

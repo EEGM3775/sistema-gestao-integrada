@@ -21,6 +21,11 @@ input::-ms-clear {
   --line:#DEE4EC; --line-2:#EAEEF4;
   /* marca / acento */
   --brand:#0A2A5B; --brand-2:#123A75; --brand-ink:#FFFFFF;
+  /* Céu Meia-Noite (§5.1) — superfície de MARCA, não de tema: é a mesma no claro
+     e no escuro por desenho (hero, faixa do hub, superfícies de rede). Tokenizada
+     para que nenhuma tela precise repetir o hex. */
+  --midnight:#0A1626; --midnight-2:#122340;
+  --on-midnight:#EDF2F9; --on-midnight-2:#8797AE;
   --accent:#E79A22; --accent-strong:#A85F0D; --accent-soft:#FBEED5; --accent-ink:#6E4404;
   /* semânticos de UI (nunca reutilizam cor de estágio como significado) */
   --good:#1F9D74; --good-soft:#E2F3EC; --good-ink:#0C6448;
@@ -184,6 +189,9 @@ input::-ms-clear {
 /* Leitura de instrumento (§6): todo dado em mono tabular — "colunas como réguas" */
 .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .num  { font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+
+/* Anel de espera dos primitivos Malha (components/malha/States.tsx) */
+@keyframes malha-spin { to { transform: rotate(360deg) } }
 
 /* Ponto de estado pulsante (pílulas "em andamento" — §8 estado nomeado e medido) */
 @keyframes malha-pulse { 0% { transform: scale(.6); opacity: .5 } 100% { transform: scale(2.2); opacity: 0 } }

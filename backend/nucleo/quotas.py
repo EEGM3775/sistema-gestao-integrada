@@ -67,6 +67,11 @@ RECURSOS_CONTADOS: dict[str, str] = {
     "obras": "obras.Obra",
     "clientes": "clientes.Cliente",
     "fornecedores": "fornecedores.Fornecedor",
+    # ORC.5b — acervo de tabela de preço própria. A linha é a unidade certa (e
+    # não o banco) porque é ela que ocupa espaço e é ela que a importação traz
+    # aos milhares; limitar "bancos" deixaria um único banco com 200 mil linhas
+    # passar batido.
+    "banco_preco_linhas": "moduloorcamento.ItemBancoPreco",
 }
 
 # Rótulo legível para a mensagem do 402 e para o medidor da UI.
@@ -75,6 +80,7 @@ ROTULOS: dict[str, str] = {
     "obras": "obras",
     "clientes": "clientes",
     "fornecedores": "fornecedores",
+    "banco_preco_linhas": "linhas de banco de preço próprio",
 }
 
 

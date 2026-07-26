@@ -48,6 +48,19 @@ export function mesToBR(iso: string): string {
   return `${MESES_ABREV[idx]}/${y}`
 }
 
+/**
+ * `Date` → `YYYY-MM-DD` no fuso **local**.
+ *
+ * `toISOString()` converte para UTC antes de fatiar: no Brasil (UTC−3), das 21h
+ * em diante ele já devolve o dia seguinte. Onde a data é um **dia de calendário**
+ * do usuário (janela "hoje…+7", rótulo "Hoje"/"Amanhã"), tem de ser a data local.
+ */
+export function isoLocal(d: Date): string {
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${d.getFullYear()}-${mm}-${dd}`
+}
+
 // ─── Helpers internos ─────────────────────────────────────────────────────────
 
 function toISO(d: Date): string { return d.toISOString().slice(0, 10) }

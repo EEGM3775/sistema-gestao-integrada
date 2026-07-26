@@ -40,13 +40,28 @@ O **empreendimento** é o eixo. Quase tudo de negócio aponta para ele (direta o
 `Cliente` → `ClienteEmpreendimento` (aquisição de uma unidade) → `ContratoCliente` →
 `CobrancaCliente` (parcelas) / `ContaReceber` → `Boleto`.
 
-- `ClienteEmpreendimento` liga **cliente ↔ empreendimento** + unidade comprada, valor e condições
-  (`unique(empreendimento, unidade_comprada)`).
+- `Unidade` é **o que se vende** — cadastro do empreendimento (quadra/lote/bloco/andar/apto + preço
+  de tabela + situação), anterior ao comprador. É a fonte única do rótulo da unidade
+- `ClienteEmpreendimento` é **a venda**: aponta para uma `Unidade` (uma unidade, um dono) e carrega o
+  plano de pagamento (desconto → entrada → saldo em Price/SAC → balões)
+  (`unique(empreendimento, unidade_comprada)`). A unidade é identificada de duas formas: o rótulo
+  livre `unidade_comprada` (histórico, e a chave de unicidade) e os campos **estruturados**
+  `quadra`/`lote`/`bloco_torre`/`andar`/`unidade` — só estes permitem ordenar, filtrar e agrupar a
+  carteira por quadra. A property `rotulo_unidade` monta a exibição ("QD 12 · LT 05",
+  "Torre A · 3º · 302") e cai no rótulo livre quando não há campo estruturado.
+- `Empreendimento` tem `cidade`/`estado` próprios além do `endereco` em texto livre — é a
+  localização do **imóvel** (a de `Cliente` é a do comprador).
 - `ContratoCliente` referencia cliente, empreendimento, a aquisição, e ainda um **`responsavel`**
   (`rh.Funcionario`) e um **`vendedor`** (`fornecedores.Fornecedor`).
-- No financeiro, `CobrancaCliente` e `ContaReceber` apontam para o cliente (e a cobrança, ao
-  `ContratoCliente`); `Boleto` pode estar ligado a uma `ContaReceber` (emitido) **ou** a uma
-  `ContaPagar` (recebido) — nunca aos dois (CHECK constraint).
+- No financeiro, `ContaReceber` aponta para o cliente e, opcionalmente, para a **aquisição**
+  (`cliente_empreendimento`) e o **contrato** — sem esse vínculo, um cliente com dois lotes no mesmo
+  loteamento teria a inadimplência somada num balaio só e a carteira por unidade seria um número
+  inventado. Parcelas anteriores ao vínculo ficam com os campos nulos: contam no total do cliente e
+  ficam fora do rateio por unidade. `Boleto` pode estar ligado a uma `ContaReceber` (emitido) **ou**
+  a uma `ContaPagar` (recebido) — nunca aos dois (CHECK constraint).
+- `CobrancaCliente` existe no schema com CRUD exposto, mas **nada no sistema escreve nela** — a
+  cadeia viva é `ContaReceber` → `Boleto` (Asaas). Consolidação pendente em
+  [pendencias.md#A5](pendencias.md).
 
 ## Cadeia de suprimentos (compra)
 

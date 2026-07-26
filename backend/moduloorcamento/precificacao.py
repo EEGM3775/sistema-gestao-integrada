@@ -22,7 +22,7 @@ está no sistema.
 from decimal import ROUND_HALF_UP, Decimal
 
 from django.db import transaction
-from django.db.models import Avg, DecimalField, F, Max, Sum
+from django.db.models import Avg, DecimalField, ExpressionWrapper, F, Max, Sum
 from django.db.models.functions import Coalesce
 
 from catalogo.models import ComponenteComposicao, Item
@@ -253,6 +253,60 @@ def memoria_de_calculo(item_orcado: ItemOrcado) -> dict:
             }
             for categoria, valor in sorted(por_categoria.items())
         },
+    }
+
+
+def custo_por_categoria(orcamento: Orcamento) -> dict:
+    """Composição do custo direto por **natureza do insumo** no orçamento inteiro.
+
+    Responde "esta obra é intensiva em material ou em gente?", que é o que
+    orienta negociação (material se compra melhor; mão de obra se planeja
+    melhor) e o que dimensiona o encargo social.
+
+    Só enxerga linhas **explodidas** — o insumo só existe depois que a
+    composição foi aberta. Por isso a resposta declara a `cobertura`: sem ela, um
+    orçamento com 10% das linhas explodidas mostraria um gráfico convincente e
+    errado.
+    """
+    valor_no_orcamento = ExpressionWrapper(
+        F("custo_no_item") * F("item_orcado__quantidade"),
+        output_field=DecimalField(max_digits=24, decimal_places=4),
+    )
+    linhas = (
+        ItemOrcadoInsumo.objects.filter(item_orcado__orcamento=orcamento)
+        .values("categoria")
+        .annotate(valor=Sum(valor_no_orcamento))
+        .order_by("-valor")
+    )
+    total = sum((linha["valor"] or Decimal("0") for linha in linhas), Decimal("0"))
+
+    explodido = (
+        ItemOrcado.objects.filter(
+            orcamento=orcamento,
+            tipo_linha=ItemOrcado.TipoLinha.ANALITICO,
+            insumos__isnull=False,
+        )
+        .distinct()
+        .aggregate(soma=Sum("total_custo_direto"))["soma"] or Decimal("0")
+    )
+    direto = orcamento.custo_direto_total or Decimal("0")
+
+    return {
+        "orcamento": orcamento.pk,
+        "total": str(dinheiro(total)),
+        "custo_direto_do_orcamento": str(dinheiro(direto)),
+        "cobertura_pct": str((explodido / direto * CEM).quantize(Decimal("0.01")))
+        if direto > 0 else "0",
+        "categorias": [
+            {
+                "categoria": linha["categoria"],
+                "rotulo": dict(ItemOrcadoInsumo.Categoria.choices).get(linha["categoria"], linha["categoria"]),
+                "valor": str(dinheiro(linha["valor"] or Decimal("0"))),
+                "pct": str(((linha["valor"] or Decimal("0")) / total * CEM).quantize(Decimal("0.01")))
+                if total > 0 else "0",
+            }
+            for linha in linhas
+        ],
     }
 
 

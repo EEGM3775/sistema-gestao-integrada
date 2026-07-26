@@ -1,399 +1,268 @@
-import React from 'react'
-import { useNavigate } from 'react-router-dom'
-import {
-  Building2, HardHat, Users, Truck, Brain, CalendarDays,
-  BarChart3, UserCog, TrendingUp, Plane,
-  FileText, ClipboardList, Boxes, Map, Wrench, Warehouse,
-  Lock, Construction,
-} from 'lucide-react'
+import { useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { Activity, CalendarDays, LayoutDashboard, LayoutGrid, ListChecks } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
+import { Quarteirao } from '@/components/brand/Quarteirao'
+import { acessoDoModulo, CATALOGO } from './home/catalogo'
+import { useHomeResumo } from './home/useHomeResumo'
+import { TabVisaoGeral } from './home/TabVisaoGeral'
+import { TabDecisoes } from './home/TabDecisoes'
+import { TabAgenda } from './home/TabAgenda'
+import { TabModulos } from './home/TabModulos'
+import { TabAtividade } from './home/TabAtividade'
 
-// ─── Tipos ────────────────────────────────────────────────────────────────────
+/**
+ * Hub da Edição Construtora — o padrão de página da identidade §9:
+ * faixa Meia-Noite com a malha viva (saudação + chip da edição + números vivos),
+ * e o resto do conteúdo distribuído em **abas horizontais**.
+ *
+ * A escolha das abas segue o que as plataformas grandes convergiram a colocar na
+ * home: um painel de indicadores, uma fila do que exige ação (*Assigned to Me* do
+ * Autodesk Construction Cloud, *open items for review* do Procore, *Assistant* do
+ * Salesforce), a agenda do dia (*Today's Tasks* do Salesforce, *today's schedule*
+ * do Procore), o lançador de módulos (*App Launcher* do Salesforce, *spaces* do
+ * SAP Fiori Launchpad) e o feed de mudanças recentes (*Recent Items*).
+ *
+ * A aba vive na URL (`?aba=`) — assim um link para "a fila de decisão" é
+ * compartilhável e o botão voltar do navegador funciona.
+ */
 
-interface ModuleDef {
-  code?: string          // entitlement code (undefined = módulo base)
-  label: string
-  description: string
-  icon: React.ReactNode
-  color: string          // cor de fundo do ícone
-  implemented: boolean
-  route?: string         // rota de navegação (quando implemented = true)
-  comingSoon?: boolean
-}
+const ABAS = [
+  { id: 'visao', label: 'Visão geral', icon: LayoutDashboard },
+  { id: 'decisoes', label: 'Requer decisão', icon: ListChecks },
+  { id: 'agenda', label: 'Agenda', icon: CalendarDays },
+  { id: 'modulos', label: 'Módulos', icon: LayoutGrid },
+  { id: 'atividade', label: 'Atividade', icon: Activity },
+] as const
 
-// ─── Catálogo de módulos ──────────────────────────────────────────────────────
+type AbaId = (typeof ABAS)[number]['id']
 
-const BASE_MODULES: ModuleDef[] = [
-  {
-    label: 'Empreendimentos',
-    icon: <Building2 size={28} />,
-    color: '#dbeafe',
-    description: 'Cadastro e acompanhamento de empreendimentos com orçamento, contas bancárias e custos.',
-    implemented: true,
-    route: '/app/empreendimentos',
-  },
-  {
-    label: 'Obras',
-    icon: <HardHat size={28} />,
-    color: '#fef3c7',
-    description: 'Gestão de obras: etapas, cronograma, documentos, equipe e KPIs em tempo real.',
-    implemented: true,
-    route: '/app/obras',
-  },
-  {
-    label: 'Clientes',
-    icon: <Users size={28} />,
-    color: '#dcfce7',
-    description: 'Cadastro de compradores, contratos, cobranças e histórico de relacionamento.',
-    implemented: true,
-    route: '/app/clientes',
-  },
-  {
-    label: 'Fornecedores',
-    icon: <Truck size={28} />,
-    color: '#ede9fe',
-    description: 'Catálogo de fornecedores e produtos/serviços vinculados às obras e empreendimentos.',
-    implemented: true,
-    route: '/app/fornecedores',
-  },
-  {
-    label: 'Diário de Obra',
-    icon: <Brain size={28} />,
-    color: '#e0f2fe',
-    description: 'Registro diário de obra por WhatsApp com análise automática de fotos via IA.',
-    implemented: true,
-    route: '/app/diario',
-  },
-  {
-    label: 'Calendário',
-    icon: <CalendarDays size={28} />,
-    color: '#fce7f3',
-    description: 'Agenda integrada com eventos de obra, vencimentos e reuniões de toda a equipe.',
-    implemented: true,
-    route: '/app/calendario',
-  },
-]
+export default function AppHomePage() {
+  const { user, hasModule, isTenantAdmin } = useAuth()
+  const [params, setParams] = useSearchParams()
+  const r = useHomeResumo()
 
-const PAID_MODULES: ModuleDef[] = [
-  {
-    code: 'erp_financeiro',
-    label: 'ERP Financeiro',
-    icon: <BarChart3 size={28} />,
-    color: '#d1fae5',
-    description: 'Contas a pagar e receber, fluxo de caixa, NF-e/NFS-e e boletos integrados.',
-    implemented: true,
-    route: '/app/erp',
-  },
-  {
-    code: 'rh',
-    label: 'Recursos Humanos',
-    icon: <UserCog size={28} />,
-    color: '#fef3c7',
-    description: 'Funcionários, cargos, folha de pagamento e documentos com conformidade LGPD.',
-    implemented: true,
-    route: '/app/rh',
-  },
-  {
-    code: 'crm',
-    label: 'CRM de Vendas',
-    icon: <TrendingUp size={28} />,
-    color: '#ede9fe',
-    description: 'Pipeline de leads, oportunidades e contas. Do primeiro contato ao contrato assinado.',
-    implemented: true,
-    route: '/app/crm',
-  },
-  {
-    code: 'scm',
-    label: 'Suprimentos (SCM)',
-    icon: <Boxes size={28} />,
-    color: '#fef3c7',
-    description: 'Catálogo, cotação e compra direta. Da demanda ao recebimento, com avaliação de fornecedor.',
-    implemented: true,
-    route: '/app/scm',
-  },
-  {
-    code: 'sil',
-    label: 'Estoque & Logística (SIL)',
-    icon: <Warehouse size={28} />,
-    color: '#dbeafe',
-    description: 'Saldo valorado, movimentações, requisição da obra e inventário. Recebimento vira entrada; falta vira demanda.',
-    implemented: true,
-    route: '/app/sil',
-  },
-  {
-    code: 'drone',
-    label: 'Drone & Mapeamento',
-    icon: <Plane size={28} />,
-    color: '#dbeafe',
-    description: 'Levantamento aéreo e modelagem 3D com NodeODM. Projetos vinculados à obra.',
-    implemented: false,
-  },
-]
+  const abaAtual = (ABAS.find((a) => a.id === params.get('aba'))?.id ?? 'visao') as AbaId
+  const irPara = (id: AbaId) => setParams(id === 'visao' ? {} : { aba: id }, { replace: true })
 
-const COMING_SOON: ModuleDef[] = [
-  {
-    code: 'dms',
-    label: 'Gestão de Documentos',
-    icon: <FileText size={24} />,
-    color: '#f3f4f6',
-    description: 'Repositório central de projetos, licenças e contratos.',
-    implemented: false,
-    comingSoon: true,
-  },
-  {
-    code: 'pdca',
-    label: 'PDCA / Qualidade',
-    icon: <ClipboardList size={24} />,
-    color: '#f3f4f6',
-    description: 'Ciclo de melhoria contínua e controle de qualidade.',
-    implemented: false,
-    comingSoon: true,
-  },
-  {
-    code: 'aps',
-    label: 'Planejamento (APS)',
-    icon: <Wrench size={24} />,
-    color: '#f3f4f6',
-    description: 'Planejamento avançado de produção e recursos.',
-    implemented: false,
-    comingSoon: true,
-  },
-  {
-    code: 'maps',
-    label: 'Mapas & GIS',
-    icon: <Map size={24} />,
-    color: '#f3f4f6',
-    description: 'Visualização georreferenciada de obras e empreendimentos.',
-    implemented: false,
-    comingSoon: true,
-  },
-]
-
-// ─── Componente de card ───────────────────────────────────────────────────────
-
-interface ModuleCardProps {
-  mod: ModuleDef
-  acquired: boolean
-}
-
-const ModuleCard: React.FC<ModuleCardProps> = ({ mod, acquired }) => {
-  const navigate = useNavigate()
-  const isPaid = !!mod.code
-  const locked = isPaid && !acquired
-  const canAccess = mod.implemented && (!isPaid || acquired)
-
-  return (
-    <div
-      className="relative flex flex-col gap-4 rounded-2xl p-6 transition-shadow duration-200"
-      style={{
-        background: '#FFFFFF',
-        boxShadow: 'var(--shadow-sm)',
-        opacity: mod.comingSoon ? 0.55 : 1,
-      }}
-    >
-      {/* Lock badge (módulos pagos não contratados) */}
-      {locked && (
-        <span
-          className="absolute top-4 right-4 flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full"
-          style={{ background: '#fef9c3', color: '#854d0e', fontFamily: 'var(--font-body)' }}
-        >
-          <Lock size={10} /> Adicional
-        </span>
-      )}
-
-      {/* Coming soon badge */}
-      {mod.comingSoon && (
-        <span
-          className="absolute top-4 right-4 flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full"
-          style={{ background: '#f3f4f6', color: '#6b7280', fontFamily: 'var(--font-body)' }}
-        >
-          <Construction size={10} /> Em breve
-        </span>
-      )}
-
-      {/* Ícone */}
-      <div
-        className="w-14 h-14 rounded-xl flex items-center justify-center"
-        style={{ background: mod.color, color: 'var(--color-brand)' }}
-      >
-        {mod.icon}
-      </div>
-
-      {/* Texto */}
-      <div className="flex-1">
-        <h3
-          className="text-base font-bold mb-1.5"
-          style={{ fontFamily: 'var(--font-heading)', color: 'var(--color-brand)' }}
-        >
-          {mod.label}
-        </h3>
-        <p
-          className="text-sm leading-relaxed"
-          style={{ fontFamily: 'var(--font-body)', color: 'var(--color-text)' }}
-        >
-          {mod.description}
-        </p>
-      </div>
-
-      {/* Botão */}
-      {!mod.comingSoon && (
-        <button
-          disabled={!canAccess}
-          onClick={() => canAccess && mod.route && navigate(mod.route)}
-          className="w-full py-2.5 rounded-lg text-sm font-semibold transition-all duration-150"
-          style={{
-            fontFamily: 'var(--font-body)',
-            cursor: canAccess ? 'pointer' : 'not-allowed',
-            ...(locked
-              ? { background: 'transparent', border: '1.5px solid #e2e8f0', color: '#94a3b8' }
-              : canAccess
-                ? { background: 'var(--color-brand)', border: 'none', color: '#FFFFFF' }
-                : { background: 'var(--color-brand)', border: 'none', color: '#FFFFFF', opacity: 0.4 }
-            ),
-          }}
-          onMouseEnter={e => {
-            if (canAccess) (e.currentTarget as HTMLElement).style.background = 'var(--color-brand-dark)'
-          }}
-          onMouseLeave={e => {
-            if (canAccess) (e.currentTarget as HTMLElement).style.background = 'var(--color-brand)'
-          }}
-        >
-          {locked ? 'Contratar módulo' : 'Acessar'}
-        </button>
-      )}
-    </div>
-  )
-}
-
-// ─── Página principal ─────────────────────────────────────────────────────────
-
-const AppHomePage: React.FC = () => {
-  const { user, modules } = useAuth()
-
-  const now = new Date()
-  const dateStr = now.toLocaleDateString('pt-BR', {
-    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  const agora = new Date()
+  const saudacao = agora.getHours() < 12 ? 'Bom dia' : agora.getHours() < 18 ? 'Boa tarde' : 'Boa noite'
+  const dataLonga = agora.toLocaleDateString('pt-BR', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
   })
-  const hour = now.getHours()
-  const greeting = hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite'
+
+  // Quantos módulos este usuário realmente abre — número honesto do farol.
+  const disponiveis = useMemo(
+    () => CATALOGO.filter((m) => acessoDoModulo(m, hasModule, isTenantAdmin).pode).length,
+    [hasModule, isTenantAdmin],
+  )
+
+  const temFonteOperacional = r.fontes.erp || r.fontes.scm || r.fontes.sil
 
   return (
-    <div className="px-6 py-8 max-w-6xl mx-auto">
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
+      {/* ── Faixa Meia-Noite com a malha viva (identidade §9) ─────────────── */}
+      <header
+        style={{
+          position: 'relative',
+          overflow: 'hidden',
+          background: 'linear-gradient(135deg, var(--midnight) 0%, var(--midnight-2) 100%)',
+          color: 'var(--on-midnight)',
+          padding: '26px 28px 22px',
+        }}
+      >
+        {/* A malha: o traçado de quarteirões que dá nome ao sistema. */}
+        <div
+          aria-hidden
+          style={{
+            position: 'absolute',
+            inset: 0,
+            opacity: 0.13,
+            backgroundImage:
+              'linear-gradient(var(--on-midnight-2) 1px, transparent 1px), linear-gradient(90deg, var(--on-midnight-2) 1px, transparent 1px)',
+            backgroundSize: '44px 44px',
+            maskImage: 'radial-gradient(120% 100% at 88% 0%, #000 10%, transparent 72%)',
+            WebkitMaskImage: 'radial-gradient(120% 100% at 88% 0%, #000 10%, transparent 72%)',
+          }}
+        />
 
-      {/* ── Cabeçalho ─────────────────────────────────────── */}
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-2 mb-10">
-        <div>
-          <h1
-            className="text-2xl font-bold"
-            style={{ fontFamily: 'var(--font-heading)', color: 'var(--color-brand)' }}
-          >
-            {greeting}, {user?.username}!
-          </h1>
-          <p className="text-sm mt-0.5 capitalize"
-             style={{ fontFamily: 'var(--font-body)', color: 'var(--color-text-muted)' }}>
-            {dateStr}
-          </p>
-        </div>
-        <span
-          className="text-xs font-semibold px-3 py-1.5 rounded-full self-start sm:self-auto"
-          style={{ background: '#e8f0fb', color: 'var(--color-brand)', fontFamily: 'var(--font-body)' }}
-        >
-          {modules.length > 0
-            ? `${modules.length} módulo${modules.length > 1 ? 's' : ''} contratado${modules.length > 1 ? 's' : ''}`
-            : 'Plano base'}
-        </span>
-      </div>
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+          {/* Sobre o céu Meia-Noite o marco vai sem tile e com a praça em Papel (§9). */}
+          <Quarteirao size={38} tile={null} praca="var(--on-midnight)" />
 
-      {/* ── Módulos base ──────────────────────────────────── */}
-      <section className="mb-12">
-        <div className="flex items-center gap-3 mb-5">
-          <h2
-            className="text-sm font-semibold uppercase tracking-widest"
-            style={{ fontFamily: 'var(--font-body)', color: 'var(--color-text-muted)' }}
-          >
-            Módulos base
-          </h2>
-          <span
-            className="text-xs px-2 py-0.5 rounded-full font-medium"
-            style={{ background: '#dcfce7', color: '#166534', fontFamily: 'var(--font-body)' }}
-          >
-            Inclusos
-          </span>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {BASE_MODULES.map((mod) => (
-            <ModuleCard key={mod.label} mod={mod} acquired={true} />
-          ))}
-        </div>
-      </section>
-
-      {/* ── Módulos adicionais ────────────────────────────── */}
-      <section className="mb-12">
-        <div className="flex items-center gap-3 mb-5">
-          <h2
-            className="text-sm font-semibold uppercase tracking-widest"
-            style={{ fontFamily: 'var(--font-body)', color: 'var(--color-text-muted)' }}
-          >
-            Módulos adicionais
-          </h2>
-          <span
-            className="text-xs px-2 py-0.5 rounded-full font-medium"
-            style={{ background: '#fef9c3', color: '#854d0e', fontFamily: 'var(--font-body)' }}
-          >
-            À la carte
-          </span>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-          {PAID_MODULES.map((mod) => (
-            <ModuleCard
-              key={mod.label}
-              mod={mod}
-              acquired={!!mod.code && modules.includes(mod.code)}
-            />
-          ))}
-        </div>
-      </section>
-
-      {/* ── Em desenvolvimento ────────────────────────────── */}
-      <section>
-        <div className="flex items-center gap-3 mb-5">
-          <h2
-            className="text-sm font-semibold uppercase tracking-widest"
-            style={{ fontFamily: 'var(--font-body)', color: 'var(--color-text-muted)' }}
-          >
-            Em desenvolvimento
-          </h2>
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-          {COMING_SOON.map((mod) => (
-            <div
-              key={mod.label}
-              className="flex flex-col items-center gap-2 p-4 rounded-xl text-center"
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <h1
               style={{
-                background: '#FFFFFF',
-                boxShadow: 'var(--shadow-sm)',
-                opacity: 0.5,
+                fontFamily: 'var(--display)',
+                fontSize: 25,
+                fontWeight: 800,
+                letterSpacing: '-0.025em',
+                color: 'var(--on-midnight)',
+                lineHeight: 1.15,
               }}
             >
-              <div
-                className="w-10 h-10 rounded-lg flex items-center justify-center"
-                style={{ background: '#f1f5f9', color: '#94a3b8' }}
-              >
-                {mod.icon}
-              </div>
-              <span
-                className="text-xs font-semibold leading-tight"
-                style={{ fontFamily: 'var(--font-body)', color: '#64748b' }}
-              >
-                {mod.label}
-              </span>
-            </div>
-          ))}
-        </div>
-      </section>
+              {saudacao}, {user?.username ?? 'bem-vindo'}.
+            </h1>
+            <p style={{ fontSize: 12.5, color: 'var(--on-midnight-2)', marginTop: 4, textTransform: 'capitalize' }}>
+              {dataLonga}
+            </p>
+          </div>
 
+          {/* Chip da edição — toda tela declara seu endereço no ciclo (§9). */}
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 7,
+              padding: '5px 11px',
+              borderRadius: 999,
+              background: 'color-mix(in srgb, var(--accent) 18%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--accent) 40%, transparent)',
+              color: 'var(--accent)',
+              fontSize: 11.5,
+              fontWeight: 700,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <span style={{ width: 7, height: 7, borderRadius: 2, background: 'var(--accent)' }} />
+            Edição Construtora · Construir
+          </span>
+        </div>
+
+        {/* Números vivos — reais, e clicáveis para onde se resolve. */}
+        <div style={{ position: 'relative', display: 'flex', gap: 26, marginTop: 18, flexWrap: 'wrap' }}>
+          <NumeroVivo
+            valor={r.decisoes.length}
+            label={r.decisoes.length === 1 ? 'decisão aguardando' : 'decisões aguardando'}
+            destaque={r.decisoes.length > 0}
+            onClick={() => irPara('decisoes')}
+          />
+          <NumeroVivo
+            valor={r.agenda.data?.length ?? 0}
+            label="compromissos em 7 dias"
+            onClick={() => irPara('agenda')}
+          />
+          <NumeroVivo valor={disponiveis} label="módulos disponíveis" onClick={() => irPara('modulos')} />
+        </div>
+      </header>
+
+      {/* ── Abas horizontais ──────────────────────────────────────────────── */}
+      <nav
+        style={{
+          display: 'flex',
+          gap: 2,
+          padding: '0 22px',
+          borderBottom: '1px solid var(--line)',
+          background: 'var(--surface)',
+          overflowX: 'auto',
+          position: 'sticky',
+          top: 0,
+          zIndex: 5,
+        }}
+      >
+        {ABAS.map((a) => {
+          const ativa = a.id === abaAtual
+          const Icon = a.icon
+          const contagem = a.id === 'decisoes' ? r.decisoes.length : 0
+          return (
+            <button
+              key={a.id}
+              onClick={() => irPara(a.id)}
+              aria-current={ativa ? 'page' : undefined}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 7,
+                padding: '13px 14px',
+                fontSize: 13,
+                fontWeight: ativa ? 650 : 500,
+                color: ativa ? 'var(--ink)' : 'var(--ink-3)',
+                background: 'transparent',
+                border: 'none',
+                borderBottom: `2px solid ${ativa ? 'var(--accent)' : 'transparent'}`,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                fontFamily: 'var(--sans)',
+              }}
+            >
+              <Icon size={15} strokeWidth={1.9} />
+              {a.label}
+              {contagem > 0 && (
+                <span
+                  className="num"
+                  style={{
+                    background: 'var(--accent)',
+                    color: '#1A1204',
+                    borderRadius: 999,
+                    padding: '1px 6px',
+                    fontSize: 10.5,
+                    fontWeight: 700,
+                  }}
+                >
+                  {contagem}
+                </span>
+              )}
+            </button>
+          )
+        })}
+      </nav>
+
+      {/* ── Conteúdo da aba ───────────────────────────────────────────────── */}
+      <div style={{ padding: '22px 28px 40px', flex: 1 }}>
+        {abaAtual === 'visao' && <TabVisaoGeral r={r} />}
+        {abaAtual === 'decisoes' && <TabDecisoes decisoes={r.decisoes} temFonte={temFonteOperacional} />}
+        {abaAtual === 'agenda' && (
+          <TabAgenda eventos={r.agenda.data} carregando={r.agenda.isLoading} erro={r.agenda.isError} />
+        )}
+        {abaAtual === 'modulos' && <TabModulos />}
+        {abaAtual === 'atividade' && (
+          <TabAtividade fatos={r.atividade} temFonte={r.fontes.scm || r.fontes.sil} />
+        )}
+      </div>
     </div>
   )
 }
 
-export default AppHomePage
+function NumeroVivo({
+  valor,
+  label,
+  destaque,
+  onClick,
+}: {
+  valor: number
+  label: string
+  destaque?: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: 'flex',
+        alignItems: 'baseline',
+        gap: 7,
+        background: 'transparent',
+        border: 'none',
+        padding: 0,
+        cursor: 'pointer',
+        fontFamily: 'var(--sans)',
+      }}
+    >
+      <span
+        className="num"
+        style={{
+          fontSize: 20,
+          fontWeight: 700,
+          color: destaque ? 'var(--accent)' : 'var(--on-midnight)',
+          letterSpacing: '-0.02em',
+        }}
+      >
+        {valor}
+      </span>
+      <span style={{ fontSize: 12, color: 'var(--on-midnight-2)' }}>{label}</span>
+    </button>
+  )
+}

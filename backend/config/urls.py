@@ -11,12 +11,17 @@ from clientes.views import (
     ClienteEmpreendimentoViewSet,
     ContratoClienteViewSet,
     DocumentoClienteViewSet,
-    DadoBancarioClienteViewSet
+    DadoBancarioClienteViewSet,
+    CarteiraView,
+    CarteiraGruposView,
+    CarteiraOpcoesView,
+    IndicesEconomicosView,
 )
 from empreendimentos.views import (
     EmpreendimentoViewSet,
     ContaBancariaEmpreendimentoViewSet,
-    CustoEmpreendimentoViewSet
+    CustoEmpreendimentoViewSet,
+    UnidadeViewSet
 )
 from fornecedores.views import (
     FornecedorViewSet,
@@ -62,6 +67,21 @@ from nucleo.plano_views import PlanoView
 # Observabilidade (Fase 10.1): liveness/readiness/métricas
 from nucleo.health_views import HealthzView, ReadyzView, MetricsView
 
+# Importação/exportação de plataforma (IE.0 + IE.0b)
+from funcoesimpexp.views import (
+    ExportacaoDetalheView as ImpExpExportacaoView,
+    ExportarView as ImpExpExportarView,
+    ImportacaoDecisaoView as ImpExpDecisaoView,
+    ImportacaoDetalheView as ImpExpDetalheView,
+    ImportacaoRecusadasView as ImpExpRecusadasView,
+    ImportacoesDoRecursoView as ImpExpHistoricoView,
+    ImportarView as ImpExpImportarView,
+    MapaDetalheView as ImpExpMapaView,
+    MapasView as ImpExpMapasView,
+    ModeloView as ImpExpModeloView,
+    RecursosView as ImpExpRecursosView,
+)
+
 # Cria o roteador da API, que gera as rotas automaticamente
 router = DefaultRouter()
 
@@ -85,6 +105,9 @@ router.register(r'dados-bancarios-clientes', DadoBancarioClienteViewSet, basenam
 router.register(r'empreendimentos', EmpreendimentoViewSet, basename='empreendimento')
 router.register(r'contas-bancarias-empreendimentos', ContaBancariaEmpreendimentoViewSet, basename='contabancariaempreendimento')
 router.register(r'custos-empreendimentos', CustoEmpreendimentoViewSet, basename='custoempreendimento')
+# As unidades à venda — cadastro do empreendimento, consumido pela aba Unidades
+# e pelo seletor da aquisição.
+router.register(r'unidades', UnidadeViewSet, basename='unidade')
 
 # --- Rotas do App 'fornecedores' ---
 router.register(r'fornecedores', FornecedorViewSet, basename='fornecedor')
@@ -125,6 +148,17 @@ urlpatterns = [
     # JWT da IAM — não há mais emissão de token local (Fase 6). Ver
     # docs/acesso-e-permissoes.md.
 
+    # Carteira de clientes (a grade tipo planilha da tela de Clientes).
+    # ATENÇÃO À ORDEM: precisa vir ANTES do router, senão a rota de detalhe
+    # `clientes/<pk>/` do ClienteViewSet captura `clientes/carteira/` e devolve
+    # 404 de cliente inexistente.
+    path('api/clientes/carteira/', CarteiraView.as_view(), name='clientes_carteira'),
+    path('api/clientes/carteira/grupos/', CarteiraGruposView.as_view(), name='clientes_carteira_grupos'),
+    path('api/clientes/carteira/opcoes/', CarteiraOpcoesView.as_view(), name='clientes_carteira_opcoes'),
+    # Série pública de índices (IPCA/INCC/IGP-M) — alimenta o seletor de
+    # correção monetária da venda. Sem tenant: o índice é o mesmo para todos.
+    path('api/indices-economicos/', IndicesEconomicosView.as_view(), name='indices_economicos'),
+
     # Adiciona todas as URLs da API geradas pelo roteador sob o prefixo /api/
     path('api/', include(router.urls)),
     
@@ -142,6 +176,24 @@ urlpatterns = [
     # LGPD (Fase 9.D): portabilidade e esquecimento do titular
     path('api/lgpd/<str:tipo>/<int:pk>/exportar/', LgpdExportarView.as_view(), name='lgpd_exportar'),
     path('api/lgpd/<str:tipo>/<int:pk>/esquecer/', LgpdEsquecerView.as_view(), name='lgpd_esquecer'),
+
+    # Importação/exportação (IE.0): um conjunto de endpoints para TODO recurso de
+    # todo módulo — o `recurso` vem na URL e o registry resolve. Módulo novo
+    # ganha import/export sem rota nova. Planta: docs/modulos/funcoesimpexp.md
+    path('api/impexp/recursos/', ImpExpRecursosView.as_view(), name='impexp_recursos'),
+    # Coleções fixas antes das genéricas: `<str:recurso_id>` casa qualquer coisa,
+    # e um recurso chamado "mapas" passaria a servir de rota de mapa.
+    path('api/impexp/importacoes/<int:importacao_id>/', ImpExpDetalheView.as_view(), name='impexp_detalhe'),
+    path('api/impexp/importacoes/<int:importacao_id>/recusadas/', ImpExpRecusadasView.as_view(), name='impexp_recusadas'),
+    path('api/impexp/importacoes/<int:importacao_id>/<str:acao>/', ImpExpDecisaoView.as_view(), name='impexp_decisao'),
+    # IE.0b — acompanhamento/baixa do job (`?baixar=1`) e de-para salvo
+    path('api/impexp/exportacoes/<int:exportacao_id>/', ImpExpExportacaoView.as_view(), name='impexp_exportacao'),
+    path('api/impexp/mapas/<int:mapa_id>/', ImpExpMapaView.as_view(), name='impexp_mapa'),
+    path('api/impexp/<str:recurso_id>/exportar/', ImpExpExportarView.as_view(), name='impexp_exportar'),
+    path('api/impexp/<str:recurso_id>/modelo/', ImpExpModeloView.as_view(), name='impexp_modelo'),
+    path('api/impexp/<str:recurso_id>/importar/', ImpExpImportarView.as_view(), name='impexp_importar'),
+    path('api/impexp/<str:recurso_id>/mapas/', ImpExpMapasView.as_view(), name='impexp_mapas'),
+    path('api/impexp/<str:recurso_id>/importacoes/', ImpExpHistoricoView.as_view(), name='impexp_historico'),
 
     # --- Rotas dos Módulos (sem roteador principal) ---
     path('api/diario/', include('modulodiario.urls')),

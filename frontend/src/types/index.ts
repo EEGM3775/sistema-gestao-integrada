@@ -9,6 +9,9 @@ export interface Empreendimento {
   cnpj: string
   telefone: string
   endereco: string
+  /** Cidade/UF do imóvel — não se confunde com a do cliente. */
+  cidade: string
+  estado: string
   data_inicio_prevista: string | null
   data_fim_prevista: string | null
   data_inicio_real: string | null
@@ -19,6 +22,102 @@ export interface Empreendimento {
   data_criacao: string
   data_atualizacao: string
   tenant: number
+  /** Contagem de unidades — anotada pelo backend na listagem e no detalhe.
+   *  `null`/ausente = não calculado nesta resposta, **não** zero. */
+  unidades_total?: number | null
+  unidades_disponiveis?: number | null
+  unidades_vendidas?: number | null
+}
+
+/** A unidade à venda — cadastro do empreendimento, anterior ao comprador. */
+export type SituacaoUnidade = 'disponivel' | 'reservada' | 'vendida' | 'indisponivel'
+export type TipoUnidade = 'lote' | 'apartamento' | 'casa' | 'sala' | 'outro'
+
+export interface Unidade {
+  unidade_id: number
+  empreendimento: number
+  empreendimento_nome: string
+  /** Os cinco níveis do endereço; loteamento usa quadra/lote, vertical usa
+   *  bloco/andar/apto. Ao menos um é obrigatório. */
+  quadra: string
+  lote: string
+  bloco_torre: string
+  andar: string
+  apto: string
+  /** Montado pelo backend: "QD 12 · LT 05" ou "Torre A · 3º · 302". */
+  rotulo: string
+  tipo: TipoUnidade
+  tipo_display: string
+  situacao: SituacaoUnidade
+  situacao_display: string
+  /** Preço de tabela — a referência da negociação, não o que o cliente paga. */
+  valor_base: string
+  area_privativa: string | null
+  area_total: string | null
+  endereco: string
+  /** Medidas e confrontações lado a lado — não vão à grade, só à ficha da
+   *  unidade. A frente é, na prática, a rua. */
+  medida_frente: string | null
+  medida_fundo: string | null
+  medida_lateral_direita: string | null
+  medida_lateral_esquerda: string | null
+  confrontante_frente: string
+  confrontante_fundo: string
+  confrontante_lateral_direita: string
+  confrontante_lateral_esquerda: string
+  /** Derivados do backend: os lados preenchidos e o memorial em uma frase. */
+  confrontacoes: ConfrontacaoUnidade[]
+  descricao_confrontacoes: string
+  observacoes: string
+  cliente_id: number | null
+  cliente_nome: string | null
+  data_criacao: string
+  data_atualizacao: string
+  tenant: number
+}
+
+/** Índice de correção monetária — série pública, sem tenant. */
+export interface IndiceEconomico {
+  id: number
+  codigo: 'ipca' | 'incc' | 'igpm' | 'inpc'
+  nome: string
+  fonte: string
+  /** Até quando a série está alimentada; null = índice sem série carregada. */
+  ultimaCompetencia: string | null
+  competencias: number
+}
+
+export type PeriodicidadeCorrecao = 'anual' | 'mensal'
+
+export interface ConfrontacaoUnidade {
+  lado: 'frente' | 'fundo' | 'lateral_direita' | 'lateral_esquerda'
+  rotulo: string
+  medida: string | null
+  confrontante: string
+}
+
+export interface UnidadeFormData {
+  empreendimento: number
+  quadra: string
+  lote: string
+  bloco_torre: string
+  andar: string
+  apto: string
+  tipo: TipoUnidade
+  situacao: SituacaoUnidade
+  valor_base: string
+  area_privativa: string
+  area_total: string
+  endereco: string
+  medida_frente: string
+  medida_fundo: string
+  medida_lateral_direita: string
+  medida_lateral_esquerda: string
+  confrontante_frente: string
+  confrontante_fundo: string
+  confrontante_lateral_direita: string
+  confrontante_lateral_esquerda: string
+  observacoes: string
 }
 
 export interface ContaBancariaEmpreendimento {
@@ -68,6 +167,8 @@ export interface EmpreendimentoFormData {
   cnpj: string
   telefone: string
   endereco: string
+  cidade: string
+  estado: string
   data_inicio_prevista: string
   data_fim_prevista: string
   orcamento_total: string
@@ -153,30 +254,129 @@ export interface ClienteFormData {
   cep: string
 }
 
+export type SistemaAmortizacao = 'price' | 'sac'
+export type PeriodicidadeBalao = 'anual' | 'semestral'
+
+/** O resumo da proposta, calculado no backend (`clientes/plano_pagamento.py`).
+ *  Valores em string decimal — a conta é feita lá, nunca refeita aqui. */
+export interface ResumoPlano {
+  valorTabela: string
+  desconto: string
+  valorNegociado: string
+  entrada: string
+  baloes: string
+  saldoFinanciado: string
+  totalJuros: string
+  total: string
+  primeiraParcela: string
+  ultimaParcela: string
+}
+
+export interface ParcelaPlano {
+  numero: number
+  tipo: 'entrada' | 'parcela' | 'balao'
+  vencimento: string
+  valor: string
+  juros: string
+  amortizacao: string
+  saldo: string
+}
+
+export interface SimulacaoPlano extends ResumoPlano {
+  parcelas: ParcelaPlano[]
+}
+
 export interface ClienteEmpreendimento {
   cliente_empreendimento_id: number
   cliente: number
   cliente_nome: string
   empreendimento: number
   empreendimento_nome: string
-  unidade_comprada: string
-  endereco_unidade: string
+  /** A unidade vendida — a identificação mora no cadastro dela. */
+  unidade: number
+  unidade_valor_base: string
+  /** Montado pelo backend: "QD 12 · LT 05" ou "Torre A · 3º · 302". */
+  rotulo_unidade: string
   data_compra: string
-  valor_compra: string
   condicoes_pagamento: CondicoesPagamento
   observacoes_compra: string | null
+  /** Proposta: da tabela ao que o cliente paga. */
+  valor_tabela: string
+  desconto_percentual: string
+  desconto_valor: string
+  /** Negociado à vista (tabela − desconto) — derivado, read-only na API. */
+  valor_compra: string
+  entrada_valor: string
+  entrada_parcelas: number
+  entrada_primeiro_vencimento: string | null
+  sistema_amortizacao: SistemaAmortizacao
+  juros_mensal: string
+  num_parcelas: number
+  primeiro_vencimento: string | null
+  balao_valor: string
+  balao_quantidade: number
+  balao_periodicidade: PeriodicidadeBalao
+  balao_primeiro_vencimento: string | null
+  valor_total_plano: string
+  /** Carimbo do botão "Gerar parcelas" — nulo = carnê ainda não existe. */
+  parcelas_geradas_em: string | null
+  /** Correção monetária: nulo = contrato sem reajuste. A âncora é a data-base
+   *  (padrão: a data da compra), não a data do boleto. */
+  indice_correcao: number | null
+  indice_correcao_codigo: string | null
+  indice_correcao_nome: string | null
+  periodicidade_correcao: PeriodicidadeCorrecao
+  data_base_correcao: string | null
+  plano: ResumoPlano | null
   tenant: number
 }
 
 export interface ClienteEmpreendimentoFormData {
   cliente: number
-  empreendimento: number | ''
-  unidade_comprada: string
-  endereco_unidade: string
+  unidade: number | ''
   data_compra: string
-  valor_compra: string
   condicoes_pagamento: CondicoesPagamento | ''
   observacoes_compra: string
+  desconto_percentual: string
+  desconto_valor: string
+  entrada_valor: string
+  entrada_parcelas: number
+  entrada_primeiro_vencimento: string
+  sistema_amortizacao: SistemaAmortizacao
+  juros_mensal: string
+  num_parcelas: number
+  primeiro_vencimento: string
+  balao_valor: string
+  balao_quantidade: number
+  balao_periodicidade: PeriodicidadeBalao
+  balao_primeiro_vencimento: string
+  indice_correcao: number | ''
+  periodicidade_correcao: PeriodicidadeCorrecao
+  data_base_correcao: string
+}
+
+/** Prévia/resultado de `corrigir/` — uma linha por parcela em aberto. */
+export interface ParcelaCorrigida {
+  contaReceberId: number
+  descricao: string
+  vencimento: string
+  valorAtual: string
+  valorOriginal: string
+  valorCorrigido: string
+  acrescimo: string
+  fator: string
+  ateCompetencia: string | null
+  competenciasAplicadas: number
+  mesesFaltandoNaSerie: number
+}
+
+export interface RespostaCorrecao {
+  indice: string
+  periodicidade: PeriodicidadeCorrecao
+  dataBase: string
+  parcelas: ParcelaCorrigida[]
+  aplicado: boolean
+  alteradas?: number
 }
 
 export interface ContratoCliente {

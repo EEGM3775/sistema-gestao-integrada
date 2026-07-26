@@ -1,4 +1,6 @@
 # empreendimentos/models.py
+from decimal import Decimal
+
 from django.db import models
 from django.db.models import Q
 from nucleo.tenancy import TenantScopedModel
@@ -50,6 +52,11 @@ class Empreendimento(TenantScopedModel):
     cnpj = models.CharField(max_length=18, verbose_name=_("CNPJ"))
     telefone = models.CharField(max_length=20, verbose_name=_("Telefone"))
     endereco = models.TextField(verbose_name=_("Endereço"))
+    # Cidade/UF estruturados: `endereco` é texto livre e não serve para filtrar
+    # nem agrupar a carteira ("clientes por cidade"). É a cidade do imóvel, que
+    # não se confunde com a do cliente (Cliente.cidade é o endereço dele).
+    cidade = models.CharField(max_length=100, blank=True, verbose_name=_("Cidade"))
+    estado = models.CharField(max_length=2, blank=True, verbose_name=_("Estado"))
     data_inicio_prevista = models.DateField(null=True, blank=True, verbose_name=_("Data de Início Prevista"))
     data_fim_prevista = models.DateField(null=True, blank=True, verbose_name=_("Data de Fim Prevista"))
     data_inicio_real = models.DateField(null=True, blank=True, verbose_name=_("Data de Início Real"))
@@ -137,3 +144,205 @@ class CustoEmpreendimento(TenantScopedModel):
 
 
 
+
+
+# Choices for Unidade
+SITUACAO_UNIDADE_CHOICES = [
+    ("disponivel", _("Disponível")),
+    ("reservada", _("Reservada")),
+    ("vendida", _("Vendida")),
+    ("indisponivel", _("Indisponível")),
+]
+
+TIPO_UNIDADE_CHOICES = [
+    ("lote", _("Lote")),
+    ("apartamento", _("Apartamento")),
+    ("casa", _("Casa")),
+    ("sala", _("Sala comercial")),
+    ("outro", _("Outro")),
+]
+
+
+class Unidade(TenantScopedModel):
+    """O que se vende: o lote, o apartamento, a sala.
+
+    **É cadastro do empreendimento, não da venda.** Antes, a unidade nascia
+    junto com a aquisição — o comprador digitava "Apto 101" num campo livre *e*
+    quadra/lote/andar em campos estruturados, sem nada garantindo que os dois
+    combinassem e sem nada impedindo vender o mesmo lote duas vezes por dois
+    caminhos. Aqui a unidade existe antes do comprador: o empreendimento
+    cadastra o que tem à venda, e a aquisição apenas **aponta** para uma delas.
+    Um lote, um rótulo, um dono.
+
+    O ``valor_base`` é o **preço de tabela** — a referência da negociação, não o
+    que o cliente paga. O valor pago sai do plano de pagamento da aquisição
+    (desconto, entrada, juros, prazo) e fica lá, porque é da venda, não do lote:
+    duas pessoas compram o mesmo tipo de lote por valores finais diferentes.
+    """
+
+    unidade_id = models.AutoField(primary_key=True)
+    empreendimento = models.ForeignKey(
+        Empreendimento, on_delete=models.CASCADE, related_name='unidades',
+        verbose_name=_("Empreendimento"),
+    )
+
+    # Identificação estruturada — a hierarquia de mercado (loteamento usa
+    # quadra/lote; vertical usa torre/andar/apto). Texto porque existe "Quadra A"
+    # e "Lote 12-B"; a ordenação natural da grade cuida do "10 depois do 2".
+    quadra = models.CharField(max_length=10, blank=True, verbose_name=_("Quadra"))
+    lote = models.CharField(max_length=10, blank=True, verbose_name=_("Lote"))
+    bloco_torre = models.CharField(max_length=20, blank=True, verbose_name=_("Bloco/Torre"))
+    andar = models.CharField(max_length=10, blank=True, verbose_name=_("Andar"))
+    apto = models.CharField(max_length=20, blank=True, verbose_name=_("Apto/Número"))
+
+    tipo = models.CharField(
+        max_length=20, choices=TIPO_UNIDADE_CHOICES, default="lote", verbose_name=_("Tipo"),
+    )
+    situacao = models.CharField(
+        max_length=20, choices=SITUACAO_UNIDADE_CHOICES, default="disponivel",
+        verbose_name=_("Situação"),
+    )
+    valor_base = models.DecimalField(
+        max_digits=15, decimal_places=2, default=Decimal('0'),
+        verbose_name=_("Valor base (tabela)"),
+        help_text=_("Preço de tabela da unidade. A venda parte dele e aplica desconto, entrada e juros."),
+    )
+    area_privativa = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        verbose_name=_("Área privativa (m²)"),
+    )
+    area_total = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        verbose_name=_("Área total (m²)"),
+    )
+    endereco = models.CharField(max_length=255, blank=True, verbose_name=_("Endereço da unidade"))
+
+    # ── Medidas e confrontações ───────────────────────────────────────────────
+    # A área sozinha não descreve o imóvel: o contrato e a matrícula pedem
+    # **quanto mede cada lado** e **com quem cada lado divide**. Sem isso o
+    # memorial descritivo tem de ser redigido fora do sistema, e o que vai ao
+    # cartório deixa de bater com o que está cadastrado.
+    #
+    # Quatro lados porque é o que o lote retangular — a esmagadora maioria —
+    # tem; o irregular descreve o excedente em `observacoes`. A **frente** é, na
+    # prática, a rua: é dela que sai o endereço e é ela que o comprador
+    # reconhece. Decimal e não texto porque metro linear entra em conta (testada
+    # × profundidade confere a área declarada).
+    medida_frente = models.DecimalField(
+        max_digits=8, decimal_places=2, null=True, blank=True,
+        verbose_name=_("Frente (m)"),
+    )
+    medida_fundo = models.DecimalField(
+        max_digits=8, decimal_places=2, null=True, blank=True,
+        verbose_name=_("Fundo (m)"),
+    )
+    medida_lateral_direita = models.DecimalField(
+        max_digits=8, decimal_places=2, null=True, blank=True,
+        verbose_name=_("Lateral direita (m)"),
+    )
+    medida_lateral_esquerda = models.DecimalField(
+        max_digits=8, decimal_places=2, null=True, blank=True,
+        verbose_name=_("Lateral esquerda (m)"),
+    )
+    confrontante_frente = models.CharField(
+        max_length=255, blank=True, verbose_name=_("Confrontante da frente"),
+        help_text=_("Em geral a rua — é dela que sai o endereço da unidade."),
+    )
+    confrontante_fundo = models.CharField(
+        max_length=255, blank=True, verbose_name=_("Confrontante do fundo"),
+    )
+    confrontante_lateral_direita = models.CharField(
+        max_length=255, blank=True, verbose_name=_("Confrontante da lateral direita"),
+    )
+    confrontante_lateral_esquerda = models.CharField(
+        max_length=255, blank=True, verbose_name=_("Confrontante da lateral esquerda"),
+    )
+
+    observacoes = models.TextField(blank=True, verbose_name=_("Observações"))
+    data_criacao = models.DateTimeField(auto_now_add=True, verbose_name=_("Data de Criação"))
+    data_atualizacao = models.DateTimeField(auto_now=True, verbose_name=_("Data de Atualização"))
+
+    class Meta:
+        verbose_name = _("Unidade")
+        verbose_name_plural = _("Unidades")
+        ordering = ['empreendimento', 'quadra', 'lote', 'bloco_torre', 'andar', 'apto']
+        constraints = [
+            # Duas unidades com a mesma identificação no mesmo empreendimento
+            # seriam a mesma unidade — e a venda não saberia qual das duas
+            # entregou. É a trava que o texto livre nunca teve.
+            models.UniqueConstraint(
+                fields=['tenant', 'empreendimento', 'quadra', 'lote', 'bloco_torre', 'andar', 'apto'],
+                name='unidade_identificacao_unica',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['empreendimento', 'situacao'], name='unidade_emp_situacao_idx'),
+        ]
+
+    @property
+    def rotulo(self) -> str:
+        """Como a unidade aparece na tela: 'QD 12 · LT 05' (loteamento) ou
+        'Torre A · 3º · 302' (vertical). Fonte única — grade, ficha, extrato e
+        contrato leem daqui, então não há como divergirem."""
+        partes = []
+        if self.quadra:
+            partes.append(f"QD {self.quadra}")
+        if self.lote:
+            partes.append(f"LT {self.lote}")
+        if self.bloco_torre:
+            partes.append(self.bloco_torre)
+        if self.andar:
+            partes.append(f"{self.andar}º")
+        if self.apto:
+            partes.append(self.apto)
+        return " · ".join(partes) or f"Unidade {self.pk}"
+
+    LADOS = (
+        ("frente", _("Frente"), "medida_frente", "confrontante_frente"),
+        ("fundo", _("Fundo"), "medida_fundo", "confrontante_fundo"),
+        ("lateral_direita", _("Lateral direita"),
+         "medida_lateral_direita", "confrontante_lateral_direita"),
+        ("lateral_esquerda", _("Lateral esquerda"),
+         "medida_lateral_esquerda", "confrontante_lateral_esquerda"),
+    )
+
+    @property
+    def confrontacoes(self) -> list[dict]:
+        """Os quatro lados em forma de dado — medida e com quem divide.
+
+        Só devolve o lado que tem alguma coisa preenchida: um lote com três
+        divisas não deve exibir uma quarta linha vazia como se faltasse
+        cadastro."""
+        lados = []
+        for chave, rotulo, campo_medida, campo_confrontante in self.LADOS:
+            medida = getattr(self, campo_medida)
+            confrontante = getattr(self, campo_confrontante)
+            if medida is None and not confrontante:
+                continue
+            lados.append({
+                "lado": chave,
+                "rotulo": str(rotulo),
+                "medida": str(medida) if medida is not None else None,
+                "confrontante": confrontante,
+            })
+        return lados
+
+    @property
+    def descricao_confrontacoes(self) -> str:
+        """O memorial em uma frase: 'Frente: 12,00 m, com a Rua das Acácias; …'.
+
+        É o texto que vai ao contrato — montado aqui para que ficha, contrato e
+        exportação não escrevam três versões da mesma descrição."""
+        partes = []
+        for lado in self.confrontacoes:
+            medida = f"{Decimal(lado['medida']):.2f}".replace(".", ",") + " m" if lado["medida"] else None
+            if medida and lado["confrontante"]:
+                partes.append(f"{lado['rotulo']}: {medida}, com {lado['confrontante']}")
+            elif medida:
+                partes.append(f"{lado['rotulo']}: {medida}")
+            else:
+                partes.append(f"{lado['rotulo']}: com {lado['confrontante']}")
+        return "; ".join(partes)
+
+    def __str__(self):
+        return f"{self.empreendimento.empreendimento} — {self.rotulo}"

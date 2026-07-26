@@ -78,6 +78,12 @@ mudou. Rebuild só do que mudou é bem mais rápido que rebuildar tudo.
  Mudou backend Python (pasta backend/):
     docker compose --profile full up -d --build erp worker beat
 
+    Os TRÊS, sempre — eles compartilham a mesma imagem. Rebuildar só o
+    "erp" deixa o worker com o código velho, e o efeito é traiçoeiro:
+    a tela responde certo (202, "estamos processando") e o trabalho de
+    fundo simplesmente nunca acontece, sem erro em lugar nenhum.
+    Foi o D25 em pendencias.md.
+
  Mudou login / IAM (pasta iam/):
     docker compose --profile full up -d --build iam
 
@@ -108,6 +114,14 @@ Rode os DOIS, nesta ordem. Pode repetir sem medo — não duplica.
 
  O seed NÃO cria boletos, notas fiscais nem contas a pagar/receber —
  esses nascem de você usar o sistema (e dependem de Asaas / NFE.io).
+
+ 3) OPCIONAL — carteira grande, para ver a grade de clientes com volume
+    (5000 clientes, suas quadras/lotes e um carnê com atrasos distribuídos):
+
+    docker compose exec erp python manage.py semear_carteira_demo --clientes 5000
+
+    Só dev/staging. É idempotente (repetir não duplica) e aceita
+    --tenant, --empreendimentos e --semente.
 
 
 ============================================================

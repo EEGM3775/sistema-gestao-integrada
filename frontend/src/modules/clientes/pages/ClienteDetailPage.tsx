@@ -2,8 +2,10 @@ import React, { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Users, ArrowLeft, Pencil, Trash2, Plus, FileText,
-  ExternalLink, Building2, CreditCard, Landmark,
+  ExternalLink, Building2, CreditCard, Landmark, Wallet, HardHat,
 } from 'lucide-react'
+import { AbaFinanceiro } from '../carteira/AbaFinanceiro'
+import { AbaObra } from '../carteira/AbaObra'
 import { useCliente } from '../hooks/useCliente'
 import ClienteForm from '../components/ClienteForm'
 import AquisicaoForm from '../components/AquisicaoForm'
@@ -15,6 +17,7 @@ import type {
   ContratoCliente, ContratoClienteFormData, StatusContrato, DadoBancarioClienteFormData,
 } from '@/types'
 
+import { useAuth } from '@/hooks/useAuth'
 import { formatCPFCNPJ } from '@/utils/masks'
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -72,7 +75,7 @@ const SectionHeader: React.FC<{ title: string; onAdd?: () => void; addLabel?: st
 
 // ─── página principal ────────────────────────────────────────────────────────
 
-type Tab = 'dados' | 'aquisicoes' | 'documentos' | 'bancario'
+type Tab = 'dados' | 'aquisicoes' | 'documentos' | 'bancario' | 'financeiro' | 'obra'
 
 const ClienteDetailPage: React.FC = () => {
   const { id }    = useParams<{ id: string }>()
@@ -83,16 +86,29 @@ const ClienteDetailPage: React.FC = () => {
     data, aquisicoes, contratos, documentos, dadosBancarios,
     loading, error,
     updateCliente, deleteCliente,
-    createAquisicao, updateAquisicao, deleteAquisicao,
+    createAquisicao, updateAquisicao, deleteAquisicao, gerarParcelas, corrigirParcelas,
     createContrato, updateContrato, deleteContrato,
     uploadDocumento, deleteDocumento,
     createDadoBancario, updateDadoBancario, deleteDadoBancario,
   } = useCliente(clienteId)
 
+  // Vender e emitir o carnê são atos distintos, com permissões distintas: o
+  // comercial fecha a venda, o financeiro materializa os títulos. O backend é
+  // quem decide (403); aqui a tela só evita oferecer o que vai ser recusado.
+  const { hasPermission } = useAuth()
+  const podeVender      = hasPermission('cadastro.venda.edit')
+  const podeGerarCarne  = hasPermission('cadastro.venda.gerar_carne')
+
   const [activeTab, setActiveTab]           = useState<Tab>('dados')
   const [editOpen, setEditOpen]             = useState(false)
   const [confirmDelete, setConfirmDelete]   = useState(false)
   const [aquisicaoForm, setAquisicaoForm]   = useState<{ open: boolean; editing: ClienteEmpreendimento | null }>({ open: false, editing: null })
+  const [avisoParcelas, setAvisoParcelas]   = useState<string | null>(null)
+  const [erroParcelas, setErroParcelas]     = useState<string | null>(null)
+  const [previaCorrecao, setPreviaCorrecao] = useState<
+    { aquisicaoId: number; dados: import('@/types').RespostaCorrecao } | null
+  >(null)
+  const [corrigindo, setCorrigindo]         = useState(false)
   const [contratoForm, setContratoForm]     = useState<{ open: boolean; editing: ContratoCliente | null }>({ open: false, editing: null })
   const [bancoForm, setBancoForm]           = useState<{ open: boolean; editing: import('@/types').DadoBancarioCliente | null }>({ open: false, editing: null })
   const [docFormOpen, setDocFormOpen]       = useState(false)
@@ -171,10 +187,12 @@ const ClienteDetailPage: React.FC = () => {
   }
 
   const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
-    { id: 'dados',     label: 'Dados Cadastrais', icon: <Users size={14} /> },
-    { id: 'aquisicoes',label: `Aquisições / Contratos (${aquisicoes.length + contratos.length})`, icon: <Building2 size={14} /> },
-    { id: 'documentos',label: `Documentos (${documentos.length})`, icon: <FileText size={14} /> },
-    { id: 'bancario',  label: `Dados Bancários (${dadosBancarios.length})`, icon: <Landmark size={14} /> },
+    { id: 'dados',      label: 'Ficha', icon: <Users size={14} /> },
+    { id: 'aquisicoes', label: `Aquisições (${aquisicoes.length + contratos.length})`, icon: <Building2 size={14} /> },
+    { id: 'documentos', label: `Documentos (${documentos.length})`, icon: <FileText size={14} /> },
+    { id: 'bancario',   label: `Dados bancários (${dadosBancarios.length})`, icon: <Landmark size={14} /> },
+    { id: 'financeiro', label: 'Financeiro', icon: <Wallet size={14} /> },
+    { id: 'obra',       label: 'Obra', icon: <HardHat size={14} /> },
   ]
 
   return (
@@ -266,7 +284,14 @@ const ClienteDetailPage: React.FC = () => {
 
           {/* Aquisições */}
           <div className="rounded-xl p-6" style={{ background: '#FFFFFF', boxShadow: 'var(--shadow-sm)', border: '1px solid #e2e8f0' }}>
-            <SectionHeader title="Aquisições" onAdd={() => setAquisicaoForm({ open: true, editing: null })} addLabel="Nova aquisição" />
+            <SectionHeader title="Aquisições" addLabel="Nova aquisição"
+              onAdd={podeVender ? () => setAquisicaoForm({ open: true, editing: null }) : undefined} />
+            {avisoParcelas && (
+              <p className="text-xs mb-2" style={{ color: '#166534', fontFamily: 'var(--font-body)' }}>{avisoParcelas}</p>
+            )}
+            {erroParcelas && (
+              <p className="text-xs mb-2" style={{ color: '#b91c1c', fontFamily: 'var(--font-body)' }}>{erroParcelas}</p>
+            )}
             {aquisicoes.length === 0 ? (
               <p className="text-sm py-4 text-center" style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-body)' }}>
                 Nenhuma aquisição registrada.
@@ -279,24 +304,94 @@ const ClienteDetailPage: React.FC = () => {
                     style={{ background: '#f8fafc', border: '1px solid #e2e8f0' }}>
                     <div className="flex flex-col gap-0.5">
                       <span className="text-sm font-semibold" style={{ color: 'var(--color-brand)', fontFamily: 'var(--font-body)' }}>
-                        {a.empreendimento_nome} — Unid. {a.unidade_comprada}
+                        {a.empreendimento_nome} — {a.rotulo_unidade}
                       </span>
                       <span className="text-xs" style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-body)' }}>
                         {formatDate(a.data_compra)} · {formatCurrency(a.valor_compra)} · {CONDICAO_LABEL[a.condicoes_pagamento]}
                       </span>
+                      {/* O plano em uma linha: o que se paga, e como. */}
+                      {Number(a.valor_total_plano) > 0 && (
+                        <span className="text-xs" style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-body)' }}>
+                          Plano: {formatCurrency(a.entrada_valor)} de entrada
+                          {a.num_parcelas > 0 && ` + ${a.num_parcelas}x ${a.sistema_amortizacao === 'sac' ? 'SAC' : 'Price'}`}
+                          {Number(a.juros_mensal) > 0 ? ` a ${a.juros_mensal}% a.m.` : ' sem juros'}
+                          {a.balao_quantidade > 0 && ` + ${a.balao_quantidade} balão(ões)`}
+                          {' · total '}{formatCurrency(a.valor_total_plano)}
+                        </span>
+                      )}
+                      {/* A correção é do contrato, não do boleto: o rótulo diz a
+                          âncora para o vendedor não procurá-la na emissão. */}
+                      {a.indice_correcao_codigo && (
+                        <span className="text-xs" style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-body)' }}>
+                          Correção {a.indice_correcao_nome ?? a.indice_correcao_codigo.toUpperCase()}
+                          {a.periodicidade_correcao === 'mensal' ? ' mensal' : ' anual'}
+                          {' · data-base '}{formatDate((a.data_base_correcao ?? a.data_compra).slice(0, 10))}
+                        </span>
+                      )}
+                      {a.parcelas_geradas_em ? (
+                        <span className="text-xs" style={{ color: '#166534', fontFamily: 'var(--font-body)' }}>
+                          Parcelas geradas em {formatDate(a.parcelas_geradas_em.slice(0, 10))} — veja na aba Financeiro
+                        </span>
+                      ) : podeGerarCarne && (
+                        <button
+                          onClick={async () => {
+                            setErroParcelas(null)
+                            try {
+                              const r = await gerarParcelas(a.cliente_empreendimento_id)
+                              setAvisoParcelas(
+                                `${r.geradas} parcelas geradas para ${a.rotulo_unidade} — ${formatCurrency(r.total)}.`
+                                + ' Elas estão na aba Financeiro deste cliente. Boletos são emitidos à parte, no ERP.',
+                              )
+                            } catch {
+                              setErroParcelas('Não foi possível gerar as parcelas desta aquisição.')
+                            }
+                          }}
+                          className="text-xs font-semibold text-left"
+                          style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                            color: 'var(--color-brand)', fontFamily: 'var(--font-body)', width: 'fit-content' }}>
+                          Gerar parcelas no financeiro →
+                        </button>
+                      )}
+
+                      {/* Reajustar só existe depois que há carnê e índice: sem
+                          título em aberto não há o que corrigir. */}
+                      {podeGerarCarne && a.parcelas_geradas_em && a.indice_correcao_codigo && (
+                        <button
+                          onClick={async () => {
+                            setErroParcelas(null)
+                            setCorrigindo(true)
+                            try {
+                              const dados = await corrigirParcelas(a.cliente_empreendimento_id, false)
+                              setPreviaCorrecao({ aquisicaoId: a.cliente_empreendimento_id, dados })
+                            } catch {
+                              setErroParcelas('Não foi possível calcular o reajuste desta aquisição.')
+                            } finally {
+                              setCorrigindo(false)
+                            }
+                          }}
+                          disabled={corrigindo}
+                          className="text-xs font-semibold text-left"
+                          style={{ background: 'none', border: 'none', padding: 0,
+                            cursor: corrigindo ? 'wait' : 'pointer',
+                            color: 'var(--color-brand)', fontFamily: 'var(--font-body)', width: 'fit-content' }}>
+                          {corrigindo ? 'Calculando…' : 'Ver reajuste das parcelas em aberto →'}
+                        </button>
+                      )}
                     </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button onClick={() => setAquisicaoForm({ open: true, editing: a })}
-                        className="p-1.5 rounded" title="Editar"
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)' }}>
-                        <Pencil size={14} />
-                      </button>
-                      <button onClick={() => deleteAquisicao(a.cliente_empreendimento_id)}
-                        className="p-1.5 rounded" title="Remover"
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626' }}>
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
+                    {podeVender && (
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button onClick={() => setAquisicaoForm({ open: true, editing: a })}
+                          className="p-1.5 rounded" title="Editar"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)' }}>
+                          <Pencil size={14} />
+                        </button>
+                        <button onClick={() => deleteAquisicao(a.cliente_empreendimento_id)}
+                          className="p-1.5 rounded" title="Remover"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626' }}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -462,7 +557,91 @@ const ClienteDetailPage: React.FC = () => {
         </div>
       )}
 
+      {/* ── Aba: Financeiro — o histórico de pagamento e os boletos ─────────── */}
+      {activeTab === 'financeiro' && <AbaFinanceiro clienteId={clienteId} />}
+
+      {/* ── Aba: Obra — o que ele comprou está sendo construído ─────────────── */}
+      {activeTab === 'obra' && <AbaObra clienteId={clienteId} />}
+
       {/* ── Confirm delete ──────────────────────────────────────────────────── */}
+      {/* Prévia do reajuste — a conta antes de aplicar. Reajuste mexe em valor
+          já prometido ao comprador; ver depois de gravado é tarde. */}
+      {previaCorrecao && (
+        <>
+          <div className="fixed inset-0 z-40" style={{ background: 'rgba(0,0,0,0.4)' }} onClick={() => setPreviaCorrecao(null)} />
+          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 rounded-2xl p-6 flex flex-col"
+            style={{ background: '#FFFFFF', boxShadow: '0 20px 60px rgba(0,0,0,0.2)', width: 'min(680px, 92vw)', maxHeight: '82vh' }}>
+            <h3 className="text-base font-bold mb-1" style={{ fontFamily: 'var(--font-heading)', color: 'var(--color-brand)' }}>
+              Reajuste — {previaCorrecao.dados.indice.toUpperCase()}
+              {previaCorrecao.dados.periodicidade === 'mensal' ? ' mensal' : ' anual'}
+            </h3>
+            <p className="text-xs mb-3" style={{ fontFamily: 'var(--font-body)', color: 'var(--color-text-muted)' }}>
+              Data-base {formatDate(previaCorrecao.dados.dataBase)} · cada parcela é trazida até o
+              próprio vencimento. Só entram as parcelas em aberto.
+            </p>
+            {previaCorrecao.dados.parcelas.some(p => p.mesesFaltandoNaSerie > 0) && (
+              <p className="text-xs mb-3 p-2 rounded" style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e' }}>
+                A série do índice não cobre todos os meses do período. O reajuste abaixo é o que
+                está publicado — carregue as competências que faltam antes de aplicar.
+              </p>
+            )}
+            <div style={{ overflowY: 'auto', flex: 1 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
+                <thead>
+                  <tr style={{ color: 'var(--color-text-muted)', textAlign: 'left' }}>
+                    <th style={{ padding: '4px 6px' }}>Parcela</th>
+                    <th style={{ padding: '4px 6px' }}>Vencimento</th>
+                    <th style={{ padding: '4px 6px', textAlign: 'right' }}>Nominal</th>
+                    <th style={{ padding: '4px 6px', textAlign: 'right' }}>Corrigida</th>
+                    <th style={{ padding: '4px 6px', textAlign: 'right' }}>Acréscimo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {previaCorrecao.dados.parcelas.map(p => (
+                    <tr key={p.contaReceberId} style={{ borderTop: '1px solid #e2e8f0' }}>
+                      <td style={{ padding: '4px 6px' }}>{p.descricao}</td>
+                      <td style={{ padding: '4px 6px' }}>{formatDate(p.vencimento)}</td>
+                      <td style={{ padding: '4px 6px', textAlign: 'right' }}>{formatCurrency(p.valorOriginal)}</td>
+                      <td style={{ padding: '4px 6px', textAlign: 'right', fontWeight: 600 }}>{formatCurrency(p.valorCorrigido)}</td>
+                      <td style={{ padding: '4px 6px', textAlign: 'right', color: Number(p.acrescimo) > 0 ? '#166534' : 'var(--color-text-muted)' }}>
+                        {Number(p.acrescimo) === 0 ? '—' : formatCurrency(p.acrescimo)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex justify-end gap-3 mt-4">
+              <button onClick={() => setPreviaCorrecao(null)}
+                className="px-4 py-2 rounded-lg text-sm font-semibold"
+                style={{ border: '1.5px solid #e2e8f0', background: 'none', cursor: 'pointer',
+                  color: 'var(--color-text-muted)', fontFamily: 'var(--font-body)' }}>
+                Fechar
+              </button>
+              <button
+                disabled={corrigindo || previaCorrecao.dados.parcelas.every(p => Number(p.acrescimo) === 0)}
+                onClick={async () => {
+                  setCorrigindo(true)
+                  try {
+                    const r = await corrigirParcelas(previaCorrecao.aquisicaoId, true)
+                    setAvisoParcelas(`${r.alteradas ?? 0} parcela(s) reajustada(s) pelo ${r.indice.toUpperCase()}.`)
+                    setPreviaCorrecao(null)
+                  } catch {
+                    setErroParcelas('Não foi possível aplicar o reajuste.')
+                  } finally {
+                    setCorrigindo(false)
+                  }
+                }}
+                className="px-5 py-2 rounded-lg text-sm font-semibold"
+                style={{ background: 'var(--color-brand)', color: '#FFFFFF', border: 'none',
+                  cursor: corrigindo ? 'wait' : 'pointer', fontFamily: 'var(--font-body)' }}>
+                {corrigindo ? 'Aplicando…' : 'Aplicar reajuste'}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
       {confirmDelete && (
         <>
           <div className="fixed inset-0 z-40" style={{ background: 'rgba(0,0,0,0.4)' }} onClick={() => setConfirmDelete(false)} />

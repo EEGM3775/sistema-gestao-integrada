@@ -356,11 +356,45 @@ class ContaReceber(TenantScopedModel):
     conta_receber_id = models.AutoField(primary_key=True, verbose_name=_("ID da Conta a Receber"))
     cliente = models.ForeignKey('clientes.Cliente', on_delete=models.CASCADE, related_name='contas_a_receber', verbose_name=_("Cliente"))
     empreendimento = models.ForeignKey('empreendimentos.Empreendimento', on_delete=models.SET_NULL, null=True, blank=True, verbose_name=_("Empreendimento"))
+    # A parcela aponta para a unidade que ela paga. Sem isto, um cliente com dois
+    # lotes no mesmo loteamento tem a inadimplência somada num balaio só e a
+    # carteira por unidade seria um número inventado. Opcionais porque parcelas
+    # anteriores a este vínculo existem e continuam válidas — elas contam no
+    # total do cliente e ficam fora do rateio por unidade.
+    cliente_empreendimento = models.ForeignKey(
+        'clientes.ClienteEmpreendimento', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='contas_a_receber', verbose_name=_("Aquisição (unidade) vinculada"),
+    )
+    contrato = models.ForeignKey(
+        'clientes.ContratoCliente', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='contas_a_receber', verbose_name=_("Contrato vinculado"),
+    )
     nota_fiscal_recebida = models.ForeignKey(NotaFiscal, on_delete=models.SET_NULL, null=True, blank=True, related_name='contas_a_receber', verbose_name=_("Nota Fiscal Associada"))
     nota_fiscal_servico = models.OneToOneField('NotaFiscalServico', on_delete=models.SET_NULL, related_name='conta_receber_origem', null=True, blank=True, verbose_name=_("NFS-e emitida"))
     nota_fiscal_produto = models.OneToOneField('NotaFiscalProduto', on_delete=models.SET_NULL, related_name='conta_receber_origem', null=True, blank=True, verbose_name=_("NF-e emitida"))
     descricao = models.TextField(verbose_name=_("Descrição da Conta"))
     valor = models.DecimalField(max_digits=15, decimal_places=2, verbose_name=_("Valor da Conta"))
+    # ─── Correção monetária (contratos com índice) ────────────────────────────
+    # `valor` é o que se cobra hoje — é ele que o boleto carrega. `valor_nominal`
+    # preserva o que o contrato dizia na assinatura, e os três campos abaixo são
+    # a memória do reajuste. Sem eles, o cliente que pergunta "por que subiu"
+    # recebe um número sem origem, e conferir o reajuste exigiria refazer a conta
+    # à mão sobre uma série que pode ter sido revisada desde então.
+    valor_nominal = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True,
+        verbose_name=_("Valor nominal (sem correção)"),
+        help_text=_("O valor do contrato na assinatura. Vazio = título nunca corrigido."),
+    )
+    fator_correcao = models.DecimalField(
+        max_digits=12, decimal_places=8, null=True, blank=True,
+        verbose_name=_("Fator de correção aplicado"),
+    )
+    correcao_ate_competencia = models.DateField(
+        null=True, blank=True, verbose_name=_("Índice acumulado até"),
+    )
+    corrigido_em = models.DateTimeField(
+        null=True, blank=True, verbose_name=_("Corrigido em"),
+    )
     data_emissao = models.DateField(null=True, blank=True, verbose_name=_("Data de Emissão"))
     data_vencimento = models.DateField(verbose_name=_("Data de Vencimento"))
     data_agendamento = models.DateField(null=True, blank=True, verbose_name=_("Data de Agendamento da Cobrança"))

@@ -110,6 +110,25 @@ rejeita na escrita (RH, clientes, fornecedores). Validado por `iam/identity/test
 > [arquitetura/monetizacao.md](arquitetura/monetizacao.md).
 >
 > ⚠️ Numeração: "9.D" no [roadmap](roadmap.md) = **LGPD**; "fatia D" no AD-9 §6 = **ABAC por objeto**.
+
+### Adimplência do cliente — situação × números (decisão de produto)
+
+A carteira de clientes ([frontend.md §5.8](frontend.md)) mostra uma pílula
+**adimplente/inadimplente** para quem enxerga o cadastro (`cadastro.cliente.view`), mas os
+**números** — parcelas em atraso, valor, dias, faixa detalhada, subtotais de grupo — exigem também
+**`erp.cobranca.view`**. É o mesmo gate de duas pontas das divergências Asaas, pela mesma razão:
+`hasModule` é entitlement do **tenant**, não permissão do **usuário**.
+
+O corte é **no backend**: sem a permissão os campos não são serializados, então a tela não tem como
+vazá-los por engano — e a ordenação por valor/atraso também é recusada, porque ordenar por dívida é
+uma forma de lê-la. O documento segue mascarado sem `cadastro.cliente_doc.view`, e não há exportação
+para planilha nesta tela (decisão do dono do produto).
+
+**O que foi decidido conscientemente:** o rótulo binário *é* dado financeiro de pessoa natural e
+aparece para todo usuário do cadastro. A alternativa (esconder também a pílula) foi levantada e
+recusada — quem atende o cliente precisa saber se há pendência antes de prometer entrega ou emitir
+2ª via. Se o entendimento mudar, o corte é uma linha em `_pode_financeiro`
+([clientes/views.py](../backend/clientes/views.py)).
 > São coisas diferentes (herança de dois esquemas).
 
 ## 5.1 Revogação imediata de sessão (época no Redis)

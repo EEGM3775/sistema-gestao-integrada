@@ -37,7 +37,14 @@ export function useClienteOptions(enabled: boolean): EntityOptionsResult {
   const q = useQuery({
     queryKey: ['erp', 'filter-options', 'clientes'],
     queryFn: async () => {
-      const { data } = await apiClient.get<{ results?: Cliente[] } | Cliente[]>('/clientes/')
+      // `/clientes/` passou a ser paginado (a carteira pode ter milhares de
+      // linhas). Este select ainda carrega tudo de uma vez — pedimos a página
+      // máxima para não truncar a lista em silêncio, que seria pior do que
+      // lento: o cliente 200 simplesmente não apareceria no formulário. A
+      // correção de verdade é o select com busca server-side (pendência F2).
+      const { data } = await apiClient.get<{ results?: Cliente[] } | Cliente[]>(
+        '/clientes/', { params: { page_size: 300 } },
+      )
       const list = Array.isArray(data) ? data : (data.results ?? [])
       return list.map((c): EntityOption => ({ id: c.cliente_id, label: c.nome_completo }))
     },

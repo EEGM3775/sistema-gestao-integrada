@@ -40,7 +40,9 @@ class TenantIsolationTests(APITestCase):
         self.client.force_authenticate(user=self.user_a)
         resp = self.client.get("/api/clientes/")
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        nomes = {c["nome_completo"] for c in resp.json()}
+        # `/api/clientes/` é paginado (a carteira pode ter milhares de linhas):
+        # a lista vem em `results`, não na raiz.
+        nomes = {c["nome_completo"] for c in resp.json()["results"]}
         self.assertEqual(nomes, {"Cliente A"})
 
     def test_detail_cross_tenant_retorna_404(self):

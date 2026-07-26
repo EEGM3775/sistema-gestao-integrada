@@ -982,3 +982,337 @@ class MemorialNBR(TenantScopedModel):
 
     def __str__(self):
         return f"{self.get_quadro_display()} — {self.dependencia or self.descricao[:40]}"
+
+
+# ---------------------------------------------------------------------------
+# ORC.5b — bancos de preço do tenant, importação e reprecificação
+# ---------------------------------------------------------------------------
+#
+# A base referencial do topo deste arquivo é pública e global (§11.1). Daqui para
+# baixo é o espelho **da empresa**: mesmo formato (publicação → itens →
+# componentes), só que `TenantScopedModel` com RLS fail-closed padrão.
+#
+# São tabelas separadas em vez de uma só com `tenant` nulável, de propósito. Um
+# `tenant IS NULL OR tenant = :meu` na política RLS transformaria a trava
+# fail-closed — a defesa que impede vazamento entre empresas — numa política com
+# exceção, e exceção em política de isolamento é o tipo de detalhe que passa
+# despercebido na revisão seguinte. O custo é duplicar busca e adoção; o ganho é
+# que a regra do projeto continua valendo sem asterisco.
+#
+# Desenho e decisões de rumo em docs/modulos/moduloorcamento.md §12.2.
+
+
+class BancoPreco(TenantScopedModel):
+    """Base de preço **da empresa**: a tabela da prefeitura, o banco histórico.
+
+    É da empresa **com obra opcional**, não da obra. A tabela de uma prefeitura
+    serve todas as obras daquela cidade, e amarrá-la a uma obra obrigaria a
+    reimportar a mesma planilha por obra — multiplicando linhas idênticas e
+    criando divergência silenciosa quando uma cópia é corrigida e a outra não.
+
+    `travado` é a trava contra edição por engano. Banco conferido é régua: quem
+    orça confia no número, e uma correção acidental num coeficiente contamina
+    todo orçamento montado a partir dele. Destravar é explícito e fica registrado.
+    """
+
+    class Origem(models.TextChoices):
+        IMPORTADA = "importada", _("Importada de arquivo/API")
+        PROPRIA = "propria", _("Montada na empresa")
+
+    banco_id = models.AutoField(primary_key=True)
+    nome = models.CharField(max_length=120, verbose_name=_("Nome"))
+    descricao = models.TextField(blank=True, verbose_name=_("Descrição"))
+    fonte = models.CharField(
+        max_length=10, choices=Fonte.choices, default=Fonte.PROPRIA, verbose_name=_("Fonte"),
+    )
+    uf = models.CharField(max_length=2, blank=True, verbose_name=_("UF"))
+    mes_referencia = models.DateField(
+        null=True, blank=True, verbose_name=_("Mês de referência (data-base)"),
+        help_text=_("Data-base dos preços deste banco. Vazio = sem data-base declarada."),
+    )
+    regime_encargos = models.CharField(
+        max_length=10, choices=BaseReferencial.Regime.choices,
+        default=BaseReferencial.Regime.NAO_SE_APLICA, verbose_name=_("Regime de encargos"),
+    )
+    obra = models.ForeignKey(
+        "obras.Obra", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="bancos_preco", verbose_name=_("Obra (opcional)"),
+        help_text=_("Marque só quando o banco existir por causa de uma obra específica."),
+    )
+    origem = models.CharField(
+        max_length=10, choices=Origem.choices, default=Origem.PROPRIA, verbose_name=_("Origem"),
+    )
+    travado = models.BooleanField(
+        default=False, verbose_name=_("Travado"),
+        help_text=_("Travado = somente leitura. Protege o banco conferido de edição acidental."),
+    )
+    travado_em = models.DateTimeField(null=True, blank=True, verbose_name=_("Travado em"))
+    travado_por_nome = models.CharField(max_length=150, blank=True, verbose_name=_("Travado por"))
+    total_itens = models.PositiveIntegerField(default=0, verbose_name=_("Total de itens"))
+    ativo = models.BooleanField(default=True, verbose_name=_("Ativo"))
+    criado_em = models.DateTimeField(auto_now_add=True, verbose_name=_("Criado em"))
+    atualizado_em = models.DateTimeField(auto_now=True, verbose_name=_("Atualizado em"))
+
+    class Meta:
+        verbose_name = _("Banco de preço da empresa")
+        verbose_name_plural = _("Bancos de preço da empresa")
+        ordering = ["-mes_referencia", "nome"]
+        constraints = [
+            models.UniqueConstraint(fields=["tenant", "nome"], name="orcamento_banco_nome_unico"),
+        ]
+        indexes = [
+            models.Index(fields=["tenant", "ativo"], name="orcamento_banco_ativo_idx"),
+        ]
+
+    def __str__(self):
+        return self.rotulo_automatico()
+
+    def rotulo_automatico(self) -> str:
+        partes = [self.nome]
+        if self.uf:
+            partes.append(self.uf)
+        if self.mes_referencia:
+            partes.append(self.mes_referencia.strftime("%m/%Y"))
+        return " ".join(partes)
+
+    @property
+    def editavel(self) -> bool:
+        return not self.travado
+
+
+class PastaComposicao(TenantScopedModel):
+    """Agrupamento nomeado dentro de um banco — "Estrutura", "Obra Alfa", "Padrão".
+
+    Organização, não hierarquia de custo: pasta não soma nada. Existe porque um
+    banco com mil composições sem agrupamento é impossível de navegar.
+    """
+
+    pasta_id = models.AutoField(primary_key=True)
+    banco = models.ForeignKey(
+        BancoPreco, on_delete=models.CASCADE, related_name="pastas", verbose_name=_("Banco"),
+    )
+    nome = models.CharField(max_length=120, verbose_name=_("Nome"))
+    obra = models.ForeignKey(
+        "obras.Obra", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="pastas_composicao", verbose_name=_("Obra (opcional)"),
+    )
+    ordem = models.PositiveIntegerField(default=0, verbose_name=_("Ordem"))
+
+    class Meta:
+        verbose_name = _("Pasta de composições")
+        verbose_name_plural = _("Pastas de composições")
+        ordering = ["banco", "ordem", "nome"]
+        constraints = [
+            models.UniqueConstraint(fields=["banco", "nome"], name="orcamento_pasta_nome_unica"),
+        ]
+
+    def __str__(self):
+        return self.nome
+
+
+class ItemBancoPreco(TenantScopedModel):
+    """Linha de um banco da empresa — mesmo contrato do `InsumoReferencia`."""
+
+    item_banco_id = models.AutoField(primary_key=True)
+    banco = models.ForeignKey(
+        BancoPreco, on_delete=models.CASCADE, related_name="itens", verbose_name=_("Banco"),
+    )
+    pasta = models.ForeignKey(
+        PastaComposicao, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="itens", verbose_name=_("Pasta"),
+    )
+    codigo = models.CharField(max_length=30, verbose_name=_("Código"))
+    descricao = models.CharField(max_length=500, verbose_name=_("Descrição"))
+    unidade = models.CharField(max_length=20, verbose_name=_("Unidade"))
+    tipo = models.CharField(
+        max_length=12, choices=InsumoReferencia.Tipo.choices,
+        default=InsumoReferencia.Tipo.INSUMO, verbose_name=_("Tipo"),
+    )
+    custo_unitario = models.DecimalField(
+        max_digits=14, decimal_places=4, default=Decimal("0"),
+        validators=[MinValueValidator(Decimal("0"))], verbose_name=_("Custo unitário"),
+    )
+    grupo = models.CharField(max_length=150, blank=True, verbose_name=_("Grupo/classe"))
+    observacao = models.CharField(max_length=255, blank=True, verbose_name=_("Observação"))
+
+    class Meta:
+        verbose_name = _("Item de banco da empresa")
+        verbose_name_plural = _("Itens de banco da empresa")
+        ordering = ["banco", "codigo"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["banco", "tipo", "codigo"], name="orcamento_item_banco_codigo_unico",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["banco", "tipo"], name="orcamento_itbanco_tipo_idx"),
+            models.Index(fields=["tenant", "codigo"], name="orcamento_itbanco_cod_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.codigo} — {self.descricao[:60]}"
+
+
+class ComponenteBancoPreco(TenantScopedModel):
+    """Linha analítica de uma composição do banco da empresa."""
+
+    componente_id = models.AutoField(primary_key=True)
+    composicao = models.ForeignKey(
+        ItemBancoPreco, on_delete=models.CASCADE, related_name="componentes",
+        verbose_name=_("Composição"),
+    )
+    filho = models.ForeignKey(
+        ItemBancoPreco, on_delete=models.CASCADE, related_name="usado_em",
+        verbose_name=_("Insumo/composição filha"),
+    )
+    coeficiente = models.DecimalField(
+        max_digits=14, decimal_places=5, default=Decimal("0"),
+        validators=[MinValueValidator(Decimal("0"))], verbose_name=_("Coeficiente"),
+    )
+
+    class Meta:
+        verbose_name = _("Componente de composição da empresa")
+        verbose_name_plural = _("Componentes de composição da empresa")
+        ordering = ["composicao", "componente_id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["composicao", "filho"], name="orcamento_comp_banco_unico",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.composicao_id} ⊃ {self.filho_id} ×{self.coeficiente}"
+
+
+# `ImportacaoPreco` e `LinhaImportacao` viviam aqui até o **IE.1**. Foram
+# promovidos a `funcoesimpexp.Importacao`/`LinhaImportacao`, onde o que era campo
+# de preço (`codigo`, `custo_unitario`, `grupo`) virou um `valores` JSON governado
+# pelas colunas que o recurso declara — a mesma máquina servindo qualquer módulo.
+# A declaração do Orçamento está em `impexp.py`.
+
+
+class Reprecificacao(TenantScopedModel):
+    """Um **lote** de troca de data-base, com o preço anterior de cada linha.
+
+    Reprecificar não é versionar. Versão, neste módulo, significa aditivo
+    contratual — mudou o escopo da obra, e a revisão exige motivo. Atualizar a
+    tabela de preço é o mesmo escopo com preço de outro mês; se as duas coisas
+    virassem "versão", o histórico passaria a contar duas histórias misturadas.
+
+    Por isso o lote guarda `custo_antes` linha a linha: é o que torna o
+    **desfazer** possível sem inventar versão. Em orçamento **aprovado** não há
+    lote — a régua está congelada (`planilha.exigir_editavel`) e o caminho é
+    revisar, porque medições já feitas contra ela não podem mudar de base em
+    silêncio.
+
+    O destino é **qualquer publicação**, para frente ou para trás: em licitação
+    a data-base é a do edital, e ela costuma ser passada.
+    """
+
+    class Status(models.TextChoices):
+        PREVIA = "previa", _("Prévia (não aplicada)")
+        APLICADA = "aplicada", _("Aplicada")
+        DESFEITA = "desfeita", _("Desfeita")
+
+    reprecificacao_id = models.AutoField(primary_key=True)
+    orcamento = models.ForeignKey(
+        Orcamento, on_delete=models.CASCADE, related_name="reprecificacoes",
+        verbose_name=_("Orçamento"),
+    )
+    base_destino = models.ForeignKey(
+        BaseReferencial, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="reprecificacoes", verbose_name=_("Publicação de destino"),
+    )
+    banco_destino = models.ForeignKey(
+        BancoPreco, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="reprecificacoes", verbose_name=_("Banco de destino"),
+    )
+    data_base_destino = models.DateField(
+        null=True, blank=True, verbose_name=_("Data-base de destino"),
+    )
+    somente_ate = models.DateField(
+        null=True, blank=True, verbose_name=_("Só linhas com preço até"),
+        help_text=_("Data de corte: linha com preço mais novo que isto não é tocada."),
+    )
+    status = models.CharField(
+        max_length=10, choices=Status.choices, default=Status.PREVIA, verbose_name=_("Status"),
+    )
+    total_antes = models.DecimalField(
+        max_digits=18, decimal_places=2, default=Decimal("0"), verbose_name=_("Total antes"),
+    )
+    total_depois = models.DecimalField(
+        max_digits=18, decimal_places=2, default=Decimal("0"), verbose_name=_("Total depois"),
+    )
+    linhas_afetadas = models.PositiveIntegerField(default=0, verbose_name=_("Linhas afetadas"))
+    motivo = models.CharField(max_length=255, blank=True, verbose_name=_("Motivo"))
+    criado_em = models.DateTimeField(auto_now_add=True, verbose_name=_("Criado em"))
+    aplicada_em = models.DateTimeField(null=True, blank=True, verbose_name=_("Aplicada em"))
+    desfeita_em = models.DateTimeField(null=True, blank=True, verbose_name=_("Desfeita em"))
+    criado_por_nome = models.CharField(max_length=150, blank=True, verbose_name=_("Feita por"))
+
+    class Meta:
+        verbose_name = _("Reprecificação")
+        verbose_name_plural = _("Reprecificações")
+        ordering = ["-criado_em"]
+        indexes = [
+            models.Index(fields=["orcamento", "status"], name="orcamento_repre_status_idx"),
+        ]
+
+    def __str__(self):
+        return f"Reprecificação #{self.reprecificacao_id} ({self.get_status_display()})"
+
+    @property
+    def delta(self) -> Decimal:
+        return (self.total_depois or Decimal("0")) - (self.total_antes or Decimal("0"))
+
+
+class LinhaReprecificacao(TenantScopedModel):
+    """O antes e o depois de uma linha da planilha dentro de um lote.
+
+    Guarda também `fonte_antes`/`codigo_antes`/`data_base_antes` porque desfazer
+    tem de restaurar a **procedência**, não só o número: uma linha que voltou ao
+    preço velho mas continua dizendo que veio da publicação nova é um rastro
+    falso, e é justamente o rastro que a auditoria de licitação confere.
+    """
+
+    linha_id = models.AutoField(primary_key=True)
+    reprecificacao = models.ForeignKey(
+        Reprecificacao, on_delete=models.CASCADE, related_name="linhas",
+        verbose_name=_("Lote"),
+    )
+    item_orcado = models.ForeignKey(
+        ItemOrcado, on_delete=models.CASCADE, related_name="reprecificacoes",
+        verbose_name=_("Linha orçada"),
+    )
+    custo_antes = models.DecimalField(
+        max_digits=16, decimal_places=4, default=Decimal("0"), verbose_name=_("Custo antes"),
+    )
+    custo_depois = models.DecimalField(
+        max_digits=16, decimal_places=4, default=Decimal("0"), verbose_name=_("Custo depois"),
+    )
+    fonte_antes = models.CharField(max_length=10, blank=True, verbose_name=_("Fonte antes"))
+    codigo_antes = models.CharField(max_length=30, blank=True, verbose_name=_("Código antes"))
+    data_base_antes = models.DateField(null=True, blank=True, verbose_name=_("Data-base antes"))
+    fonte_depois = models.CharField(max_length=10, blank=True, verbose_name=_("Fonte depois"))
+    codigo_depois = models.CharField(max_length=30, blank=True, verbose_name=_("Código depois"))
+    data_base_depois = models.DateField(null=True, blank=True, verbose_name=_("Data-base depois"))
+    selecionada = models.BooleanField(default=True, verbose_name=_("Selecionada"))
+    aplicada = models.BooleanField(default=False, verbose_name=_("Aplicada"))
+    motivo = models.CharField(max_length=255, blank=True, verbose_name=_("Observação"))
+
+    class Meta:
+        verbose_name = _("Linha de reprecificação")
+        verbose_name_plural = _("Linhas de reprecificação")
+        ordering = ["reprecificacao", "linha_id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["reprecificacao", "item_orcado"], name="orcamento_repre_linha_unica",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.item_orcado_id}: {self.custo_antes} → {self.custo_depois}"
+
+    @property
+    def delta_unitario(self) -> Decimal:
+        return (self.custo_depois or Decimal("0")) - (self.custo_antes or Decimal("0"))

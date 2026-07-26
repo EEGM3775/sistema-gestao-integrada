@@ -192,54 +192,47 @@ silos); **(7)** segue a Malha (tema, acento único, mono, master-detail, vazio/c
 
 ---
 
-## 2. Biblioteca de Componentes — shadcn/ui
+## 2. Biblioteca de Componentes
 
-### Por que shadcn/ui
+### A camada compartilhada — `components/malha/`
 
-- Componentes acessíveis (Radix UI primitives) sem biblioteca externa de runtime
-- Código copiado direto em `src/components/ui/` — totalmente customizável
-- Tailwind 4 nativo — sem conflito de versão
-- Tem exatamente o que o sistema precisa: `Table`, `Dialog`, `Sheet`, `Tabs`, `Card`,
-  `Badge`, `Form`, `Select`, `Popover`, `Toast`, `Skeleton`
+Os primitivos da Malha vivem em [components/malha/](../frontend/src/components/malha/) e são a
+**fonte única** dos módulos novos. Nenhum deles usa cor fixa: tudo sai dos tokens de
+[index.css](../frontend/src/index.css), e por isso acompanham tema claro/escuro sem reescrita.
 
-### Componentes a instalar (via `npx shadcn@latest add`)
+| Primitivo | Papel |
+|---|---|
+| `Card` | Superfície `--surface` (nunca branco puro), borda `--line`, raio `--r-md` |
+| `Pill` | Estado **nomeado** (§8) nos semânticos de UI + `accent`; cor sozinha nunca comunica |
+| `Num` | Dado de instrumento: mono tabular, alinhado à direita — "colunas como réguas" (§6) |
+| `KpiTile` | Mosaico de KPI: valor real **ou** o selo `EmBreve`; exige a base do número |
+| `SectionHead` | Cabeçalho de seção, opcionalmente com a cor de estágio (`--st-*`) |
+| `Spinner`/`Loading`/`Empty`/`EmBreve` | Estados; `Loading` sempre diz **o quê** carrega |
 
-```
-button      input       label       textarea    select
-card        badge       table       tabs        separator
-dialog      sheet       alert       toast       skeleton
-avatar      dropdown-menu  tooltip  progress    calendar
-```
+> **Dívida conhecida:** SCM e SIL nasceram antes deste diretório e têm cópias locais do kit
+> (`modules/scm/pages/SuprimentosPage.tsx` e `modules/sil/ui.tsx` definem `Card`/`Pill`/`Btn`/
+> `Modal` próprios). Cada um migra para `components/malha/` na sua vez. O ERP tem um terceiro kit,
+> específico de finanças, em `modules/erp/components/shared/` (`FilterBar`, `FinanceDataTable`,
+> `MoneyInput`, `Sheet`) — esse é legítimo, é de domínio, não de fundação.
 
-### Componentes de domínio (escritos no projeto)
+**shadcn/ui não foi adotado** — a versão original desta seção planejava `src/components/ui/` gerado
+por `npx shadcn add`, o que nunca aconteceu. Os primitivos são escritos no projeto (acima) e os
+componentes herdados da v01 seguem em `components/common/` com CSS próprio, migrando por módulo.
+
+### Componentes de domínio
 
 ```
 src/components/
-├── ui/                          ← shadcn (gerado, não editar manualmente)
+├── malha/                       ← primitivos da identidade (tabela acima)
+├── brand/                       ← Quarteirao · BairroRecorte · EdicaoChip
 ├── layout/
-│   ├── AppShell.tsx             ← Sidebar + Topbar + <Outlet />
-│   ├── Sidebar.tsx              ← colapsível, entitlement-aware
-│   ├── Topbar.tsx               ← breadcrumb + tenant badge + user menu
-│   └── PageHeader.tsx           ← título de página + ações primárias
-├── data/
-│   ├── DataTable.tsx            ← wrapper de <Table> com sorting/pagination
-│   ├── EmptyState.tsx           ← ilustração + CTA quando lista vazia
-│   └── LoadingSkeleton.tsx      ← skeleton de tabela/card
-├── obra/
-│   ├── StatusBadge.tsx          ← badge colorido por status_obra/etapa
-│   ├── KpiCard.tsx              ← card de KPI (valor + label + delta)
-│   ├── ObraCard.tsx             ← card clicável na grade de obras
-│   ├── EtapaRow.tsx             ← linha da lista/gantt de etapas
-│   ├── GanttBar.tsx             ← barra de gantt inline (CSS puro)
-│   └── MapaObra.tsx             ← Leaflet isolado (lazy-load)
-├── ia/
-│   ├── AnaliseCard.tsx          ← card de resultado de análise IA
-│   └── AnaliseStatus.tsx        ← badge de status de análise (pending/done/fail)
-└── shared/
-    ├── ConfirmDialog.tsx        ← Dialog de confirmação de exclusão
-    ├── UploadZone.tsx           ← drag-and-drop de arquivo
-    ├── CurrencyDisplay.tsx      ← formata BRL
-    └── DateDisplay.tsx          ← formata data pt-BR
+│   ├── AppShell.tsx             ← AppSidebar + AppTopbar + <Outlet />
+│   ├── AppSidebar.tsx           ← farol da edição, colapsível
+│   └── AppTopbar.tsx            ← glass: breadcrumb + chip de estágio + tema
+├── common/                      ← herdados da v01 (Button/Input/Modal/Table + CSS)
+├── obra/                        ← blueprint · gantt · mapa · timeline · KPIs
+├── clientes/ · notifications/
+└── ModuleRoute · PrivateRoute · AccessNotice · ThemeToggle
 ```
 
 ---
@@ -503,45 +496,58 @@ direita com o formulário. Mobile: só o formulário com logo no topo.
 - Spinner e botão desabilitado durante submit; alerta vermelho inline em caso de erro
 - Redireciona para `/app/dashboard` ou `location.state.from`
 
-### 5.3 AppHomePage / Hub de módulos (`/app/dashboard`) ✅ Construída
+### 5.3 AppHomePage — Hub da Edição Construtora (`/app/dashboard`)
 
-Tela inicial pós-login. Não é um dashboard de KPIs (ainda) — é um **hub de módulos** que exibe
-toda a plataforma com estado claro de acesso: base, contratado, adicional ou em desenvolvimento.
-Os botões ficam desabilitados até cada módulo ter sua página implementada.
+O **hub da edição** do §9 da identidade: faixa Meia-Noite com a malha viva (saudação + chip
+"Edição Construtora · Construir" + números vivos clicáveis) e o conteúdo em **abas horizontais**,
+com a aba na URL (`?aba=`) para ser linkável.
+
+| Aba | O que resolve | Referência de mercado |
+|---|---|---|
+| **Visão geral** | KPIs compostos dos módulos + medidores de plano + prévia da fila | tiles dinâmicos do SAP Fiori Launchpad |
+| **Requer decisão** | fila numerada, no acento, com o verbo e o destino | *Assigned to Me* (ACC) · *open items for review* (Procore) · *Assistant* (Salesforce) |
+| **Agenda** | próximos 7 dias do feed agregado do calendário | *Today's Tasks/Events* (Salesforce) · *today's schedule* (Procore) |
+| **Módulos** | **todos** os módulos, agrupados pelo endereço no ciclo | *App Launcher* (Salesforce) · *spaces/pages* (Fiori) |
+| **Atividade** | feed de fatos reais, carimbado com o módulo de origem | *Recently changed* (Procore) · *Recent Items* (ACC) |
+
+**Dados honestos — não há endpoint "dashboard da home".** O hub **compõe** os agregados que cada
+módulo já calcula, cada chamada condicionada ao entitlement
+([useHomeResumo](../frontend/src/pages/app/home/useHomeResumo.ts)): `/api/plano/` (uso real das
+quotas, sempre), `/api/erp/dashboard/` (exige `erp.relatorio.view`), `/api/scm/dashboard/`,
+`/api/sil/dashboard/` e `/api/calendar/events/`. Quem não assina um módulo **não vê um zero** —
+não vê o KPI. Onde não há fonte (avanço físico → APS; DRE por obra → D.1.4), o mosaico diz
+**"em breve"**. O hub de dois usuários da mesma empresa é legitimamente diferente.
+
+**Catálogo** ([catalogo.ts](../frontend/src/pages/app/home/catalogo.ts)): os módulos são agrupados
+por **estágio do ciclo** (Originar/Construir/Negociar/Operar + Plataforma transversal), não por
+"base × pago", e incluem os **futuros com o horizonte** (H1/H2/H3) — o farol mostra a casa inteira,
+inclusive os cômodos por construir. Nada é escondido: o inacessível aparece travado com o motivo
+(`Módulo não contratado` · `Somente administradores` · `Backend pronto — tela em construção` ·
+`Planejado`).
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  Bom dia, demo!                    Quarta, 4 de junho de 2026│
-│  Plano base                                                  │
+┌─ faixa Meia-Noite (malha viva) ──────────────────────────────┐
+│  ▣  Bom dia, ana.                  [Edição Construtora ·     │
+│     sexta, 25 de julho de 2026      Construir]               │
+│                                                              │
+│  7 decisões aguardando   12 compromissos em 7 dias   14 mód. │
 ├──────────────────────────────────────────────────────────────┤
-│  MÓDULOS BASE  [Inclusos]                                    │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐       │
-│  │🏗 Obras  │ │🏢 Empreen│ │👥 Client.│ │🚛 Fornec.│       │
-│  │[Acessar▷]│ │[Acessar▷]│ │[Acessar▷]│ │[Acessar▷]│       │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────┘       │
-│  ┌──────────┐ ┌──────────┐                                  │
-│  │🧠 Diário │ │📅 Agenda │                                  │
-│  │[Acessar▷]│ │[Acessar▷]│                                  │
-│  └──────────┘ └──────────┘                                  │
+│ [Visão geral] [Requer decisão ⑦] [Agenda] [Módulos] [Ativid.]│  ← abas (?aba=)
 ├──────────────────────────────────────────────────────────────┤
-│  MÓDULOS ADICIONAIS  [À la carte]                            │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐       │
-│  │💰 ERP    │ │👤 RH     │ │📈 CRM    │ │✈ Drone   │       │
-│  │[Contratar│ │[Contratar│ │[Contratar│ │[Contratar│       │
-│  │ módulo]  │ │ módulo]  │ │ módulo]  │ │ módulo]  │       │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────┘       │
-├──────────────────────────────────────────────────────────────┤
-│  EM DESENVOLVIMENTO                                          │
-│  [SCM] [DMS] [PDCA] [APS] [SIL] [Maps]  ← mini cards       │
-└──────────────────────────────────────────────────────────────┘
+│  INDICADORES                                                 │
+│  ┌────────┐┌────────┐┌────────┐┌────────┐┌──────────────┐    │
+│  │ Obras  ││A receb.││ A pagar││Estoque ││ Avanço físico│    │
+│  │  4     ││R$ 128k ││ R$ 96k ││R$ 61k  ││  [em breve]  │    │
+│  │de 8 no ││ ERP    ││  ERP   ││  SIL   ││ depende do   │    │
+│  │  plano ││        ││        ││        ││    APS       │    │
+│  └────────┘└────────┘└────────┘└────────┘└──────────────┘    │
+├───────────────────────────────────┬──────────────────────────┤
+│  REQUER SUA DECISÃO               │  SEU PLANO               │
+│  01 Requisições a aprovar   SIL → │  Essencial               │
+│  02 Pagamentos vencidos     ERP → │  obras     ▓▓▓▓░░ 4/8    │
+│  03 Cotações no prazo final SCM → │  clientes  ▓▓░░░░ 22/100 │
+└───────────────────────────────────┴──────────────────────────┘
 ```
-
-- Cards de módulos pagos mostram "Contratar módulo" se `!hasModule(code)`, "Acessar" se contratado
-- Todos os botões `disabled` enquanto as páginas dos módulos não existem (`implemented: false`)
-- Para ativar um módulo: setar `implemented: true` no catálogo + adicionar rota no `App.tsx`
-
-**Substituição futura:** quando o dashboard de KPIs (Fase C.1) for construído, esta página
-passa a ser o hub de módulos acessível por `/app/modulos` e o dashboard de KPIs ocupa `/app/dashboard`.
 
 ### 5.4 EmpreendimentosListPage
 
@@ -554,8 +560,12 @@ passa a ser o hub de módulos acessível por `/app/modulos` e o dashboard de KPI
 
 ```
 Header: nome + status badge + [Editar]
-Tabs: Visão Geral | Obras | Financeiro (hasModule) | Documentos | Custos
-─ Visão Geral: dados cadastrais + mapa da localização
+Tabs: Visão Geral | Obras | Contas Bancárias | Custos | Unidades
+─ Visão Geral: contagem de unidades (cadastradas · à venda · vendidas) + dados cadastrais
+─ Unidades: o estoque à venda em linhas e colunas — ordenação server-side sobre o
+  estoque inteiro, filtros (situação/quadra), busca, carregamento por página e CRUD.
+  Ordem padrão é a do endereço (quadra › lote › bloco › andar › apto), numérica.
+  É o cadastro que alimenta o seletor de unidade da venda (§5.8)
 ─ Obras: ObrasListPage filtrada por empreendimentoId
 ─ Financeiro: contas bancárias, custos, faturas vinculadas
 ─ Documentos: lista + upload
@@ -611,10 +621,101 @@ COLUNA DIREITA (Tabs):
     M2M responsaveis_tecnicos + equipe (rh.Funcionario)
 ```
 
-### 5.8 ClientesListPage / ClienteDetailPage
+### 5.8 Clientes — a carteira (`/app/clientes`)
 
-- Lista: Nome, CPF/CNPJ, Email, Telefone
-- Detalhe (Sheet ou página): dados + contratos + cobranças + histórico CRM
+A lista de clientes é uma **grade tipo planilha**, não uma tabela: a carteira de
+uma loteadora chega a milhares de linhas, e a tela precisa achar *um* lote entre
+elas. Camada em [modules/clientes/carteira/](../frontend/src/modules/clientes/carteira/);
+contrato do backend em [clientes/carteira.py](../backend/clientes/carteira.py).
+
+**Duas coisas independentes**, como nos grids corporativos (AG Grid, Airtable,
+relatórios do Salesforce) e nos Subtotais do Excel:
+
+- **Visão** — o que é *uma linha*: `Clientes` (uma pessoa, com a última unidade e
+  o contador das demais) ou `Unidades` (uma aquisição por linha, pessoa repetida).
+  Sem isso, "unidade" e "adimplência por lote" não seriam colunas honestas.
+  Cada visão é uma **planilha própria**, não a mesma com outro filtro: tem a sua
+  **coluna-âncora** — a primeira, congelada, a que abre a ficha (`Cliente` numa,
+  `Unidade` na outra) —, a sua **ordem padrão** (pessoas em ordem alfabética;
+  unidades na ordem do endereço) e o seu próprio conjunto de colunas, larguras,
+  agrupamento e ordenação. A âncora não se desliga nem se arrasta para o meio.
+- **Agrupar por** — até **3 níveis** empilháveis (empreendimento, quadra,
+  bloco/torre, cidade, UF, faixa de atraso, condição de pagamento, ano da compra,
+  cliente). Cada grupo é um cabeçalho recolhível com contagem e subtotais
+  calculados **no banco sobre a carteira inteira** (`GROUP BY`), não sobre a
+  página carregada; abrir um grupo dispara a consulta das linhas dele.
+
+**Ordenar** — **toda coluna ordena**, pelo clique no título (alterna o sentido) ou
+pelo menu **"Ordenar por"** do cabeçalho, que diz em palavras o que a seta faz
+("A → Z", "Menor → maior", "Mais recente primeiro"). A ordenação é **server-side**
+sobre a carteira inteira, não sobre a página em mãos, e cada chave da tela tem
+correspondente em `ORDENACOES` ([carteira.py](../backend/clientes/carteira.py)) —
+menu sem item morto. Toda ordem carrega o desempate pela chave primária: sem ele
+duas linhas de mesmo valor trocam de lugar entre páginas e a rolagem infinita
+repete uma e come a outra.
+
+Demais recursos de planilha: rolagem infinita virtualizada (só o visível é
+renderizado), cabeçalho e primeira coluna congelados, colunas redimensionáveis e
+reordenáveis por arrasto, seletor de colunas, seleção com Shift/Ctrl, **Ctrl+C**
+copiando TSV (cola no Excel) e navegação por teclado. As preferências ficam
+salvas por usuário **e por visão** (`localStorage`, chave
+`sgi_carteira_clientes_v2`).
+
+**Identificação da unidade** — `ClienteEmpreendimento` tem quadra, lote,
+bloco/torre, andar e unidade **estruturados** (o `unidade_comprada` segue como
+rótulo livre); o backend monta `rotulo_unidade` ("QD 12 · LT 05" ou
+"Torre A · 3º · 302") para que grade, extrato e ficha nunca divirjam. Os cinco
+níveis também são **colunas próprias** na visão de unidades, e juntos formam a
+**ordem natural** dela — quadra › lote › bloco/torre › andar › apto —, que é a
+ordem padrão e a que a coluna `Unidade` aplica. Natural e não alfabética: os
+campos são texto (existe "Quadra A", "Lote 12-B"), e em ordem de texto o lote 10
+vem antes do 2. A chave de ordenação preenche o valor com zeros à esquerda e
+manda o nível vazio para o fim (`nulls_last`) — o apartamento sem quadra não se
+mistura ao loteamento. Cidade/UF saem do **empreendimento** (campos próprios, não
+do endereço em texto livre) — é a cidade do imóvel, que não se confunde com a do
+cliente.
+
+**Adimplência e LGPD.** A pílula *adimplente/inadimplente* aparece para quem
+enxerga o cadastro; **parcelas, valores e dias de atraso** exigem
+`erp.cobranca.view` além de `cadastro.cliente.view` (gate de duas pontas, o
+mesmo das divergências Asaas) e nem saem do backend sem ela — a tela nunca
+mostra "R$ 0,00" no lugar de "sem acesso". **Ordenar por um dado é lê-lo**, então
+a ordenação segue o mesmo gate do valor: por dívida exige `erp.cobranca.view` e
+por documento exige `cadastro.cliente_doc.view` — a ordem alfabética dos CPFs
+reconstruiria, linha a linha, o que a máscara esconde. A resposta traz
+`podeFinanceiro`/`podeDocumento` para o menu mostrar a opção **travada com o
+motivo** em vez de aceitar o clique e não ordenar. CPF/CNPJ segue mascarado sem
+`cadastro.cliente_doc.view`. A fonte é `ContaReceber` (a viva); "atrasado" é
+derivado do vencimento, nas mesmas faixas do aging do ERP.
+
+#### A venda de uma unidade (`AquisicaoForm`)
+
+A identificação da unidade **não se digita mais na venda**: ela é cadastro do empreendimento (aba
+**Unidades**), e o formulário de aquisição só escolhe uma das que estão à venda. Era daí que vinha o
+conflito — o rótulo livre (`Unidade comprada`) e os cinco campos estruturados eram preenchidos lado a
+lado, podiam divergir, e o mesmo lote podia ser vendido duas vezes por caminhos diferentes.
+
+O preço parte do **valor de tabela** da unidade e o que o cliente paga sai de uma conta: desconto →
+entrada (parcelável, **sem juros**) → saldo em N parcelas por **Price** (fixa) ou **SAC**
+(decrescente) → **balões** anuais/semestrais. A conta roda no **backend** (`POST
+/api/clientes-empreendimentos/simular/`, com folga de digitação), nunca no navegador: repetir a
+fórmula na tela criaria duas matemáticas para o mesmo contrato, e a da tela seria a que o cliente vê.
+O painel mostra o resumo (negociado, entrada, saldo, juros, total, parcela) e abre o carnê linha a
+linha antes de salvar.
+
+**Salvar registra a proposta; o carnê é outro ato.** As parcelas só viram `ContaReceber` pelo botão
+**"Gerar parcelas"** na ficha, depois da conferência — e **sem boleto**: cobrar é decisão do ERP,
+unitária ou por lote. O botão some quando o carnê existe (o backend recusa a segunda geração).
+
+#### ClienteDetailPage — 6 abas
+
+`Ficha` · `Aquisições` · `Documentos` · `Dados bancários` · **`Financeiro`** ·
+**`Obra`**. As duas últimas são a integração entre módulos aparecendo na tela
+(§1.6.6): **Financeiro** é o extrato parcela a parcela com o boleto de cada uma e
+a unidade que ela paga (`GET /api/clientes/<id>/financeiro/`); **Obra** mostra o
+andamento das obras do empreendimento comprado, com o percentual declarado como
+*média das etapas* e link para o módulo de Obras — obra sem etapa cadastrada diz
+"em breve", nunca 0% (`GET /api/clientes/<id>/obra/`).
 
 ### 5.9 FornecedoresListPage
 

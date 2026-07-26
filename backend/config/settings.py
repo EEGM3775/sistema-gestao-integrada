@@ -92,6 +92,9 @@ INSTALLED_APPS = [
     "empreendimentos",
     "fornecedores",
     "catalogo",
+    # Fundação de importação/exportação: motor único, sem entitlement próprio —
+    # quem autoriza é o módulo dono do dado (docs/modulos/funcoesimpexp.md).
+    "funcoesimpexp.apps.FuncoesImpExpConfig",
     "obras",
     "rh",
     "modulodiario",
@@ -506,6 +509,13 @@ CELERY_BEAT_SCHEDULE = {
     'calendar-despachar-lembretes': {
         'task': 'modulocalendar.tasks.despachar_lembretes',
         'schedule': 60.0,
+    },
+    # IE.0b — apaga os arquivos de exportação vencidos. Sem esta varredura, o
+    # `expira_em` seria só uma data no banco enquanto o arquivo seguiria no disco
+    # para sempre; a linha (o rastro da R12) permanece.
+    'impexp-limpar-exportacoes-expiradas': {
+        'task': 'funcoesimpexp.limpar_exportacoes_expiradas',
+        'schedule': 6 * 3600.0,
     },
 }
 

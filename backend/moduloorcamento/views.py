@@ -26,35 +26,58 @@ from rest_framework.response import Response
 
 from catalogo.models import Item
 from nucleo.permissions import RequireModule, RequirePermission
+from nucleo.quotas import QuotaEnforcedMixin
 from nucleo.tenancy import TenantScopedViewSetMixin
 
-from . import controle, nbr12721, planilha, precificacao, services
+from . import (
+    bancos as servico_bancos,
+    controle,
+    duplicacao,
+    exportacao,
+    nbr12721,
+    planilha,
+    precificacao,
+    reprecificacao as servico_reprecificacao,
+    services,
+)
 from .models import (
+    BancoPreco,
     BaseReferencial,
+    ComponenteBancoPreco,
     ComposicaoBDI,
     ComposicaoReferenciaItem,
     InsumoReferencia,
+    ItemBancoPreco,
     ItemOrcado,
+    LinhaReprecificacao,
     MemorialNBR,
     Orcamento,
     ParametroObra,
     ParcelaEtapa,
+    PastaComposicao,
     PavimentoObra,
+    Reprecificacao,
     RevisaoOrcamento,
     UnidadeAutonoma,
 )
 from .pagination import OrcamentoPageNumberPagination
 from .serializers import (
+    BancoPrecoSerializer,
     BaseReferencialSerializer,
+    ComponenteBancoPrecoSerializer,
     ComposicaoBDISerializer,
     ComposicaoReferenciaItemSerializer,
     InsumoReferenciaSerializer,
+    ItemBancoPrecoSerializer,
     ItemOrcadoSerializer,
+    LinhaReprecificacaoSerializer,
     MemorialNBRSerializer,
     OrcamentoSerializer,
     ParametroObraSerializer,
     ParcelaEtapaSerializer,
+    PastaComposicaoSerializer,
     PavimentoObraSerializer,
+    ReprecificacaoSerializer,
     RevisaoOrcamentoSerializer,
     UnidadeAutonomaSerializer,
 )
@@ -310,9 +333,19 @@ class OrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.
         # de criar `orcamento.cronograma.*` — permissão nova exige rebuild da
         # imagem da IAM + re-seed, e o recorte aqui não pedia granularidade nova.
         "curva_abc": "orcamento.relatorio.view",
+        "por_categoria": "orcamento.relatorio.view",
         "cronograma": "orcamento.relatorio.view",
         "curva_s": "orcamento.relatorio.view",
         "distribuir_cronograma": "orcamento.orcamento.edit",
+        # ORC.5b. Duplicar cria planilha nova → `.edit`; reprecificar mexe no
+        # preço da régua, também `.edit`. Exportar é leitura de relatório.
+        # Nenhuma permissão nova: ver §12.1 da planta — permissão nova exige
+        # rebuild da imagem da IAM + re-seed, e o recorte aqui não pediu.
+        "duplicar": "orcamento.orcamento.edit",
+        "copiar_itens": "orcamento.orcamento.edit",
+        "reprecificar": "orcamento.orcamento.edit",
+        "reprecificacoes": "orcamento.orcamento.view",
+        "exportar": "orcamento.relatorio.view",
     }
 
     def perform_update(self, serializer):
@@ -363,6 +396,15 @@ class OrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.
             return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         orcamento.refresh_from_db()
         return Response(self.get_serializer(orcamento).data)
+
+    @action(detail=True, methods=["get"], url_path="por-categoria")
+    def por_categoria(self, request, pk=None):
+        """Custo direto por natureza de insumo (material × mão de obra × equipamento).
+
+        Só vê linha explodida, então a resposta carrega a `cobertura_pct` — a
+        tela mostra o gráfico e diz de quanto da planilha ele fala.
+        """
+        return Response(precificacao.custo_por_categoria(self.get_object()))
 
     @action(detail=True, methods=["get"], url_path="curva-abc")
     def curva_abc(self, request, pk=None):
@@ -443,6 +485,148 @@ class OrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.
         except planilha.RevisaoInvalida as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         return Response(self.get_serializer(nova).data, status=status.HTTP_201_CREATED)
+
+    # --- ORC.5b: duplicar, copiar, reprecificar, exportar ---
+
+    @action(detail=True, methods=["post"], url_path="duplicar")
+    def duplicar(self, request, pk=None):
+        """Clona a planilha para outra obra (ou a mesma), em rascunho v-nova.
+
+        Não é `revisar`: não rebaixa a origem nem registra aditivo. Reaproveitar
+        obra parecida é o caso mais comum de partida numa construtora.
+        """
+        origem = self.get_object()
+        obra_id = request.data.get("obra")
+        obra = None
+        if obra_id:
+            obra = origem.obra.__class__.objects.filter(
+                tenant_id=self._tenant_id(), pk=obra_id
+            ).first()
+            if obra is None:
+                return Response({"obra": "Obra não encontrada."}, status=status.HTTP_404_NOT_FOUND)
+
+        novo, sem_etapa = duplicacao.duplicar_orcamento(
+            origem, obra_destino=obra,
+            descricao=(request.data.get("descricao") or "").strip(),
+            usuario_nome=self._nome_do_usuario(request),
+        )
+        return Response(
+            duplicacao.resumo_da_duplicata(novo, sem_etapa), status=status.HTTP_201_CREATED
+        )
+
+    @action(detail=True, methods=["post"], url_path="copiar-itens")
+    def copiar_itens(self, request, pk=None):
+        """Traz um bloco de linhas de outro orçamento para dentro deste."""
+        destino = self.get_object()
+        ids = request.data.get("itens") or []
+        if not isinstance(ids, list) or not ids:
+            return Response(
+                {"itens": "Informe a lista de linhas a copiar."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        itens = list(
+            ItemOrcado.objects.filter(tenant_id=self._tenant_id(), pk__in=ids)
+            .select_related("orcamento")
+        )
+        if not itens:
+            return Response({"itens": "Nenhuma linha encontrada."}, status=status.HTTP_404_NOT_FOUND)
+
+        pai = None
+        if request.data.get("pai"):
+            pai = ItemOrcado.objects.filter(
+                tenant_id=self._tenant_id(), pk=request.data["pai"], orcamento=destino
+            ).first()
+
+        try:
+            copiadas, sem_etapa = duplicacao.copiar_itens(destino=destino, itens=itens, pai=pai)
+        except duplicacao.CopiaInvalida as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except planilha.OrcamentoNaoEditavel as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+
+        destino.refresh_from_db()
+        return Response({
+            "copiadas": copiadas,
+            "linhas_sem_etapa": sem_etapa,
+            "valor_total": str(destino.valor_total),
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"], url_path="reprecificar")
+    def reprecificar(self, request, pk=None):
+        """Monta a **prévia** de troca de data-base. Não altera nada ainda."""
+        orcamento = self.get_object()
+        base = banco = None
+        if request.data.get("base_destino"):
+            base = BaseReferencial.objects.filter(pk=request.data["base_destino"]).first()
+            if base is None:
+                return Response({"base_destino": "Publicação não encontrada."}, status=404)
+        if request.data.get("banco_destino"):
+            banco = BancoPreco.objects.filter(
+                tenant_id=self._tenant_id(), pk=request.data["banco_destino"]
+            ).first()
+            if banco is None:
+                return Response({"banco_destino": "Banco não encontrado."}, status=404)
+
+        try:
+            lote = servico_reprecificacao.gerar_previa(
+                orcamento, base_destino=base, banco_destino=banco,
+                somente_ate=request.data.get("somente_ate") or None,
+                usuario_nome=self._nome_do_usuario(request),
+            )
+        except planilha.OrcamentoNaoEditavel as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except servico_reprecificacao.ReprecificacaoInvalida as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(servico_reprecificacao.serializar_previa(lote))
+
+    @action(detail=True, methods=["get"], url_path="reprecificacoes")
+    def reprecificacoes(self, request, pk=None):
+        """Histórico de lotes deste orçamento — é aqui que mora o desfazer."""
+        lotes = Reprecificacao.objects.filter(orcamento=self.get_object()).order_by("-criado_em")
+        return Response(ReprecificacaoSerializer(lotes, many=True).data)
+
+    @action(detail=True, methods=["get"], url_path="exportar")
+    def exportar(self, request, pk=None):
+        """XLSX ou PDF da planilha, sintética ou analítica.
+
+        `?formato=xlsx|pdf&nivel=analitico|sintetico&peca=planilha|curva-abc|cronograma`
+        """
+        orcamento = self.get_object()
+        formato = (request.query_params.get("formato") or "xlsx").lower()
+        analitico = (request.query_params.get("nivel") or "analitico").lower() != "sintetico"
+        peca = (request.query_params.get("peca") or "planilha").lower()
+
+        try:
+            if peca == "curva-abc":
+                conteudo = exportacao.curva_abc_xlsx(orcamento, precificacao.curva_abc(orcamento))
+                nome = exportacao.nome_do_arquivo(orcamento, sufixo="curva-abc", extensao="xlsx")
+                tipo = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            elif peca == "cronograma":
+                dados = controle.cronograma(orcamento)
+                conteudo = exportacao.cronograma_xlsx(orcamento, dados)
+                nome = exportacao.nome_do_arquivo(orcamento, sufixo="cronograma", extensao="xlsx")
+                tipo = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            elif formato == "pdf":
+                conteudo = exportacao.planilha_pdf(orcamento, analitico=analitico)
+                nome = exportacao.nome_do_arquivo(
+                    orcamento, sufixo="analitica" if analitico else "sintetica", extensao="pdf",
+                )
+                tipo = "application/pdf"
+            else:
+                conteudo = exportacao.planilha_xlsx(orcamento, analitico=analitico)
+                nome = exportacao.nome_do_arquivo(
+                    orcamento, sufixo="analitica" if analitico else "sintetica", extensao="xlsx",
+                )
+                tipo = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        except exportacao.ExportacaoIndisponivel as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_501_NOT_IMPLEMENTED)
+
+        from django.http import HttpResponse
+
+        resposta = HttpResponse(conteudo, content_type=tipo)
+        resposta["Content-Disposition"] = f'attachment; filename="{nome}"'
+        return resposta
 
     @staticmethod
     def _nome_do_usuario(request) -> str:
@@ -852,3 +1036,300 @@ class RevisaoOrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, vi
     filterset_fields = ["orcamento", "tipo", "orcamento__obra"]
     ordering_fields = ["criado_em", "numero"]
     required_permission = "orcamento.orcamento.view"
+
+
+# ---------------------------------------------------------------------------
+# ORC.5b — bancos da empresa, importação e reprecificação
+# ---------------------------------------------------------------------------
+#
+# Nenhuma permissão nova (§12.1 da planta): manter o banco de preço da empresa é
+# a mesma mão que monta a planilha (`orcamento.orcamento.edit`), trazer preço de
+# fora é da família de adotar (`orcamento.base.adotar`) e ler é
+# `orcamento.base.view`. Permissão nova custa rebuild da imagem da IAM +
+# re-seed; se na prática "quem cuida do banco de preço" virar um papel distinto
+# de "quem orça", aí sim vale criar `orcamento.banco.*`.
+
+
+class BancoPrecoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    """Bancos de preço **da empresa** — o espelho tenant-scoped da base pública."""
+
+    queryset = BancoPreco.objects.select_related("obra").all()
+    serializer_class = BancoPrecoSerializer
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["fonte", "uf", "obra", "travado", "ativo", "origem"]
+    search_fields = ["nome", "descricao"]
+    ordering_fields = ["nome", "mes_referencia", "total_itens", "criado_em"]
+    required_resource = "orcamento.base"
+    action_permission_map = {
+        "create": "orcamento.orcamento.edit",
+        "update": "orcamento.orcamento.edit",
+        "partial_update": "orcamento.orcamento.edit",
+        "destroy": "orcamento.orcamento.edit",
+        "travar": "orcamento.orcamento.edit",
+        "destravar": "orcamento.orcamento.edit",
+        "adotar_lote": "orcamento.base.adotar",
+        "copiar_da_base": "orcamento.base.adotar",
+        "resumo": "orcamento.base.view",
+    }
+
+    def perform_update(self, serializer):
+        banco = self.get_object()
+        if banco.travado:
+            raise exceptions.ValidationError(
+                {"detail": f'O banco "{banco.nome}" está travado. Destrave para editar.'}
+            )
+        super().perform_update(serializer)
+
+    def perform_destroy(self, instance):
+        if instance.travado:
+            raise exceptions.ValidationError(
+                {"detail": "Banco travado não é excluído — destrave primeiro, de propósito."}
+            )
+        instance.delete()
+
+    @action(detail=False, methods=["get"], url_path="resumo")
+    def resumo(self, request):
+        return Response(servico_bancos.resumo(self._tenant_id()))
+
+    @action(detail=True, methods=["post"], url_path="travar")
+    def travar(self, request, pk=None):
+        banco = servico_bancos.travar(
+            self.get_object(), usuario_nome=self._usuario(request)
+        )
+        return Response(self.get_serializer(banco).data)
+
+    @action(detail=True, methods=["post"], url_path="destravar")
+    def destravar(self, request, pk=None):
+        banco = servico_bancos.destravar(
+            self.get_object(), usuario_nome=self._usuario(request)
+        )
+        return Response(self.get_serializer(banco).data)
+
+    @action(detail=True, methods=["post"], url_path="adotar-lote")
+    def adotar_lote(self, request, pk=None):
+        """Adota itens deste banco no catálogo da empresa."""
+        banco = self.get_object()
+        ids = request.data.get("itens") or []
+        itens = list(ItemBancoPreco.objects.filter(
+            tenant_id=self._tenant_id(), banco=banco, pk__in=ids
+        ).select_related("banco"))
+        if not itens:
+            return Response({"itens": "Nenhum item encontrado."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            adotados = servico_bancos.adotar_muitos(itens, self._tenant_id())
+        except servico_bancos.AdocaoInvalida as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"adotados": [i.pk for i in adotados], "criados": len(adotados)})
+
+    @action(detail=True, methods=["post"], url_path="copiar-da-base")
+    def copiar_da_base(self, request, pk=None):
+        """Copia itens da SINAPI/ORSE para dentro deste banco, **editáveis**.
+
+        O caminho pedido pelo dono do produto: ajustar coeficiente sem tocar na
+        base oficial, que segue read-only.
+        """
+        banco = self.get_object()
+        ids = request.data.get("referencias") or []
+        referencias = list(
+            InsumoReferencia.objects.filter(pk__in=ids).select_related("base")
+        )
+        if not referencias:
+            return Response(
+                {"referencias": "Nenhuma referência encontrada."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            criados = servico_bancos.copiar_da_base_publica(
+                referencias, banco_destino=banco,
+                com_composicao=request.data.get("com_composicao", True) is not False,
+            )
+        except servico_bancos.BancoTravado as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        banco.refresh_from_db()
+        return Response({"criados": criados, "total_itens": banco.total_itens})
+
+    @staticmethod
+    def _usuario(request) -> str:
+        user = getattr(request, "user", None)
+        return getattr(user, "get_full_name", lambda: "")() or getattr(user, "username", "") or ""
+
+
+class PastaComposicaoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    """Pastas dentro de um banco — organização por obra/tipo."""
+
+    queryset = PastaComposicao.objects.select_related("banco", "obra").all()
+    serializer_class = PastaComposicaoSerializer
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ["banco", "obra"]
+    ordering_fields = ["ordem", "nome"]
+    required_resource = "orcamento.base"
+    action_permission_map = {
+        "create": "orcamento.orcamento.edit",
+        "update": "orcamento.orcamento.edit",
+        "partial_update": "orcamento.orcamento.edit",
+        "destroy": "orcamento.orcamento.edit",
+    }
+
+
+class ItemBancoPrecoViewSet(
+    _OrcamentoPermsMixin, QuotaEnforcedMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet
+):
+    """Itens de um banco da empresa. Busca server-side, como a base pública.
+
+    A quota `banco_preco_linhas` vale aqui também, não só na importação: sem
+    isto, o teto do plano seria contornável criando item a item pela API — o
+    caminho é mais lento, mas o limite é comercial, e limite que se contorna com
+    paciência não é limite.
+    """
+
+    quota_recurso = "banco_preco_linhas"
+    queryset = ItemBancoPreco.objects.select_related("banco", "pasta").all()
+    serializer_class = ItemBancoPrecoSerializer
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["banco", "pasta", "tipo"]
+    search_fields = ["codigo", "descricao", "grupo"]
+    ordering_fields = ["codigo", "descricao", "custo_unitario"]
+    required_resource = "orcamento.base"
+    action_permission_map = {
+        "create": "orcamento.orcamento.edit",
+        "update": "orcamento.orcamento.edit",
+        "partial_update": "orcamento.orcamento.edit",
+        "destroy": "orcamento.orcamento.edit",
+        "adotar": "orcamento.base.adotar",
+        "duplicar": "orcamento.orcamento.edit",
+        "composicao": "orcamento.base.view",
+    }
+
+    def get_serializer_context(self):
+        """Marca o que já foi adotado — um SELECT por página, não um por linha."""
+        contexto = super().get_serializer_context()
+        if self.action != "list":
+            return contexto
+        pagina = getattr(self, "_pagina_atual", None) or []
+        codigos = [(i.banco.fonte, i.codigo) for i in pagina]
+        if codigos:
+            adotados = Item.objects.filter(
+                tenant_id=self._tenant_id(),
+                codigo_referencia__in=[c for _, c in codigos],
+            ).values_list("fonte_referencia", "codigo_referencia", "item_id")
+            contexto["adotados"] = {(f, c): i for f, c, i in adotados}
+        return contexto
+
+    def paginate_queryset(self, queryset):
+        pagina = super().paginate_queryset(queryset)
+        self._pagina_atual = pagina
+        return pagina
+
+    def perform_destroy(self, instance):
+        if instance.banco.travado:
+            raise exceptions.ValidationError({"detail": "Banco travado — destrave primeiro."})
+        banco = instance.banco
+        instance.delete()
+        servico_bancos.recontar(banco)
+
+    def perform_create(self, serializer):
+        super().perform_create(serializer)
+        servico_bancos.recontar(serializer.instance.banco)
+
+    @action(detail=True, methods=["get"], url_path="composicao")
+    def composicao(self, request, pk=None):
+        componentes = ComponenteBancoPreco.objects.filter(
+            composicao=self.get_object()
+        ).select_related("filho")
+        return Response(ComponenteBancoPrecoSerializer(componentes, many=True).data)
+
+    @action(detail=True, methods=["post"], url_path="adotar")
+    def adotar(self, request, pk=None):
+        try:
+            item = servico_bancos.adotar_no_catalogo(self.get_object(), self._tenant_id())
+        except servico_bancos.AdocaoInvalida as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"item": item.pk, "criado": True})
+
+    @action(detail=True, methods=["post"], url_path="duplicar")
+    def duplicar(self, request, pk=None):
+        """Copia o item (com a composição) para outro banco, para editar lá."""
+        destino_id = request.data.get("banco_destino")
+        destino = BancoPreco.objects.filter(
+            tenant_id=self._tenant_id(), pk=destino_id
+        ).first()
+        if destino is None:
+            return Response(
+                {"banco_destino": "Banco de destino não encontrado."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        try:
+            clone = servico_bancos.duplicar_item(
+                self.get_object(), banco_destino=destino,
+                novo_codigo=(request.data.get("codigo") or "").strip(),
+            )
+        except servico_bancos.BancoTravado as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        return Response(self.get_serializer(clone).data, status=status.HTTP_201_CREATED)
+
+
+class ComponenteBancoPrecoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    """Coeficientes das composições próprias — a memória de cálculo da empresa."""
+
+    queryset = ComponenteBancoPreco.objects.select_related("composicao", "filho").all()
+    serializer_class = ComponenteBancoPrecoSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["composicao", "filho"]
+    required_resource = "orcamento.base"
+    action_permission_map = {
+        "create": "orcamento.orcamento.edit",
+        "update": "orcamento.orcamento.edit",
+        "partial_update": "orcamento.orcamento.edit",
+        "destroy": "orcamento.orcamento.edit",
+    }
+
+
+class ReprecificacaoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ReadOnlyModelViewSet):
+    """Lotes de troca de data-base — o histórico com o desfazer."""
+
+    queryset = Reprecificacao.objects.select_related(
+        "orcamento", "base_destino", "banco_destino"
+    ).all()
+    serializer_class = ReprecificacaoSerializer
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ["orcamento", "status", "orcamento__obra"]
+    ordering_fields = ["criado_em", "aplicada_em"]
+    required_resource = "orcamento.orcamento"
+    action_permission_map = {
+        "aplicar": "orcamento.orcamento.edit",
+        "desfazer": "orcamento.orcamento.edit",
+        "linhas": "orcamento.orcamento.view",
+    }
+
+    @action(detail=True, methods=["get"], url_path="linhas")
+    def linhas(self, request, pk=None):
+        return Response(servico_reprecificacao.serializar_previa(self.get_object()))
+
+    @action(detail=True, methods=["post"], url_path="aplicar")
+    def aplicar(self, request, pk=None):
+        try:
+            lote = servico_reprecificacao.aplicar(
+                self.get_object(),
+                selecionadas=request.data.get("linhas"),
+                usuario_nome=self._usuario(request),
+            )
+        except planilha.OrcamentoNaoEditavel as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except servico_reprecificacao.ReprecificacaoInvalida as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        return Response(servico_reprecificacao.serializar_previa(lote))
+
+    @action(detail=True, methods=["post"], url_path="desfazer")
+    def desfazer(self, request, pk=None):
+        try:
+            lote = servico_reprecificacao.desfazer(self.get_object())
+        except planilha.OrcamentoNaoEditavel as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except servico_reprecificacao.ReprecificacaoInvalida as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        return Response(self.get_serializer(lote).data)
+
+    @staticmethod
+    def _usuario(request) -> str:
+        user = getattr(request, "user", None)
+        return getattr(user, "get_full_name", lambda: "")() or getattr(user, "username", "") or ""

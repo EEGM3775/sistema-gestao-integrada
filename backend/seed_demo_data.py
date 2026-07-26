@@ -23,7 +23,7 @@ from django.utils import timezone
 
 from nucleo.models import Tenant, Usuario, Notificacao
 from nucleo.tenancy import rls_bypass, tenant_context
-from empreendimentos.models import Empreendimento
+from empreendimentos.models import Empreendimento, Unidade
 from obras.models import Obra, EtapaObra
 from clientes.models import Cliente, ClienteEmpreendimento, ContratoCliente
 from rh.models import Cargo, Funcionario
@@ -280,28 +280,68 @@ def seed_clientes(tenant, empreendimentos):
             print(f"  Cliente criado: {cli.nome_completo}")
         criados.append(cli)
 
-    # Aquisições (vincula clientes a empreendimentos)
-    aquisicoes = [
-        (criados[0], empreendimentos[0], "A-101", Decimal("350000.00"), "financiamento_bancario"),
-        (criados[1], empreendimentos[0], "A-102", Decimal("355000.00"), "a_vista"),
-        (criados[2], empreendimentos[1], "Loja-01", Decimal("850000.00"), "financiamento_direto"),
-        (criados[3], empreendimentos[0], "B-201", Decimal("380000.00"), "financiamento_bancario"),
+    # Unidades à venda — o cadastro vem antes do comprador. A venda só aponta
+    # para uma delas; identificação e preço de tabela moram aqui.
+    unidades_def = [
+        # (empreendimento, bloco/torre, andar, apto, tipo, valor de tabela)
+        (empreendimentos[0], "Torre A", "1", "101", "apartamento", Decimal("350000.00")),
+        (empreendimentos[0], "Torre A", "1", "102", "apartamento", Decimal("355000.00")),
+        (empreendimentos[0], "Torre B", "2", "201", "apartamento", Decimal("380000.00")),
+        (empreendimentos[0], "Torre B", "2", "202", "apartamento", Decimal("385000.00")),
+        (empreendimentos[1], "", "", "Loja 01", "sala", Decimal("850000.00")),
+        (empreendimentos[1], "", "", "Loja 02", "sala", Decimal("870000.00")),
     ]
-    for cli, emp, unidade, valor, cond in aquisicoes:
-        aq, created = ClienteEmpreendimento.objects.get_or_create(
-            tenant=tenant,
-            empreendimento=emp,
-            unidade_comprada=unidade,
+    unidades = []
+    for emp, bloco, andar, apto, tipo, valor in unidades_def:
+        un, created = Unidade.objects.get_or_create(
+            tenant=tenant, empreendimento=emp, quadra="", lote="",
+            bloco_torre=bloco, andar=andar, apto=apto,
             defaults={
-                "cliente": cli,
-                "endereco_unidade": f"{emp.endereco} — {unidade}",
-                "data_compra": HOJE - datetime.timedelta(days=60),
-                "valor_compra": valor,
-                "condicoes_pagamento": cond,
+                "tipo": tipo,
+                "valor_base": valor,
+                "endereco": f"{emp.endereco} — {apto}",
+                "area_privativa": Decimal("72.00") if tipo == "apartamento" else Decimal("110.00"),
             },
         )
         if created:
-            print(f"  Aquisição criada: {cli.nome_completo} → {emp.empreendimento} ({unidade})")
+            print(f"  Unidade criada: {emp.empreendimento} — {un.rotulo} ({valor})")
+        unidades.append(un)
+
+    # Aquisições: quem comprou o quê, e em que condições. O plano de pagamento é
+    # o do produto (entrada + Price/SAC), para a demo mostrar a mesma conta que
+    # a tela faz.
+    aquisicoes = [
+        # (cliente, unidade, entrada, sistema, juros a.m., parcelas)
+        (criados[0], unidades[0], Decimal("70000.00"), "price", Decimal("0.79"), 48),
+        (criados[1], unidades[1], Decimal("355000.00"), "price", Decimal("0"), 0),
+        (criados[2], unidades[4], Decimal("170000.00"), "sac", Decimal("1.0"), 60),
+        (criados[3], unidades[2], Decimal("38000.00"), "price", Decimal("0.5"), 36),
+    ]
+    for cli, unidade, entrada, sistema, juros, parcelas in aquisicoes:
+        compra = HOJE - datetime.timedelta(days=60)
+        aq, created = ClienteEmpreendimento.objects.get_or_create(
+            tenant=tenant,
+            unidade=unidade,
+            defaults={
+                "cliente": cli,
+                "empreendimento": unidade.empreendimento,
+                "data_compra": compra,
+                "condicoes_pagamento": "a_vista" if parcelas == 0 else "financiamento_direto",
+                "valor_tabela": unidade.valor_base,
+                "valor_compra": unidade.valor_base,
+                "entrada_valor": entrada,
+                "entrada_parcelas": 1,
+                "entrada_primeiro_vencimento": compra,
+                "sistema_amortizacao": sistema,
+                "juros_mensal": juros,
+                "num_parcelas": parcelas,
+                "primeiro_vencimento": compra + datetime.timedelta(days=30),
+            },
+        )
+        if created:
+            unidade.situacao = "vendida"
+            unidade.save(update_fields=["situacao"])
+            print(f"  Aquisição criada: {cli.nome_completo} → {unidade.rotulo}")
 
     # Contratos
     for i, cli in enumerate(criados):
@@ -819,6 +859,374 @@ def _seed_sil_epi_ferramentaria(tenant, central, obras, usuario):
     print(f"  EPI: {EntregaEPI.objects.filter(tenant=tenant).count()} entregas · Ferramentas: {Ferramenta.objects.filter(tenant=tenant).count()} · Empréstimos: {EmprestimoFerramenta.objects.filter(tenant=tenant).count()}")
 
 
+def seed_orcamento(tenant, obras, usuario):
+    """Orçamento (ORC.0–ORC.5b) com dado que exercita as cinco páginas.
+
+    **Tudo aqui é DEMONSTRAÇÃO e está rotulado como tal.** A publicação criada
+    diz "DEMONSTRAÇÃO" no rótulo justamente para ninguém confundir com a SINAPI
+    de verdade — que é importada por `manage.py importar_base_referencial` a
+    partir do arquivo da Caixa. Preço fabricado numa base que se parece com a
+    oficial seria o pior tipo de dado falso: passaria por régua de licitação.
+
+    O que fica montado:
+      - 1 publicação-mãe demo com insumos, composições e a analítica delas;
+      - 1 banco próprio da empresa (a "tabela da prefeitura"), travado;
+      - orçamento APROVADO da Torre A com árvore EAP em 3 níveis, BDI pelo TCU,
+        composição explodida (para o gráfico por natureza ter o que mostrar),
+        cronograma distribuído e curva S com realizado vindo do SIL;
+      - orçamento em RASCUNHO da Torre B, para a fila de decisão do hub;
+      - paramétrico por CUB + pavimentos/unidades da NBR 12721.
+    """
+    from moduloorcamento.models import (
+        BancoPreco, BaseReferencial, ComponenteBancoPreco, ComposicaoBDI,
+        ComposicaoReferenciaItem, Fonte, InsumoReferencia, ItemBancoPreco, ItemOrcado,
+        MemorialNBR, Orcamento, ParametroObra, PavimentoObra, UnidadeAutonoma,
+    )
+    from moduloorcamento import controle as orc_controle
+    from moduloorcamento import planilha as orc_planilha
+    from moduloorcamento import precificacao as orc_precificacao
+    from moduloorcamento import services as orc_services
+
+    mes_base = HOJE.replace(day=1)
+
+    # ── 1. Publicação-mãe de demonstração (global, sem tenant) ──────────────
+    base, criada = BaseReferencial.objects.get_or_create(
+        fonte=Fonte.SINAPI, uf="SP", mes_referencia=mes_base,
+        regime_encargos=BaseReferencial.Regime.DESONERADO,
+        defaults={
+            "rotulo": f"SINAPI SP {mes_base:%m/%Y} desonerado — DEMONSTRAÇÃO",
+            "importada_por_nome": "seed_demo_data",
+        },
+    )
+    if criada:
+        print(f"  Base referencial demo criada: {base.rotulo}")
+
+    INSUMOS = [
+        ("00001379", "CIMENTO PORTLAND COMPOSTO CP II-32", "KG", "0.72", "Aglomerantes"),
+        ("00000370", "AREIA MEDIA - POSTO JAZIDA", "M3", "89.50", "Agregados"),
+        ("00004721", "BRITA 1", "M3", "112.40", "Agregados"),
+        ("00007258", "ACO CA-50 10,0MM", "KG", "8.94", "Aço"),
+        ("00034557", "BLOCO CERAMICO 9X19X39CM", "UN", "2.18", "Alvenaria"),
+        ("00088309", "SERVENTE COM ENCARGOS COMPLEMENTARES", "H", "19.62", "Mão de obra"),
+        ("00088316", "PEDREIRO COM ENCARGOS COMPLEMENTARES", "H", "25.84", "Mão de obra"),
+        ("00088264", "CARPINTEIRO DE FORMAS COM ENCARGOS", "H", "26.71", "Mão de obra"),
+        ("00005061", "BETONEIRA CAPACIDADE 400L", "CHP", "3.42", "Equipamentos"),
+        ("00010556", "TABUA MADEIRA 2,5X30,0CM", "M", "24.15", "Madeira"),
+    ]
+    COMPOSICOES = [
+        ("87879", "CHAPISCO APLICADO EM ALVENARIA, COM COLHER DE PEDREIRO", "M2", "5.42", [
+            ("00001379", "3.83"), ("00000370", "0.0035"),
+            ("00088316", "0.05"), ("00088309", "0.10"),
+        ]),
+        ("87486", "ALVENARIA DE VEDACAO DE BLOCOS CERAMICOS 9X19X39", "M2", "68.42", [
+            ("00034557", "13.20"), ("00001379", "8.40"), ("00000370", "0.019"),
+            ("00088316", "0.72"), ("00088309", "0.36"),
+        ]),
+        ("92759", "ARMACAO DE PILAR OU VIGA DE ESTRUTURA CONVENCIONAL, ACO CA-50 10,0MM", "KG", "12.86", [
+            ("00007258", "1.09"), ("00088316", "0.043"), ("00088309", "0.029"),
+        ]),
+        ("94965", "CONCRETO FCK = 25MPA, TRACO 1:2,3:2,7 - PREPARO MECANICO", "M3", "512.30", [
+            ("00001379", "357.00"), ("00000370", "0.55"), ("00004721", "0.83"),
+            ("00005061", "0.83"), ("00088309", "5.20"),
+        ]),
+        ("92263", "FABRICACAO DE FORMA PARA PILARES E ESTRUTURAS, EM MADEIRA SERRADA", "M2", "96.18", [
+            ("00010556", "2.35"), ("00088264", "1.42"), ("00088309", "0.71"),
+        ]),
+    ]
+
+    referencias = {}
+    for codigo, descricao, unidade, preco, grupo in INSUMOS:
+        ref, _ = InsumoReferencia.objects.get_or_create(
+            base=base, tipo=InsumoReferencia.Tipo.INSUMO, codigo=codigo,
+            defaults={
+                "descricao": descricao, "unidade": unidade,
+                "custo_unitario": Decimal(preco), "grupo": grupo,
+            },
+        )
+        referencias[codigo] = ref
+
+    for codigo, descricao, unidade, preco, componentes in COMPOSICOES:
+        comp, _ = InsumoReferencia.objects.get_or_create(
+            base=base, tipo=InsumoReferencia.Tipo.COMPOSICAO, codigo=codigo,
+            defaults={
+                "descricao": descricao, "unidade": unidade,
+                "custo_unitario": Decimal(preco), "grupo": "Serviços",
+            },
+        )
+        referencias[codigo] = comp
+        for codigo_filho, coeficiente in componentes:
+            ComposicaoReferenciaItem.objects.get_or_create(
+                composicao=comp, filho=referencias[codigo_filho],
+                defaults={"coeficiente": Decimal(coeficiente)},
+            )
+
+    base.total_insumos = InsumoReferencia.objects.filter(
+        base=base, tipo=InsumoReferencia.Tipo.INSUMO).count()
+    base.total_composicoes = InsumoReferencia.objects.filter(
+        base=base, tipo=InsumoReferencia.Tipo.COMPOSICAO).count()
+    base.save(update_fields=["total_insumos", "total_composicoes"])
+    print(f"  Base demo: {base.total_insumos} insumos · {base.total_composicoes} composições")
+
+    # Uma segunda publicação, um mês depois e mais cara — é ela que dá o que
+    # reprecificar (e o que desfazer) na tela.
+    mes_seguinte = (mes_base + datetime.timedelta(days=32)).replace(day=1)
+    base_nova, criada_nova = BaseReferencial.objects.get_or_create(
+        fonte=Fonte.SINAPI, uf="SP", mes_referencia=mes_seguinte,
+        regime_encargos=BaseReferencial.Regime.DESONERADO,
+        defaults={
+            "rotulo": f"SINAPI SP {mes_seguinte:%m/%Y} desonerado — DEMONSTRAÇÃO",
+            "importada_por_nome": "seed_demo_data",
+        },
+    )
+    if criada_nova:
+        for codigo, ref in list(referencias.items()):
+            InsumoReferencia.objects.get_or_create(
+                base=base_nova, tipo=ref.tipo, codigo=codigo,
+                defaults={
+                    "descricao": ref.descricao, "unidade": ref.unidade,
+                    # Reajuste de ~2,6% — a ordem de grandeza de um mês de SINAPI.
+                    "custo_unitario": (ref.custo_unitario * Decimal("1.026")).quantize(Decimal("0.0001")),
+                    "grupo": ref.grupo,
+                },
+            )
+        base_nova.total_insumos = InsumoReferencia.objects.filter(
+            base=base_nova, tipo=InsumoReferencia.Tipo.INSUMO).count()
+        base_nova.total_composicoes = InsumoReferencia.objects.filter(
+            base=base_nova, tipo=InsumoReferencia.Tipo.COMPOSICAO).count()
+        base_nova.save(update_fields=["total_insumos", "total_composicoes"])
+        print(f"  Base demo do mês seguinte: {base_nova.rotulo} (+2,6%)")
+
+    # ── 2. Banco próprio da empresa (a "tabela da prefeitura") ──────────────
+    banco, criado_banco = BancoPreco.objects.get_or_create(
+        tenant=tenant, nome="Prefeitura de São Paulo — DEMONSTRAÇÃO",
+        defaults={
+            "descricao": "Tabela municipal importada por planilha. Exemplo de banco próprio.",
+            "fonte": Fonte.PROPRIA, "uf": "SP", "mes_referencia": mes_base,
+            "origem": BancoPreco.Origem.IMPORTADA,
+        },
+    )
+    if criado_banco:
+        proprios = [
+            ("PMSP-01.01.010", "ESCAVACAO MANUAL EM SOLO ATE 1,5M", "M3", "78.90", InsumoReferencia.Tipo.COMPOSICAO),
+            ("PMSP-01.02.020", "REATERRO COMPACTADO MANUALMENTE", "M3", "42.15", InsumoReferencia.Tipo.COMPOSICAO),
+            ("PMSP-02.01.005", "LASTRO DE CONCRETO MAGRO", "M3", "398.60", InsumoReferencia.Tipo.COMPOSICAO),
+            ("PMSP-INS-001", "AJUDANTE GERAL (TABELA MUNICIPAL)", "H", "18.40", InsumoReferencia.Tipo.INSUMO),
+        ]
+        itens_banco = {}
+        for codigo, descricao, unidade, preco, tipo in proprios:
+            item = ItemBancoPreco.objects.create(
+                tenant=tenant, banco=banco, codigo=codigo, descricao=descricao,
+                unidade=unidade, tipo=tipo, custo_unitario=Decimal(preco),
+                grupo="Serviços preliminares",
+            )
+            itens_banco[codigo] = item
+        ComponenteBancoPreco.objects.get_or_create(
+            tenant=tenant, composicao=itens_banco["PMSP-01.01.010"],
+            filho=itens_banco["PMSP-INS-001"], defaults={"coeficiente": Decimal("4.2")},
+        )
+        banco.total_itens = len(proprios)
+        banco.travado = True
+        banco.travado_em = timezone.now()
+        banco.travado_por_nome = "seed_demo_data"
+        banco.save(update_fields=["total_itens", "travado", "travado_em", "travado_por_nome"])
+        print(f"  Banco próprio criado e travado: {banco.nome} ({banco.total_itens} itens)")
+
+    # ── 3. Orçamento aprovado da Torre A ────────────────────────────────────
+    torre_a = obras[0]
+    etapas_a = {e.nome_etapa: e for e in EtapaObra.objects.filter(tenant=tenant, obra=torre_a)}
+
+    orcamento, criado_orc = Orcamento.objects.get_or_create(
+        tenant=tenant, obra=torre_a, versao=1,
+        defaults={
+            "descricao": "Orçamento executivo — Torre A",
+            "base_referencial": base,
+            "data_base": mes_base,
+            "regime_encargos": BaseReferencial.Regime.DESONERADO,
+            "encargos_sociais_percentual": Decimal("84.70"),
+            "bdi_percentual": Decimal("22.50"),
+            "observacao": "Orçamento de demonstração gerado pelo seed.",
+        },
+    )
+
+    if criado_orc:
+        # BDI pela fórmula do Acórdão 2622/2013-TCU — o resultado é derivado.
+        bdi = ComposicaoBDI.objects.create(
+            tenant=tenant, orcamento=orcamento, nome="BDI padrão (TCU 2622/2013)",
+            padrao=True,
+            administracao_central=Decimal("4.00"), seguro=Decimal("0.80"),
+            risco=Decimal("1.27"), garantia=Decimal("0.40"),
+            despesas_financeiras=Decimal("1.23"), lucro=Decimal("7.40"),
+            pis=Decimal("0.65"), cofins=Decimal("3.00"), iss=Decimal("3.00"),
+            cprb=Decimal("0.00"),
+        )
+        orc_precificacao.salvar_bdi(bdi)
+        orcamento.bdi_percentual = bdi.percentual_calculado
+        orcamento.save(update_fields=["bdi_percentual"])
+        print(f"    BDI calculado: {bdi.percentual_calculado}%")
+
+        # Adota no catálogo o que a planilha vai orçar — é o mesmo item que o
+        # SCM compra e o SIL estoca, então orçado casa com comprado e aplicado.
+        catalogo_por_codigo = {}
+        for codigo in ("87879", "87486", "92759", "94965", "92263"):
+            item = orc_services.adotar_no_catalogo(referencias[codigo], tenant.id)
+            catalogo_por_codigo[codigo] = item
+
+        ARVORE = [
+            ("INFRAESTRUTURA", "Fundações", [
+                ("94965", "180.00"),
+                ("92759", "4200.00"),
+                ("92263", "320.00"),
+            ]),
+            ("SUPERESTRUTURA", "Estrutura", [
+                ("94965", "260.00"),
+                ("92759", "6800.00"),
+            ]),
+            ("VEDAÇÕES", None, [
+                ("87486", "1240.00"),
+                ("87879", "2480.00"),
+            ]),
+        ]
+
+        for ordem_grupo, (titulo, nome_etapa, filhos) in enumerate(ARVORE, start=1):
+            grupo = ItemOrcado.objects.create(
+                tenant=tenant, orcamento=orcamento, pai=None,
+                tipo_linha=ItemOrcado.TipoLinha.SINTETICO,
+                ordem=ordem_grupo, descricao=titulo,
+                etapa=etapas_a.get(nome_etapa) if nome_etapa else None,
+            )
+            for ordem_filho, (codigo, quantidade) in enumerate(filhos, start=1):
+                linha = orc_services.linha_a_partir_do_item(
+                    orcamento=orcamento,
+                    item=catalogo_por_codigo[codigo],
+                    quantidade=Decimal(quantidade),
+                    pai_id=grupo.item_orcado_id,
+                    etapa_id=etapas_a[nome_etapa].pk if nome_etapa else None,
+                    ordem=ordem_filho,
+                )
+                # Explodir dá memória de cálculo e alimenta o gráfico por natureza.
+                try:
+                    orc_precificacao.explodir_item(linha, atualizar_custo=False)
+                except Exception as exc:  # composição sem componentes no catálogo
+                    print(f"    (sem composição para {codigo}: {exc})")
+
+        orc_planilha.recalcular_orcamento(orcamento)
+        orc_planilha.aprovar_orcamento(orcamento, usuario_nome="demo")
+        orcamento.refresh_from_db()
+        print(f"    Orçamento aprovado: {orcamento.valor_total} ({orcamento.itens.count()} linhas)")
+
+        # Cronograma físico-financeiro dos próximos 6 meses + curva S.
+        inicio = mes_base
+        fim = (mes_base + datetime.timedelta(days=170)).replace(day=1)
+        try:
+            orc_controle.distribuir_linear(orcamento, inicio=inicio, fim=fim)
+            print(f"    Cronograma distribuído: {inicio:%m/%Y} → {fim:%m/%Y}")
+        except Exception as exc:
+            print(f"    (cronograma não distribuído: {exc})")
+
+    # ── 4. Rascunho da Torre B — alimenta a fila de decisão do hub ──────────
+    torre_b = obras[1]
+    rascunho, criado_rascunho = Orcamento.objects.get_or_create(
+        tenant=tenant, obra=torre_b, versao=1,
+        defaults={
+            "descricao": "Orçamento preliminar — Torre B",
+            "base_referencial": base,
+            "data_base": mes_base,
+            "regime_encargos": BaseReferencial.Regime.DESONERADO,
+            "encargos_sociais_percentual": Decimal("84.70"),
+            "bdi_percentual": Decimal("22.50"),
+            "observacao": "Rascunho: aparece em 'requer sua decisão' no hub.",
+        },
+    )
+    if criado_rascunho:
+        etapas_b = {e.nome_etapa: e for e in EtapaObra.objects.filter(tenant=tenant, obra=torre_b)}
+        grupo = ItemOrcado.objects.create(
+            tenant=tenant, orcamento=rascunho, tipo_linha=ItemOrcado.TipoLinha.SINTETICO,
+            ordem=1, descricao="ALVENARIA E REVESTIMENTO", etapa=etapas_b.get("Alvenaria"),
+        )
+        for ordem, (codigo, quantidade) in enumerate((("87486", "3100.00"), ("87879", "6200.00")), start=1):
+            item = orc_services.adotar_no_catalogo(referencias[codigo], tenant.id)
+            orc_services.linha_a_partir_do_item(
+                orcamento=rascunho, item=item, quantidade=Decimal(quantidade),
+                pai_id=grupo.item_orcado_id,
+                etapa_id=etapas_b["Alvenaria"].pk if "Alvenaria" in etapas_b else None,
+                ordem=ordem,
+            )
+        orc_planilha.recalcular_orcamento(rascunho)
+        rascunho.refresh_from_db()
+        print(f"    Rascunho criado: {rascunho.valor_total} ({rascunho.itens.count()} linhas)")
+
+    # ── 5. Incorporação: paramétrico + NBR 12721 ────────────────────────────
+    parametro, criado_param = ParametroObra.objects.get_or_create(
+        tenant=tenant, obra=torre_a, descricao="Viabilidade — Torre A",
+        defaults={
+            "projeto_padrao": "r8_n",
+            "cub_m2": Decimal("2384.71"),
+            "cub_uf": "SP",
+            "cub_mes": mes_base,
+            "area_real": Decimal("2850.00"),
+            "area_equivalente": Decimal("2410.00"),
+            "percentual_adicionais": Decimal("12.00"),
+            "observacao": "Estimativa de demonstração (CUB fictício).",
+        },
+    )
+    if criado_param:
+        from moduloorcamento import nbr12721 as orc_nbr
+        orc_nbr.calcular_parametrico(parametro)
+        parametro.refresh_from_db()
+        print(f"    Paramétrico: {parametro.custo_estimado} ({parametro.area_equivalente} m² eq.)")
+
+    if not PavimentoObra.objects.filter(tenant=tenant, obra=torre_a).exists():
+        pavimentos = [
+            ("Subsolo", 1, "420.00", "0.00", "1.00", "120.00", "0.50"),
+            ("Térreo", 2, "480.00", "60.00", "0.75", "180.00", "0.50"),
+            ("Tipo 1", 3, "460.00", "0.00", "1.00", "40.00", "0.50"),
+            ("Tipo 2", 4, "460.00", "0.00", "1.00", "40.00", "0.50"),
+            ("Cobertura", 5, "220.00", "0.00", "1.00", "310.00", "0.30"),
+        ]
+        criados_pav = []
+        for nome, ordem, coberta, diferente, coef_dif, descoberta, coef_desc in pavimentos:
+            criados_pav.append(PavimentoObra.objects.create(
+                tenant=tenant, obra=torre_a, nome=nome, ordem=ordem,
+                area_coberta_padrao=Decimal(coberta),
+                area_coberta_diferente=Decimal(diferente),
+                coeficiente_coberta_diferente=Decimal(coef_dif),
+                area_descoberta=Decimal(descoberta),
+                coeficiente_descoberta=Decimal(coef_desc),
+            ))
+        print(f"    Pavimentos NBR: {len(criados_pav)}")
+
+        tipo1 = next((p for p in criados_pav if p.nome == "Tipo 1"), None)
+        tipo2 = next((p for p in criados_pav if p.nome == "Tipo 2"), None)
+        for pavimento, prefixo in ((tipo1, "1"), (tipo2, "2")):
+            if pavimento is None:
+                continue
+            for numero in ("01", "02", "03", "04"):
+                UnidadeAutonoma.objects.create(
+                    tenant=tenant, obra=torre_a, pavimento=pavimento,
+                    designacao=f"Apto {prefixo}{numero}", tipo="2 dormitórios",
+                    area_privativa_padrao=Decimal("92.50"),
+                    area_privativa_diferente=Decimal("0.00"),
+                    coeficiente_privativa_diferente=Decimal("1.00"),
+                    area_uso_comum=Decimal("18.40"),
+                    fracao_ideal=Decimal("0.125"),
+                )
+        print("    Unidades autônomas NBR: 8")
+
+        for quadro, ordem, dependencia, descricao in (
+            ("v", 1, "Sala de estar", "Piso em porcelanato 60x60, rodapé 10cm, pintura acrílica."),
+            ("vi", 1, "Fachada", "Revestimento cerâmico e pintura texturizada."),
+            ("vii", 1, "Elevadores", "2 elevadores sociais, capacidade 8 pessoas."),
+            ("viii", 1, "Área comum", "Salão de festas, playground e guarita."),
+        ):
+            MemorialNBR.objects.get_or_create(
+                tenant=tenant, obra=torre_a, quadro=quadro, dependencia=dependencia,
+                defaults={"ordem": ordem, "descricao": descricao},
+            )
+        print("    Memoriais descritivos (V–VIII): 4")
+
+    return orcamento
+
+
 # ─── Execução ────────────────────────────────────────────────────────────────
 
 print("=" * 60)
@@ -856,6 +1264,9 @@ with rls_bypass():
     print("\n→ Estoque & Logística (SIL):")
     seed_sil(tenant, obras, usuario_demo)
 
+    print("\n→ Orçamento:")
+    seed_orcamento(tenant, obras, usuario_demo)
+
     print("\n" + "=" * 60)
     print("SEED OK")
     print(f"  Empreendimentos: {Empreendimento.objects.count()}")
@@ -871,4 +1282,11 @@ with rls_bypass():
     print(f"  SCM · Cotações: {Cotacao.objects.count()} · Propostas: {Proposta.objects.count()} · Pedidos: {PedidoCompra.objects.count()} · Avaliações: {AvaliacaoFornecedor.objects.count()}")
     print(f"  SIL · Locais: {LocalEstoque.objects.count()} · Saldos: {SaldoEstoque.objects.count()} · Movimentações: {MovimentacaoEstoque.objects.count()} · Requisições: {Requisicao.objects.count()} · Inventários: {Inventario.objects.count()}")
     print(f"  SIL · EPI: {EntregaEPI.objects.count()} · Ferramentas: {Ferramenta.objects.count()} · Empréstimos: {EmprestimoFerramenta.objects.count()}")
+    from moduloorcamento.models import (
+        BancoPreco as _Banco, BaseReferencial as _Base, InsumoReferencia as _Ref,
+        ItemOrcado as _ItemOrcado, Orcamento as _Orcamento, ParcelaEtapa as _Parcela,
+        UnidadeAutonoma as _Unidade,
+    )
+    print(f"  ORÇAMENTO · Bases: {_Base.objects.count()} ({_Ref.objects.count()} referências) · Bancos próprios: {_Banco.objects.count()}")
+    print(f"  ORÇAMENTO · Orçamentos: {_Orcamento.objects.count()} · Linhas: {_ItemOrcado.objects.count()} · Parcelas: {_Parcela.objects.count()} · Unidades NBR: {_Unidade.objects.count()}")
     print("=" * 60)

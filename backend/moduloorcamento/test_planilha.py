@@ -355,6 +355,40 @@ class PlanilhaAPITests(PlanilhaTestBase):
         self.assertEqual(Decimal(resp.data["valor_total"]), Decimal("5000.00"))
         self.assertEqual(resp.data["total_itens"], 1)
 
+    def test_segundo_orcamento_da_mesma_obra_nasce_na_versao_seguinte(self):
+        """Reorçamento não é erro de formulário.
+
+        `versao` é read-only e a unicidade é `(obra, versao)`: enquanto o POST
+        não numerava, a segunda planilha de uma obra respondia 400 *"Os campos
+        obra, versao devem criar um set único"* — só dava para criar uma por
+        obra, e o hub do módulo quebrava na cara do usuário.
+        """
+        primeiro = self.client.post("/api/orcamento/orcamentos/", {
+            "obra": self.obra.pk, "descricao": "Executivo",
+        }, format="json")
+        self.assertEqual(primeiro.status_code, 201, primeiro.content)
+        self.assertEqual(primeiro.data["versao"], 1)
+
+        segundo = self.client.post("/api/orcamento/orcamentos/", {
+            "obra": self.obra.pk, "descricao": "Reorçamento — método alternativo",
+        }, format="json")
+        self.assertEqual(segundo.status_code, 201, segundo.content)
+        self.assertEqual(segundo.data["versao"], 2)
+        self.assertNotEqual(segundo.data["orcamento_id"], primeiro.data["orcamento_id"])
+
+    def test_versao_do_post_continua_depois_da_revisao(self):
+        """A numeração é uma só por obra — POST, revisar e duplicar compartilham."""
+        orc = self._orcamento()
+        self._linha(orc, "Concreto", quantidade="10", custo="400")
+        planilha.aprovar_orcamento(orc)
+        planilha.revisar_orcamento(orc, tipo="aditivo", motivo="Acréscimo")  # → v2
+
+        resp = self.client.post("/api/orcamento/orcamentos/", {
+            "obra": self.obra.pk, "descricao": "Reorçamento do zero",
+        }, format="json")
+        self.assertEqual(resp.status_code, 201, resp.content)
+        self.assertEqual(resp.data["versao"], 3)
+
     def test_arvore_devolve_planilha_ordenada(self):
         orc = self._orcamento()
         grupo = self._linha(orc, "Estrutura", tipo=ItemOrcado.TipoLinha.SINTETICO, ordem=1)

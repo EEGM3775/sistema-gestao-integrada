@@ -146,7 +146,7 @@ const ContratoForm: React.FC<Props> = ({ open, clienteId, aquisicoes, onClose, o
                 <option value="">Nenhuma</option>
                 {aquisicoes.map(a => (
                   <option key={a.cliente_empreendimento_id} value={a.cliente_empreendimento_id}>
-                    {a.empreendimento_nome} — Unid. {a.unidade_comprada}
+                    {a.empreendimento_nome} — {a.rotulo_unidade}
                   </option>
                 ))}
               </select>

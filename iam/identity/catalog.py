@@ -200,6 +200,14 @@ CATALOGO: tuple[Perm, ...] = (
     Perm("cadastro.cliente_doc.view", "Ver CPF/CNPJ do cliente (PII)", "base"),
     Perm("cadastro.cliente_banco.view", "Ver dados bancários do cliente (PII)", "base"),
     Perm("cadastro.cliente_banco.edit", "Editar dados bancários do cliente (PII)", "base"),
+    # Venda de unidade — separada de `cadastro.cliente` de propósito. Registrar
+    # uma venda compromete estoque (a unidade sai da praça) e gerar o carnê cria
+    # títulos a receber no ERP: são atos comerciais e financeiros, não edição de
+    # cadastro. Enquanto dividiam a mesma permissão, quem podia corrigir um
+    # telefone podia vender um lote e emitir a dívida do comprador.
+    Perm("cadastro.venda.view", "Ver vendas/aquisições de unidades", "base"),
+    Perm("cadastro.venda.edit", "Registrar e alterar venda de unidade", "base"),
+    Perm("cadastro.venda.gerar_carne", "Gerar o carnê da venda (cria títulos a receber)", "base"),
     Perm("cadastro.fornecedor.view", "Ver fornecedores", "base"),
     Perm("cadastro.fornecedor.edit", "Gerir fornecedores (produtos/serviços)", "base"),
     Perm("cadastro.fornecedor_banco.view", "Ver dados bancários do fornecedor (PII)", "base"),
@@ -243,6 +251,7 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
         "obra.obra.view", "obra.diario.view", "ia.analise.view",
         "calendario.evento.view",
         "cadastro.cliente.view", "cadastro.cliente_doc.view", "cadastro.fornecedor.view",
+        "cadastro.venda.view",
         "plataforma.config.view", "plataforma.integracao.view",
     ],
     # RH completo, MENOS o prontuário médico (segregação médico × gestor).
@@ -265,13 +274,16 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
         "obra.empreend_conta.*", "obra.empreend_custo.*",
         "cadastro.fornecedor.view", "cadastro.fornecedor_banco.*",
         "cadastro.cliente.view", "cadastro.cliente_doc.view", "cadastro.cliente_banco.*",
+        # Materializa o carnê: os títulos nascem nas contas a receber que esta
+        # persona já governa.
+        "cadastro.venda.view", "cadastro.venda.gerar_carne",
     ],
     # Tesouraria: cobrança/boletos Asaas + conciliação (precisa do banco do cliente).
     "tesouraria": [
         "erp.conta_receber.view", "erp.conta_receber.baixar",
         "erp.cobranca.*", "erp.relatorio.view",
         "cadastro.cliente.view", "cadastro.cliente_doc.view",
-        "cadastro.cliente_banco.*",
+        "cadastro.cliente_banco.*", "cadastro.venda.view",
     ],
     # Fiscal: emissão e gestão de NF (precisa do CPF/CNPJ do cliente p/ a NF).
     "fiscal": [
@@ -279,7 +291,12 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
         "cadastro.cliente.view", "cadastro.cliente_doc.view",
     ],
     # Comercial: CRM completo + documento do cliente (fechamento/contrato).
-    "comercial": ["crm.*", "cadastro.cliente.*", "cadastro.cliente_doc.view"],
+    # Vende a unidade, mas **não** gera o carnê: emitir os títulos a receber é
+    # ato do financeiro, depois da conferência da proposta.
+    "comercial": [
+        "crm.*", "cadastro.cliente.*", "cadastro.cliente_doc.view",
+        "cadastro.venda.view", "cadastro.venda.edit",
+    ],
     # Engenharia: empreendimentos, obras, diário (+ IA), agenda, custos.
     "engenharia": [
         "obra.empreendimento.*", "obra.empreend_custo.*", "obra.obra.*",

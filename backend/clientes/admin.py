@@ -140,7 +140,7 @@ class ClienteEmpreendimentoAdmin(admin.ModelAdmin):
         'cliente_empreendimento_id',
         'cliente',
         'empreendimento',
-        'unidade_comprada',
+        'unidade',
         'data_compra',
         'valor_compra',
         'condicoes_pagamento'
@@ -153,8 +153,9 @@ class ClienteEmpreendimentoAdmin(admin.ModelAdmin):
     search_fields = (
         'cliente__nome_completo',
         'empreendimento__empreendimento',
-        'unidade_comprada',
-        'endereco_unidade'
+        'unidade__quadra',
+        'unidade__lote',
+        'unidade__apto',
     )
     ordering = ('-data_compra',)
     readonly_fields = ('cliente_empreendimento_id',)
@@ -169,11 +170,20 @@ class ClienteEmpreendimentoAdmin(admin.ModelAdmin):
         }),
         (_('Detalhes da Aquisição'), {
             'fields': (
-                'unidade_comprada',
-                'endereco_unidade',
+                'unidade',
                 'data_compra',
                 'valor_compra',
                 'condicoes_pagamento'
+            )
+        }),
+        (_('Plano de pagamento'), {
+            'fields': (
+                'valor_tabela',
+                ('desconto_percentual', 'desconto_valor'),
+                ('entrada_valor', 'entrada_parcelas', 'entrada_primeiro_vencimento'),
+                ('sistema_amortizacao', 'juros_mensal', 'num_parcelas', 'primeiro_vencimento'),
+                ('balao_valor', 'balao_quantidade', 'balao_periodicidade', 'balao_primeiro_vencimento'),
+                ('valor_total_plano', 'parcelas_geradas_em'),
             )
         }),
         (_('Observações'), {

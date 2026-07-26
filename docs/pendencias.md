@@ -194,36 +194,37 @@ existia em `diretoria`/`financeiro`/`auditor`; personas com o módulo ERP mas se
 recebiam **403** → KPIs vazios + gráficos sem dados. `erp.relatorio.view` concedido a `tesouraria`/`fiscal`
 no catálogo ([iam/identity/catalog.py](../iam/identity/catalog.py); `sync_authz` aditivo propaga no boot).
 Admin de tenant já passava (bypass do `RequirePermission`). Testes: `moduloerp/tests.py::D3DashboardPermissionTests` (3)
+
 + `identity/tests.py::…relatorio_financeiro_visivel_aos_papeis_de_dinheiro`.
-(e) **rótulo do mês** do fluxo de caixa vinha como timestamp ISO cru (`TruncMonth` sem serializer) — o front
-passou a formatá-lo como `jul/2026` (`mesToBR` em [utils/dates.ts](../frontend/src/utils/dates.ts)).
-(f) **divergências Asaas × ERP inconsistentes entre as telas** — ao criar cliente havia um painel proativo
-(lista global banco × Asaas), mas ao **gerar boleto** o bloqueio só surgia reativo (409) depois do clique.
-Padronizado: o botão "Gerar cobrança" abre um **dialog de confirmação** ([GerarCobrancaDialog](../frontend/src/modules/erp/components/GerarCobrancaDialog.tsx))
-com opção de **ver as divergências** (mesmo painel, agora componente compartilhado
-[DivergenciasAsaasPanel](../frontend/src/modules/clientes/components/DivergenciasAsaasPanel.tsx)); confirmação
-dispara a cobrança (o 409 de bloqueio segue valendo). **Falha silenciosa corrigida:** quando a auditoria não
-roda (Asaas fora/sem permissão), as duas telas avisam "não foi possível verificar agora" em vez de painel
-vazio (falso "tudo certo"). **LGPD:** o relatório expunha CPF/CNPJ em texto puro fora do mascaramento 9.C —
-agora `divergencias-asaas` mascara o documento para quem não tem `cadastro.cliente_doc.view`
-([nucleo/field_masking.mask_document_unless](../backend/nucleo/field_masking.py)). Testes:
-`funcoescobrancas/tests.py::AnalisarDivergenciasTests` (máscara com/sem permissão).
-**Fechado (13/07/2026, junto do F4):** a degradação amigável do hub para quem não tem `erp.relatorio.view` — o
-`ErpDashboardPage` detecta o **403** e vela só os indicadores consolidados (aviso âmbar, permissão nomeada),
-mantendo os atalhos de workspace; o banner de erro vermelho cru sobrou só para falhas reais de carga.
-**Correção de escopo (13/07/2026):** o painel de divergências banco × Asaas foi **removido do formulário Novo
-Cliente** ([ClienteForm](../frontend/src/modules/clientes/components/ClienteForm.tsx)) — o cadastro-base é
-escopo de dados pessoais, não de cobrança. A auditoria de divergências é escopo financeiro (ERP): passou a viver
-(a) sob demanda no [GerarCobrancaDialog](../frontend/src/modules/erp/components/GerarCobrancaDialog.tsx) na hora de
-emitir, e (b) num **botão-alerta permanente no hub do ERP**
-([DivergenciasErpButton](../frontend/src/modules/erp/components/DivergenciasErpButton.tsx)) — colorido como alerta
-com a contagem quando há divergências, abrindo um modal com os dados (mesmo `DivergenciasAsaasPanel`). **Gate LGPD +
-escopo:** é dado financeiro com PII de cliente, então exige as DUAS permissões de **usuário** — `erp.cobranca.view`
-(ver cobranças) **e** `cadastro.cliente.view` (acesso aos clientes); `hasModule` **não** basta (é entitlement do
-tenant, não do usuário — um `operacional` num tenant com ERP não deve ver). Reforçado no **backend**
-([clientes/views.py::divergencias_asaas](../backend/clientes/views.py)): checagem explícita de `erp.cobranca.view`
-além do `cadastro.cliente.view` do viewset; regressão em `funcoescobrancas/tests.py` (operacional → 403). O
-documento segue mascarado sem `cadastro.cliente_doc.view`. Isso reverte, de propósito, a duplicação do item (f).
+  (e) **rótulo do mês** do fluxo de caixa vinha como timestamp ISO cru (`TruncMonth` sem serializer) — o front
+  passou a formatá-lo como `jul/2026` (`mesToBR` em [utils/dates.ts](../frontend/src/utils/dates.ts)).
+  (f) **divergências Asaas × ERP inconsistentes entre as telas** — ao criar cliente havia um painel proativo
+  (lista global banco × Asaas), mas ao **gerar boleto** o bloqueio só surgia reativo (409) depois do clique.
+  Padronizado: o botão "Gerar cobrança" abre um **dialog de confirmação** ([GerarCobrancaDialog](../frontend/src/modules/erp/components/GerarCobrancaDialog.tsx))
+  com opção de **ver as divergências** (mesmo painel, agora componente compartilhado
+  [DivergenciasAsaasPanel](../frontend/src/modules/clientes/components/DivergenciasAsaasPanel.tsx)); confirmação
+  dispara a cobrança (o 409 de bloqueio segue valendo). **Falha silenciosa corrigida:** quando a auditoria não
+  roda (Asaas fora/sem permissão), as duas telas avisam "não foi possível verificar agora" em vez de painel
+  vazio (falso "tudo certo"). **LGPD:** o relatório expunha CPF/CNPJ em texto puro fora do mascaramento 9.C —
+  agora `divergencias-asaas` mascara o documento para quem não tem `cadastro.cliente_doc.view`
+  ([nucleo/field_masking.mask_document_unless](../backend/nucleo/field_masking.py)). Testes:
+  `funcoescobrancas/tests.py::AnalisarDivergenciasTests` (máscara com/sem permissão).
+  **Fechado (13/07/2026, junto do F4):** a degradação amigável do hub para quem não tem `erp.relatorio.view` — o
+  `ErpDashboardPage` detecta o **403** e vela só os indicadores consolidados (aviso âmbar, permissão nomeada),
+  mantendo os atalhos de workspace; o banner de erro vermelho cru sobrou só para falhas reais de carga.
+  **Correção de escopo (13/07/2026):** o painel de divergências banco × Asaas foi **removido do formulário Novo
+  Cliente** ([ClienteForm](../frontend/src/modules/clientes/components/ClienteForm.tsx)) — o cadastro-base é
+  escopo de dados pessoais, não de cobrança. A auditoria de divergências é escopo financeiro (ERP): passou a viver
+  (a) sob demanda no [GerarCobrancaDialog](../frontend/src/modules/erp/components/GerarCobrancaDialog.tsx) na hora de
+  emitir, e (b) num **botão-alerta permanente no hub do ERP**
+  ([DivergenciasErpButton](../frontend/src/modules/erp/components/DivergenciasErpButton.tsx)) — colorido como alerta
+  com a contagem quando há divergências, abrindo um modal com os dados (mesmo `DivergenciasAsaasPanel`). **Gate LGPD +
+  escopo:** é dado financeiro com PII de cliente, então exige as DUAS permissões de **usuário** — `erp.cobranca.view`
+  (ver cobranças) **e** `cadastro.cliente.view` (acesso aos clientes); `hasModule` **não** basta (é entitlement do
+  tenant, não do usuário — um `operacional` num tenant com ERP não deve ver). Reforçado no **backend**
+  ([clientes/views.py::divergencias_asaas](../backend/clientes/views.py)): checagem explícita de `erp.cobranca.view`
+  além do `cadastro.cliente.view` do viewset; regressão em `funcoescobrancas/tests.py` (operacional → 403). O
+  documento segue mascarado sem `cadastro.cliente_doc.view`. Isso reverte, de propósito, a duplicação do item (f).
 
 ### S5 — Bypass de entitlement no CRM · ✅ corrigido 04/07/2026 · Fase 9.B
 
@@ -418,11 +419,133 @@ sem refresh no corpo) → refresh (rotaciona, access com claims) → reuso do re
 *(Os TTLs citados na versão original desta entrada — 15 min / 12h / 30d — eram os de 11/07 e ficaram
 defasados; tempos vigentes em [acesso-e-permissoes.md §5.2](acesso-e-permissoes.md).)*
 
-### F2 — Selects carregam tabelas inteiras · 🔴 aberto
+### F5 — `.gitignore` engole `frontend/src/lib/` — o frontend não builda em clone limpo · 🔴 aberto
+
+A linha 13 do `.gitignore` da raiz (`lib/`, padrão de virtualenv Python) casa também com
+**`frontend/src/lib/`**. Os dois arquivos de lá nunca foram commitados: `queryClient.ts` (o
+`QueryClient` único do TanStack Query, importado por `main.tsx`) e `utils.ts` (usado pelo diário).
+Na máquina de quem escreveu eles existem, então nada acusa; num **clone novo ou worktree** o
+`tsc`/`vite build` quebra em `Cannot find module './lib/queryClient'`. Confirmado por
+`git check-ignore -v frontend/src/lib/queryClient.ts` → `.gitignore:13:lib/`.
+**Correção:** ancorar a regra na raiz (`/lib/`) ou escopá-la ao Python, e commitar os dois arquivos.
+
+### F6 — `package-lock.json` do frontend fora de sincronia · 🔴 aberto
+
+`npm ci` falha com `EUSAGE`: faltam do lock os 6 pacotes `@fullcalendar/*` (6.1.21) e `preact`, que
+estão no `package.json`. Como o gate de CI roda `npm ci` bloqueante (Fase 12), ele não passa.
+Há também conflito de peer dep (`@hookform/resolvers` 5.4.3 exige `valibot ^1.0.0`, resolvido para
+0.39.0) — hoje só contornável com `--legacy-peer-deps`.
+**Correção:** rodar `npm install` e commitar o lock; decidir sobre o peer de `valibot`.
+
+### F7 — Rotas de administração sem guard de `is_tenant_admin` · 🔴 aberto
+
+Em [App.tsx](../frontend/src/App.tsx), `admin/papeis` e `admin/usuarios` têm o comentário
+"guardado por `is_tenant_admin`", mas **não há guard na rota** — só a sidebar trava o link. URL
+digitada direto entra na tela (a API barra depois, mas a UI já montou). O RH, na mesma página, usa
+`<ModuleRoute module="rh">` corretamente.
+**Correção:** um `<AdminRoute>` irmão do `ModuleRoute`, reusando o `AccessNotice`.
+
+### F8 — Item "Início" travado na sidebar · ✅ corrigido 25/07/2026
+
+`AppSidebar` marcava `implemented: false` no item Início, que virava `<span>` com cadeado — mas
+`/app/dashboard` é a rota-índice e a página existia. O usuário aterrissava na home e não conseguia
+voltar a ela depois de navegar. **Corrigido** junto da reconstrução do hub (F.1).
+
+### F17 — Vender lote e emitir carnê andavam na permissão de editar cadastro · ✅ corrigido 26/07/2026
+
+Relatado pelo usuário ("falta authorization em AquisicaoForm — qualquer um pode vender lote?").
+`ClienteEmpreendimentoViewSet` declarava `required_resource = "cadastro.cliente"`: pelo contrato do
+`RequirePermission`, escrita exigia `cadastro.cliente.edit` — **a mesma permissão de corrigir o
+telefone de um comprador**. Quem podia editar cadastro podia registrar uma venda (tirando a unidade
+da praça) e, como os `@action` não tinham `action_permission_map`, também **gerar o carnê**, criando
+`ContaReceber` no ERP. Ato comercial e ato financeiro atrás de uma permissão de cadastro.
+**Corrigido:** três permissões novas na IAM (`cadastro.venda.view`/`.edit`/`.gerar_carne`), o viewset
+passou a `required_resource = "cadastro.venda"` com `action_permission_map` (`simular` → `.view`,
+porque cotar é anterior a fechar; `gerar_parcelas` e `corrigir` → `.gerar_carne`), personas ajustadas
+(**comercial** vende mas não emite; **financeiro** emite; tesouraria/diretoria só leem) e a ficha do
+cliente passou a gatear os botões por `hasPermission`. `sync_authz --all-tenants` (aditivo) aplicado.
+Testes `PermissaoDeVendaTests` (5).
+
+### F18 — Carteira: "Agrupar por" e todos os filtros vazios (endpoint em 500) · ✅ corrigido 26/07/2026
+
+Relatado pelo usuário. `views.py:521` (`CarteiraOpcoesView`) ainda lia
+`aquisicoes.values_list('quadra')` — campo que o **F16** moveu de `ClienteEmpreendimento` para
+`Unidade`. `FieldError` → `GET /api/clientes/carteira/opcoes/` respondia **500** → `opcoes` ficava
+`undefined` no React e `dimensoes = opcoes?.dimensoes[visao] ?? []` esvaziava o painel. Não era só o
+agrupamento: empreendimentos, quadras, cidades, UF e anos vinham vazios pela mesma resposta. Todo o
+`carteira.py` já havia sido migrado para `unidade__quadra`; só esta linha ficou.
+**Corrigido:** `unidade__quadra`. Verificado ao vivo pelo gateway — 200 com os 16 agrupamentos.
+
+### F19 — Condição de pagamento era rótulo decorativo, e vinha depois do plano · ✅ corrigido 26/07/2026
+
+Relatado pelo usuário. No `AquisicaoForm`, **Condições de pagamento** estava na linha 489 — depois de
+entrada, parcelas, juros, balões e do painel de simulação inteiro — e **não gateava nada**: vender
+"À Vista" ainda pedia sistema de amortização, juros ao mês e prazo. O campo só aparecia em filtro,
+admin e display; nenhuma linha de backend o lia para calcular.
+**Corrigido:** a condição virou a **primeira** pergunta depois da unidade e passou a reger o
+formulário (`PLANO_DA_CONDICAO`: à vista e permuta sem plano; bancário e cartão só com sinal;
+direto e outro com tudo), limpando o que a condição anterior deixou. A regra vive no **motor**
+(`plano_pagamento.montar(a_vista=…)`), não na tela, para o simulado e o gravado não divergirem — à
+vista vira parcela única na data da compra, sem juros nem prazo. Os balões ganharam o nome de
+mercado (**parcelas anuais/intercaladas**). Testes `CondicaoDePagamentoTests` (4).
+
+### F20 — "Gerar parcelas" parecia ter gerado a carteira inteira · ✅ sem defeito, apurado 26/07/2026
+
+Relatado pelo usuário ("cliquei em gerar parcelas e parece que gerou de todos os 5000 clientes").
+**Não havia defeito:** `gerar_parcelas` é `detail=True`, opera sobre uma aquisição e recusa a segunda
+chamada com 409. A apuração nos carimbos de `parcelas_geradas_em` mostrou 2.182 aquisições marcadas
+numa rajada de 3 s (10:19:40–42 — o `semear_carteira_demo`, que já gera os carnês da carteira
+semeada) e **exatamente uma** às 10:41:14, que foi o clique. As 86.010 `ContaReceber` já existiam
+antes. O que enganou foi a mensagem de sucesso mandando "veja na aba Financeiro" sem dizer de qual
+venda, com o ERP mostrando 86 mil linhas.
+**Ajustado:** a mensagem passou a nomear a unidade, o total daquela venda e a apontar para a aba
+Financeiro **do cliente**, não para o financeiro geral.
+
+### F16 — Unidade cadastrada duas vezes na venda, sem trava contra revenda · ✅ corrigido 26/07/2026
+
+O formulário de aquisição pedia **`Unidade comprada`** (texto livre) **e** os cinco campos da
+identificação estruturada, lado a lado e independentes: nada garantia que combinassem, e o mesmo
+lote entrava como "Apto 101" numa venda e "apto 101" em outra. O `unique(empreendimento,
+unidade_comprada)` que deveria impedir revenda não pegava essas duas — e a unidade não tinha preço,
+então o valor da compra era digitado do zero a cada venda.
+**Corrigido:** a unidade virou **cadastro do empreendimento** (`empreendimentos.Unidade`, com
+identificação estruturada única, preço de tabela e situação) e a aquisição só **aponta** para ela
+(`unique(tenant, unidade)`); o texto livre e os campos duplicados foram removidos. A venda ganhou
+plano de pagamento (desconto → entrada → Price/SAC → balões) calculado no backend, com simulação
+sem gravar e geração de carnê por ato explícito. Migration destrutiva, base de dev recriada com
+CPF/CNPJ **válidos** (o Asaas sandbox recusa documento com dígito verificador errado, e a base
+antiga não emitiria um boleto sequer). Suíte `clientes` 69/69 sobre PG + fumaça ao vivo pelo gateway.
+
+### F15 — Carteira: a visão "Unidades" abria como a de clientes · ✅ corrigido 26/07/2026
+
+O seletor `Clientes × Unidades` trocava o conjunto de colunas, mas não o que a
+visão promete. As preferências eram **uma só para as duas** (`sgi_carteira_clientes_v1`):
+a primeira coluna continuava `Cliente` em Unidades, a ordem continuava a de nomes, e as
+larguras/agrupamento de uma visão vazavam para a outra. Só 5 das 13 colunas eram
+ordenáveis (as demais nem existiam em `ORDENACOES`), e `quadra`/`lote` ordenavam como
+texto — o lote 10 antes do 2.
+**Corrigido:** cada visão é uma planilha própria, com **coluna-âncora** (Cliente / Unidade,
+sempre a primeira e congelada), ordem padrão própria (alfabética / endereço) e preferências
+por visão (`sgi_carteira_clientes_v2`); **toda coluna ordena**, por clique ou pelo menu
+"Ordenar por" do cabeçalho; ordem natural da unidade (quadra › lote › bloco/torre › andar ›
+apto, numérica, vazio por último) com bloco/andar/apto virando colunas; ordenar por
+documento passou a exigir `cadastro.cliente_doc.view` (a ordem dos CPFs vaza o CPF) e a
+resposta declara `podeDocumento`; toda ordenação ganhou desempate por chave primária, sem o
+qual a rolagem infinita duplicava e omitia linhas. Testes `CarteiraOrdenacaoTests` (6);
+`clientes` 31/31 sobre PG.
+
+### F2 — Selects carregam tabelas inteiras · 🟠 parcial 25/07/2026
 
 Formulários carregam todos os clientes/fornecedores/empreendimentos para montar selects.
 **Correção:** select assíncrono com busca server-side paginada (o backend precisa de
 `SearchFilter` + paginação nesses endpoints).
+**Andamento (25/07):** o SCM já resolveu dentro dele (`AsyncEntitySelect`) e a **listagem de
+clientes** deixou de ser client-side — virou a carteira paginada com rolagem infinita
+([frontend.md §5.8](frontend.md)). Efeito colateral tratado: como `/api/clientes/` passou a ser
+paginado, `useClienteOptions` ([useEntityOptions.ts](../frontend/src/modules/erp/hooks/useEntityOptions.ts))
+truncaria a lista em 50 **em silêncio** — pediria a primeira página e o cliente nº 200 sumiria do
+formulário do ERP. Mitigado com `page_size=300` e comentário no código. **Falta** o select com busca
+server-side de verdade nos formulários (clientes, fornecedores, empreendimentos).
 
 ### D8 — Tasks Celery sem contexto de tenant no worker (cobrança Asaas não gerava boleto) · ✅ corrigido 17/07/2026
 
@@ -515,6 +638,7 @@ recuperação legítima feita pelo próprio usuário. Por isso a entrega inclui 
   `POST /iam/usuarios/{id}/trocar-email/`, com regra que depende de **quem é o alvo** — porque neste
   produto o admin **é o dono da empresa** (quem paga), e as contas dos funcionários existem a partir
   dele:
+
   - **alvo funcionário** → troca vale **na hora**, sem confirmação e **sem cooldown**. Exigir
     confirmação no endereço antigo travaria justamente o caso que motivou o D11 (e-mail digitado
     errado no cadastro, ou caixa que a pessoa não acessa mais: a confirmação iria para um endereço
@@ -571,16 +695,17 @@ confirmação no endereço antigo, criação sem e-mail e e-mail duplicado recus
   (`localhost:8090`) e o usuário do staging cairia no ambiente errado. Mesma família do **D10**.
 
 **UI ✅ 18/07/2026:** link "Esqueci minha senha" na [tela de login](../frontend/src/pages/LoginPage.tsx)
+
 + três telas públicas ([EsqueciSenhaPage](../frontend/src/pages/EsqueciSenhaPage.tsx),
-[RedefinirSenhaPage](../frontend/src/pages/RedefinirSenhaPage.tsx),
-[ConfirmarEmailPage](../frontend/src/pages/ConfirmarEmailPage.tsx)) sobre uma moldura comum
-([AuthShell](../frontend/src/components/AuthShell.tsx)) e cliente "cru" sem os interceptors de refresh
-([recuperacaoSenha.ts](../frontend/src/api/recuperacaoSenha.ts) — quem esqueceu a senha não tem sessão
-a renovar). A tela de sucesso é **idêntica** para conta existente e inexistente, para a UI não desfazer
-a proteção anti-enumeração do servidor. Na confirmação de troca, "Não fui eu — recusar" tem o mesmo
-peso visual do confirmar. Rotas batem com os links montados pela IAM (`FRONTEND_BASE_URL` + path).
-Validado: `tsc` limpo nos arquivos novos (o legado caiu de 26 → 25 erros), imagens `iam`/`react`
-rebuildadas, as 3 rotas servidas pelo gateway (200) e o link do e-mail apontando para a tela nova.
+  [RedefinirSenhaPage](../frontend/src/pages/RedefinirSenhaPage.tsx),
+  [ConfirmarEmailPage](../frontend/src/pages/ConfirmarEmailPage.tsx)) sobre uma moldura comum
+  ([AuthShell](../frontend/src/components/AuthShell.tsx)) e cliente "cru" sem os interceptors de refresh
+  ([recuperacaoSenha.ts](../frontend/src/api/recuperacaoSenha.ts) — quem esqueceu a senha não tem sessão
+  a renovar). A tela de sucesso é **idêntica** para conta existente e inexistente, para a UI não desfazer
+  a proteção anti-enumeração do servidor. Na confirmação de troca, "Não fui eu — recusar" tem o mesmo
+  peso visual do confirmar. Rotas batem com os links montados pela IAM (`FRONTEND_BASE_URL` + path).
+  Validado: `tsc` limpo nos arquivos novos (o legado caiu de 26 → 25 erros), imagens `iam`/`react`
+  rebuildadas, as 3 rotas servidas pelo gateway (200) e o link do e-mail apontando para a tela nova.
 
 **Fica de fora (registrado, não implementado):** **cadastro de usuário pelo frontend**, que virá com o
 paywall (decisão 18/07); e leitura unificada das duas trilhas (ver **D17**).
@@ -663,6 +788,27 @@ compose, nem `.env`, nem documentada). O endurecimento do bloco de produção (S
 documentado no `.env.example`; regressão `test_cookie_de_refresh_leva_secure_quando_ligado`.
 **Confirmado no ar 18/07/2026** (imagem da IAM rebuildada): o login do staging passou a emitir
 `sgi_refresh=…; HttpOnly; Path=/auth/; SameSite=Strict; **Secure**`.
+
+### D25 — `worker`/`beat` ficam com a imagem velha quando só `erp`/`react` são rebuildados · ✅ corrigido 26/07/2026
+
+Achado ao subir o **IE.0b**: a importação de arquivo grande respondia **202** e a tela ficava
+progredindo para sempre. O lote ficava em `lendo` com 0 linhas, sem erro em lugar nenhum — nem na
+DLQ, porque a task nunca chegou a existir. Causa: `docker compose build erp react` não reconstrói
+`worker`/`beat`, que **usam a mesma imagem do backend**; o worker seguia com o código antigo e
+descartava `funcoesimpexp.preparar_importacao` como task desconhecida.
+
+É a mesma classe do **D8** (Celery que responde 202 e nunca faz o trabalho), por outro caminho: lá
+faltava o contexto de tenant, aqui falta a imagem. E o sintoma é o pior possível — **sucesso
+aparente**, porque o 202 é honesto e a falha acontece depois, fora da vista.
+
+O comando certo **já estava** em [comandos.md](comandos.md) (`--build erp worker beat`); o que
+faltava era o aviso de que rebuildar parcialmente falha em **silêncio**. Sem isso, a regra parece
+zelo e é fácil de encurtar quando "só mexi numa view".
+
+**Corrigido:** `worker`/`beat` recriados e o efeito colateral documentado no `comandos.md`, ao lado
+do comando. Provado depois pelo E2E
+[ie_impexp_test.py](../infra/gateway/ie_impexp_test.py) (16/16), que exercita justamente o caminho
+de job que o bug escondia.
 
 ### D17 — Duas trilhas de auditoria sem leitura unificada · 🟠 aberto
 
@@ -1053,36 +1199,100 @@ comm -23 /tmp/lidas.txt /tmp/doc.txt        # vazio = nenhum knob órfão
 
 Hoje esse `comm` sai **vazio**. Foi esta auditoria que revelou o `JWT_REFRESH_DAYS` morto e o D14.
 
+### F13 — Cliente do Orçamento contrariava o contrato do backend em 5 pontos · ✅ corrigido 25/07/2026
+
+O hub do Orçamento quebrava a tela inteira no primeiro acesso
+(`TypeError: x is not iterable`, em `montarFila`). Causa: `apiClient.get<T>` é **só um cast** — o
+tipo declarado não valida nada em runtime, então uma divergência com o backend só aparece quando a
+tela roda. Havia quatro, todas do mesmo feitio (envelope × lista, nome de campo):
+
+| Endpoint | Backend devolve | Cliente esperava | Sintoma |
+| --- | --- | --- | --- |
+| `controle/` | `{obras, nota_realizado}` | `ControleLinha[]` | **crash** do hub (`for…of` sobre objeto) |
+| `referencias/{id}/composicao/` | `{composicao, componentes}` | `ComponenteReferencia[]` | **crash** ao espiar a analítica (`.map`) |
+| `referencias/adotar-lote/` | `{adotados: <contagem>, itens: [...]}` | `{adotados: number[], criados}` | **crash** ao inserir item adotado; recado "undefined item(ns)" |
+| `bases-resumo/` | `insumos`/`composicoes`/`adotados_no_catalogo` | `total_insumos`/`total_composicoes`/`adotados` | cards de base com `undefined` |
+| `obras/` e `etapas-obras/` | `obra_id` / `etapa_id` | `id` (em `ObraOpt`/`EtapaOpt`) | **todo seletor de obra do módulo quebrado** (ver abaixo) |
+
+**Corrigido** no cliente ([orcamentoApi.ts](../frontend/src/modules/orcamento/api/orcamentoApi.ts) +
+[types.ts](../frontend/src/modules/orcamento/types.ts)), não no backend: as respostas estão
+testadas (`test_resumo_conta_itens_e_adotados`) e os nomes do resumo **não podem** virar
+`total_insumos` — são anotações `Count(...)` e o model já tem campos com esse nome. O tipo do
+cliente passou a descrever o que a API realmente devolve, com o desembrulho explícito em um lugar só.
+
+O caso `ObraOpt` merece nota própria porque **não gera erro nenhum** — nem no console: com
+`id` inexistente, `<option value={o.id}>` sai **sem atributo `value`** e o `<select>` passa a
+devolver o *texto visível* da opção. A obra virava `NaN`→`null` no POST (400 "Este campo pode não ser
+nulo") e, nos seletores que só filtram (Controlar, Cronograma, Incorporação), a tela simplesmente
+não achava nada. Os seis pontos foram corrigidos; o SIL, que já usava `obra_id`, estava certo.
+
+**Dívida que isto expõe (aberta):** nada garante o contrato entre backend e cliente. Enquanto o
+`tsc -b` não roda no build da imagem (o Dockerfile do frontend usa `vite build` de propósito, por
+causa de ~55 erros herdados do shell v01), o próximo desalinho volta a aparecer só na tela.
+Caminho: schema gerado (`drf-spectacular` → tipos) ou validação em runtime no cliente.
+
+### F14 — Só era possível criar **um** orçamento por obra (400 sem explicação) · ✅ corrigido 25/07/2026
+
+`POST /api/orcamento/orcamentos/` respondia **400 "Os campos obra, versao devem criar um set
+único"** em qualquer obra que já tivesse planilha. Causa: `versao` é `read_only` no serializer, então
+o validador automático do DRF a checava pelo **default do modelo (1)** — e a constraint
+`(obra, versao)` recusava. Os outros dois caminhos de criação já numeravam
+(`revisar_orcamento`, `duplicar_orcamento`); o POST era o único que não, e nascia sempre v1.
+Efeito prático: **reorçamento impossível pela tela** e a única saída era aprovar para poder revisar.
+
+**Corrigido:** `planilha.proxima_versao(obra_id)` virou o numerador único dos três caminhos; o
+serializer descarta o validador de `(obra, versao)` (o cliente não envia versão) e atribui o número
+no `create`, com retry em `IntegrityError` para o POST simultâneo não virar 500. Testes
+`PlanilhaAPITests.test_segundo_orcamento_da_mesma_obra_nasce_na_versao_seguinte` e
+`…test_versao_do_post_continua_depois_da_revisao` (suíte do módulo: 202 ✅). Desenho registrado em
+[modulos/moduloorcamento.md §4.2](modulos/moduloorcamento.md).
+
+**Achado junto (mesmo sintoma para o usuário):** o modal "Novo orçamento" não tratava erro —
+`onCriar` era chamado sem `await`/`catch`, então **qualquer** 400 virava só uma promise rejeitada no
+console, com o modal aberto e nenhum recado. Agora mostra a mensagem da API e avisa, ao escolher a
+obra, que a planilha nascerá como v*N*.
+
 ## 🟡 Médias
 
-| ID | Achado → correção                                                                                                                                                              | Status    |
-| -- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| S8 | backend não valida`iss`/`aud` do JWT e o DRF não tem throttling. **Corrigido 19/07:** a IAM já emitia `iss` e passou a emitir `aud`; o backend agora **exige** os dois (`ISSUER`/`AUDIENCE` no SIMPLE_JWT) — antes, qualquer token assinado com a mesma chave era aceito, viesse de onde viesse. Throttle do DRF (`anon`/`user` + `ScopedRateThrottle`) no backend e na IAM, com taxas por env; escopo `recuperacao` (30/h por origem) no endpoint público de senha, que complementa o teto de 5/h **por conta** — este não cobria rajada contra contas diferentes. A IAM ganhou cache Redis (DB 3) porque com o LocMem o teto valeria por worker do gunicorn. Testes `nucleo/test_s8_jwt_throttle.py` (6) + E2E phase5/6 no stack vivo. | ✅ corrigido 19/07/2026 |
-| S9 | PII em texto puro (CPF, endereço, dados bancários) sem mascaramento/criptografia/endpoints de titular → é a**Fase 9** (LGPD)                                            | ✅ mascaramento 05/07/2026 (Fase 9.C); endpoints de titular → 9.D |
-| L8 | `AtualizarStatusNFView` grava status arbitrário; downloads de NF sem `timeout`. **Corrigido 16/07 (Fase 11.1):** status validado contra `StatusNFE.values` (400 se inválido); `_registrar_arquivos_nf` com `timeout=(5,30)` + nome via `urlparse().path`. | ✅ corrigido 16/07/2026 |
-| L9 | Lote de remessa soma o**valor cheio** (usar `saldo_aberto`) e aceita título quitado/cancelado/duplicado (filtrar status + excluir já em lote ativo). **Corrigido 16/07:** `gerar-lote-remessa` soma o saldo em aberto, filtra `ABERTO/PARCIAL`, exclui título já em lote ativo (GERADO/ENVIADO/PROCESSADO) e devolve os `ignorados` (os elegíveis são materializados **antes** do `set()`, senão o próprio queryset — que exclui títulos em lote ativo — voltaria vazio depois de vincular). Testes `moduloerp.tests.L9LoteRemessaTests` (4), verdes sobre Postgres 17/07. | ✅ corrigido 16/07/2026 |
-| A5 | `CobrancaCliente` duplica `ContaReceber`+`Boleto` → consolidar repetindo o playbook da `Fatura`                                                                          | 🔴 aberto |
-| A6 | Signals do Celery gravam 2+ linhas por task com args completos e sem índice → logar só a conclusão, sem args, e indexar                                                       | 🔴 aberto |
-| A7 | N+1 na galeria de IA e no CRM; busca de telefone O(N) em Python →`select_related`/`prefetch_related` + paginação + query no banco *(v01-B9)*                             | 🔴 aberto |
-| A8 | Acoplamento duro ao Redis (`delete_pattern` do django-redis; sem `IGNORE_EXCEPTIONS`) → cache tolerante a queda. **Parcial 19/07:** `IGNORE_EXCEPTIONS: True` no backend e na IAM — virou obrigatório com o S8, que faz o throttle consultar a cache em TODA requisição (sem isso, Redis fora deixaria de ser lentidão e passaria a ser API inteira fora do ar). **Falta** o `delete_pattern`, que segue amarrando o código ao django-redis. | 🟠 parcial 19/07/2026 |
-| A9 | `except Exception → str(e)` no corpo do 500 vaza detalhes internos → mensagem genérica + traceback só no log *(v01-B7)*                                                   | 🔴 aberto |
-| F3 | Acessibilidade: ordenação/linhas de tabela sem teclado,`Sheet` sem focus trap, hover via JS → handlers de teclado + focus trap + CSS *(v01-F3)*                            | 🔴 aberto |
-| F4 | Rotas do ERP sem guard de módulo no front (403 cru) →`ModuleRoute`/`hasModule` com tela amigável. **Corrigido 13/07:** novo [`ModuleRoute`](../frontend/src/components/ModuleRoute.tsx) (layout guard por `hasModule`) envolve as rotas de ERP/CRM/RH; sem o entitlement, navegação direta por URL cai numa tela amigável ([`AccessNotice`](../frontend/src/components/AccessNotice.tsx)) em vez de 403 cru. Hub do ERP degrada o 403 de permissão (D3). | ✅ corrigido 13/07/2026 |
-| D7 | Recurso `erp.nf` não tinha `.edit` no catálogo → os 3 ViewSets de NF e `AtualizarStatusNFView` (POST→`.edit`) só passavam por admin; `ConsultarStatusNFView`, sendo **leitura**, exigia `.edit` indevidamente. Surgiu explícito ao remover o fallback de papel (fatia E). **Corrigido 12/07:** `erp.nf.edit` criado no catálogo (persona `fiscal` herda via `erp.nf.*`, `sync_authz` aditivo propaga no boot); `ConsultarStatusNFView` passou a exigir `erp.nf.view`. Testes `moduloerp.tests.D7NfApiViewPermissionTests` (4). | ✅ corrigido 12/07/2026 |
+| ID  | Achado → correção                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Status                                                             |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| S8  | backend não valida`iss`/`aud` do JWT e o DRF não tem throttling. **Corrigido 19/07:** a IAM já emitia `iss` e passou a emitir `aud`; o backend agora **exige** os dois (`ISSUER`/`AUDIENCE` no SIMPLE_JWT) — antes, qualquer token assinado com a mesma chave era aceito, viesse de onde viesse. Throttle do DRF (`anon`/`user` + `ScopedRateThrottle`) no backend e na IAM, com taxas por env; escopo `recuperacao` (30/h por origem) no endpoint público de senha, que complementa o teto de 5/h **por conta** — este não cobria rajada contra contas diferentes. A IAM ganhou cache Redis (DB 3) porque com o LocMem o teto valeria por worker do gunicorn. Testes `nucleo/test_s8_jwt_throttle.py` (6) + E2E phase5/6 no stack vivo.                                                                                                                                                                        | ✅ corrigido 19/07/2026                                            |
+| S9  | PII em texto puro (CPF, endereço, dados bancários) sem mascaramento/criptografia/endpoints de titular → é a**Fase 9** (LGPD)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | ✅ mascaramento 05/07/2026 (Fase 9.C); endpoints de titular → 9.D |
+| L8  | `AtualizarStatusNFView` grava status arbitrário; downloads de NF sem `timeout`. **Corrigido 16/07 (Fase 11.1):** status validado contra `StatusNFE.values` (400 se inválido); `_registrar_arquivos_nf` com `timeout=(5,30)` + nome via `urlparse().path`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | ✅ corrigido 16/07/2026                                            |
+| L9  | Lote de remessa soma o**valor cheio** (usar `saldo_aberto`) e aceita título quitado/cancelado/duplicado (filtrar status + excluir já em lote ativo). **Corrigido 16/07:** `gerar-lote-remessa` soma o saldo em aberto, filtra `ABERTO/PARCIAL`, exclui título já em lote ativo (GERADO/ENVIADO/PROCESSADO) e devolve os `ignorados` (os elegíveis são materializados **antes** do `set()`, senão o próprio queryset — que exclui títulos em lote ativo — voltaria vazio depois de vincular). Testes `moduloerp.tests.L9LoteRemessaTests` (4), verdes sobre Postgres 17/07.                                                                                                                                                                                                                                                                                                                                            | ✅ corrigido 16/07/2026                                            |
+| A5  | `CobrancaCliente` duplica `ContaReceber`+`Boleto` → consolidar repetindo o playbook da `Fatura`. **Levantado 25/07/2026:** confirmado que **nada escreve** em `CobrancaCliente` (nenhum service, task, seed ou signal — só o CRUD exposto em `/api/erp/cobrancas-cliente/`): a tabela está vazia e a cadeia viva é `ContaReceber`→`Boleto`. A única capacidade que ela tinha a mais — amarrar a parcela ao **contrato/unidade** — passou a existir na `ContaReceber` (FKs `cliente_empreendimento`/`contrato`, migration `moduloerp/0013`), então a consolidação virou basicamente **remover** o modelo e a rota.                                                                                                                                                                                                                                                                                  | 🔴 aberto                                                          |
+| A6  | Signals do Celery gravam 2+ linhas por task com args completos e sem índice → logar só a conclusão, sem args, e indexar                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | 🔴 aberto                                                          |
+| A7  | N+1 na galeria de IA e no CRM; busca de telefone O(N) em Python →`select_related`/`prefetch_related` + paginação + query no banco *(v01-B9)*                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | 🔴 aberto                                                          |
+| A8  | Acoplamento duro ao Redis (`delete_pattern` do django-redis; sem `IGNORE_EXCEPTIONS`) → cache tolerante a queda. **Parcial 19/07:** `IGNORE_EXCEPTIONS: True` no backend e na IAM — virou obrigatório com o S8, que faz o throttle consultar a cache em TODA requisição (sem isso, Redis fora deixaria de ser lentidão e passaria a ser API inteira fora do ar). **Falta** o `delete_pattern`, que segue amarrando o código ao django-redis.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | 🟠 parcial 19/07/2026                                              |
+| A9  | `except Exception → str(e)` no corpo do 500 vaza detalhes internos → mensagem genérica + traceback só no log *(v01-B7)*                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | 🔴 aberto                                                          |
+| F3  | Acessibilidade: ordenação/linhas de tabela sem teclado,`Sheet` sem focus trap, hover via JS → handlers de teclado + focus trap + CSS *(v01-F3)*                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | 🔴 aberto                                                          |
+| F4  | Rotas do ERP sem guard de módulo no front (403 cru) →`ModuleRoute`/`hasModule` com tela amigável. **Corrigido 13/07:** novo [`ModuleRoute`](../frontend/src/components/ModuleRoute.tsx) (layout guard por `hasModule`) envolve as rotas de ERP/CRM/RH; sem o entitlement, navegação direta por URL cai numa tela amigável ([`AccessNotice`](../frontend/src/components/AccessNotice.tsx)) em vez de 403 cru. Hub do ERP degrada o 403 de permissão (D3).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | ✅ corrigido 13/07/2026                                            |
+| F9  | **Breadcrumb da topbar não conhece os módulos novos** — `SEGMENT_LABELS` em [AppTopbar.tsx](../frontend/src/components/layout/AppTopbar.tsx) não tem `sil`, `orcamento`, `orcar`, `controlar`, `cronograma`, `bases`, `incorporacao` nem `notas-fiscais`: nessas telas a trilha mostra o **slug cru** (`orcamento › orcar`), quebrando a promessa de "toda tela declara seu endereço" ([frontend.md §3.3](frontend.md)). O mapa é uma lista manual que ninguém atualiza ao criar rota. → completar os rótulos e, de preferência, derivá-los do catálogo de páginas de cada módulo (o Orçamento já tem o seu em `modules/orcamento/paginas.ts`) em vez de manter uma segunda lista.                                                                                                                                                                                                                           | 🔴 aberto                                                          |
+| F10 | **`--topbar-h` não existe** — [PaginaShell.tsx](../frontend/src/modules/orcamento/components/PaginaShell.tsx) dimensiona as páginas do Orçamento com `calc(100vh - var(--topbar-h, 56px))`, mas **nenhum arquivo declara** essa variável (nem `index.css`, nem o `AppTopbar`, cuja altura real vem de `padding: 12px` + conteúdo). Sempre cai no fallback, então a grade com `semRolagem` (Orçar) fica com altura errada por alguns pixels — rolagem dupla ou faixa cortada. → declarar `--topbar-h` no `AppShell`/`index.css` a partir da altura real da topbar (ou medir por `ResizeObserver`), já que outros módulos vão precisar do mesmo cálculo.                                                                                                                                                                                                                                                            | 🔴 aberto                                                          |
+| F11 | **Duas listas de módulos que divergem** — o farol da sidebar (`NAV_SECTIONS` em [AppSidebar.tsx](../frontend/src/components/layout/AppSidebar.tsx)) e o catálogo do hub (`CATALOGO` em [pages/app/home/catalogo.ts](../frontend/src/pages/app/home/catalogo.ts)) descrevem o mesmo conjunto com vocabulários diferentes (`implemented: boolean` × `situacao: pronto/backend/planejado`) e **já discordam**: Drone é `implemented: false` num e `situacao: 'backend'` no outro; Maps/DMS/APS/PDCA/terrenos/viabilidade estão no hub e não na sidebar. Como os dois são "o farol da edição" ([frontend.md §3.2](frontend.md)), o usuário vê dois inventários da mesma casa. → uma fonte só (o `CATALOGO`, que é mais rico), com a sidebar derivando dela o seu recorte — mesmo remédio do `paginas.ts` do Orçamento, que já resolveu isso dentro do módulo.                                                     | 🔴 aberto                                                          |
+| F12 | **A convenção de estilo escrita não é a praticada** — [frontend-convencoes.md](frontend-convencoes.md) manda "Tailwind classes inline; `cn()` para condicionais; sem arquivos `.css` por componente", mas **todo** o código nascido na Malha (sidebar, topbar, hub da home, SCM, SIL, Orçamento) é escrito com objetos `style={{}}` inline, sem Tailwind e sem `cn()`. Some-se a isso **quatro kits de UI paralelos** (`components/malha/` + kit local do SCM + `sil/ui.tsx` + `orcamento/ui.tsx`, cada um com seu `Card`/`Pill`/`Btn`/`Modal`) — a dívida dos kits já está declarada em [frontend.md §2](frontend.md), a da convenção não. Quem ler o documento antes de escrever a próxima tela vai escrever no padrão errado. → decidir o padrão de fato (inline `style` + tokens parece ser o vencedor) e reescrever a regra; e datar a migração dos kits locais para `components/malha/`. | 🔴 aberto                                                          |
+| D7  | Recurso`erp.nf` não tinha `.edit` no catálogo → os 3 ViewSets de NF e `AtualizarStatusNFView` (POST→`.edit`) só passavam por admin; `ConsultarStatusNFView`, sendo **leitura**, exigia `.edit` indevidamente. Surgiu explícito ao remover o fallback de papel (fatia E). **Corrigido 12/07:** `erp.nf.edit` criado no catálogo (persona `fiscal` herda via `erp.nf.*`, `sync_authz` aditivo propaga no boot); `ConsultarStatusNFView` passou a exigir `erp.nf.view`. Testes `moduloerp.tests.D7NfApiViewPermissionTests` (4).                                                                                                                                                                                                                                                                                                                                                                                     | ✅ corrigido 12/07/2026                                            |
 
 ## 🟢 Baixas
 
-| ID  | Achado → correção                                                                                                                                                              | Status    |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| A10 | Higiene do repo:`nul`, `terminal*.txt`, scripts soltos na raiz → remover + `.gitignore` *(v01-G1)*. **Parcial 19/07:** o que tinha valor foi movido em vez de apagado — `terminal.txt` (guia de comandos atualizado) → [docs/comandos.md](comandos.md), `test_browser.py` → `infra/gateway/browser_smoke_test.py`, `serve_spa.py` → `infra/`. Docker e env saíram da raiz para [deploy/](../deploy/README.md). `.gitignore` ganhou `_verify_*.txt` e — achado no caminho — teve os padrões de virtualenv **ancorados** (`/env/` em vez de `env/`): sem a âncora, `env/` casava qualquer diretório com esse nome e escondia o `deploy/env/` inteiro, incluindo os modelos que precisam ser versionados. **Falta (exige decisão/ação do dono do repo):** (a) apagar 4 arquivos mortos na raiz — `nul` (um 502 do nginx capturado por engano), `_verify_testes.txt` (resíduo do bridge PHP removido) e `package.json`/`package-lock.json` (vestígio do monorepo Node; **nada os referencia** — o CI usa `frontend/package-lock.json`); (b) decidir o `requirements.txt` da RAIZ — não é usado por CI nem por Dockerfile algum (esses usam `backend/` e `iam/`), mas é plausível que seja o manifesto do `.venv` que roda as duas suítes localmente, e por isso **não foi tocado**. Se for isso, vale torná-lo explícito (`requirements-dev.txt`, somando backend+iam, hoje desatualizado: falta `django-redis`); se não, pode sair. | 🟠 parcial 19/07/2026 |
-| A11 | Sem testes/CI — o L1 seria pego por um smoke test de 1 linha → pipeline mínima (Fase 10.5)*(v01-G2)*. **Corrigido 14/07:** GitHub Actions ([.github/workflows/ci.yml](../.github/workflows/ci.yml)) roda backend (Django+Postgres, RLS real), iam e frontend a cada push/PR. | ✅ corrigido 14/07/2026 |
-| A12 | Modelagem: validador CPF/CNPJ sem dígito verificador no backend;`Boleto.VENCIDO` nunca setado; rota duplicada `/api/api/`; duplicata no fallback de tipos de IA *(v01-B8)* | 🔴 aberto |
-| F5  | Código morto/duplicado no frontend (duas gerações de páginas, dois`ObraDetailPage`) → remover a geração antiga *(v01-F4)*                                              | 🔴 aberto |
-| F6  | Sem`ErrorBoundary` nem padrão de loading/erro/vazio; i18n ausente → padronizar componentes de estado                                                                          | 🔴 aberto |
-| C1  | **Calendário Fatia C (14/07):** lembretes de **série recorrente** só definidos na criação — editar "só esta"/"série" não os altera. **Corrigido 14/07/2026:** `update-recurrence` sincroniza `reminders` nos três escopos — `all` substitui os do mestre (valem p/ todas as ocorrências virtuais), `future` abastece o novo mestre e o truncado conserva os seus, `this` no override; ausência de `reminders` no payload **herda os do mestre** (novo `_reminders_for`), não perde aviso. Front parou de fazer `delete payload.reminders`. Testes `CalendarRecurrenceTests` (4 novos, suíte 25/25) + E2E vivo pelo gateway (all/this/future). Canal **WhatsApp** segue adiado (hoje in-app + e-mail). | ✅ corrigido 14/07/2026 |
-| C2  | **Calendário Fatia C (14/07):** suíte DB-backed + E2E/typecheck do sino pendentes na entrega (Postgres/Docker fora). **Validado 14/07/2026:** suíte **27/27** sobre Postgres (role `erp_app`, RLS real) — `modulocalendar` (reminders CRUD + `LembreteDispatchTests`) + `nucleo.test_notificacoes`; **typecheck** `tsc -b` limpo nos arquivos da Fatia C (os 33 erros restantes são do shell legado, fora da fatia); **E2E vivo pelo gateway** — evento com lembrete `[0]` → beat@60s + worker `despachar_lembretes` → `Notificacao` in-app (badge, texto, `marcar-todas-lidas`). | ✅ validado 14/07/2026 |
+| ID  | Achado → correção                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Status                  |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------- |
+| A10 | Higiene do repo:`nul`, `terminal*.txt`, scripts soltos na raiz → remover + `.gitignore` *(v01-G1)*. **Parcial 19/07:** o que tinha valor foi movido em vez de apagado — `terminal.txt` (guia de comandos atualizado) → [docs/comandos.md](comandos.md), `test_browser.py` → `infra/gateway/browser_smoke_test.py`, `serve_spa.py` → `infra/`. Docker e env saíram da raiz para [deploy/](../deploy/README.md). `.gitignore` ganhou `_verify_*.txt` e — achado no caminho — teve os padrões de virtualenv **ancorados** (`/env/` em vez de `env/`): sem a âncora, `env/` casava qualquer diretório com esse nome e escondia o `deploy/env/` inteiro, incluindo os modelos que precisam ser versionados. **Falta (exige decisão/ação do dono do repo):** (a) apagar 4 arquivos mortos na raiz — `nul` (um 502 do nginx capturado por engano), `_verify_testes.txt` (resíduo do bridge PHP removido) e `package.json`/`package-lock.json` (vestígio do monorepo Node; **nada os referencia** — o CI usa `frontend/package-lock.json`); (b) decidir o `requirements.txt` da RAIZ — não é usado por CI nem por Dockerfile algum (esses usam `backend/` e `iam/`), mas é plausível que seja o manifesto do `.venv` que roda as duas suítes localmente, e por isso **não foi tocado**. Se for isso, vale torná-lo explícito (`requirements-dev.txt`, somando backend+iam, hoje desatualizado: falta `django-redis`); se não, pode sair.                                                                                                                             | 🟠 parcial 19/07/2026   |
+| A11 | Sem testes/CI — o L1 seria pego por um smoke test de 1 linha → pipeline mínima (Fase 10.5)*(v01-G2)*. **Corrigido 14/07:** GitHub Actions ([.github/workflows/ci.yml](../.github/workflows/ci.yml)) roda backend (Django+Postgres, RLS real), iam e frontend a cada push/PR.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | ✅ corrigido 14/07/2026 |
+| A12 | Modelagem: validador CPF/CNPJ sem dígito verificador no backend;`Boleto.VENCIDO` nunca setado; rota duplicada `/api/api/`; duplicata no fallback de tipos de IA *(v01-B8)*                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | 🔴 aberto               |
+| F5  | Código morto/duplicado no frontend (duas gerações de páginas, dois`ObraDetailPage`) → remover a geração antiga *(v01-F4)*. **Inventário confirmado 25/07/2026** (nada disto é alcançável a partir de [App.tsx](../frontend/src/App.tsx)): (a) **ilha de obras** — `modules/obras/ObraDetailPage.tsx` e `ObrasListPage.tsx` na raiz do módulo (duplicatas das versões em `pages/`, que são as roteadas) + os `.module.css` de ambas; elas são as **únicas** consumidoras de todo `components/obra/**` (blueprint · documentslist · finances · ganttchart · interactivemap · kpidashboard · obratimeline · storage, com CSS) e de `hooks/useObraData.ts` — ~18 arquivos que só se referenciam entre si; (b) **avulsos** — `pages/AppStubPage.tsx`, `pages/Clientes.tsx`, `pages/Login.tsx` (a viva é `LoginPage.tsx`), `components/layout/MainLayout.tsx` + `Sidebar.tsx` (+CSS, substituídos pelo `AppShell`), `components/clientes/ClienteForm.tsx` (a viva é `modules/clientes/components/ClienteForm.tsx`), `modules/empreendimentos/pages/EmpreendimentosPage.tsx`, `modules/drone/pages/MapeamentoDronePage.tsx`. Sintoma de que a ilha está mesmo morta: `GanttChart.tsx` importa **`frappe-gantt`, que não consta do `package.json`** — só não quebra porque o `types/frappe-gantt.d.ts` satisfaz o `tsc` e o Vite nunca chega a resolver o módulo (nada o alcança). Esse `.d.ts` sai junto. *(Este `F5` é o da tabela — não confundir com o `### F5` da seção Altas, do `.gitignore`; colisão de IDs herdada dos dois laudos.)* | 🔴 aberto               |
+| F6  | Sem`ErrorBoundary` nem padrão de loading/erro/vazio; i18n ausente → padronizar componentes de estado                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | 🔴 aberto               |
+| C1  | **Calendário Fatia C (14/07):** lembretes de **série recorrente** só definidos na criação — editar "só esta"/"série" não os altera. **Corrigido 14/07/2026:** `update-recurrence` sincroniza `reminders` nos três escopos — `all` substitui os do mestre (valem p/ todas as ocorrências virtuais), `future` abastece o novo mestre e o truncado conserva os seus, `this` no override; ausência de `reminders` no payload **herda os do mestre** (novo `_reminders_for`), não perde aviso. Front parou de fazer `delete payload.reminders`. Testes `CalendarRecurrenceTests` (4 novos, suíte 25/25) + E2E vivo pelo gateway (all/this/future). Canal **WhatsApp** segue adiado (hoje in-app + e-mail).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | ✅ corrigido 14/07/2026 |
+| C2  | **Calendário Fatia C (14/07):** suíte DB-backed + E2E/typecheck do sino pendentes na entrega (Postgres/Docker fora). **Validado 14/07/2026:** suíte **27/27** sobre Postgres (role `erp_app`, RLS real) — `modulocalendar` (reminders CRUD + `LembreteDispatchTests`) + `nucleo.test_notificacoes`; **typecheck** `tsc -b` limpo nos arquivos da Fatia C (os 33 erros restantes são do shell legado, fora da fatia); **E2E vivo pelo gateway** — evento com lembrete `[0]` → beat@60s + worker `despachar_lembretes` → `Notificacao` in-app (badge, texto, `marcar-todas-lidas`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | ✅ validado 14/07/2026  |
 
 ---
+
+
+## Duas coisas para decidir sobre moduloorcamento
+
+**`pdfplumber` entrou no `requirements.txt`.** É dependência nova e passa pelos gates de `pip-audit`/Dependabot. O código faz import tardio e degrada com mensagem clara se faltar — se preferir não adicionar dependência agora, é só remover a linha que o resto continua funcionando sem o caminho PDF.
+
+ **Nenhuma permissão nova foi criada** , de propósito: manter banco de preço usa `orcamento.orcamento.edit`, importar usa `orcamento.base.adotar`. Se na sua operação "quem cuida do banco de preço" for uma pessoa diferente de "quem orça", vale criar `orcamento.banco.*` — mas isso exige rebuild da imagem `sgi-iam` e re-seed, que eu não teria como validar aqui.
 
 ## Ideias de novas funcionalidades (backlog, sem compromisso)
 

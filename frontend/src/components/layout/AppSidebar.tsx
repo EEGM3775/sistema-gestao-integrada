@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Building2, HardHat, Users, Truck,
   BarChart3, UserCog, TrendingUp, Brain, Plane, Package,
-  CalendarDays, PanelLeft, Lock, ShieldCheck, Network, Warehouse,
+  CalendarDays, PanelLeft, Lock, ShieldCheck, Network, Warehouse, Calculator,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { Quarteirao } from '@/components/brand/Quarteirao'
@@ -32,7 +32,7 @@ const NAV_SECTIONS: NavSection[] = [
   {
     label: 'Operação',
     items: [
-      { label: 'Início',          icon: <LayoutDashboard />, to: '/app/dashboard',       implemented: false },
+      { label: 'Início',          icon: <LayoutDashboard />, to: '/app/dashboard',       implemented: true },
       { label: 'Empreendimentos', icon: <Building2 />,       to: '/app/empreendimentos', implemented: true },
       { label: 'Obras',           icon: <HardHat />,         to: '/app/obras',           implemented: true },
       { label: 'Clientes',        icon: <Users />,           to: '/app/clientes',        implemented: true },
@@ -49,6 +49,7 @@ const NAV_SECTIONS: NavSection[] = [
       { label: 'Calendário',       icon: <CalendarDays />, to: '/app/calendario',                          implemented: true },
       { label: 'Suprimentos',      icon: <Package />,     to: '/app/scm',        module: 'scm',            implemented: true },
       { label: 'Estoque & Logística', icon: <Warehouse />, to: '/app/sil',       module: 'sil',            implemented: true },
+      { label: 'Orçamento',        icon: <Calculator />,  to: '/app/orcamento',  module: 'orcamento',      implemented: true },
       { label: 'Drone',            icon: <Plane />,       to: '/app/drone',      module: 'drone',          implemented: false },
     ],
   },

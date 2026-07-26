@@ -1,0 +1,355 @@
+# backend/moduloorcamento/reprecificacao.py
+"""ORC.5b — trocar a data-base da planilha, com prévia e desfazer.
+
+A planilha guarda **snapshot** de preço: a linha que entrou em junho gravou o
+custo e a data-base de junho, e não muda sozinha quando sai a tabela de julho.
+Isso é de propósito (orçamento aprovado é régua histórica), mas cria a operação
+oposta — *quero* trocar de data-base, conscientemente.
+
+Três decisões que vêm do domínio:
+
+1. **Qualquer publicação, para frente ou para trás.** Em licitação a data-base é
+   a do edital, e ela costuma ser passada; "atualizar" não é sinônimo de "pegar a
+   mais nova". O destino é escolhido, nunca inferido.
+2. **Prévia antes de aplicar.** O lote nasce `PREVIA` com uma linha por item —
+   preço velho, preço novo, delta — e só vira `APLICADA` quando alguém confirma
+   a seleção. Descobrir depois que o total subiu 4% sem saber onde é o defeito
+   que a prévia existe para impedir.
+3. **Desfazer restaura a procedência, não só o número.** Uma linha que voltou ao
+   preço velho mas continua dizendo que veio da publicação nova é rastro falso —
+   e rastro é o que a auditoria de licitação confere.
+
+**Só em rascunho.** Orçamento aprovado tem a escrita bloqueada por
+`planilha.exigir_editavel`, e é assim que deve ser: o SIL já compara consumo
+contra aquela régua. Reprecificar aprovado é `revisar` primeiro.
+
+`somente_ate` é a **data de corte** do Sienge: só toca linha cujo preço é igual
+ou anterior à data informada. Serve para atualizar o que ficou para trás sem
+mexer no que já foi renegociado à mão.
+"""
+from __future__ import annotations
+
+from decimal import Decimal
+
+from django.db import transaction
+from django.utils import timezone
+
+from .models import (
+    BancoPreco, BaseReferencial, InsumoReferencia, ItemBancoPreco, ItemOrcado,
+    LinhaReprecificacao, Orcamento, Reprecificacao,
+)
+from .planilha import dinheiro, exigir_editavel, recalcular_orcamento
+
+
+class ReprecificacaoInvalida(Exception):
+    """Operação pedida sobre lote/orçamento em estado que não permite."""
+
+
+def _precos_do_destino(*, base: BaseReferencial | None, banco: BancoPreco | None) -> dict[str, dict]:
+    """Índice `código → preço` da publicação de destino, numa consulta só.
+
+    Um SELECT por linha da planilha seria o caminho óbvio e transformaria a
+    prévia de um orçamento de 800 itens em 800 idas ao banco.
+    """
+    if base is not None:
+        linhas = InsumoReferencia.objects.filter(base=base).values(
+            "codigo", "custo_unitario", "descricao", "unidade",
+        )
+        fonte = base.fonte
+        data_base = base.mes_referencia
+    elif banco is not None:
+        linhas = ItemBancoPreco.objects.filter(banco=banco).values(
+            "codigo", "custo_unitario", "descricao", "unidade",
+        )
+        fonte = banco.fonte
+        data_base = banco.mes_referencia
+    else:
+        raise ReprecificacaoInvalida("Informe a publicação ou o banco de destino.")
+
+    return {
+        linha["codigo"]: {
+            "custo": linha["custo_unitario"],
+            "descricao": linha["descricao"],
+            "unidade": linha["unidade"],
+            "fonte": fonte,
+            "data_base": data_base,
+        }
+        for linha in linhas
+    }
+
+
+@transaction.atomic
+def gerar_previa(
+    orcamento: Orcamento,
+    *,
+    base_destino: BaseReferencial | None = None,
+    banco_destino: BancoPreco | None = None,
+    somente_ate=None,
+    usuario_nome: str = "",
+) -> Reprecificacao:
+    """Monta o lote em `PREVIA`, sem tocar em nenhuma linha da planilha."""
+    exigir_editavel(orcamento)
+    if base_destino is None and banco_destino is None:
+        raise ReprecificacaoInvalida("Escolha a publicação ou o banco de destino.")
+    if base_destino is not None and banco_destino is not None:
+        raise ReprecificacaoInvalida("Escolha só uma origem de preço.")
+
+    precos = _precos_do_destino(base=base_destino, banco=banco_destino)
+    data_base_destino = base_destino.mes_referencia if base_destino else banco_destino.mes_referencia
+
+    # Prévia anterior ainda aberta vira lixo assim que outra é pedida: duas
+    # prévias vivas sobre o mesmo orçamento aplicariam preços conflitantes.
+    Reprecificacao.objects.filter(
+        orcamento=orcamento, status=Reprecificacao.Status.PREVIA
+    ).delete()
+
+    lote = Reprecificacao.objects.create(
+        tenant_id=orcamento.tenant_id,
+        orcamento=orcamento,
+        base_destino=base_destino,
+        banco_destino=banco_destino,
+        data_base_destino=data_base_destino,
+        somente_ate=somente_ate,
+        status=Reprecificacao.Status.PREVIA,
+        total_antes=orcamento.valor_total or Decimal("0"),
+        criado_por_nome=(usuario_nome or "")[:150],
+    )
+
+    candidatas = ItemOrcado.objects.filter(
+        orcamento=orcamento, tipo_linha=ItemOrcado.TipoLinha.ANALITICO,
+    ).exclude(codigo_referencia="")
+
+    linhas: list[LinhaReprecificacao] = []
+    for item in candidatas:
+        if somente_ate and item.data_base_preco and item.data_base_preco > somente_ate:
+            continue
+        novo = precos.get(item.codigo_referencia)
+        if novo is None:
+            continue
+        if novo["custo"] == item.custo_unitario:
+            continue
+        linhas.append(LinhaReprecificacao(
+            tenant_id=orcamento.tenant_id,
+            reprecificacao=lote,
+            item_orcado=item,
+            custo_antes=item.custo_unitario,
+            custo_depois=novo["custo"],
+            fonte_antes=item.fonte_referencia or "",
+            codigo_antes=item.codigo_referencia or "",
+            data_base_antes=item.data_base_preco,
+            fonte_depois=novo["fonte"] or "",
+            codigo_depois=item.codigo_referencia or "",
+            data_base_depois=novo["data_base"],
+            selecionada=True,
+        ))
+
+    if linhas:
+        LinhaReprecificacao.objects.bulk_create(linhas, batch_size=500)
+
+    lote.linhas_afetadas = len(linhas)
+    lote.total_depois = _total_simulado(orcamento, linhas)
+    lote.save(update_fields=["linhas_afetadas", "total_depois"])
+    return lote
+
+
+def _total_simulado(orcamento: Orcamento, linhas: list[LinhaReprecificacao]) -> Decimal:
+    """Total que o orçamento teria se todas as linhas do lote fossem aplicadas.
+
+    Aproximação deliberada: soma o delta de cada linha (Δcusto × quantidade ×
+    fator de BDI padrão) sobre o total atual, em vez de reexecutar o recálculo da
+    árvore. O número exato sai do `recalcular_orcamento` na hora de aplicar; aqui
+    o que importa é a ordem de grandeza para a decisão, e reexecutar a árvore
+    inteira só para uma prévia custaria caro numa planilha grande.
+    """
+    fator = Decimal("1") + (orcamento.bdi_percentual or Decimal("0")) / Decimal("100")
+    delta = Decimal("0")
+    for linha in linhas:
+        quantidade = linha.item_orcado.quantidade or Decimal("0")
+        delta += (linha.custo_depois - linha.custo_antes) * quantidade * fator
+    return dinheiro((orcamento.valor_total or Decimal("0")) + delta)
+
+
+@transaction.atomic
+def aplicar(
+    lote: Reprecificacao,
+    *,
+    selecionadas: list[int] | None = None,
+    usuario_nome: str = "",
+) -> Reprecificacao:
+    """Aplica as linhas escolhidas e congela o lote como `APLICADA`.
+
+    `selecionadas` são ids de `LinhaReprecificacao`; `None` = todas. O que não
+    entrou fica no lote com `selecionada=False`, então o histórico mostra o que
+    foi oferecido e recusado, não só o que passou.
+    """
+    if lote.status != Reprecificacao.Status.PREVIA:
+        raise ReprecificacaoInvalida("Só uma prévia pode ser aplicada.")
+    orcamento = lote.orcamento
+    exigir_editavel(orcamento)
+
+    linhas = list(lote.linhas.select_related("item_orcado"))
+    if selecionadas is not None:
+        escolhidas = set(selecionadas)
+        for linha in linhas:
+            linha.selecionada = linha.linha_id in escolhidas
+        LinhaReprecificacao.objects.bulk_update(linhas, ["selecionada"], batch_size=500)
+
+    aplicar_estas = [linha for linha in linhas if linha.selecionada]
+    itens: list[ItemOrcado] = []
+    for linha in aplicar_estas:
+        item = linha.item_orcado
+        item.custo_unitario = linha.custo_depois
+        item.fonte_referencia = linha.fonte_depois or item.fonte_referencia
+        item.data_base_preco = linha.data_base_depois
+        itens.append(item)
+        linha.aplicada = True
+
+    if itens:
+        ItemOrcado.objects.bulk_update(
+            itens, ["custo_unitario", "fonte_referencia", "data_base_preco"], batch_size=500,
+        )
+        LinhaReprecificacao.objects.bulk_update(aplicar_estas, ["aplicada"], batch_size=500)
+
+    # A data-base do cabeçalho acompanha, senão a planilha diria "junho" com
+    # preços de julho — e é o cabeçalho que a peça de licitação carrega.
+    if lote.data_base_destino:
+        orcamento.data_base = lote.data_base_destino
+    if lote.base_destino_id:
+        orcamento.base_referencial_id = lote.base_destino_id
+    orcamento.save(update_fields=["data_base", "base_referencial", "atualizado_em"])
+
+    recalcular_orcamento(orcamento)
+    orcamento.refresh_from_db()
+
+    lote.status = Reprecificacao.Status.APLICADA
+    lote.aplicada_em = timezone.now()
+    lote.linhas_afetadas = len(aplicar_estas)
+    lote.total_depois = orcamento.valor_total or Decimal("0")
+    if usuario_nome:
+        lote.criado_por_nome = usuario_nome[:150]
+    lote.save(update_fields=[
+        "status", "aplicada_em", "linhas_afetadas", "total_depois", "criado_por_nome",
+    ])
+    return lote
+
+
+@transaction.atomic
+def desfazer(lote: Reprecificacao) -> Reprecificacao:
+    """Restaura preço, fonte e data-base de cada linha aplicada.
+
+    Só o **último** lote aplicado pode ser desfeito. Desfazer um lote antigo
+    sobrescreveria o preço posto por um lote posterior com um valor mais velho
+    ainda, e o histórico deixaria de descrever a planilha.
+    """
+    if lote.status != Reprecificacao.Status.APLICADA:
+        raise ReprecificacaoInvalida("Só um lote aplicado pode ser desfeito.")
+
+    ultimo = (
+        Reprecificacao.objects
+        .filter(orcamento=lote.orcamento, status=Reprecificacao.Status.APLICADA)
+        .order_by("-aplicada_em", "-reprecificacao_id").first()
+    )
+    if ultimo and ultimo.pk != lote.pk:
+        raise ReprecificacaoInvalida(
+            "Desfaça primeiro a reprecificação mais recente — desfazer fora de ordem "
+            "deixaria a planilha com preços de lotes diferentes."
+        )
+
+    orcamento = lote.orcamento
+    exigir_editavel(orcamento)
+
+    linhas = list(lote.linhas.filter(aplicada=True).select_related("item_orcado"))
+    itens: list[ItemOrcado] = []
+    for linha in linhas:
+        item = linha.item_orcado
+        item.custo_unitario = linha.custo_antes
+        item.fonte_referencia = linha.fonte_antes
+        item.data_base_preco = linha.data_base_antes
+        itens.append(item)
+
+    if itens:
+        ItemOrcado.objects.bulk_update(
+            itens, ["custo_unitario", "fonte_referencia", "data_base_preco"], batch_size=500,
+        )
+
+    anterior = (
+        Reprecificacao.objects
+        .filter(orcamento=orcamento, status=Reprecificacao.Status.APLICADA)
+        .exclude(pk=lote.pk).order_by("-aplicada_em", "-reprecificacao_id").first()
+    )
+    orcamento.data_base = anterior.data_base_destino if anterior else _data_base_original(lote)
+    if lote.base_destino_id and anterior is None:
+        orcamento.base_referencial_id = None
+    orcamento.save(update_fields=["data_base", "base_referencial", "atualizado_em"])
+
+    recalcular_orcamento(orcamento)
+
+    lote.status = Reprecificacao.Status.DESFEITA
+    lote.desfeita_em = timezone.now()
+    lote.save(update_fields=["status", "desfeita_em"])
+    return lote
+
+
+def _data_base_original(lote: Reprecificacao):
+    """Data-base que as linhas do lote tinham antes — a mais frequente entre elas.
+
+    Não há um campo "data-base anterior do cabeçalho" e inventar um exigiria
+    migração; a moda das linhas reconstrói o valor com fidelidade suficiente,
+    porque um lote reprecifica linhas que vinham todas da mesma publicação.
+    """
+    contagem: dict = {}
+    for data in lote.linhas.values_list("data_base_antes", flat=True):
+        if data:
+            contagem[data] = contagem.get(data, 0) + 1
+    if not contagem:
+        return None
+    return max(contagem.items(), key=lambda par: par[1])[0]
+
+
+def serializar_previa(lote: Reprecificacao) -> dict:
+    """A prévia como a tela precisa: item a item e o efeito no total."""
+    linhas = lote.linhas.select_related("item_orcado").order_by("item_orcado__codigo_eap")
+    return {
+        "reprecificacao": lote.pk,
+        "orcamento": lote.orcamento_id,
+        "status": lote.status,
+        "destino": (
+            lote.base_destino.rotulo or lote.base_destino.rotulo_automatico()
+            if lote.base_destino_id else
+            lote.banco_destino.rotulo_automatico() if lote.banco_destino_id else None
+        ),
+        "data_base_destino": lote.data_base_destino,
+        "somente_ate": lote.somente_ate,
+        "total_antes": str(lote.total_antes),
+        "total_depois": str(lote.total_depois),
+        "delta": str(dinheiro(lote.delta)),
+        "delta_pct": (
+            str((lote.delta / lote.total_antes * Decimal("100")).quantize(Decimal("0.01")))
+            if lote.total_antes else None
+        ),
+        "linhas_afetadas": lote.linhas_afetadas,
+        "linhas": [
+            {
+                "linha": linha.linha_id,
+                "item_orcado": linha.item_orcado_id,
+                "codigo_eap": linha.item_orcado.codigo_eap,
+                "descricao": linha.item_orcado.descricao,
+                "unidade": linha.item_orcado.unidade,
+                "quantidade": str(linha.item_orcado.quantidade),
+                "codigo_referencia": linha.codigo_antes,
+                "custo_antes": str(linha.custo_antes),
+                "custo_depois": str(linha.custo_depois),
+                "delta_unitario": str(linha.delta_unitario),
+                "delta_pct": (
+                    str((linha.delta_unitario / linha.custo_antes * Decimal("100")).quantize(Decimal("0.01")))
+                    if linha.custo_antes else None
+                ),
+                "delta_total": str(dinheiro(linha.delta_unitario * (linha.item_orcado.quantidade or Decimal("0")))),
+                "data_base_antes": linha.data_base_antes,
+                "data_base_depois": linha.data_base_depois,
+                "selecionada": linha.selecionada,
+                "aplicada": linha.aplicada,
+            }
+            for linha in linhas
+        ],
+    }

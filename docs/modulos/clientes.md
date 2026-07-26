@@ -18,7 +18,7 @@ Mascaramento de campos por papel é pendência da Fase 9.
 | Modelo | Campos principais |
 |---|---|
 | `Cliente` | `nome_completo`, `cpf_cnpj` (único), `email` (único), `telefone`, endereço completo (`endereco`, `numero_endereco`, `complemento_endereco`, `bairro`, `cidade`, `estado`, `cep`, `cidade_ibge`), `data_nascimento`, `estado_civil` (choices), `profissao`, `data_cadastro`, `id_cliente_gateway` |
-| `ClienteEmpreendimento` | `cliente` FK, `empreendimento` FK, `unidade_comprada`, `endereco_unidade`, `data_compra`, `valor_compra`, `condicoes_pagamento` (choices), `observacoes_compra` |
+| `ClienteEmpreendimento` | `cliente` FK, `unidade` FK → `empreendimentos.Unidade`, `empreendimento` FK (denormalizado, mantido a partir da unidade no `save()`), `data_compra`, `condicoes_pagamento` (choices), `observacoes_compra` **+ o plano de pagamento** (abaixo) |
 | `ContratoCliente` | `cliente` FK, `empreendimento` FK, `cliente_empreendimento` FK (opcional), `numero_contrato` (único), `data_assinatura`, `objeto_contrato`, `arquivo_contrato` (URLField), `status_contrato` (choices), `responsavel` FK `rh.Funcionario`, `vendedor` FK `fornecedores.Fornecedor` |
 | `DocumentoCliente` | `cliente` FK, `tipo_documento` (choices), `nome_documento`, `arquivo` (FileField → `media/documentos_clientes/`), `data_upload` |
 | `DadoBancarioCliente` | `cliente` FK, `codigo_banco`, `agencia`, `agencia_dv`, `conta`, `conta_dv`, `tipo_conta` (choices), `titular_nome`, `titular_cpf_cnpj`, `chave_pix`, `codigo_cedente`, `carteira`, `observacoes` |
@@ -33,9 +33,46 @@ Mascaramento de campos por papel é pendência da Fase 9.
 | `tipo_documento` | `rg`, `cpf`, `cnh`, `comprovante_residencia`, `certidao_casamento`, `outros` |
 | `tipo_conta` | `corrente`, `poupanca`, `investimento`, `salario`, `outros` |
 
+#### A venda: da tabela ao carnê
+
+A aquisição deixou de descrever a unidade (isso é cadastro do empreendimento — ver
+[empreendimentos.md](empreendimentos.md)) e passou a descrever **a venda**: qual unidade, por quanto
+e em que condições. Os campos do plano, todos na aquisição:
+
+| Grupo | Campos |
+|---|---|
+| Preço | `valor_tabela` (**snapshot** do `valor_base` da unidade no dia da venda), `desconto_percentual`, `desconto_valor`, `valor_compra` (negociado à vista — derivado), `valor_total_plano` (desembolso — derivado) |
+| Entrada | `entrada_valor`, `entrada_parcelas`, `entrada_primeiro_vencimento` |
+| Saldo | `sistema_amortizacao` (`price`/`sac`), `juros_mensal`, `num_parcelas`, `primeiro_vencimento` |
+| Balão | `balao_valor`, `balao_quantidade`, `balao_periodicidade` (`anual`/`semestral`), `balao_primeiro_vencimento` |
+| Carnê | `parcelas_geradas_em` (carimbo do botão "Gerar parcelas") |
+
+O cálculo vive em [`clientes/plano_pagamento.py`](../../backend/clientes/plano_pagamento.py), em
+funções puras (não tocam banco — é o que permite simular a cada tecla). Três regras que o motor
+assume, alinhadas à prática de venda direta de loteadora/incorporadora:
+
+- **A entrada não rende juros** — é sinal, não financiamento. Cobrar juros sobre entrada é o que faz
+  a proposta do sistema não bater com a que o corretor fez na mão.
+- **O balão abate saldo antes do parcelamento** — senão o comprador pagaria juros sobre o que já se
+  comprometeu a quitar à parte.
+- **Juros correm a partir da 1ª parcela do saldo**, não da data da venda ("juros inicia na 1ª parcela").
+
+`price()` com taxa zero degenera em saldo ÷ n — a venda "sem juros" não precisa de um terceiro
+sistema. A última parcela absorve a sobra de centavos, senão o título fecha com R$ 0,03 em aberto.
+**Sem correção monetária** (INCC/IGP-M/IPCA): reajuste anual mexe em parcela já emitida e boleto
+vivo — entra depois, com lugar próprio. O que o motor devolve é o plano **na data da assinatura**.
+
+**Gerar parcelas é ato explícito.** Salvar a aquisição grava a proposta; o carnê só vira
+`ContaReceber` (uma linha por entrada/parcela/balão, amarrada à unidade) quando o usuário aciona
+`POST /api/clientes-empreendimentos/<id>/gerar-parcelas/`, depois de conferir a simulação. **Não
+emite boleto** — cobrar é decisão separada, no ERP, unitária ou por lote. Idempotente: a segunda
+chamada responde 409 em vez de duplicar o carnê.
+
 ### Relações
 
-- `ClienteEmpreendimento` liga `Cliente` ↔ `empreendimentos.Empreendimento` (`unique(empreendimento, unidade_comprada)`)
+- `ClienteEmpreendimento` → `empreendimentos.Unidade` (`unique(tenant, unidade)` — **uma unidade, um
+  dono**; era o papel do antigo `unique(empreendimento, unidade_comprada)` sobre texto livre, que
+  não valia nada porque "Apto 101" e "apto 101" passavam como unidades diferentes)
 - `ContratoCliente` → `Cliente`, `Empreendimento`, aquisição, `rh.Funcionario` (responsável), `fornecedores.Fornecedor` (vendedor)
 - Referenciado por: `moduloerp` (`ContaReceber`, `CobrancaCliente`, `NotaFiscalServico`) e `modulocrm` (`Account.cliente_associado`, `Contact.cliente_associado`)
 
@@ -62,7 +99,7 @@ Campos de exibição adicionados (somente leitura):
 
 | Serializer | Campos extras |
 |---|---|
-| `ClienteEmpreendimentoSerializer` | `cliente_nome`, `empreendimento_nome` |
+| `ClienteEmpreendimentoSerializer` | `cliente_nome`, `empreendimento_nome`, `rotulo_unidade`, `unidade_valor_base`, `plano` (resumo recalculado). `empreendimento`, `valor_tabela`, `valor_compra` e `valor_total_plano` são **read-only**: derivam da unidade e do motor de cálculo — aceitá-los do cliente da API permitiria gravar um contrato cujo total não bate com o próprio plano |
 | `ContratoClienteSerializer` | `cliente_nome`, `empreendimento_nome`, `responsavel_nome`, `vendedor_nome` |
 | `DocumentoClienteSerializer` | `cliente_nome`, `tipo_documento_display` |
 | `DadoBancarioClienteSerializer` | `cliente_nome` |

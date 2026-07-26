@@ -1,0 +1,91 @@
+{% load l10n %}<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <title>{{ cabecalho.descricao }} — v{{ cabecalho.versao }}</title>
+  <style>
+    /* Peça de licitação: paisagem, cabeçalho repetido e numeração de página.
+       Sem cor de marca — o PDF é documento, não interface, e vai ser impresso
+       em preto e branco na metade das vezes. */
+    @page {
+      size: A4 landscape;
+      margin: 12mm 10mm 14mm;
+      @bottom-right { content: "Página " counter(page) " de " counter(pages); font: 8pt "Helvetica"; color: #555; }
+      @bottom-left  { content: "{{ cabecalho.descricao }} · v{{ cabecalho.versao }}"; font: 8pt "Helvetica"; color: #555; }
+    }
+    body { font-family: Helvetica, Arial, sans-serif; font-size: 8pt; color: #111; }
+    h1 { font-size: 13pt; margin: 0 0 2mm; }
+    .meta { display: flex; flex-wrap: wrap; gap: 2mm 6mm; font-size: 8pt; color: #333; margin-bottom: 3mm; }
+    .meta b { color: #000; }
+    table { width: 100%; border-collapse: collapse; }
+    thead { display: table-header-group; }
+    tr { page-break-inside: avoid; }
+    th {
+      background: #e8edf5; border-bottom: 0.6pt solid #9aa8bd; padding: 1.6mm 1.2mm;
+      font-size: 7pt; text-transform: uppercase; letter-spacing: 0.03em; text-align: left;
+    }
+    td { border-bottom: 0.3pt solid #dde3ec; padding: 1.3mm 1.2mm; vertical-align: top; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .sintetico td { background: #f3f5f9; font-weight: bold; }
+    .total td { border-top: 1pt solid #9aa8bd; font-weight: bold; font-size: 9pt; padding-top: 2mm; }
+    .nivel-1 { padding-left: 4mm; }
+    .nivel-2 { padding-left: 8mm; }
+    .nivel-3 { padding-left: 12mm; }
+    .rodape { margin-top: 4mm; font-size: 7pt; color: #555; }
+  </style>
+</head>
+<body>
+  <h1>{{ cabecalho.descricao }} — {{ cabecalho.obra }}</h1>
+  <div class="meta">
+    <span>Versão <b>{{ cabecalho.versao }}</b> ({{ cabecalho.status }})</span>
+    <span>Base: <b>{{ cabecalho.base }}</b></span>
+    <span>Data-base: <b>{{ cabecalho.data_base|date:"m/Y"|default:"—" }}</b></span>
+    <span>Encargos: <b>{{ cabecalho.encargos }}%</b> ({{ cabecalho.regime_encargos }})</span>
+    <span>BDI: <b>{{ cabecalho.bdi }}%</b></span>
+    <span>{{ analitico|yesno:"Analítica,Sintética" }}</span>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:9%">Item</th>
+        <th style="width:12%">Fonte / código</th>
+        <th>Descrição</th>
+        <th style="width:5%">Und</th>
+        <th style="width:9%" class="num">Quant.</th>
+        <th style="width:10%" class="num">Custo unit.</th>
+        <th style="width:11%" class="num">Custo direto</th>
+        <th style="width:11%" class="num">Total c/ BDI</th>
+        <th style="width:6%" class="num">Peso</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for linha in linhas %}
+      <tr {% if linha.sintetico %}class="sintetico"{% endif %}>
+        <td>{{ linha.codigo_eap }}</td>
+        <td>{% if linha.codigo_referencia %}{{ linha.fonte }} {{ linha.codigo_referencia }}{% endif %}</td>
+        <td class="nivel-{{ linha.nivel }}">{{ linha.descricao }}</td>
+        <td>{{ linha.unidade }}</td>
+        <td class="num">{% if linha.quantidade is not None %}{{ linha.quantidade|floatformat:2 }}{% endif %}</td>
+        <td class="num">{% if linha.custo_unitario is not None %}{{ linha.custo_unitario|floatformat:2 }}{% endif %}</td>
+        <td class="num">{{ linha.total_custo_direto|floatformat:2 }}</td>
+        <td class="num">{{ linha.total_com_bdi|floatformat:2 }}</td>
+        <td class="num">{{ linha.peso|floatformat:1 }}%</td>
+      </tr>
+      {% endfor %}
+      <tr class="total">
+        <td colspan="6">TOTAL DO ORÇAMENTO</td>
+        <td class="num">{{ cabecalho.custo_direto_total|floatformat:2 }}</td>
+        <td class="num">{{ cabecalho.valor_total|floatformat:2 }}</td>
+        <td class="num">100,0%</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p class="rodape">
+    Emitido em {{ cabecalho.emitido_em|date:"d/m/Y H:i" }}. Valores em reais, na data-base
+    declarada acima. O total com BDI aplica o percentual linha a linha, como se confere
+    planilha de licitação — não sobre o total.
+  </p>
+</body>
+</html>

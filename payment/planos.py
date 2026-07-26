@@ -68,6 +68,8 @@ PLANOS: dict[str, dict] = {
         "notas_fiscais_mes": 0,
         "cobrancas_mes": 0,
         "processamentos_drone_mes": 0,
+        "banco_preco_linhas": 500,
+        "importacao_linhas": 500,
     },
     "essencial": {
         "nome": "Essencial",
@@ -83,6 +85,8 @@ PLANOS: dict[str, dict] = {
         "notas_fiscais_mes": 0,
         "cobrancas_mes": 0,
         "processamentos_drone_mes": 0,
+        "banco_preco_linhas": 20_000,
+        "importacao_linhas": 5_000,
     },
     "profissional": {
         "nome": "Profissional",
@@ -98,6 +102,8 @@ PLANOS: dict[str, dict] = {
         "notas_fiscais_mes": 100,
         "cobrancas_mes": 200,
         "processamentos_drone_mes": 0,  # add-on
+        "banco_preco_linhas": 150_000,
+        "importacao_linhas": 40_000,
     },
     "empresarial": {
         "nome": "Empresarial",
@@ -113,6 +119,8 @@ PLANOS: dict[str, dict] = {
         "notas_fiscais_mes": 500,
         "cobrancas_mes": 1_000,
         "processamentos_drone_mes": 25,
+        "banco_preco_linhas": 600_000,
+        "importacao_linhas": 120_000,
     },
     "sob_medida": {
         "nome": "Sob Medida",
@@ -130,6 +138,8 @@ PLANOS: dict[str, dict] = {
         "notas_fiscais_mes": None,
         "cobrancas_mes": None,
         "processamentos_drone_mes": None,
+        "banco_preco_linhas": None,
+        "importacao_linhas": None,
         # Sem teto contratado, um plano "ilimitado" não pode virar ilimitado de
         # verdade no eixo de requisições: cairia no teto de infraestrutura e
         # derrubaria os outros tenants. O contrato preenche
@@ -175,16 +185,34 @@ ORDEM_PLANOS: tuple[str, ...] = (
 # o cliente". É uma decisão de negócio, com efeito direto no faturamento.
 
 # Quotas de objeto — contadas no backend, onde os objetos existem.
+#
+# `banco_preco_linhas` entrou com o Orçamento (ORC.5b): é o acervo de tabela de
+# preço própria que a empresa mantém — a tabela da prefeitura importada, o banco
+# histórico. Limite de VALOR e não de COGS: servir uma linha a mais custa quase
+# nada, mas o tamanho do acervo separa quem está testando de quem opera. Por isso
+# trava, e por isso o `free` é apertado (500 linhas dão para uma obra pequena, não
+# para carregar uma SINAPI estadual inteira dentro do tenant).
 QUOTAS_DE_OBJETO: tuple[str, ...] = (
     "empreendimentos",
     "obras",
     "clientes",
     "fornecedores",
+    "banco_preco_linhas",
 )
 
 # Seats — contado na IAM, que é quem cria usuário. Seat = usuário ATIVO, então
 # desativar quem saiu da empresa libera a vaga sem passar pelo checkout.
 QUOTA_SEATS = "seats"
 
+# Tetos por OPERAÇÃO — não contam acervo, limitam uma chamada. Não entram em
+# `QUOTAS_DE_OBJETO` (não há tabela para contar) mas precisam viajar na claim,
+# porque quem decide é o backend no meio da operação.
+#
+# `importacao_linhas` protege processamento, não armazenamento: ler e classificar
+# um arquivo de 90 mil linhas prende um worker e enche a área de conferência. O
+# cliente que precisa de mais divide o arquivo — o acervo total continua regido
+# por `banco_preco_linhas`.
+QUOTAS_POR_OPERACAO: tuple[str, ...] = ("importacao_linhas",)
+
 # Tudo que morde hoje. O que não está aqui está declarado e inerte.
-QUOTAS_APLICADAS: tuple[str, ...] = (QUOTA_SEATS, *QUOTAS_DE_OBJETO)
+QUOTAS_APLICADAS: tuple[str, ...] = (QUOTA_SEATS, *QUOTAS_DE_OBJETO, *QUOTAS_POR_OPERACAO)

@@ -123,6 +123,12 @@ de custo de cada insumo = memória de cálculo), `bases-resumo/` e o verbo `refe
 | `ParametroObra` | Orçamento **paramétrico**: `projeto_padrao` (R-1…GI), CUB da data-base, áreas real e equivalente, adicionais que o CUB não cobre |
 | `PavimentoObra` · `UnidadeAutonoma` · `MemorialNBR` | Base dos quadros da **NBR 12721** — áreas por pavimento, unidades autônomas (coeficiente de proporcionalidade **e** fração ideal, que não são a mesma coisa) e os memoriais descritivos dos quadros V–VIII |
 
+**A versão é numerada pelo servidor, nunca pelo cliente.** `versao` é read-only na API e a unicidade
+é `(obra, versao)`; os três caminhos que criam orçamento — POST, `revisar_orcamento` e
+`duplicar_orcamento` — pedem o próximo número a `planilha.proxima_versao(obra_id)`. Logo a segunda
+planilha de uma obra nasce **v2**: é o **reorçamento** (escopo/método/mercado mudaram e se orça do
+zero), irmão da revisão, que copia a planilha aprovada e exige motivo.
+
 Verbos de decisão (não CRUD): **aprovar** orçamento (congela a régua), **revisar** (nova versão com
 trilha), **explodir composição** (serviço → insumos, usando `ComponenteComposicao`), **precificar
 pelo histórico** (puxa o preço real do SCM/custo médio do SIL no lugar do referencial),
@@ -161,6 +167,11 @@ Derivados: **saldo orçamentário** (orçado − comprometido, porque o que já 
 disponível), **% consumido** e **alerta de estouro**. O confronto por etapa (orçado × aplicado) vive
 no `aplicado/` do SIL, que apropria movimentação na mesma dimensão.
 
+Ao lado delas, `orcamentos/{id}/por-categoria/` responde **de que natureza é o custo** (material × mão
+de obra × equipamento) somando `ItemOrcadoInsumo` × quantidade da linha-pai. Como só enxerga linha
+**explodida**, a resposta declara `cobertura_pct`: um orçamento com 10% das linhas abertas mostraria
+um gráfico convincente e errado se ela não estivesse lá.
+
 > **Limite da coluna "realizado".** O `moduloerp` amarra despesa a **empreendimento**, não a obra
 > (`ContaPagar.empreendimento`, `CentroCusto` do ERP idem). O único vínculo preciso com a obra é
 > pelo SCM (`PedidoCompra.conta_pagar_ref`), então *realizado* cobre **o que passou por pedido de
@@ -195,12 +206,31 @@ integração visível + seams), na linguagem [Malha](../identidade-visual.md): *
 estágio Construir → acento Âmbar Obra `#E79A22`**, um acento por tela, número em **mono tabular**
 (`Num`/`KpiCard`), master-detail in-place, claro+escuro, ações gateadas por permissão.
 
-**Dois públicos, uma página** (padrão que o SIL validou com Operação × Gestão):
+**Hub + páginas** (o módulo é grande demais para caber numa página só, ao contrário do SIL): a raiz
+`/app/orcamento` é um **hub-dashboard** com a fila de decisão e a seleção das páginas; cada página tem
+um **seletor horizontal** próprio no topo. Catálogo único das páginas em
+[`paginas.ts`](../../frontend/src/modules/orcamento/paginas.ts) — hub e moldura leem de lá.
 
-| Visão | Quem | O que resolve |
-|---|---|---|
-| **Orçar** | orçamentista/engenheiro | montar e revisar a planilha: árvore EAP → etapa → serviço → insumos, explosão de composição, precificar (referencial × histórico real), encargos/BDI, memória de cálculo, curva ABC do orçado |
-| **Controlar** | dono da obra / diretoria | as **quatro colunas** por etapa com drill-down até o insumo, desvio e projeção de estouro, curva S (previsto × realizado), saldo orçamentário, top desvios |
+| Rota | Página | Quem | O que resolve |
+|---|---|---|---|
+| `/app/orcamento` | **Hub** | todos | fila "requer sua decisão" (estouro, obra sem régua, rascunho parado), KPIs das quatro colunas, bases disponíveis |
+| `…/orcar` | **Orçar** | orçamentista/engenheiro | a **grade**: árvore EAP → etapa → serviço → insumos, explosão de composição, precificar (referencial × histórico real), encargos/BDI, memória de cálculo. Sub-seletor sintético × analítico |
+| `…/controlar` | **Controlar** | dono da obra / diretoria | as **quatro colunas** com drill-down, curva ABC, composição por natureza do insumo, curva S. Sub-seletor: colunas · ABC · composição |
+| `…/cronograma` | **Cronograma** | planejador | grade etapa × competência com percentual editável, distribuição linear de partida, desembolso previsto, curva S |
+| `…/bases` | **Bases & bancos** | orçamentista | bases-mãe travadas (exploração + adoção em lote), bancos próprios do tenant, importações |
+| `…/incorporacao` | **Incorporação** | incorporador | paramétrico por CUB e os quadros da NBR 12721 |
+
+**A grade é o módulo.** O padrão do setor (OrçaFascio, Volare, Sienge) é **edição na célula**, não
+formulário por linha: Tab/Enter/setas/F2, digitar-para-começar, **colar bloco do Excel** e inserir item
+por uma janela com **três origens** (base oficial · catálogo da empresa · criar novo). Digitar 400
+quantidades num drawer é inviável, e é isso que o orçamentista faz o dia inteiro. A grade usa janela
+virtual — a planilha analítica passa de mil linhas com facilidade.
+
+**Gráficos.** As cores da Malha reprovaram na validação de paleta categórica (croma baixa: teal e verde
+lidos como cinza; vermelho × âmbar indistinguíveis sob deuteranopia). Em vez de matizes fora da marca,
+as **formas** mudaram: magnitude vira barra de um matiz, ABC vira rampa ordinal do acento, curva S vira
+referência tracejada + acento. As três séries que restaram (comprometido/aplicado/realizado) passam nos
+dois temas. Tokens em [`graficos.tsx`](../../frontend/src/modules/orcamento/components/graficos.tsx).
 
 **Fila "requer sua decisão"** do cockpit: etapas com comprometido acima do orçado, itens sem preço,
 orçamento em rascunho sem aprovação, revisão pendente, item orçado cujo preço real do SCM divergiu
@@ -281,8 +311,78 @@ empresa, de dado que **não é da empresa** — é dado público do governo. Ent
 | **ORC.2** | Composição analítica (explosão), encargos onerado/desonerado, **BDI**, curva ABC do orçado, memória de cálculo, precificar pelo histórico real do SCM/SIL |
 | **ORC.3** | **Quatro colunas** (orçado × comprometido × aplicado × realizado) + cronograma financeiro e **curva S** (`ParcelaEtapa`) |
 | **ORC.4** | **Paramétrico** (`ParametroObra`, CUB, R$/m²) + **quadros da NBR 12721** (I–IV calculados; V–VIII descritivos) |
-| **ORC.5** | Frontend Malha (**Orçar × Controlar**) com integração clicável SCM/SIL/ERP |
+| **ORC.5** | Frontend Malha (hub + 5 páginas) com integração clicável SCM/SIL/ERP |
+| **ORC.5b** | Bancos próprios do tenant, importação com conferência, duplicar/copiar, reprecificação e exportação |
 | **ORC.6** | E2E vivo pelo gateway + sincronização de docs |
+
+### 12.3 Onde o ORC.5b mora no código
+
+| Peça | Arquivo |
+|---|---|
+| Bancos da empresa: adoção, trava, cópia da base pública | [bancos.py](../../backend/moduloorcamento/bancos.py) |
+| **Importação/exportação tabular: a declaração** | [impexp.py](../../backend/moduloorcamento/impexp.py) — o motor é o [funcoesimpexp](funcoesimpexp.md) |
+| Cabeçalho da analítica, só para o comando | [leitura.py](../../backend/moduloorcamento/leitura.py) |
+| Reprecificação: prévia, aplicar, desfazer | [reprecificacao.py](../../backend/moduloorcamento/reprecificacao.py) |
+| Duplicar orçamento e copiar linhas | [duplicacao.py](../../backend/moduloorcamento/duplicacao.py) |
+| Exportação de **documento** (XLSX/PDF) | [exportacao.py](../../backend/moduloorcamento/exportacao.py) + [planilha.html](../../backend/moduloorcamento/templates/moduloorcamento/planilha.html) |
+| Testes da fatia | [test_orc5b.py](../../backend/moduloorcamento/test_orc5b.py) |
+| Dado de demonstração | `seed_orcamento` em [seed_demo_data.py](../../backend/seed_demo_data.py) |
+
+### 12.4 A importação saiu do módulo (IE.1)
+
+O ORC.5b resolveu importação de preço com conferência linha a linha, teto de plano em duas grandezas,
+base-mãe do dono da plataforma e lote desfazível — tudo dentro de `moduloorcamento/`. **Isso agora
+mora no motor de plataforma**, e o módulo só declara.
+
+| Antes (ORC.5b) | Depois (IE.1) |
+|---|---|
+| `moduloorcamento/importacao.py` | a declaração em [impexp.py](../../backend/moduloorcamento/impexp.py) |
+| `ImportacaoPreco` / `LinhaImportacao` | `funcoesimpexp.Importacao` / `LinhaImportacao` |
+| `/api/orcamento/importacoes/**` | `/api/impexp/orcamento.banco_preco/**` |
+| `ConferenciaImportacao.tsx` do módulo | `<WizardImportacao>` do kit Malha |
+| aliases de preço em `leitura.py` | `aliases` das colunas declaradas (a fonte única da R2) |
+
+**Três recursos declarados:** `orcamento.banco_preco` (banco da empresa), `orcamento.base_referencial`
+(publicação pública, só o dono da plataforma) e `orcamento.planilha` (as linhas da EAP).
+
+**O que não migrou, e por quê.** A planilha orçamentária formatada (XLSX com árvore EAP indentada e
+totais, PDF para assinar), a curva ABC e o cronograma continuam em
+[exportacao.py](../../backend/moduloorcamento/exportacao.py). Aquilo não é exportação tabular — é
+**peça de documento**, com hierarquia, subtotal e cabeçalho técnico. Espremer no escritor genérico de
+colunas perderia função, e a régua do IE.1 é migrar *sem perder função*.
+
+O gate mudou de forma junto: onde havia uma permissão de ação (`orcamento.base.adotar`), agora vale a
+regra §3 do motor — **acesso total ou nada**. Quem tem só `orcamento.base.view` não vê o botão.
+
+**Armadilha registrada.** `RequirePermission` aceita `permission_map` com as chaves **`view`/`write`**,
+não nomes de método HTTP. Um `{"GET": …}` é dicionário truthy cujo `.get("view")` devolve `None`, e
+`has_permission` trata exigência `None` como "não exige" — ou seja, **desliga o gate em silêncio**. Foi o
+que aconteceu na 1ª versão dos cinco ViewSets do ORC.5b e a suíte ficou verde, porque nenhum teste exercia
+o caminho negado. A classe do defeito é a do **D5**; a regressão vive em
+`test_orc5b.py::GateDeApiTests`.
+
+### 12.2 ORC.5b — o que o rumo do dono definiu (25/07/2026)
+
+- **Banco próprio = tabela separada do tenant.** A `BaseReferencial` pública fica como está (global,
+  sem tenant, sem RLS — §11.1 intocada) e nasce um `BancoPreco` `TenantScopedModel` com RLS
+  fail-closed padrão. **Duas tabelas, mesmo Postgres** — sem exceção nova à política de isolamento.
+  O banco é **da empresa, com obra opcional** (a tabela da prefeitura serve várias obras), tem
+  data-base própria e **trava** de edição. Pastas de composição organizam por obra/tipo dentro dele.
+- **Uma busca só.** O seletor de base da planilha lista as duas origens juntas, com cadeado no que é
+  base-mãe: origem é atributo, não lugar.
+- **Importação** por planilha XLSX/CSV, API de sincronização e PDF — os três com **conferência linha a
+  linha** (confirmar tudo · confirmar seleção · negar tudo) antes de gravar. Superuser importa
+  base-mãe (vale para todos os tenants); usuário comum importa para os bancos do próprio tenant.
+  **Teto do plano** em duas grandezas: linhas por importação e linhas acumuladas no tenant — knobs em
+  [payment/](../../payment/README.md), não no código de engenharia.
+- **Reprecificar ≠ versionar.** Trocar a data-base é operação com **prévia item a item** (preço velho →
+  novo, Δ, efeito no total, seleção por linha) sobre **qualquer publicação**, para frente ou para trás
+  — o edital manda na data-base e ela costuma ser passada. Em **rascunho** grava um lote desfazível
+  (histórico com "desfazer" que restaura os preços anteriores); em **aprovado** obriga a revisão,
+  porque `exigir_editavel` já impede escrita em régua congelada. Versão continua significando
+  **aditivo contratual**, não troca de tabela de preço.
+- **Importar/exportar** tem os pontos de entrada na tela desde já, em estado "em construção" — o
+  backend vem depois, como função separada.
 
 ### 12.1 Permissões: as 9 do catálogo bastam até aqui
 

@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
-import { Pencil, Trash2, ChevronRight, Building2, Loader2, HardHat, Landmark, Receipt, Plus } from 'lucide-react'
+import { Pencil, Trash2, ChevronRight, Building2, Loader2, HardHat, Landmark, LayoutGrid, Receipt, Plus } from 'lucide-react'
 import {
   useEmpreendimento,
   updateEmpreendimento,
@@ -16,6 +16,7 @@ import EmpreendimentoStatusBadge from '../components/EmpreendimentoStatusBadge'
 import EmpreendimentoForm from '../components/EmpreendimentoForm'
 import ContaBancariaForm from '../components/ContaBancariaForm'
 import CustoEmpreendimentoForm from '../components/CustoEmpreendimentoForm'
+import UnidadesTab from '../components/UnidadesTab'
 import { useObras } from '@/modules/obras/hooks/useObras'
 import ObraStatusBadge from '@/modules/obras/components/ObraStatusBadge'
 import type {
@@ -27,12 +28,13 @@ import type {
 } from '@/types'
 import { formatCNPJ } from '@/utils/masks'
 
-type Tab = 'visao' | 'obras' | 'contas' | 'custos'
+type Tab = 'visao' | 'obras' | 'contas' | 'custos' | 'unidades'
 const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
-  { key: 'visao',   label: 'Visão Geral',      icon: <Building2 size={15} /> },
-  { key: 'obras',   label: 'Obras',             icon: <HardHat size={15} /> },
-  { key: 'contas',  label: 'Contas Bancárias',  icon: <Landmark size={15} /> },
-  { key: 'custos',  label: 'Custos',            icon: <Receipt size={15} /> },
+  { key: 'visao',    label: 'Visão Geral',      icon: <Building2 size={15} /> },
+  { key: 'obras',    label: 'Obras',             icon: <HardHat size={15} /> },
+  { key: 'contas',   label: 'Contas Bancárias',  icon: <Landmark size={15} /> },
+  { key: 'custos',   label: 'Custos',            icon: <Receipt size={15} /> },
+  { key: 'unidades', label: 'Unidades',          icon: <LayoutGrid size={15} /> },
 ]
 
 function formatCurrency(value: string | null) {
@@ -253,6 +255,16 @@ const EmpreendimentoDetailPage: React.FC = () => {
         {activeTab === 'visao' && (
           <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-5">
             {[
+              // O estoque num relance. `null` = a resposta não trouxe a
+              // contagem; nunca mostrar "0 unidades" para o que não foi contado.
+              {
+                label: 'Unidades',
+                value: data.unidades_total == null
+                  ? '—'
+                  : `${data.unidades_total} cadastrada${data.unidades_total === 1 ? '' : 's'}`
+                    + ` · ${data.unidades_disponiveis ?? 0} à venda`
+                    + ` · ${data.unidades_vendidas ?? 0} vendida${data.unidades_vendidas === 1 ? '' : 's'}`,
+              },
               { label: 'Telefone',    value: data.telefone || '—' },
               { label: 'Endereço',    value: data.endereco || '—' },
               { label: 'Início real', value: formatDate(data.data_inicio_real) },
@@ -283,6 +295,11 @@ const EmpreendimentoDetailPage: React.FC = () => {
               </div>
             )}
           </dl>
+        )}
+
+        {/* ── Unidades ── */}
+        {activeTab === 'unidades' && (
+          <UnidadesTab empreendimentoId={numId!} onMudou={refetch} />
         )}
 
         {/* ── Obras ── */}
