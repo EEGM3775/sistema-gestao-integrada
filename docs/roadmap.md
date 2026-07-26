@@ -370,7 +370,9 @@ pendências operacionais da Fase 5.
 - **10.3.1 Config segura por padrão:** ✅ 12/07/2026 (antecipada, fecha **S3+S4**). `DEBUG`/`IAM_DEBUG`
   default **False** + fail-fast de `SECRET_KEY`/`ALLOWED_HOSTS` fora de DEBUG; **RS256 obrigatório em
   produção** (HS256 só em dev); cookies seguros + HSTS quando não-DEBUG. Gate `check --deploy` no CI ✅ 14/07 (10.5.1).
-- **10.4 Supply chain:** `npm ci` + lockfile obrigatório nos Dockerfiles/CI (10.4.1) ✅;
+- **10.4 Supply chain:** `npm ci` + lockfile obrigatório nos Dockerfiles/CI (10.4.1) ✅ — **o
+  `frontend/Dockerfile` só passou a cumprir em 26/07/2026** (era `npm install --legacy-peer-deps`,
+  que ignora o lock; causa raiz do **F6**);
   **10.4.2/10.4.5/10.4.6 ✅ 14/07/2026** — job `security-scan` no CI ([ci.yml](../.github/workflows/ci.yml)):
   `npm audit --omit=dev --audit-level=high` (frontend), `pip-audit` (backend+iam) e `trivy fs`
   (vuln com correção + **segredos**), todos **bloqueantes** em HIGH/CRITICAL, com allow-lists de
@@ -382,7 +384,11 @@ pendências operacionais da Fase 5.
   ([.github/workflows/ci.yml](../.github/workflows/ci.yml)): 3 jobs — **backend** (`manage.py test`
   sobre Postgres 16 + role `erp_app` não-superuser/CREATEDB → RLS fail-closed real; Redis de serviço;
   libs do WeasyPrint), **iam** (`manage.py test` no SQLite de dev) e **frontend** (`npm ci` bloqueante
-  + `lint`/`build` informativos até F5 limpar os 33 erros de `tsc` do shell legado). Inclui o **gate
+  + `lint`/`build` informativos enquanto os 45 erros de `tsc` não forem zerados — **D27**). **O gate só
+  passou a valer de fato em 26/07/2026 (D26):** o job do backend rodava um rótulo de app inexistente e
+  **não executava nenhum** dos seus testes, e `frontend`/`security-scan` estavam vermelhos pelo `npm ci`
+  do F6 — 3 dos 4 jobs. Linha de base na correção: **801 verdes** (backend 677 + `funcoesemail` 9 +
+  IAM 115). Inclui o **gate
   `check --deploy`** (fecha S3/S4): o backend sobe em modo produção (DEBUG=False + RS256 efêmera) e passa
   o checklist com `--fail-level WARNING` (só `security.W008`/SSL-redirect silenciado — TLS no gateway).
   O drone (Java/Maven) fica no repo próprio. **10.5.2 ✅ 14/07/2026** — gates de CVE alta no job
@@ -589,7 +595,8 @@ Achados das revisões técnicas com status vivo: [pendencias.md](pendencias.md).
 - **Supply chain:** varredura automatizada (pip/npm/trivy + Dependabot) ✅ **10.4** (14/07); falta
   Maven/Angular (repo do drone), `postinstall` e checklist de deps — **10.4.3/10.4.4**.
 - **CI/CD:** pipeline mínima (backend/iam/frontend) ✅ **10.5.1** + gates de CVE ✅ **10.5.2** (14/07);
-  falta build/push de imagens — **10.5.3**.
+  **executando de fato desde 26/07** (**D26** — 3 dos 4 jobs estavam vermelhos e o do backend não rodava
+  a suíte); falta build/push de imagens — **10.5.3** — e o gate de tipo do frontend (**D27**).
 - **JWT em `localStorage` e em query param (iframe):** ✅ **10.6** (11/07) — access em memória + refresh
   em cookie HttpOnly; iframe do drone via postMessage (sem `?token=`).
 - **Staging ausente:** validações vão direto para produção — **10.7**.

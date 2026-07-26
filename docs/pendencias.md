@@ -419,7 +419,7 @@ sem refresh no corpo) → refresh (rotaciona, access com claims) → reuso do re
 *(Os TTLs citados na versão original desta entrada — 15 min / 12h / 30d — eram os de 11/07 e ficaram
 defasados; tempos vigentes em [acesso-e-permissoes.md §5.2](acesso-e-permissoes.md).)*
 
-### F5 — `.gitignore` engole `frontend/src/lib/` — o frontend não builda em clone limpo · 🔴 aberto
+### F5 — `.gitignore` engole `frontend/src/lib/` — o frontend não builda em clone limpo · ✅ corrigido 26/07/2026
 
 A linha 13 do `.gitignore` da raiz (`lib/`, padrão de virtualenv Python) casa também com
 **`frontend/src/lib/`**. Os dois arquivos de lá nunca foram commitados: `queryClient.ts` (o
@@ -427,15 +427,29 @@ A linha 13 do `.gitignore` da raiz (`lib/`, padrão de virtualenv Python) casa t
 Na máquina de quem escreveu eles existem, então nada acusa; num **clone novo ou worktree** o
 `tsc`/`vite build` quebra em `Cannot find module './lib/queryClient'`. Confirmado por
 `git check-ignore -v frontend/src/lib/queryClient.ts` → `.gitignore:13:lib/`.
-**Correção:** ancorar a regra na raiz (`/lib/`) ou escopá-la ao Python, e commitar os dois arquivos.
+**Corrigido:** `lib/`/`lib64/` **ancorados** na raiz (`/lib/`, `/lib64/` — diretório de build do
+Python é sempre da raiz, ancorar não perde nada) e os dois arquivos versionados. Mesma lição já
+registrada no bloco "Virtual Environment" do `.gitignore`, que aprendeu isso com o `deploy/env/`:
+padrão de diretório sem âncora casa **qualquer nível**. Verificado que a âncora não destapa mais
+nada — os outros dois `lib/` da árvore (`ImgDrone/`, worktree do `.claude/`) são ignorados por
+regra própria.
 
-### F6 — `package-lock.json` do frontend fora de sincronia · 🔴 aberto
+### F6 — `package-lock.json` do frontend fora de sincronia · ✅ corrigido 26/07/2026
 
 `npm ci` falha com `EUSAGE`: faltam do lock os 6 pacotes `@fullcalendar/*` (6.1.21) e `preact`, que
 estão no `package.json`. Como o gate de CI roda `npm ci` bloqueante (Fase 12), ele não passa.
 Há também conflito de peer dep (`@hookform/resolvers` 5.4.3 exige `valibot ^1.0.0`, resolvido para
 0.39.0) — hoje só contornável com `--legacy-peer-deps`.
-**Correção:** rodar `npm install` e commitar o lock; decidir sobre o peer de `valibot`.
+**Corrigido:** lock regenerado (4936 → 5077 linhas, os 6 `@fullcalendar/*` de volta) e `npm ci`
+provado limpo — 294 pacotes, **sem** `--legacy-peer-deps`, tanto no Node 20 (versão do CI) quanto no
+22 (versão da imagem). Duas partes do achado envelheceram: **`preact`** saiu do `package.json`, e o
+conflito de **`valibot`** dissolveu-se quando o projeto passou a usar `zod` (o `@hookform/resolvers`
+v5 declara os validadores como peers *opcionais*) — não havia o que decidir.
+**A causa raiz era outra, e foi fechada junto:** o `frontend/Dockerfile` rodava
+`npm install --legacy-peer-deps`, que **reresolve tudo e ignora o lock**. Por isso o defeito viveu 7
+dias sem sintoma — a imagem buildava e só o CI quebrava. Trocado por `npm ci`, que falha quando o
+lock divergir; é o que a Fase **10.4.1** já declarava ("`npm ci` + lockfile obrigatório nos
+Dockerfiles/CI") e não valia para o frontend. Imagem rebuildada e validada.
 
 ### F7 — Rotas de administração sem guard de `is_tenant_admin` · 🔴 aberto
 
@@ -788,6 +802,69 @@ compose, nem `.env`, nem documentada). O endurecimento do bloco de produção (S
 documentado no `.env.example`; regressão `test_cookie_de_refresh_leva_secure_quando_ligado`.
 **Confirmado no ar 18/07/2026** (imagem da IAM rebuildada): o login do staging passou a emitir
 `sgi_refresh=…; HttpOnly; Path=/auth/; SameSite=Strict; **Secure**`.
+
+### D26 — O CI nunca rodou a suíte do backend: três jobs vermelhos há 7 dias · ✅ corrigido 26/07/2026
+
+Achado ao analisar o estado do projeto. O job `backend-tests` rodava
+`manage.py test identity funcoesemail` com `working-directory: backend` — mas **`identity` é app da
+IAM**, não existe no backend. O rótulo e o comentário que o explica foram colados no job errado
+(introduzidos em `a4c45be`, 19/07). Resultado reproduzido: `ModuleNotFoundError: No module named
+'identity'`, **"Ran 1 test"** — o job falhava e **nenhum dos 677 testes do backend rodava**.
+
+Agravante no mesmo comando: o rótulo **`funcoesemail`** (sem `.tests`) roda **0 testes** em silêncio.
+Django resolve o rótulo como diretório quando ele existe no cwd, e como *nome de módulo* quando não —
+nos dois caminhos cai num **pacote** que não declara testes. Só `funcoesemail.tests` roda os 9. Ou
+seja, nem a parte que "funcionava" funcionava, e a mensagem final era `NO TESTS RAN`, não um erro.
+
+E não era um job só. O **`frontend`** e o **`security-scan`** também estavam vermelhos, os dois pelo
+mesmo `npm ci` do **F6** — no `security-scan` ele roda *antes* do `npm audit` e do trivy, então o gate
+bloqueante de CVE e de segredos também não executava. Dos 4 jobs, **3 vermelhos**; o único verde era
+o do IAM.
+
+**Por que importa mais que a soma das partes.** Entre 19 e 26/07 entraram SIL v2, ORC.0–ORC.5b,
+IE.0–IE.1 e o pacote clientes/F16–F20 — todos com "suíte X/X verde" registrado aqui e no roadmap,
+todos medidos **à mão**, nenhum por um portão. A afirmação era verdadeira e não era verificável: é a
+classe de defeito que não quebra nada hoje e remove a rede de proteção de tudo o que vem depois.
+
+**Corrigido:** job do backend passou a `manage.py test . funcoesemail.tests` (`.` dispara a descoberta
+a partir de `backend/`; o pacote da raiz entra pelo módulo de teste), o `identity` voltou para o job
+do IAM e os comentários dos dois jobs foram corrigidos. **Linha de base medida na correção — 801
+testes verdes:** backend **677**, `funcoesemail` **9** (= os 686 que os documentos citavam), IAM
+**115**. Nenhuma regressão havia acumulado atrás do portão desligado; o que faltava era a prova.
+**Não fechado:** os `continue-on-error` de lint/build do frontend — medidos em clone limpo, `npm run
+lint` dá **51 erros** e `tsc -b` dá **45** em 19 arquivos, e o topo **não** é o shell legado que o
+comentário do `ci.yml` culpava, é o **SIL v2** (`operacao.tsx` 13, `pessoas.tsx` 6), de 25/07. Ver
+**D27**.
+
+### D27 — 45 erros de tipo no frontend, e um import de dependência que não existe · 🔴 aberto
+
+Medido ao tentar transformar lint/build em gate (D26): `tsc -b` acusa **45 erros** em 19 arquivos e
+`npm run lint` **51**. Enquanto isso vale, o build do CI não pode bloquear merge — e o `vite build`
+da imagem não substitui o gate, porque usa `npx vite build` **sem `tsc`**: o esbuild transpila sem
+type-check, então erro de tipo nunca aparece em lugar nenhum.
+
+Concentração (não é dívida uniforme de shell legado): `modules/sil/tabs/operacao.tsx` **13**,
+`sil/tabs/pessoas.tsx` **6**, `crm/pages/LeadsPage.tsx` **4**, `obras/ObraDetailPage.tsx` **3**. A
+maioria é ruído barato (`no-unused-vars`, TS6133), mas há erros de contrato reais: `obra_nome`/
+`etapa_nome` lidos de `MovimentacaoEstoque` e `Requisicao` sem existir no tipo (o backend passou a
+mandá-los na apropriação por etapa do SIL v2 e o tipo do front não acompanhou) e
+`Property 'token' does not exist on type 'AuthContextType'` em `ObrasListPage`, resíduo da Fase 10.6
+(access token saiu para a memória).
+
+**Confirmação independente do `F5` da tabela de Médias** (o do código morto, não o do `.gitignore` —
+colisão de IDs herdada dos laudos): 3 dos 45 erros vêm de `modules/obras/ObraDetailPage.tsx`, a
+duplicata órfã já inventariada lá, e ela importa **`react-hot-toast`, que não está no
+`package.json`** — o mesmo padrão de dependência fantasma que aquela entrada já registrou para o
+`frappe-gantt` do `GanttChart.tsx`. Ou seja: **parte dos 45 erros morre com a limpeza do código
+morto**, não precisa de correção própria. Fazer o `F5` da tabela antes de atacar o resto reduz o
+número real.
+
+**Resíduo à parte:** o `package.json` da **raiz** do repo é da era Node (versão `1.0.14`,
+`description` com um cabeçalho markdown solto, deps duplicando o frontend) e está **fora da varredura
+do CI**, que só olha `frontend/` — decidir se sai ou entra no escopo do `npm audit`.
+**Correção:** limpar o código morto (`F5` da tabela) → zerar os erros de tipo que sobrarem, começando
+pelos **contratos do SIL**, que são bug de verdade e não ruído → remover os dois `continue-on-error`
+do job `frontend`.
 
 ### D25 — `worker`/`beat` ficam com a imagem velha quando só `erp`/`react` são rebuildados · ✅ corrigido 26/07/2026
 

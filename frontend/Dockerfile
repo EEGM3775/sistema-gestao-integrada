@@ -4,7 +4,13 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY package*.json ./
-RUN npm install --legacy-peer-deps --no-audit --no-fund
+# `npm ci` (Fase 10.4.1): instala EXATAMENTE o package-lock.json, e falha se o
+# lock divergir do package.json. Era `npm install --legacy-peer-deps`, que
+# reresolvia tudo e ignorava o lock — foi o que deixou o lock derivar sem os
+# seis `@fullcalendar/*` por 7 dias: a imagem buildava e só o CI quebrava (F6).
+# O `--legacy-peer-deps` era de um conflito de peer do `valibot`, que saiu do
+# grafo quando o projeto passou a usar `zod`; sem ele o `npm ci` resolve limpo.
+RUN npm ci --no-audit --no-fund
 COPY . .
 RUN npx vite build
 

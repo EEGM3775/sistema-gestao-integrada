@@ -98,10 +98,17 @@ jobs:
           SQL
 
       - name: Rodar a suíte (manage.py test)
-        # `funcoesemail` é explícito porque mora na RAIZ do repositório (pacote
-        # compartilhado com o backend) — a descoberta automática roda a partir de
-        # iam/ e não o encontraria. Ver funcoesemail/README.md.
-        run: python manage.py test identity funcoesemail --verbosity 2
+        # `.` dispara a descoberta a partir de backend/ — é o que roda a suíte do
+        # backend inteira. Sem ela, um rótulo de app qualquer no lugar silencia o
+        # gate: era o defeito daqui, que rodava `identity` (app da IAM, inexistente
+        # neste serviço) e nenhum dos testes do backend.
+        #
+        # `funcoesemail.tests` é explícito por DUAS razões: o pacote mora na RAIZ do
+        # repositório (compartilhado com a IAM), fora do alcance da descoberta; e o
+        # rótulo precisa apontar o MÓDULO de teste — `funcoesemail` sozinho resolve
+        # para o pacote, que não declara testes, e roda 0 em silêncio.
+        # Ver funcoesemail/README.md.
+        run: python manage.py test . funcoesemail.tests --verbosity 2
 
       # Gate de config segura (fecha o cabo solto de S3/S4): o backend tem de subir
       # em modo produção (DEBUG=False → exige SECRET_KEY/ALLOWED_HOSTS + RS256) e
@@ -124,7 +131,9 @@ jobs:
         run: python manage.py check --deploy --fail-level WARNING
 
   # -------------------------------------------------------------------------
-  # IAM — suíte própria; roda no SQLite de dev (sem RLS/role dedicada).
+  # IAM — suíte própria (`identity`); roda no SQLite de dev (sem RLS/role
+  # dedicada). O `funcoesemail` da raiz é exercido no job do backend — rodar o
+  # pacote compartilhado uma vez basta.
   # -------------------------------------------------------------------------
   iam-tests:
     name: iam (Django)
@@ -155,9 +164,23 @@ jobs:
 
   # -------------------------------------------------------------------------
   # Frontend — instalação reprodutível (bloqueante) + lint/build informativos.
-  # O build (`tsc -b && vite build`) ainda acusa erros do shell legado (F5);
-  # enquanto não forem limpos, lint e build reportam status sem bloquear merge.
-  # Ao fechar F5, remover os `continue-on-error` para virar gate real.
+  #
+  # O `npm ci` voltou a passar em 26/07/2026 (F6): o lock estava sem os seis
+  # `@fullcalendar/*` do package.json, então este job — e o `security-scan`, que
+  # também roda `npm ci` — falhavam antes de qualquer verificação. O defeito
+  # sobreviveu 7 dias porque o frontend/Dockerfile usa `npm install
+  # --legacy-peer-deps`, que ignora o lock: a imagem buildava, o CI não.
+  #
+  # `continue-on-error` AINDA é necessário, mas NÃO por causa do F5 (fechado em
+  # 26/07). Medido nesta data, em clone limpo: `npm run lint` = 51 erros,
+  # `tsc -b` = 45 erros em 19 arquivos. E a maioria não é do "shell legado" — o
+  # topo é o SIL v2 (operacao.tsx 13, pessoas.tsx 6), entregue em 25/07 sem
+  # nenhum gate rodando. Há também um import de `react-hot-toast` que não está
+  # no package.json (src/modules/obras/ObraDetailPage.tsx, arquivo órfão — o
+  # roteado é o de pages/); passa no `vite build` só porque está fora do grafo.
+  #
+  # Virar gate real exige zerar os 45 erros de tipo primeiro. Ao fazê-lo,
+  # remover os dois `continue-on-error` abaixo.
   # -------------------------------------------------------------------------
   frontend:
     name: frontend (Vite/TS)
@@ -177,11 +200,11 @@ jobs:
       - name: Instalar dependências (npm ci)
         run: npm ci
 
-      - name: Lint (informativo até F5)
+      - name: Lint (informativo — ver bloco acima)
         continue-on-error: true
         run: npm run lint
 
-      - name: Build + typecheck (informativo até F5)
+      - name: Build + typecheck (informativo — ver bloco acima)
         continue-on-error: true
         run: npm run build
 
