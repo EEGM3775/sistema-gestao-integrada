@@ -85,8 +85,8 @@ rm -f .venv/bin/python* && python3 -m venv .venv   # regenera symlinks, preserva
 
 ## Rodar os testes
 
-**Banco único = PostgreSQL** (não há mais fallback SQLite). Os defaults do `settings.py` já apontam
-para o container de dev (`localhost:5432`, `erp_db`/`erp_app`), então basta ter a infra de pé:
+**Banco único = PostgreSQL com PostGIS** (não há mais fallback SQLite). Os defaults do `settings.py`
+já apontam para o container de dev (`localhost:5432`, `erp_db`/`erp_app`), então basta ter a infra de pé:
 
 ```bash
 docker compose up -d postgres                                   # se ainda não estiver rodando
@@ -95,6 +95,26 @@ docker exec sgi-postgres psql -U postgres -c 'ALTER ROLE erp_app CREATEDB;'
 
 cd backend && ../.venv/bin/python manage.py test                # roda a suíte inteira no Postgres
 ```
+
+> **MAP.0 — duas exigências novas.**
+>
+> 1. **A extensão espacial precisa estar no `template1`.** O runner cria o `test_erp_db` a cada
+>    execução, copiando o template; sem a extensão lá, a primeira migration geométrica quebra — e
+>    `erp_app` não pode criá-la (é role comum de propósito, e é disso que a RLS `FORCE` depende).
+>    Ambiente novo já nasce certo pelo [init](../infra/postgres/init/01-init-databases.sh); num volume
+>    antigo, uma vez à mão:
+>    ```bash
+>    docker compose exec postgres psql -U postgres -d template1 -c 'CREATE EXTENSION IF NOT EXISTS postgis;'
+>    docker compose exec postgres psql -U postgres -d erp_db    -c 'CREATE EXTENSION IF NOT EXISTS postgis;'
+>    ```
+> 2. **GEOS/GDAL/PROJ no ambiente que roda o Django.** O `django.contrib.gis` os carrega por ctypes no
+>    import — sem eles o processo **não sobe** (`ImproperlyConfigured`), não é degradação. Na imagem
+>    Docker e no CI já vêm; para rodar a suíte no venv local:
+>    ```bash
+>    sudo apt-get install -y binutils gdal-bin libgeos-dev libproj-dev
+>    ```
+>    Sem privilégio de instalar, a alternativa é rodar a suíte dentro da imagem do backend (que já
+>    tem tudo), montando o repositório — foi assim que a leva do Maps foi validada.
 
 Como o Postgres é o único banco, a RLS *fail-closed* vale de fato e **todos** os testes de isolamento
 (`nucleo/test_rls_fail_closed.py`, `test_tenant_isolation.py`) rodam — nenhum é pulado. A suíte roda

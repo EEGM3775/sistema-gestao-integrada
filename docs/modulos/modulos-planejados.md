@@ -11,11 +11,17 @@
 | `moduloaps` | APS — acompanhamento/planejamento de serviços |
 | `modulodms` | DMS — gestão de documentos |
 | `modulopdca` | PDCA — ciclo de melhoria contínua |
-| `modulomaps` | Maps — geolocalização/mapas |
 
 > `moduloscm` (SCM — suprimentos) **saiu da lista de placeholders**: porte iniciado (fatia 1 ✅
 > 20/07/2026 — catálogo + centro de custo). Desenho e faseamento em
 > [../expansão/modulos/moduloscm.md](../expansão/modulos/moduloscm.md); status no
+> [../roadmap.md](../roadmap.md) (Fase 7).
+
+> `modulomaps` (Maps — dimensão espacial) **saiu da lista de placeholders**: implementado em
+> MAP.0–MAP.5 (**duas metades** — `Local` como fundação sem entitlement, à la
+> `catalogo`/`funcoesimpexp`, e as camadas de ortofoto/voo/rota/cerca atrás do entitlement `maps`;
+> **PostGIS/GeoDjango** como camada espacial). Falta só o MAP.6 (`CamadaExterna` + banco de terrenos),
+> que é fronteira com a expansão. Planta em [modulomaps.md](modulomaps.md); status no
 > [../roadmap.md](../roadmap.md) (Fase 7).
 
 > `modulosil` (SIL — estoque & logística interna) **saiu da lista de placeholders**: desenho

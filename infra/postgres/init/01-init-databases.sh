@@ -3,6 +3,17 @@
 # Executado uma única vez pelo container do Postgres na primeira subida.
 set -euo pipefail
 
+# MAP.0 — PostGIS no TEMPLATE, não só no banco do backend. `CREATE EXTENSION
+# postgis` exige SUPERUSER (a extensão não é "trusted"), e o backend roda como
+# `erp_app`, que é de propósito um role comum — é dele que depende a RLS FORCE
+# valer de fato. Criar a extensão em `template1` resolve os dois casos de uma vez:
+# `erp_db` nasce com ela (é copiado do template) e o `test_erp_db` que o runner de
+# testes cria a cada execução também — senão a suíte quebraria no primeiro
+# CreateModel geométrico, sem que ninguém pudesse consertar sem superuser.
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname template1 <<-SQL
+    CREATE EXTENSION IF NOT EXISTS postgis;
+SQL
+
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres <<-SQL
     -- Role + banco do backend
     CREATE ROLE ${backend_USER} WITH LOGIN PASSWORD '${backend_PASSWORD}';

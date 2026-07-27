@@ -115,6 +115,10 @@ INSTALLED_APPS = [
     "modulomaps.apps.ModuloMapsConfig",
 
     # Apps do Django
+    # MAP.0 — camada espacial. `django.contrib.gis` precisa vir ANTES do admin
+    # (registra os widgets geométricos) e exige GEOS/GDAL/PROJ no sistema
+    # (backend/Dockerfile). Armazenamento único em SRID 4326.
+    "django.contrib.gis",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -180,9 +184,14 @@ AUTH_USER_MODEL = "nucleo.Usuario"
 # PostgreSQL é o único banco (dev e produção). A RLS, os CheckConstraint e as
 # transações do ATOMIC_REQUESTS só são reais no PostgreSQL — o SQLite não é mais
 # suportado. Os defaults apontam para o container de dev (localhost:5432).
+# MAP.0 — o engine passou a ser o do PostGIS (superset do `postgresql`: mesmo
+# driver, mesmas transações, mesma RLS; acrescenta os tipos geométricos e o
+# índice GiST). A extensão `postgis` é criada pelo SUPERUSER no template do
+# cluster (infra/postgres/init/01-init-databases.sh) — não pelas migrations,
+# porque o role de aplicação é comum de propósito.
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql',
+        'ENGINE': 'django.contrib.gis.db.backends.postgis',
         'NAME': os.getenv('POSTGRES_DB', 'erp_db'),
         'USER': os.getenv('POSTGRES_USER', 'erp_app'),
         'PASSWORD': os.getenv('POSTGRES_PASSWORD', 'erp_app_senha_dev'),
@@ -673,6 +682,43 @@ WHATSAPP_DEFAULT_PHONE_NUMBER_ID = os.getenv('WHATSAPP_DEFAULT_PHONE_NUMBER_ID',
 WHATSAPP_DEFAULT_ACCESS_TOKEN = os.getenv('WHATSAPP_DEFAULT_ACCESS_TOKEN', '')
 WHATSAPP_DEFAULT_APP_SECRET = os.getenv('WHATSAPP_DEFAULT_APP_SECRET', '')
 WHATSAPP_DEFAULT_VERIFY_TOKEN = os.getenv('WHATSAPP_DEFAULT_VERIFY_TOKEN', '')
+
+# --- Maps / dimensão espacial (MAP.0–MAP.5) -----------------------------------
+# Caminho explícito das libs geo. Só necessário onde o `find_library` não acha
+# (macOS/homebrew, conda). Na imagem Docker e no CI ficam vazias — o pacote do
+# sistema resolve sozinho.
+if os.getenv('GDAL_LIBRARY_PATH'):
+    GDAL_LIBRARY_PATH = os.getenv('GDAL_LIBRARY_PATH')
+if os.getenv('GEOS_LIBRARY_PATH'):
+    GEOS_LIBRARY_PATH = os.getenv('GEOS_LIBRARY_PATH')
+
+# Provedores da dimensão espacial. TODOS opcionais e TODOS grátis/self-host por
+# padrão (docs/modulos/modulomaps.md §9): ausente = degrada declarando a perda,
+# nunca inventa coordenada nem rota. O pago é knob de payment/, não daqui.
+#
+# Geocodificação por ENDEREÇO (precisão de porta). Sem URL, a cascata pula este
+# degrau e cai em centroide de CEP/município — com a precisão dizendo isso.
+NOMINATIM_URL = os.getenv('NOMINATIM_URL', '')
+# `User-Agent` é exigência da política de uso do Nominatim público; num
+# self-host é só rastro. Identifica a instalação, não o usuário final.
+NOMINATIM_USER_AGENT = os.getenv('NOMINATIM_USER_AGENT', 'sgi-plataforma/1.0')
+# CEP → coordenada (BrasilAPI v2 devolve `location` quando conhece o logradouro).
+BRASILAPI_CEP_URL = os.getenv('BRASILAPI_CEP_URL', 'https://brasilapi.com.br/api/cep/v2')
+# Malha municipal do IBGE — de onde sai o centroide de município (último degrau).
+IBGE_MALHAS_URL = os.getenv(
+    'IBGE_MALHAS_URL', 'https://servicodados.ibge.gov.br/api/v3/malhas/municipios'
+)
+# Motor de rota (OSRM self-host: `/route`, `/table`). Sem URL, a rota é traçada
+# em linha reta com a distância de grande círculo e o campo `procedencia` do
+# resultado diz `estimada` — o número aparece, mas não se passa por rota real.
+OSRM_URL = os.getenv('OSRM_URL', '')
+# Servidor de tiles raster (TiTiler) para o acervo de ortofotos em COG.
+TITILER_URL = os.getenv('TITILER_URL', '')
+# Timeout (conectar, ler) das chamadas geo — todas são de terceiro.
+GEO_TIMEOUT = (
+    int(os.getenv('GEO_CONNECT_TIMEOUT', '5')),
+    int(os.getenv('GEO_READ_TIMEOUT', '15')),
+)
 
 # --- Integração serviço→serviço com o drone (Fase 10.8) -----------------------
 # Ao excluir uma obra/empreendimento, o backend desvincula (soft) no drone os

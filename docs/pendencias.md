@@ -981,6 +981,103 @@ precisar do `admin` — o `demo` (que não é `is_tenant_admin`) aprova e revisa
 suíte segue **55/55**. IAM **115/115**. Quem quiser separar de novo cria uma persona só de aprovação
 e tira as duas ações de `orcamento.orcamento.*` aqui.
 
+### D29 — Ordem de rota sem OR-Tools: heurística própria (desvio consciente do MAP.2) · 📋 aberto
+
+A [planta do Maps §9](modulos/modulomaps.md) previa **OSRM + OR-Tools**. O MAP.2 entregou o OSRM
+(traçado) e **substituiu o OR-Tools por vizinho-mais-próximo + 2-opt** em
+[rotas.py](../backend/modulomaps/rotas.py).
+
+O motivo é de proporção, não de preguiça: o problema desta fase é **um** veículo, sem capacidade,
+saindo de origem fixa — um TSP aberto de dezenas de paradas. Nesse porte a heurística chega ao ótimo
+ou a fração de por cento dele, em milissegundos. OR-Tools resolveria um problema que ainda não existe
+ao custo de ~100 MB de dependência nativa na imagem do backend e no CI.
+
+**Quando reabrir:** no dia em que entrarem **frota, capacidade e janela dura** — aí vira VRPTW de
+verdade e troca de pares não basta. O sinal de que chegou a hora é a `Rota` ganhar veículo/motorista,
+ou a `ParadaRota` passar a ter a `carga_kg` respeitada como restrição (hoje ela é registro).
+
+Enquanto isso, o que **não** se fez foi esconder a limitação: as janelas de horário são conferidas
+contra a ordem escolhida e as violações voltam no payload do `otimizar/` — o operador vê que a ordem
+mais curta chega às 6h num portão que abre às 8h e decide.
+
+### D30 — Detecção de endereço só no 1º degrau: a LLM local não foi ligada (MAP.5) · 📋 aberto
+
+A [planta §7](modulos/modulomaps.md) fixa a ordem de esforço para achar endereço em texto livre:
+**regex ancorado no CEP → LLM local (`LLM_VISION_URL`, do funcoesia) → NER dedicada**. O MAP.5
+entregou o primeiro degrau e o parsing do XML da NF-e (que não é detecção — ali o endereço já vem
+estruturado e conferido pela SEFAZ). O degrau da LLM ficou de fora.
+
+Não por dificuldade: por **exercício**. Ligar a LLM agora seria acrescentar um caminho que nenhum
+teste percorre e nenhum usuário pediu, e a decisão de arquitetura que sustenta isso já está tomada —
+tudo que a detecção produz desemboca na **conferência linha a linha** do `funcoesimpexp` (recurso
+`maps.local`), onde a régua R1 garante que nada entra antes da decisão de alguém. A extração pode ser
+imperfeita porque o motor foi desenhado para absorver imperfeição.
+
+**Quando reabrir:** quando a conferência mostrar volume real de documento que o regex não alcança —
+contrato sem CEP, e-mail de fornecedor, mensagem de WhatsApp. O número de linhas classificadas como
+inválidas no histórico do motor é a medida; hoje ele é zero porque o recurso acabou de nascer.
+
+### D31 — O Maps nasceu inalcançável: nenhum tenant assinava `maps` no stack vivo · ✅ corrigido 27/07/2026
+
+Achado no primeiro minuto do **MAP.6** (E2E vivo), e é da mesma família do **D28**: só aparece com o
+**token real da IAM**. O backend estava inteiro — migrations `0001`/`0002` aplicadas no `erp_db`,
+rotas registradas, gateway roteando —, a suíte unitária fechava **44/44**, e mesmo assim **nenhum
+usuário conseguia abrir uma camada do módulo**. O token do `demo` trazia
+`modules: [crm, drone, erp_financeiro, orcamento, rh, scm, sil]` — sem `maps` — e, de `mapa.*`,
+só `mapa.local.view/edit`.
+
+A causa é a mesma armadilha já registrada para o SIL e o Orçamento: **o catálogo da IAM está na
+imagem, mas a assinatura do tenant está no seed**. A imagem `sgi-iam` havia sido rebuildada (o
+`topografo` estava lá), e o `sync_authz --all-tenants` do boot propagou o catálogo — mas ele é
+**aditivo sobre o que o tenant assina**, e o tenant `demo` nunca passou a assinar `maps`, porque isso
+mora no `iam/seed_demo.py`, que não roda no boot. Resultado: a trava anti-escalada (permissão ⊆
+módulos assinados) cortou corretamente todas as permissões do módulo `maps`, e sobraram só as de
+`base` — que é exatamente por que `mapa.local.*` sobreviveu. O sintoma parecia defeito de gate; era
+provisionamento.
+
+Sinal correlato de que o módulo nunca havia sido exercido no stack: **zero linhas em `maps_local`**
+— o `georreferenciar_cadastros` nunca rodou no dev, então o mapa da empresa abria vazio.
+
+**Corrigido:** re-seed (`docker exec -i sgi-iam python manage.py shell < iam/seed_demo.py`) — o
+tenant passou a assinar `maps` e o `demo` a ter o `topografo`. Sem rebuild: a imagem já estava certa.
+
+**Segundo achado, dentro do primeiro:** o seed **não tinha ator capaz de provar a tese das duas
+metades** (planta §2). O candidato natural, o `admin`, não serve — `is_tenant_admin` **herda todos os
+módulos do tenant**, então assim que o `demo` passou a assinar `maps` ele passou a alcançar as
+camadas também (medido: o tile saiu de 403 para 503). Sem um ator sem o entitlement, a afirmação
+central do módulo — `Local` é fundação, camada é produto — ficaria só no comentário do código.
+Corrigido dando ao usuário `acme` (tenant que assina **só `drone`**) a persona `engenharia`: o
+`sync_authz` a compõe naquele tenant **sem nenhuma permissão de `maps`**, sobrando exatamente
+`mapa.local.*`. É o ator que o E2E usa, e ele prova a régua nas duas direções. Blast radius medido:
+21 permissões, todas de `base`/`drone`; [phase8_tenancy_test.py](../infra/gateway/phase8_tenancy_test.py)
+revalidado **10/10** (o isolamento do drone não se mexeu).
+
+**Lição para o próximo módulo:** entitlement novo exige **re-seed**, não só rebuild — e o E2E vivo é
+o único lugar onde isso aparece. Os dois comandos estão em [comandos.md](comandos.md); o **D25**
+registra a armadilha vizinha (rebuildar `erp`/`react` e esquecer `worker`/`beat`).
+
+### D32 — O degrau do CEP na cascata está inerte com o provedor grátis · 📋 aberto
+
+Medido no MAP.6: um `Local` criado só com o CEP `41820-021` (Av. Tancredo Neves, Salvador) resolveu
+como **`precisao=municipio`, `fonte=ibge`** — ou seja, pulou o degrau do meio e caiu no último.
+
+Não é defeito de código: `coordenada_por_cep` está correta e degrada como desenhado. É o **provedor**.
+A BrasilAPI v2 responde `location: {"type": "Point", "coordinates": {}}` — objeto vazio — para todos
+os CEPs testados (Salvador, Belo Horizonte, Curitiba, São Paulo, Rio), servidos pelo `open-cep`. O
+código lê `coordinates.longitude/latitude`, não acha, devolve `None`, e a cascata segue.
+
+A consequência é de produto, não de engenharia: **na configuração padrão (sem `NOMINATIM_URL`), a
+cascata tem só dois degraus vivos** — `exata` (pin/EXIF) e `municipio` (centroide do IBGE). Todo
+endereço geocodificado sozinho vira pin no centro da cidade, e o mapa da empresa nasce com a fila
+`precisao_grosseira` cheia — corretamente, porque a precisão é declarada, mas o cliente vê uma
+pendência que ele não tem como resolver sem trabalho manual.
+
+**Quando reabrir:** quando a geocodificação fina virar decisão comercial. As saídas, em ordem de
+custo: (a) **Nominatim self-host** (§9 já prevê) — resolve o degrau de porta e mata o problema na
+raiz; (b) trocar o provedor de CEP por um com coordenada de verdade; (c) aceitar e deixar o pin no
+município, contando com o arrasto manual. A medida para decidir é a contagem de
+`precisao_grosseira` na fila de decisão dos primeiros clientes reais.
+
 ### D17 — Duas trilhas de auditoria sem leitura unificada · 🟠 aberto
 
 Criado junto do **D11**. A plataforma passou a ter **duas** trilhas append-only e independentes:

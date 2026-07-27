@@ -86,13 +86,16 @@ export const CATALOGO: ModuloDef[] = [
     rota: '/app/empreendimentos',
   },
   {
+    // Georreferenciar cadastro é FUNDAÇÃO (sem `modulo`): a página abre para
+    // todo tenant e trava só a aba Território, que é o que o entitlement paga.
+    // Declarar `modulo: 'maps'` aqui poria cadeado no que está incluso.
     id: 'maps',
-    label: 'Mapas & GIS',
-    descricao: 'Camadas geográficas de terrenos, obras e empreendimentos — com as ortofotos do drone.',
+    label: 'Mapas & Território',
+    descricao: 'Onde cada obra, fornecedor e almoxarifado fica — com precisão declarada. Acervo de voos, plano de voo e rotas com o módulo Maps.',
     icon: Map,
     estagio: 'originar',
-    situacao: 'planejado',
-    modulo: 'maps',
+    situacao: 'pronto',
+    rota: '/app/maps',
   },
   {
     id: 'terrenos',

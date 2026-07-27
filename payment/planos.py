@@ -70,6 +70,12 @@ PLANOS: dict[str, dict] = {
         "processamentos_drone_mes": 0,
         "banco_preco_linhas": 500,
         "importacao_linhas": 500,
+        # Maps (MAP.0–MAP.5) — COGS: geocodificação fina, motor de rota e
+        # storage raster custam dinheiro por uso. Declaradas e INERTES, como as
+        # demais da família: medem e cobram, não travam.
+        "geocodificacoes_mes": 100,
+        "rotas_mes": 0,
+        "storage_raster_gb": 0,
     },
     "essencial": {
         "nome": "Essencial",
@@ -87,6 +93,9 @@ PLANOS: dict[str, dict] = {
         "processamentos_drone_mes": 0,
         "banco_preco_linhas": 20_000,
         "importacao_linhas": 5_000,
+        "geocodificacoes_mes": 1_000,
+        "rotas_mes": 20,
+        "storage_raster_gb": 2,
     },
     "profissional": {
         "nome": "Profissional",
@@ -104,6 +113,9 @@ PLANOS: dict[str, dict] = {
         "processamentos_drone_mes": 0,  # add-on
         "banco_preco_linhas": 150_000,
         "importacao_linhas": 40_000,
+        "geocodificacoes_mes": 10_000,
+        "rotas_mes": 200,
+        "storage_raster_gb": 25,
     },
     "empresarial": {
         "nome": "Empresarial",
@@ -121,6 +133,9 @@ PLANOS: dict[str, dict] = {
         "processamentos_drone_mes": 25,
         "banco_preco_linhas": 600_000,
         "importacao_linhas": 120_000,
+        "geocodificacoes_mes": 50_000,
+        "rotas_mes": 1_000,
+        "storage_raster_gb": 150,
     },
     "sob_medida": {
         "nome": "Sob Medida",
@@ -140,6 +155,9 @@ PLANOS: dict[str, dict] = {
         "processamentos_drone_mes": None,
         "banco_preco_linhas": None,
         "importacao_linhas": None,
+        "geocodificacoes_mes": None,
+        "rotas_mes": None,
+        "storage_raster_gb": None,
         # Sem teto contratado, um plano "ilimitado" não pode virar ilimitado de
         # verdade no eixo de requisições: cairia no teto de infraestrutura e
         # derrubaria os outros tenants. O contrato preenche

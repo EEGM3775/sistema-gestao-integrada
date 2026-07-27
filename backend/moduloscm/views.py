@@ -192,9 +192,42 @@ class PropostaViewSet(BaseScmViewSet):
             qs = self.filter_queryset(self.get_queryset())
             forn_ids = qs.values_list("fornecedor_id", flat=True)
             ctx["avaliacao_agg"] = AvaliacaoFornecedor.agg_por_fornecedor(self._tenant_id(), forn_ids)
+            ctx["distancia_km"] = self._distancias(qs)
         except Exception:  # pragma: no cover - contexto é otimização, nunca bloqueia
             pass
         return ctx
+
+    def _distancias(self, qs) -> dict:
+        """`(cotacao, fornecedor) → km` até o canteiro daquela cotação (MAP.2).
+
+        A obra sai da cadeia `cotação → demanda → centro de custo → obra`: o SCM
+        é vertical-agnóstico e não tem FK direta para obra, então a alocação é o
+        caminho legítimo. Cotação cujo centro de custo não é de obra fica sem
+        distância — o que está certo, porque "distância até o administrativo"
+        não quer dizer nada.
+        """
+        from modulomaps.services import distancias_ate_obra
+
+        tenant_id = self._tenant_id()
+        # `list()` porque a tupla é percorrida duas vezes — sem materializar, o
+        # `values_list` reexecuta a consulta na segunda passada.
+        pares = list(qs.exclude(fornecedor_id=None).values_list(
+            "cotacao_id", "fornecedor_id", "cotacao__demanda__centro_custo__obra_id"
+        ))
+        por_obra: dict[int, set] = {}
+        for _cotacao_id, fornecedor_id, obra_id in pares:
+            if obra_id:
+                por_obra.setdefault(obra_id, set()).add(fornecedor_id)
+
+        distancias = {
+            obra_id: distancias_ate_obra(tenant_id, obra_id, fornecedores)
+            for obra_id, fornecedores in por_obra.items()
+        }
+        return {
+            (cotacao_id, fornecedor_id): distancias[obra_id][fornecedor_id]
+            for cotacao_id, fornecedor_id, obra_id in pares
+            if obra_id and fornecedor_id in distancias.get(obra_id, {})
+        }
 
 
 class ItemPropostaViewSet(BaseScmViewSet):

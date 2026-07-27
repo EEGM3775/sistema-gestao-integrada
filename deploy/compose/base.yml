@@ -25,8 +25,14 @@ services:
   # ---------- INFRA (sempre) ----------
 
   # PostgreSQL — cluster de registro do IAM e do backend (bancos iam_db e erp_db)
+  #
+  # MAP.0: a imagem é a do PostGIS (mesmo Postgres 16 + a extensão espacial), não
+  # a baunilha. O volume `pg_data` existente CONTINUA VÁLIDO — a major é a mesma,
+  # só muda o que vem instalado —, mas o script de init NÃO reroda num volume já
+  # inicializado: num ambiente antigo, crie a extensão uma vez à mão (o comando
+  # está em docs/modulos/modulomaps.md §3).
   postgres:
-    image: postgres:16-alpine
+    image: postgis/postgis:16-3.4
     container_name: ${SGI_PREFIX:-sgi}-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_SUPERUSER:-postgres}

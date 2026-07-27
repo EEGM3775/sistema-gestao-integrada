@@ -28,7 +28,9 @@ jobs:
         working-directory: backend
     services:
       postgres:
-        image: postgres:16
+        # MAP.0: PostGIS (mesmo Postgres 16 + extensão espacial). O gate real da
+        # troca de banco é esta suíte passar inteira sobre a imagem nova.
+        image: postgis/postgis:16-3.4
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -74,12 +76,13 @@ jobs:
 
       # Bibliotecas de sistema do WeasyPrint (geração de PDF) — sem elas o
       # import do app quebra ao subir a suíte.
-      - name: Instalar libs de sistema (WeasyPrint)
+      - name: Instalar libs de sistema (WeasyPrint + GeoDjango)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 \
-            libcairo2 libgdk-pixbuf-2.0-0 libffi-dev
+            libcairo2 libgdk-pixbuf-2.0-0 libffi-dev \
+            binutils gdal-bin libgeos-dev libproj-dev
 
       - name: Instalar dependências Python
         run: |
@@ -95,6 +98,18 @@ jobs:
         run: |
           psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
           CREATE ROLE erp_app WITH LOGIN PASSWORD 'erp_app_ci' CREATEDB;
+          SQL
+
+      # MAP.0 — a extensão espacial vai no TEMPLATE, pelo superuser. `erp_app` é
+      # role comum (é o que faz a RLS FORCE valer) e não pode criar extensão; o
+      # `test_erp_db` que o runner cria a cada execução é copiado de `template1`,
+      # então é lá que a extensão precisa estar. Espelha infra/postgres/init/.
+      - name: Habilitar PostGIS no template1 (superuser)
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d template1 -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE EXTENSION IF NOT EXISTS postgis;
           SQL
 
       - name: Rodar a suíte (manage.py test)

@@ -5,12 +5,23 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Dependências de sistema: psycopg2/build + WeasyPrint (pango/cairo) para PDFs.
+# Dependências de sistema: psycopg2/build + WeasyPrint (pango/cairo) para PDFs
+# + GEOS/GDAL/PROJ do GeoDjango (MAP.0). As três bibliotecas geo são carregadas
+# por ctypes em tempo de import de `django.contrib.gis`: sem elas o processo NÃO
+# sobe (ImproperlyConfigured), não é degradação. `binutils` entra porque é o que
+# dá `objdump` ao `ctypes.util.find_library` — é a receita da doc do Django para
+# Debian, e sem ele a busca pela libgdal falha mesmo com o pacote instalado.
+#
+# `gdal-bin` sozinho puxa libgdal, libgeos e libproj como dependência. Fixar os
+# nomes versionados (libgdal32, libproj25) quebra a cada troca de base do
+# `python:3.12-slim` — o Debian renumera essas libs a cada release, e foi
+# exatamente o que aconteceu na trixie.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libpq5 \
         libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 \
         libcairo2 libgdk-pixbuf-2.0-0 libffi8 shared-mime-info \
         fonts-liberation \
+        binutils gdal-bin \
     && rm -rf /var/lib/apt/lists/*
 
 # ATENÇÃO: o contexto de build é a RAIZ do repositório (ver deploy/compose/base.yml),

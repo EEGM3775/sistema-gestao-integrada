@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { LogOut, ChevronDown, ChevronRight, User, KeyRound } from 'lucide-react'
+import { LogOut, ChevronDown, ChevronRight, User, KeyRound, CalendarDays, Map as MapIcon } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { ChangePasswordModal } from '@/components/ChangePasswordModal'
 import { NotificationBell } from '@/components/notifications/NotificationBell'
@@ -26,6 +26,7 @@ const SEGMENT_LABELS: Record<string, string> = {
   diario: 'Diário + IA',
   calendario: 'Calendário',
   drone: 'Drone',
+  maps: 'Mapas & Território',
   scm: 'Suprimentos',
   produtos: 'Produtos',
   ofertas: 'Ofertas',
@@ -46,6 +47,38 @@ function useBreadcrumb(): string[] {
   return tail
     .filter((s) => !/^\d+$/.test(s)) // some ids numéricos de detalhe
     .map((s) => SEGMENT_LABELS[s] ?? s)
+}
+
+/**
+ * Ícone-atalho da topbar. Mesma caixa de 34px do `ThemeToggle` e do sino, para
+ * a fileira da direita ler como uma fileira só; ativo acende no âmbar da marca
+ * (o mesmo sinal do "quarteirão aceso" da sidebar).
+ */
+const AtalhoTopbar: React.FC<{ to: string; rotulo: string; children: React.ReactNode }> = ({ to, rotulo, children }) => {
+  const { pathname } = useLocation()
+  const ativo = pathname.startsWith(to)
+  return (
+    <Link
+      to={to}
+      aria-label={rotulo}
+      title={rotulo}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 34,
+        height: 34,
+        borderRadius: 'var(--r-sm)',
+        color: ativo ? 'var(--accent-ink)' : 'var(--ink-2)',
+        background: ativo ? 'var(--accent-soft)' : 'transparent',
+        transition: 'background .15s, color .15s',
+      }}
+      onMouseEnter={(e) => { if (!ativo) { e.currentTarget.style.background = 'var(--surface-2)'; e.currentTarget.style.color = 'var(--ink)' } }}
+      onMouseLeave={(e) => { if (!ativo) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--ink-2)' } }}
+    >
+      {children}
+    </Link>
+  )
 }
 
 export const AppTopbar: React.FC = () => {
@@ -106,7 +139,15 @@ export const AppTopbar: React.FC = () => {
 
       <div className="flex-1" />
 
-      {/* Direita: tema · notificações · usuário */}
+      {/* Direita: lentes transversais · tema · notificações · usuário.
+          Mapas e Calendário vivem AQUI, e não na sidebar: nenhum dos dois é um
+          lugar do ciclo — são lentes sobre tudo o que já existe (o território de
+          obra/fornecedor/almoxarifado; a agenda de todos os módulos). Ficam ao
+          lado do sino porque pertencem à mesma família: coisas que se consultam
+          sem sair de onde se está. */}
+      <AtalhoTopbar to="/app/maps" rotulo="Mapas & Território"><MapIcon size={18} /></AtalhoTopbar>
+      <AtalhoTopbar to="/app/calendario" rotulo="Calendário"><CalendarDays size={18} /></AtalhoTopbar>
+
       <ThemeToggle />
       <NotificationBell />
 

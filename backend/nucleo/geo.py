@@ -22,7 +22,10 @@ import re
 import unicodedata
 
 import requests
+from django.conf import settings
 from django.core.cache import cache
+
+from .rate_limit import LimiteFornecedorExcedido, consumir
 
 logger = logging.getLogger(__name__)
 
@@ -232,3 +235,221 @@ def resolver(cep: str = None, endereco: str = None, cidade: str = None, uf: str 
             return {"cidade": "", "uf": uf, "ibge": "", "fonte": "uf_apenas"}
 
     return None
+
+
+# ===========================================================================
+# COORDENADA — a cascata de geocodificação (MAP.0)
+# ===========================================================================
+# Nada aqui devolve um ponto sem dizer **de onde ele veio e quão perto está do
+# lugar real**. É a regra de ouro do módulo Maps: um pin de centroide de
+# município e um pin arrastado à mão não podem parecer a mesma coisa. Por isso
+# toda função devolve `(lon, lat, precisao, fonte)` e nunca só a coordenada.
+#
+# As strings de `precisao`/`fonte` são o CONTRATO com `modulomaps.models`
+# (`Precisao` / `FonteGeo`) — repetidas como texto de propósito: este módulo é
+# `nucleo` e não pode importar um app de negócio. O teste amarra as duas listas.
+#
+# Ordem (a de confiança, docs/modulos/modulomaps.md §5): pin à mão e EXIF são
+# resolvidos pelo chamador (já são `exata`); daqui para baixo é o que exige rede.
+
+PRECISAO_ENDERECO = "endereco"
+PRECISAO_CEP = "cep"
+PRECISAO_MUNICIPIO = "municipio"
+
+
+def _externo(fornecedor: str, url: str, params=None, headers=None):
+    """GET a um provedor geo com o limite de saída da camada 2 aplicado.
+
+    Devolve o JSON ou `None`. Nunca estoura: geocodificação é melhor-esforço, e
+    a alternativa a um degrau indisponível é o degrau seguinte (mais grosso),
+    não uma tela de erro. Inclusive o estouro de cota vira `None` — quem chamou
+    recebe uma precisão pior, que é uma resposta honesta, em vez de um 429 no
+    meio de um cadastro.
+    """
+    try:
+        consumir(fornecedor)
+    except LimiteFornecedorExcedido:
+        logger.warning("Limite de saída atingido em %s; degradando a cascata geo.", fornecedor)
+        return None
+    try:
+        resp = requests.get(
+            url, params=params or {}, headers=headers or {},
+            timeout=getattr(settings, "GEO_TIMEOUT", TIMEOUT),
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except (requests.RequestException, ValueError) as e:
+        logger.warning("Provedor geo %s falhou (%s): %s", fornecedor, url, e)
+        return None
+
+
+def geocodificar_endereco(endereco: str):
+    """Endereço em texto → coordenada de **porta**, via Nominatim.
+
+    Sem `NOMINATIM_URL` configurada a função devolve `None` e a cascata cai no
+    degrau seguinte: o padrão do produto é grátis/self-host, e geocodificação
+    fina é add-on (planta §9). Vale dizer o que NÃO se faz aqui: chutar a
+    coordenada do centro da cidade e chamar de "endereço".
+    """
+    base = getattr(settings, "NOMINATIM_URL", "")
+    if not base or not endereco:
+        return None
+    chave = f"geo:nominatim:{_normalizar(endereco)}"
+    cacheado = cache.get(chave)
+    if cacheado is not None:
+        return cacheado or None
+    dados = _externo(
+        "geo", f"{base.rstrip('/')}/search",
+        params={"q": endereco, "format": "jsonv2", "countrycodes": "br", "limit": 1},
+        # Exigência da política de uso do Nominatim público; num self-host é rastro.
+        headers={"User-Agent": getattr(settings, "NOMINATIM_USER_AGENT", "sgi-plataforma/1.0")},
+    )
+    if not dados:
+        return None
+    try:
+        lon, lat = float(dados[0]["lon"]), float(dados[0]["lat"])
+    except (KeyError, IndexError, TypeError, ValueError):
+        cache.set(chave, "", CACHE_TTL)
+        return None
+    ponto = {"lon": lon, "lat": lat, "precisao": PRECISAO_ENDERECO, "fonte": "geocoder"}
+    cache.set(chave, ponto, CACHE_TTL)
+    return ponto
+
+
+def coordenada_por_cep(cep: str):
+    """CEP → coordenada do logradouro (BrasilAPI v2), quando a base a conhece.
+
+    O ViaCEP, que já usamos para cidade/UF/IBGE, **não devolve coordenada** —
+    daí o segundo provedor. Quando a base não tem o ponto do logradouro, ela
+    responde sem `location`, e devolvemos `None` em vez do centro do bairro.
+    """
+    digitos = re.sub(r"\D", "", cep or "")
+    if len(digitos) != 8:
+        return None
+    chave = f"geo:cepgeo:{digitos}"
+    cacheado = cache.get(chave)
+    if cacheado is not None:
+        return cacheado or None
+    base = getattr(settings, "BRASILAPI_CEP_URL", "")
+    if not base:
+        return None
+    dados = _externo("geo", f"{base.rstrip('/')}/{digitos}")
+    coords = ((dados or {}).get("location") or {}).get("coordinates") or {}
+    try:
+        lon, lat = float(coords["longitude"]), float(coords["latitude"])
+    except (KeyError, TypeError, ValueError):
+        cache.set(chave, "", CACHE_TTL)
+        return None
+    ponto = {"lon": lon, "lat": lat, "precisao": PRECISAO_CEP, "fonte": "cep"}
+    cache.set(chave, ponto, CACHE_TTL)
+    return ponto
+
+
+def _centroide_anel(anel):
+    """Centroide de um anel (fórmula do polígono / *shoelace*).
+
+    Em Python puro, e não via GEOS, por uma razão prática: este módulo é
+    `nucleo` — compartilhado com calendário e NF — e não deve exigir a stack
+    geoespacial para ser importado. São 10 linhas, e o resultado é o centro de
+    massa de verdade, não o centro do retângulo envolvente (que numa cidade em
+    "L" cai fora do município).
+    """
+    area = cx = cy = 0.0
+    for i in range(len(anel) - 1):
+        x0, y0 = anel[i][0], anel[i][1]
+        x1, y1 = anel[i + 1][0], anel[i + 1][1]
+        cruz = x0 * y1 - x1 * y0
+        area += cruz
+        cx += (x0 + x1) * cruz
+        cy += (y0 + y1) * cruz
+    if abs(area) < 1e-12:  # degenerado → média simples dos vértices
+        n = max(1, len(anel))
+        return sum(p[0] for p in anel) / n, sum(p[1] for p in anel) / n
+    area *= 0.5
+    return cx / (6 * area), cy / (6 * area)
+
+
+def _aneis_do_geojson(geometria):
+    """Todos os anéis externos de um Polygon/MultiPolygon do GeoJSON."""
+    tipo = (geometria or {}).get("type")
+    coords = (geometria or {}).get("coordinates") or []
+    if tipo == "Polygon":
+        return [coords[0]] if coords else []
+    if tipo == "MultiPolygon":
+        return [poligono[0] for poligono in coords if poligono]
+    return []
+
+
+def centroide_municipio(ibge: str):
+    """Código IBGE → centroide do município, pela **malha oficial** do IBGE.
+
+    É o último degrau da cascata, e o mais grosso: diz "em algum lugar desta
+    cidade". Existe porque é melhor que nada — uma obra que aparece na cidade
+    certa já responde "quais obras tenho no interior?" —, mas só presta se a
+    tela declarar a precisão, que é o que a `Precisao.MUNICIPIO` faz.
+    """
+    codigo = re.sub(r"\D", "", str(ibge or ""))
+    if len(codigo) != 7:
+        return None
+    chave = f"geo:centroide:{codigo}"
+    cacheado = cache.get(chave)
+    if cacheado is not None:
+        return cacheado or None
+    base = getattr(settings, "IBGE_MALHAS_URL", "")
+    if not base:
+        return None
+    dados = _externo(
+        "geo", f"{base.rstrip('/')}/{codigo}",
+        params={"formato": "application/vnd.geo+json", "qualidade": "minima"},
+    )
+    # A malha vem como FeatureCollection; pegamos a geometria da 1ª feature.
+    geometria = None
+    if isinstance(dados, dict):
+        if dados.get("type") == "FeatureCollection" and dados.get("features"):
+            geometria = dados["features"][0].get("geometry")
+        elif dados.get("type") in ("Polygon", "MultiPolygon"):
+            geometria = dados
+    aneis = _aneis_do_geojson(geometria)
+    if not aneis:
+        cache.set(chave, "", CACHE_TTL)
+        return None
+    # Vários polígonos (ilhas): fica com o maior anel, que é o continente do
+    # município — o centroide da média incluiria ilhas distantes e sairia no mar.
+    maior = max(aneis, key=len)
+    lon, lat = _centroide_anel(maior)
+    ponto = {"lon": lon, "lat": lat, "precisao": PRECISAO_MUNICIPIO, "fonte": "ibge"}
+    cache.set(chave, ponto, CACHE_TTL)
+    return ponto
+
+
+def geocodificar(endereco: str = None, cep: str = None, cidade: str = None,
+                 uf: str = None, ibge: str = None):
+    """**A cascata.** Devolve o melhor ponto disponível, sempre com procedência.
+
+    Ordem: endereço (porta) → CEP (logradouro) → município (centro de massa).
+    Os dois degraus mais confiáveis — pin à mão e EXIF — não estão aqui porque
+    não dependem de rede: quem os tem já grava `precisao=exata`.
+
+    Retorna `{"lon", "lat", "precisao", "fonte"}` ou `None` quando nem o
+    município foi possível resolver. `None` é resposta legítima e vira
+    `precisao=desconhecida` no `Local` — é o que alimenta a fila "obras sem
+    coordenada" em vez de um pin inventado.
+    """
+    ponto = geocodificar_endereco(endereco)
+    if ponto:
+        return ponto
+
+    # O CEP pode vir do campo ou estar embutido no texto do endereço — o mesmo
+    # padrão que `resolver()` já usa uma camada acima.
+    if not cep and endereco:
+        m = re.search(r"\b(\d{5})-?(\d{3})\b", endereco)
+        if m:
+            cep = m.group(1) + m.group(2)
+    ponto = coordenada_por_cep(cep)
+    if ponto:
+        return ponto
+
+    if not ibge:
+        localidade = resolver(cep=cep, endereco=endereco, cidade=cidade, uf=uf)
+        ibge = (localidade or {}).get("ibge")
+    return centroide_municipio(ibge) if ibge else None

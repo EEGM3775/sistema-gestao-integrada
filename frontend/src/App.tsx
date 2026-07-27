@@ -29,6 +29,7 @@ import { crmRoutes } from './modules/crm/routes'
 import { scmRoutes } from './modules/scm/routes'
 import { silRoutes } from './modules/sil/routes'
 import { orcamentoRoutes } from './modules/orcamento/routes'
+import { mapsRoutes } from './modules/maps/routes'
 
 function App() {
   return (
@@ -106,6 +107,10 @@ function App() {
 
           {/* ── Orçamento (hub + páginas, sub-rotas lazy) ── */}
           {orcamentoRoutes}
+
+          {/* ── Maps / Território (metade fundação sem entitlement; a aba
+               Território é que trava sem o módulo `maps`) ── */}
+          {mapsRoutes}
 
           {/* Fallback interno — caminho absoluto evita loop de append no splat (/app/x → /app/x/dashboard → …) */}
           <Route path="*" element={<Navigate to="/app/dashboard" replace />} />

@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Building2, HardHat, Users, Truck,
   BarChart3, UserCog, TrendingUp, Brain, Plane, Package,
-  CalendarDays, PanelLeft, Lock, ShieldCheck, Network, Warehouse, Calculator,
+  PanelLeft, Lock, ShieldCheck, Network, Warehouse, Calculator,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { Quarteirao } from '@/components/brand/Quarteirao'
@@ -28,6 +28,13 @@ interface NavSection {
 
 // Seções endereçadas como no protótipo (docs/identidade-visual §9). A régua do
 // ciclo no topo é a assinatura de plataforma; cada item ativo vira "quarteirão aceso".
+//
+// **Calendário e Mapas não estão aqui** (26/07/2026): os dois são *transversais* —
+// não são um lugar do ciclo, são uma lente sobre tudo que já existe (a agenda de
+// todos os módulos; o território de obra, fornecedor e almoxarifado). Ficam como
+// ícone na topbar, ao lado das notificações, que é onde mora o que se consulta a
+// qualquer momento sem sair de onde se está. A sidebar segue sendo o farol dos
+// lugares da edição.
 const NAV_SECTIONS: NavSection[] = [
   {
     label: 'Operação',
@@ -46,7 +53,6 @@ const NAV_SECTIONS: NavSection[] = [
       { label: 'RH',               icon: <UserCog />,     to: '/app/rh',         module: 'rh',             implemented: true },
       { label: 'CRM',              icon: <TrendingUp />,  to: '/app/crm',        module: 'crm',            implemented: true },
       { label: 'Diário + IA',      icon: <Brain />,       to: '/app/diario',                               implemented: true },
-      { label: 'Calendário',       icon: <CalendarDays />, to: '/app/calendario',                          implemented: true },
       { label: 'Suprimentos',      icon: <Package />,     to: '/app/scm',        module: 'scm',            implemented: true },
       { label: 'Estoque & Logística', icon: <Warehouse />, to: '/app/sil',       module: 'sil',            implemented: true },
       { label: 'Orçamento',        icon: <Calculator />,  to: '/app/orcamento',  module: 'orcamento',      implemented: true },

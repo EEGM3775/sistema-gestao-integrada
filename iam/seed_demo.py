@@ -45,6 +45,7 @@ for cod, nome in [
     ("scm", "Suprimentos (SCM)"),
     ("sil", "Estoque & Logística (SIL)"),
     ("orcamento", "Orçamento de Obra"),
+    ("maps", "Mapas & Território"),
 ]:
     modulos[cod], _ = Modulo.objects.get_or_create(codigo=cod, defaults={"nome": nome})
 
@@ -104,15 +105,23 @@ call_command("sync_authz", all_tenants=True)
 
 # --- Usuários e seus papéis ---
 demo = upsert_user(
-    tenant, "demo", "demo123", ["drone", "erp_financeiro", "crm", "rh", "scm", "sil", "orcamento"],
+    tenant, "demo", "demo123",
+    ["drone", "erp_financeiro", "crm", "rh", "scm", "sil", "orcamento", "maps"],
     # Power-user: papéis cobrindo todos os módulos do tenant (erp, crm, obras, drone, rh, scm,
-    # sil, orcamento).
+    # sil, orcamento, maps).
     ["financeiro", "tesouraria", "fiscal", "comercial", "engenharia",
      "drone_analista", "rh_gestor", "rh_medico", "rh_financeiro", "suprimentos", "almoxarife",
-     "orcamentista"],
+     "orcamentista", "topografo"],
 )
 semdrone = upsert_user(tenant, "semdrone", "semdrone123", ["erp_financeiro"], ["operacional"])
-acme = upsert_user(acme_tenant, "acme", "acme123", ["drone"], ["operacional"])
+# O `engenharia` aqui não é enfeite: é o único ator do seed capaz de provar a
+# tese das DUAS METADES do Maps (planta §2). O tenant acme **não assina `maps`**,
+# então o `sync_authz` compõe esta persona sem nenhuma permissão do módulo — e
+# ela fica exatamente com `mapa.local.*`, que vive em `base`. É a demonstração de
+# que georreferenciar a obra continua valendo para quem não comprou o módulo,
+# enquanto camada/voo/rota ficam atrás dele. Sem este papel, o `is_tenant_admin`
+# seria o único candidato, e ele herda TODOS os módulos do tenant.
+acme = upsert_user(acme_tenant, "acme", "acme123", ["drone"], ["operacional", "engenharia"])
 # Admin do tenant 'demo': gere papéis/personas e permissões na tela de Administração.
 admin = upsert_user(
     tenant, "admin", "admin123", ["drone", "erp_financeiro", "crm", "rh"], [], is_admin=True

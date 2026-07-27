@@ -19,6 +19,14 @@ export { Btn } from './Btn'
 export { Modal } from './Modal'
 
 /**
+ * MAP.1 — a superfície espacial. Fica aqui, e não num kit do módulo Maps,
+ * porque obra, fornecedor, almoxarifado e voo caem no MESMO mapa: um mapa por
+ * módulo repetiria a dívida dos kits paralelos.
+ */
+export { Mapa } from './Mapa'
+export type { PontoMapa, CamadaGeoJSON, CamadaRaster } from './Mapa'
+
+/**
  * IE.0c — importação e exportação, os dois componentes que **todo módulo**
  * consome ([docs/modulos/funcoesimpexp.md §10](../../../../docs/modulos/funcoesimpexp.md)).
  * Ambos somem sozinhos quando a pessoa não tem acesso total ao recurso: quem

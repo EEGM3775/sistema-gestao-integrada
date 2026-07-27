@@ -174,6 +174,26 @@ CATALOGO: tuple[Perm, ...] = (
     Perm("orcamento.item.view", "Ver as linhas da planilha orçamentária", "orcamento"),
     Perm("orcamento.item.edit", "Editar as linhas da planilha orçamentária", "orcamento"),
     Perm("orcamento.relatorio.view", "Ver curva ABC, curva S e orçado × realizado", "orcamento"),
+    # --- Maps — dimensão espacial (módulo 'maps', com uma metade de fundação) ---
+    #     `mapa.local` é a metade FUNDAÇÃO e por isso está em "base", não em
+    #     "maps": georreferenciar obra, fornecedor e almoxarifado é atributo de
+    #     cadastro (o ViewSet correspondente não tem `RequireModule`). Se ficasse
+    #     no módulo, quem não assina Maps teria SIL e SCM sem saber onde as
+    #     coisas ficam — ver docs/modulos/modulomaps.md §1.
+    Perm("mapa.local.view", "Ver locais georreferenciados", "base"),
+    Perm("mapa.local.edit", "Georreferenciar: criar/editar local e mover o pin", "base"),
+    #     Daqui para baixo é o produto: acervo raster, missão de voo e rota têm
+    #     custo próprio (storage, motor de rota, geocodificação fina).
+    Perm("mapa.feicao.view", "Ver camadas e feições do mapa", "maps"),
+    Perm("mapa.feicao.edit", "Desenhar e editar camadas/feições", "maps"),
+    Perm("mapa.ortofoto.view", "Ver o acervo de ortofotos no mapa", "maps"),
+    Perm("mapa.ortofoto.edit", "Indexar/editar ortofotos do acervo", "maps"),
+    Perm("mapa.plano_voo.view", "Ver planos de voo", "maps"),
+    Perm("mapa.plano_voo.edit", "Criar, calcular e exportar plano de voo", "maps"),
+    Perm("mapa.rota.view", "Ver rotas de entrega", "maps"),
+    Perm("mapa.rota.edit", "Planejar e otimizar rotas de entrega", "maps"),
+    Perm("mapa.geofence.view", "Ver cercas (geofence) de canteiro", "maps"),
+    Perm("mapa.geofence.edit", "Criar e editar cercas de canteiro", "maps"),
     # --- Obras/empreendimentos e cadastros base (sem entitlement de módulo) ---
     Perm("obra.empreendimento.view", "Ver empreendimentos", "base"),
     Perm("obra.empreendimento.edit", "Gerir empreendimentos", "base"),
@@ -252,6 +272,7 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
         "calendario.evento.view",
         "cadastro.cliente.view", "cadastro.cliente_doc.view", "cadastro.fornecedor.view",
         "cadastro.venda.view",
+        "mapa.local.view", "mapa.feicao.view", "mapa.ortofoto.view",
         "plataforma.config.view", "plataforma.integracao.view",
     ],
     # RH completo, MENOS o prontuário médico (segregação médico × gestor).
@@ -298,21 +319,35 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
         "cadastro.venda.view", "cadastro.venda.edit",
     ],
     # Engenharia: empreendimentos, obras, diário (+ IA), agenda, custos.
+    # Georreferencia e desenha no mapa: quem responde pela obra é quem sabe onde
+    # o canteiro começa e o que há dentro dele.
     "engenharia": [
         "obra.empreendimento.*", "obra.empreend_custo.*", "obra.obra.*",
         "obra.diario.*", "ia.analise.*", "calendario.evento.*",
         "cadastro.fornecedor.view", "drone.projeto.view", "drone.medicao.view",
+        "mapa.local.*", "mapa.feicao.*", "mapa.ortofoto.view", "mapa.geofence.*",
     ],
     # Campo: apontamentos do diário + upload de drone (sem gestão).
     "campo": [
         "obra.obra.view", "obra.diario.view", "obra.diario.create",
         "ia.analise.view", "calendario.evento.view",
         "drone.projeto.view", "drone.imagem.upload",
+        "mapa.local.view", "mapa.feicao.view",
     ],
-    # Analista de drone: processamento e medições.
+    # Analista de drone: processamento e medições. Ganhou o acervo e a missão —
+    # é a mesma pessoa que hoje já opera o voo, agora com o plano na plataforma.
     "drone_analista": [
         "drone.projeto.*", "drone.imagem.upload",
         "drone.processamento.executar", "drone.medicao.*",
+        "mapa.ortofoto.*", "mapa.plano_voo.*", "mapa.local.view", "mapa.feicao.view",
+    ],
+    # Topógrafo: a persona do território. Marca, mede e voa — não mexe em
+    # financeiro nem em cadastro comercial.
+    "topografo": [
+        "mapa.local.*", "mapa.feicao.*", "mapa.ortofoto.*", "mapa.plano_voo.*",
+        "mapa.geofence.*", "mapa.rota.view",
+        "obra.obra.view", "obra.empreendimento.view",
+        "drone.projeto.view", "drone.medicao.view",
     ],
     # Auditor LGPD: leitura ampla + trilha + operações de titular. READ-ONLY —
     # só permissões `.view` explícitas (nunca `.edit`/`.delete`/PII bancária por wildcard).
@@ -327,9 +362,15 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
         "obra.empreendimento.view", "obra.empreend_custo.view",
         "obra.obra.view", "obra.diario.view",
         "cadastro.cliente.view", "cadastro.cliente_doc.view", "cadastro.fornecedor.view",
+        "mapa.local.view",
     ],
     # Suprimentos: catálogo de produtos, ofertas de fornecedores e centros de custo.
-    "suprimentos": ["scm.*", "cadastro.fornecedor.view", "cadastro.item.*"],
+    # `mapa.local.view` + `mapa.rota.view` porque distância entrega→canteiro é
+    # critério de compra tanto quanto preço e reputação.
+    "suprimentos": [
+        "scm.*", "cadastro.fornecedor.view", "cadastro.item.*",
+        "mapa.local.view", "mapa.rota.view",
+    ],
     # Almoxarife: estoque & logística interna. `sil.*` + leitura do item-mestre
     # (o que se estoca) e dos selects do domínio (obra do canteiro/requisição,
     # fornecedor da devolução/lote).
@@ -337,6 +378,9 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
         "sil.*", "cadastro.item.view",
         "obra.obra.view", "cadastro.fornecedor.view",
         "rh.funcionario.view",  # picker de colaborador em EPI/ferramentaria
+        # Roteirização de transferência e entrega ao canteiro é trabalho de
+        # almoxarifado, não de mapa: quem carrega o caminhão define a ordem.
+        "mapa.rota.*", "mapa.local.view", "mapa.geofence.view",
     ],
     # Orçamentista: monta, aprova e revisa a planilha orçamentária. Precisa GERIR
     # o item-mestre (adotar da base referencial cria item no catálogo) e LER o que
@@ -383,6 +427,7 @@ DESCRICOES_TEMPLATE: dict[str, str] = {
     "suprimentos": "Suprimentos: catálogo de produtos, ofertas/preços de fornecedores e centros de custo.",
     "almoxarife": "Estoque e logística interna: saldos, movimentações, requisições, transferências, devoluções, lotes e inventário.",
     "orcamentista": "Planilha orçamentária da obra: bases referenciais (SINAPI/ORSE), composições, curva ABC e orçado × realizado. Aprova e revisa o orçamento.",
+    "topografo": "Território: georreferenciamento, camadas e feições do mapa, acervo de ortofotos e planos de voo.",
     "gestor_lixo": "Restauração e expurgo de itens da lixeira (exclusão reversível).",
     "operacional": "Leitura básica de obras, diário, agenda e cadastros.",
 }

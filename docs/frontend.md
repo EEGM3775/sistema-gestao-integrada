@@ -293,6 +293,11 @@ texto `--ink-*`, borda `--line`). De cima para baixo (identidade §9):
 - **Rodapé:** recorte do Bairro ([BairroRecorte](../frontend/src/components/brand/BairroRecorte.tsx)) com o
   quarteirão-empresa (dia masterplan / noite janelas acesas, via `--city-*`) + avatar e usuário.
 - **Colapsável** (`localStorage` `sgi_sidebar_collapsed`): expandida 236px / recolhida 60px (só ícones).
+- **O que NÃO entra na sidebar: as lentes transversais.** Calendário e Mapas não são *lugares* do
+  ciclo — são leituras sobre tudo o que já existe (a agenda de todos os módulos; o território de
+  obra, fornecedor e almoxarifado). Os dois vivem como ícone na topbar (§3.3). A régua: se o item
+  responde "onde eu estou no ciclo", é sidebar; se responde "o que está acontecendo agora, visto de
+  outro eixo", é topbar.
 
 ### 3.3 Topbar — glass (Malha)
 
@@ -302,6 +307,10 @@ borda `--line`.
 - **Breadcrumb** automático por rota (mapa de segmentos → rótulos; ignora ids numéricos).
 - **Chip de estágio** ([EdicaoChip](../frontend/src/components/brand/EdicaoChip.tsx)) "Edição Construtora ·
   Construir" — toda tela declara seu endereço no ciclo.
+- **Lentes transversais** (26/07/2026): ícone de **Mapas** (`/app/maps`) e de **Calendário**
+  (`/app/calendario`), na mesma caixa de 34px do resto da fileira, ativo aceso em `--accent-soft`.
+  Ficam ao lado do sino porque pertencem à mesma família — o que se consulta sem sair de onde se
+  está. Ver a régua em §3.2.
 - **[ThemeToggle](../frontend/src/components/ThemeToggle.tsx)** claro/escuro (o gesto de tema é movimento de
   marca §7); sino de notificações; avatar + dropdown (alterar senha, sair).
 - **Sem command palette (⌘K)** por ora — volta quando houver busca cross-entidade real (ver **F2** em

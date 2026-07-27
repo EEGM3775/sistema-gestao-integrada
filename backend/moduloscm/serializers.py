@@ -88,6 +88,10 @@ class PropostaSerializer(TenantScopedModelSerializer):
     # `None`/0 quando o fornecedor ainda não tem avaliação ("sem avaliação").
     fornecedor_avaliacao_media = serializers.SerializerMethodField()
     fornecedor_avaliacao_count = serializers.SerializerMethodField()
+    # MAP.2 — distância fornecedor→canteiro. `None` quando a obra ou o
+    # fornecedor não tem coordenada: a tela mostra "—", nunca um zero (que
+    # seria lido como "está na esquina"). Frete e prazo saem daqui.
+    distancia_km = serializers.SerializerMethodField()
 
     class Meta:
         model = Proposta
@@ -116,6 +120,18 @@ class PropostaSerializer(TenantScopedModelSerializer):
 
     def get_fornecedor_avaliacao_count(self, obj):
         return self._avaliacao(obj)[1]
+
+    def get_distancia_km(self, obj):
+        """Lê o mapa `(cotacao, fornecedor) → km` montado pelo viewset.
+
+        Sem o cache (detalhe, ou instalação sem Maps), devolve `None` em vez de
+        consultar — a distância é enfeite decisório do comparativo, e não vale
+        uma query por linha para preenchê-la fora dele.
+        """
+        cache = self.context.get("distancia_km")
+        if not cache or not obj.fornecedor_id:
+            return None
+        return cache.get((obj.cotacao_id, obj.fornecedor_id))
 
 
 class ItemPropostaSerializer(TenantScopedModelSerializer):
