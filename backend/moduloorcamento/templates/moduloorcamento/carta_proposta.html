@@ -1,0 +1,86 @@
+{% load l10n %}<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <title>Carta-proposta — {{ cabecalho.descricao }} v{{ cabecalho.versao }}</title>
+  <style>
+    /* Folha de rosto da proposta: retrato, uma página, com espaço de assinatura.
+       Sem cor de marca pelo mesmo motivo da planilha — é documento, vai ser
+       impresso, carimbado e digitalizado. */
+    @page {
+      size: A4 portrait;
+      margin: 22mm 20mm 20mm;
+      @bottom-center { content: "Página " counter(page) " de " counter(pages); font: 8pt "Helvetica"; color: #555; }
+    }
+    body { font-family: Helvetica, Arial, sans-serif; font-size: 10pt; color: #111; line-height: 1.5; }
+    h1 { font-size: 14pt; margin: 0 0 6mm; text-align: center; text-transform: uppercase; letter-spacing: 0.04em; }
+    .identificacao { margin-bottom: 6mm; font-size: 9.5pt; }
+    .identificacao div { margin-bottom: 1mm; }
+    .identificacao b { display: inline-block; min-width: 34mm; }
+    p { margin: 0 0 4mm; text-align: justify; }
+    .valor {
+      border: 0.6pt solid #9aa8bd; background: #f3f5f9; padding: 4mm; margin: 5mm 0;
+      text-align: center;
+    }
+    .valor .numero { font-size: 16pt; font-weight: bold; font-variant-numeric: tabular-nums; }
+    .valor .extenso { font-size: 9.5pt; font-style: italic; color: #333; margin-top: 1.5mm; }
+    table.condicoes { width: 100%; border-collapse: collapse; margin: 5mm 0; font-size: 9.5pt; }
+    table.condicoes th { text-align: left; padding: 1.6mm 2mm; background: #e8edf5; border-bottom: 0.6pt solid #9aa8bd; }
+    table.condicoes td { padding: 1.6mm 2mm; border-bottom: 0.3pt solid #dde3ec; }
+    .assinatura { margin-top: 22mm; text-align: center; }
+    .assinatura .linha { border-top: 0.6pt solid #111; width: 80mm; margin: 0 auto 2mm; }
+    .rodape { margin-top: 8mm; font-size: 7.5pt; color: #555; text-align: justify; }
+  </style>
+</head>
+<body>
+  <h1>Carta-proposta</h1>
+
+  <div class="identificacao">
+    <div><b>Obra:</b> {{ cabecalho.obra }}</div>
+    <div><b>Objeto:</b> {{ cabecalho.descricao }}</div>
+    {% if proponente %}<div><b>Proponente:</b> {{ proponente }}</div>{% endif %}
+    <div><b>Orçamento:</b> versão {{ cabecalho.versao }} ({{ cabecalho.status }})</div>
+    <div><b>Data-base:</b> {{ cabecalho.data_base|date:"m/Y"|default:"—" }} · {{ cabecalho.base }}</div>
+    <div><b>Encargos sociais:</b> {{ cabecalho.encargos }}% ({{ cabecalho.regime_encargos }})</div>
+    <div><b>BDI:</b> {{ cabecalho.bdi }}%</div>
+  </div>
+
+  <p>
+    Apresentamos nossa proposta para a execução dos serviços em referência, conforme
+    a planilha orçamentária, o cronograma físico-financeiro e as composições de
+    preço unitário que a acompanham, declarando ter pleno conhecimento das
+    condições e das especificações técnicas do objeto.
+  </p>
+
+  {# O valor por extenso não é enfeite: em divergência com o algarismo, é ele que
+     prevalece. Gerá-lo aqui é o que impede o erro de casa decimal que só aparece
+     na abertura do envelope. #}
+  <div class="valor">
+    <div class="numero">R$ {{ total|floatformat:2 }}</div>
+    <div class="extenso">({{ total_extenso }})</div>
+  </div>
+
+  <table class="condicoes">
+    <tr><th>Custo direto</th><td>R$ {{ custo_direto|floatformat:2 }}</td></tr>
+    <tr><th>Preço total (custo direto + BDI)</th><td>R$ {{ total|floatformat:2 }}</td></tr>
+    {% if prazo_dias %}<tr><th>Prazo de execução</th><td>{{ prazo_dias }} dias</td></tr>{% endif %}
+    {% if validade_dias %}<tr><th>Validade da proposta</th><td>{{ validade_dias }} dias</td></tr>{% endif %}
+  </table>
+
+  <div class="assinatura">
+    <div>{% if cidade %}{{ cidade }}, {% endif %}{{ emitido_em|date:"d \d\e F \d\e Y" }}</div>
+    <div style="margin-top: 16mm;">
+      <div class="linha"></div>
+      <div>{{ responsavel|default:"Responsável técnico" }}</div>
+      {% if crea %}<div style="font-size: 9pt; color: #333;">CREA/CAU {{ crea }}</div>{% endif %}
+      {% if proponente %}<div style="font-size: 9pt; color: #333;">{{ proponente }}</div>{% endif %}
+    </div>
+  </div>
+
+  <div class="rodape">
+    Emitido em {{ emitido_em|date:"d/m/Y H:i" }}. O valor por extenso prevalece sobre
+    o algarismo em caso de divergência. Esta carta acompanha a planilha orçamentária
+    e não a substitui.
+  </div>
+</body>
+</html>

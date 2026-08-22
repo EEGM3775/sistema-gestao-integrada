@@ -12,14 +12,51 @@ holidays
 gunicorn
 python-dotenv
 requests
-Pillow
-pandas
-openpyxl
-weasyprint
+# --- As que comem arquivo de terceiro: versão FIXA (D72) -------------------
+# Estas quatro leem bytes que o cliente escolheu — planilha, PDF, imagem —, e
+# são a superfície de ataque de quem sobe arquivo. Sem pin, a superfície muda
+# sozinha entre dois builds: "openpyxl moderno não resolve entidade externa
+# (XXE)" é verdade sobre a versão que o pip resolveu HOJE, e o gate de CVE do CI
+# (10.5.2) confere o que **foi** resolvido, não o que será. Os números abaixo
+# são os que a imagem roda e que a suíte provou — não os mais novos que existem.
+#
+# Subir qualquer um destes é mudança deliberada: troca o pin, roda a suíte, e o
+# que quebrar quebra no CI e não no upload do cliente.
+Pillow==12.3.0
+openpyxl==3.1.5
+weasyprint==69.0
 # Extração de tabela de PDF na importação de preços (ORC.5b). O código faz import
 # tardio e degrada com mensagem clara se faltar — prefeitura que só publica PDF é
 # o caso real, e a conferência linha a linha existe justamente porque a extração
 # é frágil.
-pdfplumber
+pdfplumber==0.11.10
+# ---------------------------------------------------------------------------
+# `pandas` fica sem pin porque **nenhum arquivo .py do backend o importa** —
+# conferido em 09/08/2026 com o D72. Quem lê planilha é o openpyxl, em
+# `funcoesimpexp/formatos/leitura.py`. Pinar uma dependência que ninguém usa
+# seria congelar peso morto; a pergunta certa é se ela sai da imagem, e essa é
+# decisão de quem for medir o tamanho do build.
+pandas
 django-cors-headers
 prometheus-client
+# --- Motores de conversão da Prancheta (PRA.1) -----------------------------
+# Todos com **import tardio** nos adaptadores (backend/moduloprancheta/motores/):
+# a ausência de qualquer um torna aquele motor indisponível e isso aparece
+# declarado em `GET /api/prancheta/status/` — nunca derruba o boot nem quebra
+# `manage.py check`. É o mesmo idioma do `pdfplumber` acima.
+#
+# `ezdxf>=1.4` não é capricho, e o número subiu por um motivo concreto (D46): o
+# backend de desenho SVG puro (`addons.drawing.svg`) chegou na 1.1 — antes dela a
+# alternativa era rasterizar via matplotlib, que arrastaria matplotlib para a
+# imagem —, mas o **enquadramento pelo grosso da geometria** depende do
+# `Recorder`/`Player` (`bbox()` + `crop_rect()`), que é da 1.4. A imagem já rodava
+# 1.4.4 por acaso, e o pin dizia 1.1: um `pip install` num host que resolvesse a
+# 1.1 voltaria a entregar prancha com tarja preta sem quebrar teste nenhum.
+ezdxf>=1.4
+# Rasteriza a 1ª página do PDF para a miniatura do acervo (wheel autocontida,
+# sem dependência de sistema — poppler NÃO entra na imagem por causa disto).
+pypdfium2
+# BIM: IFC → glTF. É a dependência mais pesada da lista (traz o wrapper
+# compilado do OpenCascade); se o tamanho da imagem virar problema, ela é a
+# primeira candidata a sair para um worker próprio de conversão.
+ifcopenshell

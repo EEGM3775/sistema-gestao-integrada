@@ -17,12 +17,14 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from payment.planos import NOTIFICACOES_LIMITE_LISTA
+
 from .models import Notificacao
 from .tenancy import TenantScopedViewSetMixin
 
 # Teto de itens devolvidos na listagem — o sino mostra as recentes, não um
 # histórico infinito (sem paginação global configurada no projeto).
-LIMITE_LISTA = 50
+LIMITE_LISTA = NOTIFICACOES_LIMITE_LISTA
 
 
 class NotificacaoSerializer(serializers.ModelSerializer):

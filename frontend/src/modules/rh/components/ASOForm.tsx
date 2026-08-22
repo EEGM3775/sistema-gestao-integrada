@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { Paperclip, ExternalLink } from 'lucide-react'
+import { abrirEmNovaAba } from '@/lib/arquivo'
 import type { ASOFuncionario, ASOFuncionarioFormData, TipoExameASO, StatusASO } from '@/types'
 import { FieldError, FormErrorBanner, parseApiErrors, type FieldErrors } from '@/utils/formErrors'
 import { minVigenciaISO, maxTodayISO, maxVigenciaISO, validateISO_ExameASO, validateISO_ValidadeASO } from '@/utils/dates'
@@ -127,11 +128,14 @@ const ASOForm: React.FC<Props> = ({ open, onClose, onSave, initial, funcionarioI
               {arquivo ? arquivo.name : (initial?.arquivo ? 'Substituir arquivo…' : 'Escolher arquivo (PDF ou imagem)…')}
             </button>
             {initial?.arquivo && !arquivo && (
-              <a href={initial.arquivo} target="_blank" rel="noreferrer"
+              // D70 — o ASO é dado de saúde e sai gateado: abrir é XHR + object
+              // URL, porque o token não viaja num `<a href>`.
+              <button type="button" onClick={() => abrirEmNovaAba(initial.arquivo!)}
                 className="flex items-center gap-1 text-xs mt-1"
-                style={{ color: 'var(--color-brand)', fontFamily: 'var(--font-body)' }}>
+                style={{ color: 'var(--color-brand)', fontFamily: 'var(--font-body)',
+                  background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
                 <ExternalLink size={12} /> Ver documento atual
-              </a>
+              </button>
             )}
           </Field>
 

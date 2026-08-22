@@ -257,14 +257,51 @@ class AdocaoTests(OrcamentoTestBase):
         self.assertTrue(item.estocavel)
         self.assertEqual(item.tenant_id, self.tenant.id)
 
-    def test_adota_mao_de_obra_como_servico_nao_estocavel(self):
+    def test_adota_mao_de_obra_pela_unidade_quando_a_fonte_nao_classifica(self):
+        """Sem a coluna `Classificação` (publicação antiga), a unidade decide —
+        e `H` é gente, não serviço de terceiro."""
         base = self._base()
         ref = self._ref(base, codigo="88309", descricao="SERVENTE", unidade="H")
         item = services.adotar_no_catalogo(ref, self.tenant.id)
 
-        self.assertEqual(item.tipo, Item.Tipo.SERVICO)
+        self.assertEqual(item.tipo, Item.Tipo.MAO_DE_OBRA)
         self.assertFalse(item.estocavel)
         self.assertFalse(item.compravel)
+
+    def test_classificacao_da_fonte_vence_a_unidade(self):
+        """A publicação de 2025 diz a natureza; a heurística de unidade é só o
+        plano B. Aqui a unidade (`H`) sugeriria mão de obra e a fonte corrige."""
+        base = self._base()
+        ref = self._ref(base, codigo="10553", descricao="BETONEIRA - LOCACAO", unidade="H")
+        ref.grupo = "EQUIPAMENTO (LOCAÇÃO)"
+        ref.save(update_fields=["grupo"])
+        item = services.adotar_no_catalogo(ref, self.tenant.id)
+
+        self.assertEqual(item.tipo, Item.Tipo.EQUIPAMENTO)
+
+    def test_encargos_complementares_viram_classe_propria(self):
+        base = self._base()
+        ref = self._ref(base, codigo="43462", descricao="CAFE DA MANHA", unidade="UN")
+        ref.grupo = "ENCARGOS COMPLEMENTARES"
+        ref.save(update_fields=["grupo"])
+        item = services.adotar_no_catalogo(ref, self.tenant.id)
+
+        self.assertEqual(item.tipo, Item.Tipo.ENCARGOS_COMPLEMENTARES)
+        # Compra-se, mas o consumo é do trabalhador — não baixa contra a etapa.
+        self.assertTrue(item.compravel)
+        self.assertFalse(item.consumivel)
+
+    def test_capitulo_da_composicao_nao_e_lido_como_natureza(self):
+        """Publicação antiga grava o capítulo ("ESTRUTURAS") no mesmo campo. Ele
+        não classifica insumo, e ler como se classificasse seria pior que
+        adivinhar pela unidade."""
+        base = self._base()
+        ref = self._ref(base, codigo="1379", descricao="CIMENTO CP II", unidade="KG")
+        ref.grupo = "ESTRUTURAS"
+        ref.save(update_fields=["grupo"])
+        item = services.adotar_no_catalogo(ref, self.tenant.id)
+
+        self.assertEqual(item.tipo, Item.Tipo.MATERIAL)
 
     def test_adocao_e_idempotente_e_atualiza_descricao(self):
         base = self._base()

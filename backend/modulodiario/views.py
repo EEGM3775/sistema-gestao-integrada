@@ -8,7 +8,9 @@ from django.utils import timezone
 from django.http import JsonResponse
 from django.db.models import Q
 
+from funcoesimpexp.entrega import url_do_arquivo
 from nucleo.tenancy import TenantScopedViewSetMixin
+from .impexp import ESPECIE_MIDIA, RECURSO_MIDIA
 from .models import DiarioObra, EntradaDiario, DocumentoDiario
 from .serializers import (
     DiarioObraSerializer,
@@ -26,6 +28,18 @@ from .permissions import (
 
 def _str_to_bool(value):
     return str(value).strip().lower() in ('1', 'true', 'on', 'sim', 'yes')
+
+
+def _url_da_midia(documento):
+    """A foto pela porta única (D70), ou `None` quando a linha não tem arquivo.
+
+    Existe como função porque **duas** views montam payload à mão aqui — a
+    galeria e o detalhe da análise —, e duas cópias de uma URL é uma que fica
+    para trás quando o recurso mudar de nome.
+    """
+    if not documento.arquivo:
+        return None
+    return url_do_arquivo(RECURSO_MIDIA, ESPECIE_MIDIA, documento.pk)
 
 
 class DiarioObraViewSet(TenantScopedViewSetMixin,
@@ -242,7 +256,9 @@ def documentos_com_analise(request):
                 'data_analise': data_analise,
                 'resultado_analise': resultado_analise,
                 'tipo_analise': 'completa',
-                'url_imagem': documento.arquivo.url if documento.arquivo else None,
+                # D70 — payload montado à mão, fora do serializer: era o caminho
+                # por onde `/media/` continuava chegando à galeria de IA.
+                'url_imagem': _url_da_midia(documento),
                 'tem_analise': analise is not None,
             })
 

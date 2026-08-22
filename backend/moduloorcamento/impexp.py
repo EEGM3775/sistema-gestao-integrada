@@ -70,9 +70,11 @@ class TabelaDePreco(Recurso):
 
     rotulo = "Tabela de preço"
     modulo = "orcamento"
-    # §3 — acesso total: ver a base e poder trazer preço para dentro. Nenhuma
-    # coluna daqui é PII, então não há permissão de máscara a somar.
-    permissoes_exigidas = ("orcamento.base.view", "orcamento.base.adotar")
+    # §3 — acesso total: ver o banco da empresa e poder escrever nele. Desde a
+    # ORC.9 escrever numa tabela de preço é `orcamento.banco.edit`, e não mais a
+    # permissão de quem orça: importar preço é montar a régua, não usá-la.
+    # Nenhuma coluna daqui é PII, então não há permissão de máscara a somar.
+    permissoes_exigidas = ("orcamento.banco.view", "orcamento.banco.edit")
     chave = "codigo"
     contexto_requerido = ("banco",)
     formatos_entrada = ("xlsx", "csv", "pdf")

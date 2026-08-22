@@ -70,7 +70,7 @@ A regra é sempre a mesma, independente da tecnologia do módulo:
   módulo. O código exigido é **configurável** (`app.module.required`) — ou seja, **é um padrão
   genérico**, não algo "do drone".
 - Prova: usuário **sem** `drone` recebe **403**; **com** `drone`, **200** (ver
-  `infra/gateway/phase4_e2e.py`).
+  `testes/e2e/phase4_e2e.py`).
 
 O drone também demonstra que um módulo pode ser uma **stack inteiramente separada** (Spring +
 Angular) e ainda assim plugar na **mesma** identidade/entitlement — sem reimplementar nada.
@@ -273,7 +273,7 @@ Arquitetura completa do lixo: [arquitetura/lixo.md](arquitetura/lixo.md).
 ## 8. Contrato de um módulo novo (vendável isoladamente)
 
 Qualquer módulo futuro — um app Django **ou** um serviço separado (estilo drone), incluindo os hoje
-vazios (`moduloaps`, `modulodms`, `modulopdca`, `moduloscm`, `modulosil`, `modulomaps`) — segue o
+vazios (`moduloprancheta`, `modulodms`, `modulopdca`, `moduloscm`, `modulosil`, `modulomaps`) — segue o
 **mesmo contrato**, sem reimplementar identidade:
 
 1. Registrar um `Modulo` (código) no catálogo da IAM.

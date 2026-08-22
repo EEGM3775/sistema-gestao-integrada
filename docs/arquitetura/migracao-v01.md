@@ -87,14 +87,14 @@ Lead→Account→Contact→Opportunity muito mais rico), `obras`, `clientes`, `e
 |---|---|---|---|
 | `moduloscm` (suprimentos) | `PedidoCompra`, `ItemPedido`, `AvaliacaoFornecedor` | **Portar adaptando** (liga a `fornecedores`) | `scm` |
 | `modulosil` (estoque & logística interna) | `ItemCatalogo`, `Estoque`, `ItemEstoque`, `MovimentacaoEstoque` | **Portar adaptando + ampliar** (WMS-lite: requisição, transferência, devolução, rastreabilidade, inventário). O `ItemCatalogo` v01 (que FK-ava `fornecedores.ProdutoServicoFornecedor`) **não** vira um catálogo próprio: o item mestre é o **`catalogo.Item`** compartilhado (ver nota abaixo) | `sil` |
-| `modulopdca` (planejamento/risco) | `Tarefa`, `Marco`, `Risco` | **Portar adaptando** | `pdca` |
+| `modulopdca` (planejamento/risco) | `Tarefa`, `Marco`, `Risco` | **Portar adaptando + ampliar** — absorve o **planejamento de obra** (cronograma físico, Gantt, linha de balanço, avanço × previsto), que a documentação atribuía a um "APS" que nunca existiu (ver §5.3) | `pdca` |
 | `modulodms` (documentos) | `Documento`, `VersaoDocumento` | **Avaliar** — pode colidir com mídia/`modulodiario` | `dms` |
-| `moduloaps` (BIM/Autodesk) | `APSModel` + proxy de token OAuth | **Portar adaptando** (ver §5.3) | `aps` |
+| `moduloprancheta` — ex-`moduloaps` (BIM/Autodesk) | `APSModel` + proxy de token OAuth | **Portar adaptando + ampliar** (ver §5.3) | `prancheta` |
 | `modulomaps` (agregador de mapa) | `Map*` (fino) | **Reescrever** como *view* sobre os módulos portados | `maps` |
 
 > Os códigos de entitlement (`scm`, `sil`, …) ainda **não existem** no catálogo da IAM —
 > registrá-los é o passo 1 do contrato ([modulos-planejados.md](../modulos/modulos-planejados.md)).
-> Ordem sugerida: `scm` → `sil` → `pdca` → `dms` → `aps` → `maps`.
+> Ordem sugerida: `scm` → `sil` → `pdca` → `dms` → `prancheta` → `maps`.
 
 > **Catálogo-mestre compartilhado (decisão do porte do SIL):** vários módulos precisam do **mesmo**
 > cadastro de item (SCM compra, SIL estoca, comercial/orçamento vendem/orçam) — e haverá **serviços
@@ -106,18 +106,29 @@ Lead→Account→Contact→Opportunity muito mais rico), `obras`, `clientes`, `e
 > sub-fatia **SIL.0**. Plantas: [../modulos/catalogo.md](../modulos/catalogo.md) e
 > [../modulos/modulosil.md](../modulos/modulosil.md).
 
-### 5.3 Detalhe — `moduloaps` (Autodesk Platform Services / BIM)
+### 5.3 Detalhe — `moduloprancheta` (ex-`moduloaps`: Autodesk Platform Services / BIM)
+
+> **A sigla APS era do fornecedor, não do domínio.** "APS" = **Autodesk Platform Services** (ex-Forge),
+> a plataforma que traduz e renderiza DWG/RVT. Fora deste arquivo, o projeto leu a sigla como
+> "acompanhamento/planejamento de serviços" e documentou um módulo de **planejamento** que não
+> existe. Renomeado para **`moduloprancheta`** (entitlement `prancheta`) em 28/07/2026; o
+> planejamento de obra virou escopo do `modulopdca`. Desenho do módulo:
+> [../modulos/moduloprancheta.md](../modulos/moduloprancheta.md).
 
 Visualizar plantas/modelos BIM 2D/3D de uma obra via Autodesk Viewer — o lado **projeto/planta**,
 complementar ao drone (*as-built*). A v01 tem `APSModel` (FK `Obra`, `urn` unique), o proxy de
 credenciais `APSTokenView` (troca `APS_CLIENT_ID/SECRET` por token OAuth 2-legged; credenciais
-nunca vão ao front) e `ObraPlantasListView`. Adaptações obrigatórias no porte:
+nunca vão ao front) e `ObraPlantasListView`. **O porte amplia o escopo**: a v01 só falava com a
+Autodesk, e o módulo v02 é o **visualizador central** da plataforma (IFC/DXF/geo/nuvem de pontos por
+pipeline própria, Autodesk como um motor entre outros). Adaptações obrigatórias no porte:
 
 1. **Corrigir vazamento de tenant:** `ObraPlantasListView` filtra só por `obra_id` — herdar
    `TenantScopedModel` e filtrar também por tenant do JWT.
 2. **APIView → ViewSet** (ou escopo manual): o `TenantScopedViewSetMixin` não se aplica a APIView.
-3. **Entitlement:** `RequireModule("aps")` (registrar `aps` na IAM).
-4. **`urn` unique global → por-tenant.**
+3. **Entitlement:** `RequireModule("prancheta")` (registrar `prancheta` na IAM).
+4. **`urn` unique global → por-tenant.** E o `urn` deixa de ser o identificador do arquivo: ele é o
+   ponteiro de **um** motor (o da Autodesk). O modelo do v02 guarda o arquivo e suas derivadas, e o
+   `urn` vira um campo do motor APS quando esse motor for usado.
 5. **Credenciais:** decidir conta única da plataforma (global, secrets manager) × credencial
    por-tenant (via [moduloapi](../modulos/moduloapi.md)).
 

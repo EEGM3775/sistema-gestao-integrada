@@ -37,8 +37,15 @@ A documentação tem **quatro naturezas** — saber qual você procura já resol
 
 ### 📜 Histórico — o que aconteceu, quando
 
-Entregas datadas, bugs corrigidos e decisões vivem no **histórico do git** (`git log`), não em
-documento versionado, quando for solicitado fazer o git.
+| Quero saber… | Documento |
+|---|---|
+| **Como um achado foi corrigido** — causa, remédio e data dos achados já fechados | [historico-correcoes.md](historico-correcoes.md) |
+
+Entregas datadas e decisões de implementação vivem no **histórico do git** (`git log`), não em
+documento versionado. A exceção é o `historico-correcoes.md`: ele existe porque achado **corrigido**
+não é pendência, e mantê-lo em [pendencias.md](pendencias.md) fazia aquele documento crescer sem
+limite — 68% dele eram achados fechados. O **desenho** que resultou da correção vive na planta do
+módulo; ali fica só o *porquê* e a data.
 
 ### 🧭 Estratégia — o que a plataforma deve se tornar
 
@@ -89,13 +96,18 @@ Setup completo (venvs, portas, seed) em [desenvolvimento.md](desenvolvimento.md)
 
 ## Convenções da documentação
 
-- **Cada documento tem UMA natureza** (planta · status · estratégia) e não mistura as outras:
+- **Cada documento tem UMA natureza** (planta · status · histórico · estratégia) e não mistura as outras:
   - status/plano → **só** no [roadmap.md](roadmap.md) e [pendencias.md](pendencias.md);
   - a planta (arquitetura, módulos, frontend) descreve o sistema inteiro **sem** status nem datas;
+  - o histórico ([historico-correcoes.md](historico-correcoes.md)) guarda o que já foi fechado;
   - a estratégia ([expansão/](expansão/README.md)) propõe o futuro **sem** virar planta nem status
     até graduar.
-- **Uma revisão técnica só** — achados e backlog de ideias vivem consolidados em
-  [pendencias.md](pendencias.md); não criar novas pastas de laudo versionadas.
+- **Uma revisão técnica só** — achados vivem consolidados em [pendencias.md](pendencias.md); não criar
+  novas pastas de laudo versionadas.
+- **`pendencias.md` só tem o que está aberto.** Ao fechar um achado, ele **sai** dali: o relato vai
+  para [historico-correcoes.md](historico-correcoes.md) e o desenho resultante para a planta do
+  módulo. Limite consciente e decisão de desenho nunca nascem em pendências — nascem na planta; e
+  trabalho planejado nasce no [roadmap.md](roadmap.md).
 - **O que é de plataforma** (arquitetura, domínio, acesso, módulos do backend) fica em `docs/`.
 - **O drone** mantém a sua própria `docs/` ([ImgDrone/funcoesODM/docs/](../ImgDrone/funcoesODM/docs/)) —
   é produto separado e autossuficiente; aqui só o referenciamos.

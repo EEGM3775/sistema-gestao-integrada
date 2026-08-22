@@ -19,6 +19,7 @@ import type {
   PagamentoFuncionario, PagamentoFormData, FolhaPagamento, FolhaPagamentoFormData,
 } from '@/types'
 
+import { abrirEmNovaAba } from '@/lib/arquivo'
 import { formatCPF, formatPISPASEP } from '@/utils/masks'
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -399,11 +400,14 @@ const FuncionarioDetailPage: React.FC = () => {
                     </div>
                   </div>
                   <div className="flex items-center gap-1">
-                    <a href={doc.arquivo} target="_blank" rel="noreferrer"
+                    {/* D70: o arquivo saiu de `/media/` e passou a exigir token,
+                        então abrir é XHR + object URL — `<a href>` chegaria sem
+                        `Authorization` e levaria 401. */}
+                    <button onClick={() => abrirEmNovaAba(doc.arquivo)}
                       className="p-1.5 rounded" title="Abrir"
-                      style={{ color: 'var(--color-brand)' }}>
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-brand)' }}>
                       <ExternalLink size={14} />
-                    </a>
+                    </button>
                     <button onClick={() => deleteDocumento(doc.documento_id)}
                       className="p-1.5 rounded" title="Remover"
                       style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626' }}>
@@ -535,11 +539,12 @@ const FuncionarioDetailPage: React.FC = () => {
                                   textTransform: 'uppercase', letterSpacing: '0.06em', fontFamily: 'var(--font-body)', marginBottom: '2px' }}>
                                   Documento
                                 </p>
-                                <a href={aso.arquivo} target="_blank" rel="noreferrer"
+                                <button onClick={() => abrirEmNovaAba(aso.arquivo!)}
                                   className="flex items-center gap-1"
-                                  style={{ fontSize: '0.875rem', color: 'var(--color-brand)', fontFamily: 'var(--font-body)' }}>
+                                  style={{ fontSize: '0.875rem', color: 'var(--color-brand)', fontFamily: 'var(--font-body)',
+                                    background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
                                   Abrir <ExternalLink size={12} />
-                                </a>
+                                </button>
                               </div>
                             )}
                           </div>
@@ -676,11 +681,17 @@ const FuncionarioDetailPage: React.FC = () => {
                           </p>
                         </div>
                         <div className="flex gap-1">
+                          {/* D70: o holerite tem o MESMO gate dos valores da folha
+                              (`rh.folha.view`) e agora sai pela porta única.
+                              `link_holerite`, logo acima, é URL externa e continua
+                              sendo `<a href>` — não é arquivo nosso. */}
                           {f.holerite && (
-                            <a href={f.holerite} target="_blank" rel="noreferrer"
-                              style={{ color: 'var(--color-brand)', padding: '4px' }}>
+                            <button onClick={() => abrirEmNovaAba(f.holerite!)}
+                              title="Abrir holerite"
+                              style={{ background: 'none', border: 'none', cursor: 'pointer',
+                                color: 'var(--color-brand)', padding: '4px' }}>
                               <ExternalLink size={13} />
-                            </a>
+                            </button>
                           )}
                           <button onClick={() => setFolhaForm({ open: true, editing: f })}
                             style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)', padding: '4px' }}>

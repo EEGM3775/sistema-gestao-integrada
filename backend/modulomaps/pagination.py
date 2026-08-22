@@ -7,9 +7,10 @@ território em lista. O teto continua existindo — é o que impede um `page_siz
 de 50 mil derrubar o browser.
 """
 from rest_framework.pagination import PageNumberPagination
+from payment.planos import PAGINA_MAXIMA, PAGINA_PADRAO
 
 
 class MapsPageNumberPagination(PageNumberPagination):
-    page_size = 50
+    page_size = PAGINA_PADRAO["maps"]
     page_size_query_param = "page_size"
-    max_page_size = 500
+    max_page_size = PAGINA_MAXIMA["maps"]

@@ -1,0 +1,44 @@
+# De-para de classificação declarada pela empresa — D111.
+#
+# A SINAPI BA 10/2024 é anterior a 01/2025 e não traz a coluna `Classificação`:
+# seus 4.811 insumos entram sem natureza, e a adoção cai no plano B da unidade.
+# Dos 86 itens que o tenant adotou, 29 dependem dessa publicação e 14 saíram
+# errados. Este arquivo é a resposta HUMANA para esses 14 — o comando não deduz
+# natureza de descrição, por decisão (foi esse palpite que produziu o D109).
+#
+# Os outros 15 estão certos pela unidade e por isso NÃO aparecem aqui:
+# pedreiro/servente/armador/motorista/operador em `H` → mão de obra; areia,
+# aço, arame, cabo, diesel, gasolina → material.
+#
+# Some quando uma publicação 2025+ da mesma fonte for importada: lá a coluna
+# `Classificação` responde, e a fonte passa a valer sozinha.
+#
+# Uso:
+#   manage.py reclassificar_itens_catalogo --tenant <slug> --dry-run \
+#       --de-para backend/moduloorcamento/dados/classificacao-sinapi-ba-2024-10.csv
+#
+codigo;natureza;fonte
+
+# --- Equipamento lido como material -----------------------------------------
+# Publicados em `UN` (custo de aquisição, como a SINAPI faz), e `UN` não é hora
+# nem mês, então o plano B os chamou de material. São a queixa que abriu o D111.
+14525;EQUIPAMENTO;sinapi
+37758;EQUIPAMENTO;sinapi
+37734;EQUIPAMENTO;sinapi
+13458;EQUIPAMENTO;sinapi
+
+# --- Encargos complementares lidos como mão de obra --------------------------
+# Publicados em `H`, então o plano B os chamou de mão de obra — e mão de obra
+# leva encargo social (84,70% nos seus cabeçalhos) sobre um custo que não é
+# salário. EPI, ferramenta, alimentação, transporte, exame e seguro acompanham
+# a hora do trabalhador SEM receber o percentual por cima.
+37370;ENCARGOS COMPLEMENTARES;sinapi
+37371;ENCARGOS COMPLEMENTARES;sinapi
+37372;ENCARGOS COMPLEMENTARES;sinapi
+37373;ENCARGOS COMPLEMENTARES;sinapi
+43464;ENCARGOS COMPLEMENTARES;sinapi
+43465;ENCARGOS COMPLEMENTARES;sinapi
+43467;ENCARGOS COMPLEMENTARES;sinapi
+43488;ENCARGOS COMPLEMENTARES;sinapi
+43489;ENCARGOS COMPLEMENTARES;sinapi
+43491;ENCARGOS COMPLEMENTARES;sinapi

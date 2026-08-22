@@ -30,6 +30,7 @@ import { scmRoutes } from './modules/scm/routes'
 import { silRoutes } from './modules/sil/routes'
 import { orcamentoRoutes } from './modules/orcamento/routes'
 import { mapsRoutes } from './modules/maps/routes'
+import { pranchetaRoutes } from './modules/prancheta/routes'
 
 function App() {
   return (
@@ -111,6 +112,10 @@ function App() {
           {/* ── Maps / Território (metade fundação sem entitlement; a aba
                Território é que trava sem o módulo `maps`) ── */}
           {mapsRoutes}
+
+          {/* ── Prancheta / projeto em campo (rota aberta; a página é que decide
+               entre o acervo e a tela que explica o módulo — como o Maps) ── */}
+          {pranchetaRoutes}
 
           {/* Fallback interno — caminho absoluto evita loop de append no splat (/app/x → /app/x/dashboard → …) */}
           <Route path="*" element={<Navigate to="/app/dashboard" replace />} />

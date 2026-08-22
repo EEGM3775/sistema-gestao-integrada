@@ -1,7 +1,8 @@
 # backend/empreendimentos/views.py
 from rest_framework import viewsets
 from rest_framework.decorators import action
-from rest_framework.filters import SearchFilter, OrderingFilter
+from nucleo.busca import BuscaSemAcento
+from rest_framework.filters import OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
 from nucleo.tenancy import TenantScopedViewSetMixin
 from nucleo.permissions import RequirePermission
@@ -16,6 +17,7 @@ from .serializers import (
 )
 from obras.models import Obra
 from django.db.models import Count, F, Q
+from payment.planos import PAGINA_MAXIMA, PAGINA_PADRAO
 
 class EmpreendimentoViewSet(QuotaEnforcedMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
     queryset = Empreendimento.objects.all()
@@ -23,7 +25,7 @@ class EmpreendimentoViewSet(QuotaEnforcedMixin, TenantScopedViewSetMixin, viewse
     permission_classes = [IsAuthenticated, RequirePermission]
     required_resource = "obra.empreendimento"
     quota_recurso = "empreendimentos"  # D24
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, OrderingFilter]
     search_fields = ['empreendimento', 'razao_social', 'cnpj']
 
     def get_queryset(self):
@@ -64,9 +66,9 @@ class ContaBancariaEmpreendimentoViewSet(TenantScopedViewSetMixin, viewsets.Mode
 class UnidadePagination(PageNumberPagination):
     """Um loteamento tem milhares de lotes; a aba Unidades rola infinito e pede
     de página em página, como a carteira de clientes."""
-    page_size = 100
+    page_size = PAGINA_PADRAO["empreendimentos"]
     page_size_query_param = 'page_size'
-    max_page_size = 300
+    max_page_size = PAGINA_MAXIMA["empreendimentos"]
 
 
 class UnidadeViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
@@ -84,7 +86,7 @@ class UnidadeViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     serializer_class = UnidadeSerializer
     permission_classes = [IsAuthenticated, RequirePermission]
     required_resource = "obra.empreendimento"
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, OrderingFilter]
     filterset_fields = ['empreendimento', 'situacao', 'tipo', 'quadra', 'bloco_torre']
     search_fields = ['quadra', 'lote', 'bloco_torre', 'andar', 'apto', 'endereco']
     ordering_fields = ['valor_base', 'situacao', 'tipo', 'area_privativa', 'data_criacao']
@@ -127,7 +129,7 @@ class CustoEmpreendimentoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet
     serializer_class = CustoEmpreendimentoSerializer
     permission_classes = [IsAuthenticated, RequirePermission]
     required_resource = "obra.empreend_custo"
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, OrderingFilter]
     filterset_fields = ['empreendimento']
     search_fields = ['descricao', 'nota_fiscal']
 

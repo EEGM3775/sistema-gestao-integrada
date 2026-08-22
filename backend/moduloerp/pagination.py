@@ -8,9 +8,10 @@ paginação aqui é obrigatória — ver dívida registrada em docs/frontend.md
 ("Tabela client-side... trava com milhares de lançamentos").
 """
 from rest_framework.pagination import PageNumberPagination
+from payment.planos import PAGINA_MAXIMA, PAGINA_PADRAO
 
 
 class ErpPageNumberPagination(PageNumberPagination):
-    page_size = 25
+    page_size = PAGINA_PADRAO["erp"]
     page_size_query_param = 'page_size'
-    max_page_size = 200
+    max_page_size = PAGINA_MAXIMA["erp"]

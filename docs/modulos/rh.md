@@ -32,6 +32,27 @@ Entitlement **`rh`** (todo ViewSet declara `required_module = "rh"` com
 `/documentos-funcionarios/` · `/dados-bancarios-funcionarios/` · `/pagamentos-funcionarios/` ·
 `/folhas-pagamento/`.
 
+## Os quatro arquivos saem pela porta única, cada um com o gate do seu conteúdo
+
+Os `FileField` do RH não são publicados como caminho de `/media/`: o JSON traz a URL do
+[funcoesimpexp](funcoesimpexp.md) e o binário só sai por ela ([D70](../historico-correcoes.md),
+[declaração em rh/impexp.py](../../backend/rh/impexp.py)).
+
+| Arquivo | Recurso · espécie | Gate |
+|---|---|---|
+| `Funcionario.carteira_trabalho` | `rh.documentos` · `ctps` | `rh.documento.view` |
+| `DocumentoFuncionario.arquivo` | `rh.documentos` · `documento` | `rh.documento.view` |
+| `ASOFuncionario.arquivo` | `rh.aso` · `aso` | `rh.dado_medico.view` |
+| `FolhaPagamento.holerite` | `rh.holerite` · `holerite` | `rh.folha.view` |
+
+**O gate do arquivo é o mesmo que mascara o campo, e é o ponto.** O ASO responde a
+`rh.dado_medico.view` — a permissão que já esconde o prontuário; o holerite, a `rh.folha.view` — a que
+já esconde o salário. Enquanto isso não valia, a máscara da 9.C protegia o *valor* e o mesmo payload
+entregava o PDF que o contém em claro.
+
+A **entrada** continua sendo o POST do próprio ViewSet, com `UploadValidationMixin`. Levá-la também
+para a porta única é a IE.6 ([funcoesimpexp §7.2](funcoesimpexp.md)).
+
 ## Frontend React ✅ 07/06/2026
 
 Rotas: `/app/rh` · `/app/rh/cargos` · `/app/rh/:id`.

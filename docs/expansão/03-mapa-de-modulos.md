@@ -14,8 +14,8 @@
 |---|---|
 | `moduloscm` | §3 Suprimentos — SCM (requisições→cotações→pedidos) |
 | `modulodms` | §6 Documental — DMS/gestão documental |
-| `moduloaps` | §2 Engenharia & Obra — planejamento e programação (APS) |
-| `modulopdca` | §2 Engenharia & Obra — qualidade/melhoria contínua |
+| `moduloprancheta` | §2 Engenharia & Obra — **Prancheta**: o visualizador de projeto em campo (era `moduloaps`, lido por engano como "planejamento") |
+| `modulopdca` | §2 Engenharia & Obra — planejamento de obra **e** qualidade/melhoria contínua |
 | `modulomaps` | §7 Terrenos & Incorporação — GIS/geolocalização |
 | `modulosil` | **definido:** §3 Suprimentos — **estoque & logística interna** (almoxarifado central + canteiros, saldo valorado, movimentações, requisição, rastreabilidade, inventário). Planta em [../modulos/modulosil.md](../modulos/modulosil.md) |
 
@@ -36,13 +36,13 @@ bancária (ver §5).
 
 | Módulo | Status | O que faz | Depende de | Efeito de rede / IA |
 |---|---|---|---|---|
-| Planejamento de obra (APS) | 📦 `moduloaps` | Cronograma físico (EAP, Gantt, linha de balanço), avanço × previsto | obras, diário | IA: previsão de atraso com histórico do diário ([06](06-dados-ia-automacao.md)) |
+| Planejamento de obra | 📦 `modulopdca` | Cronograma físico (EAP, Gantt, linha de balanço), avanço × previsto | obras, diário, orçamento | IA: previsão de atraso com histórico do diário ([06](06-dados-ia-automacao.md)) |
 | Orçamento de obra | ✅ `moduloorcamento` | Planilha orçamentária (EAP × insumos), composições de custo (SINAPI/ORSE/TCPO), BDI/encargos, curva ABC, curva S e **orçado × comprometido × aplicado × realizado**. Planta em [../modulos/moduloorcamento.md](../modulos/moduloorcamento.md) | catálogo, obras, SCM, SIL, moduloerp | Benchmark de custo/m² entre tenants (E4); banco de composições da rede |
 | Medições & empreiteiros | 🧭 | Contratos de empreitada, boletins de medição, retenções, liberação de pagamento | obras, moduloerp, fornecedores | Boletim espelhado com a **Edição Empreiteiro** ([09](09-verticais-por-participante.md)) |
-| Qualidade / PDCA / ISO | 📦 `modulopdca` | Checklists de serviço (FVS), não-conformidades, planos de ação, auditorias ISO 9001/PBQP-H | obras, diário | IA: detectar não-conformidade em foto do diário |
+| Qualidade / PDCA / ISO | 📦 `modulopdca` *(mesmo app do planejamento)* | Checklists de serviço (FVS), não-conformidades, planos de ação, auditorias ISO 9001/PBQP-H | obras, diário | IA: detectar não-conformidade em foto do diário |
 | SST (segurança do trabalho) | 🧭 | NRs, treinamentos, EPIs, inspeções, CAT/acidentes | rh, obras | IA: detecção de EPI em fotos; premium compliance |
 | Equipamentos & frota | 🧭 | Ativos de obra, alocação, manutenção preventiva, horímetro/diesel | obras, moduloerp | IoT/telemetria (H3); aluguel ocioso → marketplace |
-| Central BIM | 🧭 | Upload/viewer IFC, vínculo modelo↔etapa↔orçamento (4D/5D) | obras, APS, orçamento | Produto premium; viewer é peça técnica pesada — H3 |
+| **Prancheta** — projeto em campo | 📦 `moduloprancheta` | Visualizador central dos arquivos de projeto: DWG/DXF, RVT, IFC, KMZ/QGIS, nuvem de pontos e PDF, abertos no celular no canteiro. Depois: vínculo modelo↔etapa↔orçamento (4D/5D) e BCF. Planta em [../modulos/moduloprancheta.md](../modulos/moduloprancheta.md) | obras, maps, drone, orçamento | Produto premium por formato (paywall caso a caso); 4D/5D é H3 |
 
 ## 3. Suprimentos (SCM)
 
@@ -137,7 +137,7 @@ tudo acima): [04-rede-e-marketplaces.md](04-rede-e-marketplaces.md); portais de 
  DMS ──────────────┐                    espelho de vendas ──► Edição Imobiliária / marketplace imóveis
  eventos (E3) ─────┼──► quase tudo      SCM ───────────────► Edição Loja / marketplace de cotações
  ABAC objeto (E2) ─┘                    entrega/vistoria ──► assistência técnica ──► portal cliente
- APS + orçamento ──► BIM 4D/5D          cobranças Asaas ───► condomínio (reuso direto)
+ PDCA + orçamento ─► Prancheta 4D/5D    cobranças Asaas ───► condomínio (reuso direto)
                                         medições ──────────► Edição Empreiteiro (boletim espelhado)
 ```
 

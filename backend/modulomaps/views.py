@@ -19,6 +19,7 @@ from django.conf import settings
 from django.http import HttpResponse
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
+from nucleo.busca import BuscaSemAcento
 from rest_framework import filters, permissions, status, views, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -100,7 +101,7 @@ class LocalViewSet(BaseFundacaoViewSet):
         "obra", "empreendimento", "fornecedor", "local_estoque", "unidade"
     ).all()
     serializer_class = LocalSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_fields = ["tipo", "precisao", "uf", "cidade", "ativo", "obra", "empreendimento", "fornecedor"]
     search_fields = ["nome", "logradouro", "bairro", "cidade"]
     ordering_fields = ["nome", "cidade"]
@@ -192,7 +193,7 @@ class LocalViewSet(BaseFundacaoViewSet):
 class CamadaViewSet(BaseCamadaViewSet):
     queryset = Camada.objects.all()
     serializer_class = CamadaSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento]
     filterset_fields = ["obra", "visivel"]
     search_fields = ["nome", "descricao"]
     required_resource = "mapa.feicao"
@@ -206,7 +207,7 @@ class CamadaViewSet(BaseCamadaViewSet):
 class FeicaoViewSet(BaseCamadaViewSet):
     queryset = Feicao.objects.select_related("camada").all()
     serializer_class = FeicaoSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento]
     filterset_fields = ["camada", "obra", "tipo", "grupo", "data_referencia"]
     search_fields = ["nome"]
     required_resource = "mapa.feicao"
@@ -234,7 +235,7 @@ class FeicaoViewSet(BaseCamadaViewSet):
 class OrtofotoViewSet(BaseCamadaViewSet):
     queryset = Ortofoto.objects.select_related("obra").all()
     serializer_class = OrtofotoSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento]
     filterset_fields = ["obra", "data_voo"]
     search_fields = ["titulo", "chunk_uuid"]
     required_resource = "mapa.ortofoto"
@@ -287,7 +288,7 @@ class OrtofotoViewSet(BaseCamadaViewSet):
 class PlanoVooViewSet(BaseCamadaViewSet):
     queryset = PlanoVoo.objects.select_related("obra").all()
     serializer_class = PlanoVooSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento]
     filterset_fields = ["obra", "tipo"]
     search_fields = ["nome"]
     required_resource = "mapa.plano_voo"
@@ -353,7 +354,7 @@ class PlanoVooViewSet(BaseCamadaViewSet):
 class RotaViewSet(BaseCamadaViewSet):
     queryset = Rota.objects.select_related("origem", "obra").prefetch_related("paradas__local").all()
     serializer_class = RotaSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento]
     filterset_fields = ["status", "obra", "data_planejada"]
     search_fields = ["nome"]
     required_resource = "mapa.rota"
@@ -452,7 +453,7 @@ class ParadaRotaViewSet(BaseCamadaViewSet):
 class GeofenceViewSet(BaseCamadaViewSet):
     queryset = Geofence.objects.select_related("local").all()
     serializer_class = GeofenceSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento]
     filterset_fields = ["tipo", "ativo", "local"]
     search_fields = ["nome"]
     required_resource = "mapa.geofence"

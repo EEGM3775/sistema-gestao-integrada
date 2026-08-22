@@ -173,6 +173,20 @@ services:
       dockerfile: backend/Dockerfile
     container_name: ${SGI_PREFIX:-sgi}-erp
     profiles: ["full"]
+    # **D76 — a terceira frota sem teto.** O D57 deu teto à conversão e o D71 à
+    # frota geral; sobrou justamente a que atende o cliente. Aqui roda o caminho
+    # SÍNCRONO do impexp (arquivo pequeno não vira job — é lido na requisição), e
+    # ele lê arquivo que qualquer cliente sobe. Sem `mem_limit` o freio era o host.
+    #
+    # **O número segue a invariante do D71** — o freio que sabe EXPLICAR estoura
+    # antes do que só mata: o `orcamento()` do impexp tem pior caso
+    # `IMPEXP_TETO_INFRA_MEMORIA_MB` = 2.048 MB (payment/planos.py), e o gunicorn
+    # sobe **1 worker síncrono** (o `CMD` do Dockerfile não passa `--workers`):
+    #   1 × 2.048 MB + o processo ≈ 2,3 GB de pico legítimo → `3g` com folga.
+    # Mexer em `--workers` muda esta conta: N workers exigem N × 2.048 MB abaixo
+    # do `mem_limit`, senão o cgroup mata antes de o `RecursoExcedido` explicar.
+    mem_limit: ${ERP_MEM_LIMIT:-3g}
+    cpus: ${ERP_CPUS:-2}
     environment:
       SECRET_KEY: ${SECRET_KEY:-django-insecure-erp-dev}
       DEBUG: ${DEBUG:-True}
@@ -271,7 +285,41 @@ services:
       dockerfile: backend/Dockerfile
     container_name: ${SGI_PREFIX:-sgi}-worker
     profiles: ["full"]
-    command: ["celery", "-A", "config", "worker", "-l", "info", "--concurrency", "2"]
+    # `-Q celery` explícito (D57): sem isto o worker geral consome TODAS as filas,
+    # inclusive a de conversão que o `worker-conversao` existe para isolar — e o
+    # isolamento seria só aparente.
+    #
+    # **D71 — a outra metade do D57.** Isolar a conversão numa frota com teto
+    # deixou esta SEM nenhum: aqui rodam a importação do impexp (que lê arquivo
+    # que qualquer cliente sobe), a cobrança, a NF-e, o e-mail e os lembretes.
+    # A importação tem orçamento por operação desde a IE.2; as outras quatro não
+    # têm teto de espécie alguma, e o `mem_limit` é o único freio que as alcança.
+    #
+    # **De onde sai o número — e por que NÃO é `2g`.** A ordem do D57 exige que o
+    # freio que sabe EXPLICAR estoure antes do que só mata processo, senão o
+    # cgroup derruba o worker e a operação fica pendurada dizendo "processando"
+    # para sempre. Aqui o freio explicativo é o `orcamento()` do impexp, cujo
+    # pior caso é `IMPEXP_TETO_INFRA_MEMORIA_MB` = 2.048 MB (payment/planos.py —
+    # onde caem o "Sob Medida" e o fail-open de token sem plano). Com
+    # `--concurrency 2` são DOIS filhos podendo segurar 2.048 MB ao mesmo tempo:
+    #   2 × 2.048 MB = 4.096 MB + o processo pai ≈ 4,25 GB de pico legítimo.
+    # `2g` ficaria abaixo do orçamento de UM só filho — o cgroup mataria antes de
+    # o `RLIMIT_AS` conseguir virar `MemoryError` → `RecursoExcedido`, que é
+    # exatamente o defeito que a PRA.1d levou 7 minutos para achar.
+    #
+    # `mem_limit` é TETO, não reserva: 5g não ocupa 5 GB, limita a 5 GB.
+    # Para apertar de verdade o caminho barato é baixar
+    # `IMPEXP_TETO_INFRA_MEMORIA_MB` (knob comercial, visível ao dono) e só então
+    # descer este número — nunca o contrário.
+    command: ["celery", "-A", "config", "worker", "-l", "info", "--concurrency", "2",
+              "-Q", "celery",
+              # Rede contra vazamento lento: recicla o filho que passar do RSS.
+              # 2,25 GiB fica logo ACIMA do orçamento de 2.048 MB, para operação
+              # legítima no teto não provocar reciclagem a cada task.
+              "--max-memory-per-child", "${WORKER_MAX_MEM_KB:-2359296}"]
+    # Invariante: mem_limit > concurrency × max-memory-per-child (5 > 2 × 2,25).
+    mem_limit: ${WORKER_MEM_LIMIT:-5g}
+    cpus: ${WORKER_CPUS:-2}
     environment:
       SECRET_KEY: ${SECRET_KEY:-django-insecure-erp-dev}
       DEBUG: ${DEBUG:-True}
@@ -323,6 +371,115 @@ services:
       # Mídia compartilhada: o worker grava (PDF/XML de NF baixados da NFE.io) e o
       # erp serve `/media/`. Sem volume comum, o arquivo escrito pelo worker não é
       # visível ao erp → download 404.
+      - media_data:/app/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A config inspect ping -d celery@$$(hostname) || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks: [sgi]
+    restart: unless-stopped
+
+  # ---------- Celery worker de CONVERSÃO (D57: a frota separada) ----------
+  # **Por que uma frota só para converter.** É a única carga do sistema cujo custo
+  # é definido pelo ARQUIVO DE UM CLIENTE e não pelo nosso código: um DWG do
+  # acervo real expandiu hachura até 62 GB de RAM. Na fila geral esse job divide o
+  # processo com cobrança, e-mail e NF — e o kernel, ao escolher uma vítima por
+  # memória, não sabe que a task ao lado estava emitindo um boleto. É o mesmo
+  # desenho que plataforma de mídia usa: transcodificação nunca roda na frota de
+  # uso geral.
+  #
+  # **Os três freios, do mais grosseiro ao mais explicativo:**
+  #   `mem_limit`             — o cgroup mata o container antes de o host sofrer.
+  #                             É o que protege a MÁQUINA (e a fatura da VM).
+  #   `--max-memory-per-child`— o Celery recicla o filho que passar do RSS,
+  #                             devolvendo ao SO a memória que o Python não
+  #                             devolve. Protege a FILA de um vazamento lento.
+  #   `orcamento_de_conversao`— o teto por conversão, em `limites.py`. É o único
+  #                             que produz ERRO LEGÍVEL para o cliente; os dois de
+  #                             cima só matam processo. Por isso é o mais apertado.
+  #
+  # `--concurrency 1`: converter é trabalho de CPU e memória, não de espera. Dois
+  # processos aqui dobram o pico de RAM sem dobrar a vazão.
+  worker-conversao:
+    build:
+      context: ../..
+      dockerfile: backend/Dockerfile
+    container_name: ${SGI_PREFIX:-sgi}-worker-conversao
+    profiles: ["full"]
+    command: ["celery", "-A", "config", "worker", "-l", "info",
+              "-Q", "conversao", "--concurrency", "1",
+              "--max-memory-per-child", "${CONVERSAO_MAX_MEM_KB:-2097152}"]
+    # Teto do container. Precisa ser MAIOR que o `--max-memory-per-child` e que o
+    # `PRANCHETA_CONVERSAO_MEMORIA_MB`, senão o cgroup mata antes de qualquer um
+    # dos dois conseguir explicar o que houve.
+    mem_limit: ${CONVERSAO_MEM_LIMIT:-3g}
+    cpus: ${CONVERSAO_CPUS:-2}
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-django-insecure-erp-dev}
+      DEBUG: ${DEBUG:-True}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1,erp,gateway}
+      JWT_SECRET: ${JWT_SECRET}
+      POSTGRES_DB: ${POSTGRES_DB:-erp_db}
+      POSTGRES_USER: ${POSTGRES_USER:-erp_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-erp_app_senha_dev}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_SSLMODE: ${DB_SSLMODE:-disable}
+      DB_SSLROOTCERT: ${DB_SSLROOTCERT:-}
+      REDIS_URL: redis://redis:6379/0
+      RATE_LIMIT_REDIS_URL: ${RATE_LIMIT_REDIS_URL:-redis://redis:6379/4}
+      CELERY_TASK_ALWAYS_EAGER: "False"
+      JWT_PUBLIC_KEY_PATH: /keys/jwt_public.pem
+      # O orçamento por conversão (`PRANCHETA_CONVERSAO_MEMORIA_MB`/`_SEGUNDOS`)
+      # NÃO é declarado aqui de propósito: o valor é do dono e vive em
+      # `payment/planos.py`, de onde o `settings.py` já o lê. Declará-lo neste
+      # arquivo criava dois defeitos silenciosos — o número voltava a existir em
+      # arquivo de deploy, e `nucleo/test_tetos_no_payment.py` pula a asserção
+      # quando a env existe, então o container ficaria com o valor antigo depois
+      # de uma mudança em `payment/` sem nenhum teste reclamar. Para experimentar
+      # um teto diferente, exporte a env no ambiente; o default correto vem do
+      # payment.
+      #
+      # **Medição por cgroup — desligada por padrão, e a razão é medida.** Com
+      # estas duas vazias, `nucleo/consumo.py` mede por amostragem a 50 ms, que é
+      # piso do pico e deixou 76 dos 159 arquivos do acervo sem número. Com um
+      # cgroup v2 delegado ele lê `memory.peak`, que é exato e conta pai e
+      # subprocesso **juntos** — em teste de 13/08/2026, 454 MB onde a amostragem
+      # reportava 372, porque as duas metades coexistem e o maior das duas não é
+      # a soma delas.
+      #
+      # O que a delegação exige, e por que não vem ligada:
+      #
+      #   1. um diretório `cgroup2` gravável pelo worker, com `+memory` na
+      #      `cgroup.subtree_control` e **sem processos membros** (o kernel
+      #      recusa habilitar controlador em cgroup povoado — medido);
+      #   2. um caminho **gravável de volta** para o cgroup de origem. Sem ele o
+      #      medidor recusa a mudança e cai na amostragem, de propósito: num
+      #      teste com o cgroup delegado montado fora do cgroup do container, o
+      #      worker mediu certo, não conseguiu voltar e **ficou fora do próprio
+      #      cgroup** — o `mem_limit` acima deixaria de valer, e o terceiro freio
+      #      do §4.6 sumiria. Quando o `/proc/self/cgroup` aponta um caminho
+      #      somente-leitura mas o deploy montou um alias gravável do mesmo
+      #      cgroup, é `SGI_CGROUP_ORIGEM` que informa o apelido.
+      #
+      # No Docker puro isso significa dar ao container acesso de escrita ao
+      # cgroupfs, e este é o container que abre arquivo de cliente — o
+      # último a quem se dá privilégio. Em orquestrador com delegação nativa
+      # (k8s, systemd) o custo é outro, e aí liga-se. **A decisão é de
+      # operação, não de engenharia**, e é por isso que ela está aqui e não no
+      # código.
+      SGI_CGROUP_MEDICAO: ${CONVERSAO_CGROUP_MEDICAO:-}
+      SGI_CGROUP_ORIGEM: ${CONVERSAO_CGROUP_ORIGEM:-}
+    volumes:
+      - ../../infra/keys:/keys:ro
+      # Mesma mídia do erp: é aqui que a derivada convertida é gravada.
       - media_data:/app/media
     depends_on:
       postgres:

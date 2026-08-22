@@ -1,0 +1,75 @@
+# Imagem de MEDIÇÃO — o `dwg2dxf` do git master do LibreDWG ao lado do 0.13.3.
+#
+# **Por que ela existe.** O [D43](../../docs/pendencias.md) chegou ao ponto em
+# que o que sobra não é código nosso: os 19 arquivos do balde
+# `dxf_intermediario_ilegivel` param no **decodificador** do LibreDWG, que
+# escreve um DXF truncado (sem a tag `EOF`) e sai com código 0. E o 0.13.3
+# pinado em [backend/Dockerfile](../../backend/Dockerfile) **é o release mais
+# novo publicado** — conferido no ftp.gnu.org: não há 0.13.4. O único ponto
+# adiante é o git master.
+#
+# **Por que uma imagem à parte, e não um `--build-arg` no Dockerfile do
+# backend.** Trocar o motor da imagem de produção antes de medir seria decidir
+# pelo resultado que ainda não existe. Aqui os dois binários convivem: o de
+# produção continua sendo `dwg2dxf`, e o candidato entra como
+# `dwg2dxf-master`, apontado caso a caso por `LIBREDWG_DWG2DXF`. Se o master
+# não melhorar nada, esta imagem se apaga e nada no backend foi tocado.
+#
+# **O que NÃO é conclusão desta imagem:** "abriu" não é medida. A lição do
+# `--as rNNNN` (pendencias, D43) foi que uma flag pode fazer todos os arquivos
+# abrirem e **zerar o modelspace** — DXF legível e vazio. Por isso o
+# instrumento que roda em cima dela conta **entidade e envolvente**, não
+# legibilidade.
+#
+# Uso:
+#   docker build -f infra/medicao/Dockerfile.libredwg-master \
+#                -t medicao-libredwg-master infra/medicao
+#
+# GPLv3, como o binário de produção — mesma tarball, outro commit.
+
+ARG IMAGEM_BASE=02sistema_gestao_integrada-erp:latest
+
+# ---------------------------------------------------------------------------
+# Estágio 1 — LibreDWG do git master
+# ---------------------------------------------------------------------------
+FROM python:3.12-slim AS master
+
+# `autogen.sh` é o preço do git: a tarball do GNU já vem com `configure`
+# gerado, o repositório não. Daí autoconf/automake/libtool/texinfo, que o
+# estágio do backend não precisa carregar.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential ca-certificates git \
+        autoconf automake libtool pkg-config texinfo gperf perl \
+        libpcre2-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tmp
+# `--depth 50` e não `--depth 1`: o `git-version-gen` do projeto lê o histórico
+# recente para compor a versão; com um commit só ele cai no genérico e a saída
+# de `--version` deixa de identificar o que foi medido.
+ARG LIBREDWG_GIT=https://github.com/LibreDWG/libredwg.git
+RUN git clone --depth 50 "$LIBREDWG_GIT" libredwg
+WORKDIR /tmp/libredwg
+RUN git log -1 --format='%H %ad %s' --date=short > /tmp/COMMIT && cat /tmp/COMMIT
+
+# Mesmas flags do build de produção — a comparação só vale se a única variável
+# for o commit. `--disable-werror` continua obrigatório (GCC 14 × `encode.c`).
+#
+# `JOBS` tem padrão 4, e não `nproc`: esta é a estação de trabalho do dono, não
+# um servidor de build.
+ARG JOBS=4
+RUN sh autogen.sh \
+    && ./configure --prefix=/opt/libredwg-master --disable-shared --enable-static \
+        --disable-bindings --disable-werror \
+    && make -j"$JOBS" \
+    && make install-strip
+
+# ---------------------------------------------------------------------------
+# Estágio 2 — a imagem do backend + o candidato ao lado
+# ---------------------------------------------------------------------------
+FROM ${IMAGEM_BASE}
+
+COPY --from=master /opt/libredwg-master/bin/dwg2dxf /usr/local/bin/dwg2dxf-master
+COPY --from=master /tmp/libredwg/COPYING /usr/share/licenses/libredwg-master/COPYING
+COPY --from=master /tmp/COMMIT /usr/share/licenses/libredwg-master/COMMIT
+COPY comparar_decodificador.py /opt/comparar_decodificador.py

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
-import { ChevronDown, ChevronRight, Layers3, MoreVertical } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronRight, CornerDownRight, GitBranch, Layers3, MoreVertical } from 'lucide-react'
 import { CAPS, mono } from '../ui'
-import { achatar, brl, FONTE_ROTULO, montarArvore, num, paraDecimal, paraEdicao, peso, type NoEap } from '../lib'
-import type { ItemOrcado } from '../types'
+import { achatar, brl, FONTE_ROTULO, mesBR, montarArvore, num, paraDecimal, paraEdicao, peso, type NoEap } from '../lib'
+import type { AnaliticaOrcamento, ItemOrcado, ItemOrcadoInsumo } from '../types'
 
 export type ColunaEditavel = 'descricao' | 'unidade' | 'quantidade' | 'custo_unitario'
 const EDITAVEIS: ColunaEditavel[] = ['descricao', 'unidade', 'quantidade', 'custo_unitario']
@@ -10,6 +10,14 @@ const NUMERICAS = new Set<ColunaEditavel>(['quantidade', 'custo_unitario'])
 
 const ALTURA_LINHA = 30
 const JANELA_EXTRA = 12
+
+const CATEGORIA_ROTULO: Record<string, string> = {
+  material: 'Material',
+  mao_de_obra: 'Mão de obra',
+  equipamento: 'Equipamento',
+  encargos_complementares: 'Enc. complementares',
+  outro: 'Outro',
+}
 
 export interface Cursor { linha: number; coluna: ColunaEditavel }
 
@@ -21,6 +29,10 @@ const LARGURAS: Record<string, Colunas> = {
   unidade: { largura: 58, alinhamento: 'center' },
   quantidade: { largura: 108, alinhamento: 'right' },
   custo_unitario: { largura: 116, alinhamento: 'right' },
+  // Fica **colada** no custo unitário de propósito: é a data daquele preço, não
+  // um atributo solto da linha. Item aposentado pela fonte permanece na planilha
+  // com o preço e a data que tinha — e é aqui que isso deixa de ser invisível.
+  data_base: { largura: 92, alinhamento: 'center' },
   bdi: { largura: 62, alinhamento: 'right' },
   total: { largura: 128, alinhamento: 'right' },
   peso: { largura: 62, alinhamento: 'right' },
@@ -29,19 +41,47 @@ const LARGURAS: Record<string, Colunas> = {
 
 export interface EdicaoCelula { item: ItemOrcado; coluna: ColunaEditavel; valor: string }
 
+/** O que ocupa uma linha da grade.
+ *
+ *  Sintético e analítico são a **mesma planilha** vista com e sem a composição
+ *  — a convenção da SINAPI, que publica o sintético (um serviço por linha, com
+ *  o custo unitário fechado) e o analítico (o mesmo serviço aberto nos insumos
+ *  que formam aquele custo). Não é um recorte da EAP: nenhum serviço some ao
+ *  trocar de modo, senão a planilha deixaria de fechar com o total do rodapé.
+ *
+ *  Por isso a grade deixou de rolar uma lista de nós da EAP e passou a rolar
+ *  uma lista de **linhas**, das quais o nó é só um dos tipos. Quem edita,
+ *  navega com o teclado e cola do Excel continua andando apenas sobre as linhas
+ *  de EAP — insumo é leitura, e o que o muda é a composição, não a célula.
+ */
+type Linha =
+  | { tipo: 'eap'; no: NoEap }
+  | { tipo: 'insumo'; pai: ItemOrcado; insumo: ItemOrcadoInsumo; nivel: number }
+  | { tipo: 'sem-composicao'; pai: ItemOrcado; nivel: number }
+
+const ehEap = (linha: Linha | undefined): linha is { tipo: 'eap'; no: NoEap } => linha?.tipo === 'eap'
+
 export default function GradeOrcamento({
-  itens, totalOrcamento, bdiPadrao, editavel, modo, filtro, onEditar, onColar, onAbrirLinha, onMenu,
+  itens, totalOrcamento, bdiPadrao, editavel, modo, filtro, dataBaseOrcamento,
+  insumos, carregandoInsumos, onEditar, onColar, onAbrirLinha, onMenu, onExplodir,
 }: {
   itens: ItemOrcado[]
   totalOrcamento: string
   bdiPadrao: string
+  /** Data-base do cabeçalho. A linha cujo preço é anterior a ela está atrasada:
+   *  a planilha se anuncia por um mês e carrega preço de outro. */
+  dataBaseOrcamento?: string | null
   editavel: boolean
   modo: 'sintetico' | 'analitico'
   filtro: string
+  /** A composição de cada linha, indexada pelo id. Só chega em analítico. */
+  insumos?: AnaliticaOrcamento
+  carregandoInsumos?: boolean
   onEditar: (item: ItemOrcado, coluna: ColunaEditavel, valor: string) => void
   onColar: (edicoes: EdicaoCelula[]) => void
   onAbrirLinha: (item: ItemOrcado) => void
   onMenu: (item: ItemOrcado, ancora: DOMRect) => void
+  onExplodir?: (item: ItemOrcado) => void
 }) {
   const [recolhidos, setRecolhidos] = useState<ReadonlySet<number>>(new Set())
   const [cursor, setCursor] = useState<Cursor | null>(null)
@@ -65,23 +105,41 @@ export default function GradeOrcamento({
 
   const arvore = useMemo(() => montarArvore(itens), [itens])
 
-  const visiveis = useMemo(() => {
+  const visiveis = useMemo<Linha[]>(() => {
     const busca = filtro.trim().toLowerCase()
-    let linhas = achatar(arvore, recolhidos)
-    if (modo === 'sintetico') {
-      // Sintético esconde a folha analítica cujo pai já resume o custo — é a
-      // mesma planilha, outro nível de leitura (a convenção da SINAPI).
-      linhas = linhas.filter(n => n.item.tipo_linha === 'sintetico' || n.nivel <= 1)
-    }
     if (busca) {
+      // Com filtro a hierarquia já está quebrada (a linha que casa aparece sem
+      // o pai): abrir composição em cima disso viraria ruído.
       const casa = (n: NoEap) =>
         n.item.descricao.toLowerCase().includes(busca) ||
         n.item.codigo_referencia.toLowerCase().includes(busca) ||
         n.item.codigo_eap.toLowerCase().includes(busca)
-      linhas = achatar(arvore, new Set()).filter(casa)
+      return achatar(arvore, new Set()).filter(casa).map(no => ({ tipo: 'eap', no }) as Linha)
+    }
+
+    const linhas: Linha[] = []
+    for (const no of achatar(arvore, recolhidos)) {
+      linhas.push({ tipo: 'eap', no })
+      if (modo !== 'analitico') continue
+      const item = no.item
+      // Agrupador não tem composição: o custo dele é a soma dos filhos, e
+      // pendurar insumo embaixo de etapa contaria o mesmo insumo duas vezes.
+      if (item.tipo_linha === 'sintetico') continue
+      if (recolhidos.has(item.item_orcado_id)) continue
+      const composicao = insumos?.[String(item.item_orcado_id)] ?? []
+      if (composicao.length) {
+        for (const insumo of composicao) {
+          linhas.push({ tipo: 'insumo', pai: item, insumo, nivel: no.nivel + 1 })
+        }
+      } else if (!carregandoInsumos) {
+        // Dado honesto: a linha sem composição gravada diz isso, em vez de
+        // parecer serviço que "não tem insumo". São dois casos diferentes — o
+        // que veio do catálogo e nunca foi explodido, e o de preço digitado.
+        linhas.push({ tipo: 'sem-composicao', pai: item, nivel: no.nivel + 1 })
+      }
     }
     return linhas
-  }, [arvore, recolhidos, modo, filtro])
+  }, [arvore, recolhidos, modo, filtro, insumos, carregandoInsumos])
 
   const alternar = useCallback((id: number) => {
     setRecolhidos(atual => {
@@ -109,6 +167,21 @@ export default function GradeOrcamento({
     onEditar(no.item, coluna, valor)
   }, [editando, onEditar])
 
+  /** Próxima linha **de EAP** na direção pedida. As linhas de insumo ficam de
+   *  fora da navegação: o cursor da grade é o cursor da planilha, e parar numa
+   *  linha que não se edita quebraria a descida contínua de quem digita
+   *  quantidade atrás de quantidade. */
+  const pularParaEap = useCallback((partida: number, direcao: number) => {
+    const passo = direcao >= 0 ? 1 : -1
+    for (let i = partida; i >= 0 && i < visiveis.length; i += passo) {
+      if (ehEap(visiveis[i])) return i
+    }
+    for (let i = partida; i >= 0 && i < visiveis.length; i -= passo) {
+      if (ehEap(visiveis[i])) return i
+    }
+    return -1
+  }, [visiveis])
+
   const mover = useCallback((dLinha: number, dColuna: number) => {
     setCursor(atual => {
       if (!atual) return atual
@@ -119,10 +192,11 @@ export default function GradeOrcamento({
         else if (i >= EDITAVEIS.length) { coluna = EDITAVEIS[0]; linha += 1 }
         else coluna = EDITAVEIS[i]
       }
-      linha = Math.max(0, Math.min(visiveis.length - 1, linha + dLinha))
-      return { linha, coluna }
+      const bruta = Math.max(0, Math.min(visiveis.length - 1, linha + dLinha))
+      const destino = pularParaEap(bruta, dLinha || dColuna || 1)
+      return destino < 0 ? atual : { linha: destino, coluna }
     })
-  }, [visiveis.length])
+  }, [visiveis.length, pularParaEap])
 
   useLayoutEffect(() => {
     if (emEdicao) inputRef.current?.focus()
@@ -136,7 +210,7 @@ export default function GradeOrcamento({
     else if (topo + ALTURA_LINHA > el.scrollTop + el.clientHeight) el.scrollTop = topo + ALTURA_LINHA - el.clientHeight
   }, [cursor])
 
-  const aoTeclar = (e: KeyboardEvent<HTMLDivElement>, no: NoEap, coluna: ColunaEditavel) => {
+  const aoTeclar = (e: KeyboardEvent<HTMLDivElement>, no: NoEap, coluna: ColunaEditavel, temComposicao: boolean) => {
     if (emEdicao) {
       if (e.key === 'Escape') { e.preventDefault(); setEmEdicao(false) }
       else if (e.key === 'Enter') { e.preventDefault(); confirmar(no, coluna); mover(1, 0) }
@@ -149,7 +223,7 @@ export default function GradeOrcamento({
     else if (e.key === 'ArrowUp') { e.preventDefault(); mover(-1, 0) }
     else if (e.key === 'ArrowRight' && !e.ctrlKey) { e.preventDefault(); mover(0, 1) }
     else if (e.key === 'ArrowLeft' && !e.ctrlKey) { e.preventDefault(); mover(0, -1) }
-    else if (e.key === ' ' && no.filhos.length) { e.preventDefault(); alternar(no.item.item_orcado_id) }
+    else if (e.key === ' ' && (no.filhos.length || temComposicao)) { e.preventDefault(); alternar(no.item.item_orcado_id) }
     else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && editavel) {
       setEditando(e.key)
       setEmEdicao(true)
@@ -157,7 +231,8 @@ export default function GradeOrcamento({
   }
 
   /** Colar bloco do Excel: a área colada se ancora na célula com foco e desce
-   *  pelas linhas visíveis. Fora da grade, o orçamentista faria isso à mão. */
+   *  pelas linhas visíveis — **saltando as de insumo**, que não se editam.
+   *  Fora da grade, o orçamentista faria isso à mão. */
   const aoColar = (e: React.ClipboardEvent, indice: number, coluna: ColunaEditavel) => {
     const texto = e.clipboardData.getData('text/plain')
     if (!texto.includes('\t') && !texto.includes('\n')) return
@@ -166,16 +241,19 @@ export default function GradeOrcamento({
     const bloco = texto.replace(/\r/g, '').split('\n').filter(l => l !== '').map(l => l.split('\t'))
     const colunaInicial = EDITAVEIS.indexOf(coluna)
     const edicoes: EdicaoCelula[] = []
-    bloco.forEach((linha, dl) => {
-      const alvo = visiveis[indice + dl]
-      if (!alvo) return
+    let atual = indice
+    for (const linha of bloco) {
+      while (atual < visiveis.length && !ehEap(visiveis[atual])) atual += 1
+      const alvo = visiveis[atual]
+      if (!ehEap(alvo)) break
       linha.forEach((bruto, dc) => {
         const col = EDITAVEIS[colunaInicial + dc]
         if (!col) return
-        if (alvo.item.tipo_linha === 'sintetico' && col !== 'descricao') return
-        edicoes.push({ item: alvo.item, coluna: col, valor: NUMERICAS.has(col) ? paraDecimal(bruto) : bruto.trim() })
+        if (alvo.no.item.tipo_linha === 'sintetico' && col !== 'descricao') return
+        edicoes.push({ item: alvo.no.item, coluna: col, valor: NUMERICAS.has(col) ? paraDecimal(bruto) : bruto.trim() })
       })
-    })
+      atual += 1
+    }
     if (edicoes.length) onColar(edicoes)
   }
 
@@ -203,11 +281,12 @@ export default function GradeOrcamento({
         background: 'var(--surface-2)', borderBottom: '1px solid var(--line)', ...CAPS, fontSize: 10,
       }}>
         {cel('eap', 'Item')}
-        {cel('fonte', 'Fonte / código')}
+        {cel('fonte', modo === 'analitico' ? 'Fonte / natureza' : 'Fonte / código')}
         {cel('descricao', 'Descrição')}
         {cel('unidade', 'Und')}
         {cel('quantidade', 'Quantidade')}
         {cel('custo_unitario', 'Custo unit.')}
+        {cel('data_base', 'Data-base')}
         {cel('bdi', 'BDI')}
         {cel('total', 'Total c/ BDI')}
         {cel('peso', 'Peso')}
@@ -222,11 +301,120 @@ export default function GradeOrcamento({
       >
         <div style={{ height: visiveis.length * ALTURA_LINHA, position: 'relative' }}>
           <div style={{ position: 'absolute', top: primeira * ALTURA_LINHA, left: 0, right: 0 }}>
-            {fatia.map((no, iFatia) => {
+            {fatia.map((linha, iFatia) => {
               const indice = primeira + iFatia
+
+              // --- linha de insumo: a composição do serviço logo acima -------
+              if (linha.tipo === 'insumo') {
+                const { insumo, pai } = linha
+                const quantidadeServico = Number(pai.quantidade) || 0
+                const consumo = Number(insumo.coeficiente) * quantidadeServico
+                const parcela = Number(insumo.custo_no_item) * quantidadeServico
+                const maoDeObra = insumo.categoria === 'mao_de_obra'
+                return (
+                  <div
+                    key={`ins-${insumo.insumo_id}`}
+                    style={{
+                      display: 'flex', alignItems: 'stretch', height: ALTURA_LINHA,
+                      borderBottom: '1px solid var(--line-2)', fontSize: 11.5,
+                      background: 'var(--inset)', color: 'var(--ink-3)',
+                    }}
+                  >
+                    {cel('eap', (
+                      <span style={{ display: 'flex', alignItems: 'center', paddingLeft: linha.nivel * 11 + 13 }}>
+                        <CornerDownRight size={11} style={{ color: 'var(--ink-3)' }} />
+                      </span>
+                    ))}
+                    {cel('fonte', (
+                      <span
+                        title={maoDeObra
+                          ? 'Mão de obra — a parcela já inclui os encargos sociais do regime do orçamento.'
+                          : `Natureza do insumo: ${CATEGORIA_ROTULO[insumo.categoria] ?? insumo.categoria}.`}
+                        style={{
+                          ...CAPS, fontSize: 9, padding: '1px 5px', borderRadius: 3, cursor: 'help',
+                          background: maoDeObra ? 'var(--accent-soft)' : 'var(--surface-2)',
+                          color: maoDeObra ? 'var(--accent-ink)' : 'var(--ink-3)',
+                        }}
+                      >
+                        {CATEGORIA_ROTULO[insumo.categoria] ?? insumo.categoria}
+                      </span>
+                    ))}
+                    {cel('descricao', (
+                      <span title={insumo.descricao} style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {insumo.descricao}
+                      </span>
+                    ))}
+                    {cel('unidade', insumo.unidade)}
+                    {cel('quantidade', (
+                      <span
+                        style={{ ...mono }}
+                        title={`Coeficiente ${num(insumo.coeficiente)} por ${pai.unidade || 'unidade'} `
+                          + `× ${num(pai.quantidade)} = consumo do insumo neste serviço.`}
+                      >{num(consumo)}</span>
+                    ))}
+                    {cel('custo_unitario', <span style={{ ...mono }}>{num(insumo.custo_unitario)}</span>)}
+                    {cel('data_base', '')}
+                    {cel('bdi', '')}
+                    {cel('total', (
+                      <span
+                        style={{ ...mono }}
+                        title="Parcela do insumo no custo direto do serviço — sem BDI, que já está na linha do serviço."
+                      >{brl(parcela)}</span>
+                    ))}
+                    {cel('peso', (
+                      <span
+                        style={{ ...mono, fontSize: 10.5 }}
+                        title="Peso do insumo dentro da composição deste serviço (não do orçamento)."
+                      >{Number(insumo.peso_pct).toFixed(1)}</span>
+                    ))}
+                    {cel('menu', '')}
+                  </div>
+                )
+              }
+
+              // --- linha sem composição gravada -----------------------------
+              if (linha.tipo === 'sem-composicao') {
+                const { pai } = linha
+                const doCatalogo = pai.item !== null
+                return (
+                  <div
+                    key={`vazio-${pai.item_orcado_id}`}
+                    style={{
+                      display: 'flex', alignItems: 'center', height: ALTURA_LINHA, gap: 7,
+                      borderBottom: '1px solid var(--line-2)', fontSize: 11.5,
+                      background: 'var(--inset)', color: 'var(--ink-3)',
+                      paddingLeft: linha.nivel * 11 + 108,
+                    }}
+                  >
+                    <CornerDownRight size={11} />
+                    {doCatalogo ? (
+                      <>
+                        <span>composição não explodida — o preço veio fechado da base.</span>
+                        {onExplodir && (
+                          <button
+                            onClick={() => onExplodir(pai)}
+                            style={{
+                              display: 'inline-flex', alignItems: 'center', gap: 4, border: 'none',
+                              background: 'none', cursor: 'pointer', padding: 0,
+                              color: 'var(--net-ink)', fontSize: 11.5, fontWeight: 650,
+                            }}
+                          ><GitBranch size={11} />explodir</button>
+                        )}
+                      </>
+                    ) : (
+                      <span>preço digitado — esta linha não tem composição para abrir.</span>
+                    )}
+                  </div>
+                )
+              }
+
+              // --- linha da EAP ---------------------------------------------
+              const no = linha.no
               const item = no.item
               const sintetico = item.tipo_linha === 'sintetico'
-              const temFilhos = no.filhos.length > 0
+              const temComposicao = modo === 'analitico' && !sintetico
+                && (insumos?.[String(item.item_orcado_id)]?.length ?? 0) > 0
+              const temFilhos = no.filhos.length > 0 || temComposicao
               const recolhido = recolhidos.has(item.item_orcado_id)
               const p = peso(item.total_com_bdi, totalOrcamento)
 
@@ -289,7 +477,7 @@ export default function GradeOrcamento({
                         onFocus={() => setCursor({ linha: indice, coluna })}
                         onClick={() => setCursor({ linha: indice, coluna })}
                         onDoubleClick={() => iniciarEdicao(no, coluna)}
-                        onKeyDown={e => aoTeclar(e, no, coluna)}
+                        onKeyDown={e => aoTeclar(e, no, coluna, temComposicao)}
                         onPaste={e => aoColar(e, indice, coluna)}
                         style={{
                           width: LARGURAS[chaveCol].largura || undefined,
@@ -310,7 +498,7 @@ export default function GradeOrcamento({
                             value={editando}
                             onChange={e => setEditando(e.target.value)}
                             onBlur={() => confirmar(no, coluna)}
-                            onKeyDown={e => aoTeclar(e, no, coluna)}
+                            onKeyDown={e => aoTeclar(e, no, coluna, temComposicao)}
                             style={{
                               width: '100%', height: '100%', border: '2px solid var(--accent)', outline: 'none',
                               background: 'var(--surface)', color: 'var(--ink)', padding: '0 7px', fontSize: 12.5,
@@ -322,6 +510,44 @@ export default function GradeOrcamento({
                       </div>
                     )
                   })}
+
+                  {cel('data_base', sintetico ? '' : (() => {
+                    // Sintético não tem preço próprio (é soma dos filhos), logo
+                    // não tem data-base — inventar uma aqui seria dado fabricado.
+                    const atrasada = Boolean(
+                      item.data_base_preco && dataBaseOrcamento
+                      && item.data_base_preco < dataBaseOrcamento,
+                    )
+                    return (
+                      <span
+                        title={atrasada
+                          ? `Preço de ${mesBR(item.data_base_preco)}, anterior à data-base `
+                            + `${mesBR(dataBaseOrcamento)} da planilha — item aposentado pela fonte `
+                            + 'ou não reprecificado. O total não reflete a data-base anunciada.'
+                          : item.data_base_preco
+                            ? `Preço da publicação de ${mesBR(item.data_base_preco)}.`
+                            // Sem afirmar a causa: a linha pode ter sido digitada,
+                            // ou vinda do catálogo sem a data ter sido registrada.
+                            : 'Sem data-base registrada neste preço.'}
+                        style={{
+                          ...mono, fontSize: 11,
+                          display: 'inline-flex', alignItems: 'center', gap: 4,
+                          padding: atrasada ? '1px 5px' : 0,
+                          borderRadius: 3,
+                          // `danger`, e não um tom ameno: linha fora da data-base
+                          // anunciada é defeito da peça que vai para a licitação,
+                          // não enfeite. O módulo não tem par `warn`.
+                          background: atrasada ? 'var(--danger-soft)' : undefined,
+                          color: atrasada ? 'var(--danger-ink)' : 'var(--ink-3)',
+                          fontWeight: atrasada ? 600 : 400,
+                          cursor: 'help',
+                        }}
+                      >
+                        {atrasada && <AlertTriangle size={11} />}
+                        {mesBR(item.data_base_preco)}
+                      </span>
+                    )
+                  })())}
 
                   {cel('bdi', sintetico ? '' : (
                     <span style={{ ...mono, fontSize: 11.5, color: item.bdi ? 'var(--accent-ink)' : 'var(--ink-3)' }}>

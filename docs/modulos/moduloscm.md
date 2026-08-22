@@ -25,10 +25,23 @@ O SCM tem **duas vias que convergem no mesmo `PedidoCompra`** (ver
 Fluxo interno completo (o que o frontend da fase atual cobre):
 
 ```
-(falta no estoque/SIL ou manual) → Demanda → [publicar?] → Cotação → Propostas → adjudicar
-                                                                          ↓
-Compra direta de uma Oferta ─────────────────────────────────────→ PedidoCompra → Recebimento → (Avaliação)
+(falta no estoque/SIL, planilha do Orçamento ou manual) → Demanda → [publicar?] → Cotação → Propostas → adjudicar
+                                                                                        ↓
+Compra direta de uma Oferta ───────────────────────────────────────────────────→ PedidoCompra → Recebimento → (Avaliação)
 ```
+
+**A compra que nasce da planilha** (`POST /api/scm/demandas/do-orcamento/`, permissão
+`scm.demanda.edit`, motor em [`do_orcamento.py`](../../backend/moduloscm/do_orcamento.py)):
+consome a relação consolidada de insumos do [Orçamento](moduloorcamento.md) e cria a `Demanda`
+com a quantidade **da obra inteira** — o mesmo aço que aparece em nove serviços entra uma vez,
+somado, apontando o mesmo `catalogo.Item` que foi orçado.
+
+O arquivo mora **aqui**, e não no orçamento, porque quem sabe explodir composição é aquele
+módulo e quem sabe o que é uma demanda é este. Três decisões do domínio: nasce **rascunho**
+(planilha de mil linhas viraria RFQ com centenas de itens indo direto para cotação); **material
+e serviço se separam** (mão de obra não vira compra — a RFQ pediria preço de "PEDREIRO (H)"); e
+a **cobertura viaja junto** (se metade das composições não foi explodida, a lista de compra é
+metade, e o comprador precisa saber antes de cotar).
 
 ## Modelos
 

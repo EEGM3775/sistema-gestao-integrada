@@ -1,0 +1,7 @@
+# Dependências desta ferramenta apenas — deliberadamente fora do requirements.txt
+# da raiz, que é o do backend Django. PyMuPDF não deve entrar no deploy do servidor
+# por causa de um utilitário desktop.
+
+pymupdf>=1.24
+tkinterdnd2>=0.4      # opcional: habilita arrastar-e-soltar; sem ele o app usa só o botão
+pyinstaller>=6.0      # opcional: só para gerar o .exe

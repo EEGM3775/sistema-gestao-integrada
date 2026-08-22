@@ -8,20 +8,26 @@ from .views import (
     BaseReferencialViewSet,
     ComponenteBancoPrecoViewSet,
     ComposicaoBDIViewSet,
+    ComposicaoEncargosViewSet,
     ControleDeCustoView,
+    FormulaReajusteViewSet,
+    IndiceEconomicoViewSet,
     InsumoReferenciaViewSet,
     ItemBancoPrecoViewSet,
     ItemOrcadoViewSet,
+    LinhaMedicaoViewSet,
     MemorialNBRViewSet,
     OrcamentoStatusView,
     OrcamentoViewSet,
     ParametroObraViewSet,
     ParcelaEtapaViewSet,
+    ParcelaFormulaReajusteViewSet,
     PastaComposicaoViewSet,
     PavimentoObraViewSet,
     QuadrosNBRView,
     ReprecificacaoViewSet,
     RevisaoOrcamentoViewSet,
+    RubricaEncargosViewSet,
     UnidadeAutonomaViewSet,
 )
 
@@ -43,6 +49,15 @@ router.register(r"pastas", PastaComposicaoViewSet, basename="orcamento-pasta")
 router.register(r"itens-banco", ItemBancoPrecoViewSet, basename="orcamento-item-banco")
 router.register(r"componentes-banco", ComponenteBancoPrecoViewSet, basename="orcamento-componente-banco")
 router.register(r"reprecificacoes", ReprecificacaoViewSet, basename="orcamento-reprecificacao")
+# ORC.7 — encargos analíticos, memória do quantitativo e reajuste contratual
+router.register(r"encargos", ComposicaoEncargosViewSet, basename="orcamento-encargos")
+router.register(r"rubricas-encargos", RubricaEncargosViewSet, basename="orcamento-rubrica-encargos")
+router.register(r"medicoes", LinhaMedicaoViewSet, basename="orcamento-medicao")
+router.register(r"indices", IndiceEconomicoViewSet, basename="orcamento-indice")
+router.register(r"formulas-reajuste", FormulaReajusteViewSet, basename="orcamento-formula-reajuste")
+router.register(
+    r"parcelas-reajuste", ParcelaFormulaReajusteViewSet, basename="orcamento-parcela-reajuste",
+)
 
 urlpatterns = [
     path("status/", OrcamentoStatusView.as_view(), name="orcamento-status"),

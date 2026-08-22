@@ -16,6 +16,8 @@ from datetime import timedelta
 from django.core.files.base import ContentFile
 from django.utils import timezone
 
+from payment.planos import IMPEXP_LIMITE_SINCRONO_EXPORTACAO
+
 from .formatos.escrita import escrever
 from .models import Exportacao
 from .registro import Recurso
@@ -24,7 +26,7 @@ from .registro import Recurso
 # materializa o arquivo inteiro em memória antes de responder: 2.000 linhas de
 # XLSX com estilo já são alguns MB, e o custo cresce com a largura da declaração,
 # não só com a altura.
-LIMITE_SINCRONO = 2_000
+LIMITE_SINCRONO = IMPEXP_LIMITE_SINCRONO_EXPORTACAO
 
 # Quanto tempo o arquivo gerado fica disponível. Curto de propósito: é uma
 # fotografia de dado sensível fora da RLS (mora no filesystem), e o valor de
@@ -84,7 +86,7 @@ def exportar(
         # O valor da linha é o rastro, não o arquivo: "quem levou a carteira de
         # clientes embora, quando e com que recorte" precisa ter resposta (R12).
         user = getattr(request, "user", None)
-        Exportacao.objects.create(
+        lote = Exportacao.objects.create(
             tenant_id=tenant_id,
             recurso=recurso.id,
             formato=formato,
@@ -94,8 +96,41 @@ def exportar(
             status=Exportacao.Status.PRONTA,
             usuario_nome=_nome_do_usuario(user)[:150],
         )
+        auditar(lote, recurso=recurso, usuario=user, recorte=recorte, total=total)
 
     return conteudo, content_type, nome
+
+
+def auditar(lote: Exportacao, *, recurso: Recurso, usuario, recorte: dict, total: int) -> None:
+    """A outra metade da R12 — o evento na trilha append-only da plataforma.
+
+    **A linha `Exportacao` sozinha não cumpria a regra.** Ela mora na RLS do
+    próprio tenant e é rastro *operacional*: serve à tela de histórico. O
+    `AuditLog` é a trilha imutável (o `save()` recusa update, o `delete()` é
+    bloqueado, a API é read-only) e é onde "o dado saiu do sistema" precisa
+    estar, porque exportação é **o** evento de LGPD — o momento exato em que a
+    informação deixa o perímetro. Até 07/08/2026 a régua prometia isto e nenhuma
+    chamada existia.
+
+    `detalhes` sem PII, como manda o modelo: recurso, recorte e volume. O recorte
+    é filtro (`obra=Alfa`), não conteúdo — e é justamente ele que responde
+    "levou tudo ou levou uma obra".
+    """
+    from nucleo.auditoria import registrar_auditoria
+    from nucleo.models import AuditLog
+
+    registrar_auditoria(
+        acao=AuditLog.Acao.EXPORTAR_DADOS,
+        instance=lote,
+        usuario=usuario,
+        detalhes={
+            "recurso": recurso.id,
+            "formato": lote.formato,
+            "linhas": total,
+            "recorte": descrever_recorte(recorte) or "tudo",
+            "contexto": lote.contexto or {},
+        },
+    )
 
 
 def _materializar(recurso: Recurso, request, recorte: dict) -> list[dict]:
@@ -154,6 +189,13 @@ def gerar_no_lote(exportacao: Exportacao, *, recurso: Recurso, request) -> Expor
     exportacao.status = Exportacao.Status.PRONTA
     exportacao.expira_em = timezone.now() + timedelta(hours=VALIDADE_HORAS)
     exportacao.save(update_fields=["arquivo", "linhas", "status", "expira_em"])
+    # R12 no caminho de job, e aqui é onde ela mais vale: o lote grande é o que
+    # leva a carteira inteira. Auditado na CONCLUSÃO e não na abertura — o que
+    # saiu do sistema é o arquivo pronto, não o pedido.
+    auditar(
+        exportacao, recurso=recurso, usuario=getattr(request, "user", None),
+        recorte=exportacao.recorte or {}, total=total,
+    )
     return exportacao
 
 

@@ -6,7 +6,7 @@
 > Camada de acesso *dentro* do tenant: [rbac-abac.md](rbac-abac.md).
 >
 > **Deixou de ser só planejamento em 19/07/2026.** O checkout continua sendo fase futura
-> ([D24](../pendencias.md)), mas o **modelo de planos existe em código** e uma quota já é aplicada de
+> ([D24](../historico-correcoes.md)), mas o **modelo de planos existe em código** e uma quota já é aplicada de
 > verdade — ver [§11](#11-onde-o-modelo-de-planos-vive-em-código-paywall-e-catálogo). Isso foi feito
 > antes do paywall de propósito: sem os planos declarados, o teto de requisições do **D23** não teria
 > de onde tirar o tamanho de cada empresa.
@@ -85,6 +85,34 @@ segundos → ativação quase imediata. **SMS fica como add-on** (custa ~R$0,08�
 liga só se a conversão justificar). Confiabilidade: e-mail transacional dedicado (evita spam) + reenvio.
 
 ---
+
+## 3.1 Módulo × capacidade — nem tudo que se vende é um lugar
+
+*(decisão do dono, 08/08/2026, tomada sobre a Prancheta.)*
+
+A unidade de venda padrão é o **módulo**, e ele é um lugar: o cliente contrata o SCM e passa a ter as
+telas do SCM. Mas parte do catálogo não tem essa forma. **A [Prancheta](../modulos/moduloprancheta.md)
+não vende um lugar, vende uma capacidade** — *ver os próprios arquivos e projetos dentro do software*
+—, e essa capacidade é consumida de dentro de outros módulos: o Orçamento que precisa mostrar a
+prancha de uma composição, o SIL que mostra a planta do almoxarifado, o diário que abre o detalhe
+citado no apontamento.
+
+Três consequências comerciais, e as três já valem em código:
+
+1. **O formato é vendido uma vez.** `formatos_prancheta` deixou de significar "o que a Prancheta
+   abre" e passou a significar **"o que esta empresa abre no sistema"**. Quem aplica a parede é o
+   motor de import/export na porta única, não cada módulo — um 402 só, com o mesmo corpo, em qualquer
+   tela ([funcoesimpexp §2, R17](../modulos/funcoesimpexp.md)).
+2. **A capacidade e o acabamento são duas vendas, porque são dois custos.** Abrir DWG é a capacidade;
+   abrir com alta fidelidade é o motor premium (`motores_prancheta`), que é COGS por tradução — cai
+   na família §4.2, não na §4.1.
+3. **Não contratar nunca vira função invisível.** O usuário vê o cadeado com o motivo **na tela onde
+   estava**, o que é upsell no momento da necessidade — o oposto de descobrir a ausência procurando
+   um menu que não existe ([frontend.md §1.6](../frontend.md)).
+
+Ao desenhar um item novo do catálogo, a pergunta é: *isto é um lugar aonde a pessoa vai, ou algo que
+ela passa a poder fazer em todo lugar?* A segunda resposta muda onde o gate mora e onde o cadeado
+aparece.
 
 ## 4. Catálogo de limites — o estudo central (não só os 5 citados)
 

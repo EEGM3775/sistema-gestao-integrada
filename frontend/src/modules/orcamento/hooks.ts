@@ -1,9 +1,16 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient,
+} from '@tanstack/react-query'
 import * as api from './api/orcamentoApi'
 import { orcKeys } from './api/queryKeys'
 import type {
   ArvoreResposta, BancoPreco as Banco, ItemBancoPreco as ItemBanco, ItemOrcado, Orcamento,
   ParcelaEtapa, PastaComposicao as Pasta,
+  // ORC.7
+  ComposicaoEncargos, FormulaReajuste, LinhaMedicao, ParcelaFormulaReajuste,
+  RegimeEncargos, RubricaEncargos, TipoMaoDeObra,
+  // ORC.9
+  TipoItemProprio,
 } from './types'
 
 type Params = Record<string, unknown>
@@ -37,6 +44,45 @@ export function useArvore(id: number | undefined) {
   })
 }
 
+/** A composição de todas as linhas. Só sai do lugar quando a grade entra em
+ *  **analítico** — em sintético ninguém olha insumo, e a analítica de uma obra
+ *  inteira é maior que a planilha que a contém. */
+export function useAnalitica(id: number | undefined, ativo: boolean) {
+  return useQuery({
+    queryKey: orcKeys.analitica(id ?? 0),
+    queryFn: () => api.getAnalitica(id as number),
+    enabled: id != null && ativo,
+    placeholderData: keepPreviousData,
+  })
+}
+
+/** Os tipos próprios da empresa. Lista curta (dezenas), sem paginação. */
+export function useTiposItem(habilitado = true) {
+  return useQuery({
+    queryKey: orcKeys.tiposItem(),
+    queryFn: api.listarTiposItem,
+    enabled: habilitado,
+  })
+}
+
+/** As naturezas e o padrão de flags de cada uma — o de-para é do backend.
+ *  `staleTime` alto porque é tabela de domínio: muda quando o código muda. */
+export function useNaturezasItem(habilitado = true) {
+  return useQuery({
+    queryKey: orcKeys.naturezasItem(),
+    queryFn: api.listarNaturezasItem,
+    enabled: habilitado,
+    staleTime: 60 * 60 * 1000,
+  })
+}
+
+export const useCriarTipoItem = () =>
+  useVerbo((v: Partial<TipoItemProprio>) => api.criarTipoItem(v))
+export const useAtualizarTipoItem = () =>
+  useVerbo((v: { id: number; payload: Partial<TipoItemProprio> }) =>
+    api.atualizarTipoItem(v.id, v.payload))
+export const useRemoverTipoItem = () => useVerbo((id: number) => api.removerTipoItem(id))
+
 export function useObras() {
   return useQuery({ queryKey: orcKeys.obras, queryFn: api.listarObras })
 }
@@ -57,6 +103,27 @@ export function useReferencias(params: Params, habilitado = true) {
   return useQuery({
     queryKey: orcKeys.referencias.list(params),
     queryFn: () => api.referencias.listar(params),
+    enabled: habilitado,
+    placeholderData: keepPreviousData,
+  })
+}
+
+/** A base referencial paginada **de verdade**.
+ *
+ *  Uma publicação da SINAPI tem ~12,5 mil linhas e o teto de página é 100
+ *  (`PAGINA_MAXIMA["orcamento"]`). Buscar uma página só e parar ali fazia a tela
+ *  parecer ter "algumas dezenas de itens" — o catálogo inteiro existia no banco
+ *  e era inalcançável, porque não havia como pedir o item 101. "Refine a busca"
+ *  não é navegação de catálogo: quem não sabe o nome exato precisa **percorrer**.
+ */
+export function useReferenciasInfinitas(params: Params, habilitado = true) {
+  return useInfiniteQuery({
+    queryKey: orcKeys.referencias.list({ ...params, modo: 'infinita' }),
+    queryFn: ({ pageParam }) => api.referencias.listar({ ...params, page: pageParam }),
+    initialPageParam: 1,
+    // DRF devolve `next: null` na última — é ele quem diz se há mais, não uma
+    // conta nossa de count/page_size, que erraria na última página.
+    getNextPageParam: (ultima, todas) => (ultima.next ? todas.length + 1 : undefined),
     enabled: habilitado,
     placeholderData: keepPreviousData,
   })
@@ -233,6 +300,7 @@ export function useEditarCelula(orcamentoId: number | undefined) {
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: chave })
+      qc.invalidateQueries({ queryKey: orcKeys.analitica(orcamentoId ?? 0) })
       qc.invalidateQueries({ queryKey: orcKeys.orcamentos.all })
     },
   })
@@ -329,3 +397,131 @@ export const useGerarPreviaReprecificacao = () =>
 export const useAplicarReprecificacao = () =>
   useVerbo((v: { lote: number; linhas?: number[] }) => api.aplicarReprecificacao(v.lote, v.linhas))
 export const useDesfazerReprecificacao = () => useVerbo((lote: number) => api.desfazerReprecificacao(lote))
+
+// --- ORC.7: encargos analíticos, memória do quantitativo e reajuste ---
+
+export function useQuadrosEncargos(orcamento: number | undefined) {
+  return useQuery({
+    queryKey: orcKeys.encargos.list({ orcamento }),
+    queryFn: () => api.encargos.todos({ orcamento }),
+    enabled: orcamento != null,
+  })
+}
+
+export function useQuadroEncargos(id: number | undefined) {
+  return useQuery({
+    queryKey: orcKeys.quadroEncargos(id ?? 0),
+    queryFn: () => api.getQuadroEncargos(id as number),
+    enabled: id != null,
+  })
+}
+
+export function useMemoriaQuantitativo(itemOrcado: number | undefined) {
+  return useQuery({
+    queryKey: orcKeys.memoriaQuantitativo(itemOrcado ?? 0),
+    queryFn: () => api.getMemoriaQuantitativo(itemOrcado as number),
+    enabled: itemOrcado != null,
+  })
+}
+
+export function useComposicaoNatureza(itemOrcado: number | undefined) {
+  return useQuery({
+    queryKey: orcKeys.composicaoNatureza(itemOrcado ?? 0),
+    queryFn: () => api.getComposicaoNatureza(itemOrcado as number),
+    enabled: itemOrcado != null,
+  })
+}
+
+export function useCoberturaMedicao(orcamento: number | undefined) {
+  return useQuery({
+    queryKey: orcKeys.coberturaMedicao(orcamento ?? 0),
+    queryFn: () => api.getCoberturaMedicao(orcamento as number),
+    enabled: orcamento != null,
+  })
+}
+
+export function useRelacaoInsumos(orcamento: number | undefined, categoria?: string) {
+  return useQuery({
+    queryKey: orcKeys.relacaoInsumos(orcamento ?? 0, categoria),
+    queryFn: () => api.getRelacaoInsumos(orcamento as number, categoria),
+    enabled: orcamento != null,
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function useCurvaAbcInsumos(orcamento: number | undefined) {
+  return useQuery({
+    queryKey: orcKeys.curvaAbcInsumos(orcamento ?? 0),
+    queryFn: () => api.getCurvaAbcInsumos(orcamento as number),
+    enabled: orcamento != null,
+  })
+}
+
+export function useDesembolsoInsumos(orcamento: number | undefined, categoria?: string) {
+  return useQuery({
+    queryKey: orcKeys.desembolsoInsumos(orcamento ?? 0, categoria),
+    queryFn: () => api.getDesembolsoInsumos(orcamento as number, categoria),
+    enabled: orcamento != null,
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function useIndices() {
+  return useQuery({
+    queryKey: orcKeys.indices.list({ ativo: true }),
+    queryFn: () => api.indices.todos({ ativo: true }),
+  })
+}
+
+export function useFormulasReajuste(orcamento: number | undefined) {
+  return useQuery({
+    queryKey: orcKeys.formulas.list({ orcamento }),
+    queryFn: () => api.formulasReajuste.todos({ orcamento }),
+    enabled: orcamento != null,
+  })
+}
+
+/** A prévia só corre com competência escolhida — pedir sem ela devolveria 400 e
+ *  encheria a tela de erro enquanto o usuário ainda está escolhendo o mês. */
+export function usePreviaReajuste(formula: number | undefined, competencia: string) {
+  return useQuery({
+    queryKey: orcKeys.previaReajuste(formula ?? 0, competencia),
+    queryFn: () => api.getPreviaReajuste(formula as number, competencia),
+    enabled: formula != null && !!competencia,
+    retry: false,
+  })
+}
+
+export const useCriarQuadroEncargos = () =>
+  useVerbo((v: { orcamento: number; tipo_mao_de_obra: TipoMaoDeObra; regime?: RegimeEncargos }) =>
+    api.criarQuadroEncargos(v))
+export const useAtualizarRubrica = () =>
+  useVerbo((v: { id: number; payload: Partial<RubricaEncargos> }) =>
+    api.rubricas.atualizar(v.id, v.payload))
+export const useCriarRubrica = () => useVerbo((v: Partial<RubricaEncargos>) => api.rubricas.criar(v))
+export const useRemoverRubrica = () => useVerbo((id: number) => api.rubricas.remover(id))
+export const useAtualizarQuadroEncargos = () =>
+  useVerbo((v: { id: number; payload: Partial<ComposicaoEncargos> }) =>
+    api.encargos.atualizar(v.id, v.payload))
+export const useRemoverQuadroEncargos = () => useVerbo((id: number) => api.encargos.remover(id))
+
+export const useCriarMedicao = () => useVerbo((v: Partial<LinhaMedicao>) => api.medicoes.criar(v))
+export const useAtualizarMedicao = () =>
+  useVerbo((v: { id: number; payload: Partial<LinhaMedicao> }) => api.medicoes.atualizar(v.id, v.payload))
+export const useRemoverMedicao = () => useVerbo((id: number) => api.medicoes.remover(id))
+export const useMedicoesEmLote = () =>
+  useVerbo((v: { item_orcado: number; linhas: Partial<LinhaMedicao>[]; substituir?: boolean }) =>
+    api.salvarMedicoesEmLote(v))
+
+export const useCriarFormulaReajuste = () =>
+  useVerbo((v: Partial<FormulaReajuste>) => api.formulasReajuste.criar(v))
+export const useCriarParcelaReajuste = () =>
+  useVerbo((v: Partial<ParcelaFormulaReajuste>) => api.parcelasReajuste.criar(v))
+export const useRemoverParcelaReajuste = () => useVerbo((id: number) => api.parcelasReajuste.remover(id))
+export const useAplicarReajuste = () =>
+  useVerbo((v: { formula: number; competencia: string; motivo?: string }) =>
+    api.aplicarReajuste(v.formula, { competencia: v.competencia, motivo: v.motivo }))
+
+export const useGerarDemandaDoOrcamento = () =>
+  useVerbo((v: { orcamento: number; tipo?: 'material' | 'servico'; observacao?: string }) =>
+    api.gerarDemandaDoOrcamento(v))

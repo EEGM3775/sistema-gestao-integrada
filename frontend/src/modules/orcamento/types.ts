@@ -45,6 +45,18 @@ export interface BaseResumo {
   regime_encargos: Regime
   insumos: number
   composicoes: number
+  /** Quantos insumos da publicação trazem a coluna `Classificação` preenchida.
+   *  Preenchida ≠ legível: ver `classes_desconhecidas`. */
+  insumos_classificados: number
+  /** Classes que a publicação usa e que o sistema não sabe traduzir em natureza
+   *  (vocabulário próprio de ORSE/SICRO/prefeitura). Texto literal, para alguém
+   *  decidir se vira mapeamento ou `--de-para`. */
+  classes_desconhecidas: string[]
+  /** `false` = a classificação **não chega até a natureza**, e todo insumo cai no
+   *  plano B da unidade — o que não é hora/mês vira material, e o que é hora vira
+   *  mão de obra (leva encargo social). Duas causas: publicação anterior a
+   *  01/2025, que não traz a coluna (D111), ou vocabulário que não sabemos ler. */
+  classifica_insumo: boolean
   adotados_no_catalogo: number
 }
 
@@ -89,12 +101,30 @@ export interface ItemAdotado {
   descricao: string
 }
 
+/** O item do catálogo achado pelo código **não é** o item que a publicação
+ *  descreve (D110): a fonte reaproveitou o número entre edições. A adoção não
+ *  sobrescreve — devolve os dois lados para quem está na tela decidir. */
+export interface DivergenciaAdocao {
+  codigo: string
+  item_id: number
+  codigo_interno: string
+  /** "descrição" · "unidade" · "descrição e unidade" */
+  motivo: string
+  descricao_catalogo: string
+  descricao_publicacao: string
+  unidade_catalogo: string
+  unidade_publicacao: string
+  semelhanca: number
+}
+
 /** `/referencias/adotar-lote/` — `adotados` é a CONTAGEM, não a lista de ids;
  *  os ids vêm em `itens` (a adoção é idempotente, então reaproveita item já
- *  existente e a ordem não espelha necessariamente a seleção da tela). */
+ *  existente e a ordem não espelha necessariamente a seleção da tela).
+ *  `divergentes` são os que ficaram de FORA por não conferirem (D110). */
 export interface ResultadoAdocaoLote {
   adotados: number
   itens: ItemAdotado[]
+  divergentes: DivergenciaAdocao[]
 }
 
 export interface Orcamento {
@@ -189,7 +219,45 @@ export interface ComposicaoBDI {
   observacao: string
 }
 
-export type CategoriaInsumo = 'material' | 'mao_de_obra' | 'equipamento' | 'outro'
+export type CategoriaInsumo =
+  | 'material' | 'mao_de_obra' | 'equipamento' | 'encargos_complementares' | 'outro'
+
+/** A natureza do item no catálogo — a classificação que a SINAPI publica.
+ *  É ela que decide conta: encargo social só incide sobre `mao_de_obra`. */
+export type NaturezaItem =
+  | 'material' | 'mao_de_obra' | 'equipamento' | 'encargos_complementares'
+  | 'servico' | 'epi' | 'ativo' | 'composicao'
+
+/** Flags de domínio de um tipo — o que cada módulo faz com o item. */
+export interface FlagsTipoItem {
+  leva_encargo_social: boolean
+  compravel: boolean
+  estocavel: boolean
+  vendavel: boolean
+  consumivel: boolean
+  rastreavel: boolean
+}
+
+/** O tipo de item **que a empresa cria**, por cima de uma natureza da SINAPI. */
+export interface TipoItemProprio extends FlagsTipoItem {
+  tipo_item_id: number
+  codigo: string
+  nome: string
+  descricao: string
+  natureza: NaturezaItem
+  natureza_nome: string
+  ativo: boolean
+  itens_com_este_tipo: number
+}
+
+/** `/catalogo/tipos-item/naturezas/` — as naturezas com o padrão de flags de
+ *  cada uma. O de-para vive no backend: a tela que o repetisse divergiria dele
+ *  na primeira mudança de regra. */
+export interface NaturezaComPadroes {
+  valor: NaturezaItem
+  rotulo: string
+  padroes: FlagsTipoItem
+}
 
 export interface ItemOrcadoInsumo {
   insumo_id: number
@@ -212,6 +280,11 @@ export interface MemoriaCalculo {
   insumos: ItemOrcadoInsumo[]
   por_categoria: Record<string, { valor: string; pct: string }>
 }
+
+/** `/orcamentos/{id}/analitica/` — a composição de **cada** linha da planilha,
+ *  indexada pelo `item_orcado_id` em texto (chave de JSON é sempre string).
+ *  É o que a grade desenha embaixo do serviço no modo analítico. */
+export type AnaliticaOrcamento = Record<string, ItemOrcadoInsumo[]>
 
 export interface CustoPorCategoria {
   orcamento: number
@@ -425,6 +498,8 @@ export interface CatalogoItem {
   estocavel: boolean
   fonte_referencia: Fonte | ''
   codigo_referencia: string
+  /** De qual EDIÇÃO o item foi adotado ("SINAPI BA 10/2024 desonerada"). */
+  publicacao_referencia?: string
   ativo: boolean
 }
 
@@ -593,4 +668,312 @@ export interface ResumoDuplicata {
   valor_total: string
   linhas_sem_etapa: number
   aviso_etapa: string
+}
+
+// --- ORC.7: encargos analíticos, memória do quantitativo e reajuste ---
+
+export type GrupoEncargos = 'A' | 'B' | 'C' | 'D'
+export type TipoMaoDeObra = 'horista' | 'mensalista'
+export type RegimeEncargos = 'onerado' | 'desonerado'
+
+export interface RubricaEncargos {
+  rubrica_id: number
+  composicao: number
+  grupo: GrupoEncargos
+  grupo_nome: string
+  codigo: string
+  descricao: string
+  percentual: string
+  base_calculo: 'direta' | 'a_sobre_b' | 'fgts_sobre_aviso'
+  derivada: boolean
+  e_fgts: boolean
+  e_aviso_previo: boolean
+  ordem: number
+}
+
+export interface ComposicaoEncargos {
+  encargos_id: number
+  orcamento: number
+  nome: string
+  tipo_mao_de_obra: TipoMaoDeObra
+  tipo_nome: string
+  regime: RegimeEncargos
+  regime_nome: string
+  padrao: boolean
+  data_base: string | null
+  total_grupo_a: string
+  total_grupo_b: string
+  total_grupo_c: string
+  total_grupo_d: string
+  percentual_calculado: string
+  observacao: string
+  rubricas: RubricaEncargos[]
+}
+
+/** O quadro pronto para a tela — com a conta ao lado de cada derivada. */
+export interface QuadroEncargos {
+  encargos: number
+  orcamento: number
+  nome: string
+  tipo_mao_de_obra: TipoMaoDeObra
+  regime: RegimeEncargos
+  padrao: boolean
+  data_base: string | null
+  total: string
+  grupos: {
+    grupo: GrupoEncargos
+    rotulo: string
+    subtotal: string
+    rubricas: {
+      rubrica: number
+      codigo: string
+      descricao: string
+      percentual: string
+      derivada: boolean
+      conta: string
+      e_fgts: boolean
+      e_aviso_previo: boolean
+    }[]
+  }[]
+}
+
+export interface LinhaMedicao {
+  medicao_id: number
+  item_orcado: number
+  ordem: number
+  descricao: string
+  sinal: 1 | -1
+  sinal_nome: string
+  repeticoes: string
+  comprimento: string | null
+  largura: string | null
+  altura: string | null
+  formula: string
+  total: string
+  referencia_projeto: string
+}
+
+export interface MemoriaQuantitativo {
+  item_orcado: number
+  descricao: string
+  unidade: string
+  quantidade: string
+  derivada: boolean
+  total_somado: string
+  total_subtraido: string
+  total: string
+  confere: boolean
+  linhas: {
+    medicao: number
+    ordem: number
+    descricao: string
+    sinal: 1 | -1
+    repeticoes: string
+    comprimento: string | null
+    largura: string | null
+    altura: string | null
+    formula: string
+    total: string
+    referencia_projeto: string
+  }[]
+}
+
+export interface CoberturaMedicao {
+  orcamento: number
+  custo_direto_total: string
+  custo_com_memoria: string
+  cobertura_pct: string
+  linhas_totais: number
+  linhas_com_memoria: number
+}
+
+/** Campos de cobertura que toda resposta de insumo carrega — a honestidade do número. */
+export interface Cobertura {
+  custo_direto_total: string
+  custo_direto_explodido: string
+  cobertura_pct: string
+  linhas_analiticas: number
+  linhas_explodidas: number
+  linhas_sem_composicao: number
+}
+
+export interface InsumoConsolidado {
+  item: number | null
+  codigo_referencia: string
+  fonte_referencia: string
+  descricao: string
+  unidade: string
+  categoria: string
+  rotulo_categoria?: string
+  quantidade: string
+  custo_unitario_medio: string
+  valor: string
+  pct: string
+  servicos: number
+}
+
+export interface RelacaoInsumos extends Cobertura {
+  orcamento: number
+  filtro_categoria: string
+  total: string
+  itens: InsumoConsolidado[]
+}
+
+export interface CurvaABCInsumos extends Cobertura {
+  orcamento: number
+  total: string
+  resumo: Record<ClasseABC, { itens: number; valor: string; pct: string }>
+  itens: (InsumoConsolidado & { pct_acumulado: string; classe: ClasseABC })[]
+}
+
+export interface ComposicaoPorNatureza {
+  item_orcado: number
+  codigo_eap: string
+  descricao: string
+  unidade: string
+  quantidade: string
+  custo_unitario: string
+  total_composicao: string
+  confere_com_a_linha: boolean
+  grupos: {
+    categoria: string
+    rotulo: string
+    subtotal: string
+    pct: string
+    insumos: {
+      insumo: number
+      item: number | null
+      descricao: string
+      unidade: string
+      coeficiente: string
+      custo_unitario: string
+      custo_no_item: string
+      pct: string
+    }[]
+  }[]
+}
+
+export interface DesembolsoInsumo {
+  item: number | null
+  descricao: string
+  unidade: string
+  categoria: string
+  quantidade_total: string
+  valor_total: string
+  meses: Record<string, { quantidade: string; valor: string }>
+}
+
+export interface DesembolsoPorInsumo {
+  orcamento: number
+  filtro_categoria: string
+  competencias: string[]
+  insumos: DesembolsoInsumo[]
+  sem_distribuicao: DesembolsoInsumo[]
+  nota_sem_distribuicao: string
+}
+
+export interface IndiceEconomico {
+  indice_id: number
+  codigo: string
+  nome: string
+  fonte: string
+  uf: string
+  ativo: boolean
+}
+
+export interface ValorIndice {
+  valor_id: number
+  indice: number
+  indice_codigo: string
+  competencia: string
+  numero_indice: string
+  variacao_percentual: string | null
+}
+
+export interface ParcelaFormulaReajuste {
+  parcela_id: number
+  formula: number
+  indice: number
+  indice_codigo: string
+  indice_nome: string
+  peso: string
+  rotulo: string
+}
+
+export interface FormulaReajuste {
+  formula_id: number
+  orcamento: number
+  nome: string
+  data_base: string
+  parcela_fixa: string
+  observacao: string
+  parcelas: ParcelaFormulaReajuste[]
+  soma_pesos: string
+  fecha: boolean
+}
+
+export interface MemoriaFator {
+  formula: number
+  nome: string
+  data_base: string
+  competencia: string
+  parcela_fixa: string
+  fator: string
+  variacao_pct: string
+  parcelas: {
+    parcela: number
+    indice: string
+    nome_indice: string
+    rotulo: string
+    peso: string
+    indice_base: string
+    indice_reajuste: string
+    razao: string
+    variacao_pct: string
+    contribuicao: string
+  }[]
+}
+
+export interface PreviaReajuste {
+  orcamento: number
+  status_orcamento: StatusOrcamento
+  exige_revisao: boolean
+  memoria: MemoriaFator
+  total_antes: string
+  total_depois: string
+  delta: string
+  itens: {
+    item_orcado: number
+    codigo_eap: string
+    descricao: string
+    unidade: string
+    quantidade: string
+    custo_antes: string
+    custo_depois: string
+    valor_antes: string
+    valor_depois: string
+    delta: string
+  }[]
+}
+
+export interface ResultadoReajuste {
+  orcamento: number
+  versao: number
+  gerou_revisao: boolean
+  revisao: number | null
+  memoria: MemoriaFator
+  linhas_reajustadas: number
+  valor_anterior: string
+  valor_novo: string
+}
+
+export interface DemandaGerada {
+  demanda: number
+  tipo: string
+  status: string
+  itens: number
+  orcamento: number
+  valor_orcado_dos_itens: string
+  cobertura_pct: string
+  nota_cobertura: string
 }

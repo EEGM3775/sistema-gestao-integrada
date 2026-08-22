@@ -113,6 +113,18 @@ cd backend && ../.venv/bin/python manage.py test                # roda a suíte 
 >    ```bash
 >    sudo apt-get install -y binutils gdal-bin libgeos-dev libproj-dev
 >    ```
+
+> **`unaccent` — mesma exigência, mesmo motivo (16/08/2026).** Toda busca por texto do backend é
+> insensível a acento ([`nucleo/busca.py`](../backend/nucleo/busca.py)), e `CREATE EXTENSION unaccent`
+> também exige SUPERUSER. Ambiente novo nasce certo pelo
+> [init](../infra/postgres/init/01-init-databases.sh); **volume antigo precisa de uma passada à mão**,
+> senão toda view com `search_fields` responde 500 (`FieldError` no lookup) e a suíte quebra ao criar
+> o `test_erp_db`:
+>
+> ```bash
+> docker compose exec postgres psql -U postgres -d template1 -c 'CREATE EXTENSION IF NOT EXISTS unaccent;'
+> docker compose exec postgres psql -U postgres -d erp_db    -c 'CREATE EXTENSION IF NOT EXISTS unaccent;'
+> ```
 >    Sem privilégio de instalar, a alternativa é rodar a suíte dentro da imagem do backend (que já
 >    tem tudo), montando o repositório — foi assim que a leva do Maps foi validada.
 
@@ -136,6 +148,21 @@ cd iam && ../.venv/bin/python manage.py shell < seed_demo.py
 
 - `demo` / `demo123` — tem os módulos `crm`/`rh`/`erp_financeiro` (+ `drone`) e o papel `financeiro`.
 - `semdrone` / `semdrone123` — usuário sem `drone` (e papel `operacional`), para testar 403/RBAC.
+
+## Ferramentas de bancada (`ferramentas/`)
+
+Funções resolvidas à mão enquanto o módulo dono delas não existe — rodam na máquina, não sobem em
+container nem entram no `.venv` da raiz. **Cada uma tem venv e `requirements.txt` próprios**, de
+propósito: as dependências delas (algumas AGPL) não podem chegar às imagens do backend/IAM.
+
+```bash
+cd ferramentas/<nome>
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+```
+
+Índice, regra de fronteira e anatomia de uma ferramenta nova em
+[ferramentas/README.md](../ferramentas/README.md).
 
 ## Frontend React (dev isolado)
 

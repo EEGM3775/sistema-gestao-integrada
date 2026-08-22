@@ -28,6 +28,51 @@ class EscritaIndisponivel(Exception):
     """Biblioteca de escrita ausente no ambiente."""
 
 
+class RecursoExternoRecusado(Exception):
+    """O PDF pediu um recurso de fora; o buscador não busca fora (D73)."""
+
+
+def _buscador_sem_rede(url: str):
+    """`url_fetcher` do WeasyPrint que só entrega o que já veio embutido.
+
+    **O padrão do WeasyPrint busca URL de verdade** — `http://`, `file://`, o
+    que estiver no HTML. Hoje nenhum dos dois templates tem `img`, `url()` ou
+    `|safe`, e o autoescape do Django segura o resto, então não há SSRF; o
+    problema é que a primeira pessoa a pôr o logo do tenant no cabeçalho abre a
+    porta para metadado de nuvem (`169.254.169.254`) e para `file:///etc/…`, e
+    não vai lembrar disto. É a diferença entre *não estar sendo explorado* e
+    *não ser explorável*.
+
+    `data:` passa porque não é busca: o conteúdo já está no documento. Todo o
+    resto é recusado, e o WeasyPrint trata exceção de `url_fetcher` **pulando o
+    recurso** — o PDF sai sem a imagem, em vez de não sair. Quando um logo
+    embutido for pedido de verdade, o caminho é o `data:` URI, que este
+    buscador já aceita.
+    """
+    if url.startswith("data:"):
+        from weasyprint.urls import default_url_fetcher
+
+        return default_url_fetcher(url)
+    raise RecursoExternoRecusado(url)
+
+
+def html_para_pdf(html: str) -> bytes:
+    """HTML → PDF, com o buscador fechado. **A única porta de PDF do sistema.**
+
+    Existe como função e não como linha repetida porque `HTML(string=…)` sem
+    `url_fetcher` é seguro por acidente (depende do template do dia), e um
+    segundo `write_pdf()` em outro módulo reabriria o D73 sem ninguém notar.
+    """
+    try:
+        from weasyprint import HTML
+    except ImportError as exc:  # pragma: no cover - dependência de requirements
+        raise EscritaIndisponivel(
+            "WeasyPrint não instalado — necessário para exportar PDF."
+        ) from exc
+
+    return HTML(string=html, url_fetcher=_buscador_sem_rede).write_pdf()
+
+
 def escrever(formato: str, *, colunas, linhas, procedencia: dict) -> tuple[bytes, str]:
     """Despacha por formato. Devolve `(bytes, content_type)`."""
     if formato == "xlsx":
@@ -56,6 +101,50 @@ def _valor_para_celula(coluna, valor):
     if coluna.tipo is bool:
         return "Sim" if valor else "Não"
     return str(valor)
+
+
+# ---------------------------------------------------------------------------
+# Injeção de fórmula — o arquivo que sai não pode ser executável
+# ---------------------------------------------------------------------------
+# **O defeito é de quem GERA o arquivo, não do Excel** (OWASP, *CSV Injection*).
+# Um fornecedor cadastra a razão social como `=cmd|'/c calc'!A1`, o dado entra
+# pelo cadastro normal, e quem abre a planilha exportada executa a fórmula — o
+# alvo é o cliente do nosso cliente, e o veículo somos nós. É o oposto exato da
+# R9: a peça sai executável em vez de conferível.
+#
+# Os gatilhos são os quatro caracteres que o Excel/Sheets/Calc leem como início
+# de fórmula, mais tabulação e retorno de carro, que servem para escondê-los.
+_GATILHOS_DE_FORMULA = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _neutraliza_csv(texto: str) -> str:
+    """Prefixa `'` no que o Excel leria como fórmula ao ABRIR um CSV.
+
+    A mitigação da OWASP, e ela custa um apóstrofo visível — aceitável aqui e
+    não no XLSX porque os dois formatos têm públicos diferentes: o CSV existe
+    "para quem vai ler com script", e script ignora o apóstrofo; o XLSX é o que
+    a pessoa abre para trabalhar, e lá a correção é outra (`_texto_xlsx`).
+
+    Só o caminho de TEXTO passa por aqui. Número e data saem tipados (R8) e não
+    são reinterpretados — então o `-` de um valor negativo continua intacto.
+    """
+    if texto and texto[0] in _GATILHOS_DE_FORMULA:
+        return "'" + texto
+    return texto
+
+
+def _forcar_texto(celula) -> None:
+    """Impede o openpyxl de gravar `=...` como FÓRMULA de verdade.
+
+    No XLSX o risco é menor e mais preciso que no CSV: célula de string é
+    string, e o Excel não a reinterpreta ao abrir — `+`, `-` e `@` são inofensivos
+    ali. O que sobra é o `=`, porque o **openpyxl** infere o tipo no `append` e
+    grava um `<f>` no XML; nesse caso o arquivo sai com uma fórmula real dentro.
+    Fixar `data_type` depois da atribuição desfaz a inferência sem sujar o valor,
+    que é o motivo de não usarmos o apóstrofo aqui.
+    """
+    if isinstance(celula.value, str) and celula.value.startswith("="):
+        celula.data_type = "s"
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +190,8 @@ def _xlsx(colunas, linhas, procedencia: dict) -> bytes:
 
     for linha in linhas:
         ws.append([_valor_para_celula(c, linha.get(c.campo)) for c in colunas])
+        for celula in ws[ws.max_row]:
+            _forcar_texto(celula)
 
     for pos, coluna in enumerate(colunas, start=1):
         largura = 46 if coluna.tipo is str and pos == 2 else max(12, min(34, len(coluna.rotulo) + 6))
@@ -140,7 +231,7 @@ def _csv(colunas, linhas) -> bytes:
             elif coluna.tipo is bool:
                 saida.append("Sim" if valor else "Não")
             else:
-                saida.append(str(valor))
+                saida.append(_neutraliza_csv(str(valor)))
         escritor.writerow(saida)
     return buffer.getvalue().encode("utf-8-sig")
 
@@ -158,13 +249,6 @@ def _pdf(colunas, linhas, procedencia: dict) -> bytes:
     motor de impressão resolve com CSS, e uma biblioteca de desenho exigiria
     reimplementar cada um.
     """
-    try:
-        from weasyprint import HTML
-    except ImportError as exc:  # pragma: no cover - dependência de requirements
-        raise EscritaIndisponivel(
-            "WeasyPrint não instalado — necessário para exportar PDF."
-        ) from exc
-
     # O template recebe primitivos, não os dataclasses: o Django proíbe acesso a
     # atributo iniciado por `_` (e `tipo.__name__` seria TemplateSyntaxError), e
     # decidir alinhamento no Python deixa o template só com apresentação.
@@ -182,7 +266,7 @@ def _pdf(colunas, linhas, procedencia: dict) -> bytes:
             for linha in linhas
         ],
     })
-    return HTML(string=html).write_pdf()
+    return html_para_pdf(html)
 
 
 def _texto_pdf(coluna, valor) -> str:

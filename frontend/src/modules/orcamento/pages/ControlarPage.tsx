@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { AlertTriangle, ExternalLink, Info as InfoIcon, Layers, TrendingUp } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import PaginaShell from '../components/PaginaShell'
+import PainelInsumos from '../components/PainelInsumos'
 import {
   BarrasHorizontais, COR_SERIE, CurvaSGrafico, GraficoEstilos, Legenda, Pareto, TrilhoQuatroColunas,
 } from '../components/graficos'
@@ -14,7 +15,7 @@ import {
 } from '../hooks'
 import type { ControleLinha } from '../types'
 
-type Aba = 'colunas' | 'abc' | 'composicao'
+type Aba = 'colunas' | 'abc' | 'insumos' | 'composicao'
 
 export default function ControlarPage() {
   const { hasPermission } = useAuth()
@@ -70,6 +71,9 @@ export default function ControlarPage() {
         opcoes={[
           { valor: 'colunas' as Aba, rotulo: 'Quatro colunas' },
           { valor: 'abc' as Aba, rotulo: 'Curva ABC', travado: !obraParam, motivo: 'Escolha uma obra' },
+          // ORC.7 — a dimensão que a planilha não mostra. A ABC de serviços diz
+          // onde negociar escopo; esta diz onde negociar preço.
+          { valor: 'insumos' as Aba, rotulo: 'Insumos', travado: !obraParam, motivo: 'Escolha uma obra' },
           { valor: 'composicao' as Aba, rotulo: 'Composição do custo', travado: !obraParam, motivo: 'Escolha uma obra' },
         ]}
       />
@@ -281,6 +285,10 @@ export default function ControlarPage() {
               </>
             )}
 
+            {aba === 'insumos' && orcamentoDaObra && (
+              <PainelInsumos orcamentoId={orcamentoDaObra.orcamento_id} />
+            )}
+
             {aba === 'composicao' && (
               <>
                 <SectHead>Composição do custo por natureza do insumo</SectHead>
@@ -345,7 +353,7 @@ export default function ControlarPage() {
           <SectHead>Para onde ir</SectHead>
           <div style={{ display: 'grid', gap: 8 }}>
             {[
-              { to: `/app/orcamento/orcar?orcamento=${detalhe.orcamento ?? ''}`, rotulo: 'Planilha orçamentária', apoio: 'ajustar quantidades e preços', off: !detalhe.orcamento },
+              { to: `/app/orcamento/orcar/orcamento/${detalhe.orcamento ?? ''}`, rotulo: 'Planilha orçamentária', apoio: 'ajustar quantidades e preços', off: !detalhe.orcamento },
               { to: '/app/scm', rotulo: 'Suprimentos', apoio: 'pedidos que formam o comprometido' },
               { to: '/app/sil', rotulo: 'Estoque & Logística', apoio: 'consumo por obra e etapa que forma o aplicado' },
               { to: '/app/erp', rotulo: 'ERP / Financeiro', apoio: 'contas a pagar que formam o realizado' },

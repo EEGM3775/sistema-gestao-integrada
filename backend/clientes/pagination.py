@@ -5,9 +5,10 @@ um JSON gigante por tecla digitada na busca. A grade da carteira consome página
 grandes (rolagem infinita), daí o teto mais alto que o do ERP.
 """
 from rest_framework.pagination import PageNumberPagination
+from payment.planos import PAGINA_MAXIMA, PAGINA_PADRAO
 
 
 class ClientePageNumberPagination(PageNumberPagination):
-    page_size = 50
+    page_size = PAGINA_PADRAO["clientes"]
     page_size_query_param = 'page_size'
-    max_page_size = 300
+    max_page_size = PAGINA_MAXIMA["clientes"]

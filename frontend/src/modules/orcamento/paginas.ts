@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 
-export type ChavePagina = 'orcar' | 'controlar' | 'cronograma' | 'bases' | 'incorporacao'
+export type ChavePagina =
+  | 'orcar' | 'encargos' | 'controlar' | 'cronograma' | 'bases' | 'incorporacao'
 
 export interface DefinicaoPagina {
   chave: ChavePagina
@@ -23,6 +24,15 @@ export const PAGINAS: DefinicaoPagina[] = [
     resumo: 'Árvore EAP, composições analíticas, encargos e BDI. A grade onde o orçamento nasce.',
     permissao: 'orcamento.orcamento.view',
     icone: 'planilha',
+  },
+  {
+    chave: 'encargos',
+    rota: '/app/orcamento/encargos',
+    titulo: 'Encargos & reajuste',
+    verbo: 'Parametrizar o preço',
+    resumo: 'Quadro de encargos por grupo A/B/C/D, composição do BDI e reajuste por índice.',
+    permissao: 'orcamento.orcamento.view',
+    icone: 'percentual',
   },
   {
     chave: 'controlar',

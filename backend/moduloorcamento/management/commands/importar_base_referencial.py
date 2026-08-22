@@ -37,6 +37,8 @@ from pathlib import Path
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
+from catalogo.models import Item
+from moduloorcamento import services
 from moduloorcamento.models import (
     BaseReferencial,
     ComposicaoReferenciaItem,
@@ -51,6 +53,7 @@ LOTE = 1_000
 # desde a ORC.0 — mover sem manter o nome quebraria quem já importa daqui.
 from moduloorcamento.leitura import (  # noqa: E402  (posição deliberada: depois dos models)
     ALIASES,
+    EXTRAS_POR_ARQUIVO,
     OBRIGATORIOS,
     detectar_colunas,
     detectar_delimitador,
@@ -137,6 +140,14 @@ class Command(BaseCommand):
             help="Apaga os itens da publicação antes de importar (em vez de atualizar).",
         )
         parser.add_argument("--dry-run", action="store_true", help="Só conta e valida; não grava.")
+        parser.add_argument(
+            "--aceitar-sem-classe", dest="aceitar_sem_classe", action="store_true",
+            help=(
+                "Importa mesmo que a publicação traga classes sem tradução para "
+                "natureza. Sem isto o comando para e lista quais são — a base-mãe é "
+                "global e a decisão é do superuser que a importa."
+            ),
+        )
 
     def handle(self, *args, **opcoes):
         if not any(opcoes.get(k) for k in ("insumos", "composicoes", "analitica")):
@@ -144,6 +155,11 @@ class Command(BaseCommand):
         mes = self._parse_mes(opcoes["mes"])
         manual = parsear_colunas_manuais(opcoes["colunas"]) if opcoes["colunas"] else {}
         seco = opcoes["dry_run"]
+        self._aceitar_sem_classe = opcoes["aceitar_sem_classe"]
+        # O dicionário de classes é lido do disco e cacheado por processo; num
+        # comando de bancada o arquivo pode ter acabado de ser editado pelo
+        # superuser, justamente por causa da recusa da corrida anterior.
+        services.esquecer_classes_declaradas()
 
         base, criada = BaseReferencial.objects.get_or_create(
             fonte=opcoes["fonte"], uf=(opcoes["uf"] or "").upper()[:2],
@@ -215,7 +231,9 @@ class Command(BaseCommand):
         obrigatorios = OBRIGATORIOS[tipo_arquivo]
         if manual and all(c in manual for c in obrigatorios):
             return manual, -1
-        mapa, cabecalho, vistos = detectar_colunas(linhas, obrigatorios)
+        mapa, cabecalho, vistos = detectar_colunas(
+            linhas, obrigatorios, extras=EXTRAS_POR_ARQUIVO.get(tipo_arquivo)
+        )
         if mapa is None:
             amostra = "\n    ".join(" | ".join(v[:12]) for v in vistos[:5]) or "(vazio)"
             raise CommandError(
@@ -258,9 +276,88 @@ class Command(BaseCommand):
             f"  {caminho.name}: {len(pendentes)} {rotulo} lidos"
             f"{f' ({ignoradas} linhas ignoradas)' if ignoradas else ''}."
         )
+        if tipo == InsumoReferencia.Tipo.INSUMO:
+            self._conferir_classificacao(base, pendentes)
         if seco:
             return len(pendentes)
         return self._gravar_itens(base, tipo, pendentes)
+
+    def _conferir_classificacao(self, base, pendentes: dict[str, InsumoReferencia]) -> None:
+        """Confere, **antes de gravar**, se a fonte classificou e se sabemos ler.
+
+        Sem isto, base de vocabulário próprio (ORSE, SICRO, tabela de
+        prefeitura) entrava calada: a coluna vinha preenchida, o de-para de
+        classes não conhecia as palavras, e todo insumo caía no plano B da
+        unidade — que para `H` significa mão de obra, logo **encargo social**
+        sobre item que não é salário. O silêncio era pior que a ausência da
+        coluna (o D111), porque ali pelo menos o campo vazio era evidente.
+
+        **Classe ilegível interrompe a importação** *(decisão do dono,
+        21/08/2026)*, e a diferença entre este caso e o da coluna ausente é de
+        quem tem a resposta. Base-mãe é global e read-only: só o superuser
+        importa, e o que ele importa **todos os tenants enxergam**. Uma classe
+        traduzida errado é alavanca de preço para a plataforma inteira de uma
+        vez, e quem pode respondê-la é justamente quem está rodando o comando.
+        Então o comando não decide sozinho — ele lista o que não soube fazer e
+        devolve a pergunta, com as duas saídas explícitas.
+
+        A coluna **ausente** não interrompe: aí não há pergunta a fazer a
+        ninguém, a fonte simplesmente não respondeu (D111), e a publicação
+        continua útil como era antes da ORC.9.
+
+        A conferência é só de **insumo**: em composição o campo traz o capítulo
+        ("MOVIMENTO DE TERRA"), que não é natureza nem pretende ser — reportá-lo
+        encheria a tela de falso alarme.
+        """
+        sem_classe = sum(1 for item in pendentes.values() if not item.grupo.strip())
+        desconhecidas: dict[str, int] = {}
+        for item in pendentes.values():
+            if services.classificacao_desconhecida(item.grupo, base.fonte):
+                chave = item.grupo.strip()
+                desconhecidas[chave] = desconhecidas.get(chave, 0) + 1
+
+        if sem_classe == len(pendentes) and pendentes:
+            self.stdout.write(self.style.WARNING(
+                "    → nenhum insumo traz classificação. A coluna `Classificação` só "
+                "existe na SINAPI a partir de 01/2025; nas anteriores a natureza sai "
+                "da unidade, e tudo que não é hora nem mês vira material."
+            ))
+        elif sem_classe:
+            self.stdout.write(
+                f"    → {sem_classe} insumo(s) sem classificação (caem no plano B da unidade)."
+            )
+
+        if not desconhecidas:
+            return
+        if self._aceitar_sem_classe:
+            self.stdout.write(self.style.WARNING(
+                f"    → {len(desconhecidas)} classe(s) sem tradução, aceitas por "
+                "--aceitar-sem-classe: esses insumos entram pelo plano B da unidade."
+            ))
+            return
+
+        total = sum(desconhecidas.values())
+        linhas = [
+            f"{quantos:>7}×  {classe}"
+            for classe, quantos in sorted(desconhecidas.items(), key=lambda x: -x[1])
+        ]
+        arquivo = services.PASTA_DE_CLASSES / f"{base.fonte}.csv"
+        raise CommandError(
+            f"\nNÃO IMPORTADO — {len(desconhecidas)} classe(s) desta publicação não têm "
+            f"tradução para natureza, em {total} insumo(s).\n\n"
+            "A base-mãe é global: o que entra aqui todos os tenants enxergam, e classe "
+            "sem tradução cai no plano B da unidade — em `H` vira mão de obra, que leva "
+            "encargo social sobre custo que pode não ser salário. Quem decide isto é "
+            "você, que importa a base.\n\n"
+            "O que não foi feito:\n\n" + "\n".join(linhas) + "\n\n"
+            "Duas saídas:\n\n"
+            f"  1. Declare a tradução (vale para as próximas publicações desta fonte):\n"
+            f"     {arquivo}\n"
+            "     uma linha por classe, no formato  classe;natureza\n"
+            f"     naturezas: {', '.join(sorted(t for t, _ in Item.Tipo.choices))}\n\n"
+            "  2. Aceite que esses insumos entrem pela unidade, sabendo do risco:\n"
+            "     rode de novo com --aceitar-sem-classe\n"
+        )
 
     @transaction.atomic
     def _gravar_itens(self, base, tipo, pendentes: dict[str, InsumoReferencia]) -> int:

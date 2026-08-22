@@ -12,9 +12,19 @@
 | Módulo-fonte | IA proposta | Dado de treino/contexto | Valor |
 |---|---|---|---|
 | Diário de obra ✅ | Análise de foto ✅ → **evoluir p/**: detecção de EPI (SST), detecção de não-conformidade, avanço físico estimado por imagem | Fotos do diário + etiquetas de etapa | Compliance automático; medição sem visita |
-| Drone ✅ | Volumetria de aterro/estoque ✅ (Potree) → comparação temporal automática entre voos, avanço vs. cronograma (APS) | Ortofotos/nuvens sequenciais | "A obra andou X% este mês" sem apontamento manual |
-| APS + diário | **Previsão de atraso** (o modelo mais vendável do setor) | Histórico cronograma × diário × clima | Alerta antes do estouro |
-| Orçamento + SCM | Previsão de estouro de custo; sugestão de preço em cotação | Orçado × realizado × preços da rede | Protege margem do cliente |
+| Drone ✅ | Volumetria de aterro/estoque ✅ (Potree) → comparação temporal automática entre voos, avanço vs. cronograma (PDCA) | Ortofotos/nuvens sequenciais | "A obra andou X% este mês" sem apontamento manual |
+| PDCA + diário | **Previsão de atraso** (o modelo mais vendável do setor) | Histórico cronograma × diário × clima | Alerta antes do estouro |
+| Orçamento + SCM | Previsão de estouro de custo; sugestão de preço em cotação; **sugestão de composição/CPU** (o que o OrçaFascio vende como *OF IA*) | Orçado × realizado × preços da rede; a composição analítica que o ORC.2/ORC.7 já produz | Protege margem do cliente |
+
+> 🧮 **A IA de composição mora aqui, não no Orçamento.** Registrado ao fechar o ORC.7
+> (17/08/2026): o módulo de orçamento **expõe** a composição e **consome** a sugestão, sem
+> cliente de modelo próprio — toda chamada externa vive em [funcoesia](../modulos/funcoesia.md)
+> como task Celery (AD-8). O insumo já está pronto do lado de lá: `ItemOrcadoInsumo` guarda a
+> composição explodida em folhas com coeficiente, categoria e custo, e a relação consolidada
+> (ORC.7) dá o vocabulário real de insumos daquela empresa — que é o que faz uma sugestão ser
+> calibrada em vez de genérica. O mesmo vale para a **previsão de estouro**: as quatro colunas já
+> entregam orçado × comprometido × aplicado × realizado na mesma dimensão, com a cobertura
+> declarada. Ver [moduloorcamento §13](../modulos/moduloorcamento.md).
 | ERP financeiro | Score de **inadimplência** por parcela/cliente; priorização da régua de cobrança | Histórico de pagamento (Asaas ✅) | Menos churn de caixa |
 | CRM ✅ | Scoring ✅ → next-best-action; resposta assistida a lead via WhatsApp ✅ (canal pronto) | Interações + conversões | Velocidade de funil |
 | Contratos/DMS | Extração de cláusulas, alertas de prazo/reajuste (IGP-M/INCC), resumo de contrato | Documentos do tenant | Jurídico preventivo |

@@ -1,4 +1,5 @@
 # backend/clientes/views.py
+from nucleo.busca import BuscaSemAcento
 from rest_framework import viewsets, permissions, filters, status as drf_status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -49,7 +50,7 @@ class ClienteViewSet(QuotaEnforcedMixin, TenantScopedViewSetMixin, viewsets.Mode
     quota_recurso = "clientes"  # D24
     queryset = Cliente.objects.all().order_by('nome_completo')
     serializer_class = ClienteSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_class = ClienteFilter
     search_fields = ['nome_completo', 'cpf_cnpj', 'email', 'telefone', 'bairro', 'cidade', 'cep']
     ordering_fields = ['nome_completo', 'data_cadastro', 'cidade', 'estado', 'email', 'telefone']
@@ -440,7 +441,7 @@ def _data(valor):
 class ContratoClienteViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     queryset = ContratoCliente.objects.all().order_by('-data_assinatura')
     serializer_class = ContratoClienteSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_class = ContratoClienteFilter
     search_fields = ['numero_contrato', 'objeto_contrato']
     ordering_fields = ['data_assinatura', 'numero_contrato', 'status_contrato']

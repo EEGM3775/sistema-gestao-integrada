@@ -127,7 +127,33 @@ Valores monetários trafegam como **centavos inteiros** na UI — use **exclusiv
 `apiDecimalToCents`) e os componentes `MoneyInput`/`MoneyDisplay` do ERP. Nunca `parseFloat` em
 valor monetário.
 
-## 6. Botões inativos — como funciona e como ativar um módulo
+## 6. Busca por texto — nunca compare acento
+
+**Decisão do dono (16/08/2026):** *"quero que todo o software seja acessível, ninguém tem que ficar
+digitando exatamente a palavra para conseguir achar o que quer"*. Quem digita rápido digita sem
+acento, e no celular do canteiro ninguém caça o `ç`. Busca que exige `Fundação` para achar `Fundação`
+faz a pessoa concluir que **o dado não existe** — a pior forma de falha, porque não parece falha.
+
+Filtro que roda na tela usa **exclusivamente** `@/utils/texto.ts`:
+
+```ts
+import { contemSemAcento } from '@/utils/texto'
+
+const visiveis = itens.filter(i => contemSemAcento(i.nome, termo))
+```
+
+Nunca `.toLowerCase().includes(...)` em texto que a pessoa digitou. `normalizar()` está exposto para
+quem precisa da chave normalizada (ordenação, agrupamento).
+
+**As duas pontas precisam da mesma régua.** No servidor, quem faz o mesmo é
+[`nucleo/busca.py`](../backend/nucleo/busca.py) — o `BuscaSemAcento` já é o `filter_backend` de toda
+view com `search_fields`. Uma busca que o servidor resolve sem acento e a tela refiltra **com** acento
+devolve menos do que veio, e o sintoma é o pior possível: a lista pisca com o resultado certo e some.
+
+Limite declarado: `ß` e `ø` não são letra + sinal, sobrevivem à decomposição e não são normalizados.
+Nenhum aparece em nome de disciplina, obra ou insumo de projeto brasileiro.
+
+## 7. Botões inativos — como funciona e como ativar um módulo
 
 Itens sem acesso aparecem **inativos** — visíveis mas não clicáveis. Intencional: mostra o alcance
 da edição sem enganar sobre o que está disponível.

@@ -20,20 +20,71 @@ export interface ColunaRecurso {
   tipo: string
   obrigatoria: boolean
   exemplo: string
+  /**
+   * R19 — a célula abre na conferência, corrigindo o palpite sem reenviar o
+   * arquivo. Quem decide é o **recurso**, não a tela: sem esta declaração o
+   * wizard voltaria a um `if recurso === '...'` escrito à mão.
+   */
+  editavel?: boolean
+  /** Aceita mais de um valor (guardados separados por vírgula). */
+  multipla?: boolean
+  /** A allowlist da coluna. `null`/ausente = texto livre. `cor` é opcional. */
+  opcoes?: { valor: string; rotulo: string; cor?: string }[] | null
 }
+
+/**
+ * IE.3 — as duas naturezas de entrada, e é ela que decide o **gesto** da tela.
+ *
+ * `tabela` abre o seletor de planilha e o wizard de de-para; `arquivo` abre o
+ * seletor de PASTA e confere uma lista de binários. O backend publica isto no
+ * catálogo justamente para o frontend não voltar ao `if recurso === '…'` escrito
+ * à mão — ver `Recurso.descrever()`.
+ */
+export type NaturezaRecurso = 'tabela' | 'arquivo'
 
 export interface RecursoImpExp {
   id: string
   rotulo: string
   modulo: string
   exporta: boolean
+  /** Saída de binário que já existe (o acervo), distinta do `exporta` tabular. */
+  entrega: boolean
   importa: boolean
   desfazivel: boolean
   chave: string
+  natureza: NaturezaRecurso
   formatos_saida: string[]
   formatos_entrada: string[]
+  /** O que ESTE destino recebe quando a natureza é `arquivo`. */
+  formatos_arquivo: string[]
+  /**
+   * D83 — o teto **deste destino** por formato, em MB, que é o que a porta dele
+   * vai aplicar. Só vem em recurso de natureza `arquivo`.
+   *
+   * Existe porque o teto de formato de arquivo não é do plano nem do formato:
+   * é do recurso (`Recurso.teto_mb_do_formato`). O `limites.formatos[].max_mb`
+   * do catálogo global publica o número da **planilha** — 25 MB no
+   * `profissional` — e a tela que acreditasse nele recusaria sozinha um DWG de
+   * 64,9 MB que a porta aceita até 150. Preferir este campo, sempre que existir.
+   */
+  tetos_mb?: Record<string, number>
   contexto_requerido: string[]
   colunas: ColunaRecurso[]
+}
+
+/** O teto declarado ANTES do envio (parte 3 do método gov.br — ver `limites.py`). */
+export interface FormatoDeclarado {
+  codigo: string
+  rotulo: string
+  extensoes: string[]
+  natureza: NaturezaRecurso
+  max_mb: number
+}
+
+export interface LimitesDoPlano {
+  max_mb: number
+  formatos: FormatoDeclarado[]
+  plano: string
 }
 
 export interface ResumoImportacao {
@@ -110,8 +161,16 @@ export interface MapaSalvo {
   criado_em: string
 }
 
+export interface CatalogoImpExp {
+  recursos: RecursoImpExp[]
+  limites: LimitesDoPlano
+}
+
+export const listarCatalogo = async (): Promise<CatalogoImpExp> =>
+  (await apiClient.get<CatalogoImpExp>('impexp/recursos/')).data
+
 export const listarRecursos = async (): Promise<RecursoImpExp[]> =>
-  (await apiClient.get<{ recursos: RecursoImpExp[] }>('impexp/recursos/')).data.recursos
+  (await listarCatalogo()).recursos
 
 // ---------------------------------------------------------------------------
 // Exportação
@@ -193,6 +252,46 @@ export async function importar(pedido: PedidoImportacao): Promise<ResumoImportac
   return data
 }
 
+/**
+ * IE.3 — a porta de LOTE de arquivo: N binários, uma decisão.
+ *
+ * **`caminhos` viaja em paralelo a `arquivos`, e não dentro do nome.** É o
+ * caminho relativo na pasta — o `webkitRelativePath` que o navegador entrega ao
+ * escolher um diretório — que carrega a taxonomia (disciplina, código, revisão)
+ * de um acervo histórico; o nome sozinho faria a plataforma adivinhar pior do
+ * que ela sabe. Embuti-lo no `filename` não é opção: nome com `/` é recusado
+ * pelo storage do Django.
+ */
+export async function importarArquivos(pedido: {
+  recurso: string
+  arquivos: File[]
+  contexto?: Record<string, unknown>
+  /** Progresso de rede da remessa, em 0–100. */
+  onProgresso?: (pct: number) => void
+}): Promise<ResumoImportacao> {
+  const corpo = new FormData()
+  for (const arquivo of pedido.arquivos) {
+    corpo.append('arquivos', arquivo)
+    // `webkitRelativePath` só existe quando a escolha veio de uma pasta; com
+    // arquivos soltos o nome é o caminho, e o backend faz o mesmo fallback.
+    corpo.append('caminhos', arquivoComCaminho(arquivo))
+  }
+  if (pedido.contexto) corpo.append('contexto', JSON.stringify(pedido.contexto))
+  const { data } = await apiClient.post<ResumoImportacao>(
+    `impexp/${pedido.recurso}/importar-arquivos/`, corpo,
+    {
+      onUploadProgress: evento => {
+        if (!pedido.onProgresso || !evento.total) return
+        pedido.onProgresso(Math.round((evento.loaded / evento.total) * 100))
+      },
+    },
+  )
+  return data
+}
+
+export const arquivoComCaminho = (arquivo: File): string =>
+  (arquivo as File & { webkitRelativePath?: string }).webkitRelativePath || arquivo.name
+
 export interface LoteHistorico extends ResumoImportacao {
   criada_em: string
   decidida_em: string | null
@@ -214,6 +313,19 @@ export const consultarImportacao = async (
 export const marcarLinhas = async (id: number, aceitar: boolean, linhas?: number[]) =>
   (await apiClient.post<{ linhas_marcadas: number }>(
     `impexp/importacoes/${id}/marcar/`, { aceitar, linhas },
+  )).data
+
+/**
+ * R19 — corrige o palpite de colunas `editavel`, numa linha ou em várias.
+ *
+ * `linhas` ausente = todas as da importação, que é o gesto "aplicar a todos".
+ * Corrigir **não** aceita a linha: os dois continuam sendo atos separados.
+ */
+export const corrigirLinhas = async (
+  id: number, valores: Record<string, string>, linhas?: number[],
+) =>
+  (await apiClient.post<{ linhas_corrigidas: number }>(
+    `impexp/importacoes/${id}/corrigir/`, { valores, linhas },
   )).data
 
 export const aplicarImportacao = async (id: number): Promise<ResumoImportacao> =>

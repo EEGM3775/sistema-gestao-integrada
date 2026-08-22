@@ -4,8 +4,10 @@
 # em tipos de dados nativos do Python que podem ser facilmente renderizados em JSON para a API.
 
 from rest_framework import serializers
+from funcoesimpexp.entrega import ArquivoGateadoSerializerMixin
 from nucleo.tenant_validators import TenantScopedUniqueSerializerMixin
 from nucleo.upload_validation import UploadValidationMixin
+from .impexp import ESPECIE_XML, RECURSO_CUSTO_NFE
 from .models import (
     Empreendimento,
     ContaBancariaEmpreendimento,
@@ -82,11 +84,10 @@ class ContaBancariaEmpreendimentoSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['tenant']  # injetado pelo perform_create (Fase 8.2 / D3)
 
-class CustoEmpreendimentoSerializer(UploadValidationMixin, TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
-    """
-    Serializador para o modelo CustoEmpreendimento.
-    Converte os dados de custos dos empreendimentos para JSON.
-    """
+class CustoEmpreendimentoSerializer(ArquivoGateadoSerializerMixin, UploadValidationMixin, TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
+    """Custos do empreendimento — o XML da NF-e sai gateado (D70)."""
+    arquivos_gateados = {"arquivo_xml": (RECURSO_CUSTO_NFE, ESPECIE_XML)}
+
     class Meta:
         model = CustoEmpreendimento
         fields = '__all__'

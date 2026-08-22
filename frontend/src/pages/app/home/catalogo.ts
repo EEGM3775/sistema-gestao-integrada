@@ -1,9 +1,8 @@
 import type { LucideIcon } from 'lucide-react'
 import {
   BarChart3, Brain, Building, Building2, CalendarDays, Calculator, ClipboardList,
-  FileText, HardHat, KeyRound, Landmark, LayoutGrid, LifeBuoy, LineChart, Map,
+  DraftingCompass, FileText, HardHat, KeyRound, Landmark, LayoutGrid, LifeBuoy, LineChart, Map,
   Package, Plane, Ruler, ShieldCheck, TrendingUp, Truck, UserCog, Users, Warehouse,
-  Wrench,
 } from 'lucide-react'
 
 /**
@@ -182,18 +181,19 @@ export const CATALOGO: ModuloDef[] = [
     modulo: 'drone',
   },
   {
-    id: 'aps',
-    label: 'Planejamento (APS)',
-    descricao: 'Cronograma físico, linha de balanço e avanço × previsto, com previsão de atraso por IA.',
-    icon: Wrench,
+    id: 'prancheta',
+    label: 'Prancheta',
+    descricao: 'O projeto aberto no celular, em campo: DWG, RVT, IFC, KMZ e nuvem de pontos — não só o PDF da planta.',
+    icon: DraftingCompass,
     estagio: 'construir',
-    situacao: 'planejado',
-    modulo: 'aps',
+    situacao: 'pronto',
+    modulo: 'prancheta',
+    rota: '/app/prancheta',
   },
   {
     id: 'pdca',
-    label: 'Qualidade / PDCA',
-    descricao: 'Checklists de serviço (FVS), não-conformidades, planos de ação e auditoria ISO/PBQP-H.',
+    label: 'Planejamento & Qualidade (PDCA)',
+    descricao: 'Cronograma físico e avanço × previsto; checklists de serviço (FVS), não-conformidades e planos de ação.',
     icon: ClipboardList,
     estagio: 'construir',
     situacao: 'planejado',

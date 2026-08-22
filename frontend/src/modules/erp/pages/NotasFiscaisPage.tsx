@@ -11,6 +11,7 @@ import {
   useNotasFiscaisServico, useNotasFiscaisRecebidas,
   useConsultarStatusNfse, useCancelarNfse, useVerificarDocumentoNfse,
 } from '../hooks/useNotasFiscais'
+import { baixarArquivo, baixarParaDisco } from '@/lib/arquivo'
 import { apiDecimalToCents } from '@/utils/money'
 import { dateToBR } from '@/utils/dates'
 import type { NotaFiscalRecebida, NotaFiscalServico } from '../types'
@@ -153,7 +154,18 @@ function NotasServicoTab({ canceladas }: { canceladas: boolean }) {
     const win = window.open('', '_blank')
     verificarDoc.mutate(nf.id, {
       onSuccess: doc => {
-        if (doc.url_pdf && win) win.location.href = doc.url_pdf
+        // A resposta traz OU o link assinado da NFE.io (externo, navega direto)
+        // OU a nossa cópia local, que desde o D70 é a porta única e exige token:
+        // apontar a janela para ela daria 401. Por isso a distinção pela origem.
+        if (doc.url_pdf && win) {
+          if (doc.url_pdf.startsWith('/')) {
+            baixarArquivo(doc.url_pdf)
+              .then(blob => { win.location.href = URL.createObjectURL(blob) })
+              .catch(() => { win.close(); setMensagem({ tom: 'erro', texto: 'Não foi possível abrir a cópia local da nota.' }) })
+          } else {
+            win.location.href = doc.url_pdf
+          }
+        }
         else if (win) win.close()
         if (!doc.gateway_online) setMensagem({ tom: 'erro', texto: doc.mensagem })
         else if (!doc.url_pdf) setMensagem({ tom: 'erro', texto: 'Documento ainda indisponível na NFE.io.' })
@@ -225,7 +237,10 @@ function NotasServicoTab({ canceladas }: { canceladas: boolean }) {
       id: 'arquivos',
       header: 'Arquivos',
       enableSorting: false,
-      cell: ({ row }) => <ArquivosCell pdf={row.original.arquivo_pdf} xml={row.original.arquivo_xml} />,
+      cell: ({ row }) => (
+        <ArquivosCell pdf={row.original.arquivo_pdf} xml={row.original.arquivo_xml}
+                      nome={row.original.numero} />
+      ),
     },
     {
       id: 'acoes',
@@ -334,7 +349,10 @@ function NotasRecebidasTab() {
       id: 'arquivos',
       header: 'Arquivos',
       enableSorting: false,
-      cell: ({ row }) => <ArquivosCell pdf={row.original.arquivo_pdf} xml={row.original.arquivo_xml} />,
+      cell: ({ row }) => (
+        <ArquivosCell pdf={row.original.arquivo_pdf} xml={row.original.arquivo_xml}
+                      nome={row.original.numero_nota} />
+      ),
     },
   ], [])
 
@@ -357,23 +375,32 @@ function NotasRecebidasTab() {
 }
 
 /** Links de download de PDF/XML — só aparecem quando o arquivo existe na NF. */
-function ArquivosCell({ pdf, xml }: { pdf: string | null; xml: string | null }) {
+/**
+ * PDF e XML da nota.
+ *
+ * **D70:** os dois deixaram de ser caminhos de `/media/` e passaram a ser a URL
+ * da porta única, que exige token — `<a href>` chegaria sem `Authorization`.
+ * Baixar por XHR também dá o nome certo ao arquivo salvo: a URL gateada termina
+ * em `/nfse_pdf/12/`, e sem `download` o browser salvaria "12".
+ */
+function ArquivosCell({ pdf, xml, nome }: { pdf: string | null; xml: string | null; nome?: string | null }) {
   if (!pdf && !xml) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>
+  const base = nome ? `nota-${nome}` : 'nota-fiscal'
   return (
     <div className="flex items-center gap-2">
       {pdf && (
-        <a href={pdf} target="_blank" rel="noopener noreferrer"
+        <button type="button" onClick={() => baixarParaDisco(pdf, `${base}.pdf`)}
           className="inline-flex items-center gap-1 text-xs font-semibold"
-          style={{ color: '#b91c1c', textDecoration: 'none' }}>
+          style={{ color: '#b91c1c', textDecoration: 'none', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
           <FileDown size={14} /> PDF
-        </a>
+        </button>
       )}
       {xml && (
-        <a href={xml} target="_blank" rel="noopener noreferrer"
+        <button type="button" onClick={() => baixarParaDisco(xml, `${base}.xml`)}
           className="inline-flex items-center gap-1 text-xs font-semibold"
-          style={{ color: '#0369a1', textDecoration: 'none' }}>
+          style={{ color: '#0369a1', textDecoration: 'none', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
           <FileCode2 size={14} /> XML
-        </a>
+        </button>
       )}
     </div>
   )

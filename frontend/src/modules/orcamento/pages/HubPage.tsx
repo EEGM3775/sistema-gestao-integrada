@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import {
   AlertTriangle, ArrowUpRight, Building2, CalendarRange, Database, FileSpreadsheet,
-  Layers, Lock, PieChart, TrendingUp,
+  Layers, Lock, Percent, PieChart, TrendingUp,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { Aviso, Btn, Card, CAPS, Empty, Kpi, Loading, mono, Num, OrcStyles, Pill, SectHead } from '../ui'
@@ -13,6 +13,7 @@ import type { ControleLinha, Orcamento } from '../types'
 
 const ICONES: Record<ChavePagina, typeof Layers> = {
   orcar: FileSpreadsheet,
+  encargos: Percent,
   controlar: Layers,
   cronograma: CalendarRange,
   bases: Database,
@@ -64,7 +65,7 @@ function montarFila(orcamentos: Orcamento[], controle: ControleLinha[]): Decisao
         urgencia: 'info',
         titulo: `${orcamento.descricao} está vazio`,
         detalhe: `Rascunho v${orcamento.versao} de ${orcamento.obra_nome} criado em ${dataBR(orcamento.criado_em)}, ainda sem nenhuma linha.`,
-        paraOnde: `/app/orcamento/orcar?orcamento=${orcamento.orcamento_id}`,
+        paraOnde: `/app/orcamento/orcar/orcamento/${orcamento.orcamento_id}`,
         rotuloAcao: 'Abrir a planilha',
       })
     } else {
@@ -73,7 +74,7 @@ function montarFila(orcamentos: Orcamento[], controle: ControleLinha[]): Decisao
         urgencia: 'info',
         titulo: `${orcamento.descricao} aguarda aprovação`,
         detalhe: `Rascunho v${orcamento.versao} com ${orcamento.total_itens} linhas e ${brl(orcamento.valor_total)}. Enquanto não for aprovado, não vale como régua de custo.`,
-        paraOnde: `/app/orcamento/orcar?orcamento=${orcamento.orcamento_id}`,
+        paraOnde: `/app/orcamento/orcar/orcamento/${orcamento.orcamento_id}`,
         rotuloAcao: 'Revisar e aprovar',
       })
     }
@@ -247,7 +248,7 @@ export default function HubPage() {
                   <tr key={o.orcamento_id} className="orc-linha">
                     <td style={{ padding: '10px 14px', borderBottom: '1px solid var(--line-2)', color: 'var(--ink-2)' }}>{o.obra_nome}</td>
                     <td style={{ padding: '10px 14px', borderBottom: '1px solid var(--line-2)' }}>
-                      <Link to={`/app/orcamento/orcar?orcamento=${o.orcamento_id}`} style={{ color: 'var(--ink)', fontWeight: 600, textDecoration: 'none' }}>
+                      <Link to={`/app/orcamento/orcar/orcamento/${o.orcamento_id}`} style={{ color: 'var(--ink)', fontWeight: 600, textDecoration: 'none' }}>
                         {o.descricao}
                       </Link>
                     </td>

@@ -1,9 +1,9 @@
 from django.apps import AppConfig
 
 
-class ModuloApsConfig(AppConfig):
+class ModuloPranchetaConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
-    name = "moduloaps"
-    verbose_name = "APS — Acompanhamento de Serviços"
+    name = "moduloprancheta"
+    verbose_name = "Prancheta — Projetos e Modelos"
     # Código do módulo no catálogo da IAM (entitlement camada 1)
-    module_code = "aps"
+    module_code = "prancheta"

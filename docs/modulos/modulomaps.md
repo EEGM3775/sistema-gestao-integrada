@@ -123,6 +123,19 @@ consumidor** e já devolve `fonte` — com um `geocodificar()` que retorna `(pon
 Orçamento declarar `cobertura_pct` e `realizado_cobertura`. Um mapa que mostra a obra no meio da
 cidade porque só sabia o município, com a mesma confiança de um ponto de porta, mente.
 
+**O degrau 4 está inerte com o provedor grátis, e isso muda o que se vê na tela.** A BrasilAPI v2
+responde `location: {"type": "Point", "coordinates": {}}` — objeto vazio — para os CEPs medidos
+(Salvador, Belo Horizonte, Curitiba, São Paulo, Rio), todos servidos pelo `open-cep`:
+`coordenada_por_cep` lê `coordinates.longitude/latitude`, não acha e devolve `None`. O código está
+correto e degrada como desenhado — o que falta é **dado do provedor**. A consequência é de produto:
+na configuração padrão (sem `NOMINATIM_URL`) a cascata tem só **dois degraus vivos**, `exata`
+(pin/EXIF) e `municipio` (centroide do IBGE), então todo endereço geocodificado sozinho vira pin no
+centro da cidade e a fila `precisao_grosseira` nasce cheia — corretamente, porque a precisão é
+declarada, mas com trabalho manual que o cliente não pediu. As saídas, em ordem de custo: **Nominatim
+self-host** (§9), que resolve o degrau 3 e torna o 4 dispensável; trocar o provedor de CEP por um com
+coordenada de verdade; ou aceitar o pin de município contando com o arrasto à mão. A medida para
+decidir é a contagem de `precisao_grosseira` na fila de decisão dos primeiros clientes reais.
+
 ## 6. Endpoints (`/api/maps/`)
 
 | Rota | Verbo de domínio |
@@ -239,7 +252,7 @@ inertes**, como as demais — medem e cobram, não travam.
 | **MAP.3** | `Ortofoto` (índice + bbox + COG/TiTiler) sobreposta ao mapa; `Camada`/`Feicao` com `data_referencia` para o antes/depois | **3** (ortofoto) · **4** |
 | **MAP.4** | `PlanoVoo` (grid/duplo/perímetro/orbital/corredor, GSD→altura) + exportação KML · MAVLink `.plan` · Litchi CSV · DJI WPML | **3** (voo) |
 | **MAP.5** | Detecção de endereço em texto → conferência pelo `funcoesimpexp`; endereço do XML da NF-e georreferenciando fornecedor | **5** |
-| **MAP.6** | E2E vivo pelo gateway ([map6_maps_test.py](../../infra/gateway/map6_maps_test.py)) — as duas metades do gate com token real, cascata contra a rede, seam do SCM, tile gateado, R1 do motor | fecha 1–5 |
+| **MAP.6** | E2E vivo pelo gateway ([map6_maps_test.py](../../testes/e2e/map6_maps_test.py)) — as duas metades do gate com token real, cascata contra a rede, seam do SCM, tile gateado, R1 do motor | fecha 1–5 |
 | **MAP.7** | `CamadaExterna` (CAR/SICAR, SIGEF, IBGE, zoneamento) + seam do banco de terrenos | **6** / expansão §7 |
 
 ## 12. Decisões registradas
@@ -252,7 +265,10 @@ inertes**, como as demais — medem e cobram, não travam.
 - **Precisão e procedência sempre visíveis** — pin de centroide não se parece com pin de porta.
 - **A extensão do banco vem do `template1`, pelo superuser** (§3) — não de migration, porque o role
   de aplicação é comum de propósito.
-- **Ordem de rota por heurística própria; OR-Tools só com frota/capacidade** (§9).
+- **Ordem de rota por heurística própria; OR-Tools só com frota/capacidade** (§9). O sinal concreto de
+  que chegou a hora de trocar é o modelo, não a intuição: a `Rota` ganhar veículo/motorista, ou a
+  `carga_kg` da `ParadaRota` deixar de ser registro e passar a valer como restrição — aí o problema
+  virou VRPTW e troca de pares não basta mais.
 - **O tile da ortofoto é servido pelo backend, com gate** — a alternativa (mandar o browser no COG do
   drone) ampliaria para todo o acervo histórico a superfície pública do `/chunks/*/assets/*`, que é
   `permitAll` por desenho do visualizador (**S10**). Custa um salto de rede e vale.
@@ -268,8 +284,12 @@ inertes**, como as demais — medem e cobram, não travam.
 ## 13. Questões em aberto (decidir antes da sub-fase relevante)
 
 - **MAP.5** — a escalada da extração de endereço em texto livre para em qual degrau? Hoje há regex
-  ancorado no CEP (que valida contra o ViaCEP) e o parsing do XML da NF-e. A LLM local (§7) só se
-  paga se a conferência linha a linha mostrar volume de texto que o regex não alcança — a régua R1
-  do motor existe justamente para a extração poder ser imperfeita.
+  ancorado no CEP (que valida contra o ViaCEP) e o parsing do XML da NF-e — que não é detecção: ali o
+  endereço já vem estruturado e conferido pela SEFAZ. A LLM local (§7) só se paga se a conferência
+  linha a linha mostrar volume de texto que o regex não alcança — a régua R1 do motor existe
+  justamente para a extração poder ser imperfeita. **A medida é a contagem de linhas classificadas
+  como inválidas no histórico do motor**, e o gatilho é documento que o regex não alcança por
+  natureza: contrato sem CEP, e-mail de fornecedor, mensagem de WhatsApp. Ligar a LLM antes disso é
+  acrescentar um caminho que nenhum teste percorre e nenhum usuário pediu.
 - **MAP.7** — `CamadaExterna` (CAR/SICAR, SIGEF, zoneamento) fica fora desta leva: é a fronteira com
   o banco de terrenos da [expansão §7](../expansão/03-mapa-de-modulos.md).

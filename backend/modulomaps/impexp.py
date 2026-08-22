@@ -31,6 +31,13 @@ class LocaisGeorreferenciados(Recurso):
 
     rotulo = "Locais (georreferenciamento)"
     modulo = "maps"
+    # **Fundação, não produto vendido.** `Local` é a metade do Maps que abre para
+    # todo tenant (MAP.0): georreferenciar obra, fornecedor e almoxarifado é
+    # cadastro, e as permissões `mapa.local.*` moram no módulo `base`. Sem este
+    # `None`, o entitlement de escrita cobraria o módulo `maps` de quem só está
+    # subindo o endereço das próprias obras — o oposto do desenho das duas
+    # metades. As camadas, o acervo e o voo é que ficam atrás de `maps`.
+    entitlement = None
     # §3 — acesso total: ver o local e poder gravá-lo. Endereço de obra não é
     # PII de titular (é da empresa), então não há permissão de máscara a somar.
     permissoes_exigidas = ("mapa.local.view", "mapa.local.edit")

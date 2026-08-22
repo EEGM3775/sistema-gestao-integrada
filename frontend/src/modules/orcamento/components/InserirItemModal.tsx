@@ -1,7 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Check, Database, PackageSearch, Plus, Search, Sparkles } from 'lucide-react'
-import { Aviso, Btn, CAPS, Field, inp, Loading, Modal, mono, Pill, Select } from '../ui'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import {
+  Check, ChevronLeft, ChevronRight, Database, PackageSearch, Plus, Search, Sparkles, X,
+} from 'lucide-react'
+import {
+  Aviso, BotaoAnalitica, Btn, CAPS, Field, inp, LegendaLista, Loading, MarcaCatalogo,
+  Modal, mono, Pill, Select, Spinner,
+} from '../ui'
 import { brl, FONTE_ROTULO, num } from '../lib'
 import * as api from '../api/orcamentoApi'
 import { orcKeys } from '../api/queryKeys'
@@ -9,6 +14,116 @@ import { useBasesResumo, useComposicaoReferencia } from '../hooks'
 import type { CatalogoItem, InsumoReferencia } from '../types'
 
 type Origem = 'base' | 'catalogo' | 'novo'
+
+/** A cesta, **ao lado** da lista.
+ *
+ *  Antes o rodapé só dizia "5 item(ns) marcado(s)": um número sem rosto. Quem
+ *  marca ao longo de várias páginas e buscas perde a conta do que já pegou, e
+ *  tirar um errado exigia achá-lo de novo na lista — depois de trocar de
+ *  filtro, uma caçada. Fica na lateral, e não embaixo, para continuar visível
+ *  enquanto se rola a lista: uma cesta que sai de vista não serve de conferência.
+ *
+ *  Só **código e nome**: é o que identifica o item. Preço e unidade já estão na
+ *  linha da lista, e repeti-los aqui só encolheria o nome.
+ */
+function CestaMarcados({ referencias, catalogo, onTirarReferencia, onTirarCatalogo, onLimpar }: {
+  referencias: InsumoReferencia[]
+  catalogo: CatalogoItem[]
+  onTirarReferencia: (id: number) => void
+  onTirarCatalogo: (id: number) => void
+  onLimpar: () => void
+}) {
+  const total = referencias.length + catalogo.length
+  return (
+    <aside style={{
+      // Constante nas duas dimensões. `flex: 0 0 246px` sozinho não segura: item
+      // flex nasce com `min-width: auto`, e aí conteúdo largo (código comprido,
+      // descrição sem espaço) empurra a caixa e come a área da lista. `minWidth`
+      // e `maxWidth` explícitos tiram essa possibilidade — a cesta tem o mesmo
+      // tamanho vazia ou com cinquenta itens.
+      flex: '0 0 246px', width: 246, minWidth: 0, maxWidth: 246,
+      display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden',
+      border: '1px solid var(--line)', borderRadius: 'var(--r-sm)', background: 'var(--inset)',
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 6, padding: '7px 9px',
+        borderBottom: '1px solid var(--line)',
+      }}>
+        <span style={{ ...CAPS, fontSize: 9 }}>Marcados ({total})</span>
+        {total > 0 && (
+          <button
+            onClick={onLimpar}
+            style={{
+              marginLeft: 'auto', border: 'none', background: 'none', cursor: 'pointer',
+              color: 'var(--ink-3)', fontSize: 11, fontWeight: 650, textDecoration: 'underline',
+            }}
+          >limpar</button>
+        )}
+      </div>
+
+      {total === 0 ? (
+        <p style={{
+          padding: '14px 10px', fontSize: 11.5, color: 'var(--ink-3)', margin: 0,
+          lineHeight: 1.5, overflowWrap: 'anywhere',
+        }}>
+          Nada marcado ainda. Clique numa linha da lista para trazer o item para cá.
+        </p>
+      ) : (
+        <div style={{
+          flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain',
+          scrollbarGutter: 'stable', padding: 6, display: 'flex', flexDirection: 'column', gap: 4,
+        }} className="orc-grade">
+          {referencias.map(r => (
+            <LinhaCesta key={`ref-${r.referencia_id}`} codigo={r.codigo} nome={r.descricao}
+              onTirar={() => onTirarReferencia(r.referencia_id)} />
+          ))}
+          {catalogo.map(i => (
+            <LinhaCesta key={`cat-${i.item_id}`} codigo={i.codigo_interno} nome={i.descricao} doCatalogo
+              onTirar={() => onTirarCatalogo(i.item_id)} />
+          ))}
+        </div>
+      )}
+    </aside>
+  )
+}
+
+function LinhaCesta({ codigo, nome, doCatalogo, onTirar }: {
+  codigo: string; nome: string; doCatalogo?: boolean; onTirar: () => void
+}) {
+  return (
+    <span
+      title={`${codigo} — ${nome}`}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 6, padding: '4px 4px 4px 7px',
+        minWidth: 0, maxWidth: '100%', overflow: 'hidden',
+        borderRadius: 'var(--r-sm)', background: 'var(--surface)', border: '1px solid var(--line-2)',
+      }}
+    >
+      {/* O código também tem teto: um `PMSP-01.02.003` longo não pode espremer o
+          nome até sumir, nem alargar a cesta. */}
+      <span style={{
+        ...mono, fontSize: 10.5, flex: '0 1 auto', maxWidth: 78,
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        color: doCatalogo ? 'var(--net-ink)' : 'var(--ink-3)',
+      }}>{codigo}</span>
+      {/* `title` também no nome, e não só na linha: a descrição da SINAPI passa
+          de 130 caracteres e o que se vê aqui é sempre um pedaço. */}
+      <span title={nome} style={{
+        flex: 1, minWidth: 0, fontSize: 11.5, color: 'var(--ink-2)',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'help',
+      }}>{nome}</span>
+      <button
+        onClick={onTirar}
+        title="Desmarcar"
+        aria-label={`Desmarcar ${codigo}`}
+        style={{
+          flex: 'none', border: 'none', background: 'none', cursor: 'pointer', padding: 2,
+          display: 'flex', color: 'var(--ink-3)', borderRadius: 999,
+        }}
+      ><X size={12} /></button>
+    </span>
+  )
+}
 
 export interface Escolha { itemCatalogoId: number; descricao: string }
 
@@ -33,15 +148,41 @@ export default function InserirItemModal({ onFechar, onInserir, inserindo }: {
     if (baseId === '' && bases && bases.length > 0) setBaseId(bases[0].base_id)
   }, [bases, baseId])
 
+  // 100 é o teto do servidor (`PAGINA_MAXIMA["orcamento"]` em planos.py), então
+  // "a lista toda" não cabe numa requisição: 12,5 mil linhas viriam em 126. O que
+  // dá para oferecer é o controle — quantos por vez e ir e voltar de página —
+  // sem obrigar ninguém a saber o código de cor para achar o que quer.
+  const POR_PAGINA = [25, 50, 100]
+  const [porPagina, setPorPagina] = useState(50)
+  const [pagina, setPagina] = useState(1)
+  const listaRef = useRef<HTMLDivElement>(null)
+
+  // Filtro que muda invalida a página em que se estava: manter `pagina=7` depois
+  // de digitar uma busca de 3 resultados devolveria uma lista vazia.
+  useEffect(() => { setPagina(1) }, [baseId, busca, tipo, porPagina])
+
   const paramsRef = useMemo(
-    () => ({ base: baseId || undefined, search: busca || undefined, tipo: tipo || undefined, page_size: 40 }),
-    [baseId, busca, tipo],
+    () => ({
+      base: baseId || undefined, search: busca || undefined, tipo: tipo || undefined,
+      page_size: porPagina, page: pagina,
+    }),
+    [baseId, busca, tipo, porPagina, pagina],
   )
   const referencias = useQuery({
     queryKey: orcKeys.referencias.list(paramsRef),
     queryFn: () => api.referencias.listar(paramsRef),
     enabled: origem === 'base' && baseId !== '',
+    placeholderData: keepPreviousData,
   })
+  const total = referencias.data?.count ?? 0
+  const totalPaginas = Math.max(1, Math.ceil(total / porPagina))
+
+  const irPara = (n: number) => {
+    setPagina(Math.min(Math.max(1, n), totalPaginas))
+    // Sem isto a página nova começa na altura de rolagem da anterior, e parece
+    // que nada aconteceu.
+    listaRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+  }
   const catalogo = useQuery({
     queryKey: orcKeys.catalogo(busca),
     queryFn: () => api.buscarNoCatalogo(busca),
@@ -63,6 +204,20 @@ export default function InserirItemModal({ onFechar, onInserir, inserindo }: {
         const resultado = await api.adotarLote([...marcados.keys()])
         for (const item of resultado.itens ?? []) {
           escolhas.push({ itemCatalogoId: item.item_id, descricao: item.descricao })
+        }
+        // D110 — o que não conferiu não foi adotado, e portanto não vai virar
+        // linha. Sair daqui em silêncio faria o orçamentista marcar cinco itens,
+        // ver quatro na planilha e não saber do quinto; a marca do quinto é o
+        // aviso, não a ausência dele.
+        const divergentes = resultado.divergentes ?? []
+        if (divergentes.length) {
+          setErro(
+            `${divergentes.length} item(ns) não foram adotados: o código já existe no seu `
+            + 'catálogo descrevendo outro insumo ('
+            + divergentes.map(d => `${d.codigo} — "${d.descricao_catalogo}" × "${d.descricao_publicacao}"`).join('; ')
+            + '). Confira em Bases & bancos antes de inserir.',
+          )
+          if (!escolhas.length && !marcadosCatalogo.size) return
         }
       }
       for (const item of marcadosCatalogo.values()) {
@@ -102,7 +257,11 @@ export default function InserirItemModal({ onFechar, onInserir, inserindo }: {
     <Modal
       titulo="Inserir item na planilha"
       onClose={onFechar}
-      largura={880}
+      // 880 apertava: a lista tem 6 colunas e a cesta ocupa 246 fixos. Em
+      // 1240 a descrição da composição — que passa de 130 caracteres — cabe
+      // muito mais antes das reticências. O `maxWidth` do Modal continua
+      // convivendo com `width: 100%`, então em tela estreita ele encolhe.
+      largura={1240}
       rodape={
         <>
           <span style={{ marginRight: 'auto', fontSize: 12, color: 'var(--ink-3)' }}>
@@ -168,7 +327,30 @@ export default function InserirItemModal({ onFechar, onInserir, inserindo }: {
                 </div>
               </div>
 
-              <div style={{ maxHeight: 330, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 'var(--r-sm)' }}>
+              {/* `height` fixa, não `maxHeight`: sem altura própria, a linha flex
+                  assume a do filho mais alto — a cesta crescia a cada item marcado
+                  e empurrava a lista para fora da tela. Com altura constante, o
+                  bloco não muda de tamanho, marcado ou vazio, e cada coluna rola
+                  por dentro. */}
+              <div style={{
+                display: 'flex', gap: 10, alignItems: 'stretch',
+                height: 'min(62vh, 660px)', minHeight: 0,
+              }}>
+              <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+              <div
+                ref={listaRef}
+                className="orc-grade"
+                style={{
+                  flex: 1, minHeight: 0,
+                  overflowY: 'auto',
+                  // O que fazia o scroll "pegar": ao chegar no fim da lista a
+                  // rolagem vazava para a página atrás do modal (scroll chaining).
+                  overscrollBehavior: 'contain',
+                  // Sem isto a lista salta lateralmente quando a barra aparece.
+                  scrollbarGutter: 'stable',
+                  border: '1px solid var(--line)', borderRadius: 'var(--r-sm)',
+                }}
+              >
                 {referencias.isLoading ? <Loading /> : (referencias.data?.results.length ?? 0) === 0 ? (
                   <div style={{ padding: 26, textAlign: 'center', fontSize: 13, color: 'var(--ink-3)' }}>
                     Nada encontrado nesta publicação.
@@ -196,18 +378,18 @@ export default function InserirItemModal({ onFechar, onInserir, inserindo }: {
                           {FONTE_ROTULO[r.base_fonte]}
                         </span>
                         <span style={{ ...mono, fontSize: 11.5, color: 'var(--ink-3)', flex: '0 0 74px' }}>{r.codigo}</span>
-                        <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <span title={r.descricao} style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {r.descricao}
                         </span>
-                        {r.tipo === 'composicao' && (
-                          <button
+                        {/* Espaço reservado mesmo quando é insumo: sem isso as
+                            colunas seguintes mudam de lugar a cada linha. */}
+                        {r.tipo === 'composicao' ? (
+                          <BotaoAnalitica
+                            aberto={espiando === r.referencia_id}
                             onClick={e => { e.stopPropagation(); setEspiando(espiando === r.referencia_id ? null : r.referencia_id) }}
-                            style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--net-ink)', fontSize: 11.5, fontWeight: 650 }}
-                          >
-                            {espiando === r.referencia_id ? 'fechar' : 'ver analítica'}
-                          </button>
-                        )}
-                        {r.adotado_item_id && <Pill kind="good">já no catálogo</Pill>}
+                          />
+                        ) : <span style={{ flex: '0 0 18px' }} />}
+                        <MarcaCatalogo adotado={!!r.adotado_item_id} />
                         <span style={{ ...mono, fontSize: 11.5, color: 'var(--ink-3)', flex: '0 0 38px', textAlign: 'center' }}>{r.unidade}</span>
                         <span style={{ ...mono, fontSize: 12.5, color: 'var(--ink)', flex: '0 0 104px', textAlign: 'right' }}>{brl(r.custo_unitario)}</span>
                       </div>
@@ -246,6 +428,54 @@ export default function InserirItemModal({ onFechar, onInserir, inserindo }: {
                   )
                 })}
               </div>
+              {total > 0 && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                  marginTop: 9, fontSize: 11.5, color: 'var(--ink-3)',
+                }}>
+                  <span>
+                    <b style={{ color: 'var(--ink-2)' }}>{total.toLocaleString('pt-BR')}</b> itens
+                    {' · '}página {pagina.toLocaleString('pt-BR')} de {totalPaginas.toLocaleString('pt-BR')}
+                  </span>
+                  <LegendaLista />
+
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginLeft: 'auto' }}>
+                    <span>Por página</span>
+                    <Select
+                      value={porPagina}
+                      onChange={e => setPorPagina(Number(e.target.value))}
+                      style={{ width: 74, padding: '4px 6px', fontSize: 11.5 }}
+                    >
+                      {POR_PAGINA.map(n => <option key={n} value={n}>{n}</option>)}
+                    </Select>
+                  </span>
+
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    <Btn variant="ghost" tam="sm" onClick={() => irPara(1)}
+                      disabled={pagina <= 1} title="Primeira página">«</Btn>
+                    <Btn variant="ghost" tam="sm" onClick={() => irPara(pagina - 1)}
+                      disabled={pagina <= 1} title="Página anterior">
+                      <ChevronLeft size={13} />
+                    </Btn>
+                    <Btn variant="ghost" tam="sm" onClick={() => irPara(pagina + 1)}
+                      disabled={pagina >= totalPaginas} title="Próxima página">
+                      <ChevronRight size={13} />
+                    </Btn>
+                    <Btn variant="ghost" tam="sm" onClick={() => irPara(totalPaginas)}
+                      disabled={pagina >= totalPaginas} title="Última página">»</Btn>
+                    {referencias.isFetching && <Spinner />}
+                  </span>
+                </div>
+              )}
+              </div>
+              <CestaMarcados
+                referencias={[...marcados.values()]}
+                catalogo={[...marcadosCatalogo.values()]}
+                onTirarReferencia={id => setMarcados(m => { const p = new Map(m); p.delete(id); return p })}
+                onTirarCatalogo={id => setMarcadosCatalogo(m => { const p = new Map(m); p.delete(id); return p })}
+                onLimpar={() => { setMarcados(new Map()); setMarcadosCatalogo(new Map()) }}
+              />
+              </div>
               <p style={{ fontSize: 11.5, color: 'var(--ink-3)', marginTop: 9, display: 'flex', gap: 6, alignItems: 'flex-start' }}>
                 <Sparkles size={13} style={{ flex: 'none', marginTop: 1 }} />
                 Inserir da base <b>adota</b> o item no catálogo da empresa (cópia editável) — a base
@@ -268,7 +498,18 @@ export default function InserirItemModal({ onFechar, onInserir, inserindo }: {
               style={{ ...inp, paddingLeft: 30 }}
             />
           </div>
-          <div style={{ maxHeight: 330, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 'var(--r-sm)' }}>
+          <div style={{
+            display: 'flex', gap: 10, alignItems: 'stretch',
+            height: 'min(62vh, 660px)', minHeight: 0,
+          }}>
+          <div
+            className="orc-grade"
+            style={{
+              flex: 1, minWidth: 0, overflowY: 'auto',
+              overscrollBehavior: 'contain', scrollbarGutter: 'stable',
+              border: '1px solid var(--line)', borderRadius: 'var(--r-sm)',
+            }}
+          >
             {catalogo.isLoading ? <Loading /> : (catalogo.data ?? []).length === 0 ? (
               <div style={{ padding: 26, textAlign: 'center', fontSize: 13, color: 'var(--ink-3)' }}>
                 Nenhum item no catálogo com esse termo.
@@ -295,7 +536,7 @@ export default function InserirItemModal({ onFechar, onInserir, inserindo }: {
                   <span style={{ ...mono, fontSize: 11.5, color: 'var(--ink-3)', flex: '0 0 96px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {item.codigo_interno}
                   </span>
-                  <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span title={item.descricao} style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {item.descricao}
                   </span>
                   {item.fonte_referencia && <Pill kind="slate">{FONTE_ROTULO[item.fonte_referencia]} {item.codigo_referencia}</Pill>}
@@ -303,6 +544,14 @@ export default function InserirItemModal({ onFechar, onInserir, inserindo }: {
                 </div>
               )
             })}
+          </div>
+          <CestaMarcados
+            referencias={[...marcados.values()]}
+            catalogo={[...marcadosCatalogo.values()]}
+            onTirarReferencia={id => setMarcados(m => { const p = new Map(m); p.delete(id); return p })}
+            onTirarCatalogo={id => setMarcadosCatalogo(m => { const p = new Map(m); p.delete(id); return p })}
+            onLimpar={() => { setMarcados(new Map()); setMarcadosCatalogo(new Map()) }}
+          />
           </div>
         </>
       )}
@@ -322,8 +571,10 @@ export default function InserirItemModal({ onFechar, onInserir, inserindo }: {
             <Field label="Tipo">
               <Select value={novo.tipo} onChange={e => setNovo(n => ({ ...n, tipo: e.target.value }))} style={{ width: '100%', maxWidth: 'none' }}>
                 <option value="material">Material</option>
-                <option value="servico">Serviço</option>
+                <option value="mao_de_obra">Mão de obra</option>
                 <option value="equipamento">Equipamento / Ferramenta</option>
+                <option value="encargos_complementares">Encargos complementares</option>
+                <option value="servico">Serviço de terceiro</option>
                 <option value="composicao">Composição</option>
                 <option value="epi">EPI</option>
               </Select>
@@ -337,6 +588,7 @@ export default function InserirItemModal({ onFechar, onInserir, inserindo }: {
           </Aviso>
         </>
       )}
+
     </Modal>
   )
 }

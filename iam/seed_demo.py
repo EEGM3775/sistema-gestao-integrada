@@ -14,9 +14,10 @@ Papéis de fábrica: criados por `sync_authz` a partir dos templates do catálog
 comercial, engenharia, campo, drone_analista, auditor, gestor_lixo, operacional).
 
 Usuários:
-  demo     / demo123     -> tenant demo | módulos: drone,erp,crm,rh,scm,sil | papéis: financeiro + RH + suprimentos + almoxarife
+  demo     / demo123     -> tenant demo | módulos: drone,erp,crm,rh,scm,sil,orcamento,maps,prancheta | papéis: financeiro + RH + suprimentos + almoxarife + orcamentista + topografo + projetista
   semdrone / semdrone123 -> tenant demo | módulos: erp_financeiro    | papel: operacional (restrito — exercita mascaramento)
   acme     / acme123     -> tenant acme | módulos: drone             | papel: operacional
+  campo    / campo123    -> tenant demo | módulos: drone,prancheta   | papel: campo (aponta, não resolve — PRA.3)
 
 Rodar (no container):  docker compose exec -T iam python manage.py shell < iam/seed_demo.py
 """
@@ -46,6 +47,7 @@ for cod, nome in [
     ("sil", "Estoque & Logística (SIL)"),
     ("orcamento", "Orçamento de Obra"),
     ("maps", "Mapas & Território"),
+    ("prancheta", "Prancheta — Projeto em Campo"),
 ]:
     modulos[cod], _ = Modulo.objects.get_or_create(codigo=cod, defaults={"nome": nome})
 
@@ -106,12 +108,12 @@ call_command("sync_authz", all_tenants=True)
 # --- Usuários e seus papéis ---
 demo = upsert_user(
     tenant, "demo", "demo123",
-    ["drone", "erp_financeiro", "crm", "rh", "scm", "sil", "orcamento", "maps"],
+    ["drone", "erp_financeiro", "crm", "rh", "scm", "sil", "orcamento", "maps", "prancheta"],
     # Power-user: papéis cobrindo todos os módulos do tenant (erp, crm, obras, drone, rh, scm,
-    # sil, orcamento, maps).
+    # sil, orcamento, maps, prancheta).
     ["financeiro", "tesouraria", "fiscal", "comercial", "engenharia",
      "drone_analista", "rh_gestor", "rh_medico", "rh_financeiro", "suprimentos", "almoxarife",
-     "orcamentista", "topografo"],
+     "orcamentista", "topografo", "projetista"],
 )
 semdrone = upsert_user(tenant, "semdrone", "semdrone123", ["erp_financeiro"], ["operacional"])
 # O `engenharia` aqui não é enfeite: é o único ator do seed capaz de provar a
@@ -121,7 +123,21 @@ semdrone = upsert_user(tenant, "semdrone", "semdrone123", ["erp_financeiro"], ["
 # que georreferenciar a obra continua valendo para quem não comprou o módulo,
 # enquanto camada/voo/rota ficam atrás dele. Sem este papel, o `is_tenant_admin`
 # seria o único candidato, e ele herda TODOS os módulos do tenant.
+#
+# O mesmo ator prova, de graça, o gate da **Prancheta** (PRA.0), e prova o
+# contraste: `engenharia` também declara `prancheta.documento.view`, mas o acme
+# não assina `prancheta`, então a trava anti-escalada corta essa permissão e o
+# acervo de projeto fecha em 403 — enquanto `mapa.local.*` sobrevive. Um módulo
+# com fundação e um sem, lado a lado, com o mesmo usuário.
 acme = upsert_user(acme_tenant, "acme", "acme123", ["drone"], ["operacional", "engenharia"])
+# O ator do canteiro — e o único capaz de provar a segregação da PRA.3 com token
+# real. A persona `campo` traz `prancheta.marcacao.view`+`.edit` e **não** traz
+# `.resolver`: apontar o problema é o trabalho dele, declarar que acabou não é.
+# O `demo` não serve para isso (tem `projetista`, que traz `prancheta.marcacao.*`)
+# e o `admin` menos ainda (`is_tenant_admin` herda o catálogo inteiro) — é a mesma
+# lição do MAP.6, onde o seed não tinha ator para separar os dois eixos do gate e
+# o E2E teve de esperar um re-seed.
+campo = upsert_user(tenant, "campo", "campo123", ["drone", "prancheta"], ["campo"])
 # Admin do tenant 'demo': gere papéis/personas e permissões na tela de Administração.
 admin = upsert_user(
     tenant, "admin", "admin123", ["drone", "erp_financeiro", "crm", "rh"], [], is_admin=True
@@ -133,3 +149,5 @@ print("            permissoes:", len(demo.permissoes_efetivas()), "codigos")
 print("  admin    -> tenant_admin:", admin.is_tenant_admin, "| permissoes:", len(admin.permissoes_efetivas()))
 print("  semdrone -> modulos:", semdrone.modulos_efetivos(), "| papeis:", semdrone.nomes_perfis())
 print("  acme     -> modulos:", acme.modulos_efetivos(), "| papeis:", acme.nomes_perfis())
+print("  campo    -> modulos:", campo.modulos_efetivos(), "| papeis:", campo.nomes_perfis(),
+      "| resolve marcacao:", "prancheta.marcacao.resolver" in campo.permissoes_efetivas())

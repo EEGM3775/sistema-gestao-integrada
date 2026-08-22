@@ -10,8 +10,11 @@ O único verbo de escrita do módulo nesta fatia é **adotar**, e ele não escre
 base: escreve no `catalogo.Item` **do tenant**. Por isso exige permissão própria
 (`orcamento.base.adotar`) e não o `.edit` do recurso.
 """
+from django.db import transaction
 from django.db.models import Count, Q
+from django.utils.dateparse import parse_date
 from django_filters.rest_framework import DjangoFilterBackend
+from nucleo.busca import BuscaSemAcento
 from rest_framework import (
     exceptions,
     filters,
@@ -33,10 +36,14 @@ from . import (
     bancos as servico_bancos,
     controle,
     duplicacao,
+    encargos,
     exportacao,
+    insumos as servico_insumos,
     nbr12721,
     planilha,
     precificacao,
+    quantitativos,
+    reajuste,
     reprecificacao as servico_reprecificacao,
     services,
 )
@@ -45,18 +52,25 @@ from .models import (
     BaseReferencial,
     ComponenteBancoPreco,
     ComposicaoBDI,
+    ComposicaoEncargos,
     ComposicaoReferenciaItem,
+    FormulaReajuste,
+    IndiceEconomico,
     InsumoReferencia,
     ItemBancoPreco,
     ItemOrcado,
+    LinhaMedicao,
     LinhaReprecificacao,
     MemorialNBR,
     Orcamento,
     ParametroObra,
     ParcelaEtapa,
+    ParcelaFormulaReajuste,
     PastaComposicao,
     PavimentoObra,
     Reprecificacao,
+    RubricaEncargos,
+    ValorIndice,
     RevisaoOrcamento,
     UnidadeAutonoma,
 )
@@ -66,20 +80,27 @@ from .serializers import (
     BaseReferencialSerializer,
     ComponenteBancoPrecoSerializer,
     ComposicaoBDISerializer,
+    ComposicaoEncargosSerializer,
     ComposicaoReferenciaItemSerializer,
+    FormulaReajusteSerializer,
+    IndiceEconomicoSerializer,
     InsumoReferenciaSerializer,
     ItemBancoPrecoSerializer,
     ItemOrcadoSerializer,
+    LinhaMedicaoSerializer,
     LinhaReprecificacaoSerializer,
     MemorialNBRSerializer,
     OrcamentoSerializer,
     ParametroObraSerializer,
     ParcelaEtapaSerializer,
+    ParcelaFormulaReajusteSerializer,
     PastaComposicaoSerializer,
     PavimentoObraSerializer,
     ReprecificacaoSerializer,
     RevisaoOrcamentoSerializer,
+    RubricaEncargosSerializer,
     UnidadeAutonomaSerializer,
+    ValorIndiceSerializer,
 )
 
 MODULO = "orcamento"
@@ -133,7 +154,7 @@ class InsumoReferenciaViewSet(_OrcamentoPermsMixin, viewsets.ReadOnlyModelViewSe
 
     queryset = InsumoReferencia.objects.select_related("base").all()
     serializer_class = InsumoReferenciaSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_fields = ["base", "tipo", "unidade"]
     search_fields = ["codigo", "descricao", "grupo"]
     ordering_fields = ["codigo", "descricao", "custo_unitario"]
@@ -185,13 +206,28 @@ class InsumoReferenciaViewSet(_OrcamentoPermsMixin, viewsets.ReadOnlyModelViewSe
 
     @action(detail=True, methods=["post"], url_path="adotar")
     def adotar(self, request, pk=None):
-        """Traz o item da base para o catálogo da empresa (idempotente)."""
+        """Traz o item da base para o catálogo da empresa (idempotente).
+
+        **409, não 400, quando a identidade diverge** (D110): não há nada errado
+        com o pedido nem com o dado — o código existe dos dois lados e está bem
+        formado. O que houve é conflito de identidade, e a resposta carrega os
+        dois lados justamente para quem está na tela poder olhar e decidir. A
+        decisão volta como `{"forcar": true}`.
+        """
         referencia = self.get_object()
         recursivo = request.data.get("recursivo", True) not in (False, "false", "0", 0)
+        forcar = request.data.get("forcar", False) not in (False, "false", "0", 0, None, "")
         try:
-            item = services.adotar_no_catalogo(referencia, self._tenant_id(), recursivo=recursivo)
+            item = services.adotar_no_catalogo(
+                referencia, self._tenant_id(), recursivo=recursivo, forcar=forcar
+            )
         except services.AdocaoInvalida as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except services.IdentidadeDivergente as exc:
+            return Response(
+                {"detail": str(exc), "divergencia": exc.como_dict()},
+                status=status.HTTP_409_CONFLICT,
+            )
         return Response(
             {
                 "item_id": item.item_id,
@@ -217,17 +253,22 @@ class InsumoReferenciaViewSet(_OrcamentoPermsMixin, viewsets.ReadOnlyModelViewSe
         )
         if not referencias:
             return Response({"detail": "Nenhuma referência encontrada."}, status=status.HTTP_404_NOT_FOUND)
+        forcar = request.data.get("forcar", False) not in (False, "false", "0", 0, None, "")
         try:
-            itens = services.adotar_muitos(referencias, self._tenant_id())
+            resultado = services.adotar_muitos(referencias, self._tenant_id(), forcar=forcar)
         except services.AdocaoInvalida as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        # O lote não falha por causa de um divergente: os que conferem entram e
+        # os que não conferem voltam listados, para a tela dizer quais ficaram
+        # de fora e por quê (D110).
         return Response(
             {
-                "adotados": len(itens),
+                "adotados": len(resultado.adotados),
                 "itens": [
                     {"item_id": i.item_id, "codigo_interno": i.codigo_interno, "descricao": i.descricao}
-                    for i in itens
+                    for i in resultado.adotados
                 ],
+                "divergentes": resultado.divergentes,
             },
             status=status.HTTP_201_CREATED,
         )
@@ -248,6 +289,17 @@ class BaseReferencialResumoView(views.APIView):
             .annotate(
                 insumos=Count("itens", filter=Q(itens__tipo=InsumoReferencia.Tipo.INSUMO)),
                 composicoes=Count("itens", filter=Q(itens__tipo=InsumoReferencia.Tipo.COMPOSICAO)),
+                # D111: a coluna `Classificação` só existe a partir de 01/2025.
+                # Sem ela, a adoção cai no plano B da unidade e tudo o que não é
+                # hora nem mês vira material — leitura torta de "material × mão
+                # de obra × equipamento" no orçamento inteiro. Contar aqui é o
+                # que faz a tela poder **dizer** isso em vez de o usuário
+                # descobrir olhando a analítica e estranhando.
+                insumos_classificados=Count(
+                    "itens",
+                    filter=Q(itens__tipo=InsumoReferencia.Tipo.INSUMO)
+                    & ~Q(itens__grupo=""),
+                ),
             )
             .order_by("-mes_referencia", "fonte")
         )
@@ -257,6 +309,25 @@ class BaseReferencialResumoView(views.APIView):
             .values_list("fonte_referencia")
             .annotate(total=Count("item_id"))
         )
+        # As classes distintas que cada publicação usa em INSUMO — dezenas de
+        # valores, não milhares de linhas, então cabe numa consulta e roda em
+        # memória. Sem isto, `classifica_insumo` significava só "a coluna veio
+        # preenchida", e uma base de vocabulário próprio (ORSE, SICRO, tabela de
+        # prefeitura) acendia o indicador verde enquanto **nenhuma** das classes
+        # dela era compreendida — falso "está tudo certo", que é pior do que a
+        # publicação antiga, onde o campo vazio ao menos era evidente.
+        # O `distinct()` do banco separa "Agregados" de "Agregados " — para o
+        # SQL são textos diferentes, e a lista sairia com a mesma classe duas
+        # vezes. Quem deduplica é o `set` sobre o texto já aparado.
+        desconhecidas_por_base: dict[int, set[str]] = {}
+        for base_id, grupo in (
+            InsumoReferencia.objects.filter(tipo=InsumoReferencia.Tipo.INSUMO)
+            .exclude(grupo="")
+            .values_list("base_id", "grupo")
+            .distinct()
+        ):
+            if services.classificacao_desconhecida(grupo):
+                desconhecidas_por_base.setdefault(base_id, set()).add(grupo.strip())
         return Response([
             {
                 "base_id": b.base_id,
@@ -267,6 +338,22 @@ class BaseReferencialResumoView(views.APIView):
                 "regime_encargos": b.regime_encargos,
                 "insumos": b.insumos,
                 "composicoes": b.composicoes,
+                "insumos_classificados": b.insumos_classificados,
+                # As classes que a publicação usa e que o de-para de
+                # `PREFIXOS_DE_CLASSE` não conhece, com o texto literal — é o que
+                # a tela mostra para alguém decidir se aquilo vira mapeamento ou
+                # `--de-para`.
+                "classes_desconhecidas": sorted(desconhecidas_por_base.get(b.base_id, set()))[:12],
+                # Publicação sem insumo nenhum não "deixa de classificar" — não
+                # há o que classificar. O `False` é reservado para a publicação
+                # que **tem** insumo e cuja classificação não chega até a
+                # natureza: ou porque o campo vem vazio (D111), ou porque veio
+                # num vocabulário que não sabemos ler — que dá no mesmo para
+                # quem orça, e por isso acende o mesmo aviso.
+                "classifica_insumo": (
+                    b.insumos == 0
+                    or (b.insumos_classificados > 0 and b.base_id not in desconhecidas_por_base)
+                ),
                 "adotados_no_catalogo": adotados_por_fonte.get(b.fonte, 0),
             }
             for b in bases
@@ -318,7 +405,7 @@ class OrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.
 
     queryset = Orcamento.objects.select_related("obra", "base_referencial").all()
     serializer_class = OrcamentoSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_fields = ["obra", "status", "versao", "base_referencial"]
     search_fields = ["descricao", "obra__nome_obra"]
     ordering_fields = ["criado_em", "valor_total", "versao"]
@@ -328,6 +415,7 @@ class OrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.
         "revisar": "orcamento.orcamento.revisar",
         "recalcular": "orcamento.orcamento.edit",
         "arvore": "orcamento.orcamento.view",
+        "analitica": "orcamento.orcamento.view",
         # Relatórios de controle sob `relatorio.view`; mexer no cronograma é
         # editar o orçamento. Os dois reusam as 9 permissões do catálogo em vez
         # de criar `orcamento.cronograma.*` — permissão nova exige rebuild da
@@ -345,7 +433,14 @@ class OrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.
         "copiar_itens": "orcamento.orcamento.edit",
         "reprecificar": "orcamento.orcamento.edit",
         "reprecificacoes": "orcamento.orcamento.view",
+        "avisos": "orcamento.orcamento.view",
         "exportar": "orcamento.relatorio.view",
+        # ORC.7 — quatro leituras novas, todas relatório. Continuam sem
+        # permissão nova pelo mesmo motivo de sempre.
+        "relacao_insumos": "orcamento.relatorio.view",
+        "curva_abc_insumos": "orcamento.relatorio.view",
+        "desembolso_insumos": "orcamento.relatorio.view",
+        "cobertura_medicao": "orcamento.relatorio.view",
     }
 
     def perform_update(self, serializer):
@@ -357,6 +452,18 @@ class OrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.
         feitas. Cancele (ou revise) em vez de apagar."""
         _exigir_editavel(instance)
         instance.delete()
+
+    @action(detail=True, methods=["get"], url_path="avisos")
+    def avisos(self, request, pk=None):
+        """Linhas com preço mais velho que a data-base que a planilha anuncia.
+
+        Fica no **orçamento**, e não no lote de reprecificação, porque é a
+        planilha que vai para a licitação: quem abre o arquivo meses depois
+        precisa ver o defeito sem ir atrás do histórico de lotes.
+        """
+        return Response(
+            servico_reprecificacao.avisos_de_data_base(self.get_object())
+        )
 
     @action(detail=True, methods=["get"], url_path="arvore")
     def arvore(self, request, pk=None):
@@ -376,6 +483,20 @@ class OrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.
             "orcamento": self.get_serializer(orcamento).data,
             "itens": ItemOrcadoSerializer(itens, many=True).data,
         })
+
+    @action(detail=True, methods=["get"], url_path="analitica")
+    def analitica(self, request, pk=None):
+        """A composição de **todas** as linhas, indexada pelo id da linha.
+
+        É o que a grade desenha embaixo de cada serviço no modo analítico — a
+        convenção da SINAPI, onde sintético e analítico são a mesma planilha
+        vista com e sem a composição, e não dois recortes da EAP.
+
+        Resposta separada da `arvore/` de propósito: trocar de modo na tela não
+        pode jogar fora a árvore já carregada nem esperar por ela de novo, e
+        quem só lê a planilha nunca chega a pedir esta.
+        """
+        return Response(precificacao.analitica_por_linha(self.get_object()))
 
     @action(detail=True, methods=["post"], url_path="recalcular")
     def recalcular(self, request, pk=None):
@@ -403,8 +524,54 @@ class OrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.
 
         Só vê linha explodida, então a resposta carrega a `cobertura_pct` — a
         tela mostra o gráfico e diz de quanto da planilha ele fala.
+
+        Com `?por_etapa=1` (ORC.7) o corte desce para a etapa, que é o que
+        transforma o gráfico em decisão: uma obra 60% material no total pode ser
+        90% mão de obra no acabamento, e é essa etapa que precisa de efetivo
+        contratado com antecedência.
         """
+        if request.query_params.get("por_etapa") in ("1", "true", "True"):
+            return Response(
+                servico_insumos.resumo_por_natureza(self.get_object(), por_etapa=True)
+            )
         return Response(precificacao.custo_por_categoria(self.get_object()))
+
+    # --- ORC.7: o orçamento visto por insumo ---
+
+    @action(detail=True, methods=["get"], url_path="relacao-insumos")
+    def relacao_insumos(self, request, pk=None):
+        """A **lista de compra da obra**: cada insumo uma vez, com quantidade total.
+
+        É a saída que o SCM consome para gerar `Demanda` — e a peça que faltava
+        para a planilha virar entrada do suprimento em vez de documento parado.
+        Aceita `?categoria=material` para separar o que se compra do que se
+        contrata.
+        """
+        return Response(servico_insumos.relacao_de_insumos(
+            self.get_object(), categoria=request.query_params.get("categoria") or None,
+        ))
+
+    @action(detail=True, methods=["get"], url_path="curva-abc-insumos")
+    def curva_abc_insumos(self, request, pk=None):
+        """Curva ABC **de insumos** — onde negociar preço.
+
+        Complementa a de serviços, que diz onde negociar escopo. O aço diluído
+        em nove serviços nunca aparece como item A na curva de serviços, e é
+        item A da obra.
+        """
+        return Response(servico_insumos.curva_abc_insumos(self.get_object()))
+
+    @action(detail=True, methods=["get"], url_path="desembolso-insumos")
+    def desembolso_insumos(self, request, pk=None):
+        """Quanto de cada insumo cai em cada mês, herdando o cronograma da etapa."""
+        return Response(controle.desembolso_por_insumo(
+            self.get_object(), categoria=request.query_params.get("categoria") or None,
+        ))
+
+    @action(detail=True, methods=["get"], url_path="cobertura-medicao")
+    def cobertura_medicao(self, request, pk=None):
+        """Quanto do custo tem quantidade com memória — ponderado por valor."""
+        return Response(quantitativos.cobertura_do_orcamento(self.get_object()))
 
     @action(detail=True, methods=["get"], url_path="curva-abc")
     def curva_abc(self, request, pk=None):
@@ -588,25 +755,58 @@ class OrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.
 
     @action(detail=True, methods=["get"], url_path="exportar")
     def exportar(self, request, pk=None):
-        """XLSX ou PDF da planilha, sintética ou analítica.
+        """XLSX ou PDF das peças da proposta.
 
-        `?formato=xlsx|pdf&nivel=analitico|sintetico&peca=planilha|curva-abc|cronograma`
+        `?formato=xlsx|pdf&nivel=analitico|sintetico&peca=…`
+
+        As peças (ORC.7 acrescentou as cinco últimas): `planilha`, `curva-abc`,
+        `cronograma`, `composicao-bdi`, `encargos`, `relacao-insumos`,
+        `curva-abc-insumos`, `carta-proposta`. Juntas, são o envelope inteiro —
+        até o ORC.6 o módulo emitia a planilha e deixava o orçamentista montar
+        os anexos à mão.
         """
         orcamento = self.get_object()
         formato = (request.query_params.get("formato") or "xlsx").lower()
         analitico = (request.query_params.get("nivel") or "analitico").lower() != "sintetico"
         peca = (request.query_params.get("peca") or "planilha").lower()
+        XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
         try:
             if peca == "curva-abc":
                 conteudo = exportacao.curva_abc_xlsx(orcamento, precificacao.curva_abc(orcamento))
                 nome = exportacao.nome_do_arquivo(orcamento, sufixo="curva-abc", extensao="xlsx")
-                tipo = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                tipo = XLSX
+            elif peca == "composicao-bdi":
+                conteudo = exportacao.composicao_bdi_xlsx(orcamento)
+                nome = exportacao.nome_do_arquivo(orcamento, sufixo="composicao-bdi", extensao="xlsx")
+                tipo = XLSX
+            elif peca == "encargos":
+                conteudo = exportacao.quadro_encargos_xlsx(orcamento)
+                nome = exportacao.nome_do_arquivo(orcamento, sufixo="encargos-sociais", extensao="xlsx")
+                tipo = XLSX
+            elif peca == "relacao-insumos":
+                conteudo = exportacao.relacao_insumos_xlsx(
+                    orcamento, servico_insumos.relacao_de_insumos(orcamento),
+                )
+                nome = exportacao.nome_do_arquivo(orcamento, sufixo="relacao-insumos", extensao="xlsx")
+                tipo = XLSX
+            elif peca == "curva-abc-insumos":
+                conteudo = exportacao.curva_abc_insumos_xlsx(
+                    orcamento, servico_insumos.curva_abc_insumos(orcamento),
+                )
+                nome = exportacao.nome_do_arquivo(orcamento, sufixo="curva-abc-insumos", extensao="xlsx")
+                tipo = XLSX
+            elif peca == "carta-proposta":
+                # Sempre PDF: é peça de assinar, e assinar planilha editável não
+                # faz sentido. O `?formato=` é ignorado aqui de propósito.
+                conteudo = exportacao.carta_proposta_pdf(orcamento, dados=request.query_params.dict())
+                nome = exportacao.nome_do_arquivo(orcamento, sufixo="carta-proposta", extensao="pdf")
+                tipo = "application/pdf"
             elif peca == "cronograma":
                 dados = controle.cronograma(orcamento)
                 conteudo = exportacao.cronograma_xlsx(orcamento, dados)
                 nome = exportacao.nome_do_arquivo(orcamento, sufixo="cronograma", extensao="xlsx")
-                tipo = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                tipo = XLSX
             elif formato == "pdf":
                 conteudo = exportacao.planilha_pdf(orcamento, analitico=analitico)
                 nome = exportacao.nome_do_arquivo(
@@ -618,7 +818,7 @@ class OrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.
                 nome = exportacao.nome_do_arquivo(
                     orcamento, sufixo="analitica" if analitico else "sintetica", extensao="xlsx",
                 )
-                tipo = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                tipo = XLSX
         except exportacao.ExportacaoIndisponivel as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_501_NOT_IMPLEMENTED)
 
@@ -644,13 +844,15 @@ class ItemOrcadoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets
 
     queryset = ItemOrcado.objects.select_related("orcamento", "etapa", "item").all()
     serializer_class = ItemOrcadoSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_fields = ["orcamento", "pai", "etapa", "item", "tipo_linha"]
     search_fields = ["descricao", "codigo_referencia", "codigo_eap"]
     ordering_fields = ["codigo_eap", "ordem", "total_custo_direto"]
     required_resource = "orcamento.item"
     action_permission_map = {
         "memoria": "orcamento.item.view",
+        "composicao_natureza": "orcamento.item.view",
+        "memoria_quantitativo": "orcamento.item.view",
         "preco_real": "orcamento.item.view",
         "explodir": "orcamento.item.edit",
         "aplicar_preco_real": "orcamento.item.edit",
@@ -739,6 +941,24 @@ class ItemOrcadoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets
     def memoria(self, request, pk=None):
         """A memória de cálculo da linha: insumos, pesos e resumo por categoria."""
         return Response(precificacao.memoria_de_calculo(self.get_object()))
+
+    # --- ORC.7: composição separada e memória do quantitativo ---
+
+    @action(detail=True, methods=["get"], url_path="composicao-natureza")
+    def composicao_natureza(self, request, pk=None):
+        """A composição da linha **separada em material, mão de obra e equipamento**.
+
+        É como ORSE e Arquimedes imprimem a analítica, e não é estética: as três
+        naturezas têm regimes diferentes (encargo só incide sobre mão de obra,
+        material entra na relação de compra, equipamento admite BDI diferenciado
+        pelo TCU). Numa coluna só, some exatamente a informação que decide.
+        """
+        return Response(servico_insumos.composicao_por_natureza(self.get_object()))
+
+    @action(detail=True, methods=["get"], url_path="memoria-quantitativo")
+    def memoria_quantitativo(self, request, pk=None):
+        """As parciais que somam a quantidade, com o par somado × subtraído."""
+        return Response(quantitativos.memoria_do_quantitativo(self.get_object()))
 
     @action(detail=True, methods=["get"], url_path="preco-real")
     def preco_real(self, request, pk=None):
@@ -919,7 +1139,7 @@ class UnidadeAutonomaViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, vie
 
     queryset = UnidadeAutonoma.objects.select_related("obra", "pavimento").all()
     serializer_class = UnidadeAutonomaSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_fields = ["obra", "pavimento", "tipo"]
     search_fields = ["designacao", "tipo"]
     ordering_fields = ["designacao", "coeficiente_proporcionalidade"]
@@ -931,7 +1151,7 @@ class MemorialNBRViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewset
 
     queryset = MemorialNBR.objects.select_related("obra").all()
     serializer_class = MemorialNBRSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_fields = ["obra", "quadro"]
     search_fields = ["dependencia", "descricao"]
     ordering_fields = ["quadro", "ordem"]
@@ -1042,12 +1262,19 @@ class RevisaoOrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, vi
 # ORC.5b — bancos da empresa, importação e reprecificação
 # ---------------------------------------------------------------------------
 #
-# Nenhuma permissão nova (§12.1 da planta): manter o banco de preço da empresa é
-# a mesma mão que monta a planilha (`orcamento.orcamento.edit`), trazer preço de
-# fora é da família de adotar (`orcamento.base.adotar`) e ler é
-# `orcamento.base.view`. Permissão nova custa rebuild da imagem da IAM +
-# re-seed; se na prática "quem cuida do banco de preço" virar um papel distinto
-# de "quem orça", aí sim vale criar `orcamento.banco.*`.
+# **A condição do §12.1 se cumpriu (20/08/2026).** A nota original dizia: manter
+# o banco de preço é a mesma mão que monta a planilha, e permissão nova custa
+# rebuild da imagem da IAM + re-seed — "se na prática 'quem cuida do banco de
+# preço' virar um papel distinto de 'quem orça', aí sim vale criar
+# `orcamento.banco.*`". Virou, por decisão do dono: a régua de preço da casa é
+# função específica, como quem cria e exclui cliente. Daí a família nova.
+#
+# Ler o banco é `orcamento.banco.view`; mexer nele (item, pasta, coeficiente,
+# trava, importação) é `orcamento.banco.edit`. Trazer preço **para dentro do
+# catálogo** continua sendo `orcamento.base.adotar`: é escrita no cadastro-
+# mestre, não no banco, e quem pode uma coisa não precisa poder a outra. A
+# persona `orcamentista` nasce com as duas — quem quiser separar tira a linha
+# do papel de fábrica em `/app/admin/papeis`.
 
 
 class BancoPrecoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
@@ -1055,21 +1282,21 @@ class BancoPrecoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets
 
     queryset = BancoPreco.objects.select_related("obra").all()
     serializer_class = BancoPrecoSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_fields = ["fonte", "uf", "obra", "travado", "ativo", "origem"]
     search_fields = ["nome", "descricao"]
     ordering_fields = ["nome", "mes_referencia", "total_itens", "criado_em"]
-    required_resource = "orcamento.base"
+    required_resource = "orcamento.banco"
     action_permission_map = {
-        "create": "orcamento.orcamento.edit",
-        "update": "orcamento.orcamento.edit",
-        "partial_update": "orcamento.orcamento.edit",
-        "destroy": "orcamento.orcamento.edit",
-        "travar": "orcamento.orcamento.edit",
-        "destravar": "orcamento.orcamento.edit",
+        "create": "orcamento.banco.edit",
+        "update": "orcamento.banco.edit",
+        "partial_update": "orcamento.banco.edit",
+        "destroy": "orcamento.banco.edit",
+        "travar": "orcamento.banco.edit",
+        "destravar": "orcamento.banco.edit",
         "adotar_lote": "orcamento.base.adotar",
         "copiar_da_base": "orcamento.base.adotar",
-        "resumo": "orcamento.base.view",
+        "resumo": "orcamento.banco.view",
     }
 
     def perform_update(self, serializer):
@@ -1115,11 +1342,16 @@ class BancoPrecoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets
         ).select_related("banco"))
         if not itens:
             return Response({"itens": "Nenhum item encontrado."}, status=status.HTTP_400_BAD_REQUEST)
+        forcar = request.data.get("forcar", False) not in (False, "false", "0", 0, None, "")
         try:
-            adotados = servico_bancos.adotar_muitos(itens, self._tenant_id())
+            resultado = servico_bancos.adotar_muitos(itens, self._tenant_id(), forcar=forcar)
         except servico_bancos.AdocaoInvalida as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        return Response({"adotados": [i.pk for i in adotados], "criados": len(adotados)})
+        return Response({
+            "adotados": [i.pk for i in resultado.adotados],
+            "criados": len(resultado.adotados),
+            "divergentes": resultado.divergentes,
+        })
 
     @action(detail=True, methods=["post"], url_path="copiar-da-base")
     def copiar_da_base(self, request, pk=None):
@@ -1154,6 +1386,352 @@ class BancoPrecoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets
         return getattr(user, "get_full_name", lambda: "")() or getattr(user, "username", "") or ""
 
 
+# ---------------------------------------------------------------------------
+# ORC.7 — encargos analíticos, memória do quantitativo e reajuste
+# ---------------------------------------------------------------------------
+
+
+class ComposicaoEncargosViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    """O quadro de encargos sociais (grupos A/B/C/D).
+
+    Espelha o `ComposicaoBDIViewSet` de propósito: são as duas peças analíticas
+    que compõem o preço, e um orçamentista que aprendeu uma tela já sabe a
+    outra. Toda escrita passa por `encargos.salvar_encargos`, que deriva o grupo
+    D, mantém um único `padrao` e propaga o percentual para o cabeçalho.
+
+    Reusa `orcamento.orcamento.edit` — encargo é parâmetro do orçamento, como o
+    BDI, e não justificou permissão nova (§12.1 da planta).
+    """
+
+    queryset = ComposicaoEncargos.objects.select_related("orcamento").prefetch_related("rubricas").all()
+    serializer_class = ComposicaoEncargosSerializer
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ["orcamento", "padrao", "tipo_mao_de_obra", "regime"]
+    required_resource = "orcamento.orcamento"
+    action_permission_map = {
+        "quadro": "orcamento.orcamento.view",
+        "do_modelo": "orcamento.orcamento.edit",
+        "recalcular": "orcamento.orcamento.edit",
+    }
+
+    def perform_create(self, serializer):
+        _exigir_editavel(serializer.validated_data.get("orcamento"))
+        super().perform_create(serializer)
+        self._salvar(serializer.instance)
+
+    def perform_update(self, serializer):
+        _exigir_editavel(serializer.instance.orcamento)
+        super().perform_update(serializer)
+        self._salvar(serializer.instance)
+
+    def perform_destroy(self, instance):
+        _exigir_editavel(instance.orcamento)
+        instance.delete()
+
+    @staticmethod
+    def _salvar(composicao):
+        try:
+            encargos.salvar_encargos(composicao)
+        except encargos.QuadroInvalido as exc:
+            raise exceptions.ValidationError({"detail": str(exc)}) from exc
+
+    @action(detail=False, methods=["post"], url_path="do-modelo")
+    def do_modelo(self, request):
+        """Cria o quadro já preenchido com o modelo de partida.
+
+        Sem isto o usuário digitaria trinta rubricas para chegar onde toda
+        publicação já chega — e digitaria com erro no grupo D, que é derivado.
+        As alíquotas do grupo A são lei e entram prontas; B e C entram como
+        valores de partida a conferir com a publicação vigente.
+        """
+        orcamento = Orcamento.objects.filter(
+            tenant_id=self._tenant_id(), pk=request.data.get("orcamento")
+        ).first()
+        if orcamento is None:
+            return Response({"orcamento": "Orçamento não encontrado."}, status=status.HTTP_404_NOT_FOUND)
+        _exigir_editavel(orcamento)
+
+        tipo = request.data.get("tipo_mao_de_obra") or ComposicaoEncargos.TipoMaoDeObra.HORISTA
+        if tipo not in ComposicaoEncargos.TipoMaoDeObra.values:
+            return Response(
+                {"tipo_mao_de_obra": "Use 'horista' ou 'mensalista'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if ComposicaoEncargos.objects.filter(orcamento=orcamento, tipo_mao_de_obra=tipo).exists():
+            return Response(
+                {"detail": f"Este orçamento já tem quadro de {tipo}."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        composicao = encargos.criar_quadro_padrao(
+            orcamento, tipo=tipo, regime=request.data.get("regime") or None,
+        )
+        return Response(self.get_serializer(composicao).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["get"], url_path="quadro")
+    def quadro(self, request, pk=None):
+        """O quadro pronto para a tela e para o PDF, com a conta do grupo D."""
+        return Response(encargos.quadro(self.get_object()))
+
+    @action(detail=True, methods=["post"], url_path="recalcular")
+    def recalcular(self, request, pk=None):
+        """Refaz as derivadas depois de editar rubricas em lote."""
+        composicao = self.get_object()
+        _exigir_editavel(composicao.orcamento)
+        self._salvar(composicao)
+        composicao.refresh_from_db()
+        return Response(encargos.quadro(composicao))
+
+
+class RubricaEncargosViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    """As linhas do quadro. Escrever aqui recalcula o quadro inteiro.
+
+    Tem de recalcular: mexer numa alíquota do grupo A muda a reincidência A×B do
+    grupo D, e um quadro que só atualiza o que foi digitado passa a somar errado
+    sem avisar.
+    """
+
+    queryset = RubricaEncargos.objects.select_related("composicao", "composicao__orcamento").all()
+    serializer_class = RubricaEncargosSerializer
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ["composicao", "grupo"]
+    ordering_fields = ["grupo", "ordem"]
+    required_resource = "orcamento.orcamento"
+
+    def perform_create(self, serializer):
+        _exigir_editavel(serializer.validated_data["composicao"].orcamento)
+        super().perform_create(serializer)
+        self._recalcular(serializer.instance.composicao)
+
+    def perform_update(self, serializer):
+        _exigir_editavel(serializer.instance.composicao.orcamento)
+        super().perform_update(serializer)
+        self._recalcular(serializer.instance.composicao)
+
+    def perform_destroy(self, instance):
+        composicao = instance.composicao
+        _exigir_editavel(composicao.orcamento)
+        instance.delete()
+        self._recalcular(composicao)
+
+    @staticmethod
+    def _recalcular(composicao):
+        try:
+            encargos.salvar_encargos(composicao)
+        except encargos.QuadroInvalido as exc:
+            raise exceptions.ValidationError({"detail": str(exc)}) from exc
+
+
+class LinhaMedicaoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    """As parciais da memória do quantitativo.
+
+    Toda escrita recalcula o total da parcial e **sincroniza a quantidade da
+    linha-pai**, que passa a ser derivada. É a mesma disciplina que o
+    `ItemOrcadoViewSet` tem com o recálculo do orçamento: deixar a soma para
+    quando o usuário pedir exibiria uma quantidade que não corresponde às
+    parciais logo abaixo dela.
+
+    Reusa `orcamento.item.*` — medir é detalhar a linha orçada, e a planta (§12.1)
+    já registrou que permissão nova custa rebuild da imagem da IAM.
+    """
+
+    queryset = LinhaMedicao.objects.select_related("item_orcado", "item_orcado__orcamento").all()
+    serializer_class = LinhaMedicaoSerializer
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ["item_orcado"]
+    ordering_fields = ["ordem", "medicao_id"]
+    required_resource = "orcamento.item"
+    action_permission_map = {
+        "em_lote": "orcamento.item.edit",
+    }
+
+    def perform_create(self, serializer):
+        _exigir_editavel(serializer.validated_data["item_orcado"].orcamento)
+        super().perform_create(serializer)
+        self._sincronizar(serializer.instance)
+
+    def perform_update(self, serializer):
+        _exigir_editavel(serializer.instance.item_orcado.orcamento)
+        super().perform_update(serializer)
+        self._sincronizar(serializer.instance)
+
+    def perform_destroy(self, instance):
+        item = instance.item_orcado
+        _exigir_editavel(item.orcamento)
+        instance.delete()
+        quantitativos.sincronizar_quantidade(item)
+
+    @staticmethod
+    def _sincronizar(linha):
+        try:
+            quantitativos.salvar_linha(linha)
+        except (quantitativos.FormulaInvalida, quantitativos.MedicaoInvalida) as exc:
+            raise exceptions.ValidationError({"detail": str(exc)}) from exc
+
+    @action(detail=False, methods=["post"], url_path="em-lote")
+    def em_lote(self, request):
+        """Grava várias parciais de uma vez — o caminho do colar do Excel.
+
+        Uma a uma, cada parcial dispararia um recálculo da árvore inteira; num
+        bloco de cinquenta linhas isso é cinquenta recálculos para chegar ao
+        mesmo lugar. Aqui a sincronização acontece uma vez, no fim.
+        """
+        item = ItemOrcado.objects.filter(
+            tenant_id=self._tenant_id(), pk=request.data.get("item_orcado")
+        ).select_related("orcamento").first()
+        if item is None:
+            return Response({"item_orcado": "Linha não encontrada."}, status=status.HTTP_404_NOT_FOUND)
+        _exigir_editavel(item.orcamento)
+
+        parciais = request.data.get("linhas") or []
+        if not isinstance(parciais, list):
+            return Response({"linhas": "Envie uma lista."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if request.data.get("substituir"):
+            LinhaMedicao.objects.filter(item_orcado=item).delete()
+
+        criadas = []
+        try:
+            with transaction.atomic():
+                base = LinhaMedicao.objects.filter(item_orcado=item).count()
+                for indice, dados in enumerate(parciais):
+                    serializer = self.get_serializer(data={
+                        **dados, "item_orcado": item.pk, "ordem": dados.get("ordem", base + indice),
+                    })
+                    serializer.is_valid(raise_exception=True)
+                    linha = LinhaMedicao(
+                        tenant_id=self._tenant_id(), **serializer.validated_data
+                    )
+                    linha.total = quantitativos.calcular_linha(linha)
+                    criadas.append(linha)
+                LinhaMedicao.objects.bulk_create(criadas)
+                quantitativos.recalcular_linhas(item)
+        except (quantitativos.FormulaInvalida, quantitativos.MedicaoInvalida) as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        item.refresh_from_db()
+        return Response(
+            quantitativos.memoria_do_quantitativo(item), status=status.HTTP_201_CREATED,
+        )
+
+
+class IndiceEconomicoViewSet(_OrcamentoPermsMixin, viewsets.ReadOnlyModelViewSet):
+    """Os índices de reajuste — **read-only**, como a base referencial.
+
+    Mesma razão do `BaseReferencialViewSet`: série pública gravada por
+    comando/job, então `POST` recebe 405 e não 403. Por isso `required_permission`
+    fixa em vez de `required_resource`, que derivaria um `.edit` fantasma.
+    """
+
+    queryset = IndiceEconomico.objects.all()
+    serializer_class = IndiceEconomicoSerializer
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ["codigo", "uf", "ativo"]
+    ordering_fields = ["codigo", "nome"]
+    required_permission = "orcamento.base.view"
+
+    @action(detail=True, methods=["get"], url_path="serie")
+    def serie(self, request, pk=None):
+        """A série do índice, para a tela conferir o número que entrou no fator."""
+        indice = self.get_object()
+        valores = ValorIndice.objects.filter(indice=indice).order_by("-competencia")
+        return Response({
+            "indice": indice.pk,
+            "codigo": indice.codigo,
+            "valores": ValorIndiceSerializer(valores, many=True).data,
+        })
+
+
+class FormulaReajusteViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    """A fórmula paramétrica do contrato, com prévia e aplicação.
+
+    `previa` é `orcamento.relatorio.view` (é leitura, e quem controla a obra
+    precisa ver o efeito antes de decidir); `aplicar` é `.revisar`, porque em
+    orçamento aprovado ele cria versão nova — é ato de contrato, não edição.
+    """
+
+    queryset = FormulaReajuste.objects.select_related("orcamento").prefetch_related(
+        "parcelas", "parcelas__indice"
+    ).all()
+    serializer_class = FormulaReajusteSerializer
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ["orcamento"]
+    required_resource = "orcamento.orcamento"
+    action_permission_map = {
+        "fator": "orcamento.relatorio.view",
+        "previa": "orcamento.relatorio.view",
+        "aplicar": "orcamento.orcamento.revisar",
+    }
+
+    @action(detail=True, methods=["get"], url_path="fator")
+    def fator(self, request, pk=None):
+        """Só o fator e a memória — sem tocar na planilha."""
+        competencia = parse_date(request.query_params.get("competencia") or "")
+        if competencia is None:
+            return Response(
+                {"competencia": "Informe a competência do reajuste (AAAA-MM-DD)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            return Response(reajuste.calcular_fator(self.get_object(), competencia))
+        except reajuste.ReajusteInvalido as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=["get"], url_path="previa")
+    def previa(self, request, pk=None):
+        """O efeito linha a linha, sem gravar."""
+        competencia = parse_date(request.query_params.get("competencia") or "")
+        if competencia is None:
+            return Response(
+                {"competencia": "Informe a competência do reajuste (AAAA-MM-DD)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        formula = self.get_object()
+        try:
+            return Response(reajuste.previa(formula.orcamento, formula, competencia))
+        except reajuste.ReajusteInvalido as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=["post"], url_path="aplicar")
+    def aplicar(self, request, pk=None):
+        """Aplica o fator. Em aprovado, cria a revisão de reequilíbrio."""
+        competencia = parse_date(str(request.data.get("competencia") or ""))
+        if competencia is None:
+            return Response(
+                {"competencia": "Informe a competência do reajuste (AAAA-MM-DD)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        formula = self.get_object()
+        try:
+            resultado = reajuste.aplicar(
+                formula.orcamento, formula, competencia,
+                motivo=request.data.get("motivo") or "",
+                usuario_nome=self._usuario_nome(request),
+            )
+        except reajuste.ReajusteInvalido as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except planilha.OrcamentoNaoEditavel as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        return Response(resultado)
+
+    @staticmethod
+    def _usuario_nome(request) -> str:
+        user = getattr(request, "user", None)
+        return getattr(user, "get_full_name", lambda: "")() or getattr(user, "username", "") or ""
+
+
+class ParcelaFormulaReajusteViewSet(
+    _OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet
+):
+    """As parcelas da cesta de índices."""
+
+    queryset = ParcelaFormulaReajuste.objects.select_related("formula", "indice").all()
+    serializer_class = ParcelaFormulaReajusteSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["formula", "indice"]
+    required_resource = "orcamento.orcamento"
+
+
 class PastaComposicaoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
     """Pastas dentro de um banco — organização por obra/tipo."""
 
@@ -1162,12 +1740,12 @@ class PastaComposicaoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, vie
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ["banco", "obra"]
     ordering_fields = ["ordem", "nome"]
-    required_resource = "orcamento.base"
+    required_resource = "orcamento.banco"
     action_permission_map = {
-        "create": "orcamento.orcamento.edit",
-        "update": "orcamento.orcamento.edit",
-        "partial_update": "orcamento.orcamento.edit",
-        "destroy": "orcamento.orcamento.edit",
+        "create": "orcamento.banco.edit",
+        "update": "orcamento.banco.edit",
+        "partial_update": "orcamento.banco.edit",
+        "destroy": "orcamento.banco.edit",
     }
 
 
@@ -1185,19 +1763,19 @@ class ItemBancoPrecoViewSet(
     quota_recurso = "banco_preco_linhas"
     queryset = ItemBancoPreco.objects.select_related("banco", "pasta").all()
     serializer_class = ItemBancoPrecoSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_fields = ["banco", "pasta", "tipo"]
     search_fields = ["codigo", "descricao", "grupo"]
     ordering_fields = ["codigo", "descricao", "custo_unitario"]
-    required_resource = "orcamento.base"
+    required_resource = "orcamento.banco"
     action_permission_map = {
-        "create": "orcamento.orcamento.edit",
-        "update": "orcamento.orcamento.edit",
-        "partial_update": "orcamento.orcamento.edit",
-        "destroy": "orcamento.orcamento.edit",
+        "create": "orcamento.banco.edit",
+        "update": "orcamento.banco.edit",
+        "partial_update": "orcamento.banco.edit",
+        "destroy": "orcamento.banco.edit",
         "adotar": "orcamento.base.adotar",
-        "duplicar": "orcamento.orcamento.edit",
-        "composicao": "orcamento.base.view",
+        "duplicar": "orcamento.banco.edit",
+        "composicao": "orcamento.banco.view",
     }
 
     def get_serializer_context(self):
@@ -1240,10 +1818,18 @@ class ItemBancoPrecoViewSet(
 
     @action(detail=True, methods=["post"], url_path="adotar")
     def adotar(self, request, pk=None):
+        forcar = request.data.get("forcar", False) not in (False, "false", "0", 0, None, "")
         try:
-            item = servico_bancos.adotar_no_catalogo(self.get_object(), self._tenant_id())
+            item = servico_bancos.adotar_no_catalogo(
+                self.get_object(), self._tenant_id(), forcar=forcar
+            )
         except servico_bancos.AdocaoInvalida as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except servico_bancos.IdentidadeDivergente as exc:
+            return Response(
+                {"detail": str(exc), "divergencia": exc.como_dict()},
+                status=status.HTTP_409_CONFLICT,
+            )
         return Response({"item": item.pk, "criado": True})
 
     @action(detail=True, methods=["post"], url_path="duplicar")
@@ -1275,12 +1861,12 @@ class ComponenteBancoPrecoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin
     serializer_class = ComponenteBancoPrecoSerializer
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["composicao", "filho"]
-    required_resource = "orcamento.base"
+    required_resource = "orcamento.banco"
     action_permission_map = {
-        "create": "orcamento.orcamento.edit",
-        "update": "orcamento.orcamento.edit",
-        "partial_update": "orcamento.orcamento.edit",
-        "destroy": "orcamento.orcamento.edit",
+        "create": "orcamento.banco.edit",
+        "update": "orcamento.banco.edit",
+        "partial_update": "orcamento.banco.edit",
+        "destroy": "orcamento.banco.edit",
     }
 
 

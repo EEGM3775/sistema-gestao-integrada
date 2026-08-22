@@ -1,4 +1,5 @@
 # backend/fornecedores/views.py
+from nucleo.busca import BuscaSemAcento
 from rest_framework import viewsets, permissions, filters
 from django_filters.rest_framework import DjangoFilterBackend
 from nucleo.tenancy import TenantScopedViewSetMixin
@@ -20,7 +21,7 @@ class FornecedorViewSet(QuotaEnforcedMixin, TenantScopedViewSetMixin, viewsets.M
     quota_recurso = "fornecedores"  # D24
     queryset = Fornecedor.objects.all().order_by('razao_social')
     serializer_class = FornecedorSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_fields = ['cnpj']
     search_fields = ['razao_social', 'cnpj', 'email', 'contato', 'telefone']
     ordering_fields = ['razao_social']
@@ -41,7 +42,7 @@ class DadoBancarioFornecedorViewSet(TenantScopedViewSetMixin, viewsets.ModelView
 class ProdutoServicoFornecedorViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     queryset = ProdutoServicoFornecedor.objects.all().order_by('nome_produto_servico')
     serializer_class = ProdutoServicoFornecedorSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_fields = ['fornecedor', 'tipo_produto_servico']
     search_fields = ['nome_produto_servico', 'descricao']
     ordering_fields = ['nome_produto_servico', 'preco_unitario', 'data_cotacao']

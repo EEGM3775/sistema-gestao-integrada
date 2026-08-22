@@ -32,7 +32,8 @@ item: *um cliente atual pagaria mais por isso amanhã?*
 | Entrega/vistorias + **assistência técnica** | [03](03-mapa-de-modulos.md) §8 |
 | **Portal do cliente** (piloto do E2/ABAC por objeto) | [05](05-portais-e-apps.md) §1 |
 | Dashboards nativos (F.1) + IA medida (inadimplência, EPI) | [06](06-dados-ia-automacao.md) |
-| Planejamento de obra (APS) — destrava `moduloaps` | [03](03-mapa-de-modulos.md) §2 |
+| Planejamento de obra (cronograma físico) — amplia `modulopdca` | [03](03-mapa-de-modulos.md) §2 |
+| **Prancheta** — visualizador de projeto em campo; destrava `moduloprancheta` | [03](03-mapa-de-modulos.md) §2 |
 
 **Gate de saída H1:** retenção líquida > 100% · ≥ 3 módulos ativos por tenant em média · portal
 do cliente usado por compradores reais (2ª via self-service medida).

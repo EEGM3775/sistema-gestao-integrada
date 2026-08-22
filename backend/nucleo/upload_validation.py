@@ -15,10 +15,12 @@ import os
 from django.core.files.uploadedfile import UploadedFile
 from rest_framework import serializers
 
+from payment.planos import UPLOAD_PADRAO_MAX_MB
+
 from .models import ConfiguracaoArquivos
 
 # Padrão global (fallback) — espelha _DEFAULT_TIPOS de nucleo.views.
-DEFAULT_MAX_MB = 10
+DEFAULT_MAX_MB = UPLOAD_PADRAO_MAX_MB
 DEFAULT_TIPOS = [
     "application/pdf",
     "image/jpeg",

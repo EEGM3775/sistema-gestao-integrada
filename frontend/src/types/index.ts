@@ -481,7 +481,10 @@ export interface DocumentoDiario {
   autor: number | null;
   autor_nome: string | null;
   origem: OrigemContribuicao | string;
+  /** D70 — URL da porta única (`/api/impexp/obra.diario_midia/arquivo/midia/<id>/`), com token. */
   arquivo: string;
+  /** Nome do arquivo guardado. A URL gateada não o carrega, e a tela decide pela extensão se há miniatura. */
+  arquivo_nome: string;
   descricao: string | null;
   data_criacao: string;
   analise_ia: AnaliseIAResumo | null;

@@ -132,6 +132,24 @@ class LinhaImportacao(TenantScopedModel):
     # a auditar o próprio extrator — quando um PDF sai torto, é comparando isto
     # com `valores` que se descobre se o erro foi da fonte ou do leitor.
     bruto = models.JSONField(default=list, blank=True, verbose_name=_("Linha original"))
+    # IE.3 — o binário, quando a unidade de decisão É um arquivo.
+    #
+    # **É o que faz a R1 valer literalmente para arquivo.** Numa importação de
+    # linhas nada precisa ficar guardado antes da decisão: os valores cabem no
+    # `valores` e o binário é lido e descartado. Um lote de pranchas não tem essa
+    # sorte — os bytes têm de existir em algum lugar entre o upload e o clique em
+    # "confirmar", e o único lugar honesto é a **área de conferência**, fora do
+    # acervo do módulo. Aqui o arquivo não conta storage do plano, não aparece no
+    # acervo, não é convertido e não é servido: ele espera uma pessoa.
+    #
+    # Caminho separado do `impexp/entrada/` da `Importacao` de propósito: lá mora
+    # UM arquivo tabular por lote (o que o worker vai reler); aqui moram N
+    # binários que são o objeto da decisão. Misturá-los faria a faxina de um
+    # varrer o outro.
+    arquivo = models.FileField(
+        upload_to="impexp/conferencia/%Y/%m/", blank=True, null=True,
+        verbose_name=_("Arquivo em conferência"),
+    )
     # O que existia antes desta linha gravar por cima (R6). Vazio em linha nova:
     # desfazer uma criação é apagar.
     estado_anterior = models.JSONField(

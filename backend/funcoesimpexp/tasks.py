@@ -16,6 +16,7 @@ tasks daqui armam o contexto na primeira linha, e o teste
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 
 from celery import shared_task
 from django.utils import timezone
@@ -25,8 +26,17 @@ from nucleo.tenancy import rls_bypass, tenant_context
 
 from . import exportacao as motor_exportacao
 from . import importacao as motor_importacao
+from .limites import Limites
 from .models import Exportacao, Importacao
 from .registro import RecursoDesconhecido, obter
+
+#: Por quantos dias um lote que ficou esperando de-para guarda o arquivo. É a
+#: outra metade do `preservar_arquivo` da R4: sem prazo, "preservado" vira
+#: "para sempre" — e arquivo de importação é o dado mais cru que existe
+#: (carteira de clientes, folha), guardado fora de qualquer quota de storage.
+#: Uma semana cobre com folga o "escolha qual coluna é cada campo" e fecha o
+#: acervo permanente de graça que o desenho anterior deixava aberto.
+DIAS_PARA_ARQUIVO_ORFAO = 7
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +73,7 @@ def _usuario(usuario_id):
 
 @shared_task(bind=True, base=DLQTask, max_retries=2, name="funcoesimpexp.preparar_importacao")
 def preparar_importacao(self, importacao_id, tenant_id, *, limites=None, de_para=None,
-                        delimitador=None):
+                        delimitador=None, teto=None, formato=None):
     """Lê e classifica um arquivo grande já persistido, deixando-o em `CONFERINDO`.
 
     O arquivo vem do storage e não como argumento: mandar megabytes pelo broker
@@ -100,6 +110,13 @@ def preparar_importacao(self, importacao_id, tenant_id, *, limites=None, de_para
                 de_para=de_para,
                 delimitador=delimitador,
                 lote=lote,
+                # O orçamento de recurso vem resolvido do request (é lá que
+                # existe a claim `plano`), e o formato veio reconhecido pelos
+                # bytes. Sem os dois, este é o caminho onde um XLSX de poucos MB
+                # descomprime sem teto — no worker GERAL, que também carrega
+                # cobrança, NF-e e lembrete.
+                teto=Limites.de_json(teto),
+                formato=formato or (lote.parametros or {}).get("formato") or None,
             )
         except motor_importacao.LimiteDoPlano as exc:
             # Teto do plano é decisão de negócio, não falha: não vai para a DLQ
@@ -165,6 +182,53 @@ def limpar_exportacoes_expiradas():
             apagados += 1
     if apagados:
         logger.info("impexp: %s arquivo(s) de exportação expirados removidos.", apagados)
+    return apagados
+
+
+@shared_task(name="funcoesimpexp.limpar_entradas_orfas")
+def limpar_entradas_orfas():
+    """Apaga o arquivo de entrada que ficou esperando um de-para e ninguém voltou.
+
+    **O buraco que isto fecha** (análise de 07/08/2026): `limpar_exportacoes_expiradas`
+    varria só a SAÍDA. Na entrada, o arquivo é apagado assim que lido — menos no
+    lote que ficou em `aguarda_de_para`, que o preserva de propósito (R4) e não
+    tinha prazo nenhum. Subir arquivos com cabeçalho que não casa era, portanto,
+    acervo permanente e fora de qualquer quota.
+
+    Como a exportação: **a linha permanece** (é o rastro de que se tentou
+    importar); o que some é o arquivo, e o lote passa a dizer isso, para a tela
+    não oferecer um "escolha as colunas" que não tem mais o que reler.
+
+    Sob `rls_bypass` porque é job global, como a faxina da saída.
+    """
+    corte = timezone.now() - timedelta(days=DIAS_PARA_ARQUIVO_ORFAO)
+    apagados = 0
+    with rls_bypass():
+        orfas = (
+            Importacao.objects
+            .filter(criada_em__lt=corte)
+            .exclude(arquivo="")
+            .exclude(arquivo=None)
+        )
+        for lote in orfas.iterator():
+            try:
+                lote.arquivo.delete(save=False)
+            except OSError:  # pragma: no cover - disco/storage indisponível
+                logger.warning("impexp: não consegui apagar a entrada %s.", lote.pk)
+            lote.arquivo = None
+            lote.parametros = {
+                **(lote.parametros or {}),
+                "aguarda_de_para": False,
+                "arquivo_expirado": True,
+            }
+            lote.mensagem = (
+                "O arquivo desta importação expirou no servidor e foi removido. "
+                "Suba de novo para escolher as colunas."
+            )[:500]
+            lote.save(update_fields=["arquivo", "parametros", "mensagem"])
+            apagados += 1
+    if apagados:
+        logger.info("impexp: %s arquivo(s) de entrada órfãos removidos.", apagados)
     return apagados
 
 

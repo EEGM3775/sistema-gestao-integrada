@@ -268,6 +268,12 @@ class AuditLog(TenantScopedModel):
         EXPORTAR_LGPD = "exportar_lgpd", _("Exportação LGPD (portabilidade)")
         ANONIMIZAR_LGPD = "anonimizar_lgpd", _("Anonimização LGPD (esquecimento)")
         VISUALIZAR_PII = "visualizar_pii", _("Visualização de PII")
+        # R12 do `funcoesimpexp`: exportação de dado pelo motor de plataforma.
+        # Separada da `EXPORTAR_LGPD` de propósito — aquela é o direito do
+        # titular exercido sobre os dados dele; esta é a operação corriqueira de
+        # levar um recorte para o Excel. Misturá-las tornaria ilegível o
+        # relatório que a LGPD pede, que é justamente o das primeiras.
+        EXPORTAR_DADOS = "exportar_dados", _("Exportação de dados (import/export)")
 
     # FK "congelado": db_constraint=False + DO_NOTHING → excluir um usuário NÃO
     # dispara UPDATE nesta tabela (que o trigger de imutabilidade da migration
@@ -430,3 +436,127 @@ class ValorIndice(models.Model):
 
     def __str__(self):
         return f"{self.indice.codigo} {self.competencia:%m/%Y}: {self.variacao_percentual}%"
+
+
+# ===========================================================================
+# D98 — a frota de trabalho pesado: o porteiro que faltava
+# ===========================================================================
+# **Por que uma TABELA e não a prioridade do Redis.** O broker sabe entregar a
+# próxima mensagem; não sabe dizer *quem está na frente*, não sabe reservar uma
+# fração de cadeiras para um plano nem devolver um job ao fim da fila com o
+# lugar certo. Tudo isso é consulta sobre um conjunto ordenado — e conjunto
+# ordenado com leitura arbitrária é banco. O Celery continua sendo o executor: o
+# despachante escolhe a linha e **só então** publica a mensagem.
+#
+# **Sem `tenant` herdado do `TenantScopedModel`, e é deliberado.** A RLS
+# fail-closed é o que impede um tenant de ler linha de outro — e o despachante
+# precisa ler as de TODOS para poder ser justo entre eles. Uma fila escopada por
+# tenant não é uma fila, são N filas que não se enxergam, que é exatamente o
+# desenho que o dono descartou ("fila única com prioridade e cadeira marcada,
+# nunca fila separada por plano"). O `tenant` fica como COLUNA — é dado da
+# política, não chave de isolamento —, e quem expõe a fila ao cliente filtra por
+# ele explicitamente na view, como o `AuditLog` já faz. É o mesmo lugar do
+# `FailedTask`: tabela de infraestrutura, lida pelo processo e não pelo inquilino.
+class TarefaNaFila(models.Model):
+    """Um trabalho pesado esperando cadeira na frota.
+
+    A linha nasce no lugar do `.delay()`: quem enfileira chama
+    `nucleo.frota.enfileirar(...)` e recebe de volta a posição, em vez de mandar
+    a mensagem direto ao broker. O despachante é quem publica — e é ele que
+    aplica a política de `payment/planos.py` §5.4c.
+    """
+
+    class Situacao(models.TextChoices):
+        #: Na fila, esperando cadeira. É o único estado que conta posição.
+        AGUARDANDO = "aguardando", _("Na fila")
+        #: O despachante publicou a mensagem; o worker pode ainda não ter pegado.
+        #: Ocupa cadeira a partir daqui, porque o que a frota tem de proteger é o
+        #: número de jobs em voo — contar só a partir do "executando" deixaria o
+        #: despachante publicar cem mensagens no intervalo entre uma e outra.
+        DESPACHADA = "despachada", _("Despachada")
+        CONCLUIDA = "concluida", _("Concluída")
+        #: Saiu da fila sem executar — a revisão foi apagada, o lote desfeito.
+        CANCELADA = "cancelada", _("Cancelada")
+
+    tarefa_id = models.AutoField(primary_key=True)
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.CASCADE, related_name="tarefas_na_fila",
+        verbose_name=_("Empresa"),
+    )
+    #: O plano **no momento de entrar na fila**, e não uma consulta ao IAM na
+    #: hora de despachar. O worker não tem token e o despachante não tem usuário;
+    #: resolver o plano ali exigiria uma chamada de rede por job, para responder
+    #: algo que quem enfileirou já tinha na mão. É a mesma razão pela qual
+    #: `tiers` e `teto_snap` viajam como argumento da task.
+    plano = models.CharField(max_length=30, blank=True, verbose_name=_("Plano"))
+    #: Quantas cadeiras extras os add-ons deste cliente compram, congeladas junto
+    #: com o plano e pelo mesmo motivo.
+    cadeiras_extras = models.PositiveSmallIntegerField(
+        default=0, verbose_name=_("Cadeiras de add-on"),
+    )
+
+    #: Qual frota. Hoje só `conversao`; o campo existe porque o endereço é do
+    #: `nucleo` justamente para a importação de acervo, a exportação grande e a
+    #: ortofoto do Maps entrarem sem uma segunda fila paralela.
+    frota = models.CharField(max_length=20, default="conversao", verbose_name=_("Frota"))
+    tarefa = models.CharField(max_length=180, verbose_name=_("Task Celery"))
+    argumentos = models.JSONField(default=list, blank=True, verbose_name=_("Argumentos"))
+    #: Identidade do TRABALHO, não da linha — `prancheta.derivada:123`. É o que
+    #: torna `enfileirar` idempotente: o mesmo upload reenviado, o `reprocessar`
+    #: clicado duas vezes e o retry do Celery não podem virar três lugares na
+    #: fila para o mesmo arquivo.
+    chave = models.CharField(max_length=120, db_index=True, verbose_name=_("Chave do trabalho"))
+
+    situacao = models.CharField(
+        max_length=12, choices=Situacao.choices, default=Situacao.AGUARDANDO,
+        verbose_name=_("Situação"),
+    )
+    #: Menor sai primeiro. Nasce da classe de cadeira e desce (fica mais urgente)
+    #: a cada volta à fila e quando o administrador do tenant sobe o job.
+    prioridade = models.IntegerField(default=100, db_index=True, verbose_name=_("Prioridade"))
+    #: Quantas vezes este trabalho já voltou ao fim da fila (PRA.11). Guardado
+    #: para a tela poder dizer "3ª passada" em vez de deixar o cliente concluir
+    #: que o sistema travou, e para o envelhecimento ser auditável.
+    voltas = models.PositiveSmallIntegerField(default=0, verbose_name=_("Voltas à fila"))
+    #: Quem mandou este job passar na frente dos OUTROS DA MESMA EMPRESA, e
+    #: quando. Nunca passa à frente de outro tenant: a ordem entre empresas do
+    #: mesmo plano continua sendo a de chegada, e um botão que atrasasse o
+    #: vizinho seria um botão que todo mundo aperta sempre — zerando o efeito e
+    #: deixando só a fila imprevisível (decisão do dono, 16/08/2026).
+    urgente_por = models.ForeignKey(
+        "nucleo.Usuario", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="tarefas_priorizadas", verbose_name=_("Priorizada por"),
+    )
+    urgente_em = models.DateTimeField(null=True, blank=True, verbose_name=_("Priorizada em"))
+
+    criada_em = models.DateTimeField(auto_now_add=True, db_index=True)
+    despachada_em = models.DateTimeField(null=True, blank=True)
+    concluida_em = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = _("Tarefa na fila")
+        verbose_name_plural = _("Tarefas na fila")
+        ordering = ["prioridade", "criada_em"]
+        constraints = [
+            # Um trabalho, um lugar. Parcial porque a chave só é única entre as
+            # VIVAS: o mesmo arquivo reprocessado meses depois é um trabalho
+            # novo, e uma unicidade total impediria a segunda conversão para
+            # sempre — o defeito que só aparece no cliente antigo.
+            models.UniqueConstraint(
+                fields=["frota", "chave"],
+                condition=models.Q(situacao__in=["aguardando", "despachada"]),
+                name="frota_um_lugar_por_trabalho",
+            ),
+        ]
+        indexes = [
+            # O índice do despachante: ele varre as aguardando de uma frota na
+            # ordem da política, e é a consulta que roda a cada job terminado.
+            models.Index(
+                fields=["frota", "situacao", "prioridade", "criada_em"],
+                name="frota_despacho_idx",
+            ),
+            models.Index(fields=["tenant", "situacao"], name="frota_tenant_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.frota}:{self.chave} ({self.situacao})"

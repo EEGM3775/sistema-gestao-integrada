@@ -29,12 +29,12 @@ própria API por HTTP e sem token de serviço no caminho feliz. Fluxos: **diári
 lead**. O antigo servidor Node foi **removido** (Fase C.4).
 
 > **Histórico:** até 15/07/2026 este era um microsserviço Node dedicado, inoperante desde a Fase 6 (usava
-> `Authorization: Token …`, rejeitado com 401 — [D1](../pendencias.md)) e fora do compose ([A2](../pendencias.md)).
+> `Authorization: Token …`, rejeitado com 401 — [D1](../historico-correcoes.md)) e fora do compose ([A2](../historico-correcoes.md)).
 
 ## 3. Desenho-alvo (Python) — princípios
 
 1. **Zero novo container.** O webhook é uma **rota Django** no backend existente; o processamento roda no
-   **worker Celery** já provido (Fase 10.9). A superfície **diminui** (−1 Node), fechando [A2](../pendencias.md).
+   **worker Celery** já provido (Fase 10.9). A superfície **diminui** (−1 Node), fechando [A2](../historico-correcoes.md).
 2. **In-process, sem auto-HTTP.** Dentro do backend, o processamento escreve direto pelo ORM sob contexto
    de tenant — não chama a própria API por HTTP. Segue o precedente da **Fase B**
    ([funcoesia/tasks.py](../../backend/funcoesia/tasks.py)): `rls_bypass()` resolve o tenant,
@@ -145,7 +145,7 @@ Conversa multi-passo mantém estado em **Redis**, uma task por mensagem:
 - **Segredos:** tokens Meta são secretos → `_config` fail-fast fora de DEBUG, sem fallback público
   (padrão S7); em produção, gestão de segredos da Fase 10.3. Nunca logar payload cru com PII (manter o
   `sanitize_webhook_payload` do Node).
-- **LGPD:** telefone é PII ([D6](../pendencias.md)); número que não vira pessoa fica só no lead, sob o
+- **LGPD:** telefone é PII ([D6](../roadmap.md)); número que não vira pessoa fica só no lead, sob o
   mascaramento da Fase 9.C quando aplicável.
 
 ## 5. Fluxos (o canal é multi-fluxo)
@@ -204,7 +204,7 @@ Ordem incremental; cada fatia fecha com testes e é entregável isolada. Status 
 
 **Testes:** unidade (transições, identidade, assinatura HMAC, idempotência); DB-backed (Postgres, role
 `erp_app`: escrita no tenant certo com `origem='whatsapp'` + disparo da IA mockada); E2E
-`infra/gateway/phaseC_whatsapp_test.py` (simula webhook da Meta com assinatura → `200`; diário criado + IA
+`testes/e2e/phaseC_whatsapp_test.py` (simula webhook da Meta com assinatura → `200`; diário criado + IA
 enfileirada; desconhecido → lead; assinatura inválida → `403`) — padrão dos `phaseN_*` em
 [infra/gateway/](../../infra/gateway/).
 

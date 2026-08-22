@@ -439,6 +439,31 @@ class ReprecificacaoTests(PlanilhaTestBase):
         )
         self.assertEqual(lote.linhas_afetadas, 0)
 
+    def test_data_de_corte_aceita_a_string_que_a_api_manda(self):
+        """JSON não tem tipo data: o POST manda `"2026-07-01"`, e comparar isso
+        com um `date` derrubava a requisição com 500. Os testes não viam porque
+        chamavam o serviço com `date` já pronto."""
+        self.linha.data_base_preco = date(2026, 8, 1)
+        self.linha.save()
+        lote = reprecificacao.gerar_previa(
+            self.orcamento, base_destino=self.base_jul, somente_ate="2026-07-01",
+        )
+        self.assertEqual(lote.linhas_afetadas, 0)
+
+    def test_data_de_corte_aceita_o_formato_brasileiro(self):
+        self.linha.data_base_preco = date(2026, 8, 1)
+        self.linha.save()
+        lote = reprecificacao.gerar_previa(
+            self.orcamento, base_destino=self.base_jul, somente_ate="01/07/2026",
+        )
+        self.assertEqual(lote.linhas_afetadas, 0)
+
+    def test_data_de_corte_ilegivel_e_pedido_ruim_e_nao_erro_de_servidor(self):
+        with self.assertRaises(reprecificacao.ReprecificacaoInvalida):
+            reprecificacao.gerar_previa(
+                self.orcamento, base_destino=self.base_jul, somente_ate="ontem",
+            )
+
     def test_orcamento_aprovado_nao_reprecifica(self):
         planilha.aprovar_orcamento(self.orcamento)
         self.orcamento.refresh_from_db()
@@ -465,6 +490,120 @@ class ReprecificacaoTests(PlanilhaTestBase):
     def test_sem_destino_recusa(self):
         with self.assertRaises(reprecificacao.ReprecificacaoInvalida):
             reprecificacao.gerar_previa(self.orcamento)
+
+
+class ItemDescontinuadoTests(PlanilhaTestBase):
+    """A SINAPI aposenta item todo mês, e a planilha não pode fingir que não viu.
+
+    Antes, `gerar_previa` pulava em silêncio o código ausente na publicação de
+    destino: a linha ficava com o preço velho, o cabeçalho passava a anunciar a
+    data-base nova, e a peça de licitação saía dizendo "julho" com preço de
+    junho dentro. O defeito não é o número — é o silêncio.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.base_jun = BaseReferencial.objects.create(
+            fonte=Fonte.SINAPI, uf="SP", mes_referencia=date(2026, 6, 1),
+        )
+        self.base_jul = BaseReferencial.objects.create(
+            fonte=Fonte.SINAPI, uf="SP", mes_referencia=date(2026, 7, 1),
+        )
+        # "0001" sobrevive para julho; "0002" é aposentado pela fonte.
+        for base, preco in ((self.base_jun, "10.00"), (self.base_jul, "12.00")):
+            InsumoReferencia.objects.create(
+                base=base, codigo="0001", descricao="CIMENTO", unidade="KG",
+                custo_unitario=Decimal(preco),
+            )
+        InsumoReferencia.objects.create(
+            base=self.base_jun, codigo="0002", descricao="TIJOLO MACICO", unidade="UN",
+            custo_unitario=Decimal("2.00"),
+        )
+
+        self.orcamento = self._orcamento(
+            base_referencial=self.base_jun, data_base=date(2026, 6, 1),
+        )
+        self.viva = self._linha(self.orcamento, "Cimento", quantidade="100", custo="10.00")
+        self.aposentada = self._linha(self.orcamento, "Tijolo", quantidade="50", custo="2.00")
+        for linha, codigo in ((self.viva, "0001"), (self.aposentada, "0002")):
+            linha.fonte_referencia = Fonte.SINAPI
+            linha.codigo_referencia = codigo
+            linha.data_base_preco = date(2026, 6, 1)
+            linha.save()
+        planilha.recalcular_orcamento(self.orcamento)
+        self.orcamento.refresh_from_db()
+
+    def _linha_do(self, item):
+        lote = reprecificacao.gerar_previa(self.orcamento, base_destino=self.base_jul)
+        return lote, lote.linhas.get(item_orcado=item)
+
+    def test_item_aposentado_aparece_na_previa_em_vez_de_sumir(self):
+        lote, linha = self._linha_do(self.aposentada)
+        self.assertTrue(linha.descontinuado)
+        self.assertFalse(linha.selecionada)
+        self.assertIn("0002", linha.motivo)
+        self.assertEqual(lote.linhas_descontinuadas, 1)
+
+    def test_descontinuada_nao_conta_como_afetada_nem_move_o_total(self):
+        lote = reprecificacao.gerar_previa(self.orcamento, base_destino=self.base_jul)
+        # Só o cimento muda de preço: 100 × (12 − 10) = 200 sobre o total.
+        self.assertEqual(lote.linhas_afetadas, 1)
+        self.assertEqual(lote.linhas.count(), 2)
+        self.assertEqual(
+            lote.total_depois - lote.total_antes, Decimal("200.00"),
+        )
+
+    def test_descontinuada_nunca_e_aplicada_mesmo_se_pedida(self):
+        """Marcar a linha na seleção não pode gravar preço velho como se fosse novo."""
+        lote, linha = self._linha_do(self.aposentada)
+        reprecificacao.aplicar(lote, selecionadas=[linha.linha_id])
+
+        self.aposentada.refresh_from_db()
+        linha.refresh_from_db()
+        self.assertFalse(linha.aplicada)
+        self.assertFalse(linha.selecionada)
+        self.assertEqual(self.aposentada.custo_unitario, Decimal("2.0000"))
+        # A procedência continua sendo junho — é o que torna o aviso possível.
+        self.assertEqual(self.aposentada.data_base_preco, date(2026, 6, 1))
+
+    def test_orcamento_avisa_a_linha_que_ficou_para_tras(self):
+        lote = reprecificacao.gerar_previa(self.orcamento, base_destino=self.base_jul)
+        reprecificacao.aplicar(lote)
+
+        self.orcamento.refresh_from_db()
+        self.assertEqual(self.orcamento.data_base, date(2026, 7, 1))
+
+        aviso = reprecificacao.avisos_de_data_base(self.orcamento)
+        self.assertTrue(aviso["tem_aviso"])
+        self.assertEqual(aviso["linhas_atrasadas"], 1)
+        self.assertEqual(aviso["linhas"][0]["codigo_referencia"], "0002")
+        self.assertIn("07/2026", aviso["mensagem"])
+
+    def test_sem_linha_atrasada_nao_ha_aviso(self):
+        """O aviso some sozinho quando a planilha volta a ser honesta."""
+        self.aposentada.delete()
+        planilha.recalcular_orcamento(self.orcamento)
+        self.orcamento.refresh_from_db()
+
+        lote = reprecificacao.gerar_previa(self.orcamento, base_destino=self.base_jul)
+        reprecificacao.aplicar(lote)
+        self.orcamento.refresh_from_db()
+
+        aviso = reprecificacao.avisos_de_data_base(self.orcamento)
+        self.assertFalse(aviso["tem_aviso"])
+        self.assertEqual(aviso["linhas_atrasadas"], 0)
+
+    def test_desfazer_leva_a_descontinuada_junto_e_zera_o_aviso(self):
+        lote = reprecificacao.gerar_previa(self.orcamento, base_destino=self.base_jul)
+        reprecificacao.aplicar(lote)
+        reprecificacao.desfazer(lote)
+
+        self.orcamento.refresh_from_db()
+        self.assertEqual(self.orcamento.data_base, date(2026, 6, 1))
+        # Cabeçalho voltou para junho, e a linha aposentada sempre esteve em
+        # junho — logo não há mais nada atrasado para avisar.
+        aviso = reprecificacao.avisos_de_data_base(self.orcamento)
+        self.assertFalse(aviso["tem_aviso"])
 
 
 class DuplicacaoTests(PlanilhaTestBase):
@@ -612,17 +751,34 @@ class GateDeApiTests(PlanilhaTestBase):
         self.assertEqual(self.client.get("/api/orcamento/bancos/").status_code, 403)
 
     def test_com_permissao_de_leitura_lista(self):
-        self.autenticar(perms=["orcamento.base.view"])
+        self.autenticar(perms=["orcamento.banco.view"])
         self.assertEqual(self.client.get("/api/orcamento/bancos/").status_code, 200)
 
+    def test_quem_so_ve_a_base_publica_nao_ve_o_banco_da_empresa(self):
+        """ORC.9 — as duas leituras se separaram. Consultar SINAPI é uma coisa;
+        ver a tabela de preço que a casa negociou é outra, e é dado comercial."""
+        self.autenticar(perms=["orcamento.base.view"])
+        self.assertEqual(self.client.get("/api/orcamento/bancos/").status_code, 403)
+
     def test_sem_o_modulo_nao_passa(self):
-        self.autenticar(modules=(), perms=["orcamento.base.view"])
+        self.autenticar(modules=(), perms=["orcamento.banco.view"])
         self.assertEqual(self.client.get("/api/orcamento/bancos/").status_code, 403)
 
     def test_leitura_nao_autoriza_escrita(self):
-        self.autenticar(perms=["orcamento.base.view"])
+        self.autenticar(perms=["orcamento.banco.view"])
         resposta = self.client.post("/api/orcamento/bancos/", {"nome": "Novo"}, format="json")
         self.assertEqual(resposta.status_code, 403)
+
+    def test_quem_orca_nao_mexe_no_banco_de_preco(self):
+        """ORC.9 — manter a régua deixou de andar junto com montar a planilha."""
+        self.autenticar(perms=["orcamento.orcamento.edit", "orcamento.banco.view"])
+        resposta = self.client.post("/api/orcamento/bancos/", {"nome": "Novo"}, format="json")
+        self.assertEqual(resposta.status_code, 403)
+
+    def test_quem_cuida_do_banco_escreve(self):
+        self.autenticar(perms=["orcamento.banco.view", "orcamento.banco.edit"])
+        resposta = self.client.post("/api/orcamento/bancos/", {"nome": "Novo"}, format="json")
+        self.assertEqual(resposta.status_code, 201)
 
     def test_itens_e_pastas_tambem_exigem_leitura(self):
         self.autenticar(perms=["orcamento.orcamento.view"])
@@ -636,27 +792,30 @@ class GateDeApiTests(PlanilhaTestBase):
 
     def test_importar_exige_o_conjunto_inteiro_de_permissoes(self):
         """Meia permissão bloqueia: não existe arquivo parcial (R11)."""
-        self.autenticar(perms=["orcamento.base.view"])  # falta `.adotar`
+        self.autenticar(perms=["orcamento.banco.view"])  # falta `.edit`
         resposta = self.client.post(
             "/api/impexp/orcamento.banco_preco/importar/", {}, format="multipart",
         )
         self.assertEqual(resposta.status_code, 403)
-        self.assertIn("orcamento.base.adotar", str(resposta.data))
+        self.assertIn("orcamento.banco.edit", str(resposta.data))
 
     def test_recursos_some_com_o_que_a_pessoa_nao_pode_operar(self):
         """O frontend não mostra botão que daria 403 no clique (§10)."""
-        self.autenticar(perms=["orcamento.base.view"])
+        self.autenticar(perms=["orcamento.banco.view"])
         ids = {r["id"] for r in self.client.get("/api/impexp/recursos/").data["recursos"]}
         self.assertNotIn("orcamento.banco_preco", ids)
 
-        self.autenticar(perms=["orcamento.base.view", "orcamento.base.adotar"])
+        self.autenticar(perms=["orcamento.banco.view", "orcamento.banco.edit"])
         ids = {r["id"] for r in self.client.get("/api/impexp/recursos/").data["recursos"]}
         self.assertIn("orcamento.banco_preco", ids)
 
     def test_base_mae_e_recusada_para_quem_nao_e_dono_da_plataforma(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
 
-        self.autenticar(perms=["orcamento.base.view", "orcamento.base.adotar"])
+        self.autenticar(perms=[
+            "orcamento.base.view", "orcamento.base.adotar",
+            "orcamento.banco.view", "orcamento.banco.edit",
+        ])
         arquivo = SimpleUploadedFile(
             "t.csv", _csv([CABECALHO, "1;A;UN;1,00;"]), content_type="text/csv",
         )
@@ -669,7 +828,7 @@ class GateDeApiTests(PlanilhaTestBase):
 
     def test_banco_travado_recusa_na_porta_e_nao_depois_de_ler(self):
         bancos.travar(self.banco)
-        self.autenticar(perms=["orcamento.base.view", "orcamento.base.adotar"])
+        self.autenticar(perms=["orcamento.banco.view", "orcamento.banco.edit"])
         resposta = self.client.post(
             "/api/impexp/orcamento.banco_preco/importar/",
             {"contexto": f'{{"banco": {self.banco.pk}}}'}, format="multipart",

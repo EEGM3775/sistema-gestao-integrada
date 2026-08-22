@@ -6,6 +6,7 @@ from django.db import transaction
 from django.db.models import Q, Sum
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
+from nucleo.busca import BuscaSemAcento
 from rest_framework import filters, permissions, status, views, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -76,7 +77,7 @@ class BaseScmViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
 class CentroCustoViewSet(BaseScmViewSet):
     queryset = CentroCusto.objects.all().order_by("nome")
     serializer_class = CentroCustoSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_fields = ["tipo", "ativo", "empreendimento", "obra"]
     search_fields = ["nome", "codigo"]
     ordering_fields = ["nome", "codigo"]
@@ -86,7 +87,7 @@ class CentroCustoViewSet(BaseScmViewSet):
 class OfertaFornecedorViewSet(BaseScmViewSet):
     queryset = OfertaFornecedor.objects.all().order_by("produto", "preco_direto")
     serializer_class = OfertaFornecedorSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_fields = ["produto", "fornecedor", "compra_direta", "visibilidade", "ativo"]
     search_fields = ["produto__descricao", "produto__codigo_interno", "codigo_no_fornecedor"]
     ordering_fields = ["preco_direto", "prazo_entrega_dias"]
@@ -108,12 +109,18 @@ class FaixaPrecoOfertaViewSet(BaseScmViewSet):
 class DemandaViewSet(BaseScmViewSet):
     queryset = Demanda.objects.all().order_by("-criado_em")
     serializer_class = DemandaSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_fields = ["tipo", "status", "visibilidade", "origem", "centro_custo"]
     search_fields = ["categoria", "regiao", "observacao"]
     ordering_fields = ["criado_em", "status"]
     required_resource = "scm.demanda"
-    action_permission_map = {"publicar": "scm.demanda.publicar"}
+    # `do_orcamento` cria demanda → é escrita de demanda, reusa a permissão do
+    # recurso. Não ganhou permissão própria pelo mesmo motivo de sempre:
+    # permissão nova exige rebuild da imagem da IAM + re-seed.
+    action_permission_map = {
+        "publicar": "scm.demanda.publicar",
+        "do_orcamento": "scm.demanda.edit",
+    }
 
     def perform_create(self, serializer):
         # Solicitante default = usuário do request (se não veio no payload).
@@ -134,6 +141,67 @@ class DemandaViewSet(BaseScmViewSet):
             demanda.status = Demanda.Status.ABERTA
         demanda.save(update_fields=["visibilidade", "status"])
         return Response(self.get_serializer(demanda).data)
+
+    @action(detail=False, methods=["post"], url_path="do-orcamento")
+    def do_orcamento(self, request):
+        """A compra que nasce da planilha: relação de insumos → demanda em rascunho.
+
+        Fecha o primeiro elo do laço `orçado → comprometido → aplicado →
+        realizado`, que era o único sem caminho automático. A quantidade é a
+        consolidada da obra inteira — o aço que aparece em nove serviços entra
+        uma vez, somado, com o mesmo `catalogo.Item` que o orçamento usou.
+
+        **Import tardio e tolerante**, como o SIL faz com o orçado: quem não
+        assina o módulo `orcamento` recebe 409 com explicação, não 500.
+        """
+        orcamento_id = request.data.get("orcamento")
+        if not orcamento_id:
+            return Response(
+                {"orcamento": "Informe o orçamento de origem."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            from moduloorcamento.models import Orcamento
+
+            from .do_orcamento import GeracaoInvalida, demanda_do_orcamento
+        except ImportError:
+            return Response(
+                {"detail": "O módulo de orçamento não está disponível nesta instalação."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        tenant_id = getattr(getattr(request, "user", None), "tenant_id", None)
+        orcamento = Orcamento.objects.filter(tenant_id=tenant_id, pk=orcamento_id).first()
+        if orcamento is None:
+            return Response(
+                {"orcamento": "Orçamento não encontrado."}, status=status.HTTP_404_NOT_FOUND,
+            )
+
+        tipo = request.data.get("tipo") or Demanda.Tipo.MATERIAL
+        if tipo not in Demanda.Tipo.values:
+            return Response(
+                {"tipo": "Use 'material' ou 'servico'."}, status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        centro = None
+        if request.data.get("centro_custo"):
+            centro = CentroCusto.objects.filter(
+                tenant_id=tenant_id, pk=request.data["centro_custo"]
+            ).first()
+
+        try:
+            resultado = demanda_do_orcamento(
+                orcamento,
+                tipo=tipo,
+                centro_custo=centro,
+                solicitante=getattr(request, "user", None),
+                observacao=request.data.get("observacao") or "",
+            )
+        except GeracaoInvalida as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+
+        return Response(resultado, status=status.HTTP_201_CREATED)
 
 
 class ItemDemandaViewSet(BaseScmViewSet):

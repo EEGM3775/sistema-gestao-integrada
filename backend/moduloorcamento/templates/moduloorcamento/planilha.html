@@ -27,6 +27,12 @@
     td { border-bottom: 0.3pt solid #dde3ec; padding: 1.3mm 1.2mm; vertical-align: top; }
     .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .sintetico td { background: #f3f5f9; font-weight: bold; }
+    /* Linha de insumo: menor e cinza, para o olho separar a composição do
+       serviço sem precisar contar recuo. Não é decoração — numa página com
+       quarenta linhas, insumo com o mesmo peso visual do serviço faz a peça
+       parecer uma planilha de quarenta serviços. */
+    .insumo td { color: #444; font-size: 7pt; }
+    .insumo .cat { text-transform: uppercase; letter-spacing: 0.03em; color: #666; }
     .total td { border-top: 1pt solid #9aa8bd; font-weight: bold; font-size: 9pt; padding-top: 2mm; }
     .nivel-1 { padding-left: 4mm; }
     .nivel-2 { padding-left: 8mm; }
@@ -61,16 +67,16 @@
     </thead>
     <tbody>
       {% for linha in linhas %}
-      <tr {% if linha.sintetico %}class="sintetico"{% endif %}>
+      <tr {% if linha.sintetico %}class="sintetico"{% elif linha.insumo %}class="insumo"{% endif %}>
         <td>{{ linha.codigo_eap }}</td>
-        <td>{% if linha.codigo_referencia %}{{ linha.fonte }} {{ linha.codigo_referencia }}{% endif %}</td>
+        <td>{% if linha.insumo %}<span class="cat">{{ linha.fonte }}</span>{% elif linha.codigo_referencia %}{{ linha.fonte }} {{ linha.codigo_referencia }}{% endif %}</td>
         <td class="nivel-{{ linha.nivel }}">{{ linha.descricao }}</td>
         <td>{{ linha.unidade }}</td>
         <td class="num">{% if linha.quantidade is not None %}{{ linha.quantidade|floatformat:2 }}{% endif %}</td>
         <td class="num">{% if linha.custo_unitario is not None %}{{ linha.custo_unitario|floatformat:2 }}{% endif %}</td>
         <td class="num">{{ linha.total_custo_direto|floatformat:2 }}</td>
-        <td class="num">{{ linha.total_com_bdi|floatformat:2 }}</td>
-        <td class="num">{{ linha.peso|floatformat:1 }}%</td>
+        <td class="num">{% if linha.total_com_bdi is not None %}{{ linha.total_com_bdi|floatformat:2 }}{% endif %}</td>
+        <td class="num">{% if linha.peso is not None %}{{ linha.peso|floatformat:1 }}%{% endif %}</td>
       </tr>
       {% endfor %}
       <tr class="total">
@@ -85,7 +91,9 @@
   <p class="rodape">
     Emitido em {{ cabecalho.emitido_em|date:"d/m/Y H:i" }}. Valores em reais, na data-base
     declarada acima. O total com BDI aplica o percentual linha a linha, como se confere
-    planilha de licitação — não sobre o total.
+    planilha de licitação — não sobre o total.{% if analitico %} As linhas recuadas com "↳" são os
+    insumos que formam o custo do serviço logo acima: somam exatamente o custo direto dele, e por
+    isso não repetem BDI nem peso — o preço de venda já está na linha do serviço.{% endif %}
   </p>
 </body>
 </html>

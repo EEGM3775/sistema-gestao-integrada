@@ -1,47 +1,53 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
-  AlertTriangle, Calculator, CheckCircle2, Copy as CopyIcon, Download, ExternalLink,
-  FileSpreadsheet, FolderPlus, GitBranch, Lock, Percent, Plus, RefreshCw, RotateCcw, Search,
+  AlertTriangle, Calculator, CheckCircle2, ChevronRight, Copy as CopyIcon, Download, ExternalLink,
+  FileSpreadsheet, FolderPlus, GitBranch, Lock, Percent, Plus, RefreshCw, RotateCcw, Ruler, Search,
   Trash2, TrendingUp, Upload,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import PaginaShell from '../components/PaginaShell'
+import MedicaoDrawer from '../components/MedicaoDrawer'
 import GradeOrcamento, { type ColunaEditavel, type EdicaoCelula } from '../components/GradeOrcamento'
 import InserirItemModal, { type Escolha } from '../components/InserirItemModal'
 import { Aviso, Btn, Card, CAPS, Empty, Field, inp, Loading, Modal, mono, Pill, Select, Seletor, Spinner, Drawer, Info } from '../ui'
 import { brl, mesBR, num, paraDecimal, pct, STATUS_ESTADO } from '../lib'
 import { baixarExportacao } from '../api/orcamentoApi'
 import {
-  useAprovar, useArvore, useBasesResumo, useCriarItem, useCriarOrcamento, useEditarCelula,
-  useExplodir, useItemDoCatalogo, useMemoria, useObras, useOrcamentos, usePrecoReal, useRecalcular,
+  useAnalitica, useAprovar, useArvore, useBasesResumo, useCriarItem, useEditarCelula,
+  useExplodir, useItemDoCatalogo, useMemoria, useObras, usePrecoReal, useRecalcular,
   useRemoverItem, useRevisar, useAplicarPrecoReal, useAtualizarOrcamento,
   useAplicarReprecificacao, useDesfazerReprecificacao, useDuplicarOrcamento,
   useGerarPreviaReprecificacao, useHistoricoReprecificacao,
 } from '../hooks'
-import type { ItemOrcado, ObraOpt, Orcamento, PreviaReprecificacao } from '../types'
+import type { ItemOrcado, ObraOpt, PreviaReprecificacao } from '../types'
 
 type Modo = 'sintetico' | 'analitico'
 
 export default function OrcarPage() {
   const { hasPermission } = useAuth()
-  const [params, setParams] = useSearchParams()
-  const orcamentoId = params.get('orcamento') ? Number(params.get('orcamento')) : undefined
+  // A planilha é um **lugar**, e não um filtro: o id vem da rota. É o que faz o
+  // voltar do navegador, o link colável e a trilha do cabeçalho existirem sem
+  // ninguém programar nenhum dos três.
+  const { orcamentoId: naRota } = useParams()
+  const navigate = useNavigate()
+  const orcamentoId = naRota ? Number(naRota) : undefined
 
   const { data: obras } = useObras()
-  const [obraId, setObraId] = useState<number | ''>('')
-  const { data: listaOrcamentos, isLoading: carregandoLista } = useOrcamentos({ page_size: 200, ordering: '-versao' })
   const { data: arvore, isLoading: carregandoArvore } = useArvore(orcamentoId)
   const { data: bases } = useBasesResumo()
 
-  const [modo, setModo] = useState<Modo>('analitico')
+  // Sintético é o padrão: é a planilha que se lê e que vai para o edital. Abrir
+  // a composição da obra inteira é ato deliberado — e custa uma consulta a mais.
+  const [modo, setModo] = useState<Modo>('sintetico')
+  const { data: analitica, isLoading: carregandoAnalitica } = useAnalitica(orcamentoId, modo === 'analitico')
   const [filtro, setFiltro] = useState('')
   const [inserindo, setInserindo] = useState(false)
-  const [criandoOrcamento, setCriandoOrcamento] = useState(false)
   const [ajustandoTaxas, setAjustandoTaxas] = useState(false)
   const [revisando, setRevisando] = useState(false)
   const [menu, setMenu] = useState<{ item: ItemOrcado; x: number; y: number } | null>(null)
   const [memoriaDe, setMemoriaDe] = useState<ItemOrcado | null>(null)
+  const [medicaoDe, setMedicaoDe] = useState<ItemOrcado | null>(null)
   const [precoDe, setPrecoDe] = useState<ItemOrcado | null>(null)
   const [recado, setRecado] = useState('')
   const [duplicando, setDuplicando] = useState(false)
@@ -56,22 +62,12 @@ export default function OrcarPage() {
   const aprovar = useAprovar()
   const revisar = useRevisar()
   const explodir = useExplodir()
-  const criarOrcamento = useCriarOrcamento()
   const atualizarOrcamento = useAtualizarOrcamento()
 
-  const orcamentos = useMemo(() => listaOrcamentos?.results ?? [], [listaOrcamentos])
-  const daObra = useMemo(
-    () => (obraId === '' ? orcamentos : orcamentos.filter(o => o.obra === obraId)),
-    [orcamentos, obraId],
-  )
   const orcamento = arvore?.orcamento
   const podeEditar = hasPermission('orcamento.orcamento.edit') && !!orcamento?.editavel
   const podeAprovar = hasPermission('orcamento.orcamento.aprovar')
   const podeRevisar = hasPermission('orcamento.orcamento.revisar')
-
-  useEffect(() => {
-    if (orcamento && obraId === '') setObraId(orcamento.obra)
-  }, [orcamento, obraId])
 
   useEffect(() => {
     if (!recado) return
@@ -86,11 +82,17 @@ export default function OrcarPage() {
     return () => document.removeEventListener('click', fechar)
   }, [menu])
 
-  const selecionar = (id: number | '') => {
-    const proximo = new URLSearchParams(params)
-    if (id === '') proximo.delete('orcamento')
-    else proximo.set('orcamento', String(id))
-    setParams(proximo, { replace: true })
+  /** Trocar de planilha é trocar de endereço: quem revisou ou duplicou sai
+   *  daqui com um link que continua valendo. */
+  const abrir = (id: number) => navigate(`/app/orcamento/orcar/orcamento/${id}`)
+
+  async function explodirLinha(item: ItemOrcado) {
+    try {
+      await explodir.mutateAsync(item.item_orcado_id)
+      setRecado('Composição explodida — custo unitário refeito pelos insumos.')
+    } catch {
+      setRecado('Este item não tem composição cadastrada no catálogo.')
+    }
   }
 
   async function inserirEscolhas(escolhas: Escolha[]) {
@@ -124,20 +126,36 @@ export default function OrcarPage() {
     return { direto, total, bdiValor: total - direto }
   }, [orcamento])
 
+  // Trilha, e não seletor: cada nível é um endereço, e voltar é subir um nível
+  // — o desenho de qualquer sistema com lista e detalhe. O seletor antigo não
+  // tinha volta possível (escolher "todas as obras" era reescrito na hora pela
+  // obra do orçamento aberto), porque filtro não é lugar nenhum.
   const seletor = (
-    <>
-      <Select value={obraId} onChange={e => setObraId(e.target.value ? Number(e.target.value) : '')} style={{ maxWidth: 210 }}>
-        <option value="">Todas as obras</option>
-        {obras?.map(o => <option key={o.obra_id} value={o.obra_id}>{o.nome_obra}</option>)}
-      </Select>
-      <Select value={orcamentoId ?? ''} onChange={e => selecionar(e.target.value ? Number(e.target.value) : '')} style={{ maxWidth: 260 }}>
-        <option value="">Selecione o orçamento</option>
-        {daObra.map(o => (
-          <option key={o.orcamento_id} value={o.orcamento_id}>
-            {o.descricao} · v{o.versao} · {o.status_nome}
-          </option>
-        ))}
-      </Select>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
+      <nav style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12.5, minWidth: 0 }}>
+        <Link to="/app/orcamento/orcar" style={{ color: 'var(--ink-3)', textDecoration: 'none', fontWeight: 650 }}>
+          Obras
+        </Link>
+        {orcamento && (
+          <>
+            <ChevronRight size={13} style={{ color: 'var(--ink-3)', flex: 'none' }} />
+            <Link
+              to={`/app/orcamento/orcar/obra/${orcamento.obra}`}
+              style={{
+                color: 'var(--ink-3)', textDecoration: 'none', fontWeight: 650,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200,
+              }}
+            >{orcamento.obra_nome}</Link>
+            <ChevronRight size={13} style={{ color: 'var(--ink-3)', flex: 'none' }} />
+            <span style={{
+              fontWeight: 650, color: 'var(--ink)',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 260,
+            }}>
+              {orcamento.descricao} <span style={{ ...mono, color: 'var(--ink-3)' }}>v{orcamento.versao}</span>
+            </span>
+          </>
+        )}
+      </nav>
       {orcamento && (
         <Seletor
           compacto
@@ -149,7 +167,7 @@ export default function OrcarPage() {
           ]}
         />
       )}
-    </>
+    </div>
   )
 
   const acoes = orcamento ? (
@@ -187,28 +205,22 @@ export default function OrcarPage() {
         <Btn tam="sm" onClick={() => setExportando(true)}><Download size={13} />Exportar</Btn>
       )}
     </div>
-  ) : (
-    hasPermission('orcamento.orcamento.edit')
-      ? <Btn tam="sm" variant="primary" onClick={() => setCriandoOrcamento(true)}><Plus size={13} />Novo orçamento</Btn>
-      : null
-  )
+  ) : null
 
   return (
     <PaginaShell pagina="orcar" seletor={seletor} acoes={acoes} semRolagem>
-      {carregandoLista || (orcamentoId && carregandoArvore && !arvore) ? (
+      {carregandoArvore && !arvore ? (
         <Loading texto="Abrindo a planilha…" />
       ) : !orcamento ? (
         <div style={{ padding: 26, overflowY: 'auto' }}>
-          {orcamentos.length === 0 ? (
-            <Empty acao={hasPermission('orcamento.orcamento.edit')
-              ? <Btn variant="primary" onClick={() => setCriandoOrcamento(true)}><Plus size={14} />Criar o primeiro orçamento</Btn>
-              : undefined}>
-              Nenhum orçamento ainda. Escolha a obra e a base de preço, e a planilha nasce em rascunho —
-              só quando for <b>aprovada</b> ela passa a valer como régua para o Estoque e o Suprimentos.
-            </Empty>
-          ) : (
-            <Empty>Selecione um orçamento no seletor acima para abrir a planilha.</Empty>
-          )}
+          <Empty acao={
+            <Link to="/app/orcamento/orcar" style={{ textDecoration: 'none' }}>
+              <Btn variant="primary">Ver as obras</Btn>
+            </Link>
+          }>
+            Esta planilha não existe mais, ou você não tem acesso a ela. Volte para a lista e escolha
+            a obra.
+          </Empty>
         </div>
       ) : (
         <>
@@ -260,9 +272,13 @@ export default function OrcarPage() {
               itens={arvore?.itens ?? []}
               totalOrcamento={orcamento.valor_total}
               bdiPadrao={orcamento.bdi_percentual}
+              dataBaseOrcamento={orcamento.data_base}
               editavel={podeEditar}
               modo={modo}
               filtro={filtro}
+              insumos={analitica}
+              carregandoInsumos={carregandoAnalitica}
+              onExplodir={podeEditar ? explodirLinha : undefined}
               onEditar={(item, coluna: ColunaEditavel, valor) =>
                 editarCelula.mutate({ id: item.item_orcado_id, payload: { [coluna]: valor } as Partial<ItemOrcado> })}
               onColar={(edicoes: EdicaoCelula[]) => {
@@ -304,13 +320,17 @@ export default function OrcarPage() {
         >
           {[
             { rotulo: 'Memória de cálculo', icone: <FileSpreadsheet size={13} />, acao: () => setMemoriaDe(menu.item) },
+            // ORC.7 — a memória do outro lado: o preço já abria em insumos, a
+            // quantidade não abria em nada.
+            {
+              rotulo: 'Memória do quantitativo', icone: <Ruler size={13} />,
+              off: menu.item.tipo_linha === 'sintetico',
+              acao: () => setMedicaoDe(menu.item),
+            },
             { rotulo: 'Preço real (SCM / SIL)', icone: <TrendingUp size={13} />, acao: () => setPrecoDe(menu.item), off: !menu.item.item },
             {
               rotulo: 'Explodir composição', icone: <GitBranch size={13} />, off: !podeEditar || !menu.item.item,
-              acao: async () => {
-                try { await explodir.mutateAsync(menu.item.item_orcado_id); setRecado('Composição explodida — custo unitário refeito pelos insumos.') }
-                catch { setRecado('Este item não tem composição cadastrada no catálogo.') }
-              },
+              acao: () => explodirLinha(menu.item),
             },
             {
               rotulo: 'Adicionar sub-item', icone: <Plus size={13} />, off: !podeEditar,
@@ -351,28 +371,21 @@ export default function OrcarPage() {
       )}
 
       {memoriaDe && <DrawerMemoria item={memoriaDe} onFechar={() => setMemoriaDe(null)} />}
+      {medicaoDe && (
+        <MedicaoDrawer
+          itemOrcado={medicaoDe.item_orcado_id}
+          descricao={medicaoDe.descricao}
+          unidade={medicaoDe.unidade}
+          podeEditar={podeEditar}
+          onClose={() => setMedicaoDe(null)}
+        />
+      )}
       {precoDe && (
         <DrawerPrecoReal
           item={precoDe}
           podeAplicar={podeEditar}
           onFechar={() => setPrecoDe(null)}
           onAplicado={() => { setPrecoDe(null); setRecado('Preço real adotado no lugar do referencial.') }}
-        />
-      )}
-
-      {criandoOrcamento && (
-        <ModalNovoOrcamento
-          obras={obras ?? []}
-          bases={bases ?? []}
-          existentes={orcamentos}
-          salvando={criarOrcamento.isPending}
-          onFechar={() => setCriandoOrcamento(false)}
-          onCriar={async dados => {
-            const criado = await criarOrcamento.mutateAsync(dados)
-            setCriandoOrcamento(false)
-            selecionar(criado.orcamento_id)
-            setRecado('Orçamento criado em rascunho.')
-          }}
         />
       )}
 
@@ -404,7 +417,7 @@ export default function OrcarPage() {
           onRevisar={async (tipo, motivo) => {
             const nova = await revisar.mutateAsync({ id: orcamento.orcamento_id, tipo, motivo })
             setRevisando(false)
-            selecionar(nova.orcamento_id)
+            abrir(nova.orcamento_id)
             setRecado(`Versão v${nova.versao} criada a partir da aprovada.`)
           }}
         />
@@ -417,7 +430,7 @@ export default function OrcarPage() {
           onFechar={() => setDuplicando(false)}
           onDuplicado={(id, aviso) => {
             setDuplicando(false)
-            selecionar(id)
+            abrir(id)
             setRecado(aviso || 'Orçamento duplicado em rascunho.')
           }}
         />
@@ -710,8 +723,8 @@ function ModalExportar({ orcamentoId, onFechar, onRecado }: {
   }
 
   const opcoes: { rotulo: string; apoio: string; params: Parameters<typeof baixarExportacao>[1] }[] = [
-    { rotulo: 'Planilha analítica (XLSX)', apoio: 'para trabalhar: filtrar, somar, comparar', params: { formato: 'xlsx', nivel: 'analitico' } },
-    { rotulo: 'Planilha sintética (XLSX)', apoio: 'só os agrupadores e o primeiro nível', params: { formato: 'xlsx', nivel: 'sintetico' } },
+    { rotulo: 'Planilha sintética (XLSX)', apoio: 'a planilha inteira, um serviço por linha, com o custo fechado', params: { formato: 'xlsx', nivel: 'sintetico' } },
+    { rotulo: 'Planilha analítica (XLSX)', apoio: 'cada serviço aberto nos insumos que formam o custo', params: { formato: 'xlsx', nivel: 'analitico' } },
     { rotulo: 'Planilha analítica (PDF)', apoio: 'para arquivar e assinar — layout fixo', params: { formato: 'pdf', nivel: 'analitico' } },
     { rotulo: 'Curva ABC (XLSX)', apoio: 'a lista que vai para a negociação de compra', params: { peca: 'curva-abc' } },
     { rotulo: 'Cronograma (XLSX)', apoio: 'etapas × competências e o desembolso previsto', params: { peca: 'cronograma' } },
@@ -885,74 +898,16 @@ function FormTaxas({ bdi, encargos, regime, salvando, onSalvar }: {
   )
 }
 
-function ModalNovoOrcamento({ obras, bases, existentes, salvando, onFechar, onCriar }: {
-  obras: ObraOpt[]
-  bases: { base_id: number; rotulo: string }[]
-  existentes: Orcamento[]
-  salvando: boolean
-  onFechar: () => void
-  onCriar: (dados: Record<string, unknown>) => Promise<void>
-}) {
-  const [form, setForm] = useState({ obra: '', descricao: '', base_referencial: '', bdi_percentual: '22,5', encargos_sociais_percentual: '84,7' })
-  const [erro, setErro] = useState('')
-  // A obra pode já ter planilha: a nova nasce como a próxima versão (reorçamento),
-  // e é melhor dizer isso antes do que o orçamentista descobrir no cabeçalho.
-  const daObra = form.obra ? existentes.filter(o => o.obra === Number(form.obra)) : []
-  const proximaVersao = daObra.reduce((maior, o) => Math.max(maior, o.versao), 0) + 1
-  return (
-    <Modal
-      titulo="Novo orçamento"
-      onClose={onFechar}
-      rodape={
-        <>
-          <Btn onClick={onFechar}>Cancelar</Btn>
-          <Btn variant="primary" disabled={salvando} onClick={async () => {
-            if (!form.obra || !form.descricao.trim()) { setErro('Obra e descrição são obrigatórias.'); return }
-            setErro('')
-            try {
-              await onCriar({
-                obra: Number(form.obra),
-                descricao: form.descricao.trim(),
-                base_referencial: form.base_referencial ? Number(form.base_referencial) : null,
-                bdi_percentual: paraDecimal(form.bdi_percentual),
-                encargos_sociais_percentual: paraDecimal(form.encargos_sociais_percentual),
-              })
-            } catch (e) {
-              // Sem isto o 400 virava só uma promise rejeitada no console: o modal
-              // ficava aberto, sem recado, e parecia que o botão não fez nada.
-              const dados = (e as { response?: { data?: Record<string, unknown> } })?.response?.data
-              const primeiro = dados && Object.values(dados)[0]
-              const detalhe = Array.isArray(primeiro) ? String(primeiro[0]) : primeiro ? String(primeiro) : null
-              setErro(detalhe ?? 'Não foi possível criar o orçamento.')
-            }
-          }}>Criar em rascunho</Btn>
-        </>
-      }
-    >
-      {erro && <Aviso tom="danger">{erro}</Aviso>}
-      <Field
-        label="Obra"
-        dica={daObra.length ? `Esta obra já tem ${daObra.length} planilha(s) — esta nasce como v${proximaVersao}.` : undefined}
-      >
-        <Select value={form.obra} onChange={e => setForm(f => ({ ...f, obra: e.target.value }))} style={{ width: '100%', maxWidth: 'none' }}>
-          <option value="">Selecione</option>
-          {obras.map(o => <option key={o.obra_id} value={o.obra_id}>{o.nome_obra}</option>)}
-        </Select>
-      </Field>
-      <Field label="Descrição"><input value={form.descricao} onChange={e => setForm(f => ({ ...f, descricao: e.target.value }))} placeholder="Ex.: Orçamento executivo — Residencial Alfa" style={inp} /></Field>
-      <Field label="Base de preço" dica="A data-base do orçamento é copiada da publicação e sobrevive a ela.">
-        <Select value={form.base_referencial} onChange={e => setForm(f => ({ ...f, base_referencial: e.target.value }))} style={{ width: '100%', maxWidth: 'none' }}>
-          <option value="">Sem base — preço digitado à mão</option>
-          {bases.map(b => <option key={b.base_id} value={b.base_id}>{b.rotulo}</option>)}
-        </Select>
-      </Field>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-        <Field label="BDI (%)"><input value={form.bdi_percentual} onChange={e => setForm(f => ({ ...f, bdi_percentual: e.target.value }))} style={{ ...inp, ...mono }} /></Field>
-        <Field label="Encargos (%)"><input value={form.encargos_sociais_percentual} onChange={e => setForm(f => ({ ...f, encargos_sociais_percentual: e.target.value }))} style={{ ...inp, ...mono }} /></Field>
-      </div>
-    </Modal>
-  )
-}
+/** Os quatro tipos existem porque **não** são a mesma coisa para quem lê a
+ *  planilha depois: dois mexem no escopo, um mexe no preço sem mexer no escopo,
+ *  e um conserta erro. Escolher errado aqui vira histórico de revisão errado no
+ *  contrato — e o histórico é o que se mostra numa auditoria. */
+const TIPOS_REVISAO = [
+  { valor: 'aditivo', rotulo: 'Aditivo', efeito: 'Acrescenta serviço ou quantidade ao aprovado. O valor sobe.' },
+  { valor: 'supressao', rotulo: 'Supressão', efeito: 'Retira serviço ou quantidade do aprovado. O valor desce.' },
+  { valor: 'reequilibrio', rotulo: 'Reequilíbrio', efeito: 'Mesmo escopo, preço corrigido — a variação de custo quebrou a equação.' },
+  { valor: 'correcao', rotulo: 'Correção', efeito: 'Conserta erro da planilha (quantidade, item trocado) sem mudar o combinado.' },
+]
 
 function ModalRevisar({ salvando, onFechar, onRevisar }: {
   salvando: boolean; onFechar: () => void; onRevisar: (tipo: string, motivo: string) => void
@@ -963,36 +918,81 @@ function ModalRevisar({ salvando, onFechar, onRevisar }: {
   return (
     <Modal
       titulo="Revisar orçamento aprovado"
+      largura={580}
       onClose={onFechar}
       rodape={
         <>
           <Btn onClick={onFechar}>Cancelar</Btn>
           <Btn variant="primary" disabled={salvando} onClick={() => {
-            if (!motivo.trim()) { setErro('O motivo é o que justifica o aditivo — obrigatório.'); return }
+            if (!motivo.trim()) { setErro('Escreva o motivo — é ele que justifica a revisão no histórico.'); return }
             onRevisar(tipo, motivo.trim())
           }}>Criar próxima versão</Btn>
         </>
       }
     >
       {erro && <Aviso tom="danger">{erro}</Aviso>}
+
+      {/* Três fatos, três linhas. Antes era um parágrafo só com os três dentro,
+          e o do meio — o que garante que a medição já feita não se mexe — era
+          justamente o que se perdia na leitura. */}
       <Aviso tom="amber">
         <Upload size={15} style={{ flex: 'none', marginTop: 1 }} />
-        A versão atual vira <b>superada</b> e continua sendo a régua daquele momento — medições já
-        feitas contra ela não mudam de base. A nova nasce em rascunho com a árvore inteira copiada.
+        <span style={{ minWidth: 0 }}>
+          <b>O que acontece ao confirmar:</b>
+          <ul style={{ margin: '5px 0 0', paddingLeft: 17, lineHeight: 1.65 }}>
+            <li>Nasce uma versão nova, em <b>rascunho</b>, com a árvore inteira copiada.</li>
+            <li>A versão atual passa a <b>superada</b> — continua consultável e continua sendo a régua do momento em que valeu.</li>
+            <li>Medições já feitas <b>não</b> mudam de base: elas seguem apontando para a versão contra a qual foram medidas.</li>
+          </ul>
+        </span>
       </Aviso>
-      <div style={{ height: 14 }} />
-      <Field label="Tipo">
-        <Select value={tipo} onChange={e => setTipo(e.target.value)} style={{ width: '100%', maxWidth: 'none' }}>
-          <option value="aditivo">Aditivo</option>
-          <option value="supressao">Supressão</option>
-          <option value="reequilibrio">Reequilíbrio</option>
-          <option value="correcao">Correção</option>
-        </Select>
-      </Field>
-      <Field label="Motivo">
-        <textarea value={motivo} onChange={e => setMotivo(e.target.value)} rows={3}
+
+      <div style={{ height: 16 }} />
+
+      <div style={{ ...CAPS, fontSize: 9, marginBottom: 7 }}>Tipo da revisão</div>
+      <div style={{ display: 'grid', gap: 6 }}>
+        {TIPOS_REVISAO.map(t => {
+          const marcado = tipo === t.valor
+          return (
+            <button
+              key={t.valor}
+              onClick={() => setTipo(t.valor)}
+              style={{
+                display: 'flex', alignItems: 'flex-start', gap: 9, width: '100%', textAlign: 'left',
+                padding: '9px 11px', cursor: 'pointer',
+                borderRadius: 'var(--r-sm)',
+                border: `1px solid ${marcado ? 'var(--accent)' : 'var(--line)'}`,
+                background: marcado ? 'var(--accent-soft)' : 'var(--surface)',
+              }}
+            >
+              <span style={{
+                flex: 'none', width: 13, height: 13, marginTop: 2, borderRadius: 99,
+                border: `2px solid ${marcado ? 'var(--accent)' : 'var(--line-2)'}`,
+                background: marcado ? 'var(--accent)' : 'transparent',
+                boxShadow: marcado ? 'inset 0 0 0 2px var(--surface)' : undefined,
+              }} />
+              <span style={{ minWidth: 0 }}>
+                <span style={{ display: 'block', fontSize: 13, fontWeight: 650, color: 'var(--ink)' }}>{t.rotulo}</span>
+                <span style={{ display: 'block', fontSize: 11.5, color: 'var(--ink-3)', lineHeight: 1.5 }}>{t.efeito}</span>
+              </span>
+            </button>
+          )
+        })}
+      </div>
+
+      <div style={{ height: 16 }} />
+
+      <Field
+        label="Motivo"
+        dica="Fica gravado no histórico da revisão, junto com o valor antes e depois — é o que responde 'por que este contrato mudou?' meses depois."
+      >
+        <textarea
+          value={motivo}
+          onChange={e => setMotivo(e.target.value)}
+          rows={3}
           placeholder="Ex.: Aditivo de 120 m² de laje por alteração de projeto aprovada em 12/07."
-          style={{ ...inp, resize: 'vertical', fontFamily: 'var(--sans)' }} />
+          style={{ ...inp, resize: 'vertical', fontFamily: 'var(--sans)', lineHeight: 1.5 }}
+        />
       </Field>
     </Modal>
   )

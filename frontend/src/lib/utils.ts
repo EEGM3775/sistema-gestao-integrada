@@ -5,10 +5,10 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-// Resolve a URL de um arquivo de mídia servido pelo Django (/media/...).
-// O gateway Nginx roteia /media/ para o Django; URLs absolutas passam direto.
-export function mediaUrl(path: string | null | undefined): string {
-  if (!path) return ''
-  if (/^https?:\/\//i.test(path)) return path
-  return path.startsWith('/') ? path : `/${path}`
-}
+// `mediaUrl` foi removida no D70 (09/08/2026). Ela resolvia caminhos de
+// `/media/`, e `/media/` passou a ser 404 no gateway: todo arquivo sai pela
+// porta única, com token. Quem precisa de um arquivo usa `@/lib/arquivo`
+// (`baixarArquivo`, `baixarParaDisco`, `abrirEmNovaAba`, `useArquivoBlob`).
+//
+// Removida e não mantida como no-op de propósito: uma função que devolve uma
+// URL que sempre dá 404 é mais difícil de achar do que um erro de compilação.

@@ -109,7 +109,7 @@
 ### Gerenciamento de Secrets — ✅ PRESENTE (com ressalvas)
 
 - `.env` gitignored; `.env.example` com placeholders; `_config` fail-fast em produção; chaves RSA gitignored.
-- **Ressalvas:** (1) **D15 corrigido 19/07/2026** — as 23 variáveis estão documentadas em `deploy/env/dev.env.example`, com um comando de auditoria registrado em [pendencias.md](../pendencias.md#d15) para reconferir periodicamente; (2) **Vault/Secrets Manager** segue **planejado** (Fase 10.3), não implementado — segredos ainda em `.env`.
+- **Ressalvas:** (1) **D15 corrigido 19/07/2026** — as 23 variáveis estão documentadas em `deploy/env/dev.env.example`, com um comando de auditoria registrado em [historico-correcoes.md](../historico-correcoes.md) para reconferir periodicamente; (2) **Vault/Secrets Manager** segue **planejado** (Fase 10.3), não implementado — segredos ainda em `.env`.
 
 ### Vulnerabilidades de Dependências — ✅ PRESENTE
 

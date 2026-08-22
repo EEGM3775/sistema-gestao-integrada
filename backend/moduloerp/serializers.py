@@ -3,7 +3,9 @@ from decimal import Decimal
 
 from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
+from funcoesimpexp.entrega import ArquivoGateadoSerializerMixin
 from nucleo.tenant_validators import TenantScopedUniqueSerializerMixin
+from .impexp import RECURSO_NOTA_FISCAL
 from .models import (
     Transacao, NotaFiscalServico, NotaFiscalProduto,
     NotaFiscal, ContaPagar, ContaReceber, CobrancaCliente, Boleto,
@@ -21,12 +23,24 @@ class BoletoSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['tenant']  # injetado pelo perform_create (Fase 8.2 / D3)
 
-class NotaFiscalServicoSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
+class NotaFiscalServicoSerializer(ArquivoGateadoSerializerMixin, TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
+    """NFS-e emitida pela NFE.io — PDF e XML pela porta única (D70)."""
+    arquivos_gateados = {
+        "arquivo_pdf": (RECURSO_NOTA_FISCAL, "nfse_pdf"),
+        "arquivo_xml": (RECURSO_NOTA_FISCAL, "nfse_xml"),
+    }
+
     class Meta:
         model = NotaFiscalServico
         fields = '__all__'
 
-class NotaFiscalProdutoSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
+class NotaFiscalProdutoSerializer(ArquivoGateadoSerializerMixin, TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
+    """NF-e de produto — PDF e XML pela porta única (D70)."""
+    arquivos_gateados = {
+        "arquivo_pdf": (RECURSO_NOTA_FISCAL, "nfe_pdf"),
+        "arquivo_xml": (RECURSO_NOTA_FISCAL, "nfe_xml"),
+    }
+
     class Meta:
         model = NotaFiscalProduto
         fields = '__all__'
@@ -37,10 +51,13 @@ class TransacaoSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['tenant']  # injetado pelo perform_create (Fase 8.2 / D3)
 
-class NotaFiscalSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
-    """
-    Serializador para o modelo NotaFiscal.
-    """
+class NotaFiscalSerializer(ArquivoGateadoSerializerMixin, TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
+    """Nota de **entrada** (a que o fornecedor mandou) — XML e PDF gateados (D70)."""
+    arquivos_gateados = {
+        "arquivo_pdf": (RECURSO_NOTA_FISCAL, "entrada_pdf"),
+        "arquivo_xml": (RECURSO_NOTA_FISCAL, "entrada_xml"),
+    }
+
     class Meta:
         model = NotaFiscal
         fields = '__all__'

@@ -157,19 +157,43 @@ def extrair(bruta: list, mapa: dict[str, int], recurso) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def ler_bytes(conteudo: bytes, nome: str, *, delimitador: str | None = None) -> list[list]:
+def ler_bytes(
+    conteudo: bytes,
+    nome: str,
+    *,
+    delimitador: str | None = None,
+    formato: str | None = None,
+) -> list[list]:
     """Lê XLSX, CSV/TXT ou PDF enviado por upload e devolve as linhas como listas.
 
     O arquivo veio pela rede e já está inteiro em memória, então a leitura é
-    materializada numa lista; o teto de tamanho é o da quota do plano, checada
-    antes de chegar aqui (R13).
+    materializada numa lista. **O teto que protege esta função não é o de linhas
+    do plano** (a R13, checada só depois, quando já se sabe quantas linhas há):
+    é o `orcamento_de_leitura` armado por quem chama, porque o que explode aqui
+    é a DESCOMPRESSÃO — um XLSX de poucos MB expande sem relação com o tamanho
+    do arquivo, e antes do orçamento isso não tinha limite superior nenhum.
+
+    `formato` é o código já reconhecido pela assinatura de bytes
+    (`funcoesimpexp.limites.detectar_formato`). Sem ele, cai no sufixo do nome —
+    caminho mantido só para chamada interna com arquivo que já passou pela porta.
     """
-    minusculo = (nome or "").lower()
-    if minusculo.endswith((".csv", ".txt")):
+    # **Erro de programação não se disfarça de arquivo ruim** (D76). Passar aqui o
+    # `FormatoEntrada` em vez do seu `.codigo` fazia todo `==` abaixo falhar e o
+    # fluxo cair no `raise LeituraInvalida` do fim — que diz "formato não
+    # suportado", acusa o arquivo do cliente e some dentro do `_com_erro` como um
+    # lote em ERRO. É a mesma lição do D34 e do D57, agora na terceira reincidência:
+    # quando um defeito nosso veste a roupa de defeito do arquivo, ninguém o acha.
+    if formato is not None and not isinstance(formato, str):
+        raise TypeError(
+            f"ler_bytes(formato=...) espera o CÓDIGO do formato (str), não "
+            f"{type(formato).__name__}. Use `formato.codigo`."
+        )
+    codigo = formato or _codigo_pelo_sufixo(nome)
+    if codigo == "csv":
         texto = conteudo.decode("utf-8-sig", errors="replace")
         sep = delimitador or detectar_delimitador(texto[:8192])
         return [linha for linha in csv.reader(io.StringIO(texto), delimiter=sep)]
-    if minusculo.endswith(".xlsx"):
+    if codigo == "xlsx":
         try:
             from openpyxl import load_workbook
         except ImportError as exc:  # pragma: no cover - dependência de requirements
@@ -180,9 +204,20 @@ def ler_bytes(conteudo: bytes, nome: str, *, delimitador: str | None = None) -> 
             return [list(linha) for linha in planilha.iter_rows(values_only=True)]
         finally:
             wb.close()
-    if minusculo.endswith(".pdf"):
+    if codigo == "pdf":
         return ler_pdf(conteudo)
     raise LeituraInvalida(f"Formato não suportado ({nome}). Use .xlsx, .csv ou .pdf.")
+
+
+def _codigo_pelo_sufixo(nome: str) -> str:
+    minusculo = (nome or "").lower()
+    if minusculo.endswith((".csv", ".txt")):
+        return "csv"
+    if minusculo.endswith(".xlsx"):
+        return "xlsx"
+    if minusculo.endswith(".pdf"):
+        return "pdf"
+    return ""
 
 
 def ler_pdf(conteudo: bytes) -> list[list]:

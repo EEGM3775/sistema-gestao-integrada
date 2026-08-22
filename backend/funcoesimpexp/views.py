@@ -21,30 +21,50 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from nucleo.tenancy import TenantScopedAPIViewMixin
-from nucleo.upload_validation import resolve_upload_config
 
+from . import entrega as motor_entrega
 from . import exportacao as motor_exportacao
 from . import importacao as motor_importacao
-from .acesso import exigir_acesso_total, recursos_permitidos
+from .acesso import exigir_acesso_total, exigir_entrega, recursos_permitidos
+from .limites import (
+    FORMATOS_POR_CODIGO,
+    ArquivoGrandeDemais,
+    FormatoDesconhecido,
+    FormatoNaoContratado,
+    limites_do_plano,
+    teto_do_formato,
+    validar_entrada,
+)
 from .models import Exportacao, Importacao, MapaColunas
 from .modelo import nome_do_modelo, planilha_modelo
-from .registro import ContextoInvalido, RecursoDesconhecido, listar, obter
+from .registro import (
+    ArquivoRecebido,
+    ContextoInvalido,
+    EntregaInvalida,
+    RecursoDesconhecido,
+    listar,
+    obter,
+)
 
 
 class _Base(TenantScopedAPIViewMixin, APIView):
     permission_classes = [IsAuthenticated]
 
-    def recurso(self, recurso_id: str, contexto: dict | None = None, *, validar=False):
+    def recurso(self, recurso_id: str, contexto: dict | None = None, *, validar=False,
+                escrita: bool = False):
         """Resolve o recurso, aplica o gate do §3 e o amarra ao destino.
 
         Nesta ordem, sempre: quem não pode operar o recurso não deve nem chegar a
         descobrir se o destino que pediu existe.
+
+        `escrita=True` no que GRAVA no destino (importar, aplicar, desfazer,
+        remapear): soma o entitlement do módulo ao conjunto de permissões.
         """
         try:
             recurso = obter(recurso_id)
         except RecursoDesconhecido:
             raise NotFound(f"Recurso '{recurso_id}' não existe.")
-        exigir_acesso_total(self.request.user, recurso)
+        exigir_acesso_total(self.request.user, recurso, escrita=escrita)
         if validar:
             try:
                 contexto = recurso.validar_contexto(
@@ -52,7 +72,19 @@ class _Base(TenantScopedAPIViewMixin, APIView):
                 )
             except ContextoInvalido as exc:
                 raise ValidationError({"contexto": str(exc)})
-        return recurso.com_contexto(contexto)
+        # **O tenant entra no contexto sempre** (R19). Os ganchos declarativos
+        # que consultam o banco do módulo — hoje o `opcoes_da_coluna`, que lista o
+        # vocabulário do cliente para a conferência oferecer — precisam saber de
+        # quem é o acervo, e o recurso é uma instância única por processo, sem
+        # request. Injetar aqui é o mesmo raciocínio do `tiers` no lote: o dado
+        # vem do request, e o gancho roda onde request não existe.
+        #
+        # **Como texto**: o contexto é persistido em `Importacao.contexto`, que é
+        # JSON, e `UUID` não serializa. O ORM aceita a string no filtro.
+        return recurso.com_contexto({
+            **(contexto or {}),
+            "tenant_id": str(self.tenant_id) if self.tenant_id else None,
+        })
 
     def separar_contexto(self, recurso, params: dict) -> tuple[dict, dict]:
         """Query params → `(contexto, recorte)`.
@@ -80,6 +112,24 @@ class _Base(TenantScopedAPIViewMixin, APIView):
     def limites(self):
         return getattr(self.request.user, "iam_quotas", None)
 
+    def teto_serializavel(self) -> dict:
+        """O orçamento de recurso do plano como JSON, para viajar na task.
+
+        No `_Base` porque dois caminhos precisam do mesmo — o upload que vira job
+        e o `remapear`, que relê o mesmo arquivo. Duas cópias divergiriam na
+        primeira vez que um terceiro número entrasse no orçamento.
+
+        Resolvido no REQUEST e não no worker, de propósito: é aqui que existe o
+        token com a claim `plano`. Recalcular lá exigiria carregar o usuário —
+        e `RequisicaoDiferida` já registra que o worker não tem request.
+        """
+        teto = limites_do_plano(self.request.user)
+        return {
+            "memoria_mb": teto.memoria_mb,
+            "segundos": teto.segundos,
+            "plano": teto.plano,
+        }
+
     def _de_para(self, request) -> dict | None:
         """De-para vindo à mão ou de um mapa salvo (R4).
 
@@ -106,8 +156,22 @@ class _Base(TenantScopedAPIViewMixin, APIView):
 
 
 def _arquivo(conteudo: bytes, content_type: str, nome: str) -> HttpResponse:
-    resposta = HttpResponse(conteudo, content_type=content_type)
+    return _blindar(
+        HttpResponse(conteudo, content_type=content_type), nome,
+    )
+
+
+def _blindar(resposta, nome: str):
+    """`attachment` + `nosniff` em toda saída de arquivo.
+
+    O `attachment` já estava; o `nosniff` faltava, e o par é o padrão que a
+    PRA.2 fixou na porta de leitura da Prancheta. Sem ele o navegador pode
+    ignorar o `Content-Type` que declaramos e decidir pelo conteúdo — e o dia em
+    que um recurso exportar em formato que o navegador saiba renderizar, o
+    arquivo passa a executar na nossa origem em vez de baixar.
+    """
     resposta["Content-Disposition"] = f'attachment; filename="{nome}"'
+    resposta["X-Content-Type-Options"] = "nosniff"
     return resposta
 
 
@@ -135,7 +199,51 @@ class RecursosView(_Base):
 
     def get(self, request):
         permitidos = recursos_permitidos(request.user, listar())
-        return Response({"recursos": [r.descrever() for r in permitidos]})
+        limites = limites_do_plano(request.user)
+        return Response({
+            # `com_contexto` com o tenant: o catálogo publica as opções das
+            # colunas editáveis, e elas são do cliente (ver `_Base.recurso`).
+            "recursos": [
+                self._descrever(
+                    r.com_contexto(
+                        {"tenant_id": str(self.tenant_id) if self.tenant_id else None},
+                    ),
+                    limites,
+                )
+                for r in permitidos
+            ],
+            # O teto e a lista de formatos vão JUNTO do catálogo, e não escondidos
+            # atrás de um erro: é a terceira parte do método do assinador gov.br
+            # (a tela diz "até 100 MB, nestes formatos" antes de a pessoa
+            # escolher o arquivo). Descobrir o limite no 402 depois de esperar o
+            # upload de 40 MB é a experiência que este campo evita.
+            "limites": limites.descrever(),
+        })
+
+    @staticmethod
+    def _descrever(recurso, limites) -> dict:
+        """A declaração do recurso + o teto que a PORTA DELE vai aplicar (D83).
+
+        **O `limites` global não serve a recurso de arquivo, e isso não é
+        detalhe de layout.** O teto de um formato de arquivo é do **recurso** —
+        o mesmo PDF é planilha de preço no Orçamento e prancha de 100 MB na
+        Prancheta —, e `Limites.descrever()`, que não conhece recurso nenhum,
+        só sabe publicar o número do plano. Resultado: o catálogo anunciava
+        25 MB para DWG enquanto a porta aceitava 150.
+        A tela que acreditou no anúncio recusou sozinha um arquivo bom.
+
+        O conserto é publicar aqui o resultado de `teto_do_formato` — **a mesma
+        função que a porta chama** —, e não uma segunda conta parecida. Duas
+        contas voltariam a divergir; o ponto é que exista uma só.
+        """
+        dados = recurso.descrever()
+        if recurso.de_arquivo:
+            dados["tetos_mb"] = {
+                codigo: teto_do_formato(recurso, FORMATOS_POR_CODIGO[codigo], limites)
+                for codigo in recurso.formatos_arquivo
+                if codigo in FORMATOS_POR_CODIGO
+            }
+        return dados
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +283,50 @@ class ExportarView(_Base):
         return _arquivo(conteudo, content_type, nome)
 
 
+class EntregarArquivoView(_Base):
+    """IE.3b — a outra metade da porta única: o **download** de um arquivo.
+
+    Uma rota para todos os módulos, como todas as daqui: `especie` e `chave` são
+    opacas e vão inteiras para o gancho do recurso, que é quem conhece domínio.
+
+    **Não confundir com `ExportarView`.** Lá se gera um arquivo tabular a partir
+    do `queryset`, com recorte, procedência e caminho de job. Aqui se deixa sair
+    um binário que o recurso já guarda. São verbos diferentes com gates
+    diferentes — ver `exigir_entrega`.
+    """
+
+    def get(self, request, recurso_id: str, especie: str, chave: str):
+        try:
+            recurso = obter(recurso_id)
+        except RecursoDesconhecido:
+            raise NotFound(f"Recurso '{recurso_id}' não existe.")
+        if not recurso.entrega:
+            # 404 e não 405: para quem pede, um recurso que não entrega arquivo é
+            # indistinguível de um caminho que não existe — e é o que ele é.
+            raise NotFound(f"Recurso '{recurso_id}' não entrega arquivo.")
+
+        exigir_entrega(request.user, recurso)
+
+        try:
+            entregue = recurso.entregar_arquivo(especie, chave, self.tenant_id)
+        except EntregaInvalida as exc:
+            raise NotFound(str(exc))
+
+        try:
+            resposta = motor_entrega.servir(entregue)
+        except FileNotFoundError as erro:
+            raise NotFound(
+                "O registro existe, mas o arquivo não está no armazenamento deste "
+                "servidor. É falha de infraestrutura, não de permissão."
+            ) from erro
+
+        # Depois de servir, nunca antes: trilha de download é registro de um ato
+        # consumado, e auditar a tentativa que terminou em 404 encheria a trilha
+        # de eventos que não aconteceram.
+        motor_entrega.auditar(recurso, entregue, usuario=request.user, especie=especie)
+        return resposta
+
+
 class ExportacaoDetalheView(_Base):
     """Acompanhamento e download do que saiu por job (R10)."""
 
@@ -198,8 +350,11 @@ class ExportacaoDetalheView(_Base):
             )
         if lote.expirada:
             raise NotFound("O link desta exportação expirou. Gere o arquivo de novo.")
-        return FileResponse(lote.arquivo.open("rb"), as_attachment=True,
-                            filename=lote.arquivo.name.rsplit("/", 1)[-1])
+        nome = lote.arquivo.name.rsplit("/", 1)[-1]
+        return _blindar(
+            FileResponse(lote.arquivo.open("rb"), as_attachment=True, filename=nome),
+            nome,
+        )
 
 
 def _resumo_exportacao(lote: Exportacao) -> dict:
@@ -235,23 +390,188 @@ class ModeloView(_Base):
 # ---------------------------------------------------------------------------
 
 
+class ImportarArquivosView(_Base):
+    """IE.3 — a porta de lote de ARQUIVO: N binários, uma decisão.
+
+    Endpoint separado do `ImportarView` e não um ramo dentro dele, porque as duas
+    naturezas divergem em tudo que um endpoint faz: o corpo (`arquivos[]` +
+    `caminhos[]` × um `arquivo`), as recusas possíveis (não há de-para nem
+    `ColunasNaoReconhecidas` aqui), o corte de job (por contagem de arquivos, não
+    por bytes de planilha) e o resumo. Um `if recurso.de_arquivo` no meio do POST
+    daria uma view com dois corpos costurados.
+
+    **`caminhos[]` é o que faz a pasta virar taxonomia.** O navegador entrega
+    `webkitRelativePath` ao arrastar um diretório, e é esse caminho relativo — não
+    o nome do arquivo — que carrega obra e disciplina num acervo histórico. Vem
+    como lista paralela a `arquivos[]` em vez de dentro do nome porque nome de
+    arquivo com `/` é rejeitado pelo storage do Django, e embuti-lo forçaria uma
+    codificação que alguém teria de decodificar do outro lado.
+    """
+
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, recurso_id: str):
+        contexto = _json_do_form(request.data.get("contexto") or {}, "contexto")
+        recurso = self.recurso(recurso_id, contexto, validar=True, escrita=True)
+        if not recurso.de_arquivo:
+            raise ValidationError({
+                "recurso": (
+                    f"'{recurso.id}' importa planilha, não arquivos soltos. "
+                    "Use a porta de importação tabular."
+                )
+            })
+
+        enviados = request.FILES.getlist("arquivos")
+        if not enviados:
+            raise ValidationError({"arquivos": "Envie os arquivos em `arquivos`."})
+
+        caminhos = request.data.getlist("caminhos") if hasattr(request.data, "getlist") else []
+        teto = limites_do_plano(request.user)
+
+        recebidos = []
+        for indice, enviado in enumerate(enviados):
+            # Amostra primeiro, hash depois: o formato é decidido nos primeiros
+            # 4 KB, e um arquivo recusado por formato não deve custar a leitura
+            # inteira de 300 MB para calcular um SHA que ninguém vai usar.
+            enviado.seek(0)
+            amostra = enviado.read(4096)
+            enviado.seek(0)
+            try:
+                formato = validar_entrada(
+                    tamanho=enviado.size or 0, nome=enviado.name,
+                    conteudo=amostra, limites=teto,
+                    # PRA.5a — o recurso entra na porta: é ele que diz quais
+                    # formatos este destino recebe, quanto cada um pode pesar e
+                    # o que o plano do módulo dono inclui.
+                    recurso=recurso, user=request.user,
+                )
+            except ArquivoGrandeDemais as exc:
+                return Response(
+                    {
+                        "detail": str(exc), "code": "arquivo_grande_demais",
+                        "arquivo": enviado.name,
+                        "limite_mb": exc.limite_mb, "tamanho_mb": round(exc.tamanho_mb, 1),
+                    },
+                    status=status.HTTP_402_PAYMENT_REQUIRED,
+                )
+            except FormatoNaoContratado as exc:
+                return Response(
+                    {
+                        "detail": str(exc), "code": "formato_nao_contratado",
+                        "arquivo": enviado.name,
+                        "formato": exc.formato, "disponiveis": exc.disponiveis,
+                    },
+                    status=status.HTTP_402_PAYMENT_REQUIRED,
+                )
+            except FormatoDesconhecido as exc:
+                raise ValidationError({"arquivos": f"{enviado.name}: {exc}"})
+
+            # **O recurso é mais estrito que a plataforma.** A allowlist diz o que
+            # o sistema reconhece; `formatos_arquivo` diz o que ESTE recurso
+            # aceita. Sem esta checagem, um DWG entraria no anexo de ASO do RH só
+            # porque a Prancheta registrou o formato.
+            if formato.codigo not in recurso.formatos_arquivo:
+                raise ValidationError({
+                    "arquivos": (
+                        f"{enviado.name}: {recurso.rotulo} não recebe "
+                        f"{formato.rotulo}. Aceita: {', '.join(recurso.formatos_arquivo)}."
+                    )
+                })
+
+            caminho = (caminhos[indice] if indice < len(caminhos) else "") or enviado.name
+            digest, tamanho = _hash_em_blocos(enviado)
+            recebidos.append((
+                ArquivoRecebido(
+                    nome=enviado.name, caminho=str(caminho).strip().lstrip("/"),
+                    tamanho=tamanho, hash=digest, formato=formato.codigo,
+                ),
+                enviado,
+            ))
+
+        try:
+            importacao = motor_importacao.preparar_arquivos(
+                recurso=recurso,
+                arquivos=recebidos,
+                tenant_id=self.tenant_id,
+                usuario_nome=self.usuario_nome,
+                limites=self.limites,
+            )
+        except motor_importacao.LimiteDoPlano as exc:
+            return Response(
+                {
+                    "detail": str(exc), "code": "quota_excedida",
+                    "quota": exc.quota, "limite": exc.limite, "uso": exc.tentado,
+                },
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
+        except motor_importacao.ImportacaoInvalida as exc:
+            raise ValidationError(str(exc))
+
+        return Response(
+            motor_importacao.resumo(importacao), status=status.HTTP_201_CREATED,
+        )
+
+
+def _hash_em_blocos(enviado) -> tuple[str, int]:
+    """SHA-256 e tamanho lendo em blocos, restaurando a posição.
+
+    Em blocos porque acima de `FILE_UPLOAD_MAX_MEMORY_SIZE` o Django já pôs o
+    arquivo em disco temporário, e um `.read()` inteiro de 300 MB traria de volta
+    para a memória exatamente o que ele acabou de tirar dela. É a mesma função
+    que a Prancheta tinha em `uploads.py` — ela vem para cá com a porta, para não
+    ficarem duas.
+    """
+    import hashlib
+
+    digest = hashlib.sha256()
+    tamanho = 0
+    enviado.seek(0)
+    for bloco in iter(lambda: enviado.read(1024 * 1024), b""):
+        digest.update(bloco)
+        tamanho += len(bloco)
+    enviado.seek(0)
+    return digest.hexdigest(), tamanho
+
+
 class ImportarView(_Base):
     parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request, recurso_id: str):
         contexto = _json_do_form(request.data.get("contexto") or {}, "contexto")
-        recurso = self.recurso(recurso_id, contexto, validar=True)
+        recurso = self.recurso(recurso_id, contexto, validar=True, escrita=True)
         arquivo = request.FILES.get("arquivo")
         if arquivo is None:
             raise ValidationError({"arquivo": "Envie o arquivo em `arquivo`."})
-        self._validar_upload(arquivo)
+        teto = limites_do_plano(request.user)
+        try:
+            formato = self._validar_upload(arquivo, teto)
+        except ArquivoGrandeDemais as exc:
+            # 402 e não 400: o arquivo não está errado — o plano é que não o
+            # comporta. O 400 mandaria a pessoa procurar defeito no arquivo.
+            return Response(
+                {
+                    "detail": str(exc), "code": "arquivo_grande_demais",
+                    "limite_mb": exc.limite_mb, "tamanho_mb": round(exc.tamanho_mb, 1),
+                },
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
+        except FormatoNaoContratado as exc:
+            return Response(
+                {
+                    "detail": str(exc), "code": "formato_nao_contratado",
+                    "formato": exc.formato, "disponiveis": exc.disponiveis,
+                },
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
 
         de_para = self._de_para(request)
         delimitador = request.data.get("delimitador") or None
         conteudo = arquivo.read()
 
         if motor_importacao.vale_a_pena_job(conteudo):
-            return self._enfileirar(recurso, arquivo, conteudo, de_para, delimitador)
+            return self._enfileirar(
+                recurso, arquivo, conteudo, de_para, delimitador, formato,
+            )
 
         try:
             importacao = motor_importacao.preparar(
@@ -263,6 +583,12 @@ class ImportarView(_Base):
                 limites=self.limites,
                 de_para=de_para,
                 delimitador=delimitador,
+                teto=teto,
+                # `.codigo`, não o objeto: `ler_bytes` despacha por string. Passar
+                # o `FormatoEntrada` fazia todo casamento falhar, cair no `raise
+                # LeituraInvalida("Formato não suportado")` e o lote nascer em
+                # ERRO com zero linhas — ver o D76.
+                formato=formato.codigo,
             )
         except motor_importacao.ColunasNaoReconhecidas as exc:
             # 422 e não 400: o arquivo não está "errado" — só não foi reconhecido,
@@ -296,7 +622,7 @@ class ImportarView(_Base):
             motor_importacao.resumo(importacao), status=status.HTTP_201_CREATED,
         )
 
-    def _enfileirar(self, recurso, arquivo, conteudo, de_para, delimitador):
+    def _enfileirar(self, recurso, arquivo, conteudo, de_para, delimitador, formato):
         """R10 — arquivo grande vira job, e a resposta é o id para acompanhar."""
         from django.core.files.base import ContentFile
 
@@ -310,35 +636,50 @@ class ImportarView(_Base):
             status=Importacao.Status.LENDO,
             assincrona=True,
             usuario_nome=self.usuario_nome[:150],
+            # O formato foi reconhecido pelos BYTES no request e viaja com o
+            # lote. Sem isso o worker voltaria a decidir pelo sufixo do nome que
+            # o cliente mandou — a porta que a validação acabou de fechar.
+            parametros={"formato": formato.codigo},
         )
         lote.arquivo.save(arquivo.name, ContentFile(conteudo), save=True)
         preparar_importacao.delay(
             lote.pk, self.tenant_id,
             limites=self.limites, de_para=de_para, delimitador=delimitador,
+            teto=self.teto_serializavel(), formato=formato.codigo,
         )
         return Response(
             motor_importacao.resumo(lote), status=status.HTTP_202_ACCEPTED,
         )
 
-    def _validar_upload(self, arquivo) -> None:
-        """Só o TETO DE TAMANHO do tenant; o formato quem decide é o leitor.
+    def _validar_upload(self, arquivo, teto):
+        """Tamanho e formato, os dois vindos do PLANO. Devolve o formato reconhecido.
 
-        Deliberadamente **não** chama `validate_uploaded_file`: aquele validador
-        serve a documento que fica guardado, e a lista de MIMEs aceitos do tenant
-        (`DEFAULT_TIPOS`) não inclui `text/csv` — reusá-la aqui recusaria toda
-        importação por CSV, e um tenant que restringisse a lista a PDF quebraria
-        a importação por planilha sem ninguém entender por quê.
+        **O que mudou, e por quê** (análise de 07/08/2026). Antes daqui saía só um
+        teto de tamanho lido de `ConfiguracaoArquivos` do tenant — um número
+        invisível ao dono do produto — e **nenhuma** checagem de formato: o
+        despacho era por sufixo do nome, lá dentro do `ler_bytes`. `payload.exe`
+        renomeado para `.xlsx` passava a porta, era gravado em disco no caminho
+        de job e só falhava ao ser parseado.
 
-        Arquivo de importação não é documento: é lido, classificado e descartado.
-        O que dele importa é (a) não estourar memória — daí o teto reusado — e
-        (b) ser legível, e disso `ler_bytes` cuida com mensagem própria.
+        A recusa de reusar `validate_uploaded_file` continua valendo e o motivo é
+        o mesmo de antes: aquela lista de MIMEs é de documento que fica guardado,
+        não tem `text/csv`, e reusá-la aqui recusaria toda importação por CSV. O
+        que faltava não era aquele validador — era um **próprio**, e é o
+        `limites.validar_entrada`, que decide pelos bytes e pergunta ao plano.
+
+        A amostra de 4 KB basta para a assinatura e é lida antes do arquivo
+        inteiro: o teto de tamanho tem de barrar **antes** de a gente trazer 50 MB
+        para a memória, senão o limite protege depois de já ter pago o custo.
         """
-        max_bytes, _ = resolve_upload_config(self.tenant_id)
-        if max_bytes and arquivo.size > max_bytes:
-            raise ValidationError(
-                {"arquivo": f"Arquivo de {arquivo.size / 1048576:.1f} MB acima do limite de "
-                            f"{max_bytes / 1048576:.0f} MB configurado para esta empresa."}
+        amostra = arquivo.read(4096)
+        arquivo.seek(0)
+        try:
+            return validar_entrada(
+                tamanho=arquivo.size, nome=arquivo.name or "",
+                conteudo=amostra, limites=teto, user=self.request.user,
             )
+        except FormatoDesconhecido as exc:
+            raise ValidationError({"arquivo": str(exc)})
 
 
 class ImportacoesDoRecursoView(_Base):
@@ -410,9 +751,18 @@ class ImportacaoDetalheView(_Base):
 class ImportacaoDecisaoView(_Base):
     """Confirmar tudo · confirmar seleção · negar tudo · desfazer."""
 
+    #: Verbos que GRAVAM no destino (ou desfazem a gravação) — exigem, além do
+    #: conjunto de permissões, o módulo contratado. `marcar` e `descartar` ficam
+    #: de fora porque não tocam no destino: só mexem na área de conferência, que
+    #: é do próprio tenant e já foi paga quando o arquivo subiu.
+    ACOES_DE_ESCRITA = frozenset({"aplicar", "desfazer", "remapear"})
+
     def post(self, request, importacao_id: int, acao: str):
         importacao = self.importacao(importacao_id)
-        recurso = self.recurso(importacao.recurso, importacao.contexto)
+        recurso = self.recurso(
+            importacao.recurso, importacao.contexto,
+            escrita=acao in self.ACOES_DE_ESCRITA,
+        )
         try:
             if acao == "marcar":
                 afetadas = motor_importacao.marcar(
@@ -421,6 +771,14 @@ class ImportacaoDecisaoView(_Base):
                     linhas=request.data.get("linhas"),
                 )
                 return Response({"linhas_marcadas": afetadas})
+            if acao == "corrigir":
+                afetadas = motor_importacao.corrigir(
+                    importacao,
+                    recurso=recurso,
+                    valores=request.data.get("valores") or {},
+                    linhas=request.data.get("linhas"),
+                )
+                return Response({"linhas_corrigidas": afetadas})
             if acao == "aplicar":
                 aplicadas = motor_importacao.aplicar(
                     importacao, recurso=recurso, usuario_nome=self.usuario_nome,
@@ -465,15 +823,20 @@ class ImportacaoDecisaoView(_Base):
         if not de_para:
             raise ValidationError({"de_para": "Informe o de-para (`campo: índice`) ou um `mapa`."})
 
+        # O formato reconhecido no upload original é preservado: o `remapear`
+        # relê o MESMO arquivo, e redetectá-lo pelo nome desfaria a validação por
+        # bytes justamente no caminho de origem mais estranha.
+        formato = (importacao.parametros or {}).get("formato") or ""
         importacao.status = Importacao.Status.LENDO
         importacao.mensagem = ""
-        importacao.parametros = {}
+        importacao.parametros = {"formato": formato} if formato else {}
         importacao.save(update_fields=["status", "mensagem", "parametros"])
 
         from .tasks import preparar_importacao
 
         preparar_importacao.delay(
             importacao.pk, self.tenant_id, limites=self.limites, de_para=de_para,
+            teto=self.teto_serializavel(), formato=formato,
         )
         return motor_importacao.resumo(importacao)
 

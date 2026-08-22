@@ -66,7 +66,7 @@ Reusa os E2E das fases apontados ao gateway HTTPS de staging (confiando no cert 
   `/auth/refresh`, cookie HttpOnly) → trocar a senha na IAM **revoga em ≤5 min**
   (época no Redis DB 2). É o cenário que só é fiel sob HTTPS.
 - **WebSocket 10.8 (`phase10_8_service_ws_test.py`):** a parte **service-token na
-  borda** roda sob HTTPS (`SGI_GW=https://localhost:8443 python infra/gateway/phase10_8_service_ws_test.py`);
+  borda** roda sob HTTPS (`SGI_GW=https://localhost:8443 python testes/e2e/phase10_8_service_ws_test.py`);
   o frame `/ws` usa **socket cru sem TLS** — aponte `SGI_WS_PORT` a um listener em
   claro se quiser exercitá-lo aqui (já validado E2E no stack de dev).
 - **NF-e (11.1):** emissão real depende de credencial NFE.io (`NFE_IO_*`) — validação

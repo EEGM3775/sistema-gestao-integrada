@@ -4,8 +4,13 @@ from rest_framework import serializers
 from decimal import Decimal
 from datetime import date
 
+from funcoesimpexp.entrega import ArquivoGateadoSerializerMixin
 from nucleo.upload_validation import UploadValidationMixin
 
+from .impexp import (
+    ESPECIE_DOCUMENTO as ESPECIE_DOCUMENTO_OBRA,
+    RECURSO_DOCUMENTOS as RECURSO_DOCUMENTOS_OBRA,
+)
 from .models import Obra, EtapaObra, DocumentoObra
 
 class ObraSerializer(serializers.ModelSerializer):
@@ -91,10 +96,10 @@ class EtapaObraSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['tenant']  # injetado pelo perform_create (Fase 8.2 / D3)
 
-class DocumentoObraSerializer(UploadValidationMixin, serializers.ModelSerializer):
-    """
-    Serializador para o modelo DocumentoObra.
-    """
+class DocumentoObraSerializer(ArquivoGateadoSerializerMixin, UploadValidationMixin, serializers.ModelSerializer):
+    """Contrato, licença, memorial — o arquivo sai gateado (D70)."""
+    arquivos_gateados = {"arquivo": (RECURSO_DOCUMENTOS_OBRA, ESPECIE_DOCUMENTO_OBRA)}
+
     class Meta:
         model = DocumentoObra
         fields = '__all__'

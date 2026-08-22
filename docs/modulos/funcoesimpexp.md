@@ -3,6 +3,11 @@
 > **App-fundação**, como o [catalogo](catalogo.md): não se vende, não tem entitlement próprio e
 > nenhum módulo depende dele para existir. É o **motor** de entrada e saída de dados; cada módulo
 > declara *o que* sai e entra, e o motor cuida do resto.
+>
+> **É a fronteira de arquivo do software, nos dois sentidos** — upload e download, planilha e binário.
+> Nenhum módulo valida, mede, admite ou entrega arquivo por conta própria: ele *declara*, e o motor
+> *admite* e *entrega*. Duas funções, uma implementação: [`entrada.admitir`](../../backend/funcoesimpexp/entrada.py)
+> e [`entrega.servir`](../../backend/funcoesimpexp/entrega.py).
 
 ## 1. O que é e por que é fundação
 
@@ -43,6 +48,11 @@ concreta a exigiu. **Declaração que viola a régua não entra.**
 | **R12** | **Toda exportação é auditada** no `AuditLog`, com recurso, recorte e volume — sem PII no `detalhes`. | Exportação é o evento LGPD por excelência: é o momento em que o dado sai do sistema. |
 | **R13** | **Teto do plano checado antes de materializar** as linhas. | Ler um arquivo de 90 mil linhas para recusar no fim é pagar o custo inteiro por nada. |
 | **R14** | **Idempotência:** reimportar o mesmo arquivo não duplica — a chave da R3 mais o veredito da R1 garantem. | O usuário sempre clica duas vezes. |
+| **R15** | **Todo limite é do PLANO, e é dito antes.** Tamanho, formato aceito, memória e relógio de uma operação vivem em [payment/planos.py](../../payment/planos.py) §5.2, por plano, e são publicados em `GET recursos/` — nunca descobertos no erro. Tetos duros de infraestrutura por cima: contrato ilimitado não compra o direito de derrubar o worker compartilhado. | Limite escondido no código de engenharia é botão comercial que o dono não vê; e limite que só aparece no 402 faz a pessoa esperar o upload de 40 MB para descobrir que não podia. *(o método do assinador gov.br: capacidade é atributo do nível da conta, formato e teto publicados antes do envio)* |
+| **R17** | **Porta única nos DOIS sentidos, e ela se adapta — não o contrário.** *(decisão do dono, 08/08/2026)* Todo arquivo que **entra** vindo do cliente e todo arquivo que **sai** para ele passam por aqui, qualquer que seja o tipo: planilha, prancha, foto, documento. Módulo não abre porta própria — declara o que aceita (`natureza = "arquivo"`, `formatos_arquivo`) e o que entrega (`entregar_arquivo`), e o motor cresce para atendê-lo. Item que o **sistema** cria (o XML que o worker baixa da NFE.io, a derivada que a Prancheta gera) **não é importação** — é registro, e não passa pela conferência; mas quando ele **sai**, sai por esta porta como tudo o mais. | A R16 já mandava decidir pelos bytes — e **a Prancheta decidia pelo nome**, porque tinha porta própria e a regra não a alcançava ([D75](../historico-correcoes.md)). Regra não herdada é regra que não existe: com seis portas, o guarda-corpo divergente aparece só na que ninguém revisou. Do lado da saída o preço era o mesmo: `moduloprancheta/entrega.py` reimplementava sozinha `nosniff`, `attachment`, o tipo declarado por nós e o saneamento do nome — quatro guarda-corpos certos, e em segunda cópia. É a razão de o [nucleo/orcamento.py](../../backend/nucleo/orcamento.py) ter subido para a fundação, aplicada a arquivo. |
+| **R18** | **Confere-se o que a PLATAFORMA adivinhou.** Lote em que o motor inferiu algo do arquivo — obra e disciplina do caminho da pasta (`TorreA/ARQ/p.dwg`) — para na conferência da R1. Envio avulso em que a pessoa escolheu o destino e digitou os campos **grava direto**, pela mesma porta e pelos mesmos guardas. O que decide não é o volume: é se há palpite nosso a confirmar. | Conferência de um item só, sobre dado que a própria pessoa acabou de digitar, é cerimônia — e cerimônia ensina o usuário a clicar "confirmar" sem ler, o que mata a R1 justamente onde ela vale. *(é o modelo do Procore: ao subir prancha ele roda OCR para inferir número e disciplina e por isso exige confirmação; Box, Drive e Dropbox não param nunca — o que eles fatiam é arquivo grande, e o "commit" é técnico, não humano)* |
+| **R19** | **O palpite se corrige na conferência — não se reenvia o arquivo.** *(15/08/2026)* A decisão deixou de ser só aceitar/recusar a linha: a coluna que o **recurso** declarar `editavel` abre na tela, com as opções que ele der em `opcoes_da_coluna` (`{valor, rotulo, cor?}`), uma linha por vez ou em massa. Três limites que ela não afrouxa: só em importação **pendente**, só em coluna declarada, e **corrigir não aceita** — a R1 é sobre a decisão, e corrigir não é decidir. | A R18 mandava conferir o palpite, e a tela só deixava recusá-lo inteiro. No acervo isso apareceu na cara: manda-se a pasta **da obra**, o palpite acerta as subpastas organizadas (`TorreA/ARQ/…`) e erra o arquivo solto no meio — e a única saída era recusar a linha e subir aquele arquivo à parte, o que faz a pessoa desistir de classificar. O gancho é do recurso porque o motor não conhece disciplina, obra nem centro de custo, e não deve conhecer: a alternativa era um `if recurso === "prancheta.acervo"` dentro do wizard compartilhado. |
+| **R16** | **O que entra é reconhecido pelos BYTES; o que sai não é executável.** Entrada: allowlist por assinatura (§6), e o nome do arquivo nunca decide. Saída: nada que o Excel leia como fórmula sai sem neutralização (§6.2). | Sufixo é dado do atacante — `payload.exe` renomeado para `.xlsx` era gravado em disco antes de qualquer leitura. E exportar `=cmd\|'/c calc'!A1` transforma a plataforma no **veículo** de entrega contra quem recebe o arquivo. *(OWASP, CSV Injection — o defeito é de quem gera o arquivo)* |
 
 ## 3. Quem pode — acesso total ou nada
 
@@ -78,6 +88,31 @@ que conhece as próprias. Admin de tenant e admin de plataforma passam pelo mesm
 > **Evolução possível:** a IAM emitir uma claim `modulos_totais` calculada do catálogo no momento da
 > emissão do token tornaria o conjunto central em vez de declarado. Fica registrado como opção; a
 > forma declarada resolve sem mexer em contrato de token e mantém a regra ao lado do dado.
+
+### 3.1 Entrar exige o módulo contratado; sair, não
+
+O conjunto de permissões **já carrega o entitlement por transitividade**: `permissoes_efetivas()` na
+IAM filtra as permissões pelos módulos efetivos, então quem não assina o Orçamento não tem
+`orcamento.*` no token e não passa pelo gate acima. Elegante — e o **bypass de admin** passava por
+cima dele, porque devolve conjunto vazio antes de olhar permissão nenhuma. O tenant que cancelava o
+Orçamento levava 403 em `/api/orcamento/**` e seguia importando e exportando por aqui
+([D66](../historico-correcoes.md)).
+
+A correção é **assimétrica de propósito**, e a assimetria é o padrão de mercado:
+
+- **importar** exige o módulo contratado, para todo mundo, inclusive admin — é entrada de dado em
+  produto não pago;
+- **exportar** segue aberto ao admin mesmo sem o módulo, porque é **portabilidade**. Salesforce
+  retém o dado por 180 dias e a HubSpot rebaixa a conta para o free em vez de apagar; prender o dado
+  do cliente no dia em que ele cancela gera processo, não receita. O que faltava para isso ser
+  decisão em vez de acidente era o **rastro** — e ele veio junto (R12, [D67](../historico-correcoes.md)).
+
+Recurso de **fundação** declara `entitlement = None`: o `maps.local` é o caso, porque `Local` é a
+metade do Maps que abre para todo tenant e as permissões `mapa.local.*` moram no módulo `base`.
+
+`impexp_exportar_apos_cancelar_dias` (§9.1) dá o prazo dessa janela e está **inerte**: aplicá-la
+exige a IAM emitir a data de cancelamento na claim — hoje `modules` só diz o estado de agora, e
+módulo cancelado é indistinguível de módulo nunca contratado.
 
 ## 4. O contrato — o que cada módulo declara
 
@@ -168,12 +203,84 @@ O modelo que o usuário baixa é, por construção, o que a importação aceita.
 |---|---|---|---|
 | **XLSX** | ✔ | ✔ | `openpyxl` |
 | **CSV / TXT delimitado** | ✔ | ✔ | `csv` (delimitador brasileiro: `;` vence — ver §7.1) |
-| **PDF** | — | ✔ | `weasyprint`, via template HTML |
+| **PDF** | — | ✔ | `weasyprint`, via template HTML — **porta única**, com buscador de URL fechado (§6.1b) |
 | **PDF (extração de tabela)** | ✔ | — | `pdfplumber` — frágil por natureza, só com conferência (R1) |
 | **JSON** | ✔ | ✔ | nativo — para integração, não para humano |
 
 DOCX e ODS ficam de fora até haver caso real: dependência nova por antecipação é custo de supply
 chain (Fase 10.4) sem contrapartida.
+
+**O `pdfplumber` é a única dependência opcional da lista, e é assim de propósito.** Ele está no
+`backend/requirements.txt` e portanto passa pelos gates de `pip-audit`/Dependabot, mas
+[leitura.py](../../backend/funcoesimpexp/formatos/leitura.py) o importa **tardiamente** e degrada com
+mensagem clara se faltar: tirar a linha do `requirements` desliga só o caminho de extração de tabela
+de PDF, e o resto do motor segue inteiro. Quem não quiser a dependência não precisa de nenhuma outra
+mudança.
+
+**A entrada é uma allowlist por assinatura de bytes** ([limites.py](../../backend/funcoesimpexp/limites.py)):
+`PK\x03\x04` → XLSX · `%PDF-` → PDF · texto que decodifica e não tem byte nulo → CSV. O **sufixo do
+nome só desempata** entre formatos que compartilham assinatura (todo XLSX é um ZIP) — ele nunca
+decide sozinho, porque é dado que o cliente escolhe. A amostra de 4 KB é lida **antes** do arquivo
+inteiro: o teto de tamanho tem de barrar antes de trazermos 50 MB para a memória.
+
+Quais desses formatos cada plano importa é knob comercial (`impexp_formatos`, §9). Formato existente
+mas não contratado volta **402** nomeando o que o plano abre; bytes que não casam com nenhuma
+assinatura voltam **400** — a mesma distinção que a Prancheta faz entre "seu plano não abre" e "isto
+não é um desenho".
+
+### 6.1b O PDF sai por aqui, e por uma porta só
+
+**`html_para_pdf` em [escrita.py](../../backend/funcoesimpexp/formatos/escrita.py) é o único ponto do
+backend que chama `write_pdf()`** — e isso é desenho, não arrumação. O WeasyPrint roda com um
+`url_fetcher` padrão que **busca URL de verdade**: bastaria o primeiro logo de tenant no cabeçalho
+para o gerador de relatório virar leitor de `http://169.254.169.254/…` e de `file:///etc/…`. O
+buscador daqui entrega **só o que já veio embutido** (`data:` URI) e recusa o resto, e o WeasyPrint
+pula o recurso recusado — o PDF sai sem a imagem, em vez de não sair.
+
+Por isso o [moduloorcamento](moduloorcamento.md) emite a planilha em PDF **chamando esta função**, e
+não o WeasyPrint direto. Duas chamadas seriam duas políticas de rede, e a segunda nasceria aberta —
+foi exatamente o que o [D73](../historico-correcoes.md) encontrou. Uma regressão varre o backend
+atrás de um segundo `write_pdf()` e falha com o nome do arquivo: é a mesma lógica da porta única de
+arquivo (§2), aplicada à emissão.
+
+### 6.2 O arquivo que sai não pode executar nada
+
+Um valor de cadastro que comece com `=`, `+`, `-`, `@`, tabulação ou CR é lido como **fórmula** por
+Excel, Sheets e Calc. Como o dado vem de fora (razão social de fornecedor, descrição de item), sem
+tratamento a exportação vira o veículo de um ataque contra quem recebe o arquivo — e o remédio é
+diferente em cada formato, porque o mecanismo é diferente:
+
+| Formato | O que acontece sem tratamento | O que fazemos |
+|---|---|---|
+| **CSV** | o Excel interpreta **cada célula** como se tivesse sido digitada | prefixo `'` nos seis gatilhos (mitigação da OWASP). Custa um apóstrofo visível, e é aceitável no formato que existe "para quem vai ler com script" |
+| **XLSX** | célula de string é string e o Excel **não** reinterpreta — mas o `openpyxl` infere o tipo no `append` e grava um `<f>` de verdade quando o texto começa com `=` | `data_type = "s"` depois da atribuição: desfaz a inferência **sem sujar o valor** |
+| **PDF** | não executa fórmula | nada |
+
+Número e data saem tipados (R8) e não passam pelo escape — valor negativo continua intacto.
+
+### 6.3 Varredura de vírus — adiada por decisão, e é aqui que ela entra
+
+Não existe varredura de vírus em lugar nenhum da plataforma: `clamav|antivirus|virustotal|malware`
+não aparece em `backend/`, `iam/`, `deploy/` nem `payment/`. Vale para este motor, para a
+[Prancheta](moduloprancheta.md) e para todo `FileField` do sistema. **O dono decidiu adiar**; por ora
+entra só o teto de recurso (§9).
+
+Quando entrar, entra **aqui** — é a outra metade da tese de que todo arquivo que entra e sai do
+sistema passa por esta porta (§1): varrer numa função só é muito mais barato do que em dezenas de
+módulos, e com dezenas é garantido que um fica de fora.
+
+**O risco não é simétrico entre os dois consumidores, e isso ordena o trabalho.** Neste motor o
+binário é lido e **descartado** ([tasks.py](../../backend/funcoesimpexp/tasks.py)), nunca devolvido a
+ninguém — ele já é, de fato, um **CDR** (*Content Disarm & Reconstruction*): o XLSX vira linhas
+tipadas e o original morre. O risco que sobra é **ser derrubado** por arquivo hostil, e é o que o teto
+de recurso da §9 fecha. Na Prancheta é o contrário — o arquivo do cliente é guardado e servido de
+volta —, e é lá que o AV vale de verdade e deve estrear.
+
+Método de mercado, para quando for a hora: varredura **assíncrona com quarentena** (o arquivo existe
+mas não é alcançável até liberar); **ClamAV em sidecar** como a opção honesta de custo zero — a paga
+por arquivo colide com a régua de o plano básico não custar nada ao dono; e **CDR** como degrau acima
+para documento, seguindo NCSC e NSA, que convergiram para sanitização por transformação em vez de
+detecção.
 
 ### 6.1 O que já está pronto e é promovido
 
@@ -236,6 +343,80 @@ progresso e link de validade limitada (R10).
 > não acha linha nenhuma sob a RLS fail-closed do worker — foi exatamente o **D8** (cobrança que
 > respondia 202 e nunca gerava boleto). Toda task daqui arma o contexto no início.
 
+## 7.2 As portas que ainda não são esta (IE.4+)
+
+Inventário levantado em 08/08/2026 ao abrir a **R17**. A IE.3 deu ao motor a natureza `arquivo`; o que
+falta é cada módulo entregar a sua porta. **Uma por vez, e nesta ordem** — a Prancheta primeiro porque
+é a única com achado de segurança aberto ([D75](../historico-correcoes.md)) e a que já tem o lote pedido pela
+própria planta.
+
+**A Prancheta terminou de atravessar na PRA.5b**, e o que ela deixa para as próximas é mais do que o
+exemplo: o lote do acervo é o **primeiro consumidor real** do caminho `preparar_arquivos → conferir →
+aplicar → desfazer`, que até aqui só tinha um recurso de teste. Quem vier depois (IE.4–IE.7) copia
+uma forma já exercitada — `contexto_requerido` para o destino, `dados_do_arquivo` para o palpite,
+`aplicar_linha` com `FileField.save()` para a cópia própria — em vez de descobri-la:
+
+| Porta | Onde | O que muda | Fatia |
+| --- | --- | --- | --- |
+| ~~Acervo de projeto (revisão)~~ | ~~`moduloprancheta/uploads.py`~~ | **migrada.** O arquivo saiu; virou o recurso `prancheta.acervo`. O avulso grava direto pela R18 (não virou "lote de 1", como esta tabela previa — a régua nasceu depois, ao ver que conferência de um item só é cerimônia) | PRA.5a ✅ |
+| ~~Saída do acervo (3 rotas)~~ | ~~`moduloprancheta/entrega.py`~~ | **migrada.** As ações `arquivo/` de revisão, derivada e snapshot saíram do módulo; o mecanismo virou `entrega.servir` | PRA.5a ✅ |
+| ~~Snapshot de marcação (BCF)~~ | ~~`moduloprancheta` (`Marcacao.snapshot`)~~ | **migrada.** A entrada passou a `entrada.admitir` pelo recurso `prancheta.marcacao`, que agora declara `formatos_arquivo` nos dois sentidos. O teto do snapshot é **do recurso**, não do formato: `imagem` no acervo é prancha escaneada (25 MB) e aqui é recorte de tela | PRA.5b ✅ |
+| ~~Importação de BCF~~ | ~~`moduloprancheta` (`marcacoes/importar-bcf/`)~~ | **migrada.** Era o último upload da Prancheta fora do motor. O teto de entrada passou a ser o do registry (50 MB, o pacote **como chega**); o orçamento de descompressão continua dentro do leitor e mede outra coisa | PRA.5b ✅ |
+| ~~Acervo histórico em lote~~ | ~~(não existia)~~ | **construída.** O `prancheta.acervo` ganhou `aplicar_linha`/`desfazer_linha` e é o **primeiro consumidor real da natureza `arquivo`** fora do teste: pasta do projetista → conferência → acervo, com R1 e R6. A obra é `contexto_requerido`; disciplina, código e revisão são o palpite da R18 | PRA.5b ✅ |
+| Mídia do diário de obra | `modulodiario` (`MidiaDiario.arquivo`) | foto do canteiro: o maior volume real e o melhor candidato a lote | IE.4 |
+| Documento do cliente | `clientes` (`DocumentoCliente.arquivo`) | contrato/RG — é PII, então o gate do recurso carrega a permissão de máscara (R11) | IE.5 |
+| Documentos do funcionário | `rh` (CTPS · ASO · documento · holerite) | **quatro** campos, e é onde a carga em lote mais paga (admissão de turma) | IE.6 |
+| Documento da obra | `obras` (`DocumentoObra.arquivo`) | o mais simples; bom para fechar | IE.7 |
+
+**O que NÃO entra, e é a metade que a R17 delimita:** `moduloerp` (`arquivo_pdf`/`arquivo_xml` de NF) e
+`empreendimentos.arquivo_xml` são **baixados pelo worker** da NFE.io, e as `DerivadaProjeto` são
+**geradas** pelo nosso motor de conversão. Nenhum é importação — são registros que o sistema cria, como
+um cliente ou um produto. Passá-los por uma conferência seria pedir a uma pessoa que aprovasse o que a
+plataforma acabou de produzir sozinha.
+
+## 7.3 A saída já atravessou inteira — as nove portas do D70
+
+**A tabela acima é sobre ENTRADA, e a saída andou primeiro.** A distinção é a mesma que o
+`ArquivoEntregue` faz: entregar é deixar sair um binário que o recurso já guarda; importar é a
+máquina de conferência. São verbos com gates diferentes, e o segundo é muito mais caro de migrar —
+mexe em tela, em wizard e no gesto de quem usa. Um vazamento de **leitura** não podia esperar por
+isso.
+
+Em 09/08/2026 os nove prefixos que ainda saíam por `/media/` ganharam recurso de entrega
+([D70](../historico-correcoes.md)). O agrupamento é por **gate**, não por app — um `Recurso` tem um
+conjunto de permissões, e juntar o ASO com o RG trocaria em silêncio o gate do prontuário médico:
+
+| Recurso | Onde | Espécies | Gate de entrega |
+| --- | --- | --- | --- |
+| `rh.documentos` | [rh/impexp.py](../../backend/rh/impexp.py) | `documento` · `ctps` | `rh.documento.view` |
+| `rh.aso` | idem | `aso` | `rh.dado_medico.view` |
+| `rh.holerite` | idem | `holerite` | `rh.folha.view` |
+| `cadastro.documento_cliente` | [clientes/impexp.py](../../backend/clientes/impexp.py) | `documento` | `cadastro.cliente.view` |
+| `obra.documento` | [obras/impexp.py](../../backend/obras/impexp.py) | `documento` | `obra.obra.view` |
+| `obra.diario_midia` | [modulodiario/impexp.py](../../backend/modulodiario/impexp.py) | `midia` | `obra.diario.view` |
+| `obra.custo_nfe` | [empreendimentos/impexp.py](../../backend/empreendimentos/impexp.py) | `xml` | `obra.empreend_custo.view` |
+| `erp.nota_fiscal` | [moduloerp/impexp.py](../../backend/moduloerp/impexp.py) | `nfse_pdf/xml` · `nfe_pdf/xml` · `entrada_pdf/xml` | `erp.nf.view` |
+
+**Três regras que este lote fixou, e valem para quem vier depois:**
+
+1. **Prefixo não é dono; modelo é.** `nfe_xmls/` é escrito por dois apps, com gates diferentes —
+   fechar "o prefixo do ERP" deixaria o XML do custo do empreendimento aberto.
+2. **Entregar não obriga a importar.** Estes oito recursos só têm `entregar_arquivo`; a régua que a
+   PRA.5b inverteu é o que permite isso, e é o que separou o conserto de leitura da migração de
+   entrada (IE.4–IE.7 continuam de pé, na mesma ordem).
+3. **Recurso de fundação declara `entitlement = None`.** `cadastro.*` e `obra.*` moram no módulo
+   `base` do catálogo: cobrar entitlement ali faria a ficha do cliente exigir assinatura que ninguém
+   vende. É o precedente do `maps.local`.
+
+O que o módulo dono ganha de graça: `nosniff`, `attachment`, tipo declarado por nós, nome saneado,
+trilha (R12) e a checagem de tenant — via `entregar_campo` e `buscar_do_tenant`, que subiram para
+[entrega.py](../../backend/funcoesimpexp/entrega.py) neste mesmo lote.
+
+**A garantia é cobrada por teste, não por lista:**
+[test_d70_portas_de_midia.py](../../backend/funcoesimpexp/test_d70_portas_de_midia.py) varre todos os
+`FileField` instalados e falha quando um `upload_to` novo aparece sem porta. `/media/` é 404 no
+gateway, sem exceção nomeada.
+
 ## 8. Modelo de dados
 
 Tudo `TenantScopedModel` com RLS fail-closed, no padrão do resto do backend.
@@ -269,16 +450,44 @@ As duas primeiras são a promoção do `ImportacaoPreco`/`LinhaImportacao` do
 O knob comercial já existe em [payment/planos.py](../../payment/planos.py) e hoje só o Orçamento o
 consome — passa a valer para todo recurso:
 
-- **`importacao_linhas`** — quota de **operação**: protege processamento (ler, classificar, conferir).
+- **`importacao_linhas`** — quota de **operação**: limita quantas linhas são **gravadas**.
 - **`banco_preco_linhas`** — quota de **objeto**, específica do acervo de preço do Orçamento; cada
   módulo que precise de teto de acervo declara o seu.
 
 Exportação não tem quota de linhas por ora; se virar vetor de custo (arquivo grande, storage,
 tráfego), o lugar de decidir é `payment/`, nunca o código de engenharia.
 
+### 9.1 O orçamento de uma operação — e por que as quotas acima não bastavam
+
+As duas quotas contam **linhas**, e linha só se conta depois de ler o arquivo. O custo de **ler** —
+descomprimir um XLSX, extrair tabela de um PDF — é anterior a qualquer contagem e não tinha teto
+nenhum até 07/08/2026: um arquivo de poucos MB expandia sem limite superior, no worker que também
+carrega cobrança e NF-e. É o [D57](../historico-correcoes.md) num segundo caminho ([D63](../historico-correcoes.md)).
+
+Por isso o plano declara **quatro** números além das quotas (§5.2 de `planos.py`), e eles são a
+R15 na prática:
+
+| Knob | O que limita | Estourar dá |
+|---|---|---|
+| `impexp_max_mb` | tamanho do arquivo de entrada | 402, antes de ler um byte |
+| `impexp_formatos` | quais formatos o plano importa | 402 nomeando o que o plano abre |
+| `impexp_memoria_mb` | memória de **uma** leitura+classificação | 402 (`RecursoExcedido`), não worker morto |
+| `impexp_segundos` | relógio da mesma operação | idem |
+
+O mecanismo é o [nucleo/orcamento.py](../../backend/nucleo/orcamento.py), promovido do
+`moduloprancheta/limites.py` quando o segundo consumidor apareceu — `RLIMIT_AS` faz o estouro virar
+`MemoryError` (exceção Python que sobe e explica) em vez de OOM do kernel (processo morto que não
+explica nada). Dois cuidados que o E2E da PRA.1d ensinou e valem aqui: **`MemoryError` é
+`Exception`**, então qualquer `except Exception` no caminho o captura antes e o limite nosso passa a
+acusar o arquivo do cliente; e os dois tetos só armam na **thread principal**, porque `RLIMIT_AS` é
+do processo.
+
+`impexp_exportar_apos_cancelar_dias` é o quinto knob e é de outra natureza — janela de
+**portabilidade**, §3.1. Declarado e inerte.
+
 ## 10. Frontend
 
-Dois componentes no [kit Malha compartilhado](../../frontend/src/components/malha/impexp/), e é tudo
+Três componentes no [kit Malha compartilhado](../../frontend/src/components/malha/impexp/), e é tudo
 o que um módulo consome:
 
 - **`<BotaoExportar recurso="..." recorte={...} />`** — abre o diálogo de formato, respeita o recorte
@@ -287,10 +496,53 @@ o que um módulo consome:
 - **`<WizardImportacao recurso="..." contexto={...} />`** — upload → de-para → **conferência linha a
   linha** → decisão. Promoção do `ConferenciaImportacao.tsx` do Orçamento, generalizada: onde lá
   havia colunas de preço fixas no JSX, aqui a tabela é montada das colunas que o **recurso declarou**.
+- **`<WizardArquivos recurso="..." contexto={...} />`** — **pasta ou arquivos soltos** → conferência
+  → decisão. O gesto do recurso de natureza `arquivo` (§6): escolhe-se um diretório, o navegador
+  entrega a árvore por `webkitRelativePath`, e é o **caminho** — não o nome — que carrega a taxonomia
+  do acervo. O cartão de *arquivos soltos* fica ao lado do de pasta e cai no mesmo caminho, com o
+  palpite saindo do nome quando não há pasta a ler. Isso é o que dispensa o módulo de manter uma
+  segunda tela de upload avulso — a Prancheta tinha uma e ela saiu na PRA.9d.
+  Prop `ajuda`: a regra que só o **módulo** sabe, renderizada acima dos cartões, no passo de escolher.
+  O wizard declara o que o destino recebe e até quantos MB porque isso está no `Recurso`; o que o
+  arquivo **vira** ao entrar (no acervo, `ARQ-PLB-001_R02.dwg` é a prancha `ARQ-PLB-001` na revisão
+  `R02`) só o módulo sabe dizer. Existe para essa frase não precisar de uma janela anterior só para
+  ser lida — uma janela que se abre para hospedar o botão que abre a janela seguinte é um clique
+  cobrado por nada.
 
-Nenhum dos dois recebe prop de permissão: quem decide é `/api/impexp/recursos/`. Repetir a regra no
+**Os dois wizards são componentes distintos pela mesma razão que as portas são endpoints distintos**
+(§11.1): a natureza muda tudo o que a tela faz. Numa a unidade de decisão é a **linha** de uma
+planilha e o passo do meio é o de-para; na outra a unidade é o **arquivo**, e o que se confere é o
+que a plataforma adivinhou do caminho. Um `if natureza` no meio de um só daria uma tela com dois
+corpos costurados — e quem escolhe qual montar não é a tela do módulo, é a declaração: cada wizard
+some sozinho quando a `natureza` do recurso não é a dele.
+
+**O envio em remessas é do teto, e a decisão continua sendo uma.** Uma requisição não pode levar mais
+que `DATA_UPLOAD_MAX_NUMBER_FILES` (100, no Django 5.1+), e uma pasta de acervo passa disso com
+folga; então o `<WizardArquivos>` pica o envio em remessas de dez. O que **não** se pica é a R1: as
+remessas ficam todas em `CONFERINDO` até "Confirmar tudo", e a conferência mostra o conjunto somado.
+Aplicar remessa a remessa enquanto o resto sobe deixaria meio acervo gravado se a aba fechasse no
+meio — que é exatamente o que a conferência existe para impedir.
+
+Nenhum dos três recebe prop de permissão: quem decide é `/api/impexp/recursos/`. Repetir a regra no
 frontend criaria um segundo lugar para ela divergir — e o que divergisse seria justamente o que o
 usuário vê.
+
+### 10.1 O teto é dito antes, e ele é do RECURSO
+
+O catálogo é a terceira parte do método do assinador gov.br (§9.1): a tela diz *"até 150 MB, nestes
+formatos"* **antes** de a pessoa escolher o arquivo, em vez de o cliente descobrir o limite no 402
+depois de esperar o upload.
+
+Para formato **tabular** o número é do plano (`impexp_max_mb`) e `limites.formatos[].max_mb` basta.
+Para formato **de arquivo** ele é do **recurso** — `Recurso.teto_mb_do_formato` —, e por um motivo
+que aparece dentro de um módulo só: `imagem` no `prancheta.acervo` é prancha escaneada (25 MB) e
+`imagem` no `prancheta.marcacoes` é recorte de tela (10 MB). Nenhum número global representa os dois.
+
+Por isso `GET /api/impexp/recursos/` publica **`tetos_mb` por recurso** de natureza `arquivo`,
+calculado pela mesma função que a porta chama na hora de aceitar (`teto_do_formato`). A tela prefere
+esse campo ao do catálogo global. Publicar por uma conta e aceitar por outra é o
+[D83](../historico-correcoes.md): o catálogo anunciava 25 MB para DWG enquanto a porta aceitava 150,
+e a primeira tela a acreditar no anúncio recusou sozinha um arquivo bom.
 
 O cliente HTTP e os hooks ficam em [`impexp/api.ts`](../../frontend/src/components/malha/impexp/api.ts)
 e [`impexp/hooks.ts`](../../frontend/src/components/malha/impexp/hooks.ts). Módulo novo **não escreve
@@ -300,7 +552,9 @@ API nova**.
 
 | Peça | Arquivo | Responsabilidade |
 |---|---|---|
-| Registry e contrato | `registro.py` | `Recurso`, `Coluna`, `@registrar` — o vocabulário da declaração |
+| Registry e contrato | `registro.py` | `Recurso`, `Coluna`, `@registrar` — o vocabulário da declaração; `ArquivoRecebido` e `ArquivoEntregue`, as duas pontas da R17 |
+| **Porta de entrada** | `entrada.py` | `admitir()` — assinatura de bytes → o que o destino aceita → o que o plano vende → teto → hash. **É o único lugar do sistema que decide se um arquivo entra**, e é onde o antivírus do [D74](#63-varredura-de-vírus--adiada-por-decisão-e-é-aqui-que-ela-entra) entra quando entrar |
+| **Porta de saída** | `entrega.py` | `servir()` — `nosniff` + `attachment` (guarda-corpo, não knob: nenhum recurso pede `inline`), tipo declarado pelo recurso, nome saneado, cache que só promete o que a URL sustenta, e o rastro da R12 quando é dado do cliente saindo |
 | Descoberta | `apps.py` | `autodiscover_modules("impexp")` no `ready()`: módulo novo se registra sozinho, e declaração torta derruba o **boot**, não o clique do usuário |
 | Formatos | `formatos/` | leitores e escritores XLSX/CSV/PDF/JSON; absorveu o `leitura.py` do Orçamento |
 | Motor de importação | `importacao.py` | `preparar → marcar → aplicar/descartar/desfazer` + o corte de volume da R10 |
@@ -329,6 +583,14 @@ Um conjunto só serve todo recurso de todo módulo — **módulo novo não ganha
 | `POST /api/impexp/importacoes/<id>/remapear/` | relê o arquivo guardado com o de-para escolhido (§7.1) |
 | `GET /api/impexp/importacoes/<id>/recusadas/` | as recusadas de volta como XLSX (R5) |
 | `GET /api/impexp/exportacoes/<id>/` · `?baixar=1` | acompanha e baixa o que saiu por job (R10) |
+| `GET /api/impexp/<recurso>/arquivo/<espécie>/<chave>/` | **a saída de um binário do acervo** (R17). `espécie` e `chave` são opacas ao motor e vão inteiras para `entregar_arquivo`, que é quem conhece domínio |
+
+**Entrega não é exportação, e as duas convivem.** Exportar gera um arquivo tabular a partir do
+`queryset`, com recorte (R7), procedência (R9), caminho de job (R10) e linha em `Exportacao`. Entregar
+deixa sair **um binário que o recurso já guarda** — não há o que recortar nem o que gerar. Por isso o
+gate é outro: `permissoes_entrega`, que é de leitura. A regra do §3 nasceu do risco da planilha com
+coluna capada, e abrir *uma* prancha que a pessoa já pode ver no módulo não tem essa forma — foi o
+que impediu o gate da saída de fechar o visualizador para o `campo`, que tem `view` e não tem `edit`.
 
 Cabeçalho irreconhecível responde **422** com os cabeçalhos vistos, para o de-para
 manual (R4); teto do plano responde **402** com quota e limite, no mesmo contrato

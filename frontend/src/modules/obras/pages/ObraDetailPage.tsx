@@ -8,6 +8,7 @@ import { useObra, updateObra, deleteObra, createEtapa, updateEtapa, deleteEtapa 
 import ObraStatusBadge from '../components/ObraStatusBadge'
 import ObraForm from '../components/ObraForm'
 import EtapaForm from '../components/EtapaForm'
+import { baixarParaDisco } from '@/lib/arquivo'
 import type { ObraFormData, EtapaObra, EtapaObraFormData } from '@/types'
 
 // ─── Utilitários ─────────────────────────────────────────────────────────────
@@ -457,12 +458,15 @@ const ObraDetailPage: React.FC = () => {
                             {formatDate(doc.data_emissao)}
                           </td>
                           <td className="px-4 py-3">
+                            {/* D70 — o documento da obra saiu de `/media/`; baixar
+                                é XHR autenticado, e o nome vem do que a tela sabe. */}
                             {doc.arquivo && (
-                              <a href={doc.arquivo} target="_blank" rel="noopener noreferrer"
+                              <button onClick={() => baixarParaDisco(doc.arquivo, doc.nome_documento)}
                                  className="text-xs font-semibold"
-                                 style={{ color: 'var(--color-brand)', textDecoration: 'none' }}>
+                                 style={{ color: 'var(--color-brand)', textDecoration: 'none',
+                                   background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
                                 Download
-                              </a>
+                              </button>
                             )}
                           </td>
                         </tr>

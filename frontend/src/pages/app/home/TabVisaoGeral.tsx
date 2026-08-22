@@ -13,7 +13,7 @@ type Resumo = ReturnType<typeof useHomeResumo>
  * Os KPIs são **compostos** a partir dos agregados que cada módulo já calcula no
  * backend — o hub não soma nada por conta própria e não exibe zero por um módulo
  * que o usuário não acessa. Onde ainda não existe fonte (avanço físico depende
- * do APS; DRE por obra é a sub-fase D.1.4 do ERP), o mosaico diz **"em breve"**
+ * do PDCA; DRE por obra é a sub-fase D.1.4 do ERP), o mosaico diz **"em breve"**
  * em vez de inventar — é a regra de dados honestos da régua (§1.6.4).
  */
 export function TabVisaoGeral({ r }: { r: Resumo }) {
@@ -48,7 +48,7 @@ export function TabVisaoGeral({ r }: { r: Resumo }) {
               label="Avanço físico × previsto"
               valor={null}
               pendente
-              base="depende do módulo de planejamento (APS)"
+              base="depende do módulo de planejamento (PDCA)"
             />
             <KpiTile
               label="DRE por obra"

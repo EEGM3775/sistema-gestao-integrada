@@ -813,6 +813,39 @@ class ApiTests(APITestCase):
         self.assertEqual(resposta.status_code, 403)
         self.assertIn("teste.item_doc.view", str(resposta.data))
 
+    def test_catalogo_publica_o_teto_antes_do_envio(self):
+        """R15 — descobrir o limite no 402, depois do upload, é o que isto evita."""
+        self.autenticar()
+        limites = self.client.get("/api/impexp/recursos/").data["limites"]
+        self.assertGreater(limites["max_mb"], 0)
+        self.assertTrue(limites["formatos"], "a allowlist tem de ser publicada")
+
+    def test_saida_de_arquivo_sai_com_attachment_e_nosniff(self):
+        """D69 — o par que a PRA.2 fixou como padrão da casa."""
+        self.autenticar()
+        for url in (
+            "/api/impexp/teste.item/exportar/?formato=csv",
+            "/api/impexp/teste.item/modelo/",
+        ):
+            resposta = self.client.get(url)
+            self.assertEqual(resposta["X-Content-Type-Options"], "nosniff", url)
+            self.assertIn("attachment", resposta["Content-Disposition"], url)
+
+    def test_executavel_renomeado_nao_entra_pela_api(self):
+        """D65 — a porta recusa pelos bytes, antes de gravar qualquer coisa."""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        self.autenticar()
+        arquivo = SimpleUploadedFile(
+            "itens.xlsx", b"MZ\x90\x00\x03\x00\x00\x00" + b"\x00" * 64,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        resposta = self.client.post(
+            "/api/impexp/teste.item/importar/", {"arquivo": arquivo}, format="multipart",
+        )
+        self.assertEqual(resposta.status_code, 400)
+        self.assertEqual(Importacao.objects.count(), 0, "nada pode ter sido gravado")
+
     def test_ciclo_completo_pela_api(self):
         self.autenticar()
         criada = self._subir([CABECALHO, "A-1;Cimento;10", "A-2;Areia;5"])
@@ -909,3 +942,268 @@ class MapaSalvoTests(MotorTestBase):
                 tenant_id=self.tenant.id, recurso=self.recurso.id, nome="Mensal",
                 mapa={"codigo": 1},
             )
+
+
+# ---------------------------------------------------------------------------
+# IE.2 — R15 e R16 (endurecimento de 07/08/2026)
+# ---------------------------------------------------------------------------
+# As travas desta leva não são de fluxo, são de **porta**: o que entra tem de ser
+# reconhecido pelos bytes, o que sai não pode executar, e todo teto tem de vir do
+# plano. Cada teste aqui corresponde a um achado da análise (D62–D69) — se um
+# deles voltar a passar por engano, é porque a porta reabriu.
+
+
+class FormatoPorAssinaturaTests(TestCase):
+    """D65 — o nome do arquivo não decide nada."""
+
+    def test_reconhece_os_tres_formatos_pelo_conteudo(self):
+        from .limites import detectar_formato
+
+        self.assertEqual(detectar_formato("x.csv", b"a;b;c\n1;2;3").codigo, "csv")
+        self.assertEqual(detectar_formato("x.xlsx", b"PK\x03\x04resto").codigo, "xlsx")
+        self.assertEqual(detectar_formato("x.pdf", b"%PDF-1.7 resto").codigo, "pdf")
+
+    def test_executavel_renomeado_para_xlsx_e_recusado(self):
+        from .limites import FormatoDesconhecido, detectar_formato
+
+        # O caso concreto do achado: antes, isto era GRAVADO em disco no caminho
+        # de job e só falhava depois, ao ser parseado.
+        with self.assertRaises(FormatoDesconhecido):
+            detectar_formato("payload.xlsx", b"MZ\x90\x00\x03\x00\x00\x00")
+        with self.assertRaises(FormatoDesconhecido):
+            detectar_formato("planilha.csv", b"\x7fELF\x02\x01\x01\x00")
+
+    def test_extensao_so_desempata_entre_formatos_de_mesma_assinatura(self):
+        from .limites import detectar_formato
+
+        # O desempate acontece, e acerta quando o nome é de um formato-zip:
+        self.assertEqual(detectar_formato("x.xlsx", b"PK\x03\x04resto").codigo, "xlsx")
+        self.assertEqual(detectar_formato("m.bcfzip", b"PK\x03\x04resto").codigo, "bcf")
+
+        # Assinatura de ZIP com nome que não é de nenhum formato-zip conhecido:
+        # cai no primeiro que casou, e NÃO vira "desconhecido" — a assinatura já
+        # provou que não é executável renomeado.
+        #
+        # O invariante é esse, e não QUAL deles: a identidade do primeiro mudou
+        # (era `xlsx`, virou `bcf`) quando a PRA.5a registrou os 18 formatos da
+        # Prancheta na allowlist da plataforma, e amarrá-la aqui faria este teste
+        # quebrar a cada formato-zip novo sem que nada tivesse quebrado de fato.
+        # Quem decide o destino não é esta função — é o recurso, declarando o que
+        # aceita; aqui só se prova que a porta não confunde zip com executável.
+        indefinido = detectar_formato("coisa.bin", b"PK\x03\x04resto")
+        self.assertIn(b"PK\x03\x04", indefinido.assinaturas)
+
+
+class LimiteDoPlanoTests(TestCase):
+    """D64 — todo teto vem de `payment/planos.py`, e nunca vira ilimitado."""
+
+    class _U:
+        def __init__(self, plano=None):
+            self.iam_plano = plano
+            self.username = "u"
+
+    def test_plano_menor_tem_teto_menor_em_todos_os_eixos(self):
+        from .limites import limites_do_plano
+
+        free = limites_do_plano(self._U("free"))
+        pro = limites_do_plano(self._U("profissional"))
+        self.assertLess(free.max_mb, pro.max_mb)
+        self.assertLess(free.memoria_mb, pro.memoria_mb)
+        self.assertLess(free.segundos, pro.segundos)
+
+    def test_sem_plano_conhecido_cai_no_teto_de_infra_e_nao_em_ilimitado(self):
+        from payment.planos import IMPEXP_TETO_INFRA_MB, IMPEXP_TETO_INFRA_MEMORIA_MB
+
+        from .limites import limites_do_plano
+
+        # Fail-open é sobre não travar quem tem token de serviço — não sobre
+        # entregar a máquina. É a diferença que o `sob_medida` também respeita.
+        for plano in (None, "inexistente", "sob_medida"):
+            teto = limites_do_plano(self._U(plano))
+            self.assertEqual(teto.max_mb, IMPEXP_TETO_INFRA_MB)
+            self.assertEqual(teto.memoria_mb, IMPEXP_TETO_INFRA_MEMORIA_MB)
+
+    def test_formato_nao_contratado_da_402_e_arquivo_grande_tambem(self):
+        from .limites import (
+            ArquivoGrandeDemais,
+            FormatoNaoContratado,
+            limites_do_plano,
+            validar_entrada,
+        )
+
+        free = limites_do_plano(self._U("free"))
+        with self.assertRaises(FormatoNaoContratado):
+            validar_entrada(tamanho=10, nome="a.pdf", conteudo=b"%PDF-1.7", limites=free)
+        with self.assertRaises(ArquivoGrandeDemais):
+            validar_entrada(
+                tamanho=free.max_bytes + 1, nome="a.csv", conteudo=b"a;b", limites=free,
+            )
+
+    def test_nenhum_plano_vende_formato_que_ninguem_le(self):
+        from payment.planos import PLANOS
+
+        from .limites import FORMATOS_POR_CODIGO
+
+        # O mesmo teste que o `RegistryEPlanosTests` da Prancheta faz: knob
+        # comercial que promete o que o motor não tem é o cliente contratando o
+        # que ninguém sabe ler.
+        for slug, cfg in PLANOS.items():
+            for codigo in cfg.get("impexp_formatos") or ():
+                self.assertIn(codigo, FORMATOS_POR_CODIGO, f"plano {slug}")
+
+
+class FormulaNaSaidaTests(MotorTestBase):
+    """D62 — o arquivo que sai não pode executar nada."""
+
+    def _exportar(self, formato, valor):
+        BANCO["A-1"] = {"codigo": "A-1", "descricao": valor, "quantidade": Decimal("1")}
+        conteudo, _, _ = motor_exportacao.exportar(
+            recurso=self.recurso, request=type("R", (), {"user": self.user})(),
+            formato=formato, tenant_id=self.tenant.id,
+        )
+        return conteudo
+
+    def test_csv_neutraliza_os_seis_gatilhos(self):
+        for valor in ("=cmd|/c calc!A1", "+1+1", "-1+1", "@SUM(A1)", "\tx", "\rx"):
+            texto = self._exportar("csv", valor).decode("utf-8-sig")
+            self.assertIn("'" + valor[0], texto, f"gatilho {valor[0]!r} passou cru")
+
+    def test_xlsx_nao_grava_formula_de_verdade(self):
+        import io
+
+        from openpyxl import load_workbook
+
+        ws = load_workbook(io.BytesIO(self._exportar("xlsx", "=1+1"))).active
+        celula = [c for c in ws[ws.max_row] if c.value == "=1+1"]
+        self.assertTrue(celula, "o valor deveria estar lá, como texto")
+        self.assertEqual(celula[0].data_type, "s", "R16: saiu como fórmula")
+
+    def test_numero_negativo_nao_e_afetado(self):
+        # O escape é só do caminho de TEXTO: número sai tipado (R8) e o `-` de um
+        # valor negativo tem de continuar sendo um sinal, não um apóstrofo.
+        BANCO["A-1"] = {"codigo": "A-1", "descricao": "Cimento", "quantidade": Decimal("-5")}
+        conteudo, _, _ = motor_exportacao.exportar(
+            recurso=self.recurso, request=type("R", (), {"user": self.user})(),
+            formato="csv", tenant_id=self.tenant.id,
+        )
+        texto = conteudo.decode("utf-8-sig")
+        self.assertIn("-5", texto)
+        self.assertNotIn("'-5", texto)
+
+
+class OrcamentoDeLeituraTests(MotorTestBase):
+    """D63 — o parse roda sob teto, e estourar não acusa o arquivo do cliente."""
+
+    def test_estouro_de_memoria_vira_erro_legivel_e_nao_falha_de_leitura(self):
+        from unittest.mock import patch
+
+        from .limites import Limites
+
+        teto = Limites(
+            max_mb=5, formatos=("csv",), memoria_mb=64, segundos=5, plano="free",
+        )
+        # `MemoryError` levantado DENTRO da leitura é o que o RLIMIT_AS produz.
+        # O que se prova aqui é a tradução: o lote fica em ERRO com a mensagem do
+        # teto, e não com "arquivo ilegível" — acusar o arquivo por um limite
+        # nosso é o defeito que o E2E da PRA.1d pegou na Prancheta.
+        with patch("funcoesimpexp.importacao.ler_bytes", side_effect=MemoryError):
+            lote = self._preparar([CABECALHO, "A-1;Cimento;10"], teto=teto)
+        self.assertEqual(lote.status, Importacao.Status.ERRO)
+        self.assertIn("64 MB", lote.mensagem)
+        self.assertEqual(lote.linhas.count(), 0, "R1: nada foi materializado")
+
+    def test_sem_teto_declarado_a_leitura_continua_funcionando(self):
+        # Chamada interna e caminho de teste não são obrigados a passar orçamento.
+        lote = self._preparar([CABECALHO, "A-1;Cimento;10"])
+        self.assertEqual(lote.status, Importacao.Status.CONFERINDO)
+
+
+class EntitlementDeEscritaTests(MotorTestBase):
+    """D66 — importar exige o módulo; exportar é portabilidade."""
+
+    def _admin(self, modules=()):
+        user = Usuario(username="dono", tenant=self.tenant)
+        user.iam_permissions = []
+        user.is_tenant_admin = True
+        user.iam_modules = list(modules)
+        return user
+
+    def test_admin_sem_o_modulo_nao_importa(self):
+        from .acesso import exigir_acesso_total
+
+        with self.assertRaises(PermissionDenied) as ctx:
+            exigir_acesso_total(self._admin(), self.recurso, escrita=True)
+        self.assertIn("teste", str(ctx.exception))
+
+    def test_admin_sem_o_modulo_continua_exportando(self):
+        from .acesso import exigir_acesso_total
+
+        # Portabilidade: cancelar o módulo não pode prender o dado que já existe.
+        exigir_acesso_total(self._admin(), self.recurso, escrita=False)
+
+    def test_admin_com_o_modulo_importa(self):
+        from .acesso import exigir_acesso_total
+
+        exigir_acesso_total(self._admin(modules=["teste"]), self.recurso, escrita=True)
+
+    def test_recurso_de_fundacao_nao_exige_entitlement(self):
+        from .acesso import exigir_acesso_total
+
+        class Fundacao(type(self.recurso)):
+            entitlement = None
+
+        exigir_acesso_total(self._admin(), Fundacao(), escrita=True)
+
+
+class RastroDeExportacaoTests(MotorTestBase):
+    """D67 — a R12 chega à trilha append-only, e não só à linha do tenant."""
+
+    def test_exportar_grava_auditlog_com_recorte_e_volume(self):
+        from nucleo.models import AuditLog
+
+        BANCO["A-1"] = {"codigo": "A-1", "descricao": "Cimento", "quantidade": Decimal("1")}
+        motor_exportacao.exportar(
+            recurso=self.recurso, request=type("R", (), {"user": self.user})(),
+            formato="csv", recorte={"codigo": "A-1"}, tenant_id=self.tenant.id,
+        )
+        log = AuditLog.objects.get(acao=AuditLog.Acao.EXPORTAR_DADOS)
+        self.assertEqual(log.detalhes["recurso"], self.recurso.id)
+        self.assertEqual(log.detalhes["linhas"], 1)
+        self.assertIn("codigo=A-1", log.detalhes["recorte"])
+
+
+class FaxinaDaEntradaTests(MotorTestBase):
+    """D68 — arquivo preso em `aguarda_de_para` tem prazo."""
+
+    @override_settings(MEDIA_ROOT=tempfile.mkdtemp())
+    def test_entrada_velha_perde_o_arquivo_e_mantem_a_linha(self):
+        from .tasks import DIAS_PARA_ARQUIVO_ORFAO, limpar_entradas_orfas
+
+        lote = Importacao.objects.create(
+            tenant_id=self.tenant.id, recurso=self.recurso.id,
+            arquivo_nome="torto.csv", status=Importacao.Status.ERRO,
+            parametros={"aguarda_de_para": True},
+        )
+        lote.arquivo.save("torto.csv", ContentFile(b"a;b"), save=True)
+        Importacao.objects.filter(pk=lote.pk).update(
+            criada_em=timezone.now() - timedelta(days=DIAS_PARA_ARQUIVO_ORFAO + 1),
+        )
+
+        self.assertEqual(limpar_entradas_orfas(), 1)
+        lote.refresh_from_db()
+        self.assertFalse(lote.arquivo, "o arquivo tinha de sumir")
+        self.assertFalse(lote.parametros["aguarda_de_para"], "a tela não pode oferecer de-para")
+        self.assertTrue(Importacao.objects.filter(pk=lote.pk).exists(), "a linha é rastro")
+
+    @override_settings(MEDIA_ROOT=tempfile.mkdtemp())
+    def test_entrada_recente_e_preservada(self):
+        from .tasks import limpar_entradas_orfas
+
+        lote = Importacao.objects.create(
+            tenant_id=self.tenant.id, recurso=self.recurso.id, arquivo_nome="novo.csv",
+            status=Importacao.Status.ERRO, parametros={"aguarda_de_para": True},
+        )
+        lote.arquivo.save("novo.csv", ContentFile(b"a;b"), save=True)
+        self.assertEqual(limpar_entradas_orfas(), 0)
+
+

@@ -2,7 +2,7 @@
 import json
 import logging
 
-from celery import Task
+from celery import Task, shared_task
 
 logger = logging.getLogger(__name__)
 
@@ -70,3 +70,23 @@ class DLQTask(Task):
         except Exception:
             logger.exception("CRÍTICO: falha ao gravar na DLQ (task %s)", task_id)
         super().on_failure(exc, task_id, args, kwargs, einfo)
+
+
+@shared_task(name="nucleo.liberar_cadeiras_presas")
+def liberar_cadeiras_presas():
+    """D98 — devolve à fila as cadeiras presas por um worker que morreu sem avisar.
+
+    **É a rede do desenho sem despachante próprio.** Todo job que ocupa cadeira
+    termina avisando — o caminho feliz chama `frota.concluir` e o `DLQTask` acima
+    garante o aviso até no caminho de falha. O que nenhum aviso cobre é a morte
+    violenta: OOM do cgroup, container derrubado, máquina reiniciada. Sem esta
+    varredura, cada uma dessas reduziria a frota em uma vaga **para sempre**, e o
+    sintoma seria uma fila que anda cada vez mais devagar sem nada nos logs.
+
+    Sem `DLQTask` de propósito: uma varredura que falhou não precisa de entrada na
+    DLQ nem de retry: o beat a chama de novo em cinco minutos, e o estado que ela
+    lê é o mesmo. Uma DLQ cheia de varreduras esconderia a falha que importa.
+    """
+    from . import frota
+
+    return frota.liberar_orfas()

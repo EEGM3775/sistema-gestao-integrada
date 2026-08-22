@@ -20,7 +20,7 @@ Todo o mercado imobiliário orbita um único fluxo. A plataforma vence quando co
 | Terreno / viabilidade / incorporação | ❌ | Banco de terrenos, estudo de viabilidade, GIS ([03](03-mapa-de-modulos.md) §7) |
 | Projeto / licenciamento | ❌ | DMS, licenciamento, BIM ([03](03-mapa-de-modulos.md) §6) |
 | Suprimentos | parcial (fornecedores, catálogo) | SCM completo + marketplace de cotações ([04](04-rede-e-marketplaces.md)) |
-| **Obra** | ✅ forte (obras, diário, drone, IA) | Planejamento (APS), qualidade, SST, equipamentos |
+| **Obra** | ✅ forte (obras, diário, drone, IA) | Planejamento e qualidade (PDCA), **Prancheta** (projeto em campo), SST, equipamentos |
 | Venda / financiamento | parcial (CRM, contratos, cobranças) | Espelho de vendas, Edição Imobiliária, rede de distribuição |
 | Entrega / pós-obra | ❌ | Vistorias, assistência técnica, manual do proprietário |
 | Operação / condomínio | ❌ | Facility, Edição Administradora de condomínio, portal do morador |

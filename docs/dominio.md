@@ -61,7 +61,7 @@ O **empreendimento** é o eixo. Quase tudo de negócio aponta para ele (direta o
   a uma `ContaPagar` (recebido) — nunca aos dois (CHECK constraint).
 - `CobrancaCliente` existe no schema com CRUD exposto, mas **nada no sistema escreve nela** — a
   cadeia viva é `ContaReceber` → `Boleto` (Asaas). Consolidação pendente em
-  [pendencias.md#A5](pendencias.md).
+  [pendencias.md, A5](pendencias.md).
 
 ## Cadeia de suprimentos (compra)
 

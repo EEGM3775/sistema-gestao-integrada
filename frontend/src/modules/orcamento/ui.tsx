@@ -1,8 +1,8 @@
 // Kit Malha do Orçamento. Mais denso que o dos outros módulos de propósito: o
 // orçamentista passa horas numa grade de centenas de linhas, e cada pixel de
 // chrome é linha de planilha que sai da tela.
-import { type ButtonHTMLAttributes, type CSSProperties, type HTMLAttributes, type ReactNode, type SelectHTMLAttributes } from 'react'
-import { Inbox, Lock } from 'lucide-react'
+import { type ButtonHTMLAttributes, type CSSProperties, type HTMLAttributes, type MouseEvent, type ReactNode, type SelectHTMLAttributes } from 'react'
+import { ChevronDown, ChevronRight, Inbox, Lock } from 'lucide-react'
 import type { Kind } from './lib'
 
 export const mono: CSSProperties = { fontFamily: 'var(--mono)', fontVariantNumeric: 'tabular-nums' }
@@ -181,6 +181,82 @@ export function Empty({ children, acao }: { children: ReactNode; acao?: ReactNod
   )
 }
 
+/** "Já existe no catálogo da empresa", como **marca** e não como texto.
+ *
+ *  Era uma pílula escrita `já no catálogo`, e ela custava duas coisas: comia a
+ *  largura da descrição — que na SINAPI passa de 130 caracteres — e só existia
+ *  em algumas linhas, então as colunas à direita dançavam de linha para linha.
+ *  O estado negativo é desenhado (círculo vazado) justamente para a coluna ter
+ *  largura constante: alinhamento é o que torna uma lista longa legível.
+ */
+export function MarcaCatalogo({ adotado }: { adotado: boolean }) {
+  return (
+    <span
+      title={adotado
+        ? 'Já existe no catálogo da empresa — inserir não duplica, reaproveita.'
+        : 'Ainda não está no catálogo — inserir vai adotá-lo.'}
+      style={{
+        flex: '0 0 11px', width: 11, height: 11, borderRadius: 999, display: 'inline-block',
+        background: adotado ? 'var(--good-ink)' : 'transparent',
+        border: adotado ? 'none' : '1px solid var(--line)',
+        cursor: 'help',
+      }}
+    />
+  )
+}
+
+/** A seta que abre a composição analítica da linha.
+ *
+ *  Era o texto `ver analítica`, no meio da linha, entre a descrição e a
+ *  unidade: dezenove caracteres roubados da descrição, presentes só nas
+ *  composições, empurrando as colunas seguintes de lugar. A seta diz a mesma
+ *  coisa em 13px, e aponta para baixo quando está aberta — a convenção que a
+ *  própria árvore da planilha já usa.
+ */
+export function BotaoAnalitica({ aberto, onClick }: { aberto: boolean; onClick: (e: MouseEvent) => void }) {
+  return (
+    <button
+      onClick={onClick}
+      title={aberto ? 'Fechar a composição' : 'Abrir a composição analítica (insumos e coeficientes)'}
+      aria-expanded={aberto}
+      aria-label={aberto ? 'Fechar composição' : 'Abrir composição analítica'}
+      style={{
+        flex: '0 0 18px', width: 18, height: 18, padding: 0, borderRadius: 4,
+        border: 'none', background: 'none', cursor: 'pointer',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        color: aberto ? 'var(--net-ink)' : 'var(--ink-3)',
+      }}
+    >
+      {aberto ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+    </button>
+  )
+}
+
+/** A legenda das marcas das listas. Marca sem legenda é charada. */
+export function LegendaLista({ comAnalitica = true, style }: {
+  comAnalitica?: boolean; style?: CSSProperties
+}) {
+  const ponto = (cheio: boolean): CSSProperties => ({
+    width: 9, height: 9, borderRadius: 999, display: 'inline-block', flex: 'none',
+    background: cheio ? 'var(--good-ink)' : 'transparent',
+    border: cheio ? 'none' : '1px solid var(--line)',
+  })
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 5, flexWrap: 'wrap',
+      fontSize: 11, color: 'var(--ink-3)', ...style,
+    }}>
+      <span style={ponto(true)} /> no catálogo
+      <span style={{ ...ponto(false), marginLeft: 7 }} /> ainda não
+      {comAnalitica && (
+        <>
+          <ChevronRight size={12} style={{ marginLeft: 7, flex: 'none' }} /> abre a composição
+        </>
+      )}
+    </span>
+  )
+}
+
 export function Modal({ titulo, onClose, children, rodape, largura = 520 }: {
   titulo: ReactNode; onClose: () => void; children: ReactNode; rodape?: ReactNode; largura?: number
 }) {
@@ -189,7 +265,11 @@ export function Modal({ titulo, onClose, children, rodape, largura = 520 }: {
       onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}
       style={{
         position: 'fixed', inset: 0, zIndex: 92, background: 'rgba(6,14,26,.5)', backdropFilter: 'blur(3px)',
-        display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: '7vh 16px', overflowY: 'auto',
+        display: 'flex', justifyContent: 'center', alignItems: 'flex-start',
+        // Era `7vh` em cima e embaixo: 14% da tela gastos em respiro, num modal
+        // que precisa mostrar lista. `4vh` devolve essa altura ao conteúdo sem
+        // colar o modal na borda.
+        padding: '4vh 16px', overflowY: 'auto',
       }}
     >
       <div className="orc-modal" style={{

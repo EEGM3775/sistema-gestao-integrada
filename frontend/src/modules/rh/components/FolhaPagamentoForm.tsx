@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { abrirEmNovaAba } from '@/lib/arquivo'
 import type { FolhaPagamento, FolhaPagamentoFormData } from '@/types'
 import { FieldError, FormErrorBanner, parseApiErrors, type FieldErrors } from '@/utils/formErrors'
 import { minPagamentoISO, maxPagamentoISO, validateISO_Pagamento } from '@/utils/dates'
@@ -108,11 +109,13 @@ const FolhaPagamentoForm: React.FC<Props> = ({ open, onClose, onSave, initial, f
               {holerite ? holerite.name : initial?.holerite ? '(substituir holerite atual)' : 'Escolher arquivo…'}
             </button>
             {initial?.holerite && !holerite && (
-              <a href={initial.holerite} target="_blank" rel="noreferrer"
+              // D70 — gateado como o resto da folha.
+              <button type="button" onClick={() => abrirEmNovaAba(initial.holerite!)}
                 className="text-xs mt-1 flex items-center gap-1"
-                style={{ color: 'var(--color-brand)', fontFamily: 'var(--font-body)' }}>
+                style={{ color: 'var(--color-brand)', fontFamily: 'var(--font-body)',
+                  background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
                 Holerite atual ↗
-              </a>
+              </button>
             )}
           </Field>
 

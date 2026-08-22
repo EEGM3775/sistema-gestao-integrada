@@ -20,21 +20,28 @@ from .models import (
     BaseReferencial,
     ComponenteBancoPreco,
     ComposicaoBDI,
+    ComposicaoEncargos,
     ComposicaoReferenciaItem,
+    FormulaReajuste,
+    IndiceEconomico,
     InsumoReferencia,
     ItemBancoPreco,
     ItemOrcado,
     ItemOrcadoInsumo,
+    LinhaMedicao,
     LinhaReprecificacao,
     MemorialNBR,
     Orcamento,
     ParametroObra,
     ParcelaEtapa,
+    ParcelaFormulaReajuste,
     PastaComposicao,
     PavimentoObra,
     Reprecificacao,
     RevisaoOrcamento,
+    RubricaEncargos,
     UnidadeAutonoma,
+    ValorIndice,
 )
 
 
@@ -509,3 +516,148 @@ class ReprecificacaoSerializer(TenantScopedModelSerializer):
         if obj.banco_destino_id:
             return obj.banco_destino.rotulo_automatico()
         return None
+
+
+# ---------------------------------------------------------------------------
+# ORC.7 — encargos analíticos, memória do quantitativo e reajuste
+# ---------------------------------------------------------------------------
+
+
+class RubricaEncargosSerializer(TenantScopedModelSerializer):
+    """Uma linha do quadro de encargos.
+
+    A alíquota do **grupo D** é derivada, então quem manda uma `percentual` numa
+    rubrica de reincidência não está errado — está sendo ignorado, e a tela
+    precisa saber disso para desenhar o campo bloqueado em vez de aceitar
+    digitação que some no próximo cálculo. É o que `derivada` informa.
+    """
+
+    grupo_nome = serializers.CharField(source="get_grupo_display", read_only=True)
+    derivada = serializers.SerializerMethodField()
+
+    class Meta:
+        model = RubricaEncargos
+        fields = "__all__"
+
+    def get_derivada(self, obj) -> bool:
+        return obj.base_calculo != RubricaEncargos.BaseCalculo.DIRETA
+
+
+class ComposicaoEncargosSerializer(TenantScopedModelSerializer):
+    """O quadro. Todos os totais são derivados — nenhum vem do cliente.
+
+    Mesma razão do `ComposicaoBDI`: se o percentual resultante viesse do corpo
+    da requisição, o quadro analítico poderia contradizer o número aplicado na
+    planilha, que é exatamente o que a peça de conferência existe para impedir.
+    """
+
+    tipo_nome = serializers.CharField(source="get_tipo_mao_de_obra_display", read_only=True)
+    regime_nome = serializers.CharField(source="get_regime_display", read_only=True)
+    rubricas = RubricaEncargosSerializer(many=True, read_only=True)
+    total_grupo_a = serializers.DecimalField(max_digits=7, decimal_places=4, read_only=True)
+    total_grupo_b = serializers.DecimalField(max_digits=7, decimal_places=4, read_only=True)
+    total_grupo_c = serializers.DecimalField(max_digits=7, decimal_places=4, read_only=True)
+    total_grupo_d = serializers.DecimalField(max_digits=7, decimal_places=4, read_only=True)
+    percentual_calculado = serializers.DecimalField(max_digits=7, decimal_places=4, read_only=True)
+
+    class Meta:
+        model = ComposicaoEncargos
+        fields = "__all__"
+
+
+class LinhaMedicaoSerializer(TenantScopedModelSerializer):
+    """Uma parcial da memória do quantitativo.
+
+    `total` é read-only porque é a conta — aceitar o total do cliente permitiria
+    uma parcial que diz `2 × 3,50 × 2,80 = 40,00`, e uma memória de cálculo que
+    não confere é pior que memória nenhuma: ela **parece** conferida.
+    """
+
+    total = serializers.DecimalField(max_digits=16, decimal_places=4, read_only=True)
+    sinal_nome = serializers.CharField(source="get_sinal_display", read_only=True)
+
+    class Meta:
+        model = LinhaMedicao
+        fields = "__all__"
+
+    def validate(self, attrs):
+        item = attrs.get("item_orcado") or getattr(self.instance, "item_orcado", None)
+        if item is not None and item.tipo_linha == ItemOrcado.TipoLinha.SINTETICO:
+            raise serializers.ValidationError({
+                "item_orcado": "Linha sintética soma os filhos — não tem quantidade própria a medir.",
+            })
+        formula = attrs.get("formula", getattr(self.instance, "formula", ""))
+        if formula:
+            from .quantitativos import FormulaInvalida, avaliar_formula
+
+            try:
+                avaliar_formula(formula)
+            except FormulaInvalida as erro:
+                raise serializers.ValidationError({"formula": str(erro)}) from erro
+        return attrs
+
+
+class IndiceEconomicoSerializer(serializers.ModelSerializer):
+    """Índice de reajuste — `ModelSerializer` puro, como a base referencial.
+
+    Não é `TenantScopedModelSerializer` porque o model não tem tenant: série
+    pública de terceiro (FGV, IBGE, Sinduscon), pela mesma razão da §11.1.
+    """
+
+    class Meta:
+        model = IndiceEconomico
+        fields = "__all__"
+
+
+class ValorIndiceSerializer(serializers.ModelSerializer):
+    """Um ponto da série."""
+
+    indice_codigo = serializers.CharField(source="indice.codigo", read_only=True)
+
+    class Meta:
+        model = ValorIndice
+        fields = "__all__"
+
+
+class ParcelaFormulaReajusteSerializer(TenantScopedModelSerializer):
+    """Parcela da cesta de índices."""
+
+    indice_codigo = serializers.CharField(source="indice.codigo", read_only=True)
+    indice_nome = serializers.CharField(source="indice.nome", read_only=True)
+
+    class Meta:
+        model = ParcelaFormulaReajuste
+        fields = "__all__"
+
+
+class FormulaReajusteSerializer(TenantScopedModelSerializer):
+    """A fórmula do contrato.
+
+    `fecha` é calculado e não gravado: a fórmula passa por estados que não
+    fecham enquanto o usuário monta a cesta, e recusar a gravação obrigaria a
+    digitar as três parcelas num submit só. Quem cobra o fechamento é o cálculo
+    do fator, que é onde errar custa dinheiro.
+    """
+
+    parcelas = ParcelaFormulaReajusteSerializer(many=True, read_only=True)
+    soma_pesos = serializers.SerializerMethodField()
+    fecha = serializers.SerializerMethodField()
+
+    class Meta:
+        model = FormulaReajuste
+        fields = "__all__"
+
+    def _soma(self, obj):
+        from decimal import Decimal
+
+        return (obj.parcela_fixa or Decimal("0")) + sum(
+            (p.peso for p in obj.parcelas.all()), Decimal("0")
+        )
+
+    def get_soma_pesos(self, obj) -> str:
+        return str(self._soma(obj))
+
+    def get_fecha(self, obj) -> bool:
+        from .reajuste import TOLERANCIA_FECHAMENTO
+
+        return abs(self._soma(obj) - 1) <= TOLERANCIA_FECHAMENTO

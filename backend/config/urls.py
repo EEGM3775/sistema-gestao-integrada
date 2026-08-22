@@ -59,6 +59,7 @@ from nucleo.lgpd_views import (
 from nucleo.auditoria_views import AuditLogViewSet
 
 # Centro de notificações in-app (Calendário, Fase 9 — Fatia C)
+from nucleo.frota_views import TarefaNaFilaViewSet
 from nucleo.notificacoes_views import NotificacaoViewSet
 
 # Plano contratado + medidores de quota (D24)
@@ -69,12 +70,14 @@ from nucleo.health_views import HealthzView, ReadyzView, MetricsView
 
 # Importação/exportação de plataforma (IE.0 + IE.0b)
 from funcoesimpexp.views import (
+    EntregarArquivoView as ImpExpEntregarView,
     ExportacaoDetalheView as ImpExpExportacaoView,
     ExportarView as ImpExpExportarView,
     ImportacaoDecisaoView as ImpExpDecisaoView,
     ImportacaoDetalheView as ImpExpDetalheView,
     ImportacaoRecusadasView as ImpExpRecusadasView,
     ImportacoesDoRecursoView as ImpExpHistoricoView,
+    ImportarArquivosView as ImpExpImportarArquivosView,
     ImportarView as ImpExpImportarView,
     MapaDetalheView as ImpExpMapaView,
     MapasView as ImpExpMapasView,
@@ -93,6 +96,12 @@ router.register(r'auditoria', AuditLogViewSet, basename='auditlog')
 
 # --- Centro de notificações in-app (Calendário, Fatia C) ---
 router.register(r'notificacoes', NotificacaoViewSet, basename='notificacao')
+
+# --- A fila da frota de trabalho pesado (D98) ---
+# Endereço no `nucleo` e não em `prancheta/` porque a frota é da plataforma: a
+# Prancheta é a primeira cliente, não a dona. Importação de acervo, exportação
+# grande e ortofoto do Maps entram pela mesma rota, com outra `frota`.
+router.register(r'frota/tarefas', TarefaNaFilaViewSet, basename='frota-tarefa')
 
 # --- Rotas do App 'clientes' ---
 router.register(r'clientes', ClienteViewSet, basename='cliente')
@@ -192,8 +201,18 @@ urlpatterns = [
     path('api/impexp/<str:recurso_id>/exportar/', ImpExpExportarView.as_view(), name='impexp_exportar'),
     path('api/impexp/<str:recurso_id>/modelo/', ImpExpModeloView.as_view(), name='impexp_modelo'),
     path('api/impexp/<str:recurso_id>/importar/', ImpExpImportarView.as_view(), name='impexp_importar'),
+    # IE.3 — lote de ARQUIVO (a pasta do projetista, a foto do diário, o ASO).
+    # Rota própria e não um ramo do `importar/`: o corpo, as recusas e o resumo
+    # são outros, e um endpoint com dois corpos costurados é o que o registry
+    # existe para evitar.
+    path('api/impexp/<str:recurso_id>/importar-arquivos/', ImpExpImportarArquivosView.as_view(), name='impexp_importar_arquivos'),
     path('api/impexp/<str:recurso_id>/mapas/', ImpExpMapasView.as_view(), name='impexp_mapas'),
     path('api/impexp/<str:recurso_id>/importacoes/', ImpExpHistoricoView.as_view(), name='impexp_historico'),
+    # IE.3b — a SAÍDA de um arquivo do acervo. A porta única é de entrada e de
+    # saída (decisão do dono, 08/08/2026), então o download do binário sai dos
+    # módulos e vem para cá: `nosniff`, `attachment`, tipo declarado por nós e
+    # trilha, numa implementação só. `especie`/`chave` são opacas ao motor.
+    path('api/impexp/<str:recurso_id>/arquivo/<str:especie>/<str:chave>/', ImpExpEntregarView.as_view(), name='impexp_entregar'),
 
     # --- Rotas dos Módulos (sem roteador principal) ---
     path('api/diario/', include('modulodiario.urls')),
@@ -207,7 +226,7 @@ urlpatterns = [
     path('api/api/', include('moduloapi.urls')),
     path('api/calendar/', include('modulocalendar.urls')),
     # Módulos planejados (stub — entitlement aplicado, endpoints de status disponíveis)
-    path('api/aps/', include('moduloaps.urls')),
+    path('api/prancheta/', include('moduloprancheta.urls')),
     path('api/dms/', include('modulodms.urls')),
     path('api/pdca/', include('modulopdca.urls')),
     path('api/catalogo/', include('catalogo.urls')),

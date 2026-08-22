@@ -1,0 +1,160 @@
+460017387_PES1_VOL_1_FLOCODEC_01A06_R04.dwg
+Anexos/01 Projeto Hidraulico Lote 10-Folha - DT3 - DETALHES.dwg
+Desenho1.dwg
+Documentos/Acade 2026/AeData/Proj/Aegs/AEGS06.DWG
+Documentos/Acade 2026/AeData/Proj/Aegs/Convert/Convert-03.dwg
+Documentos/Acade 2026/AeData/Proj/Demo/DEMO06.DWG
+Documentos/Acade 2026/AeData/Proj/GbDemo/001.dwg
+Documentos/Acade 2026/AeData/Proj/GbDemo/008.dwg
+Documentos/Acade 2026/AeData/Proj/GbDemo/015.dwg
+Documentos/Acade 2026/AeData/Proj/GbDemo/022.dwg
+Documentos/Acade 2026/AeData/Proj/GbDemo/Tabular TermLay/T04.dwg
+Documentos/Acade 2026/AeData/Proj/Iec60617Demo/007.dwg
+Documentos/Acade 2026/AeData/Proj/Iec60617Demo/014.dwg
+Documentos/Acade 2026/AeData/Proj/Iec60617Demo/021.dwg
+Documentos/Acade 2026/AeData/Proj/Iec60617Demo/Tabular TermLay/T03.dwg
+Documentos/Acade 2026/AeData/Proj/IecDemo/006.dwg
+Documentos/Acade 2026/AeData/Proj/IecDemo/013.dwg
+Documentos/Acade 2026/AeData/Proj/IecDemo/020.dwg
+Documentos/Acade 2026/AeData/Proj/IecDemo/Tabular TermLay/T02.dwg
+Documentos/Acade 2026/AeData/Proj/IeeeDemo/005.dwg
+Documentos/Acade 2026/AeData/Proj/IeeeDemo/012.dwg
+Documentos/Acade 2026/AeData/Proj/IeeeDemo/019.dwg
+Documentos/Acade 2026/AeData/Proj/IeeeDemo/Tabular TermLay/T01.dwg
+Documentos/Acade 2026/AeData/Proj/JisDemo/004.dwg
+Documentos/Acade 2026/AeData/Proj/JisDemo/011.dwg
+Documentos/Acade 2026/AeData/Proj/JisDemo/018.dwg
+Documentos/Acade 2026/AeData/Proj/JisDemo/025.dwg
+Documentos/Acade 2026/AeData/Proj/NfpaDemo/DEMO03.DWG
+Documentos/Acade 2026/AeData/Proj/Point2Point/Connector.dwg
+Documentos/Acade 2026/AeData/Tutorial/Aegs/AEGS07.DWG
+Documentos/Acade 2026/AeData/Tutorial/Aegs/Block swap/AEGS04.DWG
+Documentos/Acade 2026/AeData/Tutorial/Aegs/Block swap/AEGS11.DWG
+Documentos/Acade 2026/AeData/Tutorial/Aegs/Circuits/AEGS07.DWG
+Documentos/Acade 2026/AeData/Tutorial/Aegs/Connector diagrams/AEGS02.DWG
+Documentos/Acade 2026/AeData/Tutorial/Aegs/Connector diagrams/AEGS09.DWG
+Documentos/Acade 2026/AeData/Tutorial/Aegs/Generating reports/AEGS01.DWG
+Documentos/Acade 2026/AeData/Tutorial/Aegs/Generating reports/AEGS08.DWG
+Documentos/Acade 2026/AeData/Tutorial/Aegs/PLC/AEGS06.DWG
+Documentos/Acade 2026/AeData/Tutorial/Aegs/Panel layout/AEGS03.DWG
+Documentos/Acade 2026/AeData/Tutorial/Aegs/Panel layout/AEGS10.DWG
+Documentos/Acade 2026/AeData/Tutorial/Aegs/Projects/AEGS02.DWG
+Documentos/Acade 2026/AeData/Tutorial/Aegs/Projects/AEGS09.DWG
+Documentos/Acade 2026/AeData/Tutorial/Aegs/Schematic components/AEGS06.DWG
+Documentos/Acade 2026/AeData/Tutorial/Aegs/Schematic terminals/AEGS02.DWG
+Documentos/Acade 2026/AeData/Tutorial/Aegs/Schematic terminals/AEGS09.DWG
+Documentos/Acade 2026/AeData/Tutorial/Aegs/Surf/AEGS05.DWG
+Documentos/Acade 2026/AeData/Tutorial/Aegs/Symbol Builder/AEGS01.DWG
+Documentos/Acade 2026/AeData/Tutorial/Aegs/Symbol Builder/AEGS08.DWG
+Documentos/Acade 2026/AeData/Tutorial/Aegs/Title Block/AEGS03.DWG
+Documentos/Acade 2026/AeData/Tutorial/Aegs/Title Block/AEGS10.DWG
+Documentos/Acade 2026/AeData/Tutorial/Aegs/Wire layers/AEGS07.DWG
+Documentos/Acade 2026/AeData/Tutorial/Aegs/Wire numbers/AEGS03.DWG
+Documentos/Acade 2026/AeData/Tutorial/Aegs/Wire numbers/AEGS10.DWG
+Documentos/Acade 2026/AeData/Tutorial/Aegs/Wiring/AEGS06.DWG
+Documentos/Acade 2026/AeData/Tutorial/IEC Sample/IEC_02.dwg
+Documentos/Acade 2026/AeData/Tutorial/IEC Sample/IEC_09.dwg
+Documentos/Acade 2026/AeData/Tutorial/IEC Sample/IEC_16.dwg
+Documentos/C3DMEMO/DWG/CADMEMO.dwg
+Documentos/Desenho2_recover.dwg
+Documentos/Doc Edison/2024_05_20__11_18_29/557581198927/Attach/Media/WhatsApp Documents/As-Built_REAL CONDOMINIO_JANEIRO 2021 (1).DWG
+Documentos/Doc Edison/2024_05_20__11_18_29/557581198927/Attach/Media/WhatsApp Documents/ESGOTO 2023.dwg
+Documentos/Doc Edison/2024_05_20__11_18_29/557581198927/Attach/Media/WhatsApp Documents/JAMYLLE E PAULO_plantas executivas_R03.dwg
+Documentos/Doc Edison/2024_05_20__11_18_29/557581198927/Attach/Media/WhatsApp Documents/LEVANTAMENTO DE MATERIAIS-BLOCOS.dwg
+Documentos/Doc Edison/2024_05_20__11_18_29/557581198927/Attach/Media/WhatsApp Documents/Loteamento Park Ville R8.dwg
+Documentos/Doc Edison/2024_05_20__11_18_29/557581198927/Attach/Media/WhatsApp Documents/PERFIL MARGINAL PORTAL 02_.dwg
+Documentos/Doc Edison/2024_05_20__11_18_29/557581198927/Attach/Media/WhatsApp Documents/PREF_ROG_01.dwg
+Documentos/Doc Edison/2024_05_20__11_18_29/557581198927/Attach/Media/WhatsApp Documents/PREF_ROG_08.dwg
+Documentos/Doc Edison/2024_05_20__11_18_29/557581198927/Attach/Media/WhatsApp Documents/PROJETO PORTAL 02_2022.dwg
+Documentos/Doc Edison/2024_05_20__11_18_29/557581198927/Attach/Media/WhatsApp Documents/PROJETO_NOVO_11_04_2024.dwg
+Documentos/Doc Edison/2024_05_20__11_18_29/557581198927/Attach/Media/WhatsApp Documents/Sent/01 LOTEAMENTO PORTAL RESIDENCE.dwg
+Documentos/Doc Edison/2024_05_20__11_18_29/557581198927/Attach/Media/WhatsApp Documents/Sent/01 Projeto Hidraulico Lote 10-Folha - DT2 - DETALHES ISOMETRICOS-Vista 3D - Isometrico Agua Quente Laje.dwg
+Documentos/Doc Edison/2024_05_20__11_18_29/557581198927/Attach/Media/WhatsApp Documents/Sent/01 Projeto Hidraulico Lote 10-Folha - DT3 - DETALHES-Vista 3D - DET 05.dwg
+Documentos/Doc Edison/2024_05_20__11_18_29/557581198927/Attach/Media/WhatsApp Documents/Sent/01 Projeto Hidraulico Lote 10-Folha - PB0 - PLANTAS TERREO-Planta de piso - 0 - Esgoto Terreo.dwg
+Documentos/Doc Edison/2024_05_20__11_18_29/557581198927/Attach/Media/WhatsApp Documents/Sent/10 Projeto do Loteamento atual 04_2022.dwg
+Documentos/Doc Edison/2024_05_20__11_18_29/557581198927/Attach/Media/WhatsApp Documents/Sent/CASA DA SOPA.dwg
+Documentos/Doc Edison/2024_05_20__11_18_29/557581198927/Attach/Media/WhatsApp Documents/Sent/DRENAGEM E ESOTO VICINAL 31_10 2023.dwg
+Documentos/Doc Edison/2024_05_20__11_18_29/557581198927/Attach/Media/WhatsApp Documents/Sent/FILE-1.DWG
+Documentos/Doc Edison/2024_05_20__11_18_29/557581198927/Attach/Media/WhatsApp Documents/Sent/FILE-5.DWG
+Documentos/Doc Edison/2024_05_20__11_18_29/557581198927/Attach/Media/WhatsApp Documents/Sent/MED_16_03_23_PORTAL 02_.dwg
+Documentos/Doc Edison/2024_05_20__11_18_29/557581198927/Attach/Media/WhatsApp Documents/Sent/PORTAL 02 GALPAO_.dwg
+Documentos/Doc Edison/2024_05_20__11_18_29/557581198927/Attach/Media/WhatsApp Documents/Sent/Projeto de Rua 02.dwg
+Documentos/Doc Edison/2024_05_20__11_18_29/557581198927/Attach/Media/WhatsApp Documents/Sent/VIGAS.DWG
+Documentos/Doc Edison/2024_05_20__11_18_29/557581198927/Attach/Media/WhatsApp Documents/Sent/aerhetg.DWG
+Documentos/Doc Edison/2024_05_20__11_18_29/557581198927/Attach/Media/WhatsApp Documents/Vigas_Cobertura_Espaco_Gourmet_EST_Jamylle_Paulo.dwg
+Erica/Edison/03 - PORTAL 01 DRENAGEM E ESGOTO.dwg
+Erica/Edison/Gilson/1 Andar.dwg
+Erica/Edison/PORTAL 02 VOLUME GALPAO_.dwg
+Estudos/Cursos/Aprovação de Casa/PROJETO FINANCIAMENTO 240,82 m².dwg
+Estudos/Cursos/Civil 3D/Udemy/Parte 1.dwg
+Estudos/Cursos/Incendio/A$C59B73FC4.DWG
+Estudos/UFRB/BCET/Eletricidade/Dos Outros/3Âª Etapa - Interruptores e Tomadas.dwg bruna (1).dwg
+Estudos/UFRB/BCET/Eletricidade/Dos Outros/PROJETO DE ELETRICIDADE (PARTE 2) - Marina.dwg
+Estudos/UFRB/BCET/Eletricidade/Plantas/PROJETO DE ELETRICIDADE (PARTE 2) - Edison.dwg
+Estudos/UFRB/BCET/TCC BCET/Drawing1.dwg
+Estudos/UFRB/Eng. Civil/Barragens/Dimens. Barragem/CET 308 TOPOGRAFIA RIO 2017_2_recover.dwg
+Estudos/UFRB/Eng. Civil/Estagio/Estagio QG Engenharia/DESENHO PARA COMPRAS.dwg
+Estudos/UFRB/Eng. Civil/Inst. Hidraulicas/Blocos autocad/banheiras_biblioteca/Bañera051.dwg
+Estudos/UFRB/Eng. Civil/Inst. Hidraulicas/Blocos autocad/banheiras_biblioteca/Bañera058.dwg
+Estudos/UFRB/Eng. Civil/Inst. Hidraulicas/Blocos autocad/banheiras_biblioteca/Bañera065.dwg
+Estudos/UFRB/Eng. Civil/Inst. Hidraulicas/Blocos autocad/banheiras_biblioteca/Bañera072.dwg
+Estudos/UFRB/Eng. Civil/Inst. Hidraulicas/Blocos autocad/banheiras_biblioteca/Bañeras006.dwg
+Estudos/UFRB/Eng. Civil/Inst. Hidraulicas/Blocos autocad/banheiras_biblioteca/Bañeras013.dwg
+Estudos/UFRB/Eng. Civil/Inst. Hidraulicas/Blocos autocad/banheiras_biblioteca/Bañeras020.dwg
+Estudos/UFRB/Eng. Civil/Inst. Hidraulicas/Blocos autocad/banheiras_biblioteca/Bañeras028.dwg
+Estudos/UFRB/Eng. Civil/Inst. Hidraulicas/Blocos autocad/banheiras_biblioteca/Bañeras035.dwg
+Estudos/UFRB/Eng. Civil/Inst. Hidraulicas/Blocos autocad/banheiras_biblioteca/Bañeras042.dwg
+Estudos/UFRB/Eng. Civil/Inst. Hidraulicas/Blocos autocad/banheiras_biblioteca/Bañeras049.dwg
+Estudos/UFRB/Eng. Civil/Inst. Hidraulicas/Blocos autocad/mobilia/camasolteiro.dwg
+Estudos/UFRB/Eng. Civil/Inst. Hidraulicas/Blocos autocad/mobilia/freezer.dwg
+Estudos/UFRB/Eng. Civil/Inst. Hidraulicas/Blocos autocad/mobilia/sofa3.dwg
+Estudos/UFRB/Eng. Civil/Inst. Hidraulicas/Blocos autocad/tanques1/T560655f.dwg
+Estudos/UFRB/Eng. Civil/Inst. Hidraulicas/Modelos/Esgoto_03.dwg
+Estudos/UFRB/Eng. Civil/Proj. Inst. Elet/Aula Plantao Eng no GDrive/MODELO_RESIDENCIA.dwg
+Estudos/UFRB/Eng. Civil/Proj. Inst. Elet/PLANTA PROJETO ELÉTRICO FINAL.dwg
+Estudos/UFRB/Eng. Civil/Proj. Inst. Elet/Projeto Revit/PLANTA PROJETO ELÉTRICO.dwg
+Estudos/UFRB/Eng. Civil/Saneamento/Projeto/CONDOMINIONOVITÁ-ARQ-AP-IMP-R03-12-05-14_recover000.dwg
+Estudos/UFRB/Eng. Civil/Saneamento/Projeto/Planta Projeto Impressão Final.dwg_recover.dwg
+Estudos/UFRB/Eng. Civil/TCC/TCC Escrito/imagens/Sensor de Incendio.dwg
+Estudos/UFRB/Eng. Civil/TCC/anexos sipef/ANEXO II Projetos/PROJETOS COMPLEMENTARES/AR COMPRIMIDO/UFRB-CTC-ARC-PE-001-AC-TE-R00..dwg
+Estudos/UFRB/Eng. Civil/TCC/anexos sipef/ANEXO II Projetos/PROJETOS COMPLEMENTARES/ELÉTRICA/UFRB-CTC-ELE-PE-002-IF-1ºA-R02.dwg
+Estudos/UFRB/Eng. Civil/TCC/anexos sipef/ANEXO II Projetos/PROJETOS COMPLEMENTARES/ESTRUTURA/ESTRUTURAL RAMPA/COBERTURA/01_04-ARMADURAS.dwg
+Estudos/UFRB/Eng. Civil/TCC/anexos sipef/ANEXO II Projetos/PROJETOS COMPLEMENTARES/ESTRUTURA/ESTRUTURAL RAMPA/FUNDAÇÃO/01_02-DETALHE DAS SAPATAS.dwg
+Estudos/UFRB/Eng. Civil/TCC/anexos sipef/ANEXO II Projetos/PROJETOS COMPLEMENTARES/ESTRUTURA/formas do 1 pavimento.dwg
+Estudos/UFRB/Eng. Civil/TCC/anexos sipef/ANEXO II Projetos/PROJETOS COMPLEMENTARES/ESTRUTURA/fundações 3.4.dwg
+Estudos/UFRB/Eng. Civil/TCC/anexos sipef/ANEXO II Projetos/PROJETOS COMPLEMENTARES/ESTRUTURA/pilares do 1 pavimento ao terreo 2.2.dwg
+Estudos/UFRB/Eng. Civil/TCC/anexos sipef/ANEXO II Projetos/PROJETOS COMPLEMENTARES/ESTRUTURA/vigas da cobertura 2.5.dwg
+Estudos/UFRB/Eng. Civil/TCC/anexos sipef/ANEXO II Projetos/PROJETOS COMPLEMENTARES/ESTRUTURA/vigas do 1 pavimento 4.5.dwg
+Estudos/UFRB/Eng. Civil/TCC/anexos sipef/ANEXO II Projetos/PROJETOS COMPLEMENTARES/HIDROSANITÁRIO/UFRB-CTC-HID-PE-AD-R00/UFRB-CTC-HID-PE-002-AD-1ºA-R00.dwg
+Estudos/UFRB/Eng. Civil/TCC/anexos sipef/ANEXO II Projetos/PROJETOS COMPLEMENTARES/HIDROSANITÁRIO/UFRB-CTC-HID-PE-AP-R00/UFRB-CTC-HID-PE-001-AP-TE-R01.dwg
+Estudos/UFRB/Eng. Civil/TCC/anexos sipef/ANEXO II Projetos/PROJETOS COMPLEMENTARES/INCÊNDIO/UFRB-CTC-PCI-PE-004-HE-1ºA-R00.dwg
+Estudos/UFRB/Projetos/Projeto AUTO2E/Pav 2/anexo-I-projetos/ESTRUTURAL_PL/LAJES/HS-UFBACALMAS_Cob.dwg
+Estudos/UFRB/Projetos/Projeto AUTO2E/Pav 2/anexo-I-projetos/ESTRUTURAL_PL/MC_EST/UFCA100_01_AR.dwg
+Estudos/UFRB/Projetos/Projeto AUTO2E/Pav 2/anexo-I-projetos/ESTRUTURAL_PL/MC_EST/UFCA200_06_AR.dwg
+Estudos/UFRB/Projetos/Projeto AUTO2E/Pav 2/anexo-I-projetos/INST_ELETRICA_TELCOM/INSTALAÇÃO ELÉTRICA/UFRB-CRUZ-ELETRICA1-PAV-AULAS.dwg
+File.dwg
+Plantao Engenharia/Banco.dwg
+Plantao Engenharia/Galpão, Escolas/Escola Estadual.dwg
+Plantao Engenharia/Galpão, Escolas/Neocrotério.dwg
+Projetos/Alagoinhas/Adriana Fisio/02 - IDEALFISIO ADRIANA PARA PCI (2).dwg
+Projetos/Aratuipe/Passarela/03 ARATUIPE_EMENDA_PASSARELA STEEL/Details/Cópias de segurança/Sheet 007 GA - A0.dwg
+Projetos/Aratuipe/Passarela/03 ARATUIPE_EMENDA_PASSARELA STEEL/Details/Sheet 008 GA - A0.dwg
+Projetos/Aratuipe/Passarela/05 ARATUIPE_EMENDA_PASSARELA STEEL/Details/Sheet 003 Parts - A1.dwg
+Projetos/Aratuipe/Passarela/ARATUIPE_EMENDA_PASSARELA STEEL/Details/006.dwg
+Projetos/Aratuipe/Passarela/FILE.DWG
+Projetos/Aratuipe/Passarela/Imp/3D com Perfis.dwg
+Projetos/Aratuipe/Passarela/Imp/ELEVAÇÕES.dwg
+Projetos/Aratuipe/Passarela/Ligacoes/entrada cima.dwg
+Projetos/Aratuipe/Passarela/Ligacoes/subida cima cima.dwg
+Projetos/Camaçari/Sandro Roberto/J2 - S_PROJETO EXECUTIVO FINAL COM LAZER.dwg
+Projetos/Santo Antonio de Jesus/Edison Goes/VCA/Terrenos/Benfica/TERRAPLANEGEM PROJETO ROYAL GARDEN JULHO-2016 REVISÃO 02.dwg
+Projetos/Santo Antonio de Jesus/Jorge Galvâo/Projeto Predio Luciano/Estrutural/Imp/FILE.DWG
+Projetos/Santo Antonio de Jesus/Rycart/Embasa/Estacao Elevatoria/02 - IMP ESTRUTURA LAB E CONT EMBASA.DWG
+Projetos/Santo Antonio de Jesus/Rycart/Embasa/Estacao Elevatoria/Laboratorio.DWG
+Projetos/Santo Antonio de Jesus/Taluma Cons/Portal Residence I/Esgoto/Contencao/Fundaçao Fundo.DWG
+Projetos/Santo Antonio de Jesus/Taluma Cons/Portal Residence I/Praças/CAMPO 26_07_21.dwg
+Projetos/Santo Antonio de Jesus/Taluma Cons/Portal Residence I/Praças/PRAÇA AVENIDA 01_10_2020.dwg
+Projetos/Santo Antonio de Jesus/Taluma Cons/Portal Residence I/Praças/TERRAPLANAGEM PRACA DE ESPORTE_.dwg
+Projetos/Santo Antonio de Jesus/Taluma Cons/Portal Residence I/Projeto E Memorial Atualizados/Imagens Para F/Desenho1.dwg
+Projetos/Santo Antonio de Jesus/Taluma Cons/Portal Residence II/Memorial Descritivo Lotes/03 - Memorial de Lotes.dwg
+Projetos/Santo Antonio de Jesus/Taluma Cons/VCA/Poligonais em kmz/Desenho2.dwg

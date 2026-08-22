@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { LogOut, ChevronDown, ChevronRight, User, KeyRound, CalendarDays, Map as MapIcon } from 'lucide-react'
+import { LogOut, ChevronDown, ChevronRight, User, KeyRound, CalendarDays, DraftingCompass, Map as MapIcon } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { ChangePasswordModal } from '@/components/ChangePasswordModal'
 import { NotificationBell } from '@/components/notifications/NotificationBell'
@@ -27,6 +27,7 @@ const SEGMENT_LABELS: Record<string, string> = {
   calendario: 'Calendário',
   drone: 'Drone',
   maps: 'Mapas & Território',
+  prancheta: 'Prancheta',
   scm: 'Suprimentos',
   produtos: 'Produtos',
   ofertas: 'Ofertas',
@@ -146,6 +147,9 @@ export const AppTopbar: React.FC = () => {
           lado do sino porque pertencem à mesma família: coisas que se consultam
           sem sair de onde se está. */}
       <AtalhoTopbar to="/app/maps" rotulo="Mapas & Território"><MapIcon size={18} /></AtalhoTopbar>
+      {/* A Prancheta é da mesma família: não é um lugar do ciclo, é o projeto
+          consultado de qualquer lugar dele — inclusive do celular no canteiro. */}
+      <AtalhoTopbar to="/app/prancheta" rotulo="Prancheta — o projeto em campo"><DraftingCompass size={18} /></AtalhoTopbar>
       <AtalhoTopbar to="/app/calendario" rotulo="Calendário"><CalendarDays size={18} /></AtalhoTopbar>
 
       <ThemeToggle />

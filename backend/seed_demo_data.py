@@ -59,7 +59,7 @@ from modulosil.models import (
 )
 
 # Canal WhatsApp de demonstração (Fase 11.3 / Fase C). Estas credenciais de dev
-# são também usadas pelo E2E infra/gateway/phaseC_whatsapp_test.py para assinar o
+# são também usadas pelo E2E testes/e2e/phaseC_whatsapp_test.py para assinar o
 # webhook (HMAC) e verificar o handshake. `access_token=''` → o cliente de saída
 # ignora o envio (sem HTTP à Meta), então o fluxo roda sem credencial real.
 WA_PHONE_NUMBER_ID = "DEMO-WA-PNID"
@@ -902,16 +902,16 @@ def seed_orcamento(tenant, obras, usuario):
         print(f"  Base referencial demo criada: {base.rotulo}")
 
     INSUMOS = [
-        ("00001379", "CIMENTO PORTLAND COMPOSTO CP II-32", "KG", "0.72", "Aglomerantes"),
-        ("00000370", "AREIA MEDIA - POSTO JAZIDA", "M3", "89.50", "Agregados"),
-        ("00004721", "BRITA 1", "M3", "112.40", "Agregados"),
-        ("00007258", "ACO CA-50 10,0MM", "KG", "8.94", "Aço"),
-        ("00034557", "BLOCO CERAMICO 9X19X39CM", "UN", "2.18", "Alvenaria"),
-        ("00088309", "SERVENTE COM ENCARGOS COMPLEMENTARES", "H", "19.62", "Mão de obra"),
-        ("00088316", "PEDREIRO COM ENCARGOS COMPLEMENTARES", "H", "25.84", "Mão de obra"),
-        ("00088264", "CARPINTEIRO DE FORMAS COM ENCARGOS", "H", "26.71", "Mão de obra"),
-        ("00005061", "BETONEIRA CAPACIDADE 400L", "CHP", "3.42", "Equipamentos"),
-        ("00010556", "TABUA MADEIRA 2,5X30,0CM", "M", "24.15", "Madeira"),
+        ("00001379", "CIMENTO PORTLAND COMPOSTO CP II-32", "KG", "0.72", "MATERIAL"),
+        ("00000370", "AREIA MEDIA - POSTO JAZIDA", "M3", "89.50", "MATERIAL"),
+        ("00004721", "BRITA 1", "M3", "112.40", "MATERIAL"),
+        ("00007258", "ACO CA-50 10,0MM", "KG", "8.94", "MATERIAL"),
+        ("00034557", "BLOCO CERAMICO 9X19X39CM", "UN", "2.18", "MATERIAL"),
+        ("00088309", "SERVENTE COM ENCARGOS COMPLEMENTARES", "H", "19.62", "MÃO DE OBRA"),
+        ("00088316", "PEDREIRO COM ENCARGOS COMPLEMENTARES", "H", "25.84", "MÃO DE OBRA"),
+        ("00088264", "CARPINTEIRO DE FORMAS COM ENCARGOS", "H", "26.71", "MÃO DE OBRA"),
+        ("00005061", "BETONEIRA CAPACIDADE 400L", "CHP", "3.42", "EQUIPAMENTO (LOCAÇÃO)"),
+        ("00010556", "TABUA MADEIRA 2,5X30,0CM", "M", "24.15", "MATERIAL"),
     ]
     COMPOSICOES = [
         ("87879", "CHAPISCO APLICADO EM ALVENARIA, COM COLHER DE PEDREIRO", "M2", "5.42", [
@@ -943,6 +943,15 @@ def seed_orcamento(tenant, obras, usuario):
                 "custo_unitario": Decimal(preco), "grupo": grupo,
             },
         )
+        # `grupo` já guardou a **família** do insumo ("Agregados", "Aglomerantes",
+        # "Madeira") em vez da classificação que a SINAPI publica. Família não
+        # diz natureza, então o seed acendia o aviso de "classe que o sistema não
+        # sabe ler" em toda instalação de demonstração — ruído que ensinava a
+        # ignorar o aviso. Converge no `get_or_create` porque `defaults` só vale
+        # na criação, e as linhas antigas ficariam com o valor velho para sempre.
+        if ref.grupo != grupo:
+            ref.grupo = grupo
+            ref.save(update_fields=["grupo"])
         referencias[codigo] = ref
 
     for codigo, descricao, unidade, preco, componentes in COMPOSICOES:
@@ -1017,7 +1026,12 @@ def seed_orcamento(tenant, obras, usuario):
             item = ItemBancoPreco.objects.create(
                 tenant=tenant, banco=banco, codigo=codigo, descricao=descricao,
                 unidade=unidade, tipo=tipo, custo_unitario=Decimal(preco),
-                grupo="Serviços preliminares",
+                # `grupo` é a CLASSIFICAÇÃO do insumo, não o capítulo da obra.
+                # "Serviços preliminares" é capítulo, e como a leitura casa por
+                # prefixo ele batia com `servico` — o ajudante geral, em `H`,
+                # virava serviço de terceiro em vez de mão de obra, e deixava de
+                # levar encargo social. Capítulo não vai neste campo.
+                grupo="MÃO DE OBRA" if tipo == InsumoReferencia.Tipo.INSUMO else "",
             )
             itens_banco[codigo] = item
         ComponenteBancoPreco.objects.get_or_create(

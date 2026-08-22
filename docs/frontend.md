@@ -104,6 +104,27 @@ carregadas em [index.html](../frontend/index.html); substituem Montserrat/Roboto
 > — ***sistema de gestão integrada*** — exige que os módulos que conversam no backend **conversem
 > também na tela**; o fim do projeto é essa sensação de sistema único, não de N produtos ao lado.
 
+### Capacidade × módulo — e por que a diferença é de tela
+
+*(decisão do dono, 08/08/2026, tomada sobre a Prancheta e válida para todas as que vierem.)*
+
+Nem tudo que se vende é um lugar. **Algumas compras são capacidades que atravessam o sistema**, e a
+[Prancheta](modulos/moduloprancheta.md) é a primeira: quem a contrata não está comprando "um módulo de
+projetos", está comprando **poder ver os próprios arquivos dentro do software**. Então quando o
+Orçamento, o SIL ou o diário precisam mostrar um DWG, eles **puxam aquela visualização ali mesmo** —
+não mandam o usuário para outro módulo, e não escondem a função.
+
+A regra de tela que sai daí é a do farol (§3.2), aplicada a **função** e não só a menu:
+
+- a capacidade aparece **onde o trabalho está**, embutida na tela em que a pessoa já estava;
+- quem **não** a contratou vê o **cadeado com o motivo naquela mesma tela**, nunca um espaço vazio nem
+  um redirecionamento para uma página de vendas de outro módulo;
+- o que se vende é declarado **uma vez** e honrado em todo lugar — o cliente que comprou "abrir DWG"
+  não descobre num segundo módulo que ali não vale.
+
+Sinal de que você está tratando uma capacidade como silo: a mesma função aparece duas vezes com dois
+gates, ou o usuário precisa **sair da tarefa** para usar o que já comprou.
+
 ### Não é CRUD — é o trabalho do usuário resolvido
 
 Um módulo não é "listas + formulários". É um **workspace** que resolve o *job diário* de quem vive
@@ -175,7 +196,8 @@ Não são telas a copiar — é **o que cada cockpit precisa resolver** e **onde
 | **Clientes** | a carteira e o que cada cliente precisa (2ª via, andamento) | **Portal do cliente** (H1) |
 | **SIL — estoque** (`modulosil`) | saldo por local, mínimos, o que repor | Estoque mínimo → **RFQ automática** no SCM (E6) |
 | **DMS** (`modulodms`) | o que vence/falta assinar, versões, documento por obra | Documento espelhado + assinatura por doc (receita medida) |
-| **APS / PDCA** (`moduloaps`/`modulopdca`) | cronograma vs. real, não-conformidades a tratar | IA de previsão de atraso / detecção em foto do diário |
+| **PDCA** (`modulopdca`) | cronograma vs. real, não-conformidades a tratar | IA de previsão de atraso / detecção em foto do diário |
+| **Prancheta** (`moduloprancheta`) | o projeto da obra aberto em campo; revisão vigente × anterior | Marcação BCF devolvida ao projetista · modelo 4D/5D |
 | **MAPS / Terrenos** (`modulomaps`) | terrenos por status, viabilidade, camadas GIS | Marketplace de terrenos · banco de terrenos |
 | **Assistência / Condomínio** (pós-obra) | chamados por SLA, técnico em campo / taxas e reservas | Portal do proprietário/morador · **novo mercado** (H3) |
 
@@ -203,11 +225,13 @@ Os primitivos da Malha vivem em [components/malha/](../frontend/src/components/m
 | Primitivo | Papel |
 |---|---|
 | `Card` | Superfície `--surface` (nunca branco puro), borda `--line`, raio `--r-md` |
+| `Modal` | Diálogo: fecha no `Esc` e no clique fora. `largura` dimensiona; **`alto`** faz o cartão ocupar a janela e entregar a sobra ao conteúdo (ver §2.1) |
 | `Pill` | Estado **nomeado** (§8) nos semânticos de UI + `accent`; cor sozinha nunca comunica |
 | `Num` | Dado de instrumento: mono tabular, alinhado à direita — "colunas como réguas" (§6) |
 | `KpiTile` | Mosaico de KPI: valor real **ou** o selo `EmBreve`; exige a base do número |
 | `SectionHead` | Cabeçalho de seção, opcionalmente com a cor de estágio (`--st-*`) |
 | `Spinner`/`Loading`/`Empty`/`EmBreve` | Estados; `Loading` sempre diz **o quê** carrega |
+| `BotaoExportar`/`WizardImportacao`/`WizardArquivos` | As três portas de import/export de **todo** módulo ([impexp §10](modulos/funcoesimpexp.md)). Somem sozinhos quando `/api/impexp/recursos/` não lista o recurso para esta pessoa — nenhum recebe prop de permissão |
 
 > **Dívida conhecida:** SCM e SIL nasceram antes deste diretório e têm cópias locais do kit
 > (`modules/scm/pages/SuprimentosPage.tsx` e `modules/sil/ui.tsx` definem `Card`/`Pill`/`Btn`/
@@ -218,6 +242,102 @@ Os primitivos da Malha vivem em [components/malha/](../frontend/src/components/m
 **shadcn/ui não foi adotado** — a versão original desta seção planejava `src/components/ui/` gerado
 por `npx shadcn add`, o que nunca aconteceu. Os primitivos são escritos no projeto (acima) e os
 componentes herdados da v01 seguem em `components/common/` com CSS próprio, migrando por módulo.
+
+### 2.1 Quem é o dono da roda — as três regras de rolagem
+
+Telas de trabalho do sistema empilham áreas roláveis: página, lista, painel flutuante. Quando o
+usuário gira a roda, **uma** dessas áreas tem de responder, e qual é ela não pode depender de acaso
+de posicionamento. As três regras abaixo são o que garante isso, e cada uma existe porque a ausência
+dela produziu um defeito relatado.
+
+**1. Área rolável aninhada leva `overscroll-behavior: contain`.** Sem ele a roda *encadeia*: ao
+chegar ao fim da lista interna, o resto do gesto passa ao container de trás e a tela salta. Com
+`contain`, o ponteiro decide o dono — dentro rola o de dentro, fora rola o de fora.
+
+**2. Painel flutuante (dropdown, popover, seletor) abre em `createPortal` no `body`, com coordenada
+`fixed` medida do gatilho — nunca `position: absolute` dentro do fluxo.** Um painel absoluto dentro
+de um ancestral com `overflow` custa três coisas de uma vez: é **cortado** na borda dele; **entra no
+`scrollHeight`** do container, inventando uma barra de rolagem que o conteúdo não pediu; e obriga a
+um véu de tela cheia para fechar no clique fora. O preço do portal é reposicionar ao rolar
+(`window.addEventListener('scroll', …, true)` — captura, porque a rolagem que move o gatilho é a do
+container interno e não borbulha até a `window`).
+
+**3. Nada de véu `position: fixed; inset: 0` para fechar no clique fora — use `mousedown` no
+documento.** O véu é o alvo do ponteiro em toda a tela enquanto o painel está aberto e, sendo fixo,
+o encadeamento de rolagem dele vai para a **viewport**, não para o container que está atrás no DOM:
+a roda deixa de funcionar em todo lugar. Fechar o painel na roda "resolve" e é pior — o usuário que
+quis rolar o fundo perde a escolha que tinha aberto.
+
+Referência das três: [`WizardArquivos.tsx`](../frontend/src/components/malha/impexp/WizardArquivos.tsx)
+e [`prancheta/pages/Disciplinas.tsx`](../frontend/src/modules/prancheta/pages/Disciplinas.tsx).
+
+**Um caso que a roda sozinha não resolve: a tabela larga.** Roda de mouse não rola na horizontal, e
+uma lista de conferência com onze colunas tem para onde ir só para o lado. Quando o container
+**não** tem rolagem vertical alguma e tem conteúdo à direita, a roda vertical é traduzida em
+horizontal; havendo rolagem vertical, ela continua sendo da vertical. `Shift + roda` já é horizontal
+pelo navegador e passa direto. O listener é nativo e não-passivo — em React o `onWheel` é passivo e
+o `preventDefault()` não pega (mesma armadilha de [`Vista2D.tsx`](../frontend/src/modules/prancheta/visualizador/Vista2D.tsx)).
+
+### 2.2 Diálogo cujo miolo é uma lista — o modo `alto` do `Modal`
+
+No modo normal o cartão cresce com o conteúdo e quem rola é o fundo. Isso é certo para um aviso e
+errado para um diálogo de trabalho: cabeçalho, contadores e filtros empurram a lista para fora da
+tela e sobra **uma fileira** para aquilo que a pessoa veio ler.
+
+Com `alto`, o cartão vira coluna flex de altura fixa: cabeçalho e rodapé ficam presos, o miolo
+recebe `flex: 1` e **quem rola é a lista**. O filho tem de colaborar — ser coluna flex e usar
+`flex: 1` + `minHeight: 0` na parte que rola, nunca `height: 100%` (altura percentual dentro de flex
+depende de o pai ter altura resolvida e quebra em silêncio quando alguém insere um wrapper). Por
+exigir essa colaboração, é opção e não padrão.
+
+**Altura fixa em pixel na lista é sempre a altura errada:** no monitor grande desperdiça meia tela,
+na tela baixa espreme a lista contra um cabeçalho que não encolhe.
+
+### 2.3 Célula de tabela que precisa caber
+
+`max-width` num `<td>` de tabela com `table-layout: auto` é **conselho, não regra** — o algoritmo
+dimensiona a coluna pelo conteúdo e ignora o limite; com `white-space: nowrap` o `overflow: hidden`
+nunca chega a ter o que cortar. O corte tem de ir num **filho de bloco** dentro da célula, com o
+valor inteiro no `title` da célula.
+
+Sem isso, uma coluna de identificador longo (um SHA-256 são 64 caracteres) abre sozinha centenas de
+pixels e empurra as colunas úteis para fora da tela, espremendo justamente o nome do arquivo — que é
+o que a pessoa lê para decidir.
+
+### 2.4 Lista longa: marca em vez de rótulo, e a legenda que a explica
+
+Numa lista de catálogo — milhares de linhas, descrição que passa de 130 caracteres — **texto de
+estado no meio da linha custa duas coisas**: come a largura da descrição, que é o que a pessoa lê
+para decidir; e, por só existir em algumas linhas, faz as colunas seguintes mudarem de lugar de
+linha para linha, o que destrói a leitura em varredura vertical.
+
+Uma pílula escrita `já no catálogo` e um botão de texto `ver analítica` eram os dois casos. Viraram
+marcas de largura fixa, com o mesmo par sempre presente:
+
+- **estado binário → bolinha cheia × vazada.** O estado negativo é **desenhado**, não omitido: é
+  isso que dá largura constante à coluna. Omitir o negativo economiza um elemento e devolve o
+  problema do alinhamento.
+- **abrir/fechar detalhe → seta**, apontando para baixo quando aberta — a mesma convenção da árvore
+  da planilha. Quando a linha não tem detalhe, entra um espaçador da largura da seta.
+- **toda marca precisa de legenda.** Marca sem legenda é charada, e o usuário novo paga por ela toda
+  vez. A legenda vive ao pé da lista, junto do contador.
+
+**Descrição truncada leva `title` com o valor inteiro** — mesma regra da célula de tabela (§2.3),
+mesma razão: escolher entre "…VERGALHÃO DE 5,0 MM" e "…DE 12,5 MM" não pode depender de adivinhar o
+final. Vale para a linha da lista, para a coluna da grade e para o item recolhido de um painel.
+
+**Cesta de seleção fica ao lado, não embaixo.** Numa seleção que atravessa páginas e buscas, o
+rodapé com "5 item(ns) marcado(s)" é um número sem rosto: não diz *o que* foi marcado e não deixa
+tirar um item errado sem reencontrá-lo na lista. O painel lateral resolve os dois — e é lateral
+porque um painel abaixo sai de vista assim que a lista rola, e cesta que some não serve de
+conferência. Ele mostra **só o identificador e o nome**: o resto já está na linha da lista.
+
+**Painel lateral em linha flex precisa ser travado nas duas dimensões.** `flex: 0 0 <largura>` não
+basta: item flex nasce com `min-width: auto` e conteúdo largo empurra a caixa, comendo a área da
+lista. E se a **linha** não tiver altura própria, ela assume a do filho mais alto — cada item
+marcado estica o painel, que estica a linha, que empurra a lista para fora da tela. O par é
+`minWidth: 0` + `maxWidth` explícitos na lateral, e altura resolvida na linha (relativa à viewport,
+nunca em pixel — §2.2), com cada coluna rolando por dentro.
 
 ### Componentes de domínio
 
@@ -293,11 +413,13 @@ texto `--ink-*`, borda `--line`). De cima para baixo (identidade §9):
 - **Rodapé:** recorte do Bairro ([BairroRecorte](../frontend/src/components/brand/BairroRecorte.tsx)) com o
   quarteirão-empresa (dia masterplan / noite janelas acesas, via `--city-*`) + avatar e usuário.
 - **Colapsável** (`localStorage` `sgi_sidebar_collapsed`): expandida 236px / recolhida 60px (só ícones).
-- **O que NÃO entra na sidebar: as lentes transversais.** Calendário e Mapas não são *lugares* do
-  ciclo — são leituras sobre tudo o que já existe (a agenda de todos os módulos; o território de
-  obra, fornecedor e almoxarifado). Os dois vivem como ícone na topbar (§3.3). A régua: se o item
-  responde "onde eu estou no ciclo", é sidebar; se responde "o que está acontecendo agora, visto de
-  outro eixo", é topbar.
+- **O que NÃO entra na sidebar: as lentes transversais.** Calendário, Mapas e **Prancheta** não são
+  *lugares* do ciclo — são leituras sobre tudo o que já existe (a agenda de todos os módulos; o
+  território de obra, fornecedor e almoxarifado; o projeto de qualquer obra aberto por cima da tela
+  em que você está). Os três vivem como ícone na topbar (§3.3). A régua: se o item responde "onde eu
+  estou no ciclo", é sidebar; se responde "o que está acontecendo agora, visto de outro eixo", é
+  topbar. **As três estão na topbar** — a Prancheta entrou com a PRA.2
+  ([modulos/moduloprancheta.md §9.1](modulos/moduloprancheta.md)).
 
 ### 3.3 Topbar — glass (Malha)
 
@@ -524,7 +646,7 @@ módulo já calcula, cada chamada condicionada ao entitlement
 ([useHomeResumo](../frontend/src/pages/app/home/useHomeResumo.ts)): `/api/plano/` (uso real das
 quotas, sempre), `/api/erp/dashboard/` (exige `erp.relatorio.view`), `/api/scm/dashboard/`,
 `/api/sil/dashboard/` e `/api/calendar/events/`. Quem não assina um módulo **não vê um zero** —
-não vê o KPI. Onde não há fonte (avanço físico → APS; DRE por obra → D.1.4), o mosaico diz
+não vê o KPI. Onde não há fonte (avanço físico → PDCA; DRE por obra → D.1.4), o mosaico diz
 **"em breve"**. O hub de dois usuários da mesma empresa é legitimamente diferente.
 
 **Catálogo** ([catalogo.ts](../frontend/src/pages/app/home/catalogo.ts)): os módulos são agrupados
@@ -548,7 +670,7 @@ inclusive os cômodos por construir. Nada é escondido: o inacessível aparece t
 │  │ Obras  ││A receb.││ A pagar││Estoque ││ Avanço físico│    │
 │  │  4     ││R$ 128k ││ R$ 96k ││R$ 61k  ││  [em breve]  │    │
 │  │de 8 no ││ ERP    ││  ERP   ││  SIL   ││ depende do   │    │
-│  │  plano ││        ││        ││        ││    APS       │    │
+│  │  plano ││        ││        ││        ││   PDCA       │    │
 │  └────────┘└────────┘└────────┘└────────┘└──────────────┘    │
 ├───────────────────────────────────┬──────────────────────────┤
 │  REQUER SUA DECISÃO               │  SEU PLANO               │
@@ -1287,7 +1409,7 @@ aqui só a definição do escopo:
 | B | Landing + Login + Hub de módulos |
 | C | Core — Dashboard de KPIs (C.1) · Empreendimentos (C.2) · Obras (C.3) · Clientes (C.4) · Fornecedores (C.5) · Diário+IA (C.6) |
 | D | Módulos pagos — ERP `erp_financeiro` (D.1.x, sub-fases em [moduloerp.md §13](modulos/moduloerp.md#13-roadmap-em-sub-fases-fase-d1x)) · RH `rh` (D.2) · CRM `crm` (D.3) · **SCM `scm` (D.4 — backend ✅; sub-fases S.1–S.4 em [moduloscm.md](modulos/moduloscm.md#frontend-fase-atual--escopo-e-sub-fases))** |
-| E | Extras — Drone wrapper iframe+SSO (E.1) · Calendário (E.2) · SIL/PDCA/DMS/APS/Maps (E.3, aguarda backend) |
+| E | Extras — Drone wrapper iframe+SSO (E.1) · Calendário (E.2) · SIL/PDCA/DMS/Prancheta/Maps (E.3, aguarda backend) |
 | F | Dashboard de KPIs real substitui o hub (F.1) |
 | G | Paywall — medidores de quota, tratamento global do 402 e página de plano (§5.16). Independe de A–F: o backend já trava e já serve o medidor. |
 

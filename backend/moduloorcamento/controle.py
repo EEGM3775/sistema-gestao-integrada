@@ -38,7 +38,7 @@ fatia **D.1.4** do ERP (financeiro por obra).
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import DecimalField, F, Q, Sum
+from django.db.models import DecimalField, ExpressionWrapper, F, Q, Sum
 from django.db.models.functions import Coalesce, TruncMonth
 
 from .models import ItemOrcado, Orcamento, ParcelaEtapa
@@ -398,3 +398,123 @@ def validar_cronograma(orcamento: Orcamento) -> dict:
         if linha["soma"] != CEM
     ]
     return {"consistente": not problemas, "problemas": problemas}
+
+
+# ---------------------------------------------------------------------------
+# ORC.7 — desembolso na granularidade do insumo
+# ---------------------------------------------------------------------------
+
+
+def desembolso_por_insumo(orcamento: Orcamento, *, categoria: str | None = None) -> dict:
+    """Quanto de **cada insumo** cai em cada mês — o cronograma que o suprimento usa.
+
+    O cronograma por etapa responde ao financeiro ("quanto sai em setembro?") e
+    não responde a quem compra ("quantas toneladas de aço preciso ter em obra em
+    setembro?"). São perguntas diferentes e a segunda é a que evita tanto a
+    parada por falta quanto o pátio cheio de material parado — que é dinheiro
+    imobilizado e é o que a curva de desembolso por insumo torna visível.
+
+    **A distribuição é herdada, não inventada.** O insumo cai nas competências da
+    **etapa da linha em que ele aparece**, na mesma proporção que o planejador já
+    distribuiu em `ParcelaEtapa`. Um insumo que entra em três serviços de duas
+    etapas diferentes é rateado por cada uma na proporção do valor que tem lá —
+    inventar uma curva própria por insumo seria fabricar planejamento que
+    ninguém fez, e o módulo não fabrica dado.
+
+    Linha sem etapa e etapa sem cronograma ficam **fora** da grade e são
+    devolvidas em `sem_distribuicao`: somá-las no primeiro mês encheria setembro
+    de compra que ninguém planejou para setembro.
+    """
+    from .models import ItemOrcadoInsumo
+
+    percentuais: dict[int | None, list[tuple]] = {}
+    for parcela in ParcelaEtapa.objects.filter(orcamento=orcamento):
+        percentuais.setdefault(parcela.etapa_id, []).append(
+            (parcela.competencia, parcela.percentual)
+        )
+
+    consulta = ItemOrcadoInsumo.objects.filter(item_orcado__orcamento=orcamento)
+    if categoria:
+        consulta = consulta.filter(categoria=categoria)
+
+    linhas = consulta.values(
+        "item_id", "descricao", "unidade", "categoria", "item_orcado__etapa_id",
+    ).annotate(
+        quantidade=Coalesce(
+            Sum(ExpressionWrapper(
+                F("coeficiente") * F("item_orcado__quantidade"),
+                output_field=DecimalField(max_digits=24, decimal_places=6),
+            )),
+            ZERO,
+        ),
+        valor=Coalesce(
+            Sum(ExpressionWrapper(
+                F("custo_no_item") * F("item_orcado__quantidade"),
+                output_field=DecimalField(max_digits=24, decimal_places=4),
+            )),
+            ZERO,
+        ),
+    )
+
+    grade: dict[tuple, dict] = {}
+    sem_distribuicao: dict[tuple, dict] = {}
+    competencias: set = set()
+
+    for linha in linhas:
+        chave = (linha["item_id"], linha["descricao"], linha["unidade"])
+        etapa_id = linha["item_orcado__etapa_id"]
+        fatias = percentuais.get(etapa_id) or percentuais.get(None)
+
+        destino = grade if fatias else sem_distribuicao
+        registro = destino.setdefault(chave, {
+            "item": linha["item_id"],
+            "descricao": linha["descricao"],
+            "unidade": linha["unidade"],
+            "categoria": linha["categoria"],
+            "quantidade_total": ZERO,
+            "valor_total": ZERO,
+            "meses": {},
+        })
+        registro["quantidade_total"] += linha["quantidade"]
+        registro["valor_total"] += linha["valor"]
+
+        if not fatias:
+            continue
+        for competencia, percentual in fatias:
+            competencias.add(competencia)
+            fracao = percentual / CEM
+            mes = registro["meses"].setdefault(
+                competencia.isoformat(), {"quantidade": ZERO, "valor": ZERO}
+            )
+            mes["quantidade"] += linha["quantidade"] * fracao
+            mes["valor"] += linha["valor"] * fracao
+
+    def formatar(registros: dict) -> list[dict]:
+        saida = []
+        for registro in sorted(registros.values(), key=lambda r: r["valor_total"], reverse=True):
+            saida.append({
+                **registro,
+                "quantidade_total": str(registro["quantidade_total"].quantize(Decimal("0.0001"))),
+                "valor_total": str(dinheiro(registro["valor_total"])),
+                "meses": {
+                    mes: {
+                        "quantidade": str(v["quantidade"].quantize(Decimal("0.0001"))),
+                        "valor": str(dinheiro(v["valor"])),
+                    }
+                    for mes, v in sorted(registro["meses"].items())
+                },
+            })
+        return saida
+
+    return {
+        "orcamento": orcamento.pk,
+        "filtro_categoria": categoria or "",
+        "competencias": sorted(mes.isoformat() for mes in competencias),
+        "insumos": formatar(grade),
+        "sem_distribuicao": formatar(sem_distribuicao),
+        "nota_sem_distribuicao": (
+            "Insumos de linhas cuja etapa não tem cronograma distribuído. Ficam fora "
+            "da grade de propósito — jogá-los no primeiro mês fabricaria compra que "
+            "ninguém planejou."
+        ) if sem_distribuicao else "",
+    }

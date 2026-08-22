@@ -52,6 +52,6 @@
 
 ## Planejados (placeholders vazios)
 
-`moduloaps`, `modulodms`, `modulopdca`, `modulomaps` — ver
+`moduloprancheta` (ex-`moduloaps`), `modulodms`, `modulopdca`, `modulomaps` — ver
 [modulos-planejados.md](modulos-planejados.md). (`moduloscm` **saiu** desta lista: backend portado —
 [moduloscm.md](moduloscm.md); `modulosil` **saiu**: porte planejado — [modulosil.md](modulosil.md).)

@@ -9,10 +9,10 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 
 import {
-  consultarExportacao, consultarImportacao, desfazerImportacao, listarImportacoes, listarMapas,
-  listarRecursos,
+  consultarExportacao, consultarImportacao, desfazerImportacao, listarCatalogo, listarImportacoes,
+  listarMapas,
 } from './api'
-import type { RecursoImpExp } from './api'
+import type { LimitesDoPlano, RecursoImpExp } from './api'
 
 export const impexpKeys = {
   recursos: ['impexp', 'recursos'] as const,
@@ -30,10 +30,18 @@ export function useHistorico(recurso: string) {
   })
 }
 
-export function useRecursos() {
+/**
+ * O catálogo inteiro — recursos **e** os tetos do plano, numa consulta só.
+ *
+ * Os dois vêm juntos do servidor porque a tela precisa dos dois antes do
+ * primeiro clique: o teto dito antes é a parte 3 do método do assinador gov.br
+ * ([limites.py](../../../../../backend/funcoesimpexp/limites.py)), e descobri-lo
+ * no 402 depois de esperar o upload é a experiência que ele evita.
+ */
+export function useCatalogoImpExp() {
   return useQuery({
     queryKey: impexpKeys.recursos,
-    queryFn: listarRecursos,
+    queryFn: listarCatalogo,
     // A lista muda com o papel da pessoa, não com o dado — e o papel muda no
     // refresh do token, não a cada navegação.
     staleTime: 5 * 60_000,
@@ -41,10 +49,23 @@ export function useRecursos() {
   })
 }
 
+export function useRecursos() {
+  const { data, ...resto } = useCatalogoImpExp()
+  return { ...resto, data: data?.recursos }
+}
+
 /** O recurso, se esta pessoa puder operá-lo. `undefined` = não pode (ou não existe). */
-export function useRecurso(id: string): { recurso?: RecursoImpExp; carregando: boolean } {
-  const { data, isLoading } = useRecursos()
-  return { recurso: data?.find(r => r.id === id), carregando: isLoading }
+export function useRecurso(id: string): {
+  recurso?: RecursoImpExp
+  limites?: LimitesDoPlano
+  carregando: boolean
+} {
+  const { data, isLoading } = useCatalogoImpExp()
+  return {
+    recurso: data?.recursos.find(r => r.id === id),
+    limites: data?.limites,
+    carregando: isLoading,
+  }
 }
 
 export function useConferencia(id: number | undefined, filtro: string) {

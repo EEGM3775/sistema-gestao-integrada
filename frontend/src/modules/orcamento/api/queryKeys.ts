@@ -27,6 +27,9 @@ export const orcKeys = {
   basesResumo: () => [...raiz, 'bases-resumo'] as const,
   composicaoRef: (id: number) => [...raiz, 'composicao-ref', id] as const,
   arvore: (id: number) => [...raiz, 'arvore', id] as const,
+  analitica: (id: number) => [...raiz, 'analitica', id] as const,
+  tiposItem: () => [...raiz, 'tipos-item'] as const,
+  naturezasItem: () => [...raiz, 'naturezas-item'] as const,
   curvaAbc: (id: number) => [...raiz, 'curva-abc', id] as const,
   porCategoria: (id: number) => [...raiz, 'por-categoria', id] as const,
   cronograma: (id: number) => [...raiz, 'cronograma', id] as const,
@@ -48,4 +51,25 @@ export const orcKeys = {
   composicaoBanco: (id: number) => [...raiz, 'composicao-banco', id] as const,
   linhasImportacao: (id: number, p: Params = {}) => [...raiz, 'linhas-importacao', id, p] as const,
   historicoRepre: (id: number) => [...raiz, 'historico-repre', id] as const,
+  // ORC.7
+  encargos: familia('encargos'),
+  rubricas: familia('rubricas-encargos'),
+  medicoes: familia('medicoes'),
+  indices: familia('indices'),
+  formulas: familia('formulas-reajuste'),
+  parcelasReajuste: familia('parcelas-reajuste'),
+  quadroEncargos: (id: number) => [...raiz, 'quadro-encargos', id] as const,
+  memoriaQuantitativo: (id: number) => [...raiz, 'memoria-quantitativo', id] as const,
+  composicaoNatureza: (id: number) => [...raiz, 'composicao-natureza', id] as const,
+  coberturaMedicao: (id: number) => [...raiz, 'cobertura-medicao', id] as const,
+  relacaoInsumos: (id: number, categoria?: string) =>
+    [...raiz, 'relacao-insumos', id, categoria ?? 'todas'] as const,
+  curvaAbcInsumos: (id: number) => [...raiz, 'curva-abc-insumos', id] as const,
+  desembolsoInsumos: (id: number, categoria?: string) =>
+    [...raiz, 'desembolso-insumos', id, categoria ?? 'todas'] as const,
+  serieIndice: (id: number) => [...raiz, 'serie-indice', id] as const,
+  fatorReajuste: (id: number, competencia: string) =>
+    [...raiz, 'fator-reajuste', id, competencia] as const,
+  previaReajuste: (id: number, competencia: string) =>
+    [...raiz, 'previa-reajuste', id, competencia] as const,
 }

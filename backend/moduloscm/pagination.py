@@ -9,9 +9,10 @@ vez de herdá-lo. As tabelas-filhas (itens de pedido/demanda/proposta), sempre
 lidas por pai e pequenas, ficam sem paginação de propósito.
 """
 from rest_framework.pagination import PageNumberPagination
+from payment.planos import PAGINA_MAXIMA, PAGINA_PADRAO
 
 
 class ScmPageNumberPagination(PageNumberPagination):
-    page_size = 25
+    page_size = PAGINA_PADRAO["scm"]
     page_size_query_param = "page_size"
-    max_page_size = 100
+    max_page_size = PAGINA_MAXIMA["scm"]

@@ -32,7 +32,7 @@ class Perm:
 # ---------------------------------------------------------------------------
 # 1. CATÁLOGO — vocabulário atômico, agrupado por módulo do produto.
 #    Cobre TODOS os módulos implementados (não só o RH). Módulos ainda
-#    placeholder (aps/dms/pdca/scm/sil/maps) entram quando ganharem backend.
+#    placeholder (dms/pdca) entram quando ganharem backend.
 # ---------------------------------------------------------------------------
 CATALOGO: tuple[Perm, ...] = (
     # --- RH (módulo 'rh') — cadastro + PII sensível separada por recurso ---
@@ -167,6 +167,15 @@ CATALOGO: tuple[Perm, ...] = (
     #     é permissão própria (quem consulta preço não necessariamente cadastra).
     Perm("orcamento.base.view", "Consultar bases referenciais (SINAPI/ORSE/SICRO)", "orcamento"),
     Perm("orcamento.base.adotar", "Adotar item da base referencial no catálogo da empresa", "orcamento"),
+    #     ORC.9 — o banco de preço **da empresa** deixou de andar junto com
+    #     `orcamento.orcamento.edit`. A planta previa a separação: "se na prática
+    #     quem cuida do banco de preço virar um papel distinto de quem orça, aí
+    #     sim vale criar `orcamento.banco.*`". Virou — decisão do dono
+    #     (20/08/2026): quem monta a régua de preço da casa é função específica,
+    #     não o orçamentista de plantão. O custo é o de sempre (rebuild da
+    #     imagem da IAM + re-seed), pago de uma vez.
+    Perm("orcamento.banco.view", "Ver os bancos de preço próprios da empresa", "orcamento"),
+    Perm("orcamento.banco.edit", "Manter banco de preço próprio (itens, importação, trava)", "orcamento"),
     Perm("orcamento.orcamento.view", "Ver orçamentos de obra", "orcamento"),
     Perm("orcamento.orcamento.edit", "Criar/editar orçamentos de obra", "orcamento"),
     Perm("orcamento.orcamento.aprovar", "Aprovar orçamento (congela a régua de custo)", "orcamento"),
@@ -194,6 +203,40 @@ CATALOGO: tuple[Perm, ...] = (
     Perm("mapa.rota.edit", "Planejar e otimizar rotas de entrega", "maps"),
     Perm("mapa.geofence.view", "Ver cercas (geofence) de canteiro", "maps"),
     Perm("mapa.geofence.edit", "Criar e editar cercas de canteiro", "maps"),
+    # --- Prancheta — o projeto da obra, aberto em campo (módulo 'prancheta') ---
+    #     Diferente do Maps, NÃO há metade de fundação: nenhum outro módulo
+    #     depende do acervo de projeto para funcionar, e o custo (storage de
+    #     CAD/BIM + motor de conversão) é todo do módulo — então tudo fica atrás
+    #     do entitlement. Ver docs/modulos/moduloprancheta.md §2.
+    Perm("prancheta.documento.view", "Ver documentos de projeto e suas revisões", "prancheta"),
+    Perm("prancheta.documento.edit", "Cadastrar documento e enviar revisão (rascunho)", "prancheta"),
+    #     `publicar` é ato SEPARADO de `editar`, de propósito: publicar muda o
+    #     que o campo vai executar. Mesma classe do `orcamento.orcamento.aprovar`
+    #     — e a lição do D28 é que o verbo separado só vale se alguma persona o
+    #     tiver, senão na prática só o admin do tenant publica. A `projetista`
+    #     abaixo é essa persona.
+    Perm("prancheta.revisao.publicar", "Publicar revisão (torna-a a vigente em campo)", "prancheta"),
+    #     PRA.1: reprocessar é verbo próprio porque QUEIMA RECURSO — CPU agora e,
+    #     com a APS da PRA.4, dinheiro por tradução. Quem lê o acervo não deve
+    #     poder mandar reconverter tudo. Vem com persona (`projetista`) na mesma
+    #     fatia, que é a lição do D28.
+    Perm("prancheta.conversao.reprocessar", "Reconverter revisão (refaz as derivadas)", "prancheta"),
+    #     PRA.3 — marcar e medir. `edit` cobre criar marcação, comentar e medir:
+    #     no canteiro é um gesto só ("está errado, e está 12 cm fora"), e separar
+    #     medir de apontar daria um interruptor que ninguém saberia quando
+    #     desligar.
+    Perm("prancheta.marcacao.view", "Ver marcações e medições sobre as pranchas", "prancheta"),
+    Perm("prancheta.marcacao.edit", "Marcar, comentar e medir sobre a prancha", "prancheta"),
+    #     `resolver` é verbo SEPARADO pelo mesmo motivo de `publicar`: quem
+    #     aponta o problema não é quem declara que ele acabou. O `campo` recebe
+    #     as duas primeiras e NÃO esta — senão o apontamento se fecharia antes de
+    #     o projetista responder, e a fila esvaziaria pelo lado errado.
+    Perm("prancheta.marcacao.resolver", "Encerrar ou reabrir marcação", "prancheta"),
+    #     `.acervo.importar` entra com a fatia que a implementa (PRA.5). Declarar
+    #     agora poria na tela de papéis um interruptor ligado a nada.
+    #     (A importação de BCF do PRA.3 NÃO tem permissão própria: ela cria
+    #     marcação, então é `marcacao.edit` — e a parede dela é comercial, o
+    #     formato `bcf` em payment/planos.py.)
     # --- Obras/empreendimentos e cadastros base (sem entitlement de módulo) ---
     Perm("obra.empreendimento.view", "Ver empreendimentos", "base"),
     Perm("obra.empreendimento.edit", "Gerir empreendimentos", "base"),
@@ -217,6 +260,14 @@ CATALOGO: tuple[Perm, ...] = (
     # Cadastros — clientes/fornecedores + dados bancários (PII) segregados.
     Perm("cadastro.cliente.view", "Ver clientes", "base"),
     Perm("cadastro.cliente.edit", "Gerir clientes (contratos, documentos)", "base"),
+    #     Tipo de item é recurso à parte de `cadastro.item` de propósito:
+    #     cadastrar item é trabalho diário de quem compra e de quem orça, mas
+    #     **definir um tipo** muda como o sistema calcula todos os itens que o
+    #     usam (encargo social, entrada na relação de compra, saldo em estoque).
+    #     Mesma classe de ato que criar/excluir cliente — decisão de cadastro-
+    #     mestre, entregue pelo admin do tenant a quem responde por ele.
+    Perm("cadastro.tipo_item.view", "Ver os tipos próprios de item da empresa", "base"),
+    Perm("cadastro.tipo_item.edit", "Criar/editar tipo próprio de item (natureza e flags)", "base"),
     Perm("cadastro.cliente_doc.view", "Ver CPF/CNPJ do cliente (PII)", "base"),
     Perm("cadastro.cliente_banco.view", "Ver dados bancários do cliente (PII)", "base"),
     Perm("cadastro.cliente_banco.edit", "Editar dados bancários do cliente (PII)", "base"),
@@ -273,6 +324,7 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
         "cadastro.cliente.view", "cadastro.cliente_doc.view", "cadastro.fornecedor.view",
         "cadastro.venda.view",
         "mapa.local.view", "mapa.feicao.view", "mapa.ortofoto.view",
+        "prancheta.documento.view", "prancheta.marcacao.view",
         "plataforma.config.view", "plataforma.integracao.view",
     ],
     # RH completo, MENOS o prontuário médico (segregação médico × gestor).
@@ -326,13 +378,26 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
         "obra.diario.*", "ia.analise.*", "calendario.evento.*",
         "cadastro.fornecedor.view", "drone.projeto.view", "drone.medicao.view",
         "mapa.local.*", "mapa.feicao.*", "mapa.ortofoto.view", "mapa.geofence.*",
+        # Lê o projeto da obra que gere; publicar revisão é do `projetista`.
+        "prancheta.documento.view",
+        # Mas RESOLVE marcação: quem gere a obra é quem decide que o apontamento
+        # do campo está encerrado. Sem isto, o D28 se repetiria — verbo criado,
+        # e na prática só o admin do tenant o exerce.
+        "prancheta.marcacao.*",
     ],
     # Campo: apontamentos do diário + upload de drone (sem gestão).
+    # Lê a prancha vigente no celular — é o caso de uso central da Prancheta, e
+    # é justamente quem NÃO pode publicar: conferir a medida antes de executar é
+    # trabalho de campo; decidir qual desenho vale, não.
     "campo": [
         "obra.obra.view", "obra.diario.view", "obra.diario.create",
         "ia.analise.view", "calendario.evento.view",
         "drone.projeto.view", "drone.imagem.upload",
         "mapa.local.view", "mapa.feicao.view",
+        "prancheta.documento.view",
+        # PRA.3 — apontar o que está errado no desenho É o trabalho do campo, e
+        # é a razão de a fatia existir. Sem `resolver`: quem aponta não fecha.
+        "prancheta.marcacao.view", "prancheta.marcacao.edit",
     ],
     # Analista de drone: processamento e medições. Ganhou o acervo e a missão —
     # é a mesma pessoa que hoje já opera o voo, agora com o plano na plataforma.
@@ -368,14 +433,14 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
     # `mapa.local.view` + `mapa.rota.view` porque distância entrega→canteiro é
     # critério de compra tanto quanto preço e reputação.
     "suprimentos": [
-        "scm.*", "cadastro.fornecedor.view", "cadastro.item.*",
+        "scm.*", "cadastro.fornecedor.view", "cadastro.item.*", "cadastro.tipo_item.view",
         "mapa.local.view", "mapa.rota.view",
     ],
     # Almoxarife: estoque & logística interna. `sil.*` + leitura do item-mestre
     # (o que se estoca) e dos selects do domínio (obra do canteiro/requisição,
     # fornecedor da devolução/lote).
     "almoxarife": [
-        "sil.*", "cadastro.item.view",
+        "sil.*", "cadastro.item.view", "cadastro.tipo_item.view",
         "obra.obra.view", "cadastro.fornecedor.view",
         "rh.funcionario.view",  # picker de colaborador em EPI/ferramentaria
         # Roteirização de transferência e entrega ao canteiro é trabalho de
@@ -394,11 +459,33 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
     # administrador do tenant conseguia aprovar (ele bypassa o RequirePermission).
     # Alçada é decisão do dono; quem quiser separar de novo cria uma persona só
     # de aprovação e tira as duas linhas daqui.
+    # `orcamento.banco.*` e `cadastro.tipo_item.*` entram aqui por padrão para o
+    # módulo continuar utilizável no dia seguinte ao deploy — e são exatamente as
+    # duas linhas que o admin do tenant tira daqui quando quiser um curador de
+    # preços separado de quem orça. É o desenho pedido: destacável, não
+    # obrigatoriamente destacado.
     "orcamentista": [
-        "orcamento.base.*", "orcamento.orcamento.*",
+        "orcamento.base.*", "orcamento.banco.*", "orcamento.orcamento.*",
         "orcamento.item.*", "orcamento.relatorio.view",
-        "cadastro.item.*", "obra.obra.view", "obra.empreendimento.view",
+        "cadastro.item.*", "cadastro.tipo_item.*",
+        "obra.obra.view", "obra.empreendimento.view",
         "scm.oferta.view", "scm.pedido.view", "sil.saldo.view", "sil.relatorio.view",
+    ],
+    # Projetista: dono do acervo de projeto. É a única persona de fábrica que
+    # PUBLICA revisão — o ato que define qual desenho o canteiro executa. Lê obra
+    # e etapa porque é onde a prancha se pendura; não toca em financeiro, cadastro
+    # comercial nem estoque.
+    "projetista": [
+        "prancheta.documento.*", "prancheta.revisao.publicar",
+        # Dono do acervo é também quem responde o apontamento do campo e o
+        # encerra — é o outro lado do laço que a PRA.3 fecha.
+        "prancheta.marcacao.*",
+        # Reprocessar fica aqui e só aqui: é quem conhece o arquivo que sabe se a
+        # derivada saiu torta. `engenharia` lê o acervo, mas mandar reconverter o
+        # acervo inteiro de uma obra é gasto, não leitura.
+        "prancheta.conversao.reprocessar",
+        "obra.obra.view", "obra.empreendimento.view",
+        "mapa.local.view",
     ],
     # Gestor da lixeira (exclusão reversível — ver arquitetura/lixo.md).
     "gestor_lixo": ["plataforma.lixo.*"],
@@ -428,6 +515,7 @@ DESCRICOES_TEMPLATE: dict[str, str] = {
     "almoxarife": "Estoque e logística interna: saldos, movimentações, requisições, transferências, devoluções, lotes e inventário.",
     "orcamentista": "Planilha orçamentária da obra: bases referenciais (SINAPI/ORSE), composições, curva ABC e orçado × realizado. Aprova e revisa o orçamento.",
     "topografo": "Território: georreferenciamento, camadas e feições do mapa, acervo de ortofotos e planos de voo.",
+    "projetista": "Acervo de projeto: cadastra documentos, envia revisões e PUBLICA a revisão vigente — a que o canteiro executa.",
     "gestor_lixo": "Restauração e expurgo de itens da lixeira (exclusão reversível).",
     "operacional": "Leitura básica de obras, diário, agenda e cadastros.",
 }

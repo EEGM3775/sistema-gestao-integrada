@@ -30,6 +30,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 if (BASE_DIR.parent / 'funcoesemail').is_dir():
     sys.path.insert(0, str(BASE_DIR.parent))
 
+# Padrões que são do DONO, não do deploy — a decisão de 08/08/2026 de que todo
+# teto ou limite vive em `payment/`. Vêm com `_` porque aqui são só o valor
+# default do `os.getenv` correspondente lá embaixo; quem opera a máquina continua
+# apertando por variável de ambiente.
+from payment.planos import (  # noqa: E402  (depende do sys.path acima)
+    PRANCHETA_CONVERSAO_MEMORIA_MB as _PRANCHETA_CONVERSAO_MEMORIA_MB,
+    PRANCHETA_CONVERSAO_SEGUNDOS as _PRANCHETA_CONVERSAO_SEGUNDOS,
+    PRANCHETA_CONVERSAO_TOTAL_SEGUNDOS as _PRANCHETA_CONVERSAO_TOTAL_SEGUNDOS,
+)
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
@@ -106,7 +116,7 @@ INSTALLED_APPS = [
     "modulocalendar.apps.ModulocalendarConfig",
     "moduloapi.apps.ModuloApiConfig",
     # Módulos planejados (placeholder com contrato de entitlement aplicado)
-    "moduloaps.apps.ModuloApsConfig",
+    "moduloprancheta.apps.ModuloPranchetaConfig",
     "modulodms.apps.ModuloDmsConfig",
     "modulopdca.apps.ModuloPdcaConfig",
     "moduloscm.apps.ModuloScmConfig",
@@ -500,9 +510,93 @@ if TESTING:
     # contexto de tenant — só apareceu no worker, e é coberto por E2E no stack vivo.)
     CELERY_TASK_ALWAYS_EAGER = True
 CELERY_TASK_EAGER_PROPAGATES = True
+
+# --- Fila dedicada de conversão (D57) --------------------------------------
+# **Por que a conversão sai da fila geral.** Ela é a única carga do sistema cujo
+# custo é definido pelo ARQUIVO DE UM CLIENTE, e não pelo nosso código: um DWG
+# com hachura de padrão fino sobre área grande expandiu para 62 GB de RAM na
+# medição de 06/08. Na fila geral esse job divide o worker com cobrança, e-mail e
+# NF — e quando o kernel escolhe uma vítima por memória, ele não sabe que a task
+# ao lado estava emitindo um boleto.
+#
+# É o mesmo desenho que plataforma de mídia usa: transcodificação nunca roda na
+# frota de uso geral. Aqui isso custa uma fila e um serviço no compose.
+# Quantas cadeiras cada frota de trabalho pesado tem (D98).
+#
+# **É deploy e por isso mora aqui, não no `payment/`** (§5.6 do `planos.py`): o
+# número tem de bater com o `--concurrency` do worker correspondente no compose,
+# e quem o muda é quem opera a máquina. O que é comercial — a FRAÇÃO de cadeiras
+# reservada a cada plano — está no `planos.py`, e se aplica sobre este total.
+#
+# Um é o valor honesto hoje: o `worker-conversao` roda `--concurrency 1`, e a
+# razão está no `base.yml` (converter é trabalho de CPU e memória; dois processos
+# dobram o pico de RAM sem dobrar a vazão). Subir aqui sem subir lá prometeria
+# cadeiras que não existem — a fila despacharia dois jobs para um executor só.
+FROTA_VAGAS = {
+    "conversao": int(os.getenv("FROTA_VAGAS_CONVERSAO", "1")),
+}
+
+CELERY_TASK_ROUTES = {
+    "moduloprancheta.*": {"queue": "conversao"},
+}
+# Nome da fila padrão, explícito: sem isto o worker geral (`-Q celery`) e o
+# roteamento acima só concordam por coincidência de default.
+CELERY_TASK_DEFAULT_QUEUE = "celery"
+
+# Teto de relógio de TODA task. Generoso de propósito — quem tem perfil próprio
+# declara o seu (a conversão declara). O que este número impede é o caso sem
+# dono: uma task nova que trave para sempre e segure um worker até o restart.
+CELERY_TASK_SOFT_TIME_LIMIT = int(os.getenv("CELERY_TASK_SOFT_TIME_LIMIT", "600"))
+CELERY_TASK_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", "660"))
+
+# **Teto de memória por processo filho** — a linha que teria evitado o incidente.
+# O Celery recicla o filho depois que ele passa deste RSS (em KB), devolvendo ao
+# sistema operacional a memória que o Python não devolve sozinho. Vale como rede
+# de segurança do worker inteiro; o teto por CONVERSÃO, que produz erro legível
+# em vez de processo morto, é armado em `moduloprancheta.tasks`.
+CELERY_WORKER_MAX_MEMORY_PER_CHILD = int(
+    os.getenv("CELERY_WORKER_MAX_MEMORY_PER_CHILD_KB", str(2 * 1024 * 1024))  # 2 GiB
+)
+
+# Teto de memória de UMA conversão, em MB. Abaixo do
+# `CELERY_WORKER_MAX_MEMORY_PER_CHILD` de propósito: quem estoura primeiro tem de
+# ser o limite que sabe explicar o que aconteceu, não o que só mata o processo.
+#
+# **O padrão saiu daqui em 08/08/2026** (decisão do dono: todo teto ou limite vive
+# em `payment/`). O `settings.py` é arquivo de deploy — quem opera a máquina lê,
+# o dono do software não —, e o gêmeo deste número do lado do import/export
+# (`IMPEXP_TETO_INFRA_MEMORIA_MB`) já morava lá. A variável de ambiente continua
+# valendo por cima: uma VM pequena tem outro orçamento que uma grande, e isso é
+# operação, não produto.
+PRANCHETA_CONVERSAO_MEMORIA_MB = int(
+    os.getenv("PRANCHETA_CONVERSAO_MEMORIA_MB", str(_PRANCHETA_CONVERSAO_MEMORIA_MB))
+)
+# Idem para o relógio: o `soft` levanta exceção capturável (vira derivada em
+# `erro`, com motivo), e o `hard` só existe para o caso de a exceção não conseguir
+# subir — código presa em extensão C não vê o sinal do `soft`.
+PRANCHETA_CONVERSAO_SEGUNDOS = int(
+    os.getenv("PRANCHETA_CONVERSAO_SEGUNDOS", str(_PRANCHETA_CONVERSAO_SEGUNDOS))
+)
+# O somado entre as voltas à fila (PRA.11). O de cima é o turno; este é o quanto
+# de máquina o arquivo inteiro pode custar antes de a plataforma desistir e
+# explicar, com as folhas já convertidas preservadas.
+PRANCHETA_CONVERSAO_TOTAL_SEGUNDOS = int(
+    os.getenv(
+        "PRANCHETA_CONVERSAO_TOTAL_SEGUNDOS", str(_PRANCHETA_CONVERSAO_TOTAL_SEGUNDOS)
+    )
+)
+
 # Tarefas periódicas — exigem um processo `celery beat` (pendência A1/Fase 10:
 # worker+beat no compose); sem beat, nada é disparado.
 CELERY_BEAT_SCHEDULE = {
+    # D98 — a rede da frota: devolve à fila a cadeira presa por um worker que
+    # morreu sem avisar (OOM do cgroup, container derrubado). Cinco minutos é
+    # curto perto do MINUTOS_ATE_ORFA (30) e barato: a varredura é um SELECT
+    # sobre um índice, e no caso normal não acha nada.
+    'frota-liberar-cadeiras-presas': {
+        'task': 'nucleo.liberar_cadeiras_presas',
+        'schedule': 300.0,
+    },
     'crm-notificar-tarefas-a-vencer': {
         'task': 'modulocrm.tasks.notificar_tarefas_a_vencer',
         'schedule': 3600.0,
@@ -525,6 +619,28 @@ CELERY_BEAT_SCHEDULE = {
     'impexp-limpar-exportacoes-expiradas': {
         'task': 'funcoesimpexp.limpar_exportacoes_expiradas',
         'schedule': 6 * 3600.0,
+    },
+    # A mesma faxina do lado da ENTRADA. O arquivo importado some assim que é
+    # lido; a exceção é o lote que ficou esperando de-para (R4), que o preserva
+    # de propósito — e, até 07/08/2026, para sempre, fora de qualquer quota.
+    'impexp-limpar-entradas-orfas': {
+        'task': 'funcoesimpexp.limpar_entradas_orfas',
+        'schedule': 24 * 3600.0,
+    },
+    # ORC.7 — o calcanhar do módulo de orçamento é dado fresco, não cálculo. As
+    # duas varreduras são diárias porque publicação é mensal: rodar de hora em
+    # hora não acharia nada de novo, e semanalmente atrasaria o aviso em até
+    # sete dias no mês em que a SINAPI sai.
+    'orcamento-verificar-bases-desatualizadas': {
+        'task': 'moduloorcamento.verificar_bases_desatualizadas',
+        'schedule': 24 * 3600.0,
+    },
+    # Separada da anterior porque a consequência é outra: base velha degrada em
+    # silêncio, índice velho faz o cálculo do reajuste levantar erro no dia do
+    # aniversário do contrato.
+    'orcamento-verificar-indices-desatualizados': {
+        'task': 'moduloorcamento.verificar_indices_desatualizados',
+        'schedule': 24 * 3600.0,
     },
 }
 

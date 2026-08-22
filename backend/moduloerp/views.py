@@ -2,6 +2,7 @@
 import logging
 from urllib.parse import urlparse
 import requests
+from nucleo.busca import BuscaSemAcento
 from rest_framework import viewsets, permissions, views, filters, status as status_module
 from django_filters.rest_framework import DjangoFilterBackend
 from nucleo.tenancy import TenantScopedViewSetMixin, TenantScopedAPIViewMixin
@@ -16,6 +17,9 @@ from django.core.files.base import ContentFile
 from decimal import Decimal
 from os.path import basename
 
+from funcoesimpexp.entrega import url_do_arquivo
+
+from .impexp import RECURSO_NOTA_FISCAL
 from .models import (
     Transacao, NotaFiscalServico, NotaFiscalProduto,
     NotaFiscal, ContaPagar, ContaReceber, CobrancaCliente, Boleto,
@@ -100,12 +104,22 @@ def _verificar_documento_nf(nf):
     from .nfe_client import NFeClient, NFeIndisponivel, NFeErro
     from .tasks import _aplicar_retorno
 
+    # D70 — a cópia LOCAL da nota sai pela porta única. Este payload é montado à
+    # mão e não passa pelo serializer, então o mixin não o alcançava: era o
+    # segundo caminho pelo qual `/media/` chegava ao browser, e o mais fácil de
+    # esquecer justamente por não parecer um serializer.
+    #
+    # A URL da NFE.io (`dados['url_pdf']`, abaixo) continua sendo dela — é link
+    # assinado do provedor, não arquivo nosso, e nada aqui deve reescrevê-lo.
+    def _url_local(campo, especie):
+        return url_do_arquivo(RECURSO_NOTA_FISCAL, especie, nf.pk) if campo else ''
+
     def _local(mensagem, online=False):
         return {
             'gateway_online': online,
             'status': nf.status,
-            'url_pdf': nf.arquivo_pdf.url if nf.arquivo_pdf else '',
-            'url_xml': nf.arquivo_xml.url if nf.arquivo_xml else '',
+            'url_pdf': _url_local(nf.arquivo_pdf, 'nfse_pdf'),
+            'url_xml': _url_local(nf.arquivo_xml, 'nfse_xml'),
             'mensagem': mensagem,
         }
 
@@ -122,8 +136,8 @@ def _verificar_documento_nf(nf):
 
     _aplicar_retorno(nf, dados)   # atualiza status/arquivos locais (fallback)
     nf.refresh_from_db()
-    url_pdf = dados.get('url_pdf') or client.resolver_url_arquivo(nf.nfe_io_id, 'pdf') or (nf.arquivo_pdf.url if nf.arquivo_pdf else '')
-    url_xml = dados.get('url_xml') or client.resolver_url_arquivo(nf.nfe_io_id, 'xml') or (nf.arquivo_xml.url if nf.arquivo_xml else '')
+    url_pdf = dados.get('url_pdf') or client.resolver_url_arquivo(nf.nfe_io_id, 'pdf') or _url_local(nf.arquivo_pdf, 'nfse_pdf')
+    url_xml = dados.get('url_xml') or client.resolver_url_arquivo(nf.nfe_io_id, 'xml') or _url_local(nf.arquivo_xml, 'nfse_xml')
     return {
         'gateway_online': True,
         'status': nf.status,
@@ -250,7 +264,7 @@ class TransacaoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     required_module = "erp_financeiro"
     required_resource = "erp.transacao"   # ledger: só .view no catálogo (escrita bloqueada)
     pagination_class = ErpPageNumberPagination
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_class = TransacaoFilter
     search_fields = ['descricao']
     ordering_fields = ['data_transacao', 'valor']
@@ -456,7 +470,7 @@ class NotaFiscalViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     required_module = "erp_financeiro"
     required_resource = "erp.nf"
     pagination_class = ErpPageNumberPagination
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_fields = ['empreendimento', 'fornecedor']
     search_fields = ['numero_nota', 'chave_acesso']
     ordering_fields = ['data_emissao', 'valor_total']
@@ -476,7 +490,7 @@ class ContaPagarViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
         "gerar_lote_remessa": "erp.lote_remessa.create",
     }
     pagination_class = ErpPageNumberPagination
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_class = ContaPagarFilter
     search_fields = ['descricao']
     ordering_fields = ['data_vencimento', 'valor', 'status']
@@ -617,7 +631,7 @@ class ContaReceberViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
             self.throttle_scope = "integracao_externa"
         return super().get_throttles()
     pagination_class = ErpPageNumberPagination
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_class = ContaReceberFilter
     search_fields = ['descricao']
     ordering_fields = ['data_vencimento', 'valor', 'status']
@@ -812,7 +826,7 @@ class CentroCustoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     required_module = "erp_financeiro"
     required_resource = "erp.centro_custo"
     pagination_class = ErpPageNumberPagination
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_fields = ['empreendimento', 'ativo']
     search_fields = ['nome', 'codigo']
     ordering_fields = ['nome', 'codigo']

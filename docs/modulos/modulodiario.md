@@ -37,6 +37,34 @@ Usuário sem `funcionario_profile` recebe **403** com mensagem explicativa (não
 - `today` retorna o diário de hoje por **(obra, data)** — compartilhado, sem escopo de usuário.
 - Endpoints auxiliares para acompanhar/reprocessar a análise e listar documentos com status de IA.
 
+## A foto sai pela porta única (D70)
+
+A mídia do diário deixou de ser servida por `/media/` e passou a sair pelo recurso
+`obra.diario_midia` do [funcoesimpexp](funcoesimpexp.md), atrás de `obra.diario.view`. Duas
+consequências no desenho, e nenhuma é cosmética:
+
+- **a tela não pendura a URL num `<img src>`.** O token vive em memória, então a miniatura é buscada
+  por XHR e vira object URL (`ImagemDoArquivo`, sobre `useArquivoBlob`);
+- **o serializer publica `arquivo_nome` à parte.** A URL gateada não carrega o nome do arquivo, e é
+  pela extensão que a tela decide entre miniatura e ícone.
+
+A galeria de IA e o detalhe da análise montam payload **à mão** nas views (não passam pelo
+serializer): o `url_imagem` dos dois sai de `_url_da_midia`, e é por isso que a função existe em vez
+de duas expressões iguais.
+
+### Em aberto — a miniatura, e por que o rastro está caro
+
+O recurso entrega com `RASTRO_AUDITADO`, como os outros oito prefixos do D70: a regra do R12 é de
+**autoria** (o arquivo é do cliente), não de gravidade. O custo é uma linha de `AuditLog` **por
+miniatura carregada** — uma página com 20 fotos grava 20 linhas, e é o risco de afogar a trilha do
+D67 que a Prancheta evitou declarando a derivada como `RASTRO_INTERNO`.
+
+Não foi resolvido baixando o rastro deste recurso: enfraquecer auditoria no mesmo movimento que fecha
+um vazamento é trocar um problema por outro, em silêncio. **A saída certa é uma miniatura gerada por
+nós** — servida como `RASTRO_INTERNO` na linha do tempo, deixando o original (auditado) para quem
+pedir o arquivo. Gatilho para fazê-la: quando o volume da trilha incomodar, ou quando a foto do
+canteiro em 4G pesar o suficiente para o original não servir de miniatura — os dois chegam juntos.
+
 ## Endpoints (`/api/diario/`)
 `/diarios/` (list/retrieve/update/delete) · `/diarios/contribuir/` (POST, escrita) ·
 `/diarios/today/?obra=` · `/entradas/<id>/` (moderação) · `/documentos/<id>/` (moderação) ·

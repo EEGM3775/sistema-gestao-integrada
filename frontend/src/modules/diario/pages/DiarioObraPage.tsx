@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react'
 import {
   Brain, Plus, Search, RefreshCw, CalendarDays, CloudSun,
-  AlertTriangle, ImageOff, NotebookPen, Images, Trash2, MessageSquare, Smartphone, Globe,
+  AlertTriangle, NotebookPen, Images, Trash2, MessageSquare, Smartphone, Globe,
 } from 'lucide-react'
 import { useObras } from '@/modules/obras/hooks/useObras'
 import { useDiarios } from '../hooks/useDiarios'
@@ -10,7 +10,7 @@ import { useAnalisesIA } from '../hooks/useAnalisesIA'
 import DiarioForm from '../components/DiarioForm'
 import AnaliseModal from '../components/AnaliseModal'
 import AnaliseStatusBadge from '../components/AnaliseStatusBadge'
-import { mediaUrl } from '@/lib/utils'
+import ImagemDoArquivo from '@/components/ImagemDoArquivo'
 import type { ContribuirData, DocumentoDiario, EntradaDiario, DiarioObra } from '@/types'
 
 function formatDate(value: string | null) {
@@ -42,9 +42,11 @@ const OrigemIcon: React.FC<{ origem: string }> = ({ origem }) => (
 
 const Thumb: React.FC<{ doc: DocumentoDiario; canModerate: boolean; onOpen: () => void; onDelete: () => void }> =
 ({ doc, canModerate, onOpen, onDelete }) => {
-  const [err, setErr] = useState(false)
-  const src = mediaUrl(doc.arquivo)
-  const img = src && isImage(doc.arquivo) && !err
+  // D70 — `doc.arquivo` deixou de ser um caminho de `/media/` e virou a URL da
+  // porta única, que exige token. A miniatura é baixada por XHR e vira object
+  // URL; e como a URL gateada não carrega mais o nome do arquivo, quem responde
+  // "isto é imagem?" passou a ser `arquivo_nome`, publicado à parte pela API.
+  const src = isImage(doc.arquivo_nome) ? doc.arquivo : null
   return (
     <div className="relative group">
       <button
@@ -53,13 +55,7 @@ const Thumb: React.FC<{ doc: DocumentoDiario; canModerate: boolean; onOpen: () =
         style={{ border: '1px solid #e2e8f0', background: '#f1f5f9', cursor: 'pointer' }}
         title={doc.autor_nome ? `Foto de ${doc.autor_nome}` : 'Ver análise de IA'}
       >
-        {img ? (
-          <img src={src} alt={doc.descricao ?? ''} className="w-full h-full object-cover" onError={() => setErr(true)} />
-        ) : (
-          <span className="flex items-center justify-center w-full h-full" style={{ color: '#94a3b8' }}>
-            <ImageOff size={18} />
-          </span>
-        )}
+        <ImagemDoArquivo url={src} alt={doc.descricao ?? ''} tamanhoDoVazio={18} />
         {doc.analise_ia && (
           <span className="absolute bottom-0 inset-x-0 text-center text-[9px] py-0.5"
                 style={{ background: 'rgba(15,31,61,0.8)', color: '#fff' }}>
@@ -376,9 +372,10 @@ const DiarioObraPage: React.FC = () => {
                   style={{ background: '#FFFFFF', boxShadow: 'var(--shadow-sm)', border: '1px solid #e2e8f0', cursor: 'pointer' }}
                 >
                   <div className="w-full h-32 flex items-center justify-center" style={{ background: '#0f1f3d' }}>
-                    {a.url_imagem
-                      ? <img src={mediaUrl(a.url_imagem)} alt={a.nome} className="w-full h-full object-cover" />
-                      : <ImageOff size={28} style={{ color: 'rgba(255,255,255,0.4)' }} />}
+                    {/* D70 — `url_imagem` também virou URL gateada (a galeria é
+                        payload montado à mão nas views do diário). */}
+                    <ImagemDoArquivo url={a.url_imagem} alt={a.nome}
+                                     corDoVazio="rgba(255,255,255,0.4)" tamanhoDoVazio={28} />
                   </div>
                   <div className="p-3 flex flex-col gap-2">
                     <span className="text-xs font-semibold truncate" style={{ color: 'var(--color-brand)', fontFamily: 'var(--font-body)' }}>

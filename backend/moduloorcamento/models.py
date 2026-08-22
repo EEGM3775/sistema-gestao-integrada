@@ -573,9 +573,18 @@ class ItemOrcadoInsumo(TenantScopedModel):
     """
 
     class Categoria(models.TextChoices):
+        """As naturezas em que a SINAPI separa o custo de uma composição.
+
+        `ENCARGOS_COMPLEMENTARES` (EPI, exame, alimentação, transporte) é classe
+        própria e não "material": ela acompanha a hora de mão de obra, mas **não
+        recebe encargo social por cima** — é complemento do custo do
+        trabalhador, não salário. Somá-la ao material escondia isso.
+        """
+
         MATERIAL = "material", _("Material")
         MAO_DE_OBRA = "mao_de_obra", _("Mão de obra")
         EQUIPAMENTO = "equipamento", _("Equipamento")
+        ENCARGOS_COMPLEMENTARES = "encargos_complementares", _("Encargos complementares")
         OUTRO = "outro", _("Outro")
 
     insumo_id = models.AutoField(primary_key=True)
@@ -589,7 +598,7 @@ class ItemOrcadoInsumo(TenantScopedModel):
     descricao = models.CharField(max_length=255, verbose_name=_("Descrição"))
     unidade = models.CharField(max_length=20, blank=True, verbose_name=_("Unidade"))
     categoria = models.CharField(
-        max_length=12, choices=Categoria.choices, default=Categoria.MATERIAL, verbose_name=_("Categoria"),
+        max_length=24, choices=Categoria.choices, default=Categoria.MATERIAL, verbose_name=_("Categoria"),
     )
     coeficiente = models.DecimalField(
         max_digits=16, decimal_places=6, default=Decimal("0"), verbose_name=_("Coeficiente"),
@@ -1244,6 +1253,13 @@ class Reprecificacao(TenantScopedModel):
         max_digits=18, decimal_places=2, default=Decimal("0"), verbose_name=_("Total depois"),
     )
     linhas_afetadas = models.PositiveIntegerField(default=0, verbose_name=_("Linhas afetadas"))
+    linhas_descontinuadas = models.PositiveIntegerField(
+        default=0, verbose_name=_("Linhas descontinuadas"),
+        help_text=_(
+            "Linhas cujo código sumiu da publicação de destino. Contadas à parte "
+            "porque não são preço trocado — são preço que a fonte deixou de publicar."
+        ),
+    )
     motivo = models.CharField(max_length=255, blank=True, verbose_name=_("Motivo"))
     criado_em = models.DateTimeField(auto_now_add=True, verbose_name=_("Criado em"))
     aplicada_em = models.DateTimeField(null=True, blank=True, verbose_name=_("Aplicada em"))
@@ -1298,6 +1314,15 @@ class LinhaReprecificacao(TenantScopedModel):
     data_base_depois = models.DateField(null=True, blank=True, verbose_name=_("Data-base depois"))
     selecionada = models.BooleanField(default=True, verbose_name=_("Selecionada"))
     aplicada = models.BooleanField(default=False, verbose_name=_("Aplicada"))
+    descontinuado = models.BooleanField(
+        default=False, verbose_name=_("Descontinuado na fonte"),
+        help_text=_(
+            "O código não existe na publicação de destino. A linha entra no lote "
+            "para **aparecer**, nunca para ser aplicada: não há preço novo para pôr "
+            "nela. Antes disto ela era silenciosamente pulada, e a planilha passava "
+            "a se chamar pela data-base nova carregando preço da antiga."
+        ),
+    )
     motivo = models.CharField(max_length=255, blank=True, verbose_name=_("Observação"))
 
     class Meta:
@@ -1316,3 +1341,420 @@ class LinhaReprecificacao(TenantScopedModel):
     @property
     def delta_unitario(self) -> Decimal:
         return (self.custo_depois or Decimal("0")) - (self.custo_antes or Decimal("0"))
+
+
+# ---------------------------------------------------------------------------
+# ORC.7 — encargos analíticos, memória do quantitativo e reajuste por índice
+# ---------------------------------------------------------------------------
+#
+# As três assimetrias que sobravam depois do ORC.6, e o que cada uma custava:
+#
+#   1. **Encargos eram um percentual digitado no cabeçalho.** Passava no
+#      cálculo e reprovava em análise de edital, que pede o *quadro* — grupos
+#      A/B/C/D, horista × mensalista, onerado × desonerado.
+#   2. **A quantidade não tinha memória.** O preço tinha (`ItemOrcadoInsumo`
+#      abre a composição); a quantidade era um Decimal digitado, e ninguém
+#      conferia "por que 19,60 m²?".
+#   3. **Reprecificar ≠ reajustar.** Trocar a data-base de uma publicação e
+#      reajustar um contrato por fórmula paramétrica são operações diferentes,
+#      e só a primeira existia.
+
+
+class ComposicaoEncargos(TenantScopedModel):
+    """O **quadro de encargos sociais** — analítico, como edital exige.
+
+    Substitui, sem apagar, o `encargos_sociais_percentual` do cabeçalho do
+    orçamento: aquele campo continua sendo o número que a explosão multiplica,
+    mas quando existe um quadro marcado `padrao` é ele quem o alimenta — a mesma
+    relação que `ComposicaoBDI` tem com `bdi_percentual`.
+
+    **Por que grupos, e não um percentual.** A metodologia SINAPI (e o TCU, ao
+    auditar) separa em quatro:
+
+    - **A** — obrigações sociais sobre a folha (INSS/CPP, SESI, SENAI, INCRA,
+      SEBRAE, salário-educação, RAT, FGTS). No regime **desonerado** a CPP de
+      20% sai e entra a CPRB sobre a receita, que vive no BDI, não aqui.
+    - **B** — encargos que **recebem** as incidências do grupo A (repouso
+      semanal, feriados, 13º, férias gozadas, auxílio-enfermidade…).
+    - **C** — encargos que **não recebem** as incidências de A, porque são
+      indenizatórios (aviso prévio indenizado, férias indenizadas, multa do
+      FGTS na rescisão).
+    - **D** — as **reincidências**: A sobre B, e FGTS sobre aviso prévio. É o
+      grupo que ninguém digita à mão sem errar, e por isso aqui ele é
+      **derivado** (ver `RubricaEncargos.base_calculo`).
+
+    **Horista × mensalista não é preferência, é aritmética.** O mensalista já
+    recebe repouso semanal e feriados embutidos no salário, então o grupo B dele
+    é menor — usar o percentual do horista sobre um encargo mensal paga duas
+    vezes o mesmo descanso. Por isso o tipo é chave de unicidade junto com o
+    regime: um orçamento carrega os dois quadros e a explosão escolhe pela
+    unidade do insumo (`H` → horista, `MES` → mensalista).
+    """
+
+    class TipoMaoDeObra(models.TextChoices):
+        HORISTA = "horista", _("Horista")
+        MENSALISTA = "mensalista", _("Mensalista")
+
+    class Regime(models.TextChoices):
+        ONERADO = "onerado", _("Onerado")
+        DESONERADO = "desonerado", _("Desonerado")
+
+    encargos_id = models.AutoField(primary_key=True)
+    orcamento = models.ForeignKey(
+        Orcamento, on_delete=models.CASCADE, related_name="composicoes_encargos",
+        verbose_name=_("Orçamento"),
+    )
+    nome = models.CharField(max_length=120, default="Encargos sociais", verbose_name=_("Nome"))
+    tipo_mao_de_obra = models.CharField(
+        max_length=12, choices=TipoMaoDeObra.choices, default=TipoMaoDeObra.HORISTA,
+        verbose_name=_("Tipo de mão de obra"),
+    )
+    regime = models.CharField(
+        max_length=12, choices=Regime.choices, default=Regime.ONERADO, verbose_name=_("Regime"),
+    )
+    padrao = models.BooleanField(
+        default=True, verbose_name=_("Quadro padrão do orçamento"),
+        help_text=_(
+            "O padrão alimenta o percentual do cabeçalho e vale quando não há "
+            "quadro do tipo do insumo."
+        ),
+    )
+    fonte = models.CharField(
+        max_length=10, choices=Fonte.choices, blank=True, verbose_name=_("Fonte do quadro"),
+        help_text=_("De qual publicação as alíquotas vieram, quando não foram digitadas."),
+    )
+    data_base = models.DateField(null=True, blank=True, verbose_name=_("Data-base das alíquotas"))
+    # --- Derivados (encargos.salvar_encargos) ---
+    total_grupo_a = models.DecimalField(
+        max_digits=7, decimal_places=4, default=Decimal("0"), verbose_name=_("Grupo A (%)"),
+    )
+    total_grupo_b = models.DecimalField(
+        max_digits=7, decimal_places=4, default=Decimal("0"), verbose_name=_("Grupo B (%)"),
+    )
+    total_grupo_c = models.DecimalField(
+        max_digits=7, decimal_places=4, default=Decimal("0"), verbose_name=_("Grupo C (%)"),
+    )
+    total_grupo_d = models.DecimalField(
+        max_digits=7, decimal_places=4, default=Decimal("0"), verbose_name=_("Grupo D (%)"),
+    )
+    percentual_calculado = models.DecimalField(
+        max_digits=7, decimal_places=4, default=Decimal("0"),
+        verbose_name=_("Encargos resultantes (%)"),
+        help_text=_("A + B + C + D. Derivado, nunca digitado."),
+    )
+    observacao = models.TextField(blank=True, verbose_name=_("Observação"))
+
+    class Meta:
+        verbose_name = _("Composição de encargos sociais")
+        verbose_name_plural = _("Composições de encargos sociais")
+        ordering = ["orcamento", "-padrao", "tipo_mao_de_obra"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["orcamento", "tipo_mao_de_obra", "regime"],
+                name="orcamento_encargos_unico_por_tipo",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.nome} ({self.get_tipo_mao_de_obra_display()}) — {self.percentual_calculado}%"
+
+
+class RubricaEncargos(TenantScopedModel):
+    """Uma linha do quadro de encargos: código, descrição e alíquota.
+
+    Linha e não coluna porque as publicações **mudam de rubrica**: a SINAPI já
+    renomeou itens do grupo B e o SECONCI só existe em alguns estados. Um model
+    com quarenta campos fixos exigiria migration a cada publicação; uma tabela
+    de rubricas absorve a diferença e ainda deixa a empresa acrescentar a sua.
+
+    `base_calculo` é o que torna o **grupo D** auditável em vez de digitado:
+
+    - `direta` — a alíquota vem do campo `percentual` (grupos A, B e C).
+    - `a_sobre_b` — reincidência do grupo A sobre o grupo B: ``A × B / 100``.
+    - `fgts_sobre_aviso` — reincidência do FGTS sobre o aviso prévio, o outro
+      termo clássico de D: ``FGTS × (rubricas de aviso prévio) / 100``.
+
+    Nas duas derivadas o `percentual` vira **resultado**, não entrada — quem o
+    escreve é `encargos.calcular_encargos`, e a tela o mostra bloqueado com a
+    conta ao lado. É a diferença entre um quadro que confere e um que só parece
+    conferir.
+    """
+
+    class Grupo(models.TextChoices):
+        A = "A", _("A — Obrigações sociais sobre a folha")
+        B = "B", _("B — Encargos que recebem incidência do grupo A")
+        C = "C", _("C — Encargos que não recebem incidência do grupo A")
+        D = "D", _("D — Reincidências")
+
+    class BaseCalculo(models.TextChoices):
+        DIRETA = "direta", _("Alíquota digitada")
+        A_SOBRE_B = "a_sobre_b", _("Reincidência de A sobre B")
+        FGTS_SOBRE_AVISO = "fgts_sobre_aviso", _("Reincidência do FGTS sobre o aviso prévio")
+
+    rubrica_id = models.AutoField(primary_key=True)
+    composicao = models.ForeignKey(
+        ComposicaoEncargos, on_delete=models.CASCADE, related_name="rubricas",
+        verbose_name=_("Quadro de encargos"),
+    )
+    grupo = models.CharField(max_length=1, choices=Grupo.choices, verbose_name=_("Grupo"))
+    codigo = models.CharField(
+        max_length=10, blank=True, verbose_name=_("Código"),
+        help_text=_("A1, B3, D2… o código da publicação, quando existe."),
+    )
+    descricao = models.CharField(max_length=180, verbose_name=_("Descrição"))
+    percentual = models.DecimalField(
+        max_digits=7, decimal_places=4, default=Decimal("0"), verbose_name=_("Alíquota (%)"),
+    )
+    base_calculo = models.CharField(
+        max_length=20, choices=BaseCalculo.choices, default=BaseCalculo.DIRETA,
+        verbose_name=_("Base de cálculo"),
+    )
+    e_fgts = models.BooleanField(
+        default=False, verbose_name=_("É a rubrica do FGTS"),
+        help_text=_("Marca quem entra como multiplicando na reincidência do grupo D."),
+    )
+    e_aviso_previo = models.BooleanField(
+        default=False, verbose_name=_("É aviso prévio"),
+        help_text=_("Marca a base da reincidência do FGTS no grupo D."),
+    )
+    ordem = models.PositiveIntegerField(default=0, verbose_name=_("Ordem no grupo"))
+
+    class Meta:
+        verbose_name = _("Rubrica de encargos")
+        verbose_name_plural = _("Rubricas de encargos")
+        ordering = ["composicao", "grupo", "ordem", "rubrica_id"]
+        indexes = [
+            models.Index(fields=["composicao", "grupo"], name="orcamento_rubrica_grupo_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.grupo}{self.codigo} {self.descricao}: {self.percentual}%"
+
+
+class LinhaMedicao(TenantScopedModel):
+    """A **memória de cálculo do quantitativo** — o que faltava do outro lado.
+
+    O preço da linha já era auditável (`ItemOrcadoInsumo` abre a composição); a
+    quantidade não era. `ItemOrcado.quantidade` era um Decimal digitado, e
+    "19,60 m²" não respondia a "de onde?". Aqui ela vira soma de parciais, no
+    formato que o setor usa desde a prancheta e que Arquimedes e ORSE mantêm::
+
+        descrição       n      a       b      c      total
+        Parede eixo B   2  ×  3,50 ×  2,80        =  19,60
+        (−) Vão porta   1  ×  0,80 ×  2,10        =  −1,68
+                                            total    17,92
+
+    **Dimensão ausente não vira zero, vira ausência.** `a`, `b` e `c` são
+    anuláveis e a conta só multiplica o que foi informado — senão uma linha de
+    contagem pura (`n = 12 unidades`) daria zero, que é o erro silencioso mais
+    caro possível numa planilha.
+
+    `formula` é a saída para o que não cabe em três dimensões (uma área de
+    seção, um arco). Quando preenchida, manda; a avaliação é por AST restrita em
+    `quantitativos.py` — aritmética e parênteses, nada de nome nem chamada.
+
+    A linha-pai passa a ter a quantidade **derivada** quando tem medição: a
+    grade mostra o campo bloqueado com o total da soma. Só assim as duas pontas
+    não divergem.
+    """
+
+    class Sinal(models.IntegerChoices):
+        SOMA = 1, _("Soma (+)")
+        SUBTRACAO = -1, _("Subtração (−)")
+
+    medicao_id = models.AutoField(primary_key=True)
+    item_orcado = models.ForeignKey(
+        ItemOrcado, on_delete=models.CASCADE, related_name="linhas_medicao",
+        verbose_name=_("Linha orçada"),
+    )
+    ordem = models.PositiveIntegerField(default=0, verbose_name=_("Ordem"))
+    descricao = models.CharField(
+        max_length=180, blank=True, verbose_name=_("Descrição da parcial"),
+        help_text=_("Onde é: 'Parede eixo B', 'Pavimento tipo', 'vãos'."),
+    )
+    sinal = models.SmallIntegerField(
+        choices=Sinal.choices, default=Sinal.SOMA, verbose_name=_("Sinal"),
+    )
+    repeticoes = models.DecimalField(
+        max_digits=14, decimal_places=4, default=Decimal("1"), verbose_name=_("Repetições (n)"),
+    )
+    comprimento = models.DecimalField(
+        max_digits=14, decimal_places=4, null=True, blank=True, verbose_name=_("Comprimento (a)"),
+    )
+    largura = models.DecimalField(
+        max_digits=14, decimal_places=4, null=True, blank=True, verbose_name=_("Largura (b)"),
+    )
+    altura = models.DecimalField(
+        max_digits=14, decimal_places=4, null=True, blank=True, verbose_name=_("Altura (c)"),
+    )
+    formula = models.CharField(
+        max_length=180, blank=True, verbose_name=_("Fórmula"),
+        help_text=_("Aritmética livre. Quando preenchida, substitui n × a × b × c."),
+    )
+    total = models.DecimalField(
+        max_digits=16, decimal_places=4, default=Decimal("0"), verbose_name=_("Total da parcial"),
+        help_text=_("Derivado. Já com o sinal aplicado."),
+    )
+    referencia_projeto = models.CharField(
+        max_length=120, blank=True, verbose_name=_("Referência de projeto"),
+        help_text=_("Prancha, folha ou elemento de onde a medida saiu — o rastro da conferência."),
+    )
+
+    class Meta:
+        verbose_name = _("Linha de medição")
+        verbose_name_plural = _("Linhas de medição")
+        ordering = ["item_orcado", "ordem", "medicao_id"]
+        indexes = [
+            models.Index(fields=["item_orcado"], name="orcamento_medicao_linha_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.descricao or 'parcial'} = {self.total}"
+
+
+class IndiceEconomico(models.Model):
+    """Um índice de reajuste — INCC-M, IPCA, IGP-M, CUB.
+
+    **Global, sem tenant**, pela mesma razão da `BaseReferencial` (§11.1): o
+    INCC-M de julho/2026 é o mesmo número para todo mundo, é publicado por
+    terceiro (FGV, IBGE, Sinduscon) e replicá-lo por empresa seria copiar dado
+    público. Escrita por comando/job; a API é read-only e gateada pelo
+    entitlement `orcamento`.
+    """
+
+    indice_id = models.AutoField(primary_key=True)
+    codigo = models.CharField(max_length=20, unique=True, verbose_name=_("Código"))
+    nome = models.CharField(max_length=120, verbose_name=_("Nome"))
+    fonte = models.CharField(
+        max_length=80, blank=True, verbose_name=_("Fonte"),
+        help_text=_("FGV, IBGE, Sinduscon/UF — quem publica."),
+    )
+    uf = models.CharField(
+        max_length=2, blank=True, verbose_name=_("UF"),
+        help_text=_("Só para índices regionais, como o CUB."),
+    )
+    ativo = models.BooleanField(default=True, verbose_name=_("Ativo"))
+
+    class Meta:
+        verbose_name = _("Índice econômico")
+        verbose_name_plural = _("Índices econômicos")
+        ordering = ["codigo"]
+
+    def __str__(self):
+        return f"{self.codigo} — {self.nome}"
+
+
+class ValorIndice(models.Model):
+    """O número do índice numa competência.
+
+    Guarda o **número-índice** (a série encadeada), não só a variação: reajuste
+    contratual é razão entre dois pontos da série (``I_t / I_0``), e reconstituir
+    isso somando variações mês a mês acumula erro de arredondamento que aparece
+    como centavo de diferença num contrato de milhões. A variação fica junto
+    porque é o que a imprensa publica e o que o usuário confere.
+    """
+
+    valor_id = models.AutoField(primary_key=True)
+    indice = models.ForeignKey(
+        IndiceEconomico, on_delete=models.CASCADE, related_name="valores", verbose_name=_("Índice"),
+    )
+    competencia = models.DateField(
+        verbose_name=_("Competência"), help_text=_("Sempre o dia 1º do mês de referência."),
+    )
+    numero_indice = models.DecimalField(
+        max_digits=16, decimal_places=6, verbose_name=_("Número-índice"),
+    )
+    variacao_percentual = models.DecimalField(
+        max_digits=8, decimal_places=4, null=True, blank=True, verbose_name=_("Variação no mês (%)"),
+    )
+
+    class Meta:
+        verbose_name = _("Valor de índice")
+        verbose_name_plural = _("Valores de índice")
+        ordering = ["indice", "-competencia"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["indice", "competencia"], name="orcamento_indice_competencia_unica",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.indice.codigo} {self.competencia:%m/%Y} = {self.numero_indice}"
+
+
+class FormulaReajuste(TenantScopedModel):
+    """A **fórmula paramétrica de reajuste** do contrato, como o edital a define::
+
+        R = V × [ a + Σ pᵢ × (Iᵢ,t / Iᵢ,0) ]
+
+    onde `a` é a parcela **não reajustável** e cada `pᵢ` é o peso de um índice
+    setorial. Contratos de obra pública quase sempre usam uma cesta (mão de
+    obra, materiais, equipamentos) em vez de um índice único, e é por isso que a
+    fórmula é uma tabela de parcelas e não um campo.
+
+    **Reajustar não é reprecificar.** A reprecificação (`Reprecificacao`) troca o
+    preço unitário pela cotação de outra publicação, item a item — muda a
+    *composição* do custo. O reajuste multiplica tudo por um fator contratual,
+    sem tocar em composição, e é ato de contrato: em orçamento aprovado ele
+    exige revisão, que é onde o histórico mora.
+    """
+
+    formula_id = models.AutoField(primary_key=True)
+    orcamento = models.ForeignKey(
+        Orcamento, on_delete=models.CASCADE, related_name="formulas_reajuste",
+        verbose_name=_("Orçamento"),
+    )
+    nome = models.CharField(max_length=120, default="Reajuste contratual", verbose_name=_("Nome"))
+    data_base = models.DateField(
+        verbose_name=_("Data-base (I₀)"),
+        help_text=_("A competência do denominador — normalmente a data-base do orçamento."),
+    )
+    parcela_fixa = models.DecimalField(
+        max_digits=6, decimal_places=4, default=Decimal("0"),
+        verbose_name=_("Parcela não reajustável (a)"),
+        help_text=_("Fração de 0 a 1. A soma de 'a' com os pesos precisa fechar em 1."),
+        validators=[MinValueValidator(Decimal("0"))],
+    )
+    observacao = models.TextField(blank=True, verbose_name=_("Observação"))
+
+    class Meta:
+        verbose_name = _("Fórmula de reajuste")
+        verbose_name_plural = _("Fórmulas de reajuste")
+        ordering = ["orcamento", "nome"]
+
+    def __str__(self):
+        return f"{self.nome} (base {self.data_base:%m/%Y})"
+
+
+class ParcelaFormulaReajuste(TenantScopedModel):
+    """Uma parcela da cesta: índice × peso."""
+
+    parcela_id = models.AutoField(primary_key=True)
+    formula = models.ForeignKey(
+        FormulaReajuste, on_delete=models.CASCADE, related_name="parcelas", verbose_name=_("Fórmula"),
+    )
+    indice = models.ForeignKey(
+        IndiceEconomico, on_delete=models.PROTECT, related_name="+", verbose_name=_("Índice"),
+    )
+    peso = models.DecimalField(
+        max_digits=6, decimal_places=4, default=Decimal("0"), verbose_name=_("Peso (p)"),
+        help_text=_("Fração de 0 a 1."),
+        validators=[MinValueValidator(Decimal("0"))],
+    )
+    rotulo = models.CharField(
+        max_length=80, blank=True, verbose_name=_("Rótulo"),
+        help_text=_("'Mão de obra', 'Materiais' — como o edital nomeia a parcela."),
+    )
+
+    class Meta:
+        verbose_name = _("Parcela da fórmula de reajuste")
+        verbose_name_plural = _("Parcelas da fórmula de reajuste")
+        ordering = ["formula", "parcela_id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["formula", "indice"], name="orcamento_formula_indice_unico",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.rotulo or self.indice.codigo}: {self.peso}"

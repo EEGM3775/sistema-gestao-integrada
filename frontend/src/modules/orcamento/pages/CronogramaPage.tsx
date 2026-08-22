@@ -5,12 +5,13 @@ import { useAuth } from '@/hooks/useAuth'
 import PaginaShell from '../components/PaginaShell'
 import { CurvaSGrafico, GraficoEstilos } from '../components/graficos'
 import { Aviso, Btn, Card, CAPS, Empty, Field, inp, Kpi, Loading, Modal, mono, Pill, SectHead, Select, Seletor } from '../ui'
-import { brl, brlCurto, mesBR, paraDecimal, paraEdicao, pct } from '../lib'
+import { brl, brlCurto, mesBR, num, paraDecimal, paraEdicao, pct } from '../lib'
 import {
-  useAtualizarParcela, useCronograma, useCurvaS, useDistribuirCronograma, useObras, useOrcamentos,
+  useAtualizarParcela, useCronograma, useCurvaS, useDesembolsoInsumos, useDistribuirCronograma,
+  useObras, useOrcamentos,
 } from '../hooks'
 
-type Aba = 'grade' | 'curva'
+type Aba = 'grade' | 'curva' | 'insumos'
 
 export default function CronogramaPage() {
   const { hasPermission } = useAuth()
@@ -83,6 +84,10 @@ export default function CronogramaPage() {
           opcoes={[
             { valor: 'grade' as Aba, rotulo: 'Grade física-financeira' },
             { valor: 'curva' as Aba, rotulo: 'Curva S' },
+            // ORC.7 — a grade por etapa responde ao financeiro ("quanto sai em
+            // setembro?"); esta responde a quem compra ("quantas toneladas de
+            // aço preciso ter em obra em setembro?").
+            { valor: 'insumos' as Aba, rotulo: 'Desembolso por insumo' },
           ]}
         />
       )}
@@ -250,11 +255,13 @@ export default function CronogramaPage() {
                     preço na planilha. A linha de baixo é o <b>desembolso previsto</b> do mês, que alimenta
                     o fluxo de caixa projetado no{' '}
                     <Link to="/app/erp" style={{ color: 'inherit', fontWeight: 700 }}>ERP</Link>.
-                    Gantt, precedências e avanço medido são do módulo <b>APS</b>, não daqui.
+                    Gantt, precedências e avanço medido são do módulo <b>PDCA</b>, não daqui.
                   </span>
                 </Aviso>
               </>
             )}
+
+            {aba === 'insumos' && orcamentoId && <PainelDesembolso orcamentoId={orcamentoId} />}
 
             {aba === 'curva' && (
               <>
@@ -385,5 +392,103 @@ function ModalDistribuir({ salvando, onFechar, onDistribuir }: {
       </div>
       <Pill kind="slate">Substitui a distribuição atual do orçamento</Pill>
     </Modal>
+  )
+}
+
+/** O desembolso na granularidade do **insumo** (ORC.7).
+ *
+ *  A distribuição é herdada da etapa, não inventada: o insumo cai nas
+ *  competências que o planejador já distribuiu, na proporção do valor que ele
+ *  tem em cada uma. Uma curva própria por insumo seria planejamento fabricado —
+ *  e o módulo não fabrica dado. */
+function PainelDesembolso({ orcamentoId }: { orcamentoId: number }) {
+  const [categoria, setCategoria] = useState('')
+  const { data, isLoading } = useDesembolsoInsumos(orcamentoId, categoria || undefined)
+
+  if (isLoading) return <Loading texto="Distribuindo os insumos no tempo…" />
+  if (!data) return <Empty>Sem dados.</Empty>
+
+  return (
+    <>
+      <SectHead
+        right={
+          <Seletor
+            compacto
+            valor={categoria}
+            onChange={setCategoria}
+            opcoes={[
+              { valor: '', rotulo: 'Todas' },
+              { valor: 'material', rotulo: 'Material' },
+              { valor: 'equipamento', rotulo: 'Equipamento' },
+              { valor: 'mao_de_obra', rotulo: 'Mão de obra' },
+            ]}
+          />
+        }
+      >
+        Quanto de cada insumo cai em cada mês
+      </SectHead>
+
+      {!data.insumos.length && !data.sem_distribuicao.length && (
+        <Empty>
+          Nenhum insumo consolidado. Explodir as composições em <b>Orçar</b> é o passo que falta —
+          sem isso o cronograma sabe quanto sai em cada mês, e não sabe <i>de quê</i>.
+        </Empty>
+      )}
+
+      {!!data.insumos.length && (
+        <Card pad={false} style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+            <thead>
+              <tr style={{ color: 'var(--ink-3)', textAlign: 'left' }}>
+                <th style={{ padding: '8px 10px', position: 'sticky', left: 0, background: 'var(--surface)' }}>Insumo</th>
+                <th style={{ padding: '8px 10px', width: 54 }}>Und</th>
+                <th style={{ padding: '8px 10px', textAlign: 'right', width: 110 }}>Total</th>
+                {data.competencias.map(c => (
+                  <th key={c} style={{ padding: '8px 10px', textAlign: 'right', minWidth: 108 }}>{mesBR(c)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {data.insumos.map((linha, i) => (
+                <tr key={`${linha.item ?? linha.descricao}-${i}`} style={{ borderTop: '1px solid var(--line)' }}>
+                  <td style={{ padding: '6px 10px', position: 'sticky', left: 0, background: 'var(--surface)' }}>
+                    {linha.descricao}
+                  </td>
+                  <td style={{ padding: '6px 10px', color: 'var(--ink-3)' }}>{linha.unidade}</td>
+                  <td style={{ ...mono, padding: '6px 10px', textAlign: 'right', fontWeight: 650 }}>
+                    {num(linha.quantidade_total)}
+                  </td>
+                  {data.competencias.map(c => {
+                    const mes = linha.meses[c]
+                    return (
+                      <td key={c} style={{ ...mono, padding: '6px 10px', textAlign: 'right' }}>
+                        {mes ? (
+                          <>
+                            {num(mes.quantidade)}
+                            <span style={{ display: 'block', fontSize: 10.5, color: 'var(--ink-3)' }}>
+                              {brlCurto(mes.valor)}
+                            </span>
+                          </>
+                        ) : <span style={{ color: 'var(--ink-3)' }}>—</span>}
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      )}
+
+      {!!data.sem_distribuicao.length && (
+        <Aviso tom="amber">
+          <AlertTriangle size={15} style={{ flex: 'none', marginTop: 1 }} />
+          <span>
+            <b>{data.sem_distribuicao.length}</b> insumo(s) ficaram fora da grade: as etapas das linhas
+            em que aparecem não têm cronograma distribuído. {data.nota_sem_distribuicao}
+          </span>
+        </Aviso>
+      )}
+    </>
   )
 }

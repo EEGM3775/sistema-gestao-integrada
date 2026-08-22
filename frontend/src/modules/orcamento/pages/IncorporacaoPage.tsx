@@ -304,7 +304,7 @@ function ComparativoParametrico({ parametroId, obraId }: { parametroId: number; 
         <Aviso tom="amber">
           <AlertTriangle size={15} style={{ flex: 'none', marginTop: 1 }} />
           {dados.detalhe ?? 'A obra ainda não tem orçamento analítico aprovado para comparar.'}{' '}
-          <Link to={`/app/orcamento/orcar?obra=${obraId}`} style={{ color: 'inherit', fontWeight: 700 }}>Montar a planilha</Link>.
+          <Link to={`/app/orcamento/orcar/obra/${obraId}`} style={{ color: 'inherit', fontWeight: 700 }}>Montar a planilha</Link>.
         </Aviso>
       ) : (
         <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap' }}>

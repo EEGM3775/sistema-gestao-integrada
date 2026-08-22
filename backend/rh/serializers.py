@@ -1,9 +1,19 @@
 # backend/rh/serializers.py
 # Este arquivo define como os modelos do app 'rh' são convertidos para o formato JSON para a API.
 from rest_framework import serializers
+from funcoesimpexp.entrega import ArquivoGateadoSerializerMixin
 from nucleo.tenant_validators import TenantScopedUniqueSerializerMixin
 from nucleo.field_masking import FieldMaskingSerializerMixin
 from nucleo.upload_validation import UploadValidationMixin
+from .impexp import (
+    ESPECIE_ASO,
+    ESPECIE_CTPS,
+    ESPECIE_DOCUMENTO,
+    ESPECIE_HOLERITE,
+    RECURSO_ASO,
+    RECURSO_DOCUMENTOS,
+    RECURSO_HOLERITE,
+)
 from .models import (
     Cargo,
     Funcionario,
@@ -27,14 +37,23 @@ class CargoSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSerial
         # DRF o exigiria no payload); read-only para não travar a criação.
         read_only_fields = ['tenant']
 
-class FuncionarioSerializer(UploadValidationMixin, FieldMaskingSerializerMixin, TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
+class FuncionarioSerializer(ArquivoGateadoSerializerMixin, UploadValidationMixin, FieldMaskingSerializerMixin, TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
     """Ficha do funcionário — PII mascarada por permissão (Fase 9.C).
 
     Substitui o hack ad-hoc do ``salario_base`` (que checava o nome do papel
     ``rh_financeiro``): agora o CPF exige ``rh.cpf.view`` e o salário exige
     ``rh.folha.view``. Quem só tem ``rh.funcionario.view`` vê o cadastro, mas
     com CPF e salário mascarados — a ficha "para de chover 403".
+
+    **A CTPS é o caso que mostrava o buraco do D70 inteiro numa linha:** o
+    serializer mascarava `cpf` e entregava, no mesmo JSON, a URL do PDF da
+    carteira de trabalho — onde o CPF está em claro, e sem gate nenhum. A máscara
+    protegia o campo e o arquivo passava por baixo dela.
     """
+    #: D70 — o campo continua sendo o do modelo (escrita intacta); só a leitura
+    #: passa a apontar para a porta única, com `rh.documento.view` na frente.
+    arquivos_gateados = {"carteira_trabalho": (RECURSO_DOCUMENTOS, ESPECIE_CTPS)}
+
     class Meta:
         model = Funcionario
         fields = '__all__'
@@ -68,19 +87,24 @@ class DadoMedicoFuncionarioSerializer(FieldMaskingSerializerMixin, serializers.M
         "observacoes_medicas": "rh.dado_medico.view",
     }
 
-class ASOFuncionarioSerializer(UploadValidationMixin, serializers.ModelSerializer):
+class ASOFuncionarioSerializer(ArquivoGateadoSerializerMixin, UploadValidationMixin, serializers.ModelSerializer):
+    """ASO — atestado de saúde ocupacional (1 por ano, por exame).
+
+    **Dado de saúde (LGPD art. 11).** O arquivo sai por `rh.dado_medico.view`,
+    a mesma permissão que mascara o prontuário no `DadoMedicoFuncionarioSerializer` —
+    antes do D70 ele era baixável de `/media/asos_funcionarios/` sem token.
     """
-    Serializador para o modelo ASOFuncionario (registros de exame ocupacional, 1 por ano).
-    """
+    arquivos_gateados = {"arquivo": (RECURSO_ASO, ESPECIE_ASO)}
+
     class Meta:
         model = ASOFuncionario
         fields = '__all__'
         read_only_fields = ['tenant']
 
-class DocumentoFuncionarioSerializer(UploadValidationMixin, serializers.ModelSerializer):
-    """
-    Serializador para o modelo DocumentoFuncionario.
-    """
+class DocumentoFuncionarioSerializer(ArquivoGateadoSerializerMixin, UploadValidationMixin, serializers.ModelSerializer):
+    """RG, CPF, CNH, comprovante — a pasta do colaborador, gateada (D70)."""
+    arquivos_gateados = {"arquivo": (RECURSO_DOCUMENTOS, ESPECIE_DOCUMENTO)}
+
     class Meta:
         model = DocumentoFuncionario
         fields = '__all__'
@@ -116,8 +140,14 @@ class PagamentoFuncionarioSerializer(FieldMaskingSerializerMixin, serializers.Mo
         "bonus": "rh.folha.view",
     }
 
-class FolhaPagamentoSerializer(UploadValidationMixin, FieldMaskingSerializerMixin, serializers.ModelSerializer):
-    """Folha de pagamento — valores financeiros mascarados por ``rh.folha.view``."""
+class FolhaPagamentoSerializer(ArquivoGateadoSerializerMixin, UploadValidationMixin, FieldMaskingSerializerMixin, serializers.ModelSerializer):
+    """Folha de pagamento — valores financeiros mascarados por ``rh.folha.view``.
+
+    O holerite segue o **mesmo** gate dos valores: mascarar `salario_liquido` e
+    entregar o PDF que o contém era a mesma incoerência do CPF com a CTPS (D70).
+    """
+    arquivos_gateados = {"holerite": (RECURSO_HOLERITE, ESPECIE_HOLERITE)}
+
     class Meta:
         model = FolhaPagamento
         fields = '__all__'

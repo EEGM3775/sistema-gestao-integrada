@@ -1,0 +1,72 @@
+D43 - os 15 DWGs que o motor livre ainda nao abre   (medido em 09/08/2026)
+
+Todos tem cabecalho AC10xx DENTRO do alcance do motor livre, entao nenhum
+deles e limite de plano - se fossem, a mensagem seria outra.
+
+O que se quer saber de cada arquivo, e so isso:
+  1. ABRE no AutoCAD/BricsCAD?
+  2. Se abre, o desenho esta INTEIRO (nao so o carimbo)?
+
+Por que importa: se abre inteiro, o arquivo e bom e o defeito e do LibreDWG
+- fica na nossa fila de conserto. Se nao abre nem no CAD, o arquivo e que
+esta corrompido, e a mensagem certa passa a ser outra (nao e defeito nosso).
+Enquanto isso nao for sabido, contamos os 15 como problema NOSSO.
+
+============================================================================
+GRUPO A - o dwg2dxf nao consegue DECODIFICAR o DWG
+          o DXF sai truncado, sem a tag EOF  (12 arquivos)
+          >>> sao estes que mais interessam <<<
+============================================================================
+
+  [AC1024]   15.8 MB   2115 erros do decodificador
+  C:\Users\Edison-Engenharia\OneDrive\Documentos\Doc Edison\2024_05_20__11_18_29\557581198927\Attach\Media\WhatsApp Documents\Sent\01 LOTEAMENTO PORTAL RESIDENCE.dwg
+
+  [AC1027]    4.1 MB   1719 erros do decodificador
+  C:\Users\Edison-Engenharia\OneDrive\Estudos\UFRB\Eng. Civil\Saneamento\Projeto\Planta Projeto Impressão Final.dwg_recover.dwg
+
+  [AC1024]    3.6 MB   334 erros do decodificador
+  C:\Users\Edison-Engenharia\OneDrive\Projetos\Alagoinhas\Adriana Fisio\02 - IDEALFISIO ADRIANA PARA PCI (2).dwg
+
+  [AC1027]    3.4 MB   315 erros do decodificador
+  C:\Users\Edison-Engenharia\OneDrive\Estudos\UFRB\Projetos\Projeto AUTO2E\Pav 2\anexo-I-projetos\INST_ELETRICA_TELCOM\INSTALAÇÃO ELÉTRICA\UFRB-CRUZ-ELETRICA1-PAV-AULAS.dwg
+
+  [AC1024]    3.5 MB   126 erros do decodificador
+  C:\Users\Edison-Engenharia\OneDrive\Projetos\Santo Antonio de Jesus\Taluma Cons\Portal Residence I\Praças\PRAÇA AVENIDA 01_10_2020.dwg
+
+  [AC1021]    4.9 MB   102 erros do decodificador
+  C:\Users\Edison-Engenharia\OneDrive\Estudos\Cursos\Aprovação de Casa\PROJETO FINANCIAMENTO 240,82 m².dwg
+
+  [AC1018]    2.5 MB   42 erros do decodificador
+  C:\Users\Edison-Engenharia\OneDrive\Estudos\UFRB\Eng. Civil\TCC\anexos sipef\ANEXO II Projetos\PROJETOS COMPLEMENTARES\ELÉTRICA\UFRB-CTC-ELE-PE-002-IF-1ºA-R02.dwg
+
+  [AC1018]    1.5 MB   24 erros do decodificador
+  C:\Users\Edison-Engenharia\OneDrive\Estudos\UFRB\Eng. Civil\TCC\anexos sipef\ANEXO II Projetos\PROJETOS COMPLEMENTARES\HIDROSANITÁRIO\UFRB-CTC-HID-PE-AP-R00\UFRB-CTC-HID-PE-001-AP-TE-R01.dwg
+
+  [AC1027]    2.2 MB   14 erros do decodificador
+  C:\Users\Edison-Engenharia\OneDrive\Documentos\Doc Edison\2024_05_20__11_18_29\557581198927\Attach\Media\WhatsApp Documents\PROJETO PORTAL 02_2022.dwg
+
+  [AC1021]   16.2 MB   13 erros do decodificador
+  C:\Users\Edison-Engenharia\OneDrive\Documentos\Doc Edison\2024_05_20__11_18_29\557581198927\Attach\Media\WhatsApp Documents\ESGOTO 2023.dwg
+
+  [AC1018]    1.9 MB   10 erros do decodificador
+  C:\Users\Edison-Engenharia\OneDrive\Documentos\Doc Edison\2024_05_20__11_18_29\557581198927\Attach\Media\WhatsApp Documents\Sent\aerhetg.DWG
+
+  [AC1021]    3.8 MB   7 erros do decodificador
+  C:\Users\Edison-Engenharia\OneDrive\Documentos\Doc Edison\2024_05_20__11_18_29\557581198927\Attach\Media\WhatsApp Documents\PROJETO_NOVO_11_04_2024.dwg
+
+============================================================================
+GRUPO B - o DXF sai COMPLETO (tem EOF) e o ezdxf ainda assim nao le  (3)
+          outra familia de defeito, provavelmente mais rasa
+============================================================================
+
+  [AC1018]    0.8 MB   7 erros
+  motivo: ezdxf: Invalid DXF attribute "name" for entity VERTEX
+  C:\Users\Edison-Engenharia\OneDrive\Documentos\Doc Edison\2024_05_20__11_18_29\557581198927\Attach\Media\WhatsApp Documents\As-Built_REAL CONDOMINIO_JANEIRO 2021 (1).DWG
+
+  [AC1032]    9.2 MB   8 erros
+  motivo: o remendo do D43 disparou (8x) e revelou o defeito seguinte: KeyError da camada '00 - CADASTRO'
+  C:\Users\Edison-Engenharia\OneDrive\Documentos\Doc Edison\2024_05_20__11_18_29\557581198927\Attach\Media\WhatsApp Documents\JAMYLLE E PAULO_plantas executivas_R03.dwg
+
+  [AC1015]   13.8 MB   21 erros
+  motivo: ezdxf: name has to be a string, got NoneType (registro de tabela sem nome)
+  C:\Users\Edison-Engenharia\OneDrive\Projetos\Aratuipe\Passarela\FILE.DWG

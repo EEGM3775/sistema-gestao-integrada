@@ -3,7 +3,7 @@ import { X, RefreshCw, Loader2, ImageOff } from 'lucide-react'
 import { getAnaliseDetalhes, reprocessarAnalise } from '../hooks/useAnalisesIA'
 import { extractApiError } from '../hooks/useDiario'
 import AnaliseStatusBadge from './AnaliseStatusBadge'
-import { mediaUrl } from '@/lib/utils'
+import { useArquivoBlob } from '@/lib/arquivo'
 import type { AnaliseDocumentoDetalhes } from '@/types'
 
 interface Props {
@@ -91,7 +91,9 @@ export const AnaliseModal: React.FC<Props> = ({ documentoId, fallbackImage, onCl
     }
   }
 
-  const imageSrc = mediaUrl(data?.url_imagem ?? fallbackImage)
+  // D70 — a imagem exige token: baixa por XHR e vira object URL. O `fallbackImage`
+  // vem da miniatura que abriu o modal, e já é a URL da porta única.
+  const { objeto: imageSrc } = useArquivoBlob(data?.url_imagem ?? fallbackImage ?? null)
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4"

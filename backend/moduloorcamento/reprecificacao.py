@@ -29,6 +29,7 @@ mexer no que já foi renegociado à mão.
 """
 from __future__ import annotations
 
+from datetime import date, datetime
 from decimal import Decimal
 
 from django.db import transaction
@@ -43,6 +44,37 @@ from .planilha import dinheiro, exigir_editavel, recalcular_orcamento
 
 class ReprecificacaoInvalida(Exception):
     """Operação pedida sobre lote/orçamento em estado que não permite."""
+
+
+def _como_data(valor) -> date | None:
+    """Normaliza a data de corte, que chega em dois formatos por dois caminhos.
+
+    Do shell e dos testes vem `date`; **da API vem string** — o corpo do POST é
+    JSON, e JSON não tem tipo data. Sem esta coerção a comparação
+    `item.data_base_preco > somente_ate` virava `date > str` e derrubava a
+    requisição com 500, embora todo teste passasse: eles chamam o serviço com
+    `date` já pronto, e o defeito morava exatamente no degrau entre os dois.
+
+    Aceita ISO (`2026-08-17`, que é o que o `<input type="date">` manda) e o
+    `dd/mm/aaaa` que o brasileiro digita, porque um dia alguém vai mandar o
+    segundo. O que não for data vira `ReprecificacaoInvalida`, que a view já
+    traduz para 400 — erro do pedido, não do servidor.
+    """
+    if valor in (None, ""):
+        return None
+    if isinstance(valor, datetime):
+        return valor.date()
+    if isinstance(valor, date):
+        return valor
+    texto = str(valor).strip()
+    for formato in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(texto[:10], formato).date()
+        except ValueError:
+            continue
+    raise ReprecificacaoInvalida(
+        f"Data de corte inválida: {valor!r}. Use AAAA-MM-DD ou DD/MM/AAAA."
+    )
 
 
 def _precos_do_destino(*, base: BaseReferencial | None, banco: BancoPreco | None) -> dict[str, dict]:
@@ -93,6 +125,7 @@ def gerar_previa(
         raise ReprecificacaoInvalida("Escolha a publicação ou o banco de destino.")
     if base_destino is not None and banco_destino is not None:
         raise ReprecificacaoInvalida("Escolha só uma origem de preço.")
+    somente_ate = _como_data(somente_ate)
 
     precos = _precos_do_destino(base=base_destino, banco=banco_destino)
     data_base_destino = base_destino.mes_referencia if base_destino else banco_destino.mes_referencia
@@ -120,11 +153,39 @@ def gerar_previa(
     ).exclude(codigo_referencia="")
 
     linhas: list[LinhaReprecificacao] = []
+    descontinuadas = 0
     for item in candidatas:
         if somente_ate and item.data_base_preco and item.data_base_preco > somente_ate:
             continue
         novo = precos.get(item.codigo_referencia)
         if novo is None:
+            # O código sumiu da publicação de destino — a SINAPI aposenta itens
+            # todo mês. Pular em silêncio (o que se fazia aqui) deixava a linha
+            # com o preço velho enquanto o cabeçalho passava a anunciar a
+            # data-base nova: a planilha mentia, e mentia com aparência de
+            # certa, que é o pior tipo de erro numa peça de licitação. Entra no
+            # lote como aviso, com `custo_depois == custo_antes` para não mover
+            # nada e `selecionada=False` para nunca ser aplicada.
+            descontinuadas += 1
+            linhas.append(LinhaReprecificacao(
+                tenant_id=orcamento.tenant_id,
+                reprecificacao=lote,
+                item_orcado=item,
+                custo_antes=item.custo_unitario,
+                custo_depois=item.custo_unitario,
+                fonte_antes=item.fonte_referencia or "",
+                codigo_antes=item.codigo_referencia or "",
+                data_base_antes=item.data_base_preco,
+                fonte_depois="",
+                codigo_depois="",
+                data_base_depois=None,
+                selecionada=False,
+                descontinuado=True,
+                motivo=(
+                    f"Código {item.codigo_referencia} não existe na publicação de "
+                    f"destino — preço mantido de {item.data_base_preco or 'origem desconhecida'}."
+                )[:255],
+            ))
             continue
         if novo["custo"] == item.custo_unitario:
             continue
@@ -146,9 +207,12 @@ def gerar_previa(
     if linhas:
         LinhaReprecificacao.objects.bulk_create(linhas, batch_size=500)
 
-    lote.linhas_afetadas = len(linhas)
+    # `linhas_afetadas` conta preço que muda. A descontinuada não muda preço
+    # nenhum — somá-la aqui faria o lote anunciar um efeito que ele não tem.
+    lote.linhas_afetadas = len(linhas) - descontinuadas
+    lote.linhas_descontinuadas = descontinuadas
     lote.total_depois = _total_simulado(orcamento, linhas)
-    lote.save(update_fields=["linhas_afetadas", "total_depois"])
+    lote.save(update_fields=["linhas_afetadas", "linhas_descontinuadas", "total_depois"])
     return lote
 
 
@@ -164,6 +228,8 @@ def _total_simulado(orcamento: Orcamento, linhas: list[LinhaReprecificacao]) -> 
     fator = Decimal("1") + (orcamento.bdi_percentual or Decimal("0")) / Decimal("100")
     delta = Decimal("0")
     for linha in linhas:
+        if linha.descontinuado:
+            continue  # não tem preço novo; entrou no lote só para ser vista
         quantidade = linha.item_orcado.quantidade or Decimal("0")
         delta += (linha.custo_depois - linha.custo_antes) * quantidade * fator
     return dinheiro((orcamento.valor_total or Decimal("0")) + delta)
@@ -191,10 +257,13 @@ def aplicar(
     if selecionadas is not None:
         escolhidas = set(selecionadas)
         for linha in linhas:
-            linha.selecionada = linha.linha_id in escolhidas
+            # Descontinuada nunca é selecionável, nem que venha marcada no pedido:
+            # não existe preço novo para aplicar, e aceitar a seleção gravaria o
+            # preço velho como se fosse da publicação nova.
+            linha.selecionada = (linha.linha_id in escolhidas) and not linha.descontinuado
         LinhaReprecificacao.objects.bulk_update(linhas, ["selecionada"], batch_size=500)
 
-    aplicar_estas = [linha for linha in linhas if linha.selecionada]
+    aplicar_estas = [linha for linha in linhas if linha.selecionada and not linha.descontinuado]
     itens: list[ItemOrcado] = []
     for linha in aplicar_estas:
         item = linha.item_orcado
@@ -328,6 +397,7 @@ def serializar_previa(lote: Reprecificacao) -> dict:
             if lote.total_antes else None
         ),
         "linhas_afetadas": lote.linhas_afetadas,
+        "linhas_descontinuadas": lote.linhas_descontinuadas,
         "linhas": [
             {
                 "linha": linha.linha_id,
@@ -349,7 +419,69 @@ def serializar_previa(lote: Reprecificacao) -> dict:
                 "data_base_depois": linha.data_base_depois,
                 "selecionada": linha.selecionada,
                 "aplicada": linha.aplicada,
+                "descontinuado": linha.descontinuado,
+                "motivo": linha.motivo,
             }
             for linha in linhas
         ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# O aviso que fica no orçamento, depois que o lote passou
+# ---------------------------------------------------------------------------
+
+
+def avisos_de_data_base(orcamento: Orcamento) -> dict:
+    """Linhas cujo preço é mais velho que a data-base que a planilha anuncia.
+
+    O lote avisa **no momento** da reprecificação; este aviso é o que sobra
+    **depois**, e ele precisa existir porque é a planilha — não o lote — que vai
+    para a licitação. Quem abrir o orçamento seis meses depois não vai atrás do
+    histórico de lotes para descobrir que três linhas ficaram para trás.
+
+    Derivado, não gravado: a comparação é `ItemOrcado.data_base_preco` contra
+    `Orcamento.data_base`. Um campo "está desatualizada" gravado na linha seria
+    uma terceira verdade para manter sincronizada com as outras duas, e
+    dessincronizaria na primeira reprecificação parcial.
+
+    Pega mais do que o item descontinuado — pega também a linha que o operador
+    desmarcou na prévia, que é igualmente uma linha fora da data-base anunciada.
+    Isso é de propósito: para a auditoria as duas são o mesmo defeito.
+    """
+    if orcamento.data_base is None:
+        return {"tem_aviso": False, "data_base": None, "linhas_atrasadas": 0, "linhas": []}
+
+    atrasadas = (
+        ItemOrcado.objects
+        .filter(
+            orcamento=orcamento,
+            tipo_linha=ItemOrcado.TipoLinha.ANALITICO,
+            data_base_preco__lt=orcamento.data_base,
+        )
+        .exclude(codigo_referencia="")
+        .order_by("codigo_eap")
+    )
+    linhas = [
+        {
+            "item_orcado": item.pk,
+            "codigo_eap": item.codigo_eap,
+            "descricao": item.descricao,
+            "codigo_referencia": item.codigo_referencia,
+            "fonte_referencia": item.fonte_referencia,
+            "custo_unitario": str(item.custo_unitario),
+            "data_base_preco": item.data_base_preco,
+        }
+        for item in atrasadas
+    ]
+    return {
+        "tem_aviso": bool(linhas),
+        "data_base": orcamento.data_base,
+        "linhas_atrasadas": len(linhas),
+        "linhas": linhas,
+        "mensagem": (
+            f"{len(linhas)} linha(s) com preço anterior à data-base {orcamento.data_base:%m/%Y} "
+            f"da planilha — item aposentado pela fonte ou não reprecificado. "
+            f"O total não reflete a data-base anunciada."
+        ) if linhas else "",
     }

@@ -185,10 +185,10 @@ seguras, sessão real. Fica em portas separadas e não mexe no dev.
     docker run --rm -v $PWD/frontend:/app -w /app node:22-alpine npx tsc -b --pretty false
 
  Testes de ponta a ponta (com o DEV ligado):
-    python3 infra/gateway/phase4_e2e.py         (login e navegação geral)
-    python3 infra/gateway/phase6_rbac_test.py   (permissões)
-    python3 infra/gateway/phase8_tenancy_test.py (isolamento entre empresas)
-    python3 infra/gateway/phase9_auditoria_test.py (trilha de auditoria)
+    python3 testes/e2e/phase4_e2e.py         (login e navegação geral)
+    python3 testes/e2e/phase6_rbac_test.py   (permissões)
+    python3 testes/e2e/phase8_tenancy_test.py (isolamento entre empresas)
+    python3 testes/e2e/phase9_auditoria_test.py (trilha de auditoria)
 
 
 ============================================================
@@ -246,8 +246,94 @@ Antes de tudo: o Docker Desktop está ABERTO?
 
 
 ------------------------------------------------------------
+ CARREGAR A TABELA SINAPI (enquanto não existe o botão)
+------------------------------------------------------------
+O Orçamento precisa da tabela de preços da Caixa. Enquanto o botão do
+ORC.8 não fica pronto, a carga é por comando. Leva uns 10 segundos.
+
+1) BAIXAR o pacote no site da Caixa, pelo NAVEGADOR:
+   https://www.caixa.gov.br/site/Paginas/downloads.aspx
+   -> "SINAPI - Insumos e Composicoes" -> baixe o ZIP do mes.
+   (Baixe pelo navegador mesmo. O site recusa download por script.)
+
+2) DESCOMPACTAR e mandar os arquivos para dentro do sistema.
+   Troque CAMINHO pela pasta onde voce descompactou:
+
+   docker exec sgi-erp mkdir -p /tmp/sinapi
+   docker cp "CAMINHO/SINAPI_Preco_Ref_Insumos_*.xlsx"          sgi-erp:/tmp/sinapi/insumos.xlsx
+   docker cp "CAMINHO/SINAPI_Custo_Ref_Composicoes_Sintetico_*.xlsx" sgi-erp:/tmp/sinapi/sintetico.xlsx
+   docker cp "CAMINHO/SINAPI_Custo_Ref_Composicoes_Analitico_*.xlsx" sgi-erp:/tmp/sinapi/analitico.xlsx
+
+3) CONFERIR antes de gravar (--dry-run so conta, nao grava):
+   Troque BA e 2024-10 pelo seu estado e mes.
+   ATENCAO: "NaoDesonerado" = --regime onerado.
+
+   docker exec sgi-erp python manage.py importar_base_referencial \
+     --fonte sinapi --uf BA --mes 2024-10 --regime onerado \
+     --insumos /tmp/sinapi/insumos.xlsx \
+     --composicoes /tmp/sinapi/sintetico.xlsx \
+     --analitica /tmp/sinapi/analitico.xlsx --dry-run
+
+4) GRAVAR: o mesmo comando, SEM o --dry-run no final.
+
+4b) SE RECUSAR com "NAO IMPORTADO -- N classe(s) ... sem traducao":
+   nao e defeito. A publicacao usa palavras de classe que o sistema nao
+   traduz em natureza, e ele para antes de gravar em vez de chutar.
+   A propria mensagem lista quais sao e as duas saidas (declarar a
+   traducao, ou --aceitar-sem-classe). Leia a mensagem: ela e o manual.
+
+   Onde declarar e por que:
+   backend/moduloorcamento/dados/classes/README.md
+
+5) VER na tela: http://localhost:8090 -> Orcamento -> Bases & bancos.
+   Clique no cartao da publicacao para a lista aparecer.
+   O cartao avisa quando a publicacao nao classifica insumo, e diz quais
+   palavras nao foram entendidas.
+
+6) DEPOIS DE IMPORTAR: acertar a natureza dos itens ja adotados.
+   A publicacao traz a coluna "Classificacao" (MATERIAL, MAO DE OBRA,
+   EQUIPAMENTO, ENCARGOS COMPLEMENTARES...). Quem foi adotado antes disso
+   pode estar com a natureza errada -- e natureza errada muda encargo
+   social, ou seja, muda preco.
+
+   Conferir primeiro (nao grava nada, so mostra o de-para):
+   docker exec sgi-erp python manage.py reclassificar_itens_catalogo \
+     --all-tenants --dry-run
+
+   Aplicar: o mesmo comando SEM o --dry-run.
+   Ele corrige o catalogo e refaz so os orcamentos EM RASCUNHO.
+   Aprovado nao se mexe (e regua de medicao); a proxima revisao dele ja
+   nasce certa. Linha com preco digitado a mao mantem o preco -- o
+   comando corrige a categoria e avisa no relatorio.
+
+   SE a publicacao for ANTERIOR a 01/2025, o relatorio dira "Sem
+   classificacao na fonte: N item(ns)" -- ela nao traz a coluna, e a
+   natureza saiu da unidade. Para classificar a mao so o que importa:
+
+   docker exec sgi-erp python manage.py reclassificar_itens_catalogo \
+     --all-tenants --dry-run \
+     --de-para moduloorcamento/dados/classificacao-sinapi-ba-2024-10.csv
+
+   (esse arquivo e o exemplo pronto da SINAPI BA 10/2024)
+
+   NAO confundir os dois arquivos:
+   - dados/classes/<fonte>.csv -> por CLASSE, vale para a fonte toda
+   - --de-para arquivo.csv     -> por CODIGO, vale para item ja adotado
+
+   O desenho dos dois esta na planta:
+   docs/modulos/moduloorcamento.md
+
+Reimportar o mesmo mes NAO duplica: atualiza o preco.
+CUIDADO: hoje o --dry-run ja cria a publicacao vazia (achado A15). Se
+uma publicacao com 0 itens aparecer na lista, foi isso; rodar o comando
+de verdade a preenche.
+
+------------------------------------------------------------
  ANOTAÇÕES (coisas que já deram trabalho)
 ------------------------------------------------------------
+- Frontend: o SPA e assado na imagem. "docker cp" de uma pasta para um
+  destino que JA EXISTE aninha (vira assets/assets) e o site quebra com
+  404 no bundle. Apague o destino antes: rm -rf .../assets && docker cp.
 - Bind-mount órfão do gateway: editar a conf trocou o inode e o Docker
   Desktop deixou o container preso ao inode antigo -> gateway caiu
   (exit 127). Corrigido recriando o container. Conf de container montada

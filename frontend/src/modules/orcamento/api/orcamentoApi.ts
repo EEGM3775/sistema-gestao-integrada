@@ -2,13 +2,20 @@ import apiClient from '@/api/apiClient'
 import type {
   ArvoreResposta, BancoPreco, BancoResumo, BaseReferencial, BaseResumo, CatalogoItem,
   ComponenteBancoPreco, ComponenteReferencia, ComposicaoBDI, ComposicaoReferenciaResposta,
-  ControleLinha, ControleResposta, Cronograma, CurvaABC,
+  ControleLinha, ControleResposta, Cronograma, CurvaABC, DivergenciaAdocao,
   CurvaS, CustoPorCategoria, EtapaOpt, InsumoReferencia, ItemAdotado,
   ItemBancoPreco, ItemOrcado,
+  AnaliticaOrcamento, NaturezaComPadroes, TipoItemProprio,
   MemoriaCalculo, MemorialNBR, ObraOpt, Orcamento, Paginated, ParametroObra,
   ParcelaEtapa, PastaComposicao, PavimentoObra, PrecoReal, PreviaReprecificacao, Reprecificacao,
   ResultadoAdocaoLote, ResumoDuplicata, RevisaoOrcamento, StatusModulo,
   UnidadeAutonoma,
+  // ORC.7
+  CoberturaMedicao, ComposicaoEncargos, ComposicaoPorNatureza, CurvaABCInsumos,
+  DemandaGerada, DesembolsoPorInsumo, FormulaReajuste, IndiceEconomico, LinhaMedicao,
+  MemoriaFator, MemoriaQuantitativo, ParcelaFormulaReajuste, PreviaReajuste,
+  QuadroEncargos, RegimeEncargos, RelacaoInsumos, ResultadoReajuste, RubricaEncargos,
+  TipoMaoDeObra, ValorIndice,
 } from '../types'
 
 type Params = Record<string, unknown>
@@ -66,6 +73,9 @@ export const adotarLote = async (referencias: number[]) =>
 
 export const getArvore = async (orcamentoId: number) =>
   (await apiClient.get<ArvoreResposta>(`orcamento/orcamentos/${orcamentoId}/arvore/`)).data
+
+export const getAnalitica = async (orcamentoId: number) =>
+  (await apiClient.get<AnaliticaOrcamento>(`orcamento/orcamentos/${orcamentoId}/analitica/`)).data
 
 export const recalcular = async (orcamentoId: number) =>
   (await apiClient.post<Orcamento>(`orcamento/orcamentos/${orcamentoId}/recalcular/`)).data
@@ -134,6 +144,28 @@ export async function listarEtapas(obra: number) {
   return Array.isArray(data) ? data : data.results
 }
 
+// --- ORC.9: tipos próprios de item (catálogo, permissão `cadastro.tipo_item`) ---
+
+export async function listarTiposItem() {
+  const { data } = await apiClient.get<Paginated<TipoItemProprio> | TipoItemProprio[]>(
+    'catalogo/tipos-item/',
+  )
+  return Array.isArray(data) ? data : data.results
+}
+
+export const listarNaturezasItem = async () =>
+  (await apiClient.get<NaturezaComPadroes[]>('catalogo/tipos-item/naturezas/')).data
+
+export const criarTipoItem = async (payload: Partial<TipoItemProprio>) =>
+  (await apiClient.post<TipoItemProprio>('catalogo/tipos-item/', payload)).data
+
+export const atualizarTipoItem = async (id: number, payload: Partial<TipoItemProprio>) =>
+  (await apiClient.patch<TipoItemProprio>(`catalogo/tipos-item/${id}/`, payload)).data
+
+export const removerTipoItem = async (id: number) => {
+  await apiClient.delete(`catalogo/tipos-item/${id}/`)
+}
+
 export async function buscarNoCatalogo(busca: string) {
   const { data } = await apiClient.get<Paginated<CatalogoItem> | CatalogoItem[]>('catalogo/itens/', {
     params: { search: busca, page_size: 40, ativo: true },
@@ -166,7 +198,9 @@ export const destravarBanco = async (id: number) =>
   (await apiClient.post<BancoPreco>(`orcamento/bancos/${id}/destravar/`)).data
 
 export const adotarDoBanco = async (bancoId: number, itens: number[]) =>
-  (await apiClient.post<{ adotados: number[]; criados: number }>(
+  (await apiClient.post<{
+    adotados: number[]; criados: number; divergentes: DivergenciaAdocao[]
+  }>(
     `orcamento/bancos/${bancoId}/adotar-lote/`, { itens },
   )).data
 
@@ -240,3 +274,92 @@ export async function baixarExportacao(
   URL.revokeObjectURL(url)
   return nome
 }
+
+// --- ORC.7: encargos analíticos, memória do quantitativo e reajuste ---
+
+export const encargos = recurso<ComposicaoEncargos, Partial<ComposicaoEncargos>>('encargos')
+export const rubricas = recurso<RubricaEncargos, Partial<RubricaEncargos>>('rubricas-encargos')
+export const medicoes = recurso<LinhaMedicao, Partial<LinhaMedicao>>('medicoes')
+export const indices = recurso<IndiceEconomico, never>('indices')
+export const formulasReajuste = recurso<FormulaReajuste, Partial<FormulaReajuste>>('formulas-reajuste')
+export const parcelasReajuste =
+  recurso<ParcelaFormulaReajuste, Partial<ParcelaFormulaReajuste>>('parcelas-reajuste')
+
+/** Cria o quadro já com as rubricas do modelo de partida — o usuário não digita
+ *  trinta linhas para chegar onde toda publicação já chega. */
+export const criarQuadroEncargos = async (body: {
+  orcamento: number; tipo_mao_de_obra: TipoMaoDeObra; regime?: RegimeEncargos
+}) => (await apiClient.post<ComposicaoEncargos>('orcamento/encargos/do-modelo/', body)).data
+
+export const getQuadroEncargos = async (id: number) =>
+  (await apiClient.get<QuadroEncargos>(`orcamento/encargos/${id}/quadro/`)).data
+
+export const recalcularEncargos = async (id: number) =>
+  (await apiClient.post<QuadroEncargos>(`orcamento/encargos/${id}/recalcular/`)).data
+
+export const getMemoriaQuantitativo = async (itemOrcadoId: number) =>
+  (await apiClient.get<MemoriaQuantitativo>(
+    `orcamento/itens/${itemOrcadoId}/memoria-quantitativo/`,
+  )).data
+
+export const getComposicaoNatureza = async (itemOrcadoId: number) =>
+  (await apiClient.get<ComposicaoPorNatureza>(
+    `orcamento/itens/${itemOrcadoId}/composicao-natureza/`,
+  )).data
+
+/** Grava várias parciais de uma vez — o caminho do colar do Excel. Uma a uma,
+ *  cada parcial dispararia um recálculo da árvore inteira. */
+export const salvarMedicoesEmLote = async (body: {
+  item_orcado: number
+  substituir?: boolean
+  linhas: Partial<LinhaMedicao>[]
+}) => (await apiClient.post<MemoriaQuantitativo>('orcamento/medicoes/em-lote/', body)).data
+
+export const getCoberturaMedicao = async (orcamentoId: number) =>
+  (await apiClient.get<CoberturaMedicao>(
+    `orcamento/orcamentos/${orcamentoId}/cobertura-medicao/`,
+  )).data
+
+export const getRelacaoInsumos = async (orcamentoId: number, categoria?: string) =>
+  (await apiClient.get<RelacaoInsumos>(
+    `orcamento/orcamentos/${orcamentoId}/relacao-insumos/`,
+    { params: categoria ? { categoria } : {} },
+  )).data
+
+export const getCurvaAbcInsumos = async (orcamentoId: number) =>
+  (await apiClient.get<CurvaABCInsumos>(
+    `orcamento/orcamentos/${orcamentoId}/curva-abc-insumos/`,
+  )).data
+
+export const getDesembolsoInsumos = async (orcamentoId: number, categoria?: string) =>
+  (await apiClient.get<DesembolsoPorInsumo>(
+    `orcamento/orcamentos/${orcamentoId}/desembolso-insumos/`,
+    { params: categoria ? { categoria } : {} },
+  )).data
+
+export const getSerieIndice = async (indiceId: number) =>
+  (await apiClient.get<{ indice: number; codigo: string; valores: ValorIndice[] }>(
+    `orcamento/indices/${indiceId}/serie/`,
+  )).data
+
+export const getFatorReajuste = async (formulaId: number, competencia: string) =>
+  (await apiClient.get<MemoriaFator>(
+    `orcamento/formulas-reajuste/${formulaId}/fator/`, { params: { competencia } },
+  )).data
+
+export const getPreviaReajuste = async (formulaId: number, competencia: string) =>
+  (await apiClient.get<PreviaReajuste>(
+    `orcamento/formulas-reajuste/${formulaId}/previa/`, { params: { competencia } },
+  )).data
+
+export const aplicarReajuste = async (
+  formulaId: number, body: { competencia: string; motivo?: string },
+) => (await apiClient.post<ResultadoReajuste>(
+  `orcamento/formulas-reajuste/${formulaId}/aplicar/`, body,
+)).data
+
+/** O seam do SCM: a relação de insumos vira demanda de compra em rascunho.
+ *  O endpoint é **do SCM** — quem sabe o que é demanda é ele. */
+export const gerarDemandaDoOrcamento = async (body: {
+  orcamento: number; tipo?: 'material' | 'servico'; centro_custo?: number | null; observacao?: string
+}) => (await apiClient.post<DemandaGerada>('scm/demandas/do-orcamento/', body)).data

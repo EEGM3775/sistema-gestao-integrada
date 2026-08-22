@@ -23,8 +23,16 @@ from django.utils import timezone
 
 from catalogo.models import ComponenteComposicao, Item
 
+from . import identidade
 from .models import BancoPreco, ComponenteBancoPreco, InsumoReferencia, ItemBancoPreco
-from .services import UNIDADES_MAO_DE_OBRA, LIMITE_CODIGO_INTERNO
+from .services import (
+    LARGURA_CODIGO_INTERNO,
+    UNIDADES_MAO_DE_OBRA,
+    IdentidadeDivergente,
+    ResultadoAdocao,
+    flags_da_natureza,
+    natureza_da_classificacao,
+)
 
 
 class BancoTravado(Exception):
@@ -46,16 +54,23 @@ def exigir_editavel(banco: BancoPreco) -> None:
 def codigo_interno_para(item: ItemBancoPreco) -> str:
     """`PREFEITURA-01.02.003`, a partir do nome do banco."""
     prefixo = "".join(c for c in item.banco.nome.upper() if c.isalnum())[:12] or "BANCO"
-    return f"{prefixo}-{item.codigo}"[:LIMITE_CODIGO_INTERNO]
+    return f"{prefixo}-{item.codigo}"[:LARGURA_CODIGO_INTERNO]
 
 
 def _tipo_e_flags(item: ItemBancoPreco) -> tuple[str, dict]:
-    """Mesma heurística conservadora da adoção da base pública."""
+    """Mesma régua da adoção da base pública: classificação primeiro, unidade
+    como plano B. O banco próprio herda o `grupo` do item de origem quando foi
+    copiado da base, então a classificação da fonte continua valendo aqui."""
     if item.tipo == InsumoReferencia.Tipo.COMPOSICAO:
-        return Item.Tipo.COMPOSICAO, {"compravel": False, "estocavel": False, "consumivel": False}
-    if item.unidade.strip().upper() in UNIDADES_MAO_DE_OBRA:
-        return Item.Tipo.SERVICO, {"compravel": False, "estocavel": False, "consumivel": False}
-    return Item.Tipo.MATERIAL, {"compravel": True, "estocavel": True, "consumivel": True}
+        return Item.Tipo.COMPOSICAO, flags_da_natureza(Item.Tipo.COMPOSICAO)
+    natureza = natureza_da_classificacao(item.grupo, item.banco.fonte)
+    if natureza is None:
+        natureza = (
+            Item.Tipo.MAO_DE_OBRA
+            if item.unidade.strip().upper() in UNIDADES_MAO_DE_OBRA
+            else Item.Tipo.MATERIAL
+        )
+    return natureza, flags_da_natureza(natureza)
 
 
 def _localizar_item(tenant_id, item: ItemBancoPreco) -> Item | None:
@@ -72,11 +87,16 @@ def _localizar_item(tenant_id, item: ItemBancoPreco) -> Item | None:
 
 
 @transaction.atomic
-def adotar_no_catalogo(item: ItemBancoPreco, tenant_id, *, recursivo: bool = True) -> Item:
+def adotar_no_catalogo(
+    item: ItemBancoPreco, tenant_id, *, recursivo: bool = True, forcar: bool = False,
+) -> Item:
     """Traz o item do banco da empresa para o catálogo da empresa.
 
     Idempotente pelo mesmo par (fonte, código) da adoção pública, então adotar
-    duas vezes atualiza em vez de duplicar.
+    duas vezes atualiza em vez de duplicar — e, como lá, **confere a identidade
+    antes de sobrescrever** (D110). Aqui o risco é maior, não menor: o banco
+    próprio é onde entram as tabelas de prefeitura, que são justamente as que
+    reaproveitam código entre edições.
     """
     if not item.codigo or not item.unidade:
         raise AdocaoInvalida(
@@ -90,25 +110,37 @@ def adotar_no_catalogo(item: ItemBancoPreco, tenant_id, *, recursivo: bool = Tru
         for campo, valor in flags.items():
             setattr(alvo, campo, valor)
         alvo.tipo = tipo
+    elif not forcar:
+        divergencia = identidade.conferir(
+            descricao_catalogo=alvo.descricao,
+            unidade_catalogo=alvo.unidade,
+            descricao_publicacao=item.descricao,
+            unidade_publicacao=item.unidade,
+        )
+        if divergencia is not None:
+            raise IdentidadeDivergente(alvo, divergencia, codigo=item.codigo)
     alvo.descricao = item.descricao[:255]
     alvo.unidade = item.unidade[:20]
     alvo.codigo_referencia = item.codigo[:30]
     alvo.fonte_referencia = item.banco.fonte
+    alvo.publicacao_referencia = item.banco.nome[:120]
     if item.grupo and not alvo.categoria:
         alvo.categoria = item.grupo[:80]
     alvo.save()
 
     if recursivo and item.tipo == InsumoReferencia.Tipo.COMPOSICAO:
-        _adotar_componentes(item, alvo, tenant_id)
+        _adotar_componentes(item, alvo, tenant_id, forcar=forcar)
     return alvo
 
 
-def _adotar_componentes(item: ItemBancoPreco, item_pai: Item, tenant_id) -> None:
+def _adotar_componentes(
+    item: ItemBancoPreco, item_pai: Item, tenant_id, *, forcar: bool = False,
+) -> None:
     componentes = ComponenteBancoPreco.objects.filter(
         composicao=item
     ).select_related("filho", "filho__banco")
     for componente in componentes:
-        filho = adotar_no_catalogo(componente.filho, tenant_id, recursivo=True)
+        filho = adotar_no_catalogo(componente.filho, tenant_id, recursivo=True, forcar=forcar)
         if filho.pk == item_pai.pk:
             continue
         ComponenteComposicao.objects.update_or_create(
@@ -117,8 +149,19 @@ def _adotar_componentes(item: ItemBancoPreco, item_pai: Item, tenant_id) -> None
         )
 
 
-def adotar_muitos(itens, tenant_id, *, recursivo: bool = True) -> list[Item]:
-    return [adotar_no_catalogo(i, tenant_id, recursivo=recursivo) for i in itens]
+def adotar_muitos(
+    itens, tenant_id, *, recursivo: bool = True, forcar: bool = False,
+) -> ResultadoAdocao:
+    """Como o irmão público: divergente fica de fora e é reportado, o resto entra."""
+    resultado = ResultadoAdocao()
+    for item in itens:
+        try:
+            resultado.adotados.append(
+                adotar_no_catalogo(item, tenant_id, recursivo=recursivo, forcar=forcar)
+            )
+        except IdentidadeDivergente as exc:
+            resultado.divergentes.append(exc.como_dict())
+    return resultado
 
 
 @transaction.atomic

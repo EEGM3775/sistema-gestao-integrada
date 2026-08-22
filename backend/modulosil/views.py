@@ -6,6 +6,7 @@ from django.db.models import DecimalField, F, Q, Sum
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
+from nucleo.busca import BuscaSemAcento
 from rest_framework import filters, permissions, status, views, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -85,7 +86,7 @@ class BaseSilReadOnlyViewSet(TenantScopedViewSetMixin, _SilPermsMixin, viewsets.
 class LocalEstoqueViewSet(BaseSilViewSet):
     queryset = LocalEstoque.objects.all().order_by("nome")
     serializer_class = LocalEstoqueSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_fields = ["tipo", "ativo", "obra", "empreendimento"]
     search_fields = ["nome", "endereco"]
     ordering_fields = ["nome"]
@@ -95,7 +96,7 @@ class LocalEstoqueViewSet(BaseSilViewSet):
 class LoteViewSet(BaseSilViewSet):
     queryset = Lote.objects.all().order_by("item", "validade")
     serializer_class = LoteSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_fields = ["item", "fornecedor"]
     search_fields = ["numero_lote"]
     ordering_fields = ["validade", "numero_lote"]
@@ -108,7 +109,7 @@ class SaldoEstoqueViewSet(BaseSilReadOnlyViewSet):
 
     queryset = SaldoEstoque.objects.select_related("item", "local").all().order_by("item")
     serializer_class = SaldoEstoqueSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_fields = ["item", "local"]
     search_fields = ["item__descricao", "item__codigo_interno"]
     ordering_fields = ["quantidade"]
@@ -337,7 +338,7 @@ class EntregaEPIViewSet(BaseSilViewSet):
 
     queryset = EntregaEPI.objects.select_related("item", "colaborador", "local", "obra").all().order_by("-data_entrega", "-entrega_epi_id")
     serializer_class = EntregaEPISerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_fields = ["item", "colaborador", "status", "obra", "local"]
     search_fields = ["colaborador_nome", "ca_numero", "item__descricao"]
     ordering_fields = ["data_entrega", "ca_validade"]
@@ -371,7 +372,7 @@ class EntregaEPIViewSet(BaseSilViewSet):
 class FerramentaViewSet(BaseSilViewSet):
     queryset = Ferramenta.objects.select_related("item", "local").all().order_by("nome")
     serializer_class = FerramentaSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_fields = ["estado", "local", "calibravel", "item"]
     search_fields = ["nome", "patrimonio"]
     ordering_fields = ["nome", "proxima_calibracao", "proxima_manutencao"]

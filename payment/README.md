@@ -90,6 +90,25 @@ Nenhuma migration é necessária: `Tenant.plano` guarda só o **slug** do plano,
 | **Criar/remover um add-on** ou mexer no **excedente** | `addons.py` · `ADDONS` / `EXCEDENTES` |
 | Afrouxar/apertar o **teto de requisições** | `planos.py` · `RATE_BASE_HORA` · `RATE_POR_SEAT_HORA` · `RATE_TETO_INFRA_HORA` |
 | **Ligar/desligar** a trava de um recurso **que já é contado** | `planos.py` · `QUOTAS_APLICADAS` (§4) — só `seats`, `empreendimentos`, `obras`, `clientes`, `fornecedores` são contados hoje |
+| Mudar o **tamanho de arquivo** que entra (planilha) | `planos.py` · `PLANOS[<plano>]["impexp_max_mb"]` · teto duro em `IMPEXP_TETO_INFRA_MB` (§5.2) |
+| Mudar o **tamanho de prancha** que entra (CAD/BIM/geo) | `planos.py` · `PRANCHETA_MB_POR_FORMATO` (§5.3) · teto duro em `IMPEXP_TETO_INFRA_ARQUIVO_MB` |
+| Mudar o **orçamento de uma conversão** (memória/relógio) | `planos.py` · `PRANCHETA_CONVERSAO_MEMORIA_MB` · `PRANCHETA_CONVERSAO_SEGUNDOS` (§5.4) |
+
+> **Todo teto ou limite mora aqui** *(decisão do dono, 08/08/2026)*. Tamanho de arquivo, formato
+> aceito, memória, relógio, tamanho de página, quantas folhas um desenho rende, quantos elementos um
+> IFC tessela, a partir de quantas linhas a operação vira job — se é um número que diz *até onde vai*,
+> ele é seu e está nesta pasta, não no código de engenharia.
+>
+> A regra nasceu de um caso pequeno: o teto do recorte de tela vivia numa constante do módulo, a
+> recusa por tamanho é sempre **402** e o 402 diz *"faça upgrade do plano"* — um upgrade que não
+> existia, porque nenhum plano vendia um print maior. Teto que você não vê é teto que promete o que
+> ninguém pode cumprir.
+>
+> A varredura que a aplicou achou limites em **quinze arquivos**, incluindo `config/settings.py` (que
+> é de deploy — quem opera a máquina lê, você não) e nove paginadores. Quem cobra que eles não voltem é
+> [`backend/nucleo/test_tetos_no_payment.py`](../backend/nucleo/test_tetos_no_payment.py); a fronteira
+> do que **não** é limite — constante física, largura de campo, TTL de cache, janela de protocolo de
+> terceiro — está escrita na §5.6 do `planos.py`, para a varredura não se repetir.
 
 **Precisa de um engenheiro** (o **número** ainda é seu, aqui; o encanamento é código):
 

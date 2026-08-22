@@ -564,12 +564,37 @@ Antes de operar com **dinheiro real**, o módulo depende das fases de fundação
 | **D.1.1** ✅ 07/06/2026 | **Contas a pagar/receber** | `Fatura` **consolidada** em `ContaPagar`/`ContaReceber` (status granular, `valor_pago`/juros/multa/desconto, `data_emissao`/`agendamento`); `CentroCusto` + `RateioContaPagar/Receber`; `LoteRemessa`; `Transacao` repontada (CHECK `conta_pagar` xor `conta_receber`); `dar_baixa()` único caminho de baixa (gera `Transacao`, preparado para webhook Asaas D.1.2); `dar-baixa`/`gerar-lote-remessa` (AP) e `dar-baixa`/`emitir-nfse`/`emitir-nfe`/`emitir-lote-nfse` (AR) como actions; `ERPDashboardView` recalculado direto de AP/AR | `Sheet` (slide-over, 1º uso no projeto); `ContaPagarForm`/`ContaReceberForm`/`BaixaForm` (RHF+zod, 1º uso, com `RateioField` em field array); `ContasAPagarPage`/`ContasAReceberPage` (workspace: `FilterBar`+`FinanceDataTable`+`Sheet` p/ criar/editar/ver/baixa); cards de navegação no hub + breadcrumb de volta | ✅ CRUD completo, baixa parcial→total, rateio por centro de custo, lote de remessa e aging do dashboard validados via API/gateway (golden path, 07/06/2026; dados de teste limpos). **Achado corrigido no mesmo dia:** `dar_baixa()` aceitava baixa repetida em título já `QUITADO`/`CANCELADO` — agora detecta e encaminha para revisão do financeiro via `RevisaoBaixa`/`BaixaRequerRevisao` + fila `/api/erp/revisoes-baixa/` (`aprovar`/`rejeitar`); ver "Dívidas técnicas" |
 | **D.1.2** ✅ MVP 08/06/2026 (backend) | **Boletos & Asaas** | Django app Python [funcoescobrancas](funcoescobrancas.md) — `AsaasClient` + `services`/`tasks` Celery + `WebhookAsaasView` idempotente + `EventoWebhookAsaas`; action `gerar-cobranca` em `ContaReceber`; baixa automática via `dar_baixa(origem='asaas')` (reaproveita o guard `RevisaoBaixa` do D.1.1) | ❌ telas de boletos (`BoletosListPage`/`BoletoDetailPage`) ainda não construídas | ✅ sandbox (mockado): emite, gera customer/payment, baixa automática por webhook, idempotência e guard `RevisaoBaixa` validados e2e (08/06/2026). Escopo MVP = golden path (emitir + baixa); cancelar/estornar/QR PIX/parcelamento ficam para slice 2; credencial **global** via `.env` (decisão do usuário) |
 | **D.1.3** ✅ 16/07/2026 | **Notas fiscais** | action `cancelar` na NFS-e (Celery `cancelar_nota_fiscal_servico` → NFE.io) + permissão `erp.nf.cancelar`; `NotaFiscalServicoFilter` (`status`/`excluir_status` p/ as abas); consulta já existia (`nf/<id>/consultar/`) | `NotasFiscaisPage` (rota `/app/erp/notas-fiscais`): abas emitidas/canceladas/recebidas, `StatusNfeBadge`, download PDF/XML, ações consultar/cancelar, **`EmitirNfseDialog`** (emite a partir de uma conta a receber); card no hub | ✅ emitir (via conta a receber) + cancelar + baixar PDF/XML; suíte 35/35 (Postgres) + contrato NFE.io validado ao vivo (auth/payload/erro 4xx→`NFeErro`). **Emissão feliz pende empresa emitente na conta NFE.io.** **Falta:** UI de emissão em lote (`emitir-lote-nfse`) e CC-e |
-| **D.1.4** | **Financeiro por obra** | `CentroCusto`, rateio | DRE da obra, orçado x realizado | financeiro filtrado por obra |
+| **D.1.4** | **Financeiro por obra** | `CentroCusto`, rateio; **dimensão de obra na `ContaPagar`** (nota abaixo — é a única dívida do ERP com o Orçamento) | DRE da obra, orçado x realizado | financeiro filtrado por obra; a coluna *realizado* do Orçamento deixa de ter cobertura parcial |
 | **D.1.5** | **Devoluções/estornos** | `Devolucao`, refund Asaas, NF devolução | tela de devoluções | estorno reflete no caixa |
 | **D.1.6** | **Caixa, bancos & conciliação** | `ContaBancaria`, OFX/webhook | extrato + conciliação | extrato casa com títulos |
 | **D.1.7** | **Fluxo de caixa projetado** | projeção AP/AR + medições | gráfico realizado+projetado | projeção bate com títulos |
 | **D.1.8** | **Folha do RH no caixa** | consolidação rh→erp (rateio) | visão funcionários (mascarada) | folha aparece no caixa |
 | **D.2.x** | **Contábil** | plano de contas, lançamentos, DRE, fechamento | livros + DRE + balancete | DRE fecha com o financeiro |
+
+> 💰 **O que o Orçamento está esperando do ERP — e o que *não* é do ERP.** Registrado ao fechar o
+> ORC.7 (17/08/2026), na comparação com o Sienge.
+>
+> **A dívida é uma só: D.1.4 — dimensão de obra na despesa.** Hoje `ContaPagar` amarra a
+> **empreendimento**, e o único vínculo preciso com a obra é pelo SCM
+> (`PedidoCompra.conta_pagar_ref`). Por isso a coluna *realizado* das quatro colunas cobre **só o
+> que passou por pedido de compra**, e diz isso na resposta
+> (`realizado_cobertura`/`nota_realizado`) em vez de ratear por aproximação — ver
+> [moduloorcamento §5](moduloorcamento.md). Fechar a lacuna é o que torna a coluna completa.
+>
+> **O que NÃO é daqui** *(correção do dono, 17/08/2026 — a primeira versão desta nota punha estas
+> peças no ERP)*: **contrato de empreiteiro, boletim de medição, retenção e aditivo de escopo**
+> são do **`modulopdca`** ([modulos-planejados.md](modulos-planejados.md)). O ERP é de **recursos
+> empresariais**; aquilo é contrato de **obra**, e o ERP não tem por que conhecer o percentual de
+> avanço de uma etapa para pagar uma parcela.
+>
+> A fronteira é a que este módulo já pratica com o SCM: o outro lado decide **quanto é devido e
+> por quê** e entrega um **título líquido**; o ERP decide **quando sai do caixa**. É literalmente
+> o molde do `PedidoCompra.conta_pagar_ref` — o ERP não sabe nada de cotação, e não precisará
+> saber nada de medição.
+>
+> Na direção contrária o Orçamento **já entrega**: a curva S e o desembolso previsto (por etapa e,
+> desde o ORC.7, por insumo) são entrada natural do **fluxo de caixa projetado (D.1.7)** e da DRE
+> por obra — hoje a projeção de D.1.7 fala em "medições" e a parte previsível dela já existe.
 | **D.3.x** | **Fiscal/Tributário** | apuração, retenções, SPED, **IBS/CBS** | apuração + obrigações | SPED gera; campos IBS/CBS na NF |
 | **D.4.x** | **Compras · Estoque · Patrimônio** | ciclo compras, estoque, imobilizado | telas dos ciclos | requisição→pedido→NF→AP |
 | **D.5.x** | **Construção civil** | orçamento de obra, medição, RET | orçamento/curva ABC, boletim medição | orçado→medido→financeiro |

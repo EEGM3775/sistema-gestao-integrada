@@ -2,10 +2,15 @@
 from decimal import Decimal
 
 from rest_framework import serializers
+from funcoesimpexp.entrega import ArquivoGateadoSerializerMixin
 from nucleo.tenant_validators import TenantScopedUniqueSerializerMixin
 from nucleo.field_masking import FieldMaskingSerializerMixin
 from nucleo.upload_validation import UploadValidationMixin
 from . import plano_pagamento
+from .impexp import (
+    ESPECIE_DOCUMENTO as ESPECIE_DOCUMENTO_CLIENTE,
+    RECURSO_DOCUMENTOS as RECURSO_DOCUMENTOS_CLIENTE,
+)
 from .models import (
     Cliente,
     ClienteEmpreendimento,
@@ -197,7 +202,10 @@ class ContratoClienteSerializer(TenantScopedUniqueSerializerMixin, serializers.M
         read_only_fields = ['contrato_cliente_id', 'tenant']
 
 
-class DocumentoClienteSerializer(UploadValidationMixin, serializers.ModelSerializer):
+class DocumentoClienteSerializer(ArquivoGateadoSerializerMixin, UploadValidationMixin, serializers.ModelSerializer):
+    """RG, CPF, CNH e comprovante do titular — o arquivo sai gateado (D70)."""
+    arquivos_gateados = {"arquivo": (RECURSO_DOCUMENTOS_CLIENTE, ESPECIE_DOCUMENTO_CLIENTE)}
+
     cliente_nome = serializers.CharField(source='cliente.nome_completo', read_only=True)
     tipo_documento_display = serializers.CharField(source='get_tipo_documento_display', read_only=True)
 

@@ -27,16 +27,19 @@ from django.db.models.functions import Coalesce
 
 from catalogo.models import ComponenteComposicao, Item
 
+from . import encargos as encargos_mod
 from .models import ComposicaoBDI, ItemOrcado, ItemOrcadoInsumo, Orcamento
 from .planilha import dinheiro
 from .services import custo_de_referencia
+
+from payment.planos import ORCAMENTO_PROFUNDIDADE_MAXIMA_COMPOSICAO
 
 CEM = Decimal("100")
 UM = Decimal("1")
 # Profundidade máxima da explosão. SINAPI aninha composições auxiliares em 2–3
 # níveis; 12 é folga larga e ao mesmo tempo um freio para dado circular que
 # escape da checagem de visitados.
-PROFUNDIDADE_MAXIMA = 12
+PROFUNDIDADE_MAXIMA = ORCAMENTO_PROFUNDIDADE_MAXIMA_COMPOSICAO
 
 
 class ComposicaoInvalida(Exception):
@@ -109,20 +112,48 @@ def salvar_bdi(composicao: ComposicaoBDI) -> ComposicaoBDI:
 
 
 def categoria_do_item(item: Item) -> str:
-    """Natureza do insumo — o que decide se leva encargo social.
+    """Natureza do insumo na composição — a leitura material × gente × máquina.
 
-    Deriva do `tipo` do catálogo, que a adoção já preencheu com a heurística de
-    unidade (hora/mês → serviço = mão de obra). Não é infalível, e por isso a
-    linha explodida guarda a categoria como campo editável: o orçamentista
+    Deriva do `tipo` do catálogo, que a adoção preenche com a **classificação
+    publicada pela fonte** (a coluna `Classificação` da SINAPI) e, na falta
+    dela, com a unidade. Item com tipo próprio da empresa já teve o `tipo`
+    alinhado à natureza declarada no `save()` — não há segundo lugar para
+    consultar.
+
+    Até 20/08/2026, `SERVICO` caía em mão de obra: era o proxy que existia
+    enquanto o catálogo não tinha `MAO_DE_OBRA`. Serviço de terceiro agora é
+    `OUTRO` — ele não é gente da empresa, e o preço do subcontratado já vem com
+    o encargo dele dentro.
+
+    A linha explodida guarda a categoria como campo editável: o orçamentista
     corrige o caso raro sem que o sistema perca a regra geral.
     """
-    if item.tipo == Item.Tipo.SERVICO:
+    if item.tipo == Item.Tipo.MAO_DE_OBRA:
         return ItemOrcadoInsumo.Categoria.MAO_DE_OBRA
+    if item.tipo == Item.Tipo.ENCARGOS_COMPLEMENTARES:
+        return ItemOrcadoInsumo.Categoria.ENCARGOS_COMPLEMENTARES
     if item.tipo in (Item.Tipo.EQUIPAMENTO, Item.Tipo.ATIVO):
         return ItemOrcadoInsumo.Categoria.EQUIPAMENTO
     if item.tipo in (Item.Tipo.MATERIAL, Item.Tipo.EPI):
         return ItemOrcadoInsumo.Categoria.MATERIAL
     return ItemOrcadoInsumo.Categoria.OUTRO
+
+
+def leva_encargo_social(item: Item, categoria: str) -> bool:
+    """Se o encargo social incide sobre esta parcela.
+
+    Regra geral: incide sobre **mão de obra**, e só. Encargos complementares
+    (EPI, exame, alimentação, transporte) acompanham a hora do trabalhador mas
+    não são salário — aplicar o percentual sobre eles infla a composição.
+
+    O tipo próprio da empresa pode dizer o contrário, e aí manda ele: quem
+    cadastrou "Diarista com encargo por fora" sabe do próprio contrato mais que
+    a regra geral. É a única exceção, e ela é **declarada** no cadastro do tipo,
+    não adivinhada aqui.
+    """
+    if item.tipo_proprio_id:
+        return bool(item.tipo_proprio.leva_encargo_social)
+    return categoria == ItemOrcadoInsumo.Categoria.MAO_DE_OBRA
 
 
 def _folhas_da_composicao(item: Item, tenant_id, *, coeficiente=UM, profundidade=0, vistos=None):
@@ -161,7 +192,12 @@ def _folhas_da_composicao(item: Item, tenant_id, *, coeficiente=UM, profundidade
 
 
 @transaction.atomic
-def explodir_item(item_orcado: ItemOrcado, *, atualizar_custo: bool = True) -> list[ItemOrcadoInsumo]:
+def explodir_item(
+    item_orcado: ItemOrcado,
+    *,
+    atualizar_custo: bool = True,
+    resolvedor: "encargos_mod.ResolvedorEncargos | None" = None,
+) -> list[ItemOrcadoInsumo]:
     """Gera a memória de cálculo da linha e, por padrão, refaz seu custo unitário.
 
     O custo unitário deixa de ser um número digitado e passa a ser a **soma dos
@@ -172,6 +208,13 @@ def explodir_item(item_orcado: ItemOrcado, *, atualizar_custo: bool = True) -> l
     Insumo sem preço conhecido entra com custo zero e fica **visível na memória**
     como linha zerada — em vez de sumir. Um orçamento com furo precisa mostrar
     onde é o furo.
+
+    `resolvedor` (ORC.7) é quem escolhe o percentual de encargos de cada insumo
+    de mão de obra: havendo quadro analítico, ele responde pelo tipo que a
+    unidade indica (`H` → horista, `MES` → mensalista); não havendo, devolve o
+    percentual do cabeçalho e o comportamento é o de antes do ORC.7. Passá-lo de
+    fora é o que evita recarregar os quadros a cada linha quando o orçamento
+    inteiro é explodido de uma vez.
     """
     if item_orcado.item is None:
         raise ComposicaoInvalida("A linha não aponta item do catálogo — nada a explodir.")
@@ -185,7 +228,8 @@ def explodir_item(item_orcado: ItemOrcado, *, atualizar_custo: bool = True) -> l
             "adote a composição da base referencial ou cadastre os componentes."
         )
 
-    encargos = orcamento.encargos_sociais_percentual / CEM
+    if resolvedor is None:
+        resolvedor = encargos_mod.ResolvedorEncargos(orcamento)
     ItemOrcadoInsumo.objects.filter(item_orcado=item_orcado).delete()
 
     insumos, custo_unitario = [], Decimal("0")
@@ -194,9 +238,11 @@ def explodir_item(item_orcado: ItemOrcado, *, atualizar_custo: bool = True) -> l
         preco = custo_de_referencia(item, orcamento.base_referencial) or Decimal("0")
         bruto = coeficiente * preco
         # Encargos sociais entram AQUI, sobre a parcela de mão de obra — não no
-        # total da linha, senão incidiriam sobre material também.
-        if categoria == ItemOrcadoInsumo.Categoria.MAO_DE_OBRA:
-            bruto *= (UM + encargos)
+        # total da linha, senão incidiriam sobre material também. O fator vem do
+        # resolvedor porque horista e mensalista têm quadros diferentes: aplicar
+        # o do horista num insumo mensal paga repouso semanal duas vezes.
+        if leva_encargo_social(item, categoria):
+            bruto *= resolvedor.fator(item.unidade)
         custo_no_item = bruto.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
         custo_unitario += custo_no_item
         insumos.append(
@@ -254,6 +300,43 @@ def memoria_de_calculo(item_orcado: ItemOrcado) -> dict:
             for categoria, valor in sorted(por_categoria.items())
         },
     }
+
+
+def analitica_por_linha(orcamento: Orcamento) -> dict[str, list[dict]]:
+    """A composição de **todas** as linhas do orçamento, de uma vez.
+
+    A grade em modo analítico abre a composição de cada serviço ao mesmo tempo;
+    pedir a memória linha a linha seria uma requisição por serviço — centenas
+    numa planilha real, e a tela travaria antes de terminar de abrir.
+
+    A chave do dicionário vem como texto porque a resposta é JSON, e em JSON
+    chave é string: devolver `int` faria o cliente procurar `17` e não achar
+    `"17"`.
+    """
+    insumos = (
+        ItemOrcadoInsumo.objects.filter(item_orcado__orcamento=orcamento)
+        .select_related("item")
+        .order_by("item_orcado", "categoria", "insumo_id")
+    )
+    por_linha: dict[str, list[ItemOrcadoInsumo]] = {}
+    for insumo in insumos:
+        por_linha.setdefault(str(insumo.item_orcado_id), []).append(insumo)
+
+    saida: dict[str, list[dict]] = {}
+    for chave, lista in por_linha.items():
+        total = sum((i.custo_no_item for i in lista), Decimal("0"))
+        saida[chave] = [
+            {
+                "insumo_id": i.insumo_id, "item": i.item_id, "descricao": i.descricao,
+                "unidade": i.unidade, "categoria": i.categoria,
+                "coeficiente": str(i.coeficiente), "custo_unitario": str(i.custo_unitario),
+                "custo_no_item": str(i.custo_no_item),
+                "peso_pct": str((i.custo_no_item / total * CEM).quantize(Decimal("0.01")))
+                if total > 0 else "0",
+            }
+            for i in lista
+        ]
+    return saida
 
 
 def custo_por_categoria(orcamento: Orcamento) -> dict:

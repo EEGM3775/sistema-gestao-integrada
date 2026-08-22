@@ -18,6 +18,11 @@ infra
 deploy
 .venv
 .runtime
+# Bancada (utilitários que rodam na máquina, nunca em container). Além do peso,
+# a `marca_dagua` depende de PyMuPDF (AGPL) — código que não pode chegar nem ao
+# contexto de build de um produto proprietário servido pela rede. Ver
+# ferramentas/README.md e THIRD-PARTY-LICENSES.md.
+ferramentas
 
 # Segredos e ambientes — nunca vão para dentro de imagem
 .env

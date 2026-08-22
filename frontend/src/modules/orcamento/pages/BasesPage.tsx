@@ -1,26 +1,28 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  Check, Copy, Database, FileDown, FileUp, FolderPlus, Lock, LockOpen, Plus, Search,
-  ShieldCheck, Sparkles, Trash2, Undo2, Upload,
+  AlertTriangle, Check, Copy, Database, FileDown, FileUp, FolderPlus, Lock, LockOpen, Plus,
+  Search, ShieldCheck, Sparkles, Trash2, Undo2, Upload,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 // IE.1 — importar/exportar vêm do kit compartilhado; o módulo não tem mais os seus.
 import { BotaoExportar, WizardImportacao } from '@/components/malha'
 import { useDesfazerImportacao, useHistorico, useRecurso } from '@/components/malha/impexp/hooks'
 import PaginaShell from '../components/PaginaShell'
+import PainelTiposItem from '../components/PainelTiposItem'
 import {
-  Aviso, Btn, Card, CAPS, Empty, Field, inp, Loading, Modal, mono, Pill, SectHead,
-  Select, Seletor,
+  Aviso, BotaoAnalitica, Btn, Card, CAPS, Empty, Field, inp, LegendaLista, Loading,
+  MarcaCatalogo, Modal, mono, Pill, SectHead, Select, Seletor,
 } from '../ui'
 import { brl, dataBR, FONTE_ROTULO, mesBR, num } from '../lib'
+import type { DivergenciaAdocao } from '../types'
 import {
   useAdotarLote, useAdotarDoBanco, useBancos, useBasesResumo, useComposicaoBanco,
   useComposicaoReferencia, useCopiarDaBasePublica, useCriarBanco, useDestravarBanco,
-  useItensBanco, useReferencias, useRemoverBanco, useTravarBanco,
+  useItensBanco, useReferenciasInfinitas, useRemoverBanco, useTravarBanco,
 } from '../hooks'
 
-type Aba = 'oficiais' | 'meus' | 'importacoes'
+type Aba = 'oficiais' | 'meus' | 'importacoes' | 'tipos'
 
 export default function BasesPage() {
   const { hasPermission } = useAuth()
@@ -31,16 +33,27 @@ export default function BasesPage() {
   const [marcados, setMarcados] = useState<Set<number>>(new Set())
   const [espiando, setEspiando] = useState<number | null>(null)
   const [recado, setRecado] = useState('')
+  // D110 — os itens que a adoção NÃO sobrescreveu porque o código aponta para
+  // outro insumo. Não é toast: some antes de ser lido, e cada linha aqui pede
+  // uma conferência à mão. Fica na tela até o usuário fechar.
+  const [divergentes, setDivergentes] = useState<DivergenciaAdocao[]>([])
 
   const { data: bases, isLoading: carregandoBases } = useBasesResumo()
   const adotarLote = useAdotarLote()
   const podeAdotar = hasPermission('orcamento.base.adotar')
 
   const params = useMemo(
-    () => ({ base: baseId || undefined, search: busca || undefined, tipo: tipo || undefined, page_size: 50 }),
+    // 100 é o teto (`PAGINA_MAXIMA["orcamento"]`) — pedir o máximo por vez reduz
+    // pela metade as idas ao servidor para percorrer uma publicação de 12,5 mil.
+    () => ({ base: baseId || undefined, search: busca || undefined, tipo: tipo || undefined, page_size: 100 }),
     [baseId, busca, tipo],
   )
-  const referencias = useReferencias(params, aba === 'oficiais' && baseId !== '')
+  const referencias = useReferenciasInfinitas(params, aba === 'oficiais' && baseId !== '')
+  const linhas = useMemo(
+    () => referencias.data?.pages.flatMap(p => p.results) ?? [],
+    [referencias.data],
+  )
+  const totalDaBase = referencias.data?.pages[0]?.count ?? 0
   const composicao = useComposicaoReferencia(espiando ?? undefined)
 
   const seletor = (
@@ -52,6 +65,10 @@ export default function BasesPage() {
         { valor: 'oficiais' as Aba, rotulo: 'Bases oficiais' },
         { valor: 'meus' as Aba, rotulo: 'Meus bancos' },
         { valor: 'importacoes' as Aba, rotulo: 'Importações' },
+        // Tipo de item mora aqui, e não no cadastro de item, porque é da mesma
+        // mão: quem monta a régua de preço da casa é quem define o vocabulário
+        // com que ela classifica o que compra e o que paga.
+        { valor: 'tipos' as Aba, rotulo: 'Tipos de item' },
       ]}
     />
   )
@@ -59,6 +76,8 @@ export default function BasesPage() {
   return (
     <PaginaShell pagina="bases" seletor={seletor}>
       <div style={{ padding: '18px 22px 40px', overflowY: 'auto' }}>
+        {aba === 'tipos' && <PainelTiposItem />}
+
         {aba === 'oficiais' && (
           <>
             <SectHead right={<Pill kind="slate"><Lock size={11} />somente leitura</Pill>}>
@@ -101,6 +120,23 @@ export default function BasesPage() {
                         <div style={{ fontSize: 11.5, color: 'var(--accent-ink)', marginTop: 3 }}>
                           {b.adotados_no_catalogo} adotado(s) no seu catálogo
                         </div>
+                        {/* A classificação não chega até a natureza — ou a coluna não
+                            existe (publicação anterior a 01/2025, D111) ou o vocabulário
+                            é de outra base e não sabemos ler. Nos dois casos a adoção cai
+                            no plano B da unidade, e o usuário precisa saber disso AQUI, ao
+                            escolher a base, e não estranhando a analítica depois. */}
+                        {!b.classifica_insumo && (
+                          <div style={{ fontSize: 11.5, color: 'var(--danger-ink)', marginTop: 4, display: 'flex', gap: 5, alignItems: 'flex-start' }}>
+                            <AlertTriangle size={12} style={{ flex: 'none', marginTop: 2 }} />
+                            <span>
+                              {b.classes_desconhecidas?.length ? (
+                                <>classes que o sistema não sabe ler: <b>{b.classes_desconhecidas.join(' · ')}</b> — esses insumos caem na unidade</>
+                              ) : (
+                                <>não classifica insumo — tudo que não é hora/mês é adotado como material</>
+                              )}
+                            </span>
+                          </div>
+                        )}
                         <div style={{ ...CAPS, fontSize: 9, marginTop: 5 }}>data-base {mesBR(b.mes_referencia)} · {b.regime_encargos}</div>
                       </Card>
                     )
@@ -116,6 +152,32 @@ export default function BasesPage() {
                   </span>
                 </Aviso>
 
+                {divergentes.length > 0 && (
+                  <div style={{ marginTop: 9 }}>
+                    <Aviso tom="danger">
+                      <AlertTriangle size={15} style={{ flex: 'none', marginTop: 1 }} />
+                      <div style={{ flex: 1 }}>
+                        <b>{divergentes.length} item(ns) não foram adotados</b> — o código existe no seu
+                        catálogo, mas descrevendo outro insumo. A fonte reaproveitou o número entre
+                        edições; sobrescrever trocaria o item por baixo das composições e das planilhas
+                        que já o usam. Confira e, se for mesmo o mesmo item, adote um a um.
+                        <ul style={{ margin: '7px 0 0', paddingLeft: 17 }}>
+                          {divergentes.map(d => (
+                            <li key={d.codigo} style={{ marginBottom: 3 }}>
+                              <span style={{ ...mono }}>{d.codigo}</span> — {d.motivo}:{' '}
+                              no catálogo <b>{d.descricao_catalogo}</b> ({d.unidade_catalogo}) ·{' '}
+                              na publicação <b>{d.descricao_publicacao}</b> ({d.unidade_publicacao})
+                            </li>
+                          ))}
+                        </ul>
+                        <Btn tam="sm" onClick={() => setDivergentes([])} style={{ marginTop: 8 }}>
+                          Entendi
+                        </Btn>
+                      </div>
+                    </Aviso>
+                  </div>
+                )}
+
                 {baseId !== '' && (
                   <>
                     <SectHead right={
@@ -123,6 +185,7 @@ export default function BasesPage() {
                         <Btn tam="sm" variant="primary" disabled={adotarLote.isPending} onClick={async () => {
                           const r = await adotarLote.mutateAsync([...marcados])
                           setMarcados(new Set())
+                          setDivergentes(r.divergentes ?? [])
                           setRecado(`${r.adotados ?? marcados.size} item(ns) adotado(s) no catálogo da empresa.`)
                         }}>
                           <Check size={13} />Adotar {marcados.size} no catálogo
@@ -146,9 +209,9 @@ export default function BasesPage() {
                     </div>
 
                     <Card pad={false} style={{ overflow: 'hidden' }}>
-                      {referencias.isLoading ? <Loading /> : (referencias.data?.results.length ?? 0) === 0 ? (
+                      {referencias.isLoading ? <Loading /> : linhas.length === 0 ? (
                         <div style={{ padding: 26, textAlign: 'center', fontSize: 13, color: 'var(--ink-3)' }}>Nada encontrado.</div>
-                      ) : referencias.data?.results.map(r => {
+                      ) : linhas.map(r => {
                         const marcado = marcados.has(r.referencia_id)
                         return (
                           <div key={r.referencia_id}>
@@ -168,18 +231,16 @@ export default function BasesPage() {
                             >
                               {podeAdotar && <input type="checkbox" checked={marcado} readOnly style={{ accentColor: 'var(--accent)' }} />}
                               <span style={{ ...mono, fontSize: 11.5, color: 'var(--ink-3)', flex: '0 0 78px' }}>{r.codigo}</span>
-                              <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              <span title={r.descricao} style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                 {r.descricao}
                               </span>
-                              {r.tipo === 'composicao' && (
-                                <button
+                              {r.tipo === 'composicao' ? (
+                                <BotaoAnalitica
+                                  aberto={espiando === r.referencia_id}
                                   onClick={e => { e.stopPropagation(); setEspiando(espiando === r.referencia_id ? null : r.referencia_id) }}
-                                  style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--net-ink)', fontSize: 11.5, fontWeight: 650 }}
-                                >
-                                  {espiando === r.referencia_id ? 'fechar' : 'analítica'}
-                                </button>
-                              )}
-                              {r.adotado_item_id && <Pill kind="good">no catálogo</Pill>}
+                                />
+                              ) : <span style={{ flex: '0 0 18px' }} />}
+                              <MarcaCatalogo adotado={!!r.adotado_item_id} />
                               <span style={{ ...mono, fontSize: 11.5, color: 'var(--ink-3)', flex: '0 0 40px', textAlign: 'center' }}>{r.unidade}</span>
                               <span style={{ ...mono, fontSize: 12.5, color: 'var(--ink)', flex: '0 0 108px', textAlign: 'right' }}>{brl(r.custo_unitario)}</span>
                             </div>
@@ -207,10 +268,29 @@ export default function BasesPage() {
                           </div>
                         )
                       })}
+                      {referencias.hasNextPage && (
+                        <div style={{ padding: 10, textAlign: 'center', borderTop: '1px solid var(--line-2)' }}>
+                          <Btn
+                            variant="ghost"
+                            tam="sm"
+                            onClick={() => referencias.fetchNextPage()}
+                            disabled={referencias.isFetchingNextPage}
+                          >
+                            {referencias.isFetchingNextPage
+                              ? 'Carregando…'
+                              : `Carregar mais (${(totalDaBase - linhas.length).toLocaleString('pt-BR')} restantes)`}
+                          </Btn>
+                        </div>
+                      )}
                     </Card>
-                    {referencias.data && referencias.data.count > (referencias.data.results.length ?? 0) && (
+                    <LegendaLista style={{ marginTop: 8 }} />
+                    {totalDaBase > 0 && (
                       <p style={{ fontSize: 11.5, color: 'var(--ink-3)', marginTop: 8 }}>
-                        Mostrando {referencias.data.results.length} de {referencias.data.count} — refine a busca.
+                        {/* O total vem primeiro de propósito: sem ele, uma lista que
+                            acaba na centésima linha parece um catálogo pequeno. */}
+                        {linhas.length.toLocaleString('pt-BR')} de{' '}
+                        <b>{totalDaBase.toLocaleString('pt-BR')}</b> itens desta publicação
+                        {referencias.hasNextPage ? ' — role e carregue mais, ou busque por código/descrição.' : '.'}
                       </p>
                     )}
                   </>
@@ -366,7 +446,13 @@ function PainelMeusBancos({ marcadosDaBase, onRecado, onLimparMarcados }: {
                 <Btn tam="sm" variant="primary" disabled={adotar.isPending} onClick={async () => {
                   const r = await adotar.mutateAsync({ banco: banco.banco_id, itens: [...marcados] })
                   setMarcados(new Set())
-                  onRecado(`${r.criados} item(ns) adotados no catálogo da empresa.`)
+                  // D110: o que não conferiu ficou de fora, e o número sozinho
+                  // não conta essa parte da história.
+                  const fora = r.divergentes?.length ?? 0
+                  onRecado(
+                    `${r.criados} item(ns) adotados no catálogo da empresa.`
+                    + (fora ? ` ${fora} não conferem com o que já está no catálogo e ficaram de fora.` : ''),
+                  )
                 }}>
                   <Check size={13} />Adotar {marcados.size}
                 </Btn>
@@ -438,18 +524,16 @@ function PainelMeusBancos({ marcadosDaBase, onRecado, onLimparMarcados }: {
                     <span style={{ ...mono, fontSize: 11.5, color: 'var(--ink-3)', flex: '0 0 120px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {item.codigo}
                     </span>
-                    <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <span title={item.descricao} style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {item.descricao}
                     </span>
-                    {item.tipo === 'composicao' && (
-                      <button
+                    {item.tipo === 'composicao' ? (
+                      <BotaoAnalitica
+                        aberto={espiando === item.item_banco_id}
                         onClick={e => { e.stopPropagation(); setEspiando(espiando === item.item_banco_id ? null : item.item_banco_id) }}
-                        style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--net-ink)', fontSize: 11.5, fontWeight: 650 }}
-                      >
-                        {espiando === item.item_banco_id ? 'fechar' : 'analítica'}
-                      </button>
-                    )}
-                    {item.adotado_item_id && <Pill kind="good">no catálogo</Pill>}
+                      />
+                    ) : <span style={{ flex: '0 0 18px' }} />}
+                    <MarcaCatalogo adotado={!!item.adotado_item_id} />
                     <span style={{ ...mono, fontSize: 11.5, color: 'var(--ink-3)', flex: '0 0 40px', textAlign: 'center' }}>{item.unidade}</span>
                     <span style={{ ...mono, fontSize: 12.5, color: 'var(--ink)', flex: '0 0 108px', textAlign: 'right' }}>{brl(item.custo_unitario)}</span>
                   </div>

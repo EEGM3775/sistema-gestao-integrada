@@ -1,9 +1,11 @@
 
 from rest_framework import serializers
+from payment.planos import CALENDAR_MAX_OFFSET_LEMBRETE_MIN
+
 from .models import CalendarEvent
 
 # Teto do offset de um lembrete: 4 semanas em minutos (evita valores absurdos).
-MAX_REMINDER_OFFSET = 4 * 7 * 24 * 60
+MAX_REMINDER_OFFSET = CALENDAR_MAX_OFFSET_LEMBRETE_MIN
 
 
 class CalendarEventSerializer(serializers.ModelSerializer):

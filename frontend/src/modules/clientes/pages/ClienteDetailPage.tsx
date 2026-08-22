@@ -17,6 +17,7 @@ import type {
   ContratoCliente, ContratoClienteFormData, StatusContrato, DadoBancarioClienteFormData,
 } from '@/types'
 
+import { abrirEmNovaAba } from '@/lib/arquivo'
 import { useAuth } from '@/hooks/useAuth'
 import { formatCPFCNPJ } from '@/utils/masks'
 
@@ -493,11 +494,12 @@ const ClienteDetailPage: React.FC = () => {
                     </div>
                   </div>
                   <div className="flex items-center gap-1">
-                    <a href={doc.arquivo} target="_blank" rel="noreferrer"
+                    {/* D70 — documento do titular sai pela porta única, com token. */}
+                    <button onClick={() => abrirEmNovaAba(doc.arquivo)}
                       className="p-1.5 rounded" title="Abrir"
-                      style={{ color: 'var(--color-brand)' }}>
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-brand)' }}>
                       <ExternalLink size={14} />
-                    </a>
+                    </button>
                     <button onClick={() => deleteDocumento(doc.documento_cliente_id)}
                       className="p-1.5 rounded" title="Remover"
                       style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626' }}>
