@@ -18,6 +18,10 @@ Usuários:
   semdrone / semdrone123 -> tenant demo | módulos: erp_financeiro    | papel: operacional (restrito — exercita mascaramento)
   acme     / acme123     -> tenant acme | módulos: drone             | papel: operacional
   campo    / campo123    -> tenant demo | módulos: drone,prancheta   | papel: campo (aponta, não resolve — PRA.3)
+  dono     / dono123    -> SUPERVISOR da plataforma (is_superuser na IAM → `is_platform_admin` no token).
+                          Alcança TODO módulo do catálogo, contratado ou não, e opera o que é da
+                          plataforma (base-mãe, incidente ANPD). NÃO atravessa a fronteira de tenant
+                          e não é chave mestra. Ver o comentário dele abaixo.
 
 Rodar (no container):  docker compose exec -T iam python manage.py shell < iam/seed_demo.py
 """
@@ -143,10 +147,54 @@ admin = upsert_user(
     tenant, "admin", "admin123", ["drone", "erp_financeiro", "crm", "rh"], [], is_admin=True
 )
 
+# --- O SUPERVISOR DA PLATAFORMA -------------------------------------------
+#
+# **O que ele é** *(decisões do dono, 22/08/2026)*: o supervisor e o teste supremo
+# do sistema. Duas frases, e elas não se contradizem:
+#
+#   1. **sem restrição a nenhum módulo** — alcança o catálogo inteiro, contratado
+#      ou não (`modulos_efetivos` tem régua própria para ele). Um teste supremo
+#      que só alcança o que alguém comprou testa a assinatura, não o produto;
+#   2. **não está aqui para alterar o banco das empresas** — o que protege o
+#      cliente não é tirar módulo dele, é a **fronteira de tenant** (que vale para
+#      ele como para qualquer um) e o consentimento, que ainda vai existir.
+#
+# **O que a claim abre:** `is_superuser` aqui vira `is_platform_admin` no JWT
+# (identity/tokens.py), e ela gateia operação de PLATAFORMA — carga da base-mãe
+# (ORC.8), incidente ANPD (9.D), publicação de base pública pelo `impexp`. Nada
+# disso é linha de empresa.
+#
+# **O que ela NÃO abre:** chave mestra. O `_sync_user` do backend não copia o
+# flag para o espelho local, e no backend `is_superuser` fura escopo de tenant,
+# RLS, `RequirePermission`, máscara de PII e quota. Ele não recebe nada disso.
+#
+# **Sem `is_staff`, de propósito.** No Django é ele que abre o /admin, que é a
+# porta de editar dado à mão. O supervisor supervisiona **pelo produto** — testar
+# por uma porta que o cliente não tem não testa o sistema.
+#
+# **Sem papel e sem `AcessoUsuarioModulo` na criação** porque ele não precisa: a
+# régua dele não passa por nenhum dos dois. As listas vazias abaixo são o
+# contrato do `upsert_user`, não uma restrição.
+#
+# **O tenant é endereço, não fronteira.** A IAM exige um; `demo` é onde ele mora.
+# Ele coordena além dele — e a fronteira que o impede de ler OUTRA empresa vale
+# para `demo` igual.
+#
+# Desenho completo em docs/acesso-e-permissoes.md; as duas correções do dia em
+# docs/historico-correcoes.md.
+dono = upsert_user(tenant, "dono", "dono123", [], [])
+dono.is_superuser = True
+dono.is_staff = False
+dono.save(update_fields=["is_superuser", "is_staff"])
+
 print("SEED OK | tenants:", tenant.slug, "+", acme_tenant.slug)
 print("  demo     -> modulos:", demo.modulos_efetivos(), "| papeis:", demo.nomes_perfis())
 print("            permissoes:", len(demo.permissoes_efetivas()), "codigos")
 print("  admin    -> tenant_admin:", admin.is_tenant_admin, "| permissoes:", len(admin.permissoes_efetivas()))
+print("  dono     -> supervisor:", dono.is_superuser,
+      "| modulos:", len(dono.modulos_efetivos()), "(catalogo inteiro, sem restricao)",
+      "| permissoes:", len(dono.permissoes_efetivas()),
+      "| opera PLATAFORMA (base-mae, ANPD) — nao atravessa tenant")
 print("  semdrone -> modulos:", semdrone.modulos_efetivos(), "| papeis:", semdrone.nomes_perfis())
 print("  acme     -> modulos:", acme.modulos_efetivos(), "| papeis:", acme.nomes_perfis())
 print("  campo    -> modulos:", campo.modulos_efetivos(), "| papeis:", campo.nomes_perfis(),

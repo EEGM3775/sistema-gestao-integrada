@@ -353,6 +353,67 @@ def adotar_no_catalogo(
     return item
 
 
+def componentes_da_composicao(referencia: InsumoReferencia) -> list:
+    """A analítica de uma composição — **a única função que sabe onde ela mora**.
+
+    Desde a ORC.8 há dois armazenamentos, e é deliberado (a conta está no
+    docstring de `AnaliticaNacional`): a analítica da publicação, quando existe,
+    e a nacional guardada uma vez por fonte + mês. Ter dois *lugares* é o preço
+    de não replicar 3,6 milhões de linhas por mês; ter duas *leituras* seria o
+    bug — por isso todo consumidor (adoção, cópia para banco de preço, endpoint
+    de composição) passa por aqui.
+
+    **A própria publicação vence.** Ela é mais específica: quem importou aquele
+    arquivo pelo comando declarou aquela analítica para aquela base, e uma
+    republicação nacional não deve mudar o que já foi conferido linha a linha.
+
+    O que volta são `ComposicaoReferenciaItem` — os do banco quando existem,
+    instâncias **não salvas** quando vêm da nacional. O `componente_id` negativo
+    delas não é um id: é o que impede a lista de sair com chaves repetidas na
+    tela, e diz de qual linha nacional cada componente veio.
+
+    Componente cujo filho não tem preço naquela UF fica de fora, e isso é a
+    regra 1 do §4.1 valendo até o fim: sem pesquisa não é zero, e uma composição
+    exibida com um insumo a R$ 0,00 mentiria sobre o custo dela.
+    """
+    proprios = list(
+        ComposicaoReferenciaItem.objects.filter(composicao=referencia)
+        .select_related("filho", "filho__base")
+        .order_by("componente_id")
+    )
+    if proprios or referencia.tipo != InsumoReferencia.Tipo.COMPOSICAO:
+        return proprios
+
+    from .models import AnaliticaNacional
+
+    base = referencia.base
+    linhas = list(
+        AnaliticaNacional.objects.filter(
+            fonte=base.fonte,
+            competencia=base.mes_referencia,
+            codigo_composicao=referencia.codigo,
+        ).order_by("linha_id")
+    )
+    if not linhas:
+        return []
+    filhos = {
+        item.codigo: item
+        for item in InsumoReferencia.objects.filter(
+            base=base, codigo__in=[linha.codigo_item for linha in linhas]
+        ).select_related("base")
+    }
+    virtuais = []
+    for linha in linhas:
+        filho = filhos.get(linha.codigo_item)
+        if filho is None:
+            continue
+        virtuais.append(ComposicaoReferenciaItem(
+            componente_id=-linha.linha_id,
+            composicao=referencia, filho=filho, coeficiente=linha.coeficiente,
+        ))
+    return virtuais
+
+
 def _adotar_componentes(
     referencia: InsumoReferencia, item_pai: Item, tenant_id, *, forcar: bool = False,
 ) -> None:
@@ -364,10 +425,7 @@ def _adotar_componentes(
     metade deixaria um pai apontando para filho errado, que é o dano do D110 com
     outro nome.
     """
-    componentes = ComposicaoReferenciaItem.objects.filter(
-        composicao=referencia
-    ).select_related("filho", "filho__base")
-    for componente in componentes:
+    for componente in componentes_da_composicao(referencia):
         item_filho = adotar_no_catalogo(
             componente.filho, tenant_id, recursivo=True, forcar=forcar
         )

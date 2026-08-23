@@ -499,6 +499,12 @@ class ItemDescontinuadoTests(PlanilhaTestBase):
     destino: a linha ficava com o preço velho, o cabeçalho passava a anunciar a
     data-base nova, e a peça de licitação saía dizendo "julho" com preço de
     junho dentro. O defeito não é o número — é o silêncio.
+
+    **A regra, escrita pelo dono em 22/08/2026**, e que `test_a_regra_do_dono_*`
+    prende cláusula por cláusula: *"o usuário atualiza a base de dados para outra
+    data; caso aquele item não seja identificado, em vez de colocar preço 0 ou
+    excluir o item, é para avisar quais itens não tem, e manter a data-base
+    desatualizada"*.
     """
 
     def setUp(self):
@@ -605,6 +611,92 @@ class ItemDescontinuadoTests(PlanilhaTestBase):
         aviso = reprecificacao.avisos_de_data_base(self.orcamento)
         self.assertFalse(aviso["tem_aviso"])
 
+
+    # ------------------------------------------------------------------
+    # A regra do dono, cláusula por cláusula (22/08/2026)
+    # ------------------------------------------------------------------
+
+    def test_a_regra_do_dono_nao_zera_o_preco(self):
+        """*"em vez de colocar preço 0"* — a linha mantém o custo que tinha.
+
+        Zerar seria o desfecho mais fácil de escrever e o mais caro de descobrir:
+        um serviço a R$ 0,00 não quebra nada, só desaparece do total.
+        """
+        antes = self.aposentada.custo_unitario
+        lote = reprecificacao.gerar_previa(self.orcamento, base_destino=self.base_jul)
+        reprecificacao.aplicar(lote)
+
+        self.aposentada.refresh_from_db()
+        self.assertEqual(self.aposentada.custo_unitario, antes)
+        self.assertGreater(self.aposentada.custo_unitario, Decimal("0"))
+
+    def test_a_regra_do_dono_nao_exclui_o_item(self):
+        """*"ou excluir o item"* — a linha continua na planilha, inteira.
+
+        Sumir com ela faria o orçamento fechar um total menor sem nenhum sinal, e
+        a quantidade levantada pelo projeto — que é trabalho de gente — iria
+        junto.
+        """
+        item_id = self.aposentada.pk
+        quantidade = self.aposentada.quantidade
+        lote = reprecificacao.gerar_previa(self.orcamento, base_destino=self.base_jul)
+        reprecificacao.aplicar(lote)
+
+        sobrevivente = ItemOrcado.objects.filter(pk=item_id).first()
+        self.assertIsNotNone(sobrevivente, "a linha foi excluída da planilha")
+        self.assertEqual(sobrevivente.quantidade, quantidade)
+
+    def test_a_regra_do_dono_avisa_QUAIS_itens_nao_tem(self):
+        """*"é para avisar quais itens não tem"* — nome a nome, não um número.
+
+        Duas vezes: na **prévia**, antes de aplicar (com o motivo), e no
+        **orçamento**, depois (é a planilha que vai para a licitação, não o
+        lote). Um contador dizendo "3 itens" sem dizer quais não é aviso: é uma
+        caça ao tesouro numa planilha de 800 linhas.
+        """
+        lote = reprecificacao.gerar_previa(self.orcamento, base_destino=self.base_jul)
+        previa = reprecificacao.serializar_previa(lote)
+
+        avisadas = [linha for linha in previa["linhas"] if linha["descontinuado"]]
+        self.assertEqual(previa["linhas_descontinuadas"], len(avisadas))
+        self.assertEqual(len(avisadas), 1)
+        self.assertEqual(avisadas[0]["item_orcado"], self.aposentada.pk)
+        self.assertTrue(avisadas[0]["motivo"], "a linha avisada não diz por quê")
+        self.assertIn(self.aposentada.codigo_referencia, avisadas[0]["motivo"])
+        # e ela não conta como linha que muda preço
+        self.assertNotIn(self.aposentada.pk, [
+            linha["item_orcado"] for linha in previa["linhas"]
+            if not linha["descontinuado"]
+        ])
+
+        reprecificacao.aplicar(lote)
+        aviso = reprecificacao.avisos_de_data_base(self.orcamento)
+        self.assertTrue(aviso["tem_aviso"])
+        self.assertIn(
+            self.aposentada.pk, [linha["item_orcado"] for linha in aviso["linhas"]],
+            "depois de aplicar, a planilha deixou de apontar a linha que ficou para trás",
+        )
+
+    def test_a_regra_do_dono_mantem_a_data_base_desatualizada(self):
+        """*"e manter a data base desatualizada"* — na linha, não no cabeçalho.
+
+        O cabeçalho anda (é ele que a peça de licitação carrega e ele passou a
+        valer para a maioria das linhas); a linha sem preço novo **fica**. As
+        duas datas passam a conviver, e é exatamente essa convivência que o aviso
+        existe para tornar visível.
+        """
+        data_antiga = self.aposentada.data_base_preco
+        lote = reprecificacao.gerar_previa(self.orcamento, base_destino=self.base_jul)
+        reprecificacao.aplicar(lote)
+
+        self.aposentada.refresh_from_db()
+        self.orcamento.refresh_from_db()
+        self.assertEqual(self.aposentada.data_base_preco, data_antiga)
+        self.assertEqual(self.orcamento.data_base, self.base_jul.mes_referencia)
+        self.assertLess(
+            self.aposentada.data_base_preco, self.orcamento.data_base,
+            "a linha deveria continuar com a data-base antiga, atrás do cabeçalho",
+        )
 
 class DuplicacaoTests(PlanilhaTestBase):
     """Duplicar é planilha nova, não revisão."""

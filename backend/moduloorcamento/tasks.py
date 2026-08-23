@@ -13,10 +13,12 @@ do comando, porque duplicar o parser criaria duas verdades sobre o mesmo arquivo
 Três decisões de desenho:
 
 1. **Nada de baixar da internet sem fonte declarada.** A task não sai adivinhando
-   URL da Caixa: ela lê o que foi configurado (`BaseReferencial.url_origem` não
-   existe hoje) e, na ausência, faz o que sabe fazer — **avisar** que a
-   publicação vigente está velha. Um job que inventa fonte é um job que um dia
-   importa dado errado com a confiança de um robô.
+   URL da Caixa: ela lê o que foi configurado e, na ausência, faz o que sabe
+   fazer — **avisar** que a publicação vigente está velha. Um job que inventa
+   fonte é um job que um dia importa dado errado com a confiança de um robô.
+   *(A ORC.8 deu a essa regra o lugar que faltava: `FonteOficial` é a declaração,
+   escrita por gente, e `BaseReferencial.url_origem` guarda de onde cada preço
+   veio. O aviso continua; o que mudou é que agora ele pode virar carga.)*
 2. **A varredura é de plataforma, não de tenant.** `BaseReferencial` e
    `IndiceEconomico` são globais (§11.1), então roda com `rls_bypass` e não
    percorre tenants — é a mesma natureza da limpeza de exportações do
@@ -143,3 +145,123 @@ def verificar_indices_desatualizados(self, referencia: str | None = None) -> dic
         "em_dia": em_dia,
         "sem_serie": vazios,
     }
+
+
+# ---------------------------------------------------------------------------
+# ORC.8 — a varredura deixou de só avisar
+# ---------------------------------------------------------------------------
+#
+# A decisão nº 1 do topo deste arquivo dizia: *"nada de baixar da internet sem
+# fonte declarada — um job que inventa URL é um job que um dia importa dado
+# errado com a confiança de um robô"*. Ela continua valendo **na íntegra**; o que
+# mudou é que agora existe onde declarar. `FonteOficial` é essa declaração, e é
+# escrita por gente: sem template cadastrado, a fonte simplesmente não é tentada.
+
+
+@shared_task(name="moduloorcamento.carregar_base_oficial", base=DLQTask, bind=True)
+def carregar_base_oficial(self, carga_id: int) -> dict:
+    """Roda uma corrida de carga. O desfecho mora na `CargaBase`, não aqui.
+
+    A task devolve um resumo curto para o log e para o flower, mas quem conta a
+    história inteira é a linha no banco — inclusive quando falha, e principalmente
+    quando falha: é ela que a tela lê.
+
+    Não há `retry`, e é deliberado. O backoff que importa é o do **download**
+    (`oficial.baixar`), que sabe distinguir 429 de 404; repetir a corrida inteira
+    por fora disso reprocessaria 54 publicações já gravadas para insistir num
+    mês que talvez ainda não tenha sido publicado. Repetir é decisão de gente, e
+    tem verbo próprio (`cargas/{id}/repetir/`).
+    """
+    from . import carga as motor
+    from .models import CargaBase
+
+    with rls_bypass():
+        registro = CargaBase.objects.filter(pk=carga_id).first()
+        if registro is None:
+            logger.warning("orcamento: carga %s não existe mais", carga_id)
+            return {"carga": carga_id, "estado": "inexistente"}
+
+        conteudo = None
+        if registro.origem == CargaBase.Origem.UPLOAD and registro.arquivo:
+            with registro.arquivo.open("rb") as arquivo:
+                conteudo = arquivo.read()
+
+        motor.executar(registro, conteudo)
+        return {
+            "carga": registro.pk,
+            "fonte": registro.fonte,
+            "competencia": registro.competencia.isoformat(),
+            "estado": registro.estado,
+            "publicacoes": registro.total_publicacoes,
+            "analitica": registro.total_analitica,
+        }
+
+
+@shared_task(name="moduloorcamento.agendar_cargas_do_mes", base=DLQTask, bind=True)
+def agendar_cargas_do_mes(self, referencia: str | None = None) -> dict:
+    """A varredura diária que dispara a carga quando chega o dia da fonte.
+
+    **O botão resolve hoje; isto evita que "alguém esqueceu" vire orçamento
+    nascendo com preço vencido.** Quem escolhe o dia é o superuser, por fonte
+    (`FonteOficial.dia_do_mes`) — `0` deixa só o botão.
+
+    Três recusas, e cada uma existe para o agendamento não virar ruído:
+
+    - fonte sem template não é tentada (a decisão nº 1);
+    - fonte cujo formato o motor não sabe ler não é tentada — hoje só a SINAPI
+      tem leitor do arquivo largo, e agendar as outras seria agendar falha;
+    - competência já carregada com sucesso não é tentada de novo. A carga é
+      idempotente, mas repeti-la todo dia é gastar minutos de worker para
+      reescrever exatamente os mesmos preços.
+    """
+    from . import carga as motor
+    from . import oficial
+    from .models import CargaBase, FonteOficial
+
+    hoje = date.fromisoformat(referencia) if referencia else date.today()
+    disparadas, ignoradas = [], []
+
+    with rls_bypass():
+        for fonte in FonteOficial.objects.filter(ativa=True):
+            motivo = ""
+            if not fonte.dia_do_mes or fonte.dia_do_mes != hoje.day:
+                continue
+            if not fonte.template_url:
+                motivo = "sem template de URL"
+            elif fonte.fonte not in motor.fontes_conhecidas():
+                motivo = "o motor ainda não lê o formato desta fonte"
+
+            competencia = oficial.competencia_alvo(fonte.defasagem_meses, hoje)
+            if not motivo and CargaBase.objects.filter(
+                fonte=fonte.fonte, competencia=competencia,
+                estado=CargaBase.Estado.CONCLUIDA, somente_resumo=False,
+            ).exists():
+                motivo = f"{competencia:%m/%Y} já carregada"
+            if not motivo and CargaBase.objects.filter(
+                fonte=fonte.fonte,
+                estado__in=[
+                    CargaBase.Estado.PENDENTE, CargaBase.Estado.BAIXANDO,
+                    CargaBase.Estado.LENDO, CargaBase.Estado.GRAVANDO,
+                ],
+            ).exists():
+                motivo = "já há uma carga desta fonte em andamento"
+
+            if motivo:
+                ignoradas.append({"fonte": fonte.fonte, "motivo": motivo})
+                continue
+
+            nova = CargaBase.objects.create(
+                fonte=fonte.fonte, competencia=competencia,
+                origem=CargaBase.Origem.DOWNLOAD,
+                solicitada_por_nome="agendamento",
+            )
+            carregar_base_oficial.delay(nova.pk)
+            disparadas.append({
+                "fonte": fonte.fonte,
+                "competencia": competencia.isoformat(),
+                "carga": nova.pk,
+            })
+
+    if disparadas:
+        logger.info("orcamento: %d carga(s) de base disparada(s) pelo agendamento", len(disparadas))
+    return {"referencia": hoje.isoformat(), "disparadas": disparadas, "ignoradas": ignoradas}

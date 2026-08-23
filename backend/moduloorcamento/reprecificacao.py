@@ -110,6 +110,54 @@ def _precos_do_destino(*, base: BaseReferencial | None, banco: BancoPreco | None
     }
 
 
+def _onde_mais_existe(
+    codigos: set[str], base: BaseReferencial | None,
+) -> dict[str, list[str]]:
+    """Para cada código ausente do destino, em que **outras UFs** ele existe
+    naquele mesmo fonte + mês.
+
+    Existe por causa da ORC.8, que criou uma segunda causa para "não achei este
+    código aqui" — e as duas pedem ações opostas:
+
+    - **aposentado pela fonte** (a causa do D99): a SINAPI tirou o item do
+      catálogo. Ele não volta, e a linha precisa de substituto;
+    - **sem pesquisa nesta UF** (a causa nova): o item existe no mês, com preço
+      em outros estados, e o que faltou foi a **pesquisa** naquele. O cabeçalho
+      do arquivo oficial declara isso — *"preço em branco para determinado
+      estado significa que não houve pesquisa"* —, e por isso a carga não grava
+      a linha (§4.1, regra 1: branco não é zero). O item está vivo, costuma
+      voltar no mês seguinte, e o caminho é outro: usar a publicação vizinha,
+      cotar, ou pôr no banco de preço da empresa.
+
+    Dizer "não existe na publicação de destino" no segundo caso é verdade
+    literal e mentira prática: manda procurar substituto para um insumo que não
+    morreu. Uma consulta só, e só quando falta alguém.
+    """
+    if not codigos or base is None:
+        return {}
+    achados: dict[str, list[str]] = {}
+    for codigo, uf in (
+        InsumoReferencia.objects
+        .filter(
+            base__fonte=base.fonte,
+            base__mes_referencia=base.mes_referencia,
+            codigo__in=codigos,
+        )
+        # Fora a **UF inteira** do destino, não só aquela publicação: o outro
+        # regime do mesmo estado não é "outro lugar onde o item existe", e
+        # listá-lo faria a mensagem mandar o orçamentista de BA procurar preço
+        # na BA. O que interessa é a UF vizinha.
+        .exclude(base__uf=base.uf)
+        .values_list("codigo", "base__uf")
+        .distinct()
+    ):
+        if uf and uf not in achados.setdefault(codigo, []):
+            achados[codigo].append(uf)
+    for ufs in achados.values():
+        ufs.sort()
+    return achados
+
+
 @transaction.atomic
 def gerar_previa(
     orcamento: Orcamento,
@@ -152,6 +200,16 @@ def gerar_previa(
         orcamento=orcamento, tipo_linha=ItemOrcado.TipoLinha.ANALITICO,
     ).exclude(codigo_referencia="")
 
+    # Os que o destino não tem — apurados antes do laço para a distinção entre
+    # "aposentado" e "sem pesquisa nesta UF" custar **uma** consulta, e não uma
+    # por linha faltante.
+    faltantes = {
+        item.codigo_referencia for item in candidatas
+        if item.codigo_referencia and item.codigo_referencia not in precos
+        and not (somente_ate and item.data_base_preco and item.data_base_preco > somente_ate)
+    }
+    tambem_em = _onde_mais_existe(faltantes, base_destino)
+
     linhas: list[LinhaReprecificacao] = []
     descontinuadas = 0
     for item in candidatas:
@@ -159,13 +217,36 @@ def gerar_previa(
             continue
         novo = precos.get(item.codigo_referencia)
         if novo is None:
-            # O código sumiu da publicação de destino — a SINAPI aposenta itens
-            # todo mês. Pular em silêncio (o que se fazia aqui) deixava a linha
-            # com o preço velho enquanto o cabeçalho passava a anunciar a
-            # data-base nova: a planilha mentia, e mentia com aparência de
-            # certa, que é o pior tipo de erro numa peça de licitação. Entra no
-            # lote como aviso, com `custo_depois == custo_antes` para não mover
-            # nada e `selecionada=False` para nunca ser aplicada.
+            # O código não está na publicação de destino. Pular em silêncio (o
+            # que se fazia aqui) deixava a linha com o preço velho enquanto o
+            # cabeçalho passava a anunciar a data-base nova: a planilha mentia,
+            # e mentia com aparência de certa, que é o pior tipo de erro numa
+            # peça de licitação. Entra no lote como aviso, com
+            # `custo_depois == custo_antes` para não mover nada e
+            # `selecionada=False` para nunca ser aplicada.
+            #
+            # **Duas causas, um efeito** (ORC.8): o item pode ter sido aposentado
+            # pela fonte ou simplesmente não ter tido pesquisa naquela UF. O
+            # efeito é o mesmo — não há preço novo para aplicar, e a linha fica
+            # com a data antiga —, mas a **ação** de quem orça é oposta, e é por
+            # isso que a distinção mora no `motivo` em vez de virar dois estados:
+            # quem lê a prévia precisa saber se procura substituto ou se olha a
+            # publicação vizinha. Ver `_onde_mais_existe`.
+            outras_ufs = tambem_em.get(item.codigo_referencia or "", [])
+            if outras_ufs:
+                motivo = (
+                    f"Sem pesquisa de preço para {item.codigo_referencia} nesta "
+                    f"publicação — o item existe no mesmo mês em "
+                    f"{', '.join(outras_ufs[:6])}"
+                    f"{'…' if len(outras_ufs) > 6 else ''}. "
+                    f"Preço mantido de {item.data_base_preco or 'origem desconhecida'}."
+                )
+            else:
+                motivo = (
+                    f"Código {item.codigo_referencia} não existe na publicação de "
+                    f"destino — item aposentado pela fonte. Preço mantido de "
+                    f"{item.data_base_preco or 'origem desconhecida'}."
+                )
             descontinuadas += 1
             linhas.append(LinhaReprecificacao(
                 tenant_id=orcamento.tenant_id,
@@ -181,10 +262,7 @@ def gerar_previa(
                 data_base_depois=None,
                 selecionada=False,
                 descontinuado=True,
-                motivo=(
-                    f"Código {item.codigo_referencia} não existe na publicação de "
-                    f"destino — preço mantido de {item.data_base_preco or 'origem desconhecida'}."
-                )[:255],
+                motivo=motivo[:255],
             ))
             continue
         if novo["custo"] == item.custo_unitario:

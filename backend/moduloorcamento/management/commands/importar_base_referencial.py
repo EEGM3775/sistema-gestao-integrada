@@ -35,18 +35,10 @@ from decimal import Decimal
 from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
-from django.db import transaction
 
 from catalogo.models import Item
-from moduloorcamento import services
-from moduloorcamento.models import (
-    BaseReferencial,
-    ComposicaoReferenciaItem,
-    Fonte,
-    InsumoReferencia,
-)
-
-LOTE = 1_000
+from moduloorcamento import carga, services
+from moduloorcamento.models import BaseReferencial, Fonte, InsumoReferencia
 
 # Heurística de leitura compartilhada com a importação pela API (ORC.5b). Os
 # nomes seguem reexportados aqui porque o comando é a interface pública deles
@@ -359,31 +351,15 @@ class Command(BaseCommand):
             "     rode de novo com --aceitar-sem-classe\n"
         )
 
-    @transaction.atomic
     def _gravar_itens(self, base, tipo, pendentes: dict[str, InsumoReferencia]) -> int:
-        """Upsert em lote: a publicação é reimportável sem duplicar nem perder FK."""
-        existentes = {
-            item.codigo: item
-            for item in InsumoReferencia.objects.filter(base=base, tipo=tipo)
-        }
-        novos, alterados = [], []
-        for codigo, candidato in pendentes.items():
-            atual = existentes.get(codigo)
-            if atual is None:
-                novos.append(candidato)
-                continue
-            atual.descricao = candidato.descricao
-            atual.unidade = candidato.unidade
-            atual.custo_unitario = candidato.custo_unitario
-            atual.grupo = candidato.grupo
-            alterados.append(atual)
-        if novos:
-            InsumoReferencia.objects.bulk_create(novos, batch_size=LOTE)
-        if alterados:
-            InsumoReferencia.objects.bulk_update(
-                alterados, ["descricao", "unidade", "custo_unitario", "grupo"], batch_size=LOTE
-            )
-        self.stdout.write(f"    → {len(novos)} novos, {len(alterados)} atualizados.")
+        """O *upsert* mora em `carga.py` desde a ORC.8, e é o mesmo dos dois lados.
+
+        Duas cópias do que "reimportar" significa divergiriam na primeira
+        publicação com layout novo, e a divergência apareceria como **preço
+        errado**, não como erro. Aqui ficou só o que é da bancada: contar e
+        imprimir."""
+        novos, alterados = carga.gravar_itens(base, tipo, pendentes)
+        self.stdout.write(f"    → {novos} novos, {alterados} atualizados.")
         return len(pendentes)
 
     def _importar_analitica(self, base, caminho, aba, manual, seco, sep=None) -> tuple[int, int]:
@@ -434,74 +410,13 @@ class Command(BaseCommand):
         codigo = str(valor).strip()
         return codigo[:-2] if codigo.endswith(".0") else codigo
 
-    @transaction.atomic
     def _gravar_analitica(self, base, composicoes, filhos, vinculos) -> tuple[int, int]:
-        # 1. garante as composições declaradas na analítica
-        faltando = []
-        existentes_comp = set(
-            InsumoReferencia.objects.filter(
-                base=base, tipo=InsumoReferencia.Tipo.COMPOSICAO
-            ).values_list("codigo", flat=True)
+        """Também compartilhado com a carga automática — ver `_gravar_itens`."""
+        novas, filhos_novos, componentes = carga.gravar_analitica(
+            base, composicoes, filhos, vinculos
         )
-        for codigo, dados in composicoes.items():
-            if codigo in existentes_comp:
-                continue
-            faltando.append(InsumoReferencia(
-                base=base, codigo=codigo[:30], tipo=InsumoReferencia.Tipo.COMPOSICAO,
-                descricao=dados["descricao"] or codigo, unidade=dados["unidade"],
-            ))
-        if faltando:
-            InsumoReferencia.objects.bulk_create(faltando, batch_size=LOTE)
-
-        # 2. garante os filhos citados (insumo ou composição auxiliar)
-        por_chave = {
-            (i.tipo, i.codigo): i.pk for i in InsumoReferencia.objects.filter(base=base)
-        }
-        novos_filhos = []
-        for codigo, dados in filhos.items():
-            if (dados["tipo"], codigo) in por_chave:
-                continue
-            # Um código pode existir com o outro tipo (a sintética já o trouxe);
-            # nesse caso reaproveita em vez de duplicar.
-            outro = (
-                InsumoReferencia.Tipo.COMPOSICAO
-                if dados["tipo"] == InsumoReferencia.Tipo.INSUMO
-                else InsumoReferencia.Tipo.INSUMO
-            )
-            if (outro, codigo) in por_chave:
-                continue
-            novos_filhos.append(InsumoReferencia(
-                base=base, codigo=codigo[:30], tipo=dados["tipo"],
-                descricao=dados["descricao"] or codigo, unidade=dados["unidade"],
-            ))
-        if novos_filhos:
-            InsumoReferencia.objects.bulk_create(novos_filhos, batch_size=LOTE)
-
-        # 3. resolve códigos → pk (agora completo) e reescreve os componentes
-        por_codigo: dict[str, int] = {}
-        for tipo, codigo, pk in InsumoReferencia.objects.filter(base=base).values_list(
-            "tipo", "codigo", "pk"
-        ):
-            # Composição tem precedência no índice: o pai de um vínculo é sempre
-            # composição, e o filho é resolvido pelo mesmo código.
-            if codigo not in por_codigo or tipo == InsumoReferencia.Tipo.COMPOSICAO:
-                por_codigo[codigo] = pk
-
-        pais = {por_codigo[c] for c in composicoes if c in por_codigo}
-        ComposicaoReferenciaItem.objects.filter(composicao_id__in=pais).delete()
-        componentes, vistos = [], set()
-        for cod_comp, cod_item, coeficiente in vinculos:
-            pai, filho = por_codigo.get(cod_comp), por_codigo.get(cod_item)
-            if pai is None or filho is None or pai == filho or (pai, filho) in vistos:
-                continue
-            vistos.add((pai, filho))
-            componentes.append(ComposicaoReferenciaItem(
-                composicao_id=pai, filho_id=filho, coeficiente=coeficiente,
-            ))
-        if componentes:
-            ComposicaoReferenciaItem.objects.bulk_create(componentes, batch_size=LOTE)
         self.stdout.write(
-            f"    → {len(faltando)} composições novas, {len(novos_filhos)} filhos novos, "
-            f"{len(componentes)} componentes gravados."
+            f'    → {novas} composições novas, {filhos_novos} filhos novos, '
+            f'{componentes} componentes gravados.'
         )
-        return len(composicoes), len(componentes)
+        return len(composicoes), componentes

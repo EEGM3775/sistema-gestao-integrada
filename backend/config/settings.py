@@ -642,6 +642,15 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'moduloorcamento.verificar_indices_desatualizados',
         'schedule': 24 * 3600.0,
     },
+    # ORC.8 — a varredura que **busca**, e não só avisa. Diária pelo mesmo
+    # motivo das duas acima (publicação é mensal), mas quem decide se hoje é o
+    # dia é cada `FonteOficial.dia_do_mes`: a task só olha o calendário e o que
+    # o superuser declarou. Sem fonte cadastrada, ela não faz nada — que é a
+    # decisão nº 1 da `tasks.py` valendo.
+    'orcamento-agendar-cargas-do-mes': {
+        'task': 'moduloorcamento.agendar_cargas_do_mes',
+        'schedule': 24 * 3600.0,
+    },
 }
 
 # E-mail — lembrete de tarefa do CRM e lembrete de evento do calendário, ambos

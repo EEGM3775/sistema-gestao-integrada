@@ -175,3 +175,18 @@ da edição sem enganar sobre o que está disponível.
 3. Em `App.tsx`: adicionar as rotas `<Route path="<modulo>" element={<ListPage />} />` etc.
 4. Reconstruir o container React — ver o procedimento e o **gotcha de cache do browser** em
    [desenvolvimento.md](desenvolvimento.md#rebuild-do-frontend-react-gotcha-de-cache).
+
+
+## Visibilidade: omitir × trancar
+
+Regra de 22/08/2026, com a fronteira escrita para não virar caso a caso:
+
+- **trancar** (cadeado + motivo) — o caminho existe para aquele usuário e ele pode
+  destravá-lo: módulo não contratado, área que exige admin do tenant. O cadeado é
+  informação útil, e às vezes é venda;
+- **omitir** (`platformOnly`) — o caminho **não é dele em hipótese alguma**:
+  operação de plataforma, que nenhum tenant contrata. Mostrar trancado anuncia uma
+  porta que não é para o lado de cá.
+
+A rota acompanha: quem tranca explica (`AccessNotice`); quem omite redireciona em
+silêncio (`PlatformRoute`). Detalhe em [frontend.md](frontend.md).

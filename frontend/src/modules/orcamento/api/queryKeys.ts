@@ -72,4 +72,8 @@ export const orcKeys = {
     [...raiz, 'fator-reajuste', id, competencia] as const,
   previaReajuste: (id: number, competencia: string) =>
     [...raiz, 'previa-reajuste', id, competencia] as const,
+  // ORC.8
+  fontesOficiais: familia('fontes-oficiais'),
+  cargas: familia('cargas'),
+  estadoDaCarga: () => [...raiz, 'estado-da-carga'] as const,
 }

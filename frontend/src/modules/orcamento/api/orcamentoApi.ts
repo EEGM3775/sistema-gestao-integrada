@@ -14,6 +14,8 @@ import type {
   CoberturaMedicao, ComposicaoEncargos, ComposicaoPorNatureza, CurvaABCInsumos,
   DemandaGerada, DesembolsoPorInsumo, FormulaReajuste, IndiceEconomico, LinhaMedicao,
   MemoriaFator, MemoriaQuantitativo, ParcelaFormulaReajuste, PreviaReajuste,
+  // ORC.8
+  CargaBase, EstadoDaCarga, FonteOficial,
   QuadroEncargos, RegimeEncargos, RelacaoInsumos, ResultadoReajuste, RubricaEncargos,
   TipoMaoDeObra, ValorIndice,
 } from '../types'
@@ -363,3 +365,40 @@ export const aplicarReajuste = async (
 export const gerarDemandaDoOrcamento = async (body: {
   orcamento: number; tipo?: 'material' | 'servico'; centro_custo?: number | null; observacao?: string
 }) => (await apiClient.post<DemandaGerada>('scm/demandas/do-orcamento/', body)).data
+
+// ---------------------------------------------------------------------------
+// ORC.8 — a carga da base oficial. Todos exigem `is_platform_admin`: 403 aqui é
+// resposta normal para quem não é dono da plataforma, e a tela usa isso para
+// simplesmente não mostrar o painel, em vez de mostrá-lo quebrado.
+// ---------------------------------------------------------------------------
+
+export const fontesOficiais = recurso<FonteOficial, Partial<FonteOficial>>('fontes-oficiais')
+
+export const getEstadoDaCarga = async () =>
+  (await apiClient.get<EstadoDaCarga>('orcamento/cargas/estado/')).data
+
+export const listarCargas = async (params: Params = {}) =>
+  (await apiClient.get<Paginated<CargaBase>>('orcamento/cargas/', { params })).data
+
+export const dispararCarga = async (body: {
+  fonte: string; competencia?: string; somente_resumo?: boolean; aceitar_sem_classe?: boolean
+}) => (await apiClient.post<CargaBase>('orcamento/cargas/', body)).data
+
+/** Plano B: o ZIP à mão, para o mês em que a Caixa muda o layout ou o WAF aperta. */
+export const enviarArquivoDaCarga = async (body: {
+  fonte: string; competencia?: string; arquivo: File
+  somente_resumo?: boolean; aceitar_sem_classe?: boolean
+}) => {
+  const form = new FormData()
+  form.append('fonte', body.fonte)
+  form.append('arquivo', body.arquivo)
+  if (body.competencia) form.append('competencia', body.competencia)
+  if (body.somente_resumo) form.append('somente_resumo', 'true')
+  if (body.aceitar_sem_classe) form.append('aceitar_sem_classe', 'true')
+  return (await apiClient.post<CargaBase>('orcamento/cargas/enviar/', form)).data
+}
+
+/** A resposta à carga que parou perguntando (classe sem tradução). */
+export const repetirCarga = async (
+  cargaId: number, body: { aceitar_sem_classe?: boolean; somente_resumo?: boolean } = {},
+) => (await apiClient.post<CargaBase>(`orcamento/cargas/${cargaId}/repetir/`, body)).data

@@ -22,6 +22,8 @@ import CalendarPage from './modules/calendar/pages/CalendarPage'
 import FuncionariosListPage from './modules/rh/pages/FuncionariosListPage'
 import FuncionarioDetailPage from './modules/rh/pages/FuncionarioDetailPage'
 import CargosPage from './modules/rh/pages/CargosPage'
+import PlatformRoute from './components/PlatformRoute'
+import BasesOficiaisPage from './modules/sistema/pages/BasesOficiaisPage'
 import PersonasPage from './modules/admin/pages/PersonasPage'
 import UsuariosPage from './modules/admin/pages/UsuariosPage'
 import { erpRoutes } from './modules/erp/routes'
@@ -92,6 +94,13 @@ function App() {
           <Route element={<AdminRoute />}>
             <Route path="admin/papeis" element={<PersonasPage />} />
             <Route path="admin/usuarios" element={<UsuariosPage />} />
+          </Route>
+
+          {/* ── SISTEMA — operação da PLATAFORMA, não da empresa. Guarda por
+               `is_platform_admin`, e a recusa é um redirect silencioso: para
+               quem não é supervisor a rota não existe. ── */}
+          <Route element={<PlatformRoute />}>
+            <Route path="sistema/bases" element={<BasesOficiaisPage />} />
           </Route>
 
           {/* ── ERP Financeiro (sub-rotas lazy — code-splitting, docs/modulos/moduloerp.md §5.6) ── */}

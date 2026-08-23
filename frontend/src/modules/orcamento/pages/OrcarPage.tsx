@@ -563,7 +563,14 @@ function ModalReprecificar({ orcamentoId, bases, onFechar, onRecado }: {
               <Btn variant="primary" disabled={aplicar.isPending} onClick={() => comErro(async () => {
                 await aplicar.mutateAsync({ lote: previa.reprecificacao })
                 onFechar()
-                onRecado(`${previa.linhas.length} linha(s) reprecificadas.`)
+                // `linhas.length` contaria também as que não têm preço novo, e o
+                // recado prometeria um efeito maior do que o que aconteceu.
+                onRecado(
+                  `${previa.linhas_afetadas} linha(s) reprecificadas` +
+                  (previa.linhas_descontinuadas
+                    ? ` · ${previa.linhas_descontinuadas} sem preço na publicação, mantida(s) na data-base anterior.`
+                    : '.')
+                )
               })}>Aplicar tudo</Btn>
             </>
           )}
@@ -596,7 +603,11 @@ function ModalReprecificar({ orcamentoId, bases, onFechar, onRecado }: {
               somente_ate: somenteAte || null,
             })
             setPrevia(p)
-            setSelecao(new Set(p.linhas.map(l => l.linha)))
+            // A descontinuada fica **de fora** da seleção. O backend já a recusa,
+            // mas marcá-la aqui faria o contador de "Aplicar seleção (N)" prometer
+            // um efeito que não existe — e é justamente sobre essas linhas que o
+            // usuário precisa de clareza.
+            setSelecao(new Set(p.linhas.filter(l => !l.descontinuado).map(l => l.linha)))
           })}>Ver a prévia</Btn>
 
           {aplicaveis.length > 0 && (
@@ -636,6 +647,22 @@ function ModalReprecificar({ orcamentoId, bases, onFechar, onRecado }: {
         </Aviso>
       ) : (
         <>
+          {previa.linhas_descontinuadas > 0 && (
+            /* A regra do dono (22/08/2026): item que a publicação de destino não
+               tem **não** vira preço zero e **não** é excluído — o sistema avisa
+               quais são e mantém a data-base antiga naquelas linhas. O aviso
+               precisa estar aqui, antes de aplicar, e não só na grade depois. */
+            <Aviso tom="amber">
+              <AlertTriangle size={15} style={{ flex: 'none', marginTop: 1 }} />
+              <span>
+                <b>{previa.linhas_descontinuadas} item(ns) não têm preço nesta publicação.</b>{' '}
+                Eles não são zerados nem removidos: mantêm o preço e a data-base que já tinham,
+                e ficam marcados abaixo com o motivo. O total da planilha passa a misturar duas
+                datas-base — e a grade continua apontando essas linhas depois.
+              </span>
+            </Aviso>
+          )}
+
           <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', marginBottom: 13 }}>
             <Info k="Total antes" v={brl(previa.total_antes)} m />
             <Info k="Total depois" v={brl(previa.total_depois)} m />
@@ -663,29 +690,55 @@ function ModalReprecificar({ orcamentoId, bases, onFechar, onRecado }: {
                 {previa.linhas.map(linha => {
                   const marcada = selecao.has(linha.linha)
                   const subiu = Number(linha.delta_unitario) > 0
+                  // Sem preço novo: não se clica, não se aplica, e a linha diz por quê.
+                  const semPreco = linha.descontinuado
                   return (
                     <tr
                       key={linha.linha}
-                      className="orc-linha"
-                      onClick={() => setSelecao(s => {
+                      className={semPreco ? undefined : 'orc-linha'}
+                      onClick={semPreco ? undefined : () => setSelecao(s => {
                         const p = new Set(s)
                         if (p.has(linha.linha)) p.delete(linha.linha)
                         else p.add(linha.linha)
                         return p
                       })}
-                      style={{ cursor: 'pointer', background: marcada ? 'var(--accent-soft)' : undefined }}
+                      style={{
+                        cursor: semPreco ? 'default' : 'pointer',
+                        background: semPreco
+                          ? 'var(--accent-soft)'
+                          : marcada ? 'var(--accent-soft)' : undefined,
+                      }}
                     >
                       <td style={{ padding: '6px 10px', borderBottom: '1px solid var(--line-2)' }}>
-                        <input type="checkbox" checked={marcada} readOnly style={{ accentColor: 'var(--accent)' }} />
+                        {semPreco
+                          ? <AlertTriangle size={13} style={{ color: 'var(--accent-ink)' }} />
+                          : <input type="checkbox" checked={marcada} readOnly style={{ accentColor: 'var(--accent)' }} />}
                       </td>
                       <td style={{ padding: '6px 10px', borderBottom: '1px solid var(--line-2)', ...mono, color: 'var(--ink-3)' }}>{linha.codigo_eap}</td>
-                      <td style={{ padding: '6px 10px', borderBottom: '1px solid var(--line-2)', maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{linha.descricao}</td>
-                      <td style={{ padding: '6px 10px', borderBottom: '1px solid var(--line-2)', textAlign: 'right', ...mono, color: 'var(--ink-3)' }}>{brl(linha.custo_antes)}</td>
-                      <td style={{ padding: '6px 10px', borderBottom: '1px solid var(--line-2)', textAlign: 'right', ...mono, color: 'var(--ink)' }}>{brl(linha.custo_depois)}</td>
-                      <td style={{ padding: '6px 10px', borderBottom: '1px solid var(--line-2)', textAlign: 'right', ...mono, color: subiu ? 'var(--danger-ink)' : 'var(--good-ink)' }}>
-                        {linha.delta_pct ? `${subiu ? '+' : ''}${pct(linha.delta_pct, 1)}` : '—'}
+                      <td style={{ padding: '6px 10px', borderBottom: '1px solid var(--line-2)', maxWidth: 300 }}>
+                        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {linha.descricao}
+                        </div>
+                        {semPreco && (
+                          <div style={{ fontSize: 11, color: 'var(--accent-ink)', whiteSpace: 'normal', marginTop: 2 }}>
+                            {linha.motivo}
+                          </div>
+                        )}
                       </td>
-                      <td style={{ padding: '6px 10px', borderBottom: '1px solid var(--line-2)', textAlign: 'right', ...mono, color: subiu ? 'var(--danger-ink)' : 'var(--good-ink)' }}>{brl(linha.delta_total)}</td>
+                      <td style={{ padding: '6px 10px', borderBottom: '1px solid var(--line-2)', textAlign: 'right', ...mono, color: 'var(--ink-3)' }}>{brl(linha.custo_antes)}</td>
+                      <td style={{ padding: '6px 10px', borderBottom: '1px solid var(--line-2)', textAlign: 'right', ...mono, color: semPreco ? 'var(--accent-ink)' : 'var(--ink)' }}>
+                        {/* Nem zero, nem vazio: o preço continua sendo o que era, e a
+                            data-base dele é a informação que decide a leitura da planilha. */}
+                        {semPreco
+                          ? `mantido · ${linha.data_base_antes ? mesBR(linha.data_base_antes) : 'sem data'}`
+                          : brl(linha.custo_depois)}
+                      </td>
+                      <td style={{ padding: '6px 10px', borderBottom: '1px solid var(--line-2)', textAlign: 'right', ...mono, color: subiu ? 'var(--danger-ink)' : 'var(--good-ink)' }}>
+                        {semPreco ? '—' : linha.delta_pct ? `${subiu ? '+' : ''}${pct(linha.delta_pct, 1)}` : '—'}
+                      </td>
+                      <td style={{ padding: '6px 10px', borderBottom: '1px solid var(--line-2)', textAlign: 'right', ...mono, color: subiu ? 'var(--danger-ink)' : 'var(--good-ink)' }}>
+                        {semPreco ? '—' : brl(linha.delta_total)}
+                      </td>
                     </tr>
                   )
                 })}

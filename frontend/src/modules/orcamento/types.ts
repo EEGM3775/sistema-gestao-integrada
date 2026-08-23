@@ -9,7 +9,10 @@ export interface Paginated<T> {
 }
 
 export type Fonte = 'sinapi' | 'orse' | 'sicro' | 'seinfra' | 'sedop' | 'tcpo' | 'propria'
-export type Regime = 'onerado' | 'desonerado' | 'na'
+/** ORC.8 — `sem` são as abas ISE/CSE do arquivo nacional: preço sem encargos
+ *  sociais, que é a base legítima para aplicar o quadro analítico do ORC.7 (usar
+ *  preço que já embute encargo da Caixa contaria duas vezes). */
+export type Regime = 'onerado' | 'desonerado' | 'sem' | 'na'
 export type StatusOrcamento = 'rascunho' | 'aprovado' | 'superado' | 'cancelado'
 export type TipoLinha = 'sintetico' | 'analitico'
 export type TipoReferencia = 'insumo' | 'composicao'
@@ -642,6 +645,14 @@ export interface LinhaPrevia {
   data_base_depois: string | null
   selecionada: boolean
   aplicada: boolean
+  /** A linha **não tem preço** na publicação de destino. Não é erro e não é
+   *  "preço igual": não há valor novo para aplicar, então ela mantém o preço e a
+   *  `data_base_antes` enquanto o cabeçalho do orçamento anda para a data nova.
+   *  Nunca é selecionável — o backend a recusa mesmo se vier marcada. */
+  descontinuado: boolean
+  /** Por que não tem preço, em uma frase: item aposentado pela fonte, ou sem
+   *  pesquisa de preço naquela UF (e, neste caso, em que UFs ele existe). */
+  motivo: string
 }
 
 export interface PreviaReprecificacao {
@@ -656,6 +667,9 @@ export interface PreviaReprecificacao {
   delta: string
   delta_pct: string | null
   linhas_afetadas: number
+  /** Quantas linhas ficaram sem preço novo. Não entram em `linhas_afetadas`,
+   *  porque não mudam preço nenhum. */
+  linhas_descontinuadas: number
   linhas: LinhaPrevia[]
 }
 
@@ -976,4 +990,89 @@ export interface DemandaGerada {
   valor_orcado_dos_itens: string
   cobertura_pct: string
   nota_cobertura: string
+}
+
+
+// ---------------------------------------------------------------------------
+// ORC.8 — a carga da base oficial
+// ---------------------------------------------------------------------------
+
+export type EstadoCarga =
+  | 'pendente' | 'baixando' | 'lendo' | 'gravando'
+  | 'aguardando' | 'concluida' | 'falhou'
+
+export interface FonteOficial {
+  fonte_id: number
+  fonte: Fonte
+  fonte_nome: string
+  /** Aceita {ano}, {mes}, {ano_mes}, {uf} e {regime}. Editável de propósito: a
+   *  URL da Caixa já mudou uma vez, e o conserto tem de ser uma caixa de texto. */
+  template_url: string
+  pagina_referencia: string
+  ativa: boolean
+  /** 0 = sem agendamento; só o botão. */
+  dia_do_mes: number
+  defasagem_meses: number
+  observacao: string
+  competencia_sugerida: string
+  /** O motor sabe ler o arquivo desta fonte sozinho? Hoje só a SINAPI. */
+  carga_automatica: boolean
+}
+
+export interface PublicacaoDoResumo {
+  uf: string
+  regime: Regime
+  insumos: number
+  composicoes: number
+}
+
+export interface ResumoDaCarga {
+  planilha?: string
+  aba_analitica?: string
+  publicacoes?: PublicacaoDoResumo[]
+  total_publicacoes?: number
+  linhas_analiticas?: number
+  itens_sem_preco_em_nenhuma_uf?: number
+  avisos?: string[]
+  classes_desconhecidas?: string[]
+  publicacoes_criadas?: number
+  publicacoes_atualizadas?: number
+  analitica_gravada?: number
+  motivo?: string
+}
+
+export interface CargaBase {
+  carga_id: number
+  fonte: Fonte
+  fonte_nome: string
+  competencia: string
+  origem: 'download' | 'upload'
+  origem_nome: string
+  estado: EstadoCarga
+  estado_nome: string
+  /** O que a corrida faz agora, em uma frase — é o que a tela mostra enquanto roda. */
+  etapa: string
+  url_origem: string
+  arquivo_nome: string
+  mb_lidos: number
+  somente_resumo: boolean
+  aceitar_sem_classe: boolean
+  resumo: ResumoDaCarga
+  erro: string
+  total_publicacoes: number
+  total_insumos: number
+  total_composicoes: number
+  total_analitica: number
+  solicitada_por_nome: string
+  criada_em: string
+  concluida_em: string | null
+  em_andamento: boolean
+}
+
+export interface EstadoDaCarga {
+  fontes: FonteOficial[]
+  fontes_com_motor: Fonte[]
+  em_andamento: CargaBase | null
+  ultima_por_fonte: Record<string, CargaBase>
+  teto_mb: number
 }

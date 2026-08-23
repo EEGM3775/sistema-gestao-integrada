@@ -11,6 +11,8 @@ import type {
   RegimeEncargos, RubricaEncargos, TipoMaoDeObra,
   // ORC.9
   TipoItemProprio,
+  // ORC.8
+  FonteOficial as FonteOficialTipo,
 } from './types'
 
 type Params = Record<string, unknown>
@@ -525,3 +527,67 @@ export const useAplicarReajuste = () =>
 export const useGerarDemandaDoOrcamento = () =>
   useVerbo((v: { orcamento: number; tipo?: 'material' | 'servico'; observacao?: string }) =>
     api.gerarDemandaDoOrcamento(v))
+
+// ---------------------------------------------------------------------------
+// ORC.8 — a carga da base oficial
+// ---------------------------------------------------------------------------
+
+/** O estado da carga, com **polling só enquanto há corrida rodando**.
+ *
+ *  A corrida leva minutos e a tela precisa mostrar o degrau ("baixando 7,2 MB",
+ *  "gravando SP · onerado") — mas manter um intervalo aceso o resto do tempo
+ *  seria uma chamada a cada poucos segundos, para sempre, na tela mais aberta do
+ *  módulo. Daí o intervalo ser função do próprio dado.
+ *
+ *  `retry: false` porque **403 é resposta normal aqui**: quem não é dono da
+ *  plataforma não vê o painel, e reenviar três vezes um pedido que vai ser
+ *  negado só atrasa a tela de todo mundo.
+ */
+export function useEstadoDaCarga(ativo = true) {
+  return useQuery({
+    queryKey: orcKeys.estadoDaCarga(),
+    queryFn: api.getEstadoDaCarga,
+    enabled: ativo,
+    retry: false,
+    refetchInterval: q => (q.state.data?.em_andamento ? 3000 : false),
+  })
+}
+
+export function useCargas(params: Params = {}, ativo = true) {
+  return useQuery({
+    queryKey: orcKeys.cargas.list(params),
+    queryFn: () => api.listarCargas(params),
+    enabled: ativo,
+    retry: false,
+    placeholderData: keepPreviousData,
+  })
+}
+
+function useVerboDaCarga<T, R>(fn: (v: T) => Promise<R>) {
+  const qc = useQueryClient()
+  return useMutation<R, Error, T>({
+    mutationFn: fn,
+    // Invalida a base inteira do módulo, e não só as chaves da carga: uma carga
+    // concluída reescreve publicações, e é `bases-resumo` que a tela de bases lê.
+    onSuccess: () => qc.invalidateQueries({ queryKey: orcKeys.all }),
+  })
+}
+
+export const useSalvarFonteOficial = () =>
+  useVerboDaCarga((v: { id?: number; payload: Partial<FonteOficialTipo> }) =>
+    v.id ? api.fontesOficiais.atualizar(v.id, v.payload) : api.fontesOficiais.criar(v.payload))
+
+export const useDispararCarga = () =>
+  useVerboDaCarga((v: {
+    fonte: string; competencia?: string; somente_resumo?: boolean; aceitar_sem_classe?: boolean
+  }) => api.dispararCarga(v))
+
+export const useEnviarArquivoDaCarga = () =>
+  useVerboDaCarga((v: {
+    fonte: string; competencia?: string; arquivo: File
+    somente_resumo?: boolean; aceitar_sem_classe?: boolean
+  }) => api.enviarArquivoDaCarga(v))
+
+export const useRepetirCarga = () =>
+  useVerboDaCarga((v: { id: number; aceitar_sem_classe?: boolean; somente_resumo?: boolean }) =>
+    api.repetirCarga(v.id, { aceitar_sem_classe: v.aceitar_sem_classe, somente_resumo: v.somente_resumo }))

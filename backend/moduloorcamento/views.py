@@ -9,9 +9,17 @@ A base é catálogo público de plataforma, gravado só por
 O único verbo de escrita do módulo nesta fatia é **adotar**, e ele não escreve na
 base: escreve no `catalogo.Item` **do tenant**. Por isso exige permissão própria
 (`orcamento.base.adotar`) e não o `.edit` do recurso.
+
+**A ORC.8 não abriu exceção a isso.** O botão de carga escreve na base-mãe, mas
+não é endpoint de tenant: é operação de plataforma, gateada por
+`is_platform_admin` — o mesmo gate que já guardava a base-mãe em `impexp.py` —,
+e o que ele faz é enfileirar um job, não gravar na requisição.
 """
+from datetime import timedelta
+
 from django.db import transaction
 from django.db.models import Count, Q
+from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django_filters.rest_framework import DjangoFilterBackend
 from nucleo.busca import BuscaSemAcento
@@ -28,12 +36,16 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from catalogo.models import Item
+from nucleo.frota import MINUTOS_ATE_ORFA
 from nucleo.permissions import RequireModule, RequirePermission
 from nucleo.quotas import QuotaEnforcedMixin
 from nucleo.tenancy import TenantScopedViewSetMixin
 
+from payment import planos
+
 from . import (
     bancos as servico_bancos,
+    carga,
     controle,
     duplicacao,
     encargos,
@@ -46,14 +58,17 @@ from . import (
     reajuste,
     reprecificacao as servico_reprecificacao,
     services,
+    tasks,
 )
 from .models import (
     BancoPreco,
     BaseReferencial,
+    CargaBase,
     ComponenteBancoPreco,
     ComposicaoBDI,
     ComposicaoEncargos,
-    ComposicaoReferenciaItem,
+    Fonte,
+    FonteOficial,
     FormulaReajuste,
     IndiceEconomico,
     InsumoReferencia,
@@ -78,10 +93,12 @@ from .pagination import OrcamentoPageNumberPagination
 from .serializers import (
     BancoPrecoSerializer,
     BaseReferencialSerializer,
+    CargaBaseSerializer,
     ComponenteBancoPrecoSerializer,
     ComposicaoBDISerializer,
     ComposicaoEncargosSerializer,
     ComposicaoReferenciaItemSerializer,
+    FonteOficialSerializer,
     FormulaReajusteSerializer,
     IndiceEconomicoSerializer,
     InsumoReferenciaSerializer,
@@ -194,11 +211,7 @@ class InsumoReferenciaViewSet(_OrcamentoPermsMixin, viewsets.ReadOnlyModelViewSe
     def composicao(self, request, pk=None):
         """A analítica da composição: insumos, coeficientes e a parcela de cada um."""
         referencia = self.get_object()
-        componentes = (
-            ComposicaoReferenciaItem.objects.filter(composicao=referencia)
-            .select_related("filho")
-            .order_by("componente_id")
-        )
+        componentes = services.componentes_da_composicao(referencia)
         return Response({
             "composicao": InsumoReferenciaSerializer(referencia, context=self.get_serializer_context()).data,
             "componentes": ComposicaoReferenciaItemSerializer(componentes, many=True).data,
@@ -358,6 +371,246 @@ class BaseReferencialResumoView(views.APIView):
             }
             for b in bases
         ])
+
+
+# ---------------------------------------------------------------------------
+# ORC.8 — a carga da base oficial (só o dono da plataforma)
+# ---------------------------------------------------------------------------
+
+
+class SoDonoDaPlataforma(permissions.BasePermission):
+    """`is_platform_admin`, e **só** ele — sem entitlement de módulo junto.
+
+    Exigir também o `orcamento` seria errado por um motivo concreto: a base-mãe
+    vale para todos os tenants, e o tenant do dono da plataforma pode não assinar
+    o módulo. Ele estaria barrado de carregar a base que os clientes dele usam.
+
+    É o mesmo desenho do `IncidenteLGPD` no `nucleo/lgpd_views.py`: operação da
+    plataforma sobre dado que não é de ninguém em particular.
+    """
+
+    message = (
+        "Só o dono da plataforma carrega base oficial — ela vale para todas as "
+        "empresas. Para trazer preços da sua empresa, use um banco de preço."
+    )
+
+    def has_permission(self, request, view):
+        user = getattr(request, "user", None)
+        return bool(
+            user and user.is_authenticated and getattr(user, "is_platform_admin", False)
+        )
+
+
+def _nome_de_quem_pediu(request) -> str:
+    user = getattr(request, "user", None)
+    return (getattr(user, "username", "") or getattr(user, "email", "") or "")[:150]
+
+
+class FonteOficialViewSet(viewsets.ModelViewSet):
+    """Onde mora o endereço de cada fonte — a caixa de texto que evita o deploy.
+
+    Escrita liberada de propósito, e é a decisão de rumo: a URL da Caixa **já
+    mudou uma vez** (o padrão por UF morreu em 12/2024). Template compilado no
+    código transformaria isso num release no meio do mês; numa caixa de texto, o
+    conserto é de trinta segundos e é feito por quem percebeu o problema.
+    """
+
+    permission_classes = [permissions.IsAuthenticated, SoDonoDaPlataforma]
+    queryset = FonteOficial.objects.all()
+    serializer_class = FonteOficialSerializer
+    pagination_class = None
+
+
+class CargaBaseViewSet(viewsets.ReadOnlyModelViewSet):
+    """O histórico das corridas e os verbos que disparam uma nova.
+
+    **Histórico guardado, nada apagado** — inclusive o das que falharam, que são
+    as que mais valem: a diferença entre "o WAF cortou", "o mês ainda não saiu" e
+    "o layout mudou" só existe se alguém a escrever no momento em que ela é
+    conhecida.
+    """
+
+    permission_classes = [permissions.IsAuthenticated, SoDonoDaPlataforma]
+    queryset = CargaBase.objects.all()
+    serializer_class = CargaBaseSerializer
+    pagination_class = OrcamentoPageNumberPagination
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ["fonte", "estado", "origem", "competencia"]
+    ordering_fields = ["criada_em", "competencia"]
+
+    # --- o que a tela precisa saber antes de oferecer o botão ---------------
+
+    @action(detail=False, methods=["get"], url_path="estado")
+    def estado(self, request):
+        """Fontes configuradas, corrida em andamento e a última de cada fonte."""
+        fontes = FonteOficial.objects.all().order_by("fonte")
+        andamento = CargaBase.objects.filter(
+            estado__in=[
+                CargaBase.Estado.PENDENTE, CargaBase.Estado.BAIXANDO,
+                CargaBase.Estado.LENDO, CargaBase.Estado.GRAVANDO,
+            ]
+        ).order_by("-criada_em").first()
+        ultimas = {}
+        for registro in CargaBase.objects.order_by("fonte", "-criada_em"):
+            ultimas.setdefault(registro.fonte, registro)
+        return Response({
+            "fontes": FonteOficialSerializer(fontes, many=True).data,
+            "fontes_com_motor": carga.fontes_conhecidas(),
+            "em_andamento": (
+                CargaBaseSerializer(andamento).data if andamento is not None else None
+            ),
+            "ultima_por_fonte": {
+                fonte: CargaBaseSerializer(registro).data
+                for fonte, registro in ultimas.items()
+            },
+            "teto_mb": planos.ORCAMENTO_CARGA_TETO_MB,
+        })
+
+    # --- disparar ------------------------------------------------------------
+
+    def _disparar(self, carga_nova: CargaBase) -> Response:
+        """Enfileira e responde 202: a corrida é job, não requisição.
+
+        Um ZIP nacional rende 54 publicações de ~17 mil linhas — trabalho de
+        minutos. Fazê-lo na requisição seria timeout no gateway com a carga
+        rodando por trás, que é o pior dos dois mundos.
+        """
+        transaction.on_commit(
+            lambda: tasks.carregar_base_oficial.delay(carga_nova.pk)
+        )
+        return Response(
+            CargaBaseSerializer(carga_nova).data, status=status.HTTP_202_ACCEPTED
+        )
+
+    def _recusar_concorrente(self, fonte: str) -> None:
+        """Duas cargas da mesma fonte ao mesmo tempo escreveriam as mesmas
+        publicações em paralelo. Não é corrupção (o upsert é por código), mas é
+        trabalho dobrado numa operação medida em minutos — e some com o relato,
+        porque as duas mexem no mesmo mês.
+
+        **"Em andamento" tem prazo, e essa parte foi aprendida apanhando.** Uma
+        corrida enfileirada para um worker que não estava ouvindo fica `pendente`
+        para sempre, e sem o prazo ela travaria aquela fonte **em definitivo**:
+        nenhuma carga nova entra, e a tela não oferece saída porque, para ela, há
+        uma carga rodando. É a mesma morte violenta que o
+        `nucleo.liberar_cadeiras_presas` já trata na frota (OOM do cgroup,
+        contêiner derrubado, broker reiniciado), e a resposta aqui é a mesma:
+        parada de crescer o carimbo, a corrida deixou de estar viva.
+
+        `MINUTOS_ATE_ORFA` é folga larga sobre o relógio de uma carga honesta
+        (`ORCAMENTO_CARGA_SEGUNDOS` = 30 min do dono), e o `atualizada_em` é
+        reescrito a cada degrau — baixando, lendo, gravando cada UF —, então uma
+        carga viva nunca chega perto dele.
+        """
+        limite = timezone.now() - timedelta(minutes=MINUTOS_ATE_ORFA)
+        if CargaBase.objects.filter(
+            fonte=fonte,
+            atualizada_em__gte=limite,
+            estado__in=[
+                CargaBase.Estado.PENDENTE, CargaBase.Estado.BAIXANDO,
+                CargaBase.Estado.LENDO, CargaBase.Estado.GRAVANDO,
+            ],
+        ).exists():
+            raise exceptions.ValidationError(
+                {"fonte": "Já existe uma carga desta fonte em andamento."}
+            )
+        # A órfã não some: vira `falhou` com o motivo escrito, senão o histórico
+        # guardaria uma corrida eternamente "na fila" e ninguém saberia por quê.
+        CargaBase.objects.filter(
+            fonte=fonte,
+            atualizada_em__lt=limite,
+            estado__in=[
+                CargaBase.Estado.PENDENTE, CargaBase.Estado.BAIXANDO,
+                CargaBase.Estado.LENDO, CargaBase.Estado.GRAVANDO,
+            ],
+        ).update(
+            estado=CargaBase.Estado.FALHOU,
+            etapa="",
+            erro=(
+                f"Sem notícia por mais de {MINUTOS_ATE_ORFA} minutos — a corrida foi "
+                "dada como órfã. Quase sempre é o worker do Celery fora do ar quando "
+                "ela foi enfileirada; o trabalho não começou, e repetir é seguro."
+            ),
+        )
+
+    def create(self, request, *args, **kwargs):
+        """Baixa do site oficial. É o botão."""
+        fonte = str(request.data.get("fonte") or "").strip()
+        if fonte not in dict(Fonte.choices):
+            raise exceptions.ValidationError({"fonte": "Fonte desconhecida."})
+        self._recusar_concorrente(fonte)
+        competencia = self._competencia(request.data.get("competencia"), fonte)
+        nova = CargaBase.objects.create(
+            fonte=fonte,
+            competencia=competencia,
+            origem=CargaBase.Origem.DOWNLOAD,
+            somente_resumo=bool(request.data.get("somente_resumo")),
+            aceitar_sem_classe=bool(request.data.get("aceitar_sem_classe")),
+            solicitada_por_nome=_nome_de_quem_pediu(request),
+        )
+        return self._disparar(nova)
+
+    @action(detail=False, methods=["post"], url_path="enviar")
+    def enviar(self, request):
+        """**Plano B**: o mês em que a Caixa muda o layout ou aperta o WAF não
+        pode parar a carga. O arquivo vem à mão e segue o mesmo caminho."""
+        fonte = str(request.data.get("fonte") or "").strip()
+        if fonte not in dict(Fonte.choices):
+            raise exceptions.ValidationError({"fonte": "Fonte desconhecida."})
+        arquivo = request.FILES.get("arquivo")
+        if arquivo is None:
+            raise exceptions.ValidationError({"arquivo": "Envie o ZIP ou o .xlsx oficial."})
+        teto = planos.ORCAMENTO_CARGA_TETO_MB * 1024 * 1024
+        if arquivo.size > teto:
+            raise exceptions.ValidationError({
+                "arquivo": (
+                    f"O arquivo tem {arquivo.size / (1024 * 1024):.0f} MB e o teto é "
+                    f"{planos.ORCAMENTO_CARGA_TETO_MB} MB."
+                )
+            })
+        self._recusar_concorrente(fonte)
+        nova = CargaBase.objects.create(
+            fonte=fonte,
+            competencia=self._competencia(request.data.get("competencia"), fonte),
+            origem=CargaBase.Origem.UPLOAD,
+            arquivo=arquivo,
+            arquivo_nome=(arquivo.name or "")[:255],
+            somente_resumo=bool(request.data.get("somente_resumo")),
+            aceitar_sem_classe=bool(request.data.get("aceitar_sem_classe")),
+            solicitada_por_nome=_nome_de_quem_pediu(request),
+        )
+        return self._disparar(nova)
+
+    @action(detail=True, methods=["post"], url_path="repetir")
+    def repetir(self, request, pk=None):
+        """Roda de novo a mesma corrida — é o caminho de volta do `aguardando`.
+
+        A carga que parou por classe sem tradução fez uma **pergunta**; esta é a
+        resposta. Ou o superuser declarou o de-para em `dados/classes/<fonte>.csv`
+        e repete igual, ou aceita que aqueles insumos entrem pela unidade e
+        repete com `aceitar_sem_classe`.
+        """
+        anterior = self.get_object()
+        self._recusar_concorrente(anterior.fonte)
+        nova = CargaBase.objects.create(
+            fonte=anterior.fonte,
+            competencia=anterior.competencia,
+            origem=anterior.origem,
+            arquivo=anterior.arquivo,
+            arquivo_nome=anterior.arquivo_nome,
+            somente_resumo=bool(request.data.get("somente_resumo")),
+            aceitar_sem_classe=bool(request.data.get("aceitar_sem_classe")),
+            solicitada_por_nome=_nome_de_quem_pediu(request),
+        )
+        return self._disparar(nova)
+
+    def _competencia(self, bruta, fonte: str):
+        if not bruta:
+            return carga.competencia_sugerida(fonte)
+        competencia = parse_date(str(bruta)) or parse_date(f"{bruta}-01")
+        if competencia is None:
+            raise exceptions.ValidationError({"competencia": "Use AAAA-MM."})
+        return competencia.replace(day=1)
 
 
 # ---------------------------------------------------------------------------

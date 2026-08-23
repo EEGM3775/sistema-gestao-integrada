@@ -1420,3 +1420,39 @@ aqui só a definição do escopo:
 Vivem em [**frontend-convencoes.md**](frontend-convencoes.md) — leitura obrigatória antes de tocar o
 frontend: convenções gerais, erros de formulário, máscaras CPF/CNPJ/PIS, datas, upload/download,
 botões inativos e o procedimento para ativar um módulo concluído.
+
+
+## Telas de plataforma × telas de tenant
+
+*(Decisão do dono, 22/08/2026.)* Existem telas que **não são do cliente**: operam
+o que vale para todos os tenants ao mesmo tempo (a carga da base-mãe da SINAPI, e
+o que vier depois). Elas moram na seção **Sistema** da sidebar e seguem três
+regras próprias.
+
+**1. Não aparecem para tenant, nem trancadas.** O padrão normal da sidebar é
+mostrar com cadeado o que a pessoa não alcança (`Módulo não contratado`,
+`Somente administradores`), porque é caminho que existe para ela — ela pode
+contratar ou pedir acesso. Operação de plataforma não é vendável nem contratável:
+mostrar cadeado anunciaria uma porta que não é para o lado de cá, e convidaria a
+perguntar o que tem atrás. Por isso o `NavItem` ganhou **`platformOnly`**, que
+**omite** o item da árvore em vez de desabilitá-lo — e a seção que ficar vazia
+some junto, senão sobraria um título "Sistema" sem nada embaixo, que levanta a
+mesma pergunta.
+
+**2. A rota recusa em silêncio.** `AdminRoute` e `ModuleRoute` explicam a recusa
+com `AccessNotice` ("peça a quem administra", "seu plano não inclui"), e é o certo
+para eles. [`PlatformRoute`](../frontend/src/components/PlatformRoute.tsx)
+redireciona para o início: para quem não é supervisor, a rota não existe — que,
+para ele, é a verdade.
+
+**3. Assunto de cliente não aparece para o supervisor.** O inverso da regra 1, e
+igualmente deliberado: o card **Seu plano** e os medidores de quota do hub
+descrevem o que uma *empresa* contratou — quanto pode cadastrar, quando trava,
+qual o próximo degrau de venda. Mostrá-los a quem vende o produto é oferecer
+upsell a si mesmo, e transforma um número de fixture num alarme que ele não tem
+por que resolver. `TabVisaoGeral` oculta a seção e recolhe a grade para uma
+coluna.
+
+Quem decide, nos três casos, é `isPlatformAdmin` do `AuthContext` — que vem de
+`is_platform_admin` no `/auth/me/`, e cuja semântica está em
+[acesso-e-permissoes.md](acesso-e-permissoes.md).

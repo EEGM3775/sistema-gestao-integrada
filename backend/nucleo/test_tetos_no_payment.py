@@ -159,6 +159,34 @@ class TetosDaPlataformaTests(SimpleTestCase):
             planos.ORCAMENTO_PROFUNDIDADE_MAXIMA_FORMULA,
         )
 
+    def test_tetos_da_carga_da_base_oficial_vem_do_payment(self):
+        """ORC.8 — o que sai da nossa máquina para o site da Caixa.
+
+        Aqui a régua é prendida de um jeito diferente das outras: `carga.py` e
+        `oficial.py` **não copiam** os números para constantes locais, leem
+        `planos.*` na hora de usar. Então o que este teste cobra é que continue
+        assim — uma constante local reaparecendo nesses módulos é exatamente a
+        regressão que ele existe para pegar, e ela passaria despercebida porque
+        nada quebra: o download só passa a obedecer a um número que o dono não vê.
+        """
+        from moduloorcamento import carga, oficial
+
+        for nome in (
+            "ORCAMENTO_CARGA_TETO_MB", "ORCAMENTO_CARGA_SEGUNDOS",
+            "ORCAMENTO_CARGA_MEMORIA_MB", "ORCAMENTO_CARGA_TENTATIVAS",
+            "ORCAMENTO_CARGA_ESPERA_INICIAL_S", "ORCAMENTO_CARGA_ESPERA_MAXIMA_S",
+            "ORCAMENTO_CARGA_PAUSA_ENTRE_ARQUIVOS_S", "ORCAMENTO_CARGA_TETO_PUBLICACOES",
+        ):
+            self.assertTrue(
+                hasattr(planos, nome), f"{nome} sumiu do payment/planos.py §5.5b"
+            )
+            for modulo in (carga, oficial):
+                self.assertFalse(
+                    hasattr(modulo, nome),
+                    f"{modulo.__name__} redeclarou {nome} — o valor é do dono, "
+                    "não do módulo (payment/planos.py §5.5b).",
+                )
+
 
 class PaginacaoTests(SimpleTestCase):
     """Página é limite dos dois lados — o que vem sem pedir e o teto do que se pede.

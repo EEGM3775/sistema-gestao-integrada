@@ -37,7 +37,7 @@ da raiz e o frontend servido — em geral `:5173` no modo de desenvolvimento.
 |---|---|
 | `phase*_test.py`, `phase4_e2e.py` | As fases da plataforma: RS256, RBAC, tenancy, auditoria, WebSocket de serviço |
 | `pra*_test.py` | Prancheta ponta a ponta — escala, hachura, upload de acervo, o módulo pelo gateway |
-| `map6_maps_test.py`, `orc6_orcamento_test.py`, `ie_impexp_test.py`, `d70_*`, `d23_*`, `phaseC_*` | Um módulo ou um achado específico, no stack vivo |
+| `map6_maps_test.py`, `orc6_orcamento_test.py`, `orc8_carga_base_test.py`, `ie_impexp_test.py`, `d70_*`, `d23_*`, `phaseC_*` | Um módulo ou um achado específico, no stack vivo |
 | `amostras_pra8.py` | **Apoio**: os bytes de amostra (DWG, DXF, PDF, RVT) que o `pra8` usa — importado como módulo irmão |
 | `d11_mailpit_helper.py` | **Apoio**: lê o Mailpit para conferir e-mail de verdade |
 | `carregar_acervo_dwg.py` | **Apoio**: sobe um acervo de DWG pelo caminho de produção |

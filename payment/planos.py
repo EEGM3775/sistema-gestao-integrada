@@ -1022,6 +1022,56 @@ PAGINA_MAXIMA: dict[str, int] = {
 }
 
 # ---------------------------------------------------------------------------
+# 5.5b A carga da base oficial (ORC.8) — o que sai da nossa máquina para a Caixa
+# ---------------------------------------------------------------------------
+# O ORC.8 trocou "alguém baixa o ZIP e roda o comando" por um botão. Com isso o
+# backend passou a **sair para a internet** buscando arquivo de terceiro, e todo
+# número desse caminho é limite: diz até onde a nossa máquina vai atrás de um
+# artefato que não controlamos.
+#
+# Por que aqui e não em `config/settings.py` (que é arquivo de *deploy*): quem
+# decide "um ZIP de 200 MB ainda vale a pena?" é o dono, não quem opera o
+# contêiner. E o efeito de cada um é comercial antes de ser técnico:
+#
+#   - `ORCAMENTO_CARGA_TETO_MB` — teto do ZIP baixado. O nacional de 2026 tem
+#     ~16 MB; 250 é folga de uma ordem de grandeza para o mês em que a Caixa
+#     resolver publicar tudo junto. Baixo demais recusa publicação legítima;
+#     alto demais deixa uma URL errada (uma ISO, um espelho) encher o disco do
+#     worker. O corte acontece **durante** o stream, não depois de gravar.
+#   - `ORCAMENTO_CARGA_SEGUNDOS` — relógio de uma carga inteira (baixar + ler +
+#     gravar). 54 publicações de ~17 mil linhas é trabalho de minutos, e é por
+#     isso que a carga é job e não requisição.
+#   - `ORCAMENTO_CARGA_MEMORIA_MB` — orçamento do processo enquanto lê o XLSX
+#     largo. Mesma unidade do `impexp_memoria_mb`: o limite na moeda em que a
+#     conta chega. Estourar vira carga `falhou` com motivo, nunca worker morto.
+#   - `ORCAMENTO_CARGA_TENTATIVAS` / `_ESPERA_INICIAL_S` / `_ESPERA_MAXIMA_S` —
+#     a **pausa** do download. O WAF da Caixa (Azion) limita por taxa: rajada
+#     derruba tudo para 429, inclusive a URL boa. Backoff exponencial de 5 s,
+#     teto de 60 s, 4 tentativas. Subir as tentativas não acelera nada — só faz
+#     o job segurar por mais tempo a cadeira que pegou na frota.
+#   - `ORCAMENTO_CARGA_PAUSA_ENTRE_ARQUIVOS_S` — intervalo entre dois downloads
+#     da mesma corrida. Existe porque o formato até 12/2024 era 1 ZIP por UF ×
+#     regime: uma carga daquele formato são 54 hits, e 54 hits sem pausa é
+#     exatamente a rajada que o WAF corta.
+#   - `ORCAMENTO_CARGA_TETO_PUBLICACOES` — quantas publicações uma carga pode
+#     criar. O ZIP nacional rende 27 UFs × 3 regimes = 81 no pior caso; 120 é
+#     folga para a Caixa acrescentar regime ou território sem o job parar, e é
+#     freio contra layout inesperado em que a detecção de UF ache coluna demais
+#     e a carga escreva publicação que ninguém pediu.
+#
+# Nenhum destes é por plano, e a razão é a §11.1 do `moduloorcamento.md`: a
+# base-mãe é da PLATAFORMA. Quem paga a conta desta carga somos nós, uma vez por
+# mês, para todos os clientes de uma vez — o tenant nem sabe que ela aconteceu.
+ORCAMENTO_CARGA_TETO_MB: int = 250
+ORCAMENTO_CARGA_SEGUNDOS: int = 1_800
+ORCAMENTO_CARGA_MEMORIA_MB: int = 2_048
+ORCAMENTO_CARGA_TENTATIVAS: int = 4
+ORCAMENTO_CARGA_ESPERA_INICIAL_S: float = 5.0
+ORCAMENTO_CARGA_ESPERA_MAXIMA_S: float = 60.0
+ORCAMENTO_CARGA_PAUSA_ENTRE_ARQUIVOS_S: float = 2.0
+ORCAMENTO_CARGA_TETO_PUBLICACOES: int = 120
+
+# ---------------------------------------------------------------------------
 # 5.6 O que NÃO é limite — e por isso continua no código de engenharia
 # ---------------------------------------------------------------------------
 # A régua é "todo teto ou limite vive aqui", e ela tem uma fronteira: número que

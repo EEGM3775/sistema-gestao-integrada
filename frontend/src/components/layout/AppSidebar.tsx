@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Building2, HardHat, Users, Truck,
   BarChart3, UserCog, TrendingUp, Brain, Plane, Package,
-  PanelLeft, Lock, ShieldCheck, Network, Warehouse, Calculator,
+  PanelLeft, Lock, ShieldCheck, Network, Warehouse, Calculator, DatabaseZap,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { Quarteirao } from '@/components/brand/Quarteirao'
@@ -17,6 +17,15 @@ interface NavItem {
   to: string
   module?: string       // entitlement code — se definido, item some se não tiver o módulo
   adminOnly?: boolean    // só aparece para admin do tenant
+  /** Só para o supervisor da plataforma — e **omitido**, não trancado.
+   *
+   *  A diferença com `adminOnly` é deliberada e é decisão do dono (22/08/2026):
+   *  item de tenant que a pessoa não alcança aparece com cadeado, porque é um
+   *  caminho que existe para ela e ela pode contratar. Já a operação de
+   *  PLATAFORMA não é isso — ela não é vendável, não é contratável e não é dela.
+   *  Mostrá-la trancada anunciaria uma porta que não é para ninguém do lado de
+   *  cá, e convidaria a perguntar o que tem atrás. */
+  platformOnly?: boolean
   implemented: boolean   // quando false: mostra o item mas não navega (cadeado)
   badge?: { text: string; kind: BadgeKind }
 }
@@ -67,6 +76,14 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
+    // A operação da PLATAFORMA, não a da empresa. A seção inteira desaparece
+    // para quem não é supervisor — ver `platformOnly` e a filtragem no render.
+    label: 'Sistema',
+    items: [
+      { label: 'Bases oficiais', icon: <DatabaseZap />, to: '/app/sistema/bases', platformOnly: true, implemented: true },
+    ],
+  },
+  {
     label: 'Ecossistema',
     items: [
       { label: 'Esfera de Rede', icon: <Network />, to: '/app/rede', implemented: false, badge: { text: 'H2', kind: 'soon' } },
@@ -83,7 +100,7 @@ function iniciais(nome: string): string {
 }
 
 export const AppSidebar: React.FC = () => {
-  const { hasModule, isTenantAdmin, user } = useAuth()
+  const { hasModule, isTenantAdmin, isPlatformAdmin, user } = useAuth()
   const [collapsed, setCollapsed] = useState(() =>
     localStorage.getItem('sgi_sidebar_collapsed') === 'true'
   )
@@ -102,6 +119,13 @@ export const AppSidebar: React.FC = () => {
     if (it.adminOnly && !isTenantAdmin) return { interativo: false, motivo: 'Somente administradores' }
     return { interativo: true }
   }
+
+  // `platformOnly` some da árvore — não vira cadeado. E a seção que ficar vazia
+  // some junto, senão sobraria um título "Sistema" sem nada embaixo, que é a
+  // mesma pergunta que o cadeado levantaria.
+  const secoesVisiveis = NAV_SECTIONS
+    .map(sec => ({ ...sec, items: sec.items.filter(it => !it.platformOnly || isPlatformAdmin) }))
+    .filter(sec => sec.items.length > 0)
 
   const nome = user?.username ?? 'usuário'
 
@@ -168,7 +192,7 @@ export const AppSidebar: React.FC = () => {
 
       {/* ── Navegação ── */}
       <nav className="flex-1 overflow-y-auto relative" style={{ padding: '6px 12px', zIndex: 1 }}>
-        {NAV_SECTIONS.map((sec) => (
+        {secoesVisiveis.map((sec) => (
           <div key={sec.label}>
             {!collapsed
               ? <div style={{ fontSize: 10, letterSpacing: '0.13em', textTransform: 'uppercase', color: 'var(--ink-3)', fontWeight: 700, padding: '14px 10px 6px' }}>{sec.label}</div>

@@ -39,6 +39,15 @@ PORTAS = {
     # Portas construídas antes do D70
     "impexp": "—",       # o próprio motor: entrada, conferência e saída
     "prancheta": ("prancheta.acervo", "prancheta.marcacao"),
+    # ORC.8 — o ZIP oficial do plano B. **Entrada que nunca vira saída**: é
+    # escrito pela API (só `is_platform_admin`), lido uma vez pelo worker e
+    # nunca servido — nenhuma view o entrega e o `CargaBaseSerializer` exclui o
+    # campo de propósito, o que `test_carga_nao_expoe_o_binario` cobra. Não
+    # ganhou `Recurso` porque não há a quem servi-lo: o recurso é tenant-scoped e
+    # gateado por permissão do catálogo, e a base-mãe não tem tenant nem
+    # permissão própria — inventar uma só para satisfazer o registry seria criar
+    # uma porta que ninguém abre.
+    "cargas_base": "—",
 }
 
 

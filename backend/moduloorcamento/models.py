@@ -14,8 +14,10 @@ mensais), não dado de cliente. Duas razões para não serem tenant-scoped:
    aqui ela só custaria complexidade sem proteger nada.
 
 Por isso não há política RLS nestas tabelas — a **leitura segue gateada pelo
-entitlement `orcamento`** na API, e a **escrita só acontece por comando de
-importação** (`manage.py importar_base_referencial`), nunca por endpoint.
+entitlement `orcamento`** na API, e a **escrita só acontece pela mão do dono da
+plataforma**: o comando `manage.py importar_base_referencial` desde a ORC.0 e,
+desde a ORC.8, o botão de carga (`is_platform_admin`), que roda o mesmo motor.
+Nenhum tenant escreve aqui por endpoint algum.
 
 O que é do tenant é a **adoção**: usar um item da base cria/atualiza o
 `catalogo.Item` daquela empresa com `codigo_referencia`/`fonte_referencia`
@@ -62,6 +64,13 @@ class BaseReferencial(models.Model):
     class Regime(models.TextChoices):
         ONERADO = "onerado", _("Onerado")
         DESONERADO = "desonerado", _("Desonerado")
+        # ORC.8 — as abas `ISE`/`CSE` do arquivo nacional: preço **sem encargos
+        # sociais**. Não é "onerado com percentual zero", é outra coisa: é o
+        # custo puro sobre o qual se aplica um quadro de encargos próprio, que é
+        # o que o ORC.7 entregou. Sem este regime, quem quisesse usar o quadro
+        # analítico teria de partir de um preço que já embute encargo da Caixa —
+        # e aplicar encargo sobre encargo é contar duas vezes.
+        SEM_ENCARGOS = "sem", _("Sem encargos")
         NAO_SE_APLICA = "na", _("Não se aplica")
 
     base_id = models.AutoField(primary_key=True)
@@ -86,6 +95,15 @@ class BaseReferencial(models.Model):
     importada_por_nome = models.CharField(
         max_length=150, blank=True, verbose_name=_("Importada por"),
         help_text=_("Rótulo durável de quem rodou a importação (não é FK)."),
+    )
+    # ORC.8 — de onde este preço veio, literalmente. É o que a auditoria pede
+    # quando pergunta "por que R$ 412,80?": a resposta completa é a publicação
+    # **e** o artefato de onde ela foi lida. Fica vazio na importação por
+    # arquivo local (o comando da ORC.0), porque ali a origem é a máquina de
+    # quem rodou e inventar uma URL seria pior que não ter nenhuma.
+    url_origem = models.CharField(
+        max_length=500, blank=True, verbose_name=_("URL de origem"),
+        help_text=_("Endereço do artefato oficial de onde a publicação foi lida."),
     )
 
     class Meta:
@@ -191,6 +209,252 @@ class ComposicaoReferenciaItem(models.Model):
 
     def __str__(self):
         return f"{self.composicao_id} ⊃ {self.filho_id} ×{self.coeficiente}"
+
+
+# ---------------------------------------------------------------------------
+# ORC.8 — a carga da base oficial: de onde ela vem e o que já veio
+# ---------------------------------------------------------------------------
+#
+# Continuam sendo tabelas de plataforma, sem tenant e sem RLS, pela mesma razão
+# das três acima: descrevem dado público e a operação de quem o publica aqui
+# dentro. O que muda é quem escreve — não mais só o comando, mas o botão do
+# `is_platform_admin`. Desenho em docs/modulos/moduloorcamento.md §12.7.
+
+
+class FonteOficial(models.Model):
+    """**De onde** a publicação de uma fonte é baixada — e o desenho inteiro
+    desta tabela existe por causa de um fato: a URL da Caixa já mudou uma vez.
+
+    O padrão por UF morreu em 12/2024, e quem tivesse o endereço compilado no
+    código teria descoberto isso com um deploy no meio do mês. Com o template
+    numa caixa de texto, o conserto é de trinta segundos e é feito por quem
+    percebeu o problema — que é o dono da plataforma, não quem tem acesso ao
+    repositório.
+
+    O template aceita `{ano}` (4 dígitos), `{mes}` (2 dígitos), `{ano_mes}`
+    (AAAAMM), `{uf}` e `{regime}`. Os dois últimos existem para o formato antigo
+    (1 ZIP por UF × regime); no nacional eles simplesmente não aparecem no
+    template e a carga faz um download só.
+    """
+
+    fonte_id = models.AutoField(primary_key=True)
+    fonte = models.CharField(
+        max_length=10, choices=Fonte.choices, unique=True, verbose_name=_("Fonte"),
+    )
+    template_url = models.CharField(
+        max_length=500, blank=True, verbose_name=_("Template da URL"),
+        help_text=_("Aceita {ano}, {mes}, {ano_mes}, {uf} e {regime}."),
+    )
+    # O WAF da Caixa (Azion) recusa hit frio no arquivo: quer sessão aquecida e
+    # `Referer` da página de downloads. É janela de protocolo de terceiro (§5.6
+    # do planos.py) — não somos nós que escolhemos —, mas o **endereço** muda com
+    # o site deles, então é dado, não constante.
+    pagina_referencia = models.CharField(
+        max_length=500, blank=True, verbose_name=_("Página de referência"),
+        help_text=_("Página pública visitada antes do download (aquece a sessão e vira Referer)."),
+    )
+    ativa = models.BooleanField(
+        default=True, verbose_name=_("Ativa"),
+        help_text=_("Desligada, a fonte não entra na varredura mensal — o botão continua valendo."),
+    )
+    # Dia do mês em que a varredura tenta esta fonte. 0 desliga o agendamento e
+    # deixa só o botão: o botão resolve *hoje*, o agendamento evita que "alguém
+    # esqueceu" vire orçamento nascendo com preço vencido.
+    dia_do_mes = models.PositiveSmallIntegerField(
+        default=0, verbose_name=_("Dia do mês para tentar"),
+        help_text=_("0 = não agendar (só carga manual)."),
+    )
+    # Quantos meses a publicação da fonte costuma atrasar em relação ao mês
+    # corrente. A SINAPI publica o mês M por volta do dia 10 de M+1, então
+    # tentar `hoje` no dia 5 é pedir 404 garantido.
+    defasagem_meses = models.PositiveSmallIntegerField(
+        default=1, verbose_name=_("Defasagem de publicação (meses)"),
+    )
+    observacao = models.TextField(blank=True, verbose_name=_("Observação"))
+    atualizada_em = models.DateTimeField(auto_now=True, verbose_name=_("Atualizada em"))
+
+    class Meta:
+        verbose_name = _("Fonte oficial")
+        verbose_name_plural = _("Fontes oficiais")
+        ordering = ["fonte"]
+
+    def __str__(self):
+        return f"{self.get_fonte_display()} → {self.template_url or '(sem template)'}"
+
+    def url_para(self, competencia, uf: str = "", regime: str = "") -> str:
+        """Resolve o template para uma competência. Erro de template vira texto
+        vazio, não exceção: URL malformada é problema de quem a escreveu e a
+        carga sabe dizer isso melhor do que um `KeyError` no log do worker."""
+        if not self.template_url:
+            return ""
+        try:
+            return self.template_url.format(
+                ano=f"{competencia.year:04d}", mes=f"{competencia.month:02d}",
+                ano_mes=f"{competencia.year:04d}{competencia.month:02d}",
+                uf=uf.upper(), regime=regime,
+            )
+        except (KeyError, IndexError, ValueError):
+            return ""
+
+
+class CargaBase(models.Model):
+    """Uma **corrida** de carga: a tentativa de trazer a publicação de um mês.
+
+    Guardada mesmo quando falha, e principalmente quando falha. Sem esta linha o
+    botão seria um botão que às vezes não faz nada e ninguém sabe por quê — a
+    diferença entre "o WAF cortou", "o mês ainda não saiu" e "o layout mudou" só
+    existe se alguém a escrever no momento em que ela é conhecida.
+
+    O estado `AGUARDANDO` é o que carrega a decisão do D112 para esta porta:
+    classe que não sabemos ler **para** a carga antes de gravar e devolve a
+    pergunta a quem a disparou, com a lista do que não soube fazer. O caminho de
+    volta é a mesma corrida com `aceitar_sem_classe`.
+    """
+
+    class Estado(models.TextChoices):
+        PENDENTE = "pendente", _("Na fila")
+        BAIXANDO = "baixando", _("Baixando")
+        LENDO = "lendo", _("Lendo o arquivo")
+        GRAVANDO = "gravando", _("Gravando")
+        AGUARDANDO = "aguardando", _("Aguardando decisão")
+        CONCLUIDA = "concluida", _("Concluída")
+        FALHOU = "falhou", _("Falhou")
+
+    class Origem(models.TextChoices):
+        DOWNLOAD = "download", _("Download do site oficial")
+        UPLOAD = "upload", _("Arquivo enviado")
+
+    carga_id = models.AutoField(primary_key=True)
+    fonte = models.CharField(max_length=10, choices=Fonte.choices, verbose_name=_("Fonte"))
+    competencia = models.DateField(
+        verbose_name=_("Competência"), help_text=_("Dia 1 do mês da publicação."),
+    )
+    origem = models.CharField(
+        max_length=10, choices=Origem.choices, default=Origem.DOWNLOAD, verbose_name=_("Origem"),
+    )
+    estado = models.CharField(
+        max_length=12, choices=Estado.choices, default=Estado.PENDENTE, verbose_name=_("Estado"),
+    )
+    # O que a corrida está fazendo agora, em uma frase. É o que a tela mostra
+    # enquanto o job roda: "baixando (7,2 MB)", "lendo a aba ICD", "gravando SP".
+    etapa = models.CharField(max_length=200, blank=True, verbose_name=_("Etapa"))
+    url_origem = models.CharField(max_length=500, blank=True, verbose_name=_("URL de origem"))
+    arquivo_nome = models.CharField(max_length=255, blank=True, verbose_name=_("Arquivo"))
+    # O plano B guarda o artefato enviado, e guardar é a escolha: a publicação é
+    # a justificativa de preço de todo orçamento com aquela data-base, e no dia
+    # em que alguém contestar um valor a pergunta será "de que arquivo veio?".
+    # No caminho do download essa resposta é a `url_origem`; no upload, o
+    # arquivo é a única resposta que existe.
+    arquivo = models.FileField(
+        upload_to="cargas_base/", blank=True, verbose_name=_("Arquivo enviado"),
+    )
+    bytes_lidos = models.BigIntegerField(default=0, verbose_name=_("Bytes lidos"))
+    # **Resumo antes de gravar**, não conferência linha a linha: a importação é
+    # idempotente e conferir 800 mil linhas seria teatro. O resumo diz quantos
+    # insumos, composições e linhas analíticas entram, por publicação — e é aí
+    # que se percebe o arquivo errado.
+    somente_resumo = models.BooleanField(
+        default=False, verbose_name=_("Só o resumo"),
+        help_text=_("Lê e conta, não grava — o equivalente ao --dry-run do comando."),
+    )
+    aceitar_sem_classe = models.BooleanField(
+        default=False, verbose_name=_("Aceitar classe sem tradução"),
+    )
+    resumo = models.JSONField(default=dict, blank=True, verbose_name=_("Resumo"))
+    erro = models.TextField(blank=True, verbose_name=_("Erro"))
+    total_publicacoes = models.PositiveIntegerField(default=0, verbose_name=_("Publicações"))
+    total_insumos = models.PositiveIntegerField(default=0, verbose_name=_("Insumos"))
+    total_composicoes = models.PositiveIntegerField(default=0, verbose_name=_("Composições"))
+    total_analitica = models.PositiveIntegerField(default=0, verbose_name=_("Linhas analíticas"))
+    solicitada_por_nome = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Solicitada por"),
+    )
+    criada_em = models.DateTimeField(auto_now_add=True, verbose_name=_("Criada em"))
+    atualizada_em = models.DateTimeField(auto_now=True, verbose_name=_("Atualizada em"))
+    concluida_em = models.DateTimeField(null=True, blank=True, verbose_name=_("Concluída em"))
+
+    class Meta:
+        verbose_name = _("Carga de base oficial")
+        verbose_name_plural = _("Cargas de base oficial")
+        ordering = ["-criada_em"]
+        indexes = [
+            models.Index(fields=["fonte", "-competencia"], name="orcamento_carga_fonte_idx"),
+            models.Index(fields=["estado"], name="orcamento_carga_estado_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.get_fonte_display()} {self.competencia:%m/%Y} — {self.get_estado_display()}"
+
+    @property
+    def em_andamento(self) -> bool:
+        return self.estado in {
+            self.Estado.PENDENTE, self.Estado.BAIXANDO,
+            self.Estado.LENDO, self.Estado.GRAVANDO,
+        }
+
+
+class AnaliticaNacional(models.Model):
+    """A composição analítica guardada **uma vez por fonte + mês**, não por
+    publicação — e este é o desenho que torna a carga nacional possível.
+
+    O coeficiente da SINAPI é nacional: o que varia entre São Paulo e o Acre é o
+    **preço** do insumo, não quantos quilos de cimento entram no metro cúbico de
+    concreto. Amarrada a cada publicação, a analítica seria replicada 54× (27 UFs
+    × 2 regimes) — cerca de 3,6 milhões de linhas por mês, ~69 milhões nos 19
+    meses desde 01/2025. Guardada aqui, são ~67 mil por mês.
+
+    Convive com `ComposicaoReferenciaItem` sem ambiguidade porque **quem lê é uma
+    função só** (`services.componentes_da_composicao`): a analítica da própria
+    publicação, quando existe, vence; na ausência dela, esta tabela responde. As
+    publicações do formato antigo (1 ZIP por UF, com analítica própria) seguem
+    exatamente como estavam.
+    """
+
+    linha_id = models.BigAutoField(primary_key=True)
+    fonte = models.CharField(max_length=10, choices=Fonte.choices, verbose_name=_("Fonte"))
+    competencia = models.DateField(verbose_name=_("Competência"))
+    codigo_composicao = models.CharField(max_length=30, verbose_name=_("Código da composição"))
+    codigo_item = models.CharField(max_length=30, verbose_name=_("Código do item"))
+    coeficiente = models.DecimalField(
+        max_digits=14, decimal_places=5, verbose_name=_("Coeficiente"),
+    )
+    # Descrição, unidade e tipo do filho viajam com a linha porque a analítica é
+    # a fonte mais rica do arquivo: ela declara itens que a aba de preço pode não
+    # trazer (insumo sem pesquisa naquela UF). Sem estes campos, a carga não
+    # saberia criar o filho faltante e o coeficiente ficaria apontando para o
+    # nada — que é o mesmo buraco que o `_gravar_analitica` do comando já fecha.
+    descricao_item = models.CharField(max_length=500, blank=True, verbose_name=_("Descrição do item"))
+    unidade_item = models.CharField(max_length=20, blank=True, verbose_name=_("Unidade do item"))
+    tipo_item = models.CharField(
+        max_length=12, choices=InsumoReferencia.Tipo.choices,
+        default=InsumoReferencia.Tipo.INSUMO, verbose_name=_("Tipo do item"),
+    )
+    descricao_composicao = models.CharField(
+        max_length=500, blank=True, verbose_name=_("Descrição da composição"),
+    )
+    unidade_composicao = models.CharField(
+        max_length=20, blank=True, verbose_name=_("Unidade da composição"),
+    )
+
+    class Meta:
+        verbose_name = _("Linha analítica nacional")
+        verbose_name_plural = _("Linhas analíticas nacionais")
+        ordering = ["fonte", "-competencia", "codigo_composicao", "codigo_item"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["fonte", "competencia", "codigo_composicao", "codigo_item"],
+                name="orcamento_analitica_nacional_unica",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["fonte", "competencia", "codigo_composicao"],
+                name="orcamento_analitica_pai_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.codigo_composicao} ⊃ {self.codigo_item} ×{self.coeficiente}"
 
 
 # ---------------------------------------------------------------------------

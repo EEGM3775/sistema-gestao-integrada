@@ -98,7 +98,10 @@ caminhos gravando o mesmo número é garantia de divergência.
 | `InsumoReferencia` | Linha da publicação — **insumo** (material/mão de obra/equipamento) ou **composição**, discriminados por `tipo`, como a própria SINAPI publica |
 | `ComposicaoReferenciaItem` | Linha **analítica**: composição → filho + `coeficiente`. O filho pode ser outra composição (auxiliares aninhadas) |
 
-**Escrita só por comando** — `manage.py importar_base_referencial`, que aceita `.xlsx` e `.csv`,
+**Escrita só pela mão do dono da plataforma**, por duas portas e um motor: `manage.py
+importar_base_referencial` (ORC.0, o formato longo e as fontes sem leitor) e a **carga** da ORC.8
+(o arquivo nacional, por botão ou agendamento — §12.7). As duas gravam pelas mesmas funções. O
+comando aceita `.xlsx` e `.csv`,
 **detecta o cabeçalho por sinônimos** (os arquivos oficiais mudam de layout entre publicações),
 aceita mapeamento manual (`--colunas "codigo=1,…"`), é **idempotente** (reimportar atualiza preço
 sem duplicar nem quebrar FK) e tem `--dry-run`. Duas armadilhas do dado brasileiro já tratadas:
@@ -123,7 +126,7 @@ dele antes de tocar em qualquer linha:
 | Distribuição | 1 ZIP **por UF × regime** (~27 × 2/mês, ~21 MB cada) | **1 ZIP nacional** por mês (~16 MB) |
 | Arquivos | 3 XLSX: insumos, composições sintéticas, analítica | 1 XLSX de referência (+ mão de obra, famílias, manutenções) |
 | Layout | **longo** — uma linha por item, uma coluna de preço | **largo** — abas `ISD`/`ICD`/`ISE` (insumos) e `CSD`/`CCD`/`CSE` (composições), com **as 27 UFs em colunas** |
-| Regimes | no nome do arquivo (`NaoDesonerado`) | nas abas: `S`em desoneração · `C`om desoneração · `S`em `E`ncargos |
+| Regimes | no nome do arquivo (`NaoDesonerado`) | nas abas: `S`em desoneração · `C`om desoneração · `S`em `E`ncargos (este virou o regime `sem` na ORC.8 — é a base legítima do quadro analítico do ORC.7) |
 | Analítica | por publicação | **nacional e única** (`Grupo · Código da Composição · Tipo Item · Código do Item · Descrição · Unidade · Coeficiente · Situação`) — coeficiente da SINAPI **não varia por UF**, só o preço |
 | Classificação do insumo | ausente | coluna `Classificação`: MATERIAL, MÃO DE OBRA, EQUIPAMENTO (AQUISIÇÃO/LOCAÇÃO), ENCARGOS COMPLEMENTARES, SERVIÇOS, ESPECIAIS |
 
@@ -520,7 +523,7 @@ quantitativo extraído vai pousar quando ela existir.
 em `Demanda` é o [SCM](moduloscm.md) (`moduloscm/do_orcamento.py`), porque quem sabe explodir
 composição é este módulo e quem sabe o que é uma compra é aquele.
 
-### 12.7 ORC.8 — a carga da base num clique (desenho)
+### 12.7 ORC.8 — a carga da base num clique
 
 O calcanhar do módulo nunca foi cálculo: é **dado fresco**. Manter 27 UFs × 3 regimes × 12 meses à
 mão não escala, e a `tasks.py` só sabe **avisar** que a publicação envelheceu. O ORC.8 fecha isso
@@ -547,6 +550,59 @@ analíticas entram — e é aí que se percebe o arquivo errado.
 
 **A classificação do insumo** (MATERIAL / MÃO DE OBRA / EQUIPAMENTO / …) só existe no formato novo;
 enquanto a publicação carregada for do formato antigo, filtro por ela devolve vazio. Ver §4.1.
+
+#### Onde a ORC.8 mora no código
+
+| Peça | Arquivo |
+|---|---|
+| A busca: sessão aquecida, `Referer`, backoff e teto de bytes no stream | [oficial.py](../../backend/moduloorcamento/oficial.py) |
+| O motor: ZIP → abas largas → publicações; resumo; escrita compartilhada | [carga.py](../../backend/moduloorcamento/carga.py) |
+| Onde a fonte mora e o que já foi tentado | `FonteOficial` e `CargaBase` em [models.py](../../backend/moduloorcamento/models.py) |
+| A analítica guardada uma vez por fonte + mês | `AnaliticaNacional` em [models.py](../../backend/moduloorcamento/models.py) |
+| A leitura única das duas analíticas | `services.componentes_da_composicao` |
+| O botão, o plano B e o histórico | `FonteOficialViewSet` / `CargaBaseViewSet` em [views.py](../../backend/moduloorcamento/views.py) |
+| A varredura que busca (e as três recusas dela) | `agendar_cargas_do_mes` em [tasks.py](../../backend/moduloorcamento/tasks.py) |
+| A mesma porta pela bancada | [carregar_base_oficial](../../backend/moduloorcamento/management/commands/carregar_base_oficial.py) |
+| O painel, só para `is_platform_admin` | [PainelCargaOficial.tsx](../../frontend/src/modules/orcamento/components/PainelCargaOficial.tsx) |
+| A tela onde ele mora — **fora deste módulo** | [sistema/pages/BasesOficiaisPage.tsx](../../frontend/src/modules/sistema/pages/BasesOficiaisPage.tsx) (`/app/sistema/bases`) |
+| Os tetos do caminho (bytes, relógio, memória, tentativas, esperas) | [payment/planos.py](../../payment/planos.py) §5.5b |
+
+**A carga NÃO mora dentro do módulo** *(decisão do dono, 22/08/2026)*. Ela
+nasceu na tela de Bases & bancos e mudou-se para **Sistema → Bases oficiais**,
+porque a base-mãe não é dado da empresa: vale para todos os tenants ao mesmo
+tempo e nenhum deles a edita. Dentro do Orçamento ela dependia do entitlement
+`orcamento` — régua errada para decidir quem carrega a SINAPI — e aparecia num
+produto vendido a quem ela não pertence. O painel (`PainelCargaOficial`) continua
+morando no módulo como componente; quem o hospeda é a tela de plataforma. Regra
+de visibilidade em [acesso-e-permissoes.md](../acesso-e-permissoes.md).
+
+**Quem escreve na base-mãe são duas portas e um motor.** O comando da ORC.0 continua sendo o
+caminho do formato longo e das fontes sem leitor; a carga é o caminho do arquivo nacional. As duas
+gravam pelas **mesmas** funções (`carga.gravar_itens`, `carga.gravar_analitica`) — duas cópias do
+que "reimportar" significa divergiriam na primeira publicação com layout novo, e a divergência
+apareceria como preço errado, não como erro.
+
+**A analítica tem dois armazenamentos e uma leitura.** `ComposicaoReferenciaItem` guarda a analítica
+**da publicação** (formato longo, conferida por quem importou aquele arquivo) e `AnaliticaNacional`
+guarda a **nacional**, uma vez por fonte + mês. Todo consumidor — adoção, cópia para banco de preço,
+endpoint de composição — passa por `services.componentes_da_composicao`, e a da publicação vence
+quando existe. Componente cujo filho não tem preço naquela UF fica de fora: a regra 1 do §4.1 vale
+até o fim, e uma composição exibida com insumo a R$ 0,00 mentiria sobre o próprio custo.
+
+**Carregar reativa a publicação.** `ativa=False` some do seletor
+(`bases-resumo` só lista ativas), e uma carga que grava os preços deixando a
+publicação escondida termina com sucesso sem resultado visível. Carregar é ato
+afirmativo — diz "este mês agora está aqui".
+
+**O botão não é o único caminho, de propósito.** Três saídas para o mesmo mês, na ordem em que a
+operação as usa: o botão (baixa e grava), *só conferir* (lê e conta, não grava) e *enviar o arquivo*
+(o plano B, para o mês em que a Caixa muda o layout ou o WAF aperta). O agendamento por fonte
+(`dia_do_mes`) é a quarta, e existe para que "alguém esqueceu" não vire orçamento nascendo com preço
+vencido.
+
+**O que o motor ainda não lê:** só o formato largo da Caixa. `carga.fontes_conhecidas()` declara
+isso, a tela diz na cara e o agendamento se recusa a tentar uma fonte sem leitor — nada finge
+funcionar. É o que sobrou do [A14](../pendencias.md), com outro conteúdo.
 
 ### 12.6 Onde o ORC.7 mora no código
 

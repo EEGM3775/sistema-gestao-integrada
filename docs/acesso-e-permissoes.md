@@ -281,3 +281,103 @@ vazios (`moduloprancheta`, `modulodms`, `modulopdca`, `moduloscm`, `modulosil`, 
 3. Validar o JWT da IAM (RS256/JWKS) e **exigir o código do módulo** (403 se ausente) — via
    `RequireModule` (Django) ou o filtro de authority (estilo drone).
 4. Aplicar RBAC por papel quando necessário e filtrar tudo por `tenant_id`.
+
+## O supervisor da plataforma
+
+*(Decisões do dono, 22/08/2026 — a seção foi reescrita duas vezes no mesmo dia,
+e as duas correções estão no [histórico](historico-correcoes.md).)*
+
+O `is_superuser` da IAM é o **supervisor e o teste supremo do sistema**. Duas
+frases o definem, e elas não se contradizem:
+
+1. **Ele não tem restrição a nenhum módulo.** Coordena a plataforma inteira e
+   pode exercitar tudo. Um teste supremo que só alcança o que alguém comprou
+   testa a assinatura, não o produto.
+2. **Ele não está lá para alterar o banco de dados das empresas.** Supervisionar
+   e testar não é editar o dado do cliente. Alcançar uma versão **secundária** do
+   banco de um cliente é caminho previsto — e só se o cliente **der acesso**.
+   Consentimento ainda não existe como mecanismo.
+
+### As três réguas de acesso, lado a lado
+
+O que separa os três atores é **de onde vem o alcance de cada um**:
+
+| Ator | Módulos que alcança | Permissões |
+|---|---|---|
+| **usuário comum** | interseção: o que o tenant assina ∩ o que lhe concederam | as dos papéis dele, filtradas pelos módulos |
+| **admin do tenant** (`is_tenant_admin`) | todos os que **a empresa dele** assina — e nada além | catálogo inteiro, limitado a esses módulos |
+| **supervisor** (`is_superuser`) | **todos os do catálogo, contratados ou não** | catálogo inteiro |
+
+A régua do supervisor é a única das três que **ignora o `AssinaturaTenant`**, e é
+de propósito: entitlement é do cliente, e supervisionar não é ser cliente.
+
+### O que a claim abre, e o que ela não abre
+
+`is_superuser` na IAM vira a claim `is_platform_admin` no JWT
+([identity/tokens.py](../iam/identity/tokens.py)). Ela gateia as operações de
+**plataforma** — dado público ou nosso, que vale para todos os tenants ao mesmo
+tempo:
+
+- a **carga da base-mãe** (ORC.8 — SINAPI e demais tabelas públicas);
+- a **confirmação de incidente ANPD** (Fase 9.D);
+- a **publicação de base pública** pelo `impexp`.
+
+E ela **não** é chave mestra. Duas coisas garantem isso:
+
+- **A fronteira de tenant continua valendo para ele.** O escopo de queryset e a
+  RLS ([nucleo/tenancy.py](../backend/nucleo/tenancy.py)) o tratam como qualquer
+  um: ele enxerga o tenant onde está, não o das outras empresas.
+- **O flag não é copiado para o espelho local.** `_sync_user`
+  ([nucleo/authentication.py](../backend/nucleo/authentication.py)) sincroniza
+  e-mail, tenant e `is_tenant_admin` — e só. Isso importa porque no backend
+  `Usuario.is_superuser` **é** chave mestra: fura escopo de tenant e RLS, fura o
+  `RequirePermission`, desmascara PII e ignora quota. O supervisor não recebe
+  nada disso.
+
+### O que não é dele na tela
+
+Operação de plataforma e assunto de cliente não se misturam, **nos dois
+sentidos**:
+
+- **Plataforma não aparece para tenant, nem trancada.** Item que a pessoa não
+  alcança normalmente mostra cadeado, porque é caminho que existe para ela e ela
+  pode contratar. Operação de plataforma não é vendável nem contratável: mostrar
+  cadeado anunciaria uma porta que não é para o lado de cá. Por isso a seção
+  **Sistema** da sidebar tem `platformOnly` (o item some, e a seção vazia some
+  junto) e a rota usa [PlatformRoute](../frontend/src/components/PlatformRoute.tsx),
+  que redireciona em silêncio em vez de explicar a recusa.
+- **Plano e quota não aparecem para o supervisor.** Eles descrevem o que uma
+  *empresa* contratou: quanto pode cadastrar, quando trava, qual o próximo degrau
+  de venda. Mostrá-los a quem vende o produto é oferecer upsell a si mesmo.
+
+### Como isso é garantido, e a régua de teste que saiu daqui
+
+Duas suítes, e **nenhuma substitui a outra**:
+
+| Onde | O que garante |
+|---|---|
+| [iam/identity/tests.py](../iam/identity/tests.py) `PermissoesEfetivasTests` | o que o **emissor** põe no token: alcance de módulo, catálogo, a claim |
+| [backend/nucleo/test_supervisor_nao_atravessa_tenant.py](../backend/nucleo/test_supervisor_nao_atravessa_tenant.py) | o que o **backend faz com** o que recebeu: o espelho não vira chave mestra, e o escopo de tenant vale |
+
+A régua nasceu de um erro concreto (abaixo): *para garantir o que um usuário
+**pode**, teste o emissor do token; para garantir o que o backend **faz com** o
+que recebeu, teste o backend.*
+
+### O furo que existiu, e por que ele é a melhor prova da regra
+
+No dia em que o supervisor nasceu, o dono entrou com ele e **aprovou um orçamento
+de uma empresa** — ato de alçada financeira.
+
+A causa estava na IAM: `modulos_efetivos()` e `permissoes_efetivas()` tratavam
+`is_superuser` **igual** a `is_tenant_admin`, e o token saía com tudo do tenant
+onde ele mora. As duas camadas do backend fizeram o certo com o que receberam e
+deixaram passar.
+
+**O teste do backend estava verde**, porque montava o cenário com `iam_modules`
+escrito à mão — presumia o que o emissor manda. Foi daí que saiu a régua acima.
+
+A correção **não** foi tirar o alcance dele (isso trancou tudo e foi revertido no
+mesmo dia, quando o dono apontou que ele não pode ter restrição a nenhum módulo):
+foi separar **alcance** de **fronteira**. Ele alcança todo módulo; a empresa
+continua protegida pela fronteira de tenant e pelo consentimento que ainda vai
+existir.

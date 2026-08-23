@@ -10,6 +10,268 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### A operação de plataforma morava dentro de um produto vendido, e o hub oferecia upsell ao dono · ✅ corrigido 22/08/2026
+
+Três achados do dono na mesma passada, olhando a tela depois da ORC.8. Os três
+são a mesma regra vista de ângulos diferentes: **o que é da plataforma e o que é
+do cliente não se misturam, nos dois sentidos.**
+
+**1. A carga da base-mãe morava no módulo Orçamento.** Ela nasceu na tela de
+*Bases & bancos*, e o argumento na época era bom: o lugar onde alguém percebe que
+a base envelheceu é olhando as publicações. O problema é que a base-mãe não é dado
+da empresa — vale para todos os tenants ao mesmo tempo e nenhum deles a edita —, e
+ali ela dependia do entitlement `orcamento`, que é régua errada para decidir quem
+carrega a SINAPI: o supervisor pode não assinar o módulo, e o assinante não deve
+carregar. Mudou-se para **Sistema → Bases oficiais** (`/app/sistema/bases`), com o
+painel seguindo como componente do módulo e a tela hospedeira sendo de plataforma.
+
+**2. Não podia aparecer para tenant "nem mesmo como trancado".** O padrão da
+sidebar até aqui era mostrar com cadeado o que a pessoa não alcança — e é o certo
+para módulo não contratado ou área de admin, porque é caminho que existe para ela
+e ela pode destravar. Operação de plataforma não é nada disso: não é vendável, não
+é contratável, não é dela. Cadeado ali anunciaria uma porta que não é para o lado
+de cá e convidaria a perguntar o que tem atrás.
+
+Saiu daí uma fronteira que agora está escrita em
+[frontend-convencoes.md](frontend-convencoes.md) — **omitir × trancar**: `NavItem`
+ganhou `platformOnly`, que remove o item da árvore (e a seção vazia some junto,
+senão sobraria um título "Sistema" sem nada embaixo, levantando a mesma pergunta);
+e [`PlatformRoute`](../frontend/src/components/PlatformRoute.tsx) redireciona em
+silêncio, sem o `AccessNotice` que os irmãos dele usam. Para quem não é
+supervisor, a rota não existe — que, para ele, é a verdade.
+
+**3. E o inverso: o hub do supervisor mostrava plano e quota.** Este foi o mais
+sutil, e o dono o apontou na minha própria fala: eu havia discutido o card
+*"Limite de clientes atingido — 2004 de 1000"* **como se fosse normal aparecer
+para ele**. Não é. Plano e quota descrevem o que uma *empresa* contratou — quanto
+pode cadastrar, quando trava, qual o próximo degrau de venda. Mostrá-los a quem
+vende o produto é oferecer upsell a si mesmo, e transformar um número de fixture
+num alarme que ele não tem por que resolver. `TabVisaoGeral` oculta a seção e
+recolhe a grade para uma coluna.
+
+**Um efeito colateral apareceu no meio disso, e valia mais que o incômodo.** Eu
+havia **desativado** (em vez de apagar) as publicações de teste que a ORC.8
+deixou. Na rodada seguinte a carga regravou os preços e a tela continuou vazia,
+porque `bases-resumo` só lista `ativa=True`. Carregar passou a **reativar** a
+publicação que grava: carregar é ato afirmativo — diz *"este mês agora está
+aqui"* —, e terminar com sucesso deixando o resultado escondido é a pior das duas
+leituras possíveis.
+
+**Provado:** IAM 129/129, backend 1.476 (só os 4 do [D50](pendencias.md)),
+E2E ORC.6 59/59 e ORC.8 28/28, `tsc` limpo.
+
+---
+
+### A corrida de carga órfã travava a fonte em definitivo · ✅ corrigido 22/08/2026
+
+Apanhado ao rodar o E2E da ORC.8 pela primeira vez. O `worker` ainda rodava a
+imagem antiga (os serviços `worker`/`beat`/`worker-conversao` têm `build:`
+próprio no compose — `docker compose build erp` não os toca) e recusou a task com
+`unregistered task`. A corrida ficou `pendente` para sempre.
+
+O dano não foi a corrida perdida: foi que **a trava anti-concorrência via uma
+carga "em andamento" e recusava toda tentativa nova**, sem saída pela tela. Uma
+fonte bloqueada em definitivo por um job que nunca começou.
+
+É a mesma morte violenta que o `nucleo.liberar_cadeiras_presas` trata na frota
+desde o D98 — OOM do cgroup, contêiner derrubado, broker reiniciado —, e a
+resposta virou a mesma: **"em andamento" passou a ter prazo** (`MINUTOS_ATE_ORFA`,
+reusado do `nucleo.frota` em vez de inventar outro número), e a corrida sem
+notícia vira `falhou` com o motivo escrito, em vez de sumir — senão o histórico
+guardaria uma corrida eternamente "na fila" e ninguém saberia por quê. O
+`atualizada_em` é reescrito a cada degrau (baixando, lendo, gravando cada UF),
+então carga viva nunca chega perto do prazo; há teste para os dois lados.
+
+---
+### O supervisor da plataforma herdava o catálogo do tenant, e aprovou um orçamento de empresa · ✅ corrigido 22/08/2026
+
+Achado pelo dono, testando, horas depois de o usuário `dono` nascer: ele entrou
+com o supervisor e **aprovou um orçamento** do tenant `demo` — ato de alçada
+financeira, e o oposto exato da regra escrita no mesmo dia (*"superuser não é
+para fazer alterações em bancos de dados de empresas"*).
+
+**Causa.** Na IAM, `modulos_efetivos()` e `permissoes_efetivas()`
+(`identity/models.py`) tratavam `is_superuser` **igual** a `is_tenant_admin`:
+ambos pulavam o filtro de `AcessoUsuarioModulo` e recebiam o catálogo inteiro. O
+supervisor tinha **zero papéis** e **zero acessos concedidos**, e mesmo assim o
+token dele saía com os 9 módulos e as 184 permissões do tenant onde mora. As duas
+camadas do backend fizeram o certo com o que receberam — `RequireModule` viu o
+módulo, `RequirePermission` viu a permissão — e deixaram passar.
+
+A herança fazia sentido quando foi escrita: `is_superuser` era o admin do Django,
+usado em desenvolvimento, e não havia supervisor no seed. O papel nasceu depois, e
+ninguém releu a linha.
+
+**Correção, em duas metades — e a primeira estava errada.**
+
+A primeira tirou a herança do supervisor: ele passou a não receber módulo nem
+permissão nenhuma. Durou algumas horas, até o dono olhar a tela: *"ele não pode
+ter restrição a nenhum módulo. Tá quase tudo trancado."* E estava certo — um
+supervisor que abre o sistema e encontra tudo fechado não é teste supremo de
+nada. O erro foi meu, de leitura: confundi **alcance** (o que ele pode abrir) com
+**fronteira** (de quem é o dado), e cortei o primeiro para proteger o segundo.
+
+A correção que ficou separa os dois. O supervisor ganhou **régua própria**, a
+terceira do arquivo: alcança **todo módulo do catálogo, contratado ou não** — nem
+mesmo o admin de tenant tem isso, porque ele para no que a empresa assinou. O que
+protege a empresa não é tirar módulo dele; é a **fronteira de tenant**, que vale
+para ele como para qualquer um, e o consentimento que ainda vai existir para o
+dia em que ele precisar alcançar o banco de um cliente.
+
+O admin de tenant não foi tocado, e há teste cobrando isso: módulo que a empresa
+não contratou continua fechado para ele — senão o entitlement não valeria nada
+para quem administra o tenant.
+
+**A parte que ensina mais é por que o teste não pegou.** Havia um teste novo em
+folha (`nucleo/test_supervisor_nao_le_empresa.py`), escrito horas antes
+exatamente para prender esta fronteira, e ele estava **verde**. Ele monta o
+cenário com `iam_modules` e `iam_permissions` escritos à mão — ou seja,
+**presume** o que o emissor manda, e testa só o que o backend faz depois. A
+metade que faltava era perguntar ao emissor.
+
+A régua que fica: *para garantir o que um usuário **pode**, teste o emissor do
+token; para garantir o que o backend **faz com** o que recebeu, teste o backend.*
+As duas metades existem agora — `iam/identity/tests.py::PermissoesEfetivasTests`
+ganhou cinco testes que leem o JWT montado, e o arquivo do backend ganhou no topo
+a nota do que ele não prova. Ele também **mudou de nome**, porque o antigo virou
+mentira no desenho final: era `test_supervisor_nao_le_empresa.py`, e o supervisor
+lê, sim, a empresa onde está — o que ele não faz é atravessar para outra. Agora é
+[test_supervisor_nao_atravessa_tenant.py](../backend/nucleo/test_supervisor_nao_atravessa_tenant.py).
+
+**Provado com token real pelo gateway, no desenho final:**
+
+```
+dono   modulos=9 perms=184 platform=True  tenant_admin=False | orcamento=200 ORC8=200
+demo   modulos=9 perms=173 platform=False tenant_admin=False | orcamento=200 ORC8=403
+admin  modulos=9 perms=184 platform=False tenant_admin=True  | orcamento=200 ORC8=403
+```
+
+O supervisor alcança tudo; a operação de plataforma continua fechada para o
+tenant, **inclusive para o admin dele** com as 184 permissões do catálogo. Suíte
+da IAM 129/129, backend 1.476 (só os 4 do [D50](pendencias.md)), E2E ORC.6 59/59
+e ORC.8 28/28.
+
+**Sem dano ao dado:** o orçamento aprovado era artefato de E2E (`E2E ORC.6 —
+planilha do teste vivo`, v17, total R$ 0,00, sem base referencial).
+
+---
+### A linha sem preço na base nova ficava com a data antiga — e o motivo era um só para duas causas · ✅ corrigido 22/08/2026
+
+Pergunta do dono ao fechar a ORC.8: *"quando altera... a base de orçamento e não tem preço na base
+mais atual, fica com a data antiga"*. **Fica, e é o desenho certo** — o [D99](#) o construiu: a linha
+entra na prévia como aviso (`descontinuado`), nunca é aplicada, mantém preço e `data_base_preco`
+antigos enquanto o cabeçalho anda para a data-base nova, e a
+[`GradeOrcamento`](../frontend/src/modules/orcamento/components/GradeOrcamento.tsx) a marca em
+vermelho depois, por `avisos_de_data_base`. Nada disso mudou.
+
+**O que a ORC.8 quebrou foi a precisão do motivo**, e só apareceu quando alguém foi olhar. Até
+então, "não achei este código na publicação de destino" tinha **uma** causa: a fonte aposentou o
+item. Com a carga do arquivo nacional passou a ter **duas**, porque a regra 1 do §4.1 — preço em
+branco numa UF é ausência, não zero — faz o insumo sem pesquisa naquele estado simplesmente não ter
+linha ali. A mensagem, escrita para a primeira causa, dizia da segunda: *"código X não existe na
+publicação de destino"*.
+
+Verdade literal, mentira prática. As duas causas pedem **ações opostas**: item aposentado precisa de
+substituto; item sem pesquisa está vivo, tem preço em outros estados no mesmo mês, costuma voltar no
+mês seguinte, e o caminho é a publicação vizinha, a cotação ou o banco de preço da empresa. Mandar
+procurar substituto para um insumo que não morreu é o tipo de erro que só é descoberto depois de
+alguém ter feito o trabalho errado.
+
+**Correção:** `_onde_mais_existe` responde, numa consulta só e só quando falta alguém, em que outras
+UFs o código existe naquele fonte + mês — excluindo a UF inteira do destino, senão a mensagem
+mandaria o orçamentista da Bahia procurar preço na Bahia. Com resposta, o motivo vira *"sem pesquisa
+de preço nesta publicação — o item existe no mesmo mês em MG, RJ, SP"*; sem resposta, *"item
+aposentado pela fonte"*. O efeito continua idêntico (não há preço novo, a linha fica com a data
+antiga, e é isso que o dono descreveu); o que mudou é que quem lê a prévia agora sabe o que fazer.
+
+A distinção mora no `motivo` e não em dois estados de propósito: o **efeito** é um só, e um estado
+novo obrigaria todo consumidor de `LinhaReprecificacao` a aprender uma diferença que não muda o que
+ele faz.
+
+---
+### A13 — a sincronização de bases avisava, mas não buscava · ✅ corrigido 21/08/2026 (ORC.8)
+
+O calcanhar do módulo de orçamento nunca foi cálculo: é **dado fresco**. Desde a ORC.7 a
+`moduloorcamento/tasks.py` varria as publicações todo dia e reportava quantos meses cada fonte
+estava atrasada — e parava aí. A importação continuava sendo o comando manual, com alguém baixando
+o ZIP da Caixa e digitando `--insumos`/`--composicoes`/`--analitica`. Manter 27 UFs × 3 regimes × 12
+meses assim não escala, e trabalho recorrente humano é o que atrasa.
+
+**Por que ficou aberto até agora, e isso não foi omissão.** A decisão nº 1 escrita no topo da
+`tasks.py` dizia: *"nada de baixar da internet sem fonte declarada — um job que inventa fonte é um
+job que um dia importa dado errado com a confiança de um robô"*. O que faltava não era vontade, era
+**onde declarar**. A ORC.8 deu esse lugar: [`FonteOficial`](../backend/moduloorcamento/models.py) é
+a declaração, escrita por gente, e sem template cadastrado a fonte simplesmente não é tentada — a
+regra continua valendo na íntegra.
+
+**O que entrou.** A carga virou um botão para o dono da plataforma (`is_platform_admin`, o mesmo
+gate que já guardava a base-mãe em `impexp.py`), com download pausado, leitura do arquivo nacional,
+resumo antes de gravar e histórico do que foi tentado. O motor é
+[`carga.py`](../backend/moduloorcamento/carga.py) e a busca,
+[`oficial.py`](../backend/moduloorcamento/oficial.py); o comando
+[`carregar_base_oficial`](../backend/moduloorcamento/management/commands/carregar_base_oficial.py)
+abre a mesma porta pela bancada, para a hora em que Celery ou gateway estiverem fora.
+
+**Quatro coisas que o caminho aprendeu e que valem para quem mexer nele:**
+
+1. **O formato largo rende 54 publicações de um arquivo só.** Desde 01/2025 a Caixa publica um ZIP
+   nacional com as 27 UFs em **colunas** (abas `ISD`/`ICD`/`ISE` e `CSD`/`CCD`/`CSE`). `SD` é *sem
+   desoneração* = regime **onerado**; `CD` é *com* = **desonerado**; `SE` entrou como o regime novo
+   `sem`, que é a base legítima do quadro de encargos analítico do ORC.7 — aplicar quadro próprio
+   sobre preço que já embute encargo é contar duas vezes.
+2. **Preço em branco numa UF é ausência, não zero**, e essa foi a regra que mais moldou o código. O
+   `para_decimal` do motor devolve `Decimal("0")` tanto para célula vazia quanto para texto ilegível
+   — escolha certa lá, onde zero é um total a somar; aqui seria um insumo a R$ 0,00 atravessando a
+   planilha do cliente sem alarme. Daí o `numero_ou_ausencia`, estrito, e a linha que não entra na
+   publicação daquele estado.
+3. **A analítica é nacional e é guardada uma vez.** O coeficiente não varia por UF — o que varia é o
+   preço. Amarrada a cada publicação, seriam ~3,6 milhões de linhas/mês; em `AnaliticaNacional`, ~67
+   mil. Convive com `ComposicaoReferenciaItem` sem ambiguidade porque **quem lê é uma função só**,
+   `services.componentes_da_composicao`, e a analítica da própria publicação vence quando existe.
+4. **O D112 valeu nesta porta também.** Classe que não sabemos traduzir para natureza **para** a
+   carga antes de gravar, com o estado `aguardando` — que não é falha, é uma pergunta — e a lista do
+   que não soube fazer. O caminho de volta é `cargas/{id}/repetir/`, com ou sem `aceitar_sem_classe`.
+
+**Um defeito real foi achado pelo próprio teste, e ele é do tipo que só aparece no plano B:**
+`abrir_pacote` perguntava "é ZIP?" antes de olhar a extensão — e um `.xlsx` **é** um ZIP (o OOXML é
+um pacote de XMLs). A planilha enviada à mão era descompactada em `sheet1.xml`, `styles.xml` e
+companhia, e o erro reclamava que não havia planilha dentro da planilha. A ordem das duas perguntas
+foi invertida e o caso virou teste.
+
+**Um segundo achado veio do guard do [D70](#):** o `FileField` do arquivo enviado nasceu sem porta
+declarada, e o teste que varre todos os `upload_to` o pegou na hora. A saída não foi criar um
+`Recurso` — o registry é tenant-scoped e gateado por permissão do catálogo, e a base-mãe não tem
+tenant nem permissão própria; inventar uma só para satisfazê-lo seria abrir uma porta que ninguém
+usa. O ZIP entrou na tabela como `cargas_base: "—"`, **entrada que nunca vira saída**, e o
+`CargaBaseSerializer` exclui o campo para que isso continue verdade — com teste cobrando.
+
+**Um terceiro achado veio do próprio E2E, e é o mais operacional dos três: a corrida órfã.** A
+primeira execução enfileirou a carga para um worker que ainda rodava a imagem antiga e não conhecia
+a task. A corrida ficou `pendente` para sempre — e, pior, **travou a fonte em definitivo**: a trava
+anti-concorrência via uma carga "em andamento", recusava toda tentativa nova, e a tela não oferecia
+saída nenhuma. É a mesma morte violenta que o `nucleo.liberar_cadeiras_presas` trata na frota desde o
+D98, e a resposta virou a mesma: "em andamento" passou a ter prazo (`MINUTOS_ATE_ORFA`, reusado do
+`nucleo.frota`), e a corrida sem notícia vira `falhou` com o motivo escrito em vez de sumir. O
+`atualizada_em` é reescrito a cada degrau — baixando, lendo, gravando cada UF —, então carga viva
+nunca chega perto do prazo; há teste para os dois lados.
+
+**Provado:** 53 testes novos ([test_orc8.py](../backend/moduloorcamento/test_orc8.py)), suíte do
+módulo em **380/380**, suíte do backend em **1.467** com só os 4 erros pré-existentes do
+[D50](pendencias.md), `tsc` limpo, e o **E2E pelo gateway em 28/28**
+([orc8_carga_base_test.py](../../testes/e2e/orc8_carga_base_test.py)), com as imagens reconstruídas e
+o stack re-seedado.
+
+**O E2E só existiu porque a IAM ganhou o primeiro `is_superuser` do seed** (`dono`/`dono123`). Até
+aqui nenhum usuário tinha `is_platform_admin`, e isso deixava **três** operações sem ator para token
+real: a carga da base-mãe, a confirmação de incidente ANPD (9.D) e a publicação de base pública pelo
+`impexp`. O contraste que ele permite é o teste mais valioso da leva: o `admin`, que é
+`is_tenant_admin` e herda as 184 permissões do catálogo, recebe **403** na carga — porque mandar em
+tudo dentro da empresa não é mandar no que vale para todas elas.
+
+**O [A14](pendencias.md) mudou de conteúdo em vez de fechar:** o que falta para SICRO, SEINFRA e
+SEDOP deixou de ser "alguém rodar o comando" e passou a ser **um leitor por formato**.
+
+---
 ### D112 — classe que o sistema não sabe ler era indistinguível de classe ausente · ✅ corrigido 21/08/2026
 
 Pergunta do dono (21/08/2026), ao decidir o D111: *"quando eu importar bases que não tiverem as

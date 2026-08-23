@@ -14,14 +14,16 @@ from rest_framework import serializers
 
 from nucleo.tenant_validators import TenantScopedModelSerializer
 
-from . import planilha
+from . import carga, oficial, planilha
 from .models import (
     BancoPreco,
     BaseReferencial,
+    CargaBase,
     ComponenteBancoPreco,
     ComposicaoBDI,
     ComposicaoEncargos,
     ComposicaoReferenciaItem,
+    FonteOficial,
     FormulaReajuste,
     IndiceEconomico,
     InsumoReferencia,
@@ -56,6 +58,63 @@ class BaseReferencialSerializer(serializers.ModelSerializer):
 
     def get_rotulo_exibicao(self, obj) -> str:
         return obj.rotulo or obj.rotulo_automatico()
+
+
+class FonteOficialSerializer(serializers.ModelSerializer):
+    """ORC.8 — o endereço da fonte, editável pelo dono da plataforma.
+
+    É o único serializer de escrita desta família, e a razão é a decisão de
+    rumo: a URL da Caixa já mudou uma vez, e o conserto tem de ser uma caixa de
+    texto e não um deploy.
+    """
+
+    fonte_nome = serializers.CharField(source="get_fonte_display", read_only=True)
+    # O que o botão proporia agora — a competência já descontada da defasagem.
+    # Vem daqui, e não da tela, porque quem sabe que a SINAPI publica M no dia 10
+    # de M+1 é a fonte, não o React.
+    competencia_sugerida = serializers.SerializerMethodField()
+    # Se o motor sabe ler o arquivo desta fonte sozinho. `Fonte` aceita seis
+    # desde a ORC.0 e o importador manual é genérico, mas o formato largo é o
+    # arquivo da Caixa: oferecer o botão nas outras seria vender um caminho que
+    # sempre falha.
+    carga_automatica = serializers.SerializerMethodField()
+
+    class Meta:
+        model = FonteOficial
+        fields = "__all__"
+
+    def get_competencia_sugerida(self, obj):
+        return oficial.competencia_alvo(obj.defasagem_meses)
+
+    def get_carga_automatica(self, obj) -> bool:
+        return obj.fonte in carga.fontes_conhecidas()
+
+
+class CargaBaseSerializer(serializers.ModelSerializer):
+    """A corrida, do jeito que a tela precisa lê-la."""
+
+    fonte_nome = serializers.CharField(source="get_fonte_display", read_only=True)
+    estado_nome = serializers.CharField(source="get_estado_display", read_only=True)
+    origem_nome = serializers.CharField(source="get_origem_display", read_only=True)
+    em_andamento = serializers.BooleanField(read_only=True)
+    mb_lidos = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CargaBase
+        # `arquivo` fica **fora**, e é o que sustenta a linha `cargas_base: "—"`
+        # da tabela de portas do D70: o ZIP do plano B é entrada operacional, não
+        # mídia. Com `__all__` o DRF publicaria a URL dele em `/media/`, que é
+        # exatamente o caminho que aquele invariante existe para fechar. O que a
+        # tela precisa é o **nome**, e esse continua aqui.
+        exclude = ["arquivo"]
+        read_only_fields = [
+            "estado", "etapa", "resumo", "erro", "bytes_lidos", "url_origem",
+            "arquivo_nome", "total_publicacoes", "total_insumos", "total_composicoes",
+            "total_analitica", "solicitada_por_nome", "concluida_em",
+        ]
+
+    def get_mb_lidos(self, obj) -> float:
+        return round(obj.bytes_lidos / (1024 * 1024), 2)
 
 
 class InsumoReferenciaSerializer(serializers.ModelSerializer):

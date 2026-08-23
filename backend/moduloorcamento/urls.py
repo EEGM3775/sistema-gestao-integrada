@@ -6,10 +6,12 @@ from .views import (
     BancoPrecoViewSet,
     BaseReferencialResumoView,
     BaseReferencialViewSet,
+    CargaBaseViewSet,
     ComponenteBancoPrecoViewSet,
     ComposicaoBDIViewSet,
     ComposicaoEncargosViewSet,
     ControleDeCustoView,
+    FonteOficialViewSet,
     FormulaReajusteViewSet,
     IndiceEconomicoViewSet,
     InsumoReferenciaViewSet,
@@ -58,6 +60,9 @@ router.register(r"formulas-reajuste", FormulaReajusteViewSet, basename="orcament
 router.register(
     r"parcelas-reajuste", ParcelaFormulaReajusteViewSet, basename="orcamento-parcela-reajuste",
 )
+# ORC.8 — a carga da base oficial: onde a fonte mora e o que já foi tentado
+router.register(r"fontes-oficiais", FonteOficialViewSet, basename="orcamento-fonte-oficial")
+router.register(r"cargas", CargaBaseViewSet, basename="orcamento-carga")
 
 urlpatterns = [
     path("status/", OrcamentoStatusView.as_view(), name="orcamento-status"),

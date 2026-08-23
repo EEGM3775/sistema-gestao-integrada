@@ -119,6 +119,56 @@ outbox local para não perder evento se o backend estiver fora.
 
 ## 🟠 Altas
 
+### D113 — a demo nasce com o dobro de clientes que o plano dela permite · 🟠 aberto 22/08/2026
+
+Achado pelo dono, olhando o hub: o card **Requer sua decisão** anuncia
+permanentemente *"Limite de clientes atingido — 2004 de 1000"*, e o bloqueio é
+real (`POST /api/clientes/` → **402 `quota_excedida`**). Ou seja: **na demo não dá
+para cadastrar cliente**, que é fundação e é justamente o que alguém quer
+exercitar numa demonstração.
+
+A causa é uma colisão entre dois artefatos do próprio projeto, e nenhum dos dois
+está errado sozinho:
+
+- [`semear_carteira_demo`](../backend/clientes/management/commands/semear_carteira_demo.py)
+  tem `--clientes 2000` como **padrão**, e existe para provar que a carteira
+  aguenta volume — *"com 20 cadastros qualquer implementação parece rápida"*;
+- o tenant `demo` está no `profissional`, cujo teto de `clientes` é **1000**, e
+  `clientes` está em `QUOTAS_APLICADAS` (trava de verdade).
+
+Três saídas, todas baratas, e é escolha de quem opera a demo: baixar o padrão do
+seeder (perde parte da prova de volume); re-semear menor após `--limpar`; ou pôr
+o `demo` num plano sem esse aperto, deixando o `acme` (free) como o tenant onde a
+parede de quota é visível de propósito — papel que o `planos.py` já dá a ele.
+
+### D114 — no `profissional`, o teto de clientes não conversa com o de empreendimentos · 🟠 aberto 22/08/2026
+
+Levantado junto do D113, e é a metade **comercial** dele — a de engenharia é
+aquela; esta é decisão do dono.
+
+O `profissional` (R$ 449) vende **10 empreendimentos** e **1000 clientes**. O
+seeder modelou uma incorporadora realista e chegou a 6 empreendimentos, 2.706
+unidades e 2.186 vendas: estourou o teto de clientes sem chegar perto do de
+empreendimentos.
+
+A conta que expõe a inconsistência: dez empreendimentos de porte médio — 200
+unidades cada — dão 2.000 compradores, o dobro do teto. **Quem vende unidade
+cadastra um cliente por unidade vendida**, então o limite que morde primeiro não é
+o do portfólio que ele contratou: é o de clientes, e ele chega no meio de uma
+venda.
+
+Duas leituras possíveis, e a escolha é de posicionamento:
+
+- **o portfólio é o limite de valor** → `clientes` sobe para acompanhar 10
+  empreendimentos de porte real (2.000–3.000);
+- **o `profissional` é para construtora que executa obra**, não para incorporadora
+  que vende unidade → o teto está certo e vender 2.000 unidades é caso de
+  `empresarial`. Aí é upsell legítimo, não fricção.
+
+Não trava nada em produção hoje (nenhum cliente real). Fica aberto porque o
+módulo de venda de unidade e carnê **existe** no produto, e é ele que faz o número
+de clientes crescer rápido.
+
 ### D105 — as 200 conversões premium do `empresarial` podem custar mais que o plano · 🟠 aberto 16/08/2026
 
 O `empresarial` (R$ 1.199/mês) vende **200 conversões pagas/mês** com `motores_prancheta` incluindo
@@ -378,8 +428,7 @@ no desenho #1 e nada se move.
 | A5  | `CobrancaCliente` duplica `ContaReceber`+`Boleto` → consolidar repetindo o playbook da `Fatura`. **Levantado 25/07/2026:** confirmado que **nada escreve** em `CobrancaCliente` (nenhum service, task, seed ou signal — só o CRUD exposto em `/api/erp/cobrancas-cliente/`): a tabela está vazia e a cadeia viva é `ContaReceber`→`Boleto`. A única capacidade que ela tinha a mais — amarrar a parcela ao **contrato/unidade** — passou a existir na `ContaReceber` (FKs `cliente_empreendimento`/`contrato`, migration `moduloerp/0013`), então a consolidação virou basicamente **remover** o modelo e a rota.                                                                                                                                                                                                                                                                                  | 🔴 aberto                                                          |
 | A7  | N+1 na galeria de IA e no CRM; busca de telefone O(N) em Python →`select_related`/`prefetch_related` + paginação + query no banco *(v01-B9)*                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | 🔴 aberto                                                          |
 | A8  | Acoplamento duro ao Redis (`delete_pattern` do django-redis; sem `IGNORE_EXCEPTIONS`) → cache tolerante a queda. **Parcial 19/07:** `IGNORE_EXCEPTIONS: True` no backend e na IAM — virou obrigatório com o S8, que faz o throttle consultar a cache em TODA requisição (sem isso, Redis fora deixaria de ser lentidão e passaria a ser API inteira fora do ar). **Falta** o `delete_pattern`, que segue amarrando o código ao django-redis.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | 🟠 parcial 19/07/2026                                              |
-| A13 | **A sincronização de bases avisa, mas não busca** *(ORC.7, 17/08/2026)* — `moduloorcamento/tasks.py` varre diariamente e reporta publicação/índice atrasado, e a importação continua sendo o comando manual (`importar_base_referencial`, `importar_indices`). Foi decisão consciente: um job que adivinha URL da Caixa é um job que um dia importa dado errado com a confiança de um robô. Mas o concorrente vende "20+ bases sempre atualizadas", e manter 27 UFs × 12 meses à mão não escala. → dar fonte declarada à publicação (um `url_origem` na `BaseReferencial`) e deixar a task **baixar e importar** só o que tem origem configurada, mantendo o `--dry-run` e a idempotência que o comando já tem. Enquanto isso, o aviso diário é o que evita a descoberta tardia. | 🔴 aberto |
-| A14 | **Bases sem dado: SICRO, SEINFRA e SEDOP** *(ORC.7, 17/08/2026)* — `Fonte` aceita as quatro desde o ORC.0 e o importador é genérico, mas só SINAPI e ORSE foram efetivamente carregadas. Não é código faltando, é **operação de dado**: quem opera a plataforma precisa rodar o comando por publicação. Enquanto não rodar, o seletor de base oferece menos do que o mercado. | 🔴 aberto |
+| A14 | **Bases sem leitor: SICRO, SEINFRA e SEDOP** *(reescrito na ORC.8, 21/08/2026)* — a ORC.8 fechou o A13 e trocou o que falta aqui. `Fonte` aceita as seis desde o ORC.0 e o importador manual é genérico, mas o motor de carga automática lê **um** formato: o arquivo largo da Caixa (27 UFs em colunas). `carga.fontes_conhecidas()` declara isso, a tela diz na cara (*"o motor ainda não lê o formato desta fonte"*) e o agendamento se recusa a tentar — nada finge funcionar. Para cada base nova é preciso um leitor do formato dela, e aí ela entra no botão; enquanto não houver, o caminho continua sendo o comando por publicação. | 🟠 aberto |
 | F13 | **O `Modal` do Orçamento reimplementa o modo `alto` em vez de usar o do `malha`** *(17/08/2026)* — [frontend.md §2.2](frontend.md) descreve o modo `alto` do `Modal` compartilhado para "diálogo cujo miolo é uma lista": cartão em coluna flex, cabeçalho e rodapé presos, miolo com `flex: 1`. O kit local do Orçamento (`modules/orcamento/ui.tsx`) **não tem esse modo**, então o modal de inserir item chegou à mesma altura por conta própria (`height: min(62vh, 660px)` na linha da lista) — funciona e respeita a regra de não usar pixel fixo, mas é a terceira implementação do mesmo comportamento. É um caso concreto do **F12** (quatro kits de UI paralelos), e o remédio é o mesmo: migrar para `components/malha/`. Enquanto não migrar, mexer no modo `alto` compartilhado não conserta este modal. | 🔴 aberto |
 | A16 | **A adoção nunca remove componente que a fonte aposentou** *(17/08/2026)* — `services._adotar_componentes` e `bancos._adotar_componentes` usam só `update_or_create`: quando a SINAPI tira um insumo de uma composição, o `ComponenteComposicao` correspondente **fica para sempre** no catálogo do tenant, e a composição adotada passa a ter um item a mais que a oficial. É o irmão do D99 — lá o defeito era no preço da planilha, aqui é na receita do catálogo. **Não corrigido de propósito:** apagar componente é mexer em dado do cliente, e o tenant pode ter ajustado o coeficiente à mão; sem procedência por componente não dá para distinguir "veio da SINAPI e sumiu" de "o cliente acrescentou". → decidir com o dono entre (a) remover na re-adoção e relatar quantos, ou (b) marcar como órfão e deixar a decisão na tela; (b) exige campo novo, (a) não. | 🔴 aberto |
 | A15 | **`--dry-run` do importador grava a publicação** *(17/08/2026)* — `importar_base_referencial` diz "nada foi gravado", mas o `BaseReferencial.objects.get_or_create` roda **antes** do desvio do `--dry-run`, sem transação em volta. Quem só quer conferir um arquivo (o uso que o próprio `help` do comando sugere) deixa para trás uma publicação **vazia**, que já aparece no seletor de base pela `bases-resumo` com 0 insumos e 0 composições — dado falso numa tela de escolha de data-base. Achado ao carregar a SINAPI BA 10/2024, cuja publicação nasceu de um `--dry-run` que falhou no sintético (D98). → criar a publicação só depois do desvio, ou envolver o `handle` em `transaction.atomic` com rollback quando `seco`. | 🔴 aberto |

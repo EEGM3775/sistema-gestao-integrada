@@ -113,6 +113,74 @@ class PermissoesEfetivasTests(TestCase):
         self.assertIn("rh.dado_medico.view", claims["permissions"])
         self.assertIn("rh_medico", claims["roles"])  # nome mantido p/ transição (fatia B)
 
+    # ------------------------------------------------------------------
+    # O supervisor da plataforma: sem restrição de módulo, dentro do tenant dele
+    # ------------------------------------------------------------------
+
+    def _supervisor(self):
+        return Usuario.objects.create(
+            username="supervisor", email="supervisor@plataforma.com",
+            tenant=self.t, is_superuser=True,
+        )
+
+    def test_supervisor_alcanca_TODO_modulo_do_catalogo(self):
+        """*(Decisão do dono, 22/08/2026: "ele não pode ter restrição a nenhum
+        módulo".)* E a régua dele é diferente da do admin de tenant: alcança o
+        catálogo inteiro, **contratado ou não**.
+
+        Um teste supremo que só alcança o que alguém comprou não testa o produto,
+        testa a assinatura. O tenant deste caso assina `rh` e `erp_financeiro`; o
+        `crm` existe no catálogo e ninguém o assinou — e o supervisor o alcança.
+        """
+        Modulo.objects.create(codigo="crm", nome="CRM")   # existe, ninguém assina
+        supervisor = self._supervisor()
+
+        modulos = set(supervisor.modulos_efetivos())
+        self.assertEqual(modulos, {"rh", "erp_financeiro", "crm"})
+        self.assertIn("crm", modulos, "módulo não contratado tem de ser alcançável por ele")
+
+    def test_supervisor_pode_agir_e_nao_so_olhar(self):
+        """Ver a tela e levar 403 em toda ação não é testar — é confirmar que a
+        tela abre. Ele recebe o catálogo de permissões junto."""
+        supervisor = self._supervisor()
+        perms = set(supervisor.permissoes_efetivas())
+        self.assertIn("rh.dado_medico.view", perms)
+        self.assertIn("erp.conta_pagar.view", perms)
+        self.assertIn("obra.obra.view", perms)
+
+    def test_o_token_do_supervisor_carrega_a_claim_de_plataforma(self):
+        """A prova no artefato que realmente viaja — o JWT.
+
+        A claim `is_platform_admin` é o que abre as operações de **plataforma**
+        (base-mãe da ORC.8, incidente ANPD, base pública). Ela é separada do
+        alcance de módulo de propósito: módulo é o que ele testa, a claim é o que
+        ele governa.
+        """
+        supervisor = self._supervisor()
+        claims = build_claims(supervisor)
+        self.assertTrue(claims["is_platform_admin"])
+        self.assertFalse(claims["is_tenant_admin"], "supervisor não é admin de tenant")
+        self.assertIn("rh", claims["modules"])
+
+    def test_o_admin_de_tenant_continua_preso_ao_que_a_empresa_assina(self):
+        """A distinção entre os dois, que é o ponto da mudança: o admin manda na
+        casa dele; o supervisor atravessa o catálogo. Módulo que a empresa NÃO
+        contratou continua fechado para o admin — senão o entitlement não vale
+        nada para quem administra o tenant."""
+        Modulo.objects.create(codigo="crm", nome="CRM")   # existe, ninguém assina
+        adm = Usuario.objects.create(
+            username="adm_regua", email="adm3@teste.com", tenant=self.t,
+            is_tenant_admin=True,
+        )
+        modulos = set(adm.modulos_efetivos())
+        self.assertEqual(modulos, {"rh", "erp_financeiro"})
+        self.assertNotIn("crm", modulos)
+
+    def test_usuario_comum_continua_na_intersecao(self):
+        """A régua que vale para quase todo mundo não foi tocada."""
+        u = self._user("comum_regua", ["rh_medico"], modulos=["rh"])
+        self.assertEqual(set(u.modulos_efetivos()), {"rh"})
+
 
 class PersonasDinamicasTests(TestCase):
     """Admin de tenant compõe personas do catálogo, sem escalar além do plano."""

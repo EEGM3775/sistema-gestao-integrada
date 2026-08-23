@@ -80,6 +80,11 @@ export default function BasesPage() {
 
         {aba === 'oficiais' && (
           <>
+            {/* A carga da base-mãe **não mora aqui** desde 22/08/2026: ela é
+                operação de plataforma, não de tenant, e mudou-se para
+                Sistema → Bases oficiais. Dentro deste módulo ela dependia do
+                entitlement `orcamento` — régua errada para decidir quem carrega
+                a SINAPI — e aparecia num produto vendido a quem ela não pertence. */}
             <SectHead right={<Pill kind="slate"><Lock size={11} />somente leitura</Pill>}>
               Publicações disponíveis
             </SectHead>

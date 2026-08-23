@@ -176,10 +176,31 @@ class Usuario(AbstractUser):
 
     def modulos_efetivos(self):
         """
-        Códigos dos módulos que este usuário pode efetivamente acessar:
-        interseção entre as assinaturas ativas do tenant e o acesso concedido
-        ao usuário. Admins de tenant (e admins de plataforma) recebem todos os
-        módulos ativos do tenant.
+        Códigos dos módulos que este usuário pode efetivamente acessar.
+
+        Três réguas diferentes, e a diferença entre elas é o desenho de acesso da
+        plataforma inteira:
+
+        - **usuário comum** — interseção entre as assinaturas ativas do tenant e
+          o `AcessoUsuarioModulo` concedido a ele;
+        - **admin do tenant** — todos os módulos que a **empresa dele** assina.
+          Ele manda na própria casa, e não além dela: módulo não contratado
+          continua fechado;
+        - **supervisor da plataforma** (`is_superuser`) — **todos os módulos do
+          catálogo, contratados ou não** *(decisão do dono, 22/08/2026:
+          "ele não pode ter restrição a nenhum módulo")*. Ele é o teste supremo
+          do sistema, e um teste supremo que só alcança o que alguém comprou não
+          testa o produto — testa a assinatura. É por isso que a régua dele não
+          passa pelo `AssinaturaTenant`: ela é a única das três que ignora o
+          entitlement, porque o entitlement é **do cliente**, e supervisionar não
+          é ser cliente.
+
+        **O que isto NÃO é** — e a distinção é a mesma da decisão anterior do
+        dono, no mesmo dia: alcançar todo módulo não é alcançar o dado de toda
+        empresa. O que protege o cliente é a **fronteira de tenant**, que vale
+        para o supervisor como para qualquer um (`nucleo/tenancy.py`), e o acesso
+        a dado de um cliente segue dependendo de o cliente **dar acesso**.
+        Detalhe em docs/acesso-e-permissoes.md.
         """
         if not self.tenant_id:
             return []
@@ -194,7 +215,10 @@ class Usuario(AbstractUser):
             .values_list("modulo_id", flat=True)
         )
         modulo_ids = list(assinaturas)
-        if self.is_tenant_admin or self.is_superuser:
+        if self.is_superuser:
+            # Sem restrição: o catálogo inteiro, não o que o tenant assinou.
+            qs = Modulo.objects.all()
+        elif self.is_tenant_admin:
             qs = Modulo.objects.filter(id__in=modulo_ids)
         else:
             qs = Modulo.objects.filter(
@@ -210,7 +234,13 @@ class Usuario(AbstractUser):
         permissões dos papéis do usuário, **filtrada pelos módulos efetivos** —
         uma permissão de módulo vendável só vale se o tenant o assina e o usuário
         o acessa. Permissões `base`/`plataforma` não dependem de entitlement.
-        Admin de tenant/plataforma recebe todo o catálogo (limitado aos módulos).
+
+        O **admin do tenant** recebe todo o catálogo, limitado aos módulos que a
+        empresa dele assina. O **supervisor da plataforma** também recebe o
+        catálogo — e, como os módulos dele são todos (ver `modulos_efetivos`),
+        na prática ele recebe o catálogo inteiro. É o que "teste supremo do
+        sistema" exige: um supervisor que enxerga a tela mas leva 403 em toda
+        ação não testa nada, só confirma que a tela abre.
         """
         from identity.catalog import POR_CODIGO, CODIGOS
 

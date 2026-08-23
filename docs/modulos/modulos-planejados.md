@@ -9,7 +9,7 @@
 | App | Nome e escopo |
 |---|---|
 | `modulodms` | DMS — gestão de documentos; é dele a **capacidade de PDF** da plataforma (nota abaixo) |
-| `modulopdca` | PDCA — **planejamento de obra** (cronograma físico, Gantt, linha de balanço, avanço × previsto), **contrato de empreiteiro: medição, retenção e aditivo** (ver nota abaixo) **e** ciclo de melhoria contínua (FVS, não-conformidades, planos de ação) |
+| `modulopdca` | PDCA — **planejamento de obra** (cronograma físico, Gantt, linha de balanço, avanço × previsto), **contrato de empreiteiro: medição, retenção e aditivo** (ver nota abaixo) **e** ciclo de melhoria contínua (FVS, não-conformidades, planos de ação). **Planta escrita: [modulopdca.md](modulopdca.md)** — o app continua vazio |
 | `nucleo.frota` | **Gerência de frota de trabalho pesado** — admissão, fila por plano e preempção das conversões (nota abaixo) |
 
 > 📐 **`modulopdca` — o que o Orçamento está esperando dele.** Decidido ao fechar o ORC.7

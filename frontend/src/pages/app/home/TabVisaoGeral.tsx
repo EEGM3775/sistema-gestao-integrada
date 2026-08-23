@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { useAuth } from '@/hooks/useAuth'
 import { ArrowRight, Gauge } from 'lucide-react'
 import { Card, Empty, KpiTile, Loading, SectionHead } from '@/components/malha'
 import { ListaDecisoes } from './TabDecisoes'
@@ -15,10 +16,23 @@ type Resumo = ReturnType<typeof useHomeResumo>
  * que o usuário não acessa. Onde ainda não existe fonte (avanço físico depende
  * do PDCA; DRE por obra é a sub-fase D.1.4 do ERP), o mosaico diz **"em breve"**
  * em vez de inventar — é a regra de dados honestos da régua (§1.6.4).
+ *
+ * **Plano e quota não aparecem para o supervisor da plataforma**
+ * *(decisão do dono, 22/08/2026)*. Eles descrevem o que uma **empresa** contratou:
+ * quanto ela pode cadastrar, quando trava, qual o próximo degrau de venda. O
+ * supervisor não é cliente — mostrar "Seu plano: Profissional" e "limite de
+ * clientes atingido" para ele é oferecer um upsell a quem vende o produto, e
+ * transformar um número de fixture num alarme que ele não tem por que resolver.
  */
 export function TabVisaoGeral({ r }: { r: Resumo }) {
   const { kpis, decisoes, quotas, plano, carregando, fontes } = r
+  const { isPlatformAdmin } = useAuth()
   const semFonteAlguma = kpis.length === 0 && !carregando
+  // Sem o painel de plano, a linha volta a ser de uma coluna só — senão
+  // sobraria um vão do tamanho do card que não está lá.
+  const colunas = isPlatformAdmin
+    ? 'minmax(0, 1fr)'
+    : 'minmax(0, 1.7fr) minmax(260px, 1fr)'
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 26 }}>
@@ -61,7 +75,7 @@ export function TabVisaoGeral({ r }: { r: Resumo }) {
       </section>
 
       {/* ── Decisão + plano ─────────────────────────────────────────────── */}
-      <div style={{ display: 'grid', gap: 20, gridTemplateColumns: 'minmax(0, 1.7fr) minmax(260px, 1fr)' }}>
+      <div style={{ display: 'grid', gap: 20, gridTemplateColumns: colunas }}>
         <section style={{ minWidth: 0 }}>
           <SectionHead
             sub="Vencimentos, aprovações e rupturas que já passaram do ponto de esperar"
@@ -78,6 +92,7 @@ export function TabVisaoGeral({ r }: { r: Resumo }) {
           <ListaDecisoes decisoes={decisoes} limite={5} />
         </section>
 
+        {!isPlatformAdmin && (
         <section style={{ minWidth: 0 }}>
           <SectionHead sub="O limite aparece antes de travar o cadastro, não depois">Seu plano</SectionHead>
           <Card style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -101,13 +116,16 @@ export function TabVisaoGeral({ r }: { r: Resumo }) {
             )}
           </Card>
         </section>
+        )}
       </div>
 
       {/* ── Procedência ─────────────────────────────────────────────────── */}
       <Card style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: 13 }}>
         <span style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>
-          Números vindos de: <b style={{ color: 'var(--ink-2)' }}>plano</b>
-          {fontes.erp && <>, <b style={{ color: 'var(--ink-2)' }}>ERP</b></>}
+          Números vindos de:{' '}
+          {!isPlatformAdmin && <b style={{ color: 'var(--ink-2)' }}>plano</b>}
+          {!isPlatformAdmin && fontes.erp && ', '}
+          {fontes.erp && <b style={{ color: 'var(--ink-2)' }}>ERP</b>}
           {fontes.scm && <>, <b style={{ color: 'var(--ink-2)' }}>SCM</b></>}
           {fontes.sil && <>, <b style={{ color: 'var(--ink-2)' }}>SIL</b></>}
           . Cada módulo calcula o seu agregado no backend.

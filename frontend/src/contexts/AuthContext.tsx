@@ -21,6 +21,11 @@ interface AuthContextType {
   modules: string[]
   permissions: string[]
   isTenantAdmin: boolean
+  /** Supervisor da plataforma (`is_superuser` na IAM). Diferente de
+   *  `isTenantAdmin`: aquele manda na empresa dele, este atravessa o
+   *  catálogo. Governa o que é da PLATAFORMA — e o que depende dele **não
+   *  aparece** para os demais, nem trancado. */
+  isPlatformAdmin: boolean
   loading: boolean
   login: (username: string, password: string, remember?: boolean) => Promise<void>
   changePassword: (senhaAtual: string, novaSenha: string) => Promise<void>
@@ -36,16 +41,19 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [modules, setModules] = useState<string[]>([])
   const [permissions, setPermissions] = useState<string[]>([])
   const [isTenantAdmin, setIsTenantAdmin] = useState(false)
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false)
   const [loading, setLoading] = useState(true)
 
   const aplicarMe = (d: {
     id: string; username: string; email: string
-    modules?: string[]; permissions?: string[]; is_tenant_admin?: boolean
+    modules?: string[]; permissions?: string[]
+    is_tenant_admin?: boolean; is_platform_admin?: boolean
   }) => {
     setUser({ id: d.id, username: d.username, email: d.email })
     setModules(Array.isArray(d.modules) ? d.modules : [])
     setPermissions(Array.isArray(d.permissions) ? d.permissions : [])
     setIsTenantAdmin(!!d.is_tenant_admin)
+    setIsPlatformAdmin(!!d.is_platform_admin)
   }
 
   // `logout` é dependência dos efeitos de sessão abaixo → precisa ser estável e
@@ -55,6 +63,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setModules([])
     setPermissions([])
     setIsTenantAdmin(false)
+    setIsPlatformAdmin(false)
   }, [])
 
   const logout = useCallback(() => {
@@ -169,10 +178,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setUser({ id: u.id, username: u.username, email: u.email })
     setModules(Array.isArray(data.modules) ? data.modules : [])
     setIsTenantAdmin(!!u.is_tenant_admin)
+    setIsPlatformAdmin(!!u.is_platform_admin)
     // As permissões efetivas viajam no token; /auth/me/ as devolve.
     try {
       const me = await iamClient.get('me/')
       setPermissions(Array.isArray(me.data.permissions) ? me.data.permissions : [])
+      // `me` é a fonte mais fresca dos dois flags — o payload do login pode ser
+      // anterior a uma promoção feita enquanto a sessão já existia.
+      if (typeof me.data.is_platform_admin === 'boolean') {
+        setIsPlatformAdmin(me.data.is_platform_admin)
+      }
     } catch {
       setPermissions([])
     }
@@ -186,7 +201,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   return (
     <AuthContext.Provider value={{
-      isAuthenticated: !!user, user, modules, permissions, isTenantAdmin,
+      isAuthenticated: !!user, user, modules, permissions, isTenantAdmin, isPlatformAdmin,
       loading, login, changePassword, logout, hasModule, hasPermission,
     }}>
       {children}

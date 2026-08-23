@@ -163,8 +163,28 @@ seguras, sessão real. Fica em portas separadas e não mexe no dev.
 ============================================================
     demo      / demo123        -> vê tudo (todos os módulos)
     semdrone  / semdrone123    -> acesso restrito (bom p/ testar bloqueios)
-    admin     / admin123       -> administrador (papéis, usuários, auditoria)
+    admin     / admin123       -> administrador DO TENANT (papéis, usuários, auditoria)
     acme      / acme123        -> outra empresa (testar isolamento de dados)
+    dono      / dono123        -> DONO DA PLATAFORMA (is_platform_admin)
+
+    A diferenca entre `admin` e `dono` importa, e sao dois eixos:
+
+      * o `admin` manda em tudo DENTRO da empresa dele -- e para no que ela
+        assinou: modulo nao contratado fica fechado para ele tambem;
+      * o `dono` alcanca TODO modulo do catalogo, contratado ou nao (ele e o
+        teste supremo do sistema), e opera o que vale para TODAS as empresas:
+        carregar a base SINAPI (ORC.8), confirmar incidente ANPD, publicar
+        base-mae pelo impexp. O `admin`, mesmo com o catalogo inteiro de
+        permissoes, recebe 403 nessas tres.
+
+    O que o `dono` NAO faz: atravessar a fronteira de tenant. Ele le a empresa
+    onde esta, como qualquer um -- nao e chave mestra. E plano/quota nao
+    aparecem no hub dele: assunto de cliente nao e dele. Ver
+    docs/acesso-e-permissoes.md.
+
+    ONDE FICA A CARGA DA BASE: menu lateral -> SISTEMA -> Bases oficiais
+    (/app/sistema/bases). A secao SISTEMA so existe para o `dono` -- para os
+    demais ela nao aparece nem trancada, de proposito.
 
 
 ============================================================
@@ -246,10 +266,37 @@ Antes de tudo: o Docker Desktop está ABERTO?
 
 
 ------------------------------------------------------------
- CARREGAR A TABELA SINAPI (enquanto não existe o botão)
+ CARREGAR A TABELA SINAPI
 ------------------------------------------------------------
-O Orçamento precisa da tabela de preços da Caixa. Enquanto o botão do
-ORC.8 não fica pronto, a carga é por comando. Leva uns 10 segundos.
+O Orcamento precisa da tabela de precos da Caixa. Ha DOIS caminhos, e o
+que decide qual usar e o MES da publicacao:
+
+ * 01/2025 EM DIANTE -- pelo botao (ORC.8). A Caixa publica um ZIP
+   nacional so, com as 27 UFs em colunas, e o sistema le esse arquivo
+   sozinho: um clique rende as 54 publicacoes do mes.
+   Onde: http://localhost:8090 -> menu lateral SISTEMA -> Bases oficiais.
+   A secao SISTEMA so aparece para o dono da plataforma
+   (is_platform_admin) -- para os outros ela nao existe, nem trancada.
+   (Ate 22/08/2026 o painel morava em Orcamento -> Bases & bancos; saiu
+   de la porque base-mae e dado de plataforma, nao do modulo.)
+
+   Da primeira vez, cadastre o endereco: botao "Endereco da fonte" ->
+   cole o template da URL do pacote (aceita {ano_mes}, {ano}, {mes}).
+   Sem template, nada e baixado -- de proposito: um job que adivinha
+   endereco e um job que um dia importa dado errado com a confianca de
+   um robo. O envio manual do arquivo (botao "Enviar o arquivo")
+   continua valendo sempre, e e o plano B do mes em que a Caixa mudar
+   o layout ou o WAF apertar.
+
+   Pela bancada, quando o Celery ou o gateway estiverem fora:
+   docker exec sgi-erp python manage.py carregar_base_oficial \
+     --fonte sinapi --mes 2026-07
+   (acrescente --resumo para so conferir, sem gravar; ou
+    --arquivo /tmp/pacote.zip para o plano B)
+
+ * ATE 12/2024 -- pelo comando abaixo. Aquelas publicacoes sao um ZIP
+   por UF x regime, em formato "longo" (uma linha por item, uma coluna
+   de preco), que o motor da carga nao le. Leva uns 10 segundos.
 
 1) BAIXAR o pacote no site da Caixa, pelo NAVEGADOR:
    https://www.caixa.gov.br/site/Paginas/downloads.aspx

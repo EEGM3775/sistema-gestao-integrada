@@ -323,12 +323,12 @@ def copiar_da_base_publica(
 
 
 def _copiar_componentes_publicos(referencia, composicao: ItemBancoPreco, banco: BancoPreco) -> int:
-    from .models import ComposicaoReferenciaItem
+    from .services import componentes_da_composicao
 
     criados = 0
-    for componente in ComposicaoReferenciaItem.objects.filter(
-        composicao=referencia
-    ).select_related("filho"):
+    # ORC.8 — a analítica pode estar na publicação ou na tabela nacional; quem
+    # sabe disso é o resolvedor, e é ele que todo consumidor chama.
+    for componente in componentes_da_composicao(referencia):
         filho, novo = ItemBancoPreco.objects.get_or_create(
             tenant_id=banco.tenant_id, banco=banco,
             tipo=componente.filho.tipo, codigo=componente.filho.codigo[:30],
