@@ -45,14 +45,14 @@ prometheus-client
 # declarado em `GET /api/prancheta/status/` — nunca derruba o boot nem quebra
 # `manage.py check`. É o mesmo idioma do `pdfplumber` acima.
 #
-# `ezdxf>=1.4` não é capricho, e o número subiu por um motivo concreto (D46): o
+# `ezdxf>=1.4.4` não é capricho, e o número subiu por um motivo concreto (D46): o
 # backend de desenho SVG puro (`addons.drawing.svg`) chegou na 1.1 — antes dela a
 # alternativa era rasterizar via matplotlib, que arrastaria matplotlib para a
 # imagem —, mas o **enquadramento pelo grosso da geometria** depende do
 # `Recorder`/`Player` (`bbox()` + `crop_rect()`), que é da 1.4. A imagem já rodava
 # 1.4.4 por acaso, e o pin dizia 1.1: um `pip install` num host que resolvesse a
 # 1.1 voltaria a entregar prancha com tarja preta sem quebrar teste nenhum.
-ezdxf>=1.4
+ezdxf>=1.4.4
 # Rasteriza a 1ª página do PDF para a miniatura do acervo (wheel autocontida,
 # sem dependência de sistema — poppler NÃO entra na imagem por causa disto).
 pypdfium2
