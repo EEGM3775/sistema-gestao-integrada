@@ -24,7 +24,7 @@ requests
 # que quebrar quebra no CI e não no upload do cliente.
 Pillow==12.3.0
 openpyxl==3.1.5
-weasyprint==69.0
+weasyprint==70.0
 # Extração de tabela de PDF na importação de preços (ORC.5b). O código faz import
 # tardio e degrada com mensagem clara se faltar — prefeitura que só publica PDF é
 # o caso real, e a conferência linha a linha existe justamente porque a extração
