@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from django.db import models
 from django.core.validators import RegexValidator
-from nucleo.tenancy import TenantScopedModel
+from nucleo.tenancy import Excluivel, TenantScopedModel
 from django.utils.translation import gettext_lazy as _
 
 # Reusable validator
@@ -12,7 +12,7 @@ cpf_cnpj_validator = RegexValidator(
     message=_("O CPF/CNPJ deve conter apenas números.")
 )
 
-class Cliente(TenantScopedModel):
+class Cliente(TenantScopedModel, Excluivel):
     """
     Armazena os dados cadastrais dos clientes.
     """
@@ -53,12 +53,12 @@ class Cliente(TenantScopedModel):
         # Unicidade por-tenant (Fase 8.3): dois tenants podem ter o mesmo
         # CPF/CNPJ ou e-mail; dentro de um tenant, não.
         constraints = [
-            models.UniqueConstraint(fields=['tenant', 'cpf_cnpj'], name='cliente_cpf_cnpj_unico_por_tenant'),
-            models.UniqueConstraint(fields=['tenant', 'email'], name='cliente_email_unico_por_tenant'),
+            models.UniqueConstraint(fields=['tenant', 'cpf_cnpj'], condition=models.Q(excluido_em__isnull=True), name='cliente_cpf_cnpj_unico_por_tenant'),
+            models.UniqueConstraint(fields=['tenant', 'email'], condition=models.Q(excluido_em__isnull=True), name='cliente_email_unico_por_tenant'),
         ]
 
 
-class ClienteEmpreendimento(TenantScopedModel):
+class ClienteEmpreendimento(TenantScopedModel, Excluivel):
     """
     Vincula um cliente a um empreendimento específico, registrando a aquisição.
     """
@@ -222,12 +222,12 @@ class ClienteEmpreendimento(TenantScopedModel):
             # o texto livre — que não valia nada, porque "Apto 101" e "apto 101"
             # passavam como unidades diferentes.
             models.UniqueConstraint(
-                fields=['tenant', 'unidade'], name='aquisicao_unica_por_unidade',
+                fields=['tenant', 'unidade'], condition=models.Q(excluido_em__isnull=True), name='aquisicao_unica_por_unidade',
             ),
         ]
 
 
-class ContratoCliente(TenantScopedModel):
+class ContratoCliente(TenantScopedModel, Excluivel):
     """
     Mantém os contratos firmados com os clientes.
     """
@@ -257,7 +257,7 @@ class ContratoCliente(TenantScopedModel):
         verbose_name = _("Contrato do Cliente")
         verbose_name_plural = _("Contratos dos Clientes")
         constraints = [
-            models.UniqueConstraint(fields=['tenant', 'numero_contrato'], name='contrato_numero_unico_por_tenant'),
+            models.UniqueConstraint(fields=['tenant', 'numero_contrato'], condition=models.Q(excluido_em__isnull=True), name='contrato_numero_unico_por_tenant'),
         ]
 
 

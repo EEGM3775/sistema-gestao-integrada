@@ -10,6 +10,7 @@ const MODULE_LABELS: Record<string, string> = {
   crm: 'CRM',
   rh: 'RH',
   drone: 'Drone',
+  pdca: 'Planejamento & Qualidade',
 }
 
 interface ModuleRouteProps {

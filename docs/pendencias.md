@@ -119,7 +119,59 @@ outbox local para não perder evento se o backend estiver fora.
 
 ## 🟠 Altas
 
-### D113 — a demo nasce com o dobro de clientes que o plano dela permite · 🟠 aberto 22/08/2026
+### D124 — a paywall não decidiu se orçamento tem quantidade · 🟠 aberto 13/09/2026
+
+**Decisão do dono, 13/09/2026, ao definir a trava de exclusão do orçamento:**
+
+> *"A paywall ainda não está completamente definida, então apesar do seu entendimento, isso também
+> pode mudar sobre a quantidade de orçamento, mas não vamos mexer agora."*
+
+**O estado de hoje, conferido:** orçamento **não consome quota nenhuma**. Não está em
+`QUOTAS_DE_OBJETO` nem em `RECURSOS_CONTADOS`. Os números `orcamento: 25 / 100` do
+[`planos.py`](../payment/planos.py) são **tamanho de página**, não teto de quantidade — o que o
+módulo conta é `banco_preco_linhas`, que é a tabela de preço própria, não a planilha. Logo, um
+orçamento parado não impede ninguém de criar outro; o que ele custa hoje é poluição de listagem.
+
+**A regra que o dono fixou e que fica valendo independentemente disto** (já implementada — ver
+[modulos/moduloorcamento.md](modulos/moduloorcamento.md)): a trava protege a empresa, **não tutela o
+usuário**. Rascunho, cancelado e superado saem; aprovado não sai, mas cancelar abre o caminho —
+**nunca há estado do qual não se saia**.
+
+**O que fica em aberto:** se um dia orçamento virar quota, a decisão precisa carregar junto três
+coisas que hoje não existem, e esquecer qualquer uma recria a armadilha que esta regra evitou:
+
+1. **o contador** em `RECURSOS_CONTADOS` — e ele lê pelo gerente padrão, que já filtra a lápide, de
+   modo que orçamento na lixeira **não** ocuparia quota (isso já está certo por construção);
+2. **o que fazer com o aprovado** — se ele conta e não sai, um cliente no teto com todas as obras
+   aprovadas fica sem conseguir criar a próxima planilha sem cancelar uma que está em vigor. É a
+   forma que a armadilha tomaria aqui;
+3. **o degrau por plano**, nos cinco níveis, como todo o resto do §4 do `planos.py`.
+
+Não trava nada hoje. É decisão comercial, e o dono pediu para registrar em vez de decidir agora.
+
+### D120 — a foto do apontamento de avanço não tem porta de mídia · 🟠 aberto 13/09/2026
+
+Achado rodando a suíte inteira ao fechar o [D116](historico-correcoes.md); é da **PDCA.2**, não da
+lixeira. O teste [`funcoesimpexp.test_d70_portas_de_midia`](../backend/funcoesimpexp/test_d70_portas_de_midia.py)
+falha com:
+
+> `modulopdca.ApontamentoAvanco.foto → 'pdca_apontamento/'` — FileField sem porta no `funcoesimpexp`.
+
+**O que isso significa na prática**, e são duas coisas de gravidade diferente:
+
+- **em produção o arquivo não abre**: sem porta, ele sairia por `/media/`, que o gateway responde
+  **404**. A foto que o campo tira e envia junto do apontamento fica gravada e inalcançável;
+- **em dev com `DEBUG=True` é o oposto, e pior**: o Django serve o binário direto, **fora de auth,
+  fora de entitlement e fora da RLS** — a foto de obra de um tenant fica legível por quem tiver a URL.
+
+**A correção** é a que o próprio teste dita: declarar um `Recurso` de natureza `arquivo` com
+`entregar_arquivo` e registrá-lo na tabela de portas. É o mesmo caminho que os outros módulos com
+arquivo já percorreram (D70).
+
+Não foi corrigido junto do D116 por ser de outra fatia — mexer no contrato de mídia da PDCA.2
+enquanto se fecha a lixeira misturaria dois assuntos numa revisão só.
+
+### D115 — a demo nasce com o dobro de clientes que o plano dela permite · 🟠 aberto 22/08/2026
 
 Achado pelo dono, olhando o hub: o card **Requer sua decisão** anuncia
 permanentemente *"Limite de clientes atingido — 2004 de 1000"*, e o bloqueio é
@@ -143,7 +195,7 @@ parede de quota é visível de propósito — papel que o `planos.py` já dá a 
 
 ### D114 — no `profissional`, o teto de clientes não conversa com o de empreendimentos · 🟠 aberto 22/08/2026
 
-Levantado junto do D113, e é a metade **comercial** dele — a de engenharia é
+Levantado junto do D115, e é a metade **comercial** dele — a de engenharia é
 aquela; esta é decisão do dono.
 
 O `profissional` (R$ 449) vende **10 empreendimentos** e **1000 clientes**. O
@@ -303,6 +355,35 @@ sobre um acervo que não é o real, e o Essencial em 150 mil agora fica **abaixo
 Decisão do dono, com o número novo na mão. Não trava nada hoje.
 
 ## 🟡 Médias
+
+### D119 — o calendário de trabalho não modela turnos nem horários · 🟡 aberto 13/09/2026
+
+Levantado ao resumir a PDCA.2. O modelo `CalendarioTrabalho` tem campos para
+quantidade de horas por dia (`horas_por_dia`) e exceções de recesso/feriados,
+mas **não tem estrutura para representar turnos nem horários específicos**.
+
+Isto torna impossível representar:
+
+- **Múltiplos turnos no mesmo dia** — manhã 06h-14h, tarde 14h-22h, noite 22h-06h
+- **Horários específicos** — começar às 7:30, terminar às 17:15 em vez de "o dia inteiro"
+- **Turnos parciais** — segunda obra que bate sábado apenas pela manhã
+- **Paradas técnicas** — de 12h a 13h é parada, fora do expediente
+
+A demo funciona com a simplificação "8,8 horas corridas, segunda a sexta" — que o
+mundo real não permite. Uma obra com **dois turnos fica travada ou fake**.
+
+**O impacto:** quando o sistema rodar de verdade, a curva S (que distribui o
+previsto nos dias úteis do calendário) só conseguirá agregar horas por dia, não
+por turno — e o apontamento de avanço fica sem granularidade para dizer "andou
+15% no turno da manhã".
+
+**Não bloqueia PDCA.2:** a fatia funciona com o calendário que existe. É uma
+lacuna de desenho que só aparece em uso real, exatamente como a D118
+(calendário vazio na tela) antes de existir calendário de verdade.
+
+**Escopo:** fica para depois (Calendário.2 ou PDCA.3), porque altera o contrato
+da API — um plano rascunho salvo com calendário A teria que saber o que fazer se
+o calendário virar multi-turno depois, e essa migração de dado não é trivial.
 
 ### D113 — a plataforma não tem documentação de produção · 🟡 aberto 21/08/2026
 

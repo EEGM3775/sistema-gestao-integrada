@@ -61,6 +61,8 @@ PLANOS: dict[str, dict] = {
         "seats": 1,
         "empreendimentos": 1,
         "obras": 2,
+        "planos_modelo": 0,
+        "lixo_retencao_dias": 3,
         "clientes": 20,
         "fornecedores": 20,
         "armazenamento_gb": 1,
@@ -103,6 +105,8 @@ PLANOS: dict[str, dict] = {
         "seats": 3,
         "empreendimentos": 2,
         "obras": 8,
+        "planos_modelo": 0,
+        "lixo_retencao_dias": 15,
         "clientes": 100,
         "fornecedores": 100,
         "armazenamento_gb": 5,
@@ -139,6 +143,8 @@ PLANOS: dict[str, dict] = {
         "seats": 12,
         "empreendimentos": 10,
         "obras": 40,
+        "planos_modelo": 0,
+        "lixo_retencao_dias": 15,
         "clientes": 1_000,
         "fornecedores": 1_000,
         "armazenamento_gb": 100,
@@ -183,6 +189,8 @@ PLANOS: dict[str, dict] = {
         "seats": 40,
         "empreendimentos": 50,
         "obras": 200,
+        "planos_modelo": 25,
+        "lixo_retencao_dias": 15,
         "clientes": 10_000,
         "fornecedores": 10_000,
         "armazenamento_gb": 500,
@@ -233,6 +241,8 @@ PLANOS: dict[str, dict] = {
         "seats": None,
         "empreendimentos": None,
         "obras": None,
+        "planos_modelo": None,
+        "lixo_retencao_dias": 30,
         "clientes": None,
         "fornecedores": None,
         "armazenamento_gb": None,
@@ -317,6 +327,11 @@ QUOTAS_DE_OBJETO: tuple[str, ...] = (
     "clientes",
     "fornecedores",
     "banco_preco_linhas",
+    # PDCA.1b — cronogramas marcados como **modelo**. Conta linha da mesma tabela
+    # dos planos comuns, filtrada por `eh_modelo`: o que se vende não é guardar
+    # cronograma (isso já vem com o módulo), é ter biblioteca de padrão para
+    # replicar em obra nova. Ver §5.5e.
+    "planos_modelo",
 )
 
 # Seats — contado na IAM, que é quem cria usuário. Seat = usuário ATIVO, então
@@ -333,8 +348,17 @@ QUOTA_SEATS = "seats"
 # por `banco_preco_linhas`.
 QUOTAS_POR_OPERACAO: tuple[str, ...] = ("importacao_linhas",)
 
+# Janelas — quanto TEMPO o plano dá, e não quantos objetos. `lixo_retencao_dias`
+# é a primeira, e não cabia em nenhuma das duas listas acima: não é acervo a
+# contar (`QUOTAS_DE_OBJETO`) nem teto de uma chamada (`QUOTAS_POR_OPERACAO`).
+# Viaja na claim porque quem congela o prazo é o backend, no instante em que o
+# usuário exclui — ver §5.8.
+QUOTAS_DE_JANELA: tuple[str, ...] = ("lixo_retencao_dias",)
+
 # Tudo que morde hoje. O que não está aqui está declarado e inerte.
-QUOTAS_APLICADAS: tuple[str, ...] = (QUOTA_SEATS, *QUOTAS_DE_OBJETO, *QUOTAS_POR_OPERACAO)
+QUOTAS_APLICADAS: tuple[str, ...] = (
+    QUOTA_SEATS, *QUOTAS_DE_OBJETO, *QUOTAS_POR_OPERACAO, *QUOTAS_DE_JANELA,
+)
 
 # ---------------------------------------------------------------------------
 # 5. CAPACIDADES por plano — knobs que não são número (PRA.0)
@@ -1000,22 +1024,29 @@ ORCAMENTO_PROFUNDIDADE_MAXIMA_FORMULA: int = 8
 # Módulo que ganhar paginador e não aparecer aqui falha no teste do `nucleo`.
 PAGINA_PADRAO: dict[str, int] = {
     "catalogo": 25,
+    # A lixeira (D116) é lista de conferência, não árvore: 25 basta para quem
+    # abriu a página procurando o que apagou por engano hoje. Quem quiser varrer
+    # o histórico inteiro pede `?estado=todos&page_size=`.
+    "lixo": 25,
     "clientes": 50,
     "empreendimentos": 100,
     "erp": 25,
     "maps": 50,
     "orcamento": 25,
+    "pdca": 25,
     "prancheta": 50,
     "scm": 25,
     "sil": 25,
 }
 PAGINA_MAXIMA: dict[str, int] = {
     "catalogo": 100,
+    "lixo": 200,
     "clientes": 300,
     "empreendimentos": 300,
     "erp": 200,
     "maps": 500,
     "orcamento": 100,
+    "pdca": 200,
     "prancheta": 500,
     "scm": 100,
     "sil": 100,
@@ -1070,6 +1101,235 @@ ORCAMENTO_CARGA_ESPERA_INICIAL_S: float = 5.0
 ORCAMENTO_CARGA_ESPERA_MAXIMA_S: float = 60.0
 ORCAMENTO_CARGA_PAUSA_ENTRE_ARQUIVOS_S: float = 2.0
 ORCAMENTO_CARGA_TETO_PUBLICACOES: int = 120
+
+# ---------------------------------------------------------------------------
+# 5.5c O esqueleto da obra e a escada que aprova dinheiro (PDCA.0)
+# ---------------------------------------------------------------------------
+# O `modulopdca` traz uma família nova de limite, e ela não se parece com as
+# anteriores. Até aqui os tetos protegiam **o que entra** (bytes de arquivo,
+# linhas de importação) ou **o que a operação custa** (memória, relógio). Estes
+# protegem uma **árvore que o cliente desenha**: a hierarquia construtiva da obra
+# — torre → pavimento → unidade → ambiente — e o gerador em lote que a povoa.
+#
+# A razão de ela precisar de teto é a do D57 (a conversão sem limite superior):
+# o custo é proporcional a uma entrada que **o cliente controla**, e "torre A, 20
+# pavimentos, 4 unidades por andar" é uma frase curta que produz 1.600 linhas. Um
+# dedo a mais no formulário produz 16.000.
+#
+#   - `PDCA_TETO_LOCAIS_POR_OBRA` — quantos locais uma obra inteira comporta.
+#     Uma torre residencial real fica em 1.000–2.000 (30 pavimentos × 8 unidades
+#     × ~6 ambientes já dá 1.440); 20.000 é uma ordem de grandeza acima do maior
+#     empreendimento plausível, e é o que separa "obra grande" de "alguém digitou
+#     um zero a mais". Quem esbarrar nele tem problema de modelagem, não de
+#     plano — por isso o número é único e não escala por assinatura.
+#   - `PDCA_PROFUNDIDADE_MAXIMA_LOCAL` — quantos níveis a árvore aceita. A
+#     hierarquia nomeada da planta tem 5 (empreendimento → torre → pavimento →
+#     unidade → ambiente) e a obra linear tem 3 (frente → trecho → estaca); 8 dá
+#     folga para subsolo, setor e ala sem virar recursão sem fundo. É o irmão do
+#     `ORCAMENTO_PROFUNDIDADE_MAXIMA_FORMULA` e existe pelo mesmo motivo: o
+#     cálculo que anda na árvore é recursivo.
+#   - `PDCA_TETO_LOCAIS_POR_GERACAO` — quantos locais **uma** chamada do gerador
+#     cria. É o corte síncrono × job desta fatia: 2.000 linhas o banco escreve
+#     dentro da requisição; acima disso a espera vira timeout de gateway, e a
+#     saída certa é a frota (`nucleo.frota`), não um formulário que trava. A
+#     fatia que fizer isso virar job mexe neste número, não no de cima.
+#   - `PDCA_TETO_NIVEIS_APROVACAO` — degraus de uma escada de atesto. A prática
+#     de obra vai a três (engenheiro → gerente de contrato → fiscal); 6 acomoda
+#     obra pública com parecer jurídico e ordenador de despesa. O teto existe
+#     porque cada nível é uma pessoa a mais entre a medição e o pagamento do
+#     empreiteiro: uma escada de 30 degraus não é rigor, é medição que nunca é
+#     paga — e o efeito de um número alto demais aqui aparece no fluxo de caixa
+#     de quem executa a obra, não no nosso servidor.
+#
+# **Os outros tetos da §8 da planta** — atividades por cronograma, itens por
+# contrato, linhas por medição, fotos e bytes por apontamento, relógio do
+# recálculo de CPM — entram junto da fatia que os aplica (PDCA.1 a PDCA.3).
+# Declará-los agora seria escrever número que nenhum código lê: o teste do
+# `nucleo` prende constante a consumidor, e constante sem consumidor não é régua,
+# é intenção.
+PDCA_TETO_LOCAIS_POR_OBRA: int = 20_000
+PDCA_PROFUNDIDADE_MAXIMA_LOCAL: int = 8
+PDCA_TETO_LOCAIS_POR_GERACAO: int = 2_000
+PDCA_TETO_NIVEIS_APROVACAO: int = 6
+
+# **Em quais planos o `pdca` é vendido** *(decisão do dono, 22/08/2026)*:
+# `empresarial` e `Sob Medida`. Planejamento com CPM, Last Planner e medição
+# contratual é ferramenta de empresa que tem departamento de planejamento; nasce
+# como degrau alto e desce se o mercado pedir. Fica como **declaração** porque
+# entitlement de módulo não é chave deste arquivo — quem o concede é a
+# `AssinaturaTenant` da IAM, tenant a tenant. O tenant `demo` recebe o módulo no
+# seed para a plataforma ser testável ponta a ponta, como já recebe `prancheta` e
+# `maps` sem ser do plano dele.
+
+# ---------------------------------------------------------------------------
+# 5.5d O cronograma e o CPM (PDCA.1)
+# ---------------------------------------------------------------------------
+# > **Números provisórios** *(decisão do dono, 23/08/2026)*: os quatro abaixo
+# > foram escolhidos pela engenharia com a ordem de grandeza da obra real, e
+# > ficam **aguardando o estudo de viabilidade do software**. Editá-los é editar
+# > este bloco e mais nada — nenhum deles está repetido em código de engenharia,
+# > e o teste do `nucleo` garante que continue assim. Mexer no número não pede
+# > migration, deploy de schema nem alteração de teste: o teto é lido em tempo de
+# > execução por quem o aplica.
+#
+# A família de limite aqui é a mesma da §5.5c — protege uma **árvore que o
+# cliente desenha** —, mas com uma diferença que muda a conta: sobre a WBS roda
+# um **algoritmo de grafo** (o CPM), e não só uma inserção. O custo deixa de ser
+# proporcional ao número de linhas e passa a ser proporcional a linhas **mais
+# ligações**, que o cliente também controla.
+#
+#   - `PDCA_TETO_ATIVIDADES_POR_CRONOGRAMA` — quantas atividades um cronograma
+#     comporta. Uma obra vertical real planejada com rigor fica em 500–2.000
+#     atividades; cronograma de P6 em obra industrial chega a alguns milhares.
+#     5.000 é a ordem de grandeza acima do maior plausível — o mesmo raciocínio
+#     do teto de locais por obra. Quem esbarrar tem problema de granularidade
+#     (está planejando parafuso), não de plano, e por isso o número é único e
+#     não escala por assinatura.
+#   - `PDCA_PROFUNDIDADE_MAXIMA_WBS` — níveis da WBS. A EAP de obra costuma ter
+#     4–6 (obra → subsistema → serviço → tarefa); 12 dá folga para quem espelha
+#     a estrutura contratual dentro da técnica sem virar recursão sem fundo. É
+#     o irmão do `PDCA_PROFUNDIDADE_MAXIMA_LOCAL` e existe pelo mesmo motivo: o
+#     avanço ponderado sobe a árvore recursivamente.
+#   - `PDCA_TETO_CPM_SINCRONO` — até onde o CPM roda **dentro da requisição**.
+#     Hoje é igual ao teto de atividades, e isso é uma afirmação, não um
+#     descuido: o CPM é O(V+E) e o calendário é pré-carregado em memória antes
+#     do laço (nenhuma consulta por dia caminhado), o que põe 5.000 atividades
+#     na casa de milissegundos. O número existe **separado** porque é ele que a
+#     fatia do job assíncrono vai mexer quando o recálculo passar a valer a
+#     cadeira da frota — e separá-lo agora evita que aquela fatia precise
+#     inventar um limite novo no meio do caminho.
+#   - `PDCA_CPM_SEGUNDOS` — relógio de um recálculo. É guarda-corpo contra o
+#     grafo patológico (milhares de precedências cruzadas) e contra o defeito
+#     nosso: estourar vira erro com motivo, nunca requisição pendurada até o
+#     timeout do gateway, que é o sintoma que ninguém consegue diagnosticar.
+#   - `PDCA_TETO_VERSOES_POR_CRONOGRAMA` — quantas versões (linhas de base) um
+#     cronograma guarda. O P6 vende "linhas de base ilimitadas" e aqui elas caem
+#     de graça do versionamento, mas de graça não é sem fim: cada replanejamento
+#     **copia a árvore inteira**, então 50 versões de um cronograma de 5.000
+#     atividades são 250 mil linhas de uma obra só. 50 é muito além da prática
+#     (replanejar é ato caro, mensal na obra mal comportada) e é o freio contra
+#     o botão clicado em laço.
+PDCA_TETO_ATIVIDADES_POR_CRONOGRAMA: int = 5_000
+PDCA_PROFUNDIDADE_MAXIMA_WBS: int = 12
+PDCA_TETO_CPM_SINCRONO: int = 5_000
+PDCA_CPM_SEGUNDOS: int = 60
+PDCA_TETO_VERSOES_POR_CRONOGRAMA: int = 50
+
+# ---------------------------------------------------------------------------
+# 5.5e O plano modelo e a escrita em lote (PDCA.1b)
+# ---------------------------------------------------------------------------
+# > **Decisão do dono, 23/08/2026**, respondendo à [D116](../docs/pendencias.md):
+# > *"deixa o plano para poder ser usado como modelo em outra obra — é só ele
+# > colocar como plano modelo e usar esse plano para outras obras, para não ter
+# > que criar 300 planos em um empreendimento grande. Plano modelo pode ter
+# > apenas 1 nome por plano modelo e tem que ter limite definido na paywall."*
+#
+# **`planos_modelo` (nos degraus acima)** — quantos cronogramas o tenant pode
+# marcar como modelo. É quota de plano, e não constante de módulo, porque é
+# exatamente o que se vende: a construtora que padroniza a torre e a replica em
+# 300 unidades está comprando o oposto de digitar 300 vezes. Os degraus abaixo
+# do `empresarial` recebem **0** porque não contratam o `pdca` (§5.5c) — e zero é
+# mais honesto que ausência: a chave existe, e a resposta é "seu plano não vende
+# isto", não um `KeyError` no meio de um POST.
+#
+# **`PDCA_TETO_LINHAS_POR_LOTE`** — quantas linhas uma escrita em lote muda numa
+# chamada. É o corte síncrono × job desta fatia, e nasce do gesto que ele serve:
+# colar uma planilha de EAP e renumerar a árvore. 500 linhas o banco escreve
+# dentro da requisição com folga; a renumeração, que é a mais cara, escreve em
+# **duas passadas** (o código é único por cronograma, então ninguém vira `1.2`
+# em `1.1` com `1.1` ainda de pé) e por isso encosta em 1.000 UPDATEs no teto —
+# ainda dentro do relógio do gateway. Acima disso o cliente fatia em blocos e vê
+# o progresso, que é melhor que uma barra parada esperando timeout.
+#
+# Número escolhido pela engenharia a pedido do dono (*"pode escolher o que quiser
+# agora, mas tem que estar em payments para poder ser alterado por mim"*) — e é
+# por estar aqui que mudá-lo é uma linha, não um deploy de código.
+PDCA_TETO_LINHAS_POR_LOTE: int = 500
+
+# ---------------------------------------------------------------------------
+# 5.5f O avanço apontado e a curva S (PDCA.2)
+# ---------------------------------------------------------------------------
+# A fatia que faz a obra **responder**: o campo aponta quanto andou, e o avanço
+# sobe a árvore ponderado pelo peso até virar a curva S realizada. Dois números
+# novos, e os dois são da mesma família de sempre — corte síncrono × job e
+# tamanho de resposta.
+#
+#   - `PDCA_TETO_APONTAMENTOS_POR_LOTE` — quantos apontamentos uma chamada
+#     grava. O gesto que ele serve é a **grade da semana**: o engenheiro abre as
+#     frentes da obra numa tabela e digita o percentual de cada uma de uma vez.
+#     200 é a semana de uma obra grande com folga (uma torre em acabamento tem
+#     ~40 frentes ativas), e é menor que o irmão da escrita em lote de propósito:
+#     cada linha aqui é um INSERT com validação de sinal, teto acumulado e
+#     recálculo do pai — não um UPDATE de célula.
+#   - `PDCA_TETO_PONTOS_CURVA_S` — quantos pontos a série da curva devolve. Uma
+#     obra de cinco anos pedida em escala de dia são ~1.800 pontos, e nenhum
+#     olho lê isso num gráfico de 600 px: passado o teto, o servidor **engrossa
+#     a granularidade** (dia → semana → mês) e **declara na resposta** qual
+#     valeu. Engrossar calado seria o defeito que a régua proíbe — a tela
+#     mostraria "por dia" desenhando meses.
+#
+# Números escolhidos pela engenharia com a ordem de grandeza da obra real, na
+# mesma condição provisória da §5.5d: editá-los é editar este bloco e mais nada.
+PDCA_TETO_APONTAMENTOS_POR_LOTE: int = 200
+PDCA_TETO_PONTOS_CURVA_S: int = 400
+
+# **O peso do arquivo do apontamento não vira constante nova.** A foto do campo
+# sobe pela porta única da plataforma (`nucleo/upload_validation.py`), que já lê
+# o teto de bytes e a lista de tipos da `ConfiguracaoArquivos` do tenant com
+# fallback em `UPLOAD_PADRAO_MAX_MB` (§5.1). Declarar aqui um "bytes por
+# apontamento" criaria o segundo número para a mesma pergunta — e no dia em que
+# os dois divergissem, o cliente levaria "arquivo grande demais" de um teto que
+# ninguém sabia que existia.
+
+# ---------------------------------------------------------------------------
+# 5.5g A lixeira da plataforma (D116)
+# ---------------------------------------------------------------------------
+# > **Decisão do dono, 13/09/2026:** *"O lixo é uma página à parte. Como é custo
+# > para o programa, terá uma paywall. O lixo é apagado depois de 15 dias. O lixo
+# > pode ser restaurado através da página de lixo."*
+#
+# **`lixo_retencao_dias` (nos degraus acima)** — quantos dias o que foi excluído
+# fica recuperável antes de ser apagado de verdade. **15** é o número do dono, e
+# é o que os planos contratados recebem; o `free` fica em 3 e o `Sob Medida` em
+# 30. Essa escada é do dono: mexer nela é mexer nestes cinco números e mais nada.
+#
+# **Por que a paywall é a JANELA, e não um teto de itens.** O custo que o dono
+# aponta é real — o que está na lixeira ocupa banco e backup —, mas um teto de
+# quantidade só teria dois modos de agir, e os dois são piores:
+#
+#   - **barrar a exclusão** com a lixeira cheia. Isso quebra a regra que o
+#     `nucleo/quotas.py` já declara e defende: quota *"trava só a CRIAÇÃO;
+#     editar e excluir seguem livres mesmo acima do teto"*, senão um downgrade
+#     deixa o cliente com os dados reféns. Impedir alguém de **apagar** porque
+#     ele apagou demais é a versão mais perversa disso;
+#   - **purgar o mais antigo** para abrir espaço. Seria destruir dado ainda
+#     dentro do prazo prometido, calado, por causa de uma exclusão que o usuário
+#     acabou de fazer em outro módulo.
+#
+# A janela regula o mesmo custo sem nenhum dos dois efeitos: o que entra na
+# lixeira sai sozinho, e quanto mais barato o plano, mais rápido sai. É um teto
+# de VALOR travestido de tempo — quem paga mais tem mais chance de desfazer.
+#
+# **Por que ela viaja na claim.** Quem congela o prazo é o backend, no `DELETE`,
+# gravando `Lixo.purgar_em = agora + retenção`. Ali existe token, e portanto
+# existe plano. A varredura diária (`purgar_vencidos`) roda sem usuário e **não
+# consulta plano nenhum**: ela lê a data já gravada. Isso não é atalho — é o que
+# impede que um downgrade encurte retroativamente a janela de quem apagou antes
+# dele, apagando de verdade um dado que ainda estava no prazo.
+#
+# Sem a claim (token de serviço, legado) o backend cai em
+# `LIXO_RETENCAO_PADRAO_DIAS`, abaixo — mesmo fail-open das camadas de quota, e
+# pelo mesmo motivo: o oposto transformaria uma feature comercial em
+# impossibilidade de excluir.
+LIXO_RETENCAO_PADRAO_DIAS: int = 15
+
+# Quantos itens a varredura purga por volta. **Não é limite de produto** — é o
+# corte síncrono × job da §5.6, e está aqui porque a §5.6 manda tudo que tem
+# número para cá. Cada purga é um `DELETE` que dispara o `CASCADE` do módulo
+# dono: apagar uma obra grande toca dezenas de tabelas. 200 mantém a volta curta
+# e o lock pequeno; o que sobra fica para a volta seguinte, que é no dia
+# seguinte — ou antes, se o beat rodar mais vezes.
+LIXO_TETO_PURGAS_POR_VOLTA: int = 200
 
 # ---------------------------------------------------------------------------
 # 5.6 O que NÃO é limite — e por isso continua no código de engenharia

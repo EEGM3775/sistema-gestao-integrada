@@ -1,9 +1,9 @@
 # rh/models.py
 from django.db import models
 from django.utils.translation import gettext_lazy as _
-from nucleo.tenancy import TenantScopedModel
+from nucleo.tenancy import Excluivel, TenantScopedModel
 
-class Cargo(TenantScopedModel):
+class Cargo(TenantScopedModel, Excluivel):
     cargo_id = models.AutoField(primary_key=True, verbose_name=_("ID do Cargo"))
     nome_cargo = models.CharField(max_length=100, verbose_name=_("Nome do Cargo"))
     descricao = models.TextField(blank=True, verbose_name=_("Descrição"))
@@ -14,13 +14,13 @@ class Cargo(TenantScopedModel):
         verbose_name_plural = _("Cargos")
         ordering = ['nome_cargo']
         constraints = [
-            models.UniqueConstraint(fields=['tenant', 'nome_cargo'], name='cargo_nome_unico_por_tenant'),
+            models.UniqueConstraint(fields=['tenant', 'nome_cargo'], condition=models.Q(excluido_em__isnull=True), name='cargo_nome_unico_por_tenant'),
         ]
 
     def __str__(self):
         return self.nome_cargo
 
-class Funcionario(TenantScopedModel):
+class Funcionario(TenantScopedModel, Excluivel):
     GENERO_CHOICES = [
         ('masculino', _('Masculino')),
         ('feminino', _('Feminino')),
@@ -86,9 +86,9 @@ class Funcionario(TenantScopedModel):
         # Unicidade por-tenant (Fase 8.3). Celular/e-mail são nullable →
         # múltiplos NULL são distintos, então não bloqueiam quem não os informa.
         constraints = [
-            models.UniqueConstraint(fields=['tenant', 'cpf'], name='funcionario_cpf_unico_por_tenant'),
-            models.UniqueConstraint(fields=['tenant', 'telefone_celular'], name='funcionario_celular_unico_por_tenant'),
-            models.UniqueConstraint(fields=['tenant', 'email_pessoal'], name='funcionario_email_unico_por_tenant'),
+            models.UniqueConstraint(fields=['tenant', 'cpf'], condition=models.Q(excluido_em__isnull=True), name='funcionario_cpf_unico_por_tenant'),
+            models.UniqueConstraint(fields=['tenant', 'telefone_celular'], condition=models.Q(excluido_em__isnull=True), name='funcionario_celular_unico_por_tenant'),
+            models.UniqueConstraint(fields=['tenant', 'email_pessoal'], condition=models.Q(excluido_em__isnull=True), name='funcionario_email_unico_por_tenant'),
         ]
 
     def __str__(self):

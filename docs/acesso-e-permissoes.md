@@ -86,7 +86,7 @@ Angular) e ainda assim plugar na **mesma** identidade/entitlement — sem reimpl
 | **backend — `moduloerp` (`erp_financeiro`)** | ✅ | ✅ `RequireModule` | ✅ `RequireRole("financeiro")` (migra p/ permissão na 9.B) | ✅ |
 | **backend — base** (`clientes`/`fornecedores`/`obras`/`empreendimentos`) | ✅ | n/a (sempre disponível) | ✅ `RequirePermission` por recurso (`cadastro.*`/`obra.*`) — 05/07/2026 | ✅ |
 | **backend — `modulodiario`** | ✅ | n/a (base) | ✅ ABAC próprio (`PodeModerarDiario` + equipe/responsável) | ✅ |
-| **Sistema de lixo** (`/api/lixo/`) — 📋 **planejado, não implementado** | 📋 JWT IAM | n/a (base) | 📋 `plataforma.lixo.*` | 📋 tenant-scope |
+| **Sistema de lixo** (`/api/lixo/`) | ✅ JWT IAM | n/a (base) | ✅ `plataforma.lixo.view|.restaurar|.purgar` | ✅ tenant-scope + RLS |
 
 **Leitura (após a Fase 9.A/9.B, 05/07/2026):** a **camada 1** segue genérica (`RequireModule` lê
 `modules`). A **camada 2** passou a checar **permissão** (`RequirePermission` lê `permissions`), com
@@ -255,32 +255,70 @@ Pendências: mascaramento de campos por papel; remoção dos modelos `nucleo.Per
 aplicar o contrato (§7) aos módulos hoje vazios. Detalhe e DoD em
 [roadmap.md](roadmap.md), **Fase 6**.
 
-## 7. Papel `gestor_lixo` (planejado)
+## 7. Papel `gestor_lixo`
 
-Papel intra-tenant que controla o ciclo de vida do sistema de lixo:
+Papel intra-tenant que controla o ciclo de vida da lixeira (exclusão reversível):
 
-| Operação | `gestor_lixo` | Usuário comum |
-|---|---|---|
-| Mover registro para o lixo | ✅ | ✅ |
-| Ver itens no lixo | ✅ | ❌ |
-| Restaurar item do lixo | ✅ | ❌ |
-| Purgar permanentemente | ✅ | ❌ |
-| Configurar retenção automática | ✅ | ❌ |
+| Operação | `gestor_lixo` | Usuário comum | Permissão |
+|---|---|---|---|
+| Excluir (marcar a lápide) | ✅ | ✅ | a do próprio módulo — **nenhuma nova** |
+| Ver itens na lixeira | ✅ | ❌ | `plataforma.lixo.view` |
+| Restaurar item | ✅ | ❌ | `plataforma.lixo.restaurar` |
+| Purgar antes do prazo | ✅ | ❌ | `plataforma.lixo.purgar` |
 
-Implementação: `RequireRole("gestor_lixo")` nos endpoints de restauração e purge.
-Arquitetura completa do lixo: [arquitetura/lixo.md](arquitetura/lixo.md).
+**Excluir não ganhou verbo novo**: quem já podia apagar continua podendo, e o que mudou é que agora
+dá para voltar atrás. Trancar a exclusão atrás de uma permissão nova tornaria a lixeira um
+rebaixamento de permissão disfarçado de melhoria.
+
+**Purgar é permissão separada de restaurar**: restaurar devolve dado à circulação; purgar destrói,
+antes do prazo, o que ainda dava para recuperar. `gestor_lixo` tem as duas pelo `.*`.
+
+**Não há "configurar retenção"**: o prazo é do **plano** (`lixo_retencao_dias`, §5.5g do
+[`planos.py`](../payment/planos.py)), não configuração de tenant — é paywall, e a purga não é
+opcional, porque é ela que corta o custo que a decisão do dono queria cortar.
+
+Implementação: `RequirePermission` (o padrão da casa desde a Fase 9) no
+[`nucleo/lixo_views.py`](../backend/nucleo/lixo_views.py) — e **não** `RequireRole`, que a prancha
+antiga previa antes de o catálogo de permissões existir.
+Arquitetura completa da lixeira: [arquitetura/lixo.md](arquitetura/lixo.md).
 
 ## 8. Contrato de um módulo novo (vendável isoladamente)
 
 Qualquer módulo futuro — um app Django **ou** um serviço separado (estilo drone), incluindo os hoje
-vazios (`moduloprancheta`, `modulodms`, `modulopdca`, `moduloscm`, `modulosil`, `modulomaps`) — segue o
-**mesmo contrato**, sem reimplementar identidade:
+vazios (`modulodms`) — segue o **mesmo contrato**, sem reimplementar identidade:
 
 1. Registrar um `Modulo` (código) no catálogo da IAM.
 2. Tornar-se vendável por `AssinaturaTenant` (empresa) e liberável por `AcessoUsuarioModulo` (usuário).
 3. Validar o JWT da IAM (RS256/JWKS) e **exigir o código do módulo** (403 se ausente) — via
    `RequireModule` (Django) ou o filtro de authority (estilo drone).
 4. Aplicar RBAC por papel quando necessário e filtrar tudo por `tenant_id`.
+
+## 9. Alçada — a escada de atesto (`/api/aprovacao/`)
+
+*(PDCA.0, 23/08/2026. Desenho no [modulopdca.md §4.4](modulos/modulopdca.md).)*
+
+As duas camadas respondem *"você pode fazer isto?"*. A escada responde outra pergunta: **"quantas
+pessoas precisam concordar antes de isto valer?"** — e ela não se resolve com mais permissões.
+
+Um `FluxoAprovacao` é do tenant e tem N `NivelAprovacao`; **cada nível declara qual permissão do
+catálogo ele exige**, e é isso que impede o vocabulário de crescer por cliente: nada de
+`…aprovar_nivel_2`. A empresa compõe a escada com os papéis que já tem. Um `PedidoAprovacao` é uma
+escada correndo sobre um objeto (alvo por `ContentType`), e cada degrau vencido vira um `Atesto`
+append-only com autor, data, observação e **qual permissão foi conferida na hora**.
+
+Três regras que valem para todo módulo que usar a máquina:
+
+- **quem executa não aprova** — o solicitante não ateste, salvo se o fluxo declarar
+  `permite_autoatesto` (a saída para a obra pequena, escrita e auditável);
+- **reprovar encerra** — não existe voltar um degrau; a correção é documento novo, senão o atesto que
+  recusou seria apagado;
+- **configurar a escada é do administrador do tenant** (`plataforma.fluxo_aprovacao.edit`). Criar um
+  degrau que exige a permissão X é decidir quem tem alçada sobre o dinheiro — mesma classe de ato que
+  `plataforma.papel.gerir`, e por isso fora das personas de fábrica: uma delas com esse verbo poderia
+  rebaixar a escada que a controla. O `.view` está na `diretoria`.
+
+Mora no `nucleo` porque alçada é da plataforma: o PDCA (medição de empreiteiro) é o primeiro cliente,
+e pagamento acima de alçada no ERP entra pela mesma porta, com outro alvo.
 
 ## O supervisor da plataforma
 

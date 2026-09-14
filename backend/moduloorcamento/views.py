@@ -696,15 +696,61 @@ class OrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.
         "cobertura_medicao": "orcamento.relatorio.view",
     }
 
+    #: Os estados em que a planilha **não rege mais nada** e por isso pode sair.
+    #:
+    #: A régua é a do dono (13/09/2026): a trava existe para proteger a empresa,
+    #: **não para tutelar o usuário**. Rascunho é tentativa, cancelado é morto e
+    #: superado foi trocado por revisão — nenhum dos três rege obra nenhuma, e
+    #: segurar documento morto não é proteção, é estorvo: o cliente fica pagando
+    #: espaço por lixo que o sistema se recusa a deixá-lo limpar.
+    #:
+    #: **Aprovado é o único fora**, porque é base contratual — e mesmo ele não é
+    #: beco sem saída: cancelar já existe, é um clique, e abre o caminho. Nunca
+    #: há estado do qual não se saia; é isso que separa trava de tutela.
+    STATUS_QUE_SAEM = (
+        Orcamento.Status.RASCUNHO,
+        Orcamento.Status.CANCELADO,
+        Orcamento.Status.SUPERADO,
+    )
+
     def perform_update(self, serializer):
         _exigir_editavel(self.get_object())
         super().perform_update(serializer)
 
     def perform_destroy(self, instance):
-        """Aprovado não se apaga — é a régua contra a qual medições já foram
-        feitas. Cancele (ou revise) em vez de apagar."""
-        _exigir_editavel(instance)
-        instance.delete()
+        """Sai o que não rege mais nada — e a recusa diz como destravar.
+
+        **A trava existia e era apertada demais.** Ela usava `_exigir_editavel`,
+        que é a régua da **escrita**: só rascunho. O efeito colateral é que
+        cancelado e superado — documentos mortos, que não regem obra nenhuma —
+        também não saíam. O usuário ficava com lixo que o sistema se recusava a
+        deixá-lo limpar, que é exatamente o que a decisão do dono (13/09/2026)
+        veio corrigir: *"um orçamento que não pode ser usado também não pode
+        atrapalhar o usuário"*.
+
+        Editar e excluir passaram a ser réguas **diferentes**, e a diferença é o
+        ponto: um superado não aceita escrita (é história de revisão) mas aceita
+        exclusão (não rege nada). Reusar a régua da escrita para a exclusão foi o
+        que criou a armadilha.
+
+        **Aprovado continua fora**, porque é a base contratual contra a qual
+        medições já foram feitas — e mesmo ele não é beco sem saída: cancelar
+        abre o caminho.
+
+        O `super()` agora marca a lápide (D116) em vez de apagar — o
+        `instance.delete()` que estava aqui passaria por cima da lixeira e
+        levaria as sete tabelas filhas junto, sem desfazer.
+        """
+        if instance.status not in self.STATUS_QUE_SAEM:
+            # `DocumentoFechado` (409) pelo mesmo motivo que a escrita usa: não
+            # falta permissão — o documento é que está em vigor. Um 403 mandaria
+            # a pessoa procurar o administrador, que não resolveria nada.
+            raise DocumentoFechado(
+                f"Orçamento v{instance.versao} está aprovado e é a base "
+                "contratual da obra — por isso não sai. Cancele-o primeiro: "
+                "depois de cancelado, ele pode ser excluído normalmente."
+            )
+        super().perform_destroy(instance)
 
     @action(detail=True, methods=["get"], url_path="avisos")
     def avisos(self, request, pk=None):

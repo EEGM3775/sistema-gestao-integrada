@@ -32,7 +32,7 @@ from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
-from nucleo.tenancy import TenantScopedModel
+from nucleo.tenancy import Excluivel, TenantScopedModel
 
 
 class Fonte(models.TextChoices):
@@ -479,7 +479,7 @@ class AnaliticaNacional(models.Model):
 # R$ 412,80" (uma linha de custo). Somar as duas contaria o custo duas vezes.
 
 
-class Orcamento(TenantScopedModel):
+class Orcamento(TenantScopedModel, Excluivel):
     """Planilha orçamentária de uma obra, **versionada**.
 
     Três decisões de desenho que vêm do domínio, não da conveniência:

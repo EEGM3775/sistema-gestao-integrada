@@ -177,6 +177,44 @@ da edição sem enganar sobre o que está disponível.
    [desenvolvimento.md](desenvolvimento.md#rebuild-do-frontend-react-gotcha-de-cache).
 
 
+## 8. Excluir: a tela não pode dizer que é irreversível (D116)
+
+Desde a lixeira, **excluir marca a lápide** — o registro sai das listagens e volta inteiro dentro do
+prazo do plano. Toda mensagem de confirmação que diz *"esta ação não pode ser desfeita"* passou a ser
+**falsa**, e a falsidade custa dos dois lados: assusta quem ia excluir e **esconde o recurso que o
+cliente pagou** (`lixo_retencao_dias` é a paywall da lixeira, §5.5g do `planos.py`).
+
+Use o componente, nunca escreva a frase à mão:
+
+```tsx
+import { AvisoDaLixeira } from '@/components/AvisoDaLixeira'
+...
+<AvisoDaLixeira oQue="A obra" />
+```
+
+Para diálogo nativo (`window.confirm`, que não aceita JSX):
+
+```tsx
+const textoLixeira = useTextoDaLixeira()   // '@/hooks/useRetencaoDoLixo'
+if (confirm(textoLixeira('este lead'))) { ... }
+```
+
+**O prazo vem do servidor**, da chave `janelas` de `/api/plano/` — nunca de uma constante no
+frontend. O número é por plano (3 dias no `free`, 15 nos contratados, 30 no Sob Medida), e um `15`
+escrito em código prometeria duas semanas a quem tem três dias. Sem o prazo carregado, o componente
+promete a lixeira mas **não** promete prazo: melhor omitir que mostrar o número errado.
+
+**Só onde o modelo tem lixeira.** Prometer restauração para o que é apagado de verdade é a mentira
+oposta, e a pior das duas — a pessoa exclui confiando que dá para voltar. Hoje herdam `Excluivel`:
+`Obra`, `EtapaObra`, `DocumentoObra`, `Empreendimento`, `Cliente`, `ClienteEmpreendimento`,
+`ContratoCliente`, `Fornecedor`, `ContaPagar`, `ContaReceber`, `NotaFiscal`, `Cargo`, `Funcionario`,
+`Lead`, `Account`, `Opportunity`, `Orcamento`. O `Contact` do CRM **não** herda — a mensagem dele continua sem
+lixeira, de propósito.
+
+**E não vale para o que sai da nossa máquina.** Cancelar boleto no Asaas e cancelar NFS-e na NFE.io
+são irreversíveis de verdade: aquelas mensagens estão certas e ficam como estão. Ter lixeira aqui não
+desfaz ato em sistema de terceiro.
+
 ## Visibilidade: omitir × trancar
 
 Regra de 22/08/2026, com a fronteira escrita para não virar caso a caso:

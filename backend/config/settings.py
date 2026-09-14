@@ -334,6 +334,10 @@ THROTTLE_USER = os.getenv('THROTTLE_USER') or _fracao_do_teto(
 
 # REST Framework Configuration
 REST_FRAMEWORK = {
+    # Integridade referencial vira 409 com motivo, e não 500 mudo: o `PROTECT`
+    # é regra de negócio ("não apague o calendário que um plano usa") e precisa
+    # chegar assim a quem pediu. Ver `nucleo/excecoes.py`.
+    'EXCEPTION_HANDLER': 'nucleo.excecoes.tratador',
     'DEFAULT_AUTHENTICATION_CLASSES': (
         # backend como resource server: valida o JWT emitido pela IAM e
         # provisiona (JIT) o espelho local de tenant/usuário.
@@ -596,6 +600,12 @@ CELERY_BEAT_SCHEDULE = {
     'frota-liberar-cadeiras-presas': {
         'task': 'nucleo.liberar_cadeiras_presas',
         'schedule': 300.0,
+    },
+    # D116 — a segunda metade da exclusão: o que passou do prazo de lixeira do
+    # plano é apagado de verdade. De hora em hora (o prazo é em dias; ver a task).
+    'lixo-purgar-vencido': {
+        'task': 'nucleo.purgar_lixo_vencido',
+        'schedule': 3600.0,
     },
     'crm-notificar-tarefas-a-vencer': {
         'task': 'modulocrm.tasks.notificar_tarefas_a_vencer',

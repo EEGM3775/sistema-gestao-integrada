@@ -1,3 +1,4 @@
+import { useTextoDaLixeira } from '@/hooks/useRetencaoDoLixo'
 import { useState } from 'react'
 import { Plus, Search, RefreshCw } from 'lucide-react'
 import { useLeads, useCreateLead, useUpdateLead, useDeleteLead, useConvertLead } from '../hooks/useLeads'
@@ -9,6 +10,9 @@ const STATUS_OPTIONS: StatusLead[] = ['NOVO', 'CONTATADO', 'QUALIFICADO', 'CONVE
  * Lista de Leads - /app/crm/leads
  */
 export default function LeadsPage() {
+  // Lead herda `Excluivel` (D116): a exclusão vai para a lixeira, e a mensagem
+  // tem de dizer isso — é o recurso que o plano vende.
+  const textoLixeira = useTextoDaLixeira()
   const [search, setSearch] = useState('')
   const [statusFiltro, setStatusFiltro] = useState<StatusLead | ''>('')
   const [formOpen, setFormOpen] = useState(false)
@@ -35,7 +39,7 @@ export default function LeadsPage() {
   }
 
   const handleDelete = async (id: string) => {
-    if (confirm('Tem certeza que deseja excluir este lead?')) {
+    if (confirm(textoLixeira('este lead'))) {
       await deleteMutation.mutateAsync(id)
       refetch()
     }

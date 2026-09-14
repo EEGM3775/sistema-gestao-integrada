@@ -17,7 +17,7 @@ Usuários:
   demo     / demo123     -> tenant demo | módulos: drone,erp,crm,rh,scm,sil,orcamento,maps,prancheta | papéis: financeiro + RH + suprimentos + almoxarife + orcamentista + topografo + projetista
   semdrone / semdrone123 -> tenant demo | módulos: erp_financeiro    | papel: operacional (restrito — exercita mascaramento)
   acme     / acme123     -> tenant acme | módulos: drone             | papel: operacional
-  campo    / campo123    -> tenant demo | módulos: drone,prancheta   | papel: campo (aponta, não resolve — PRA.3)
+  campo    / campo123    -> tenant demo | módulos: drone,prancheta,pdca | papel: campo (aponta, não resolve — PRA.3; aponta avanço, não edita o plano — PDCA.2)
   dono     / dono123    -> SUPERVISOR da plataforma (is_superuser na IAM → `is_platform_admin` no token).
                           Alcança TODO módulo do catálogo, contratado ou não, e opera o que é da
                           plataforma (base-mãe, incidente ANPD). NÃO atravessa a fronteira de tenant
@@ -52,6 +52,11 @@ for cod, nome in [
     ("orcamento", "Orçamento de Obra"),
     ("maps", "Mapas & Território"),
     ("prancheta", "Prancheta — Projeto em Campo"),
+    # PDCA.0. Comercialmente o módulo é do `empresarial` para cima
+    # (payment/planos.py §5.5c); aqui ele entra porque o `demo` é o tenant onde a
+    # plataforma tem de ser testável inteira — mesmo motivo de ele já ter
+    # `prancheta` e `maps` sem que o `profissional` os venda.
+    ("pdca", "PDCA — Planejamento & Melhoria Contínua"),
 ]:
     modulos[cod], _ = Modulo.objects.get_or_create(codigo=cod, defaults={"nome": nome})
 
@@ -112,12 +117,13 @@ call_command("sync_authz", all_tenants=True)
 # --- Usuários e seus papéis ---
 demo = upsert_user(
     tenant, "demo", "demo123",
-    ["drone", "erp_financeiro", "crm", "rh", "scm", "sil", "orcamento", "maps", "prancheta"],
+    ["drone", "erp_financeiro", "crm", "rh", "scm", "sil", "orcamento", "maps",
+     "prancheta", "pdca"],
     # Power-user: papéis cobrindo todos os módulos do tenant (erp, crm, obras, drone, rh, scm,
-    # sil, orcamento, maps, prancheta).
+    # sil, orcamento, maps, prancheta, pdca).
     ["financeiro", "tesouraria", "fiscal", "comercial", "engenharia",
      "drone_analista", "rh_gestor", "rh_medico", "rh_financeiro", "suprimentos", "almoxarife",
-     "orcamentista", "topografo", "projetista"],
+     "orcamentista", "topografo", "projetista", "planejador"],
 )
 semdrone = upsert_user(tenant, "semdrone", "semdrone123", ["erp_financeiro"], ["operacional"])
 # O `engenharia` aqui não é enfeite: é o único ator do seed capaz de provar a
@@ -141,7 +147,16 @@ acme = upsert_user(acme_tenant, "acme", "acme123", ["drone"], ["operacional", "e
 # e o `admin` menos ainda (`is_tenant_admin` herda o catálogo inteiro) — é a mesma
 # lição do MAP.6, onde o seed não tinha ator para separar os dois eixos do gate e
 # o E2E teve de esperar um re-seed.
-campo = upsert_user(tenant, "campo", "campo123", ["drone", "prancheta"], ["campo"])
+#
+# **PDCA.2 deu a ele o segundo par.** A persona `campo` traz `pdca.avanco.apontar`
+# + `pdca.cronograma.view` e **não** traz `pdca.cronograma.edit`: apontar quanto a
+# frente andou é o trabalho do canteiro; mudar o plano contra o qual esse avanço é
+# medido, não. Sem o módulo `pdca` aqui a camada 1 barraria antes da camada 2, e a
+# segregação ficaria indemonstrável com token real — a mesma lição do MAP.6, em
+# que faltou ator para separar os dois eixos do gate. O `demo` não serve de
+# contraprova (tem `planejador` + `engenharia`, que editam o plano) e o `admin`
+# menos ainda (herda o catálogo inteiro).
+campo = upsert_user(tenant, "campo", "campo123", ["drone", "prancheta", "pdca"], ["campo"])
 # Admin do tenant 'demo': gere papéis/personas e permissões na tela de Administração.
 admin = upsert_user(
     tenant, "admin", "admin123", ["drone", "erp_financeiro", "crm", "rh"], [], is_admin=True

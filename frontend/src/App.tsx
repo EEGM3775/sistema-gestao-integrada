@@ -23,6 +23,7 @@ import FuncionariosListPage from './modules/rh/pages/FuncionariosListPage'
 import FuncionarioDetailPage from './modules/rh/pages/FuncionarioDetailPage'
 import CargosPage from './modules/rh/pages/CargosPage'
 import PlatformRoute from './components/PlatformRoute'
+import LixoPage from './modules/lixo/pages/LixoPage'
 import BasesOficiaisPage from './modules/sistema/pages/BasesOficiaisPage'
 import PersonasPage from './modules/admin/pages/PersonasPage'
 import UsuariosPage from './modules/admin/pages/UsuariosPage'
@@ -33,6 +34,7 @@ import { silRoutes } from './modules/sil/routes'
 import { orcamentoRoutes } from './modules/orcamento/routes'
 import { mapsRoutes } from './modules/maps/routes'
 import { pranchetaRoutes } from './modules/prancheta/routes'
+import { pdcaRoutes } from './modules/pdca/routes'
 
 function App() {
   return (
@@ -94,6 +96,14 @@ function App() {
           <Route element={<AdminRoute />}>
             <Route path="admin/papeis" element={<PersonasPage />} />
             <Route path="admin/usuarios" element={<UsuariosPage />} />
+
+          {/* ── LIXO — a exclusão reversível da plataforma (D116). Não é módulo
+               (não tem entitlement) nem é só do admin: quem alcança é o papel
+               `gestor_lixo`, pela permissão `plataforma.lixo.view`. A rota fica
+               solta aqui, ao lado da administração, porque a página atravessa
+               todos os módulos — obra, cliente, fornecedor, conta e lead saem
+               da mesma lista. ── */}
+          <Route path="lixo" element={<LixoPage />} />
           </Route>
 
           {/* ── SISTEMA — operação da PLATAFORMA, não da empresa. Guarda por
@@ -125,6 +135,10 @@ function App() {
           {/* ── Prancheta / projeto em campo (rota aberta; a página é que decide
                entre o acervo e a tela que explica o módulo — como o Maps) ── */}
           {pranchetaRoutes}
+
+          {/* ── PDCA / Planejamento e qualidade (entitlement `pdca`; a unidade de
+               trabalho é a obra — docs/modulos/modulopdca.md §5.1) ── */}
+          {pdcaRoutes}
 
           {/* Fallback interno — caminho absoluto evita loop de append no splat (/app/x → /app/x/dashboard → …) */}
           <Route path="*" element={<Navigate to="/app/dashboard" replace />} />

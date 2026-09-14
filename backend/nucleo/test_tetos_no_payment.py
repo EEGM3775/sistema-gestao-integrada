@@ -207,8 +207,14 @@ class PaginacaoTests(SimpleTestCase):
         "clientes": "clientes.pagination:ClientePageNumberPagination",
         "empreendimentos": "empreendimentos.views:UnidadePagination",
         "erp": "moduloerp.pagination:ErpPageNumberPagination",
+        # A lixeira (D116) não é módulo vendido e não tem `module_code` — ela é
+        # de plataforma e mora no `nucleo`. Entra aqui pelo mesmo motivo que as
+        # outras: é uma listagem paginada, e listagem paginada sem teto no
+        # payment é `?page_size=100000` esperando para acontecer.
+        "lixo": "nucleo.lixo_pagination:LixoPageNumberPagination",
         "maps": "modulomaps.pagination:MapsPageNumberPagination",
         "orcamento": "moduloorcamento.pagination:OrcamentoPageNumberPagination",
+        "pdca": "modulopdca.pagination:PdcaPageNumberPagination",
         "prancheta": "moduloprancheta.pagination:PranchetaPageNumberPagination",
         "scm": "moduloscm.pagination:ScmPageNumberPagination",
         "sil": "modulosil.pagination:SilPageNumberPagination",
@@ -411,3 +417,140 @@ class EscadaDeMemoriaPorPlanoTests(SimpleTestCase):
                 f"a escada de {nome} desce em algum ponto ({dict(zip(ordem, degraus))}) "
                 "— plano mais caro entregando menos máquina é upsell ao contrário",
             )
+
+
+class TetosDoPdcaTests(SimpleTestCase):
+    """PDCA.0 — a árvore que o cliente desenha e a escada que aprova dinheiro.
+
+    Família nova de teto: as anteriores protegiam o que entra (bytes) ou o que a
+    operação custa (memória, relógio). Estas protegem uma **estrutura que o
+    cliente descreve numa frase curta** — "torre A, 20 pavimentos, 4 unidades por
+    andar" são 1.600 linhas, e um dedo a mais são 16.000.
+    """
+
+    def test_a_arvore_de_locais_le_os_tetos_do_payment(self):
+        from modulopdca import services
+
+        self.assertIs(
+            services.PDCA_PROFUNDIDADE_MAXIMA_LOCAL, planos.PDCA_PROFUNDIDADE_MAXIMA_LOCAL,
+        )
+        self.assertIs(
+            services.PDCA_TETO_LOCAIS_POR_GERACAO, planos.PDCA_TETO_LOCAIS_POR_GERACAO,
+        )
+        self.assertIs(
+            services.PDCA_TETO_LOCAIS_POR_OBRA, planos.PDCA_TETO_LOCAIS_POR_OBRA,
+        )
+
+    def test_a_escada_de_atesto_le_o_teto_de_niveis_do_payment(self):
+        from nucleo import aprovacao
+
+        self.assertIs(
+            aprovacao.PDCA_TETO_NIVEIS_APROVACAO, planos.PDCA_TETO_NIVEIS_APROVACAO,
+        )
+
+    def test_o_corte_sincrono_cabe_dentro_do_teto_da_obra(self):
+        """Uma geração não pode, sozinha, passar do que a obra inteira comporta —
+        senão o teto maior nunca seria alcançável e o menor mentiria sobre o
+        motivo da recusa."""
+        self.assertLessEqual(
+            planos.PDCA_TETO_LOCAIS_POR_GERACAO, planos.PDCA_TETO_LOCAIS_POR_OBRA,
+        )
+
+    def test_o_cronograma_le_os_tetos_do_payment(self):
+        """PDCA.1 — os cinco números do plano de tempo saem do arquivo do dono.
+
+        Vale mais aqui do que na fatia anterior porque estes estão marcados como
+        **provisórios** até o estudo de viabilidade: a promessa escrita no
+        `planos.py` é que editá-los é editar aquele bloco e mais nada, e é este
+        teste que cobra a promessa.
+        """
+        from modulopdca import services
+
+        self.assertIs(
+            services.PDCA_TETO_ATIVIDADES_POR_CRONOGRAMA,
+            planos.PDCA_TETO_ATIVIDADES_POR_CRONOGRAMA,
+        )
+        self.assertIs(
+            services.PDCA_PROFUNDIDADE_MAXIMA_WBS, planos.PDCA_PROFUNDIDADE_MAXIMA_WBS,
+        )
+        self.assertIs(services.PDCA_TETO_CPM_SINCRONO, planos.PDCA_TETO_CPM_SINCRONO)
+        self.assertIs(services.PDCA_CPM_SEGUNDOS, planos.PDCA_CPM_SEGUNDOS)
+        self.assertIs(
+            services.PDCA_TETO_VERSOES_POR_CRONOGRAMA,
+            planos.PDCA_TETO_VERSOES_POR_CRONOGRAMA,
+        )
+
+    def test_o_cpm_sincrono_cabe_dentro_do_teto_de_atividades(self):
+        """Se o corte síncrono fosse menor que o teto do cronograma sem existir
+        um job, haveria cronograma legítimo que nasce impossível de calcular — e
+        a recusa citaria um caminho assíncrono que ainda não existe."""
+        self.assertLessEqual(
+            planos.PDCA_TETO_CPM_SINCRONO, planos.PDCA_TETO_ATIVIDADES_POR_CRONOGRAMA,
+        )
+
+    def test_a_escrita_em_lote_le_o_teto_do_payment(self):
+        from modulopdca import services
+
+        self.assertIs(
+            services.PDCA_TETO_LINHAS_POR_LOTE, planos.PDCA_TETO_LINHAS_POR_LOTE,
+        )
+
+    def test_o_lote_cabe_dentro_do_cronograma(self):
+        """Um lote maior que o cronograma inteiro seria teto que nunca morde — e
+        teto que não morde é número que o dono acha que protege alguma coisa."""
+        self.assertLessEqual(
+            planos.PDCA_TETO_LINHAS_POR_LOTE, planos.PDCA_TETO_ATIVIDADES_POR_CRONOGRAMA,
+        )
+
+    def test_o_avanco_le_os_tetos_do_payment(self):
+        """PDCA.2 — os dois números do avanço saem do arquivo do dono."""
+        from modulopdca import services
+
+        self.assertIs(
+            services.PDCA_TETO_APONTAMENTOS_POR_LOTE,
+            planos.PDCA_TETO_APONTAMENTOS_POR_LOTE,
+        )
+        self.assertIs(
+            services.PDCA_TETO_PONTOS_CURVA_S, planos.PDCA_TETO_PONTOS_CURVA_S,
+        )
+
+    def test_o_lote_de_apontamentos_cabe_dentro_do_cronograma(self):
+        """Um lote maior que o cronograma inteiro seria teto que nunca morde —
+        não existe semana com mais frentes do que o plano tem atividades."""
+        self.assertLessEqual(
+            planos.PDCA_TETO_APONTAMENTOS_POR_LOTE,
+            planos.PDCA_TETO_ATIVIDADES_POR_CRONOGRAMA,
+        )
+
+    def test_a_curva_cabe_num_grafico(self):
+        """O teto de pontos existe para o eixo continuar legível. Acima de uns
+        poucos milhares ele deixaria de proteger o que foi criado para proteger —
+        e a engrossada de granularidade nunca aconteceria na prática."""
+        self.assertLessEqual(planos.PDCA_TETO_PONTOS_CURVA_S, 2_000)
+
+    def test_a_quota_de_plano_modelo_existe_em_todo_degrau(self):
+        """Quota ausente num degrau é `KeyError` no meio de um POST; quota **0**
+        é a resposta honesta "seu plano não vende isto"."""
+        for slug, plano in planos.PLANOS.items():
+            self.assertIn("planos_modelo", plano, f"o degrau '{slug}' não declara a quota")
+
+    def test_a_quota_de_plano_modelo_e_aplicada_e_contada(self):
+        """Quota que viaja no token sem contador do outro lado é promessa que
+        ninguém cumpre — é a regra escrita em `quotas_efetivas`."""
+        from nucleo import quotas
+
+        self.assertIn("planos_modelo", planos.QUOTAS_DE_OBJETO)
+        self.assertIn("planos_modelo", quotas.RECURSOS_CONTADOS)
+        self.assertIn("planos_modelo", quotas.ROTULOS)
+        self.assertEqual(quotas.FILTRO_DO_RECURSO["planos_modelo"], {"eh_modelo": True})
+
+    def test_so_o_degrau_que_vende_o_modulo_tem_plano_modelo(self):
+        """A régua comercial da §5.5c: o `pdca` é vendido do `empresarial` para
+        cima. Um degrau abaixo com quota > 0 ofereceria biblioteca de padrões a
+        quem não tem onde usá-la."""
+        for slug in ("free", "essencial", "profissional"):
+            self.assertEqual(
+                planos.PLANOS[slug]["planos_modelo"], 0,
+                f"o degrau '{slug}' não contrata o `pdca` e não pode ter modelo",
+            )
+        self.assertGreater(planos.PLANOS["empresarial"]["planos_modelo"], 0)

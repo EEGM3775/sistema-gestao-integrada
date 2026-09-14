@@ -6,7 +6,7 @@ from django.conf import settings
 from django.db import models, transaction
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
-from nucleo.tenancy import TenantScopedModel
+from nucleo.tenancy import Excluivel, TenantScopedModel
 
 
 def _data_baixa_para_datetime(data):
@@ -190,7 +190,7 @@ class NotaFiscalProduto(TenantScopedModel):
 
 # --- Models from financeiro app ---
 
-class NotaFiscal(TenantScopedModel):
+class NotaFiscal(TenantScopedModel, Excluivel):
     """
     Armazena as informações das notas fiscais recebidas de fornecedores,
     vinculadas a um empreendimento.
@@ -213,15 +213,15 @@ class NotaFiscal(TenantScopedModel):
         db_table = 'financeiro_notafiscal'
         # Número e chave de acesso únicos por-tenant (Fase 8.3).
         constraints = [
-            models.UniqueConstraint(fields=['tenant', 'numero_nota'], name='nf_numero_unico_por_tenant'),
-            models.UniqueConstraint(fields=['tenant', 'chave_acesso'], name='nf_chave_acesso_unica_por_tenant'),
+            models.UniqueConstraint(fields=['tenant', 'numero_nota'], condition=models.Q(excluido_em__isnull=True), name='nf_numero_unico_por_tenant'),
+            models.UniqueConstraint(fields=['tenant', 'chave_acesso'], condition=models.Q(excluido_em__isnull=True), name='nf_chave_acesso_unica_por_tenant'),
         ]
 
     def __str__(self):
         return f"NF {self.numero_nota} - {self.fornecedor.razao_social}"
 
 
-class ContaPagar(TenantScopedModel):
+class ContaPagar(TenantScopedModel, Excluivel):
     """
     Registra as contas a pagar da empresa, como pagamentos a fornecedores.
     """
@@ -349,7 +349,7 @@ class ContaPagar(TenantScopedModel):
         raise BaixaRequerRevisao(revisao)
 
 
-class ContaReceber(TenantScopedModel):
+class ContaReceber(TenantScopedModel, Excluivel):
     """
     Registra as contas a receber da empresa, como pagamentos de clientes.
     """

@@ -1085,6 +1085,104 @@ em [moduloscm.md](modulos/moduloscm.md).
 
 ---
 
+### 5.18 PDCA — Planejamento (`hasModule: pdca`)
+
+> Primeiro módulo cuja **unidade de trabalho não é o tenant, e sim a obra** — nada aqui existe fora
+> de uma ([modulos/modulopdca.md §5.1](modulos/modulopdca.md)). Por isso ele **não** herda a forma dos
+> outros: não há hub que some sete obras, e o endereço carrega a obra e o plano
+> (`/app/pdca/obra/:obraId/cronograma/:cronogramaId`).
+
+Duas páginas, atrás de `ModuleRoute module="pdca"`:
+
+- **`ObrasPage` (`/app/pdca`)** — a escolha da obra. Cada obra mostra o plano que tem (versão, status,
+  término calculado) ou o convite para criar o primeiro; criar exige `pdca.cronograma.edit`. O select
+  de calendário do plano novo pergunta `?para_obra=` (o da obra **+** os da empresa, na ordem em que
+  vencem no cálculo) e, quando não há nenhum, **diz por quê e leva ao expediente** em vez de exibir um
+  select mudo — plano sem calendário nasce sem prazo, e a tela não deixa isso acontecer calada
+  ([D118](historico-correcoes.md)).
+- **`CronogramaPage`** — o workspace do plano, com quatro lentes sobre os mesmos dados, na ordem do
+  ciclo: **Cronograma** (o Gantt), **Avanço** (o que a obra respondeu), **Linha de base** (o desvio
+  contra o combinado) e **Curva S e rede** (leitura de desempenho). A lente de Avanço só aparece para
+  quem tem `pdca.avanco.view`, e abre em leitura para quem não pode apontar.
+
+O Gantt é um **split view de dois painéis com rolagem vertical sincronizada** e divisória arrastável
+(`GanttCronograma`), e não uma tabela com barras:
+
+- **`GradeWbs`** — planilha da EAP, virtualizada, com edição em célula, navegação por Tab/Enter,
+  **colar bloco de planilha**, colunas escolhíveis/reordenáveis/redimensionáveis (a escolha vive no
+  `localStorage` de quem planeja) e a gramática de estrutura do MS Project no teclado: `Alt+→`
+  indenta, `Alt+←` promove, `Alt+↑/↓` reordena, `Insert` insere, `Ctrl+Del` exclui. A coluna
+  **Predecessoras** é texto editável no formato `1.2FS+3d; 1.4SS` — a rede se digita, não se
+  desenha seta por seta.
+- **`LinhaDoTempo`** — o SVG: barras, marcos, colchete da sintética, fantasma da linha de base,
+  folga hachurada, linha de hoje, âncora da restrição de data, tipo e atraso escritos sobre a seta,
+  o realce da **cadeia** (o que empurra e o que é empurrado) e o **executado dentro do previsto** —
+  o preenchimento escuro da barra, no molde do "% concluído" do MS Project, nunca uma segunda barra
+  ao lado (que seria lida como um segundo período). Gestos: arrastar reprograma, esticar
+  muda a duração, o ponto da barra liga precedência — e cada um manda o **pedido**, deixando o CPM
+  do servidor decidir onde a barra para.
+- **`InspetorAtividade`** — o painel lateral: datas cedo/tarde, folgas, restrição, calendário
+  próprio, a rede com **tipo e atraso** editáveis, e os vínculos com Local, Etapa, **Item orçado**
+  (busca server-side) e Responsável. Cada ponte que exige outro módulo mostra o cadeado com o motivo
+  quando ele não está contratado — nunca uma lista vazia.
+- **Desfazer/refazer** (`historico.ts`) por **gestos inversos**, não por cópia de estado: o dono do
+  plano é o servidor, que recalcula o CPM a cada escrita. `Ctrl+Z`/`Ctrl+Y` valem na janela inteira.
+
+`PainelLinhaDeBase` ordena pelo tamanho do desvio (não pela EAP) e nomeia o que entrou e o que saiu.
+
+**`PainelAvanco`** é a **grade da semana**, e o gesto que ela serve é um só: na segunda-feira o
+engenheiro abre as frentes que deveriam estar acontecendo, digita quanto cada uma andou e manda de
+uma vez — uma transação, ou tudo ou nada. Por isso ela abre filtrada em *Em execução* (e não na lista
+inteira do plano), ordena por **crítica → vencida → vence antes** em vez de pela EAP, e põe ao lado
+de cada linha o que se precisa saber para preencher: período previsto, situação, avanço acumulado e
+os chips de **etapa**, **local** e **item orçado** — o que conversa no backend conversando na tela.
+O que se digita é o **delta** ("andou 15% esta semana"), não o acumulado, porque é essa a pergunta
+que alguém no canteiro sabe responder olhando o serviço. Abaixo, o **histórico**: o livro é
+append-only, então corrigir é **estornar** — a linha errada fica, riscada, e a correção aponta para
+ela com motivo.
+
+`PainelCurvaS` traz as duas curvas — **prevista × realizada**, alternáveis entre **físico e R$** —,
+o **desvio em pontos percentuais na data de hoje** (e não contra o previsto total: adiantado 3 pontos
+no meio da obra e 3 pontos no fim são situações opostas), o retrato da rede (densidade, folhas sem
+ligação, folga média) e a **cobertura do orçamento**, que é a integração com o módulo vizinho
+aparecendo na tela. **A curva vem do servidor** desde a PDCA.2: a realizada cruza apontamento com
+peso — duas tabelas que o navegador não tem —, e calcular o previsto aqui faria o desvio entre as
+duas carregar o erro de fim de semana da antiga aproximação por dias corridos. A linha do realizado
+**para no último apontamento**; continuar reta até o fim do plano seria lida como "em dia" onde
+ninguém apontou.
+
+Três páginas, e a terceira é da **empresa**, não de uma obra:
+
+- **`ExpedientePage` (`/app/pdca/expediente`)** — calendários de trabalho, dias da semana, exceções
+  (recesso, parada de chuva, mutirão de sábado) e a **conferência**: numa janela real, quantos dias
+  úteis dá e **quais feriados saíram da conta**. Expediente é a coisa mais fácil de configurar errado
+  e a mais cara de descobrir errado — o erro só aparece como *"o prazo não bate"*, três meses depois.
+  É aqui que o PDCA e o [Calendário](modulos/modulocalendar.md) conversam na tela: os feriados são
+  dele, a base é global e nasce vazia, e um calendário que promete descontá-los sobre base vazia
+  devolve prazo menor que o real — então o aviso é grande e o caminho para lá está a um clique.
+
+Sobre o Gantt, três camadas que só existem porque a planilha é o dia inteiro de alguém:
+
+- **Filtros de trabalho** que **se somam** (E, não OU): críticas, atrasadas contra a base, sem
+  ligação, sem peso, com restrição de data e marcos. "Crítica e sem peso" é a atividade que decide o
+  prazo e não pondera avanço nenhum — um OU devolveria duas listas e nenhuma pergunta respondida.
+- **Ações em bloco** sobre a seleção (`BarraDeSelecao`): indentar, promover, **ligar em cadeia**,
+  aplicar a mesma duração e excluir. Cada uma é **um** passo no desfazer — quem indentou doze linhas
+  volta doze —, e a ordem importa: indentar de cima para baixo, excluir de baixo para cima.
+- **Exportar** o Gantt em **PNG** (o SVG pintado num canvas pelo próprio navegador, sem servidor nem
+  biblioteca) e a grade em **CSV** com as colunas da tela, separador `;` e BOM — o que o Excel em
+  português abre com duplo clique.
+
+**Plano modelo** (`components/PlanoModelo.tsx`) é a resposta de tela para o pedido do dono: salvar um
+cronograma como padrão da empresa e aplicá-lo a uma obra nova, direto do cartão da obra sem plano na
+`ObrasPage`. O que se repete é a estrutura; as datas nascem do calendário da obra nova.
+
+Stack: TanStack Query (`modules/pdca/hooks.ts` sobre `pdcaApi`), kit Malha compartilhado, SVG próprio
+para o Gantt (nenhuma biblioteca de Gantt), paleta de gráficos compartilhada com o Orçamento.
+Contrato de API e faseamento em [modulos/modulopdca.md](modulos/modulopdca.md).
+
+---
+
 ## 6. Auth & Entitlement
 
 ### 6.1 AuthContext (mantido e expandido)

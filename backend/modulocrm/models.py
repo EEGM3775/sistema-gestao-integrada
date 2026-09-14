@@ -8,7 +8,7 @@ from django.contrib.contenttypes.models import ContentType
 from clientes.models import Cliente
 from empreendimentos.models import Empreendimento
 from fornecedores.models import ProdutoServicoFornecedor
-from nucleo.tenancy import TenantScopedModel
+from nucleo.tenancy import Excluivel, TenantScopedModel
 import logging
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ class Campaign(BaseModel):
 
 
 # 2. Lead: O ponto de entrada do funil
-class Lead(BaseModel):
+class Lead(BaseModel, Excluivel):
     class StatusChoices(models.TextChoices):
         NOVO = 'NOVO', _('Novo')
         CONTATADO = 'CONTATADO', _('Contatado')
@@ -74,11 +74,11 @@ class Lead(BaseModel):
         verbose_name = _("Lead")
         verbose_name_plural = _("Leads")
         constraints = [
-            models.UniqueConstraint(fields=['tenant', 'email'], name='lead_email_unico_por_tenant'),
+            models.UniqueConstraint(fields=['tenant', 'email'], condition=models.Q(excluido_em__isnull=True), name='lead_email_unico_por_tenant'),
         ]
 
 # 2. Account: A empresa cliente
-class Account(BaseModel):
+class Account(BaseModel, Excluivel):
     name = models.CharField(_("Nome da Conta/Empresa"), max_length=255, db_index=True)
     email = models.EmailField(_("E-mail Principal"), blank=True)
     phone = models.CharField(_("Telefone Principal"), max_length=20, blank=True)
@@ -103,7 +103,7 @@ class Account(BaseModel):
         verbose_name = _("Conta (Empresa)")
         verbose_name_plural = _("Contas (Empresas)")
         constraints = [
-            models.UniqueConstraint(fields=['tenant', 'name'], name='account_name_unico_por_tenant'),
+            models.UniqueConstraint(fields=['tenant', 'name'], condition=models.Q(excluido_em__isnull=True), name='account_name_unico_por_tenant'),
         ]
 
 # 3. Contact: O contato individual dentro de uma Account
@@ -127,7 +127,7 @@ class Contact(BaseModel):
         unique_together = ('account', 'email')
 
 # 4. Opportunity: A negociação em andamento
-class Opportunity(BaseModel):
+class Opportunity(BaseModel, Excluivel):
     class StageChoices(models.TextChoices):
         QUALIFICACAO = 'QUALIFICACAO', _('Qualificação')
         PROPOSTA = 'PROPOSTA', _('Proposta Apresentada')

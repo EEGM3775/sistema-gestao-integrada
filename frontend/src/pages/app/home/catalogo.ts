@@ -193,11 +193,12 @@ export const CATALOGO: ModuloDef[] = [
   {
     id: 'pdca',
     label: 'Planejamento & Qualidade (PDCA)',
-    descricao: 'Cronograma físico e avanço × previsto; checklists de serviço (FVS), não-conformidades e planos de ação.',
+    descricao: 'Cronograma da obra com CPM, caminho crítico, linha de base e curva S prevista. Medição, verificação (FVS) e planos de ação entram nas próximas fatias.',
     icon: ClipboardList,
     estagio: 'construir',
-    situacao: 'planejado',
+    situacao: 'pronto',
     modulo: 'pdca',
+    rota: '/app/pdca',
   },
   {
     id: 'medicoes',

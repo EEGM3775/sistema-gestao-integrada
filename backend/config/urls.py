@@ -60,6 +60,12 @@ from nucleo.auditoria_views import AuditLogViewSet
 
 # Centro de notificações in-app (Calendário, Fase 9 — Fatia C)
 from nucleo.frota_views import TarefaNaFilaViewSet
+from nucleo.aprovacao_views import (
+    FluxoAprovacaoViewSet,
+    NivelAprovacaoViewSet,
+    PedidoAprovacaoViewSet,
+)
+from nucleo.lixo_views import LixoViewSet
 from nucleo.notificacoes_views import NotificacaoViewSet
 
 # Plano contratado + medidores de quota (D24)
@@ -102,6 +108,18 @@ router.register(r'notificacoes', NotificacaoViewSet, basename='notificacao')
 # Prancheta é a primeira cliente, não a dona. Importação de acervo, exportação
 # grande e ortofoto do Maps entram pela mesma rota, com outra `frota`.
 router.register(r'frota/tarefas', TarefaNaFilaViewSet, basename='frota-tarefa')
+
+# --- A escada de atesto (PDCA.0) ---
+# Endereço no `nucleo` pela mesma razão da frota: aprovar em mais de um nível é
+# da plataforma. A medição de obra é a primeira cliente; o pagamento acima de
+# alçada do ERP entra aqui depois, com outro `alvo`.
+router.register(r'aprovacao/fluxos', FluxoAprovacaoViewSet, basename='aprovacao-fluxo')
+router.register(r'aprovacao/niveis', NivelAprovacaoViewSet, basename='aprovacao-nivel')
+router.register(r'aprovacao/pedidos', PedidoAprovacaoViewSet, basename='aprovacao-pedido')
+
+# A lixeira da plataforma (D116). No `nucleo` porque a lápide é da tenancy: 16
+# modelos de 7 apps entram por ela, e nenhum deles importa este arquivo.
+router.register(r'lixo', LixoViewSet, basename='lixo')
 
 # --- Rotas do App 'clientes' ---
 router.register(r'clientes', ClienteViewSet, basename='cliente')

@@ -1,3 +1,4 @@
+import { useTextoDaLixeira } from '@/hooks/useRetencaoDoLixo'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, Search, RefreshCw, Building2 } from 'lucide-react'
@@ -8,6 +9,7 @@ import type { Account, AccountPayload } from '../types'
  * Lista de Contas - /app/crm/accounts
  */
 export default function AccountsPage() {
+  const textoLixeira = useTextoDaLixeira()
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [formOpen, setFormOpen] = useState(false)
@@ -33,7 +35,7 @@ export default function AccountsPage() {
   }
 
   const handleDelete = async (id: string) => {
-    if (confirm('Tem certeza que deseja excluir esta conta?')) {
+    if (confirm(textoLixeira('esta conta'))) {
       await deleteMutation.mutateAsync(id)
       refetch()
     }

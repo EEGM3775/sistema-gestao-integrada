@@ -9,6 +9,7 @@ import ObraStatusBadge from '../components/ObraStatusBadge'
 import ObraForm from '../components/ObraForm'
 import EtapaForm from '../components/EtapaForm'
 import { baixarParaDisco } from '@/lib/arquivo'
+import { AvisoDaLixeira } from '@/components/AvisoDaLixeira'
 import type { ObraFormData, EtapaObra, EtapaObraFormData } from '@/types'
 
 // ─── Utilitários ─────────────────────────────────────────────────────────────
@@ -519,7 +520,8 @@ const ObraDetailPage: React.FC = () => {
                 </h3>
                 <p className="text-sm leading-relaxed"
                    style={{ fontFamily: 'var(--font-body)', color: 'var(--color-text)' }}>
-                  A obra <strong>"{data.nome_obra}"</strong> será removida. Esta ação não pode ser desfeita.
+                  A obra <strong>"{data.nome_obra}"</strong> sai das listagens.{' '}
+                  <AvisoDaLixeira oQue="Ela" />
                 </p>
               </div>
             </div>
@@ -556,7 +558,7 @@ const ObraDetailPage: React.FC = () => {
                   Excluir etapa?
                 </h3>
                 <p className="text-sm" style={{ fontFamily: 'var(--font-body)', color: 'var(--color-text)' }}>
-                  A etapa será removida permanentemente.
+                  <AvisoDaLixeira oQue="A etapa" />
                 </p>
               </div>
             </div>

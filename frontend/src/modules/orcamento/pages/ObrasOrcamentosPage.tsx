@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { Building2, ChevronRight, FileSpreadsheet, Plus, Search } from 'lucide-react'
+import { Building2, ChevronRight, FileSpreadsheet, Plus, Search, Trash2 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import PaginaShell from '../components/PaginaShell'
 import ModalNovoOrcamento from '../components/ModalNovoOrcamento'
 import { Btn, CAPS, Card, Empty, inp, Loading, mono, Pill } from '../ui'
+import { Modal } from '@/components/malha'
+import { AvisoDaLixeira } from '@/components/AvisoDaLixeira'
 import { brl, dataBR, mesBR, STATUS_ESTADO } from '../lib'
-import { useBasesResumo, useCriarOrcamento, useObras, useOrcamentos } from '../hooks'
+import { useBasesResumo, useCriarOrcamento, useObras, useOrcamentos, useRemoverOrcamento } from '../hooks'
 import type { Orcamento } from '../types'
 
 /** A entrada do Orçar: **obra primeiro**, planilha depois.
@@ -224,6 +226,11 @@ function ListaDeOrcamentos({ orcamentos, semNenhum, podeCriar, onCriar, onAbrir 
   onCriar: () => void
   onAbrir: (id: number) => void
 }) {
+  // Hooks antes dos `return` antecipados — a regra dos hooks não admite que a
+  // quantidade chamada mude entre renders.
+  const [aExcluir, setAExcluir] = useState<Orcamento | null>(null)
+  const remover = useRemoverOrcamento()
+
   if (semNenhum) {
     return (
       <div style={{ padding: 26 }}>
@@ -269,6 +276,22 @@ function ListaDeOrcamentos({ orcamentos, semNenhum, podeCriar, onCriar, onAbrir 
             <div style={{ ...CAPS, fontSize: 9 }}>total com BDI</div>
             <div style={{ ...mono, fontSize: 14, fontWeight: 700, color: 'var(--ink)' }}>{brl(o.valor_total)}</div>
           </div>
+          {/* O botão só existe onde a regra do servidor deixa sair: rascunho,
+              cancelado e superado. O aprovado não ganha botão trancado — ele
+              **rege** a obra, e oferecer a porta para depois recusar é pior que
+              não oferecer. Quem quiser excluí-lo cancela primeiro, e aí o botão
+              aparece sozinho. A regra vive no backend (`STATUS_QUE_SAEM`); isto
+              aqui é só não mostrar o que ele recusaria. */}
+          {podeCriar && o.status !== 'aprovado' && (
+            <button
+              title="Excluir orçamento"
+              onClick={e => { e.stopPropagation(); setAExcluir(o) }}
+              style={{
+                border: 'none', background: 'none', cursor: 'pointer',
+                color: 'var(--ink-3)', padding: 4, display: 'flex', flex: 'none',
+              }}
+            ><Trash2 size={15} /></button>
+          )}
           <ChevronRight size={15} style={{ color: 'var(--ink-3)', flex: 'none' }} />
         </Card>
       ))}
@@ -281,6 +304,43 @@ function ListaDeOrcamentos({ orcamentos, semNenhum, podeCriar, onCriar, onAbrir 
             padding: '11px 14px', cursor: 'pointer', color: 'var(--ink-3)', fontSize: 12.5, fontWeight: 650,
           }}
         ><Plus size={14} />Nova versão nesta obra</button>
+      )}
+
+      {aExcluir && (
+        <Modal
+          titulo="Excluir orçamento?"
+          onClose={() => setAExcluir(null)}
+          largura={470}
+          rodape={
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <Btn onClick={() => setAExcluir(null)}>Cancelar</Btn>
+              <Btn
+                variant="perigo"
+                disabled={remover.isPending}
+                onClick={() => remover.mutate(aExcluir.orcamento_id, {
+                  onSuccess: () => setAExcluir(null),
+                })}
+              >
+                {remover.isPending ? 'Excluindo…' : 'Excluir'}
+              </Btn>
+            </div>
+          }
+        >
+          <p style={{ fontSize: 13, color: 'var(--ink-2)', marginTop: 0 }}>
+            <b>{aExcluir.descricao}</b>{' '}
+            <span style={{ ...mono, fontSize: 12 }}>v{aExcluir.versao}</span>{' '}
+            sai das listagens, com as {aExcluir.total_itens} linha
+            {aExcluir.total_itens === 1 ? '' : 's'} dela.
+          </p>
+          <p style={{ fontSize: 13, color: 'var(--ink-2)' }}>
+            <AvisoDaLixeira oQue="A planilha" />
+          </p>
+          {remover.isError && (
+            <p style={{ color: 'var(--danger)', fontSize: 12.5 }}>
+              Não foi possível excluir. Se o orçamento foi aprovado, cancele-o antes.
+            </p>
+          )}
+        </Modal>
       )}
     </div>
   )

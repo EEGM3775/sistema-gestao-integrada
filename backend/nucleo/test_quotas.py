@@ -281,6 +281,32 @@ class PlanoEndpointTests(QuotaTestBase):
         self.assertEqual(clientes["restante"], 0)
         self.assertTrue(clientes["excedido"])
 
+    def test_a_janela_do_lixo_nao_entra_na_lista_de_medidores(self):
+        """Janela é tempo, não quantidade — e a home desenha toda quota como barra.
+
+        `lixo_retencao_dias` (D116) esteve entre as quotas por um dia e aparecia
+        como medidor sem uso: "null de 15", ao lado dos que funcionam. Ele
+        continua viajando na claim (é de lá que a exclusão lê o prazo); o que
+        muda é só onde a tela o encontra.
+        """
+        self.autenticar(quotas={"clientes": 20, "lixo_retencao_dias": 15})
+        corpo = self.client.get(self.URL).data
+
+        self.assertNotIn(
+            "lixo_retencao_dias", [q["recurso"] for q in corpo["quotas"]],
+        )
+        janela = next(j for j in corpo["janelas"]
+                      if j["recurso"] == "lixo_retencao_dias")
+        self.assertEqual(janela["dias"], 15)
+        # Rótulo legível: a frase do modal de exclusão é montada com ele.
+        self.assertEqual(janela["rotulo"], "dias de lixeira")
+
+    def test_sem_a_claim_a_janela_some_em_vez_de_virar_zero(self):
+        """Token antigo (sem a chave) não pode virar "0 dias de lixeira" na tela —
+        isso anunciaria que não há como desfazer, que é o oposto da verdade."""
+        self.autenticar(quotas={"clientes": 20})
+        self.assertEqual(self.client.get(self.URL).data["janelas"], [])
+
     def test_catalogo_vem_do_payment_para_a_ui_nao_repetir_preco(self):
         self.autenticar()
         catalogo = self.client.get(self.URL).data["catalogo"]

@@ -90,3 +90,26 @@ def liberar_cadeiras_presas():
     from . import frota
 
     return frota.liberar_orfas()
+
+
+@shared_task(name="nucleo.purgar_lixo_vencido")
+def purgar_lixo_vencido():
+    """D116 — apaga de verdade o que passou dos dias de lixeira do plano.
+
+    É a segunda metade da exclusão: o `DELETE` da API só marcou a lápide. Aqui o
+    registro morre, e é aqui que o `CASCADE` de cada módulo finalmente roda.
+
+    **De hora em hora, e não de minuto em minuto.** A unidade do prazo é o DIA
+    (15, no plano contratado); varrer mais que isso é gastar consulta para
+    adiantar em minutos uma exclusão que o cliente espera em dias. E não é uma
+    vez por dia porque um beat que perde a janela diária deixaria a purga parada
+    24 horas — de hora em hora, a próxima volta conserta sozinha.
+
+    Sem `DLQTask`, pelo mesmo motivo do `liberar_cadeiras_presas`: uma varredura
+    que falhou não precisa de retry nem de linha na DLQ — a volta seguinte lê o
+    mesmo estado. E a purga **recusada** nem falha: ela grava o motivo em
+    `Lixo.falha_na_purga` e segue para o próximo item.
+    """
+    from . import lixo
+
+    return lixo.purgar_vencidos()

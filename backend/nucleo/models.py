@@ -560,3 +560,359 @@ class TarefaNaFila(models.Model):
 
     def __str__(self):
         return f"{self.frota}:{self.chave} ({self.situacao})"
+
+
+# ---------------------------------------------------------------------------
+# Fluxo de aprovação multi-nível (PDCA.0) — a escada que aprova dinheiro
+# ---------------------------------------------------------------------------
+# **Por que no `nucleo` e não no `modulopdca`**, que é quem a pediu: aprovar em
+# mais de um nível não é assunto de obra. A medição do empreiteiro é só o
+# primeiro caso — o ERP tem pagamento acima de alçada, o SCM tem adjudicação de
+# cotação e o Orçamento já tem um `aprovar` de um nível só que um dia vai querer
+# ser escada. É o mesmo raciocínio que pôs a frota aqui e não na Prancheta: *a
+# Prancheta é a primeira cliente, não a dona* (docs/modulos/modulopdca.md §4.4).
+#
+# **O alvo é `ContentType`, e não o par de FKs nuláveis do `modulomaps.Local`.**
+# Lá o polimorfismo tinha seis tipos conhecidos, todos vizinhos, e a integridade
+# referencial valia o preço. Aqui o conjunto de alvos é **aberto por desenho** —
+# o `nucleo` é importado por todo módulo e não pode importar nenhum de volta, sob
+# pena de dependência circular entre apps. O preço está pago no desenho: quem for
+# alvo declara uma `GenericRelation`, e o pedido morre junto com o objeto.
+class FluxoAprovacao(TenantScopedModel):
+    """O **molde** da escada: quais degraus, em que ordem, exigindo o quê.
+
+    É por tenant porque a alçada é da empresa: uma construtora atesta com
+    engenheiro e diretor, outra insere o gerente de contrato no meio. O que a
+    plataforma fixa é a máquina; a escada é do cliente.
+    """
+
+    fluxo_id = models.AutoField(primary_key=True)
+    codigo = models.SlugField(max_length=60, verbose_name=_("Código"))
+    nome = models.CharField(max_length=150, verbose_name=_("Nome"))
+    #: O tipo de objeto que esta escada aprova (`modulopdca.medicao`, um dia).
+    #: `PROTECT` porque apagar o ContentType significa desinstalar o app — e aí
+    #: o fluxo tem de ser tratado à mão, não sumir levando o histórico junto.
+    alvo = models.ForeignKey(
+        "contenttypes.ContentType", on_delete=models.PROTECT,
+        related_name="fluxos_aprovacao", verbose_name=_("O que este fluxo aprova"),
+    )
+    #: O fluxo que vale quando quem abre o pedido não escolhe nenhum. Um por
+    #: (tenant, alvo) — a constraint parcial abaixo é quem garante.
+    padrao = models.BooleanField(default=False, verbose_name=_("Padrão para este alvo"))
+    #: **Quem executa não aprova** (a segregação que o ORC.6 provou necessária).
+    #: Ligar isto é decisão consciente do cliente para a obra pequena, onde o
+    #: mesmo engenheiro apura e atesta; o padrão recusa, e a recusa é a regra.
+    permite_autoatesto = models.BooleanField(
+        default=False, verbose_name=_("Permite que quem solicitou ateste"),
+    )
+    ativo = models.BooleanField(default=True, verbose_name=_("Ativo"))
+    descricao = models.TextField(blank=True, verbose_name=_("Descrição"))
+    criado_em = models.DateTimeField(auto_now_add=True)
+    atualizado_em = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _("Fluxo de aprovação")
+        verbose_name_plural = _("Fluxos de aprovação")
+        ordering = ["nome"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "codigo"], name="aprovacao_fluxo_codigo_unico",
+            ),
+            # Um padrão por alvo. Sem isto, "abrir sem escolher fluxo" viraria
+            # escolha arbitrária entre dois moldes — e a diferença entre eles é
+            # quantas pessoas precisam assinar antes de o dinheiro sair.
+            models.UniqueConstraint(
+                fields=["tenant", "alvo"], condition=models.Q(padrao=True),
+                name="aprovacao_um_padrao_por_alvo",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.nome} ({self.codigo})"
+
+
+class NivelAprovacao(TenantScopedModel):
+    """Um degrau. Declara **qual permissão** ele exige — e é por isso que a
+    escada não cria permissão numerada (`…aprovar_nivel_2`), que seria vocabulário
+    novo a cada cliente que insere um degrau. O tenant compõe a escada com os
+    papéis que já tem (docs/modulos/modulopdca.md §8).
+    """
+
+    nivel_id = models.AutoField(primary_key=True)
+    fluxo = models.ForeignKey(
+        FluxoAprovacao, on_delete=models.CASCADE, related_name="niveis",
+        verbose_name=_("Fluxo"),
+    )
+    ordem = models.PositiveSmallIntegerField(verbose_name=_("Ordem"))
+    nome = models.CharField(max_length=120, verbose_name=_("Nome do degrau"))
+    #: Código do catálogo da IAM (`modulo.recurso.acao`). Guardado como texto
+    #: porque o catálogo é da IAM e o backend é resource server: o que chega no
+    #: token é a string, e comparar string com string é o que o
+    #: `RequirePermission` já faz.
+    permissao_exigida = models.CharField(
+        max_length=80, verbose_name=_("Permissão exigida"),
+    )
+    #: Quantos dias este degrau deveria levar. Não trava nada — alimenta a fila
+    #: de decisão ("parado há 9 dias") e, mais tarde, a notificação.
+    prazo_dias = models.PositiveSmallIntegerField(
+        null=True, blank=True, verbose_name=_("Prazo (dias)"),
+    )
+
+    class Meta:
+        verbose_name = _("Nível de aprovação")
+        verbose_name_plural = _("Níveis de aprovação")
+        ordering = ["fluxo", "ordem"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["fluxo", "ordem"], name="aprovacao_nivel_ordem_unica",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.ordem}. {self.nome}"
+
+
+class PedidoAprovacao(TenantScopedModel):
+    """Uma escada **em curso** sobre um objeto concreto.
+
+    Guarda `resumo` e `valor_referencia` copiados do alvo de propósito: a fila de
+    decisão precisa dizer *o que* está sendo aprovado e *quanto* vale sem abrir
+    uma consulta por linha a um módulo que o `nucleo` não conhece. É snapshot,
+    não fonte — a verdade continua no alvo.
+    """
+
+    class Estado(models.TextChoices):
+        EM_APROVACAO = "em_aprovacao", _("Em aprovação")
+        APROVADO = "aprovado", _("Aprovado")
+        #: Terminal. Correção exige objeto novo (a medição **retificadora** da
+        #: §11.5), nunca reabrir este — reabrir apagaria o atesto que recusou.
+        REPROVADO = "reprovado", _("Reprovado")
+        CANCELADO = "cancelado", _("Cancelado")
+
+    pedido_id = models.AutoField(primary_key=True)
+    fluxo = models.ForeignKey(
+        FluxoAprovacao, on_delete=models.PROTECT, related_name="pedidos",
+        verbose_name=_("Fluxo"),
+    )
+    alvo_tipo = models.ForeignKey(
+        "contenttypes.ContentType", on_delete=models.PROTECT,
+        related_name="pedidos_aprovacao", verbose_name=_("Tipo do alvo"),
+    )
+    alvo_id = models.PositiveIntegerField(verbose_name=_("Id do alvo"))
+
+    estado = models.CharField(
+        max_length=14, choices=Estado.choices, default=Estado.EM_APROVACAO,
+        db_index=True, verbose_name=_("Estado"),
+    )
+    #: Em que degrau a escada parou. `SET_NULL` para o histórico sobreviver à
+    #: reorganização do fluxo; nulo quando a escada terminou.
+    nivel_atual = models.ForeignKey(
+        NivelAprovacao, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="pedidos_parados_aqui", verbose_name=_("Degrau atual"),
+    )
+
+    solicitado_por = models.ForeignKey(
+        "nucleo.Usuario", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="aprovacoes_solicitadas", verbose_name=_("Solicitante"),
+    )
+    #: O nome vale por si: `SET_NULL` acima preserva a linha quando o usuário é
+    #: desligado, e uma fila de atesto que diz "solicitado por —" perde a
+    #: rastreabilidade justamente no caso em que ela é mais necessária.
+    solicitante_nome = models.CharField(max_length=150, blank=True)
+    solicitado_em = models.DateTimeField(auto_now_add=True)
+    concluido_em = models.DateTimeField(null=True, blank=True)
+
+    resumo = models.CharField(max_length=240, blank=True, verbose_name=_("Resumo"))
+    #: Nulo é resposta legítima — nem todo alvo tem valor (uma linha de base de
+    #: cronograma não tem). Zerar seria fabricar dado, a mesma régua do
+    #: `Local.ponto` do Maps.
+    valor_referencia = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True,
+        verbose_name=_("Valor de referência"),
+    )
+
+    class Meta:
+        verbose_name = _("Pedido de aprovação")
+        verbose_name_plural = _("Pedidos de aprovação")
+        ordering = ["-solicitado_em"]
+        constraints = [
+            # Um objeto tem no máximo UMA escada correndo. Duas seriam dois
+            # atestos válidos sobre a mesma medição, cada um numa metade da
+            # escada — e o alvo congelando por qualquer uma delas.
+            models.UniqueConstraint(
+                fields=["tenant", "alvo_tipo", "alvo_id"],
+                condition=models.Q(estado="em_aprovacao"),
+                name="aprovacao_um_pedido_aberto_por_alvo",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["tenant", "estado"], name="aprov_tenant_estado_idx"),
+            models.Index(fields=["alvo_tipo", "alvo_id"], name="aprov_alvo_idx"),
+        ]
+
+    def __str__(self):
+        return f"#{self.pedido_id} {self.resumo or self.alvo_tipo} ({self.estado})"
+
+
+class Atesto(TenantScopedModel):
+    """A assinatura de um degrau — quem, quando, com qual permissão, e o que
+    escreveu. **Append-only**: não é editado nem apagado, pelo mesmo motivo que o
+    apontamento de avanço não é (§4.3) — é a prova de que o dinheiro foi liberado
+    por alguém com alçada.
+    """
+
+    class Decisao(models.TextChoices):
+        APROVADO = "aprovado", _("Aprovado")
+        REPROVADO = "reprovado", _("Reprovado")
+
+    atesto_id = models.AutoField(primary_key=True)
+    pedido = models.ForeignKey(
+        PedidoAprovacao, on_delete=models.CASCADE, related_name="atestos",
+        verbose_name=_("Pedido"),
+    )
+    nivel = models.ForeignKey(
+        NivelAprovacao, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="atestos", verbose_name=_("Degrau"),
+    )
+    #: Cópia da ordem e do nome do degrau: o fluxo pode ser reorganizado depois,
+    #: e o atesto tem de continuar contando a escada como ela era no dia.
+    nivel_ordem = models.PositiveSmallIntegerField(verbose_name=_("Ordem do degrau"))
+    nivel_nome = models.CharField(max_length=120, blank=True)
+
+    decisao = models.CharField(
+        max_length=10, choices=Decisao.choices, verbose_name=_("Decisão"),
+    )
+    autor = models.ForeignKey(
+        "nucleo.Usuario", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="atestos", verbose_name=_("Autor"),
+    )
+    autor_nome = models.CharField(max_length=150, blank=True)
+    #: Qual permissão foi conferida na hora. Auditoria: responde "com que
+    #: autoridade?" mesmo depois de o papel do usuário mudar.
+    permissao_conferida = models.CharField(max_length=80, blank=True)
+    decidido_em = models.DateTimeField(auto_now_add=True)
+    observacao = models.TextField(blank=True, verbose_name=_("Observação"))
+
+    class Meta:
+        verbose_name = _("Atesto")
+        verbose_name_plural = _("Atestos")
+        ordering = ["pedido", "nivel_ordem"]
+        constraints = [
+            # Um atesto por degrau por pedido. A reprovação encerra a escada e a
+            # correção nasce como pedido novo — então não existe "atestar de novo
+            # o mesmo degrau" dentro do mesmo pedido.
+            models.UniqueConstraint(
+                fields=["pedido", "nivel_ordem"], name="aprovacao_um_atesto_por_degrau",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.nivel_ordem}. {self.decisao} por {self.autor_nome or 'sem autor'}"
+
+
+# ---------------------------------------------------------------------------
+# A lixeira (D116) — o índice do que está sob lápide
+# ---------------------------------------------------------------------------
+
+
+class Lixo(TenantScopedModel):
+    """Uma linha por objeto que foi para a lixeira — o **índice**, não o dado.
+
+    O dado continua onde sempre esteve, marcado pela lápide do
+    `nucleo.tenancy.Excluivel`. Esta tabela existe por dois motivos que a lápide
+    sozinha não resolve:
+
+    1. **A página do lixo é uma consulta só.** Sem ela, listar "o que este tenant
+       excluiu" exigiria varrer as 16 tabelas que herdam `Excluivel`, ordenar em
+       Python e paginar à mão. Com ela, é um `ORDER BY excluido_em DESC` com
+       `LIMIT` — e o custo não cresce quando o 17º modelo entrar na lixeira.
+    2. **A auditoria sobrevive à purga.** No 15º dia o objeto é apagado de
+       verdade; esta linha **fica**, com `purgado_em` preenchido. É o que
+       responde "quem apagou o quê, quando, e por quê" depois que não há mais o
+       quê. A prancha original mandava hard-deletar esta linha junto — seria
+       apagar o log de auditoria no exato momento em que ele passa a ser a única
+       prova restante.
+
+    Os campos de auditoria são **desnormalizados** da lápide de propósito, e a
+    lápide continua sendo a verdade: as duas escritas acontecem na mesma
+    transação (`nucleo/lixo.py`). Sem a cópia, a listagem voltaria a precisar do
+    join com as 16 tabelas que ela existe para evitar.
+    """
+
+    lixo_id = models.AutoField(primary_key=True)
+
+    #: `PROTECT` porque perder o `ContentType` transformaria a linha de auditoria
+    #: em "alguém apagou alguma coisa".
+    alvo_tipo = models.ForeignKey(
+        "contenttypes.ContentType", on_delete=models.PROTECT,
+        related_name="itens_no_lixo", verbose_name=_("Tipo do alvo"),
+    )
+    alvo_id = models.PositiveBigIntegerField(verbose_name=_("Id do alvo"))
+
+    #: `str(objeto)` no instante da exclusão. Depois da purga é a **única** coisa
+    #: que ainda diz o que era: "Residencial Aurora — Torre B" responde o chamado
+    #: de suporte que `Obra #412` não responde.
+    rotulo = models.CharField(max_length=255, blank=True, verbose_name=_("Rótulo"))
+
+    excluido_em = models.DateTimeField(db_index=True, verbose_name=_("Excluído em"))
+    excluido_por = models.ForeignKey(
+        "nucleo.Usuario", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="itens_que_excluiu", verbose_name=_("Excluído por"),
+    )
+    #: Mesmo raciocínio do `solicitante_nome` do `PedidoAprovacao`: o `SET_NULL`
+    #: acima preserva a linha quando o usuário é desligado, e uma lixeira que diz
+    #: "excluído por —" perde a rastreabilidade justamente no caso difícil.
+    excluido_por_nome = models.CharField(max_length=150, blank=True)
+    motivo = models.TextField(blank=True, verbose_name=_("Motivo"))
+
+    #: **Gravado, não calculado.** O prazo é congelado no instante da exclusão a
+    #: partir da retenção do plano vigente. Calcular na hora da varredura faria um
+    #: downgrade de plano encurtar retroativamente a janela de quem já tinha
+    #: apagado — o cliente perderia, sem aviso, dado que ainda estava no prazo
+    #: quando saiu. E é este campo que a tela mostra: "purga em 11 dias".
+    purgar_em = models.DateTimeField(db_index=True, verbose_name=_("Purga em"))
+
+    restaurado_em = models.DateTimeField(null=True, blank=True)
+    restaurado_por = models.ForeignKey(
+        "nucleo.Usuario", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="itens_que_restaurou", verbose_name=_("Restaurado por"),
+    )
+
+    purgado_em = models.DateTimeField(null=True, blank=True)
+    #: Nulo com `purgado_em` preenchido significa **purga automática** — o
+    #: sistema, não uma pessoa. A tela lê os dois campos e diz qual foi; um
+    #: usuário-robô só para assinar isso seria um ator falso no log.
+    purgado_por = models.ForeignKey(
+        "nucleo.Usuario", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="itens_que_purgou", verbose_name=_("Purgado por"),
+    )
+    #: Por que a purga do 15º dia não conseguiu apagar (um `PROTECT` que o
+    #: desenho do módulo impõe, por exemplo). Vazio é o caso normal.
+    falha_na_purga = models.TextField(blank=True, verbose_name=_("Falha na purga"))
+
+    class Meta:
+        verbose_name = _("Item no lixo")
+        verbose_name_plural = _("Lixo")
+        ordering = ["-excluido_em"]
+        constraints = [
+            # Um objeto está no máximo UMA vez na lixeira. Duas linhas ativas
+            # dariam dois botões "Restaurar" para o mesmo objeto e dois relógios
+            # de purga concorrentes sobre a mesma lápide.
+            models.UniqueConstraint(
+                fields=["tenant", "alvo_tipo", "alvo_id"],
+                condition=models.Q(restaurado_em__isnull=True, purgado_em__isnull=True),
+                name="lixo_um_item_ativo_por_alvo",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["tenant", "excluido_em"], name="lixo_tenant_data_idx"),
+            models.Index(fields=["alvo_tipo", "alvo_id"], name="lixo_alvo_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.rotulo or self.alvo_tipo} (excluído em {self.excluido_em:%d/%m/%Y})"
+
+    @property
+    def ativo(self) -> bool:
+        """Está na lixeira agora — nem restaurado, nem purgado."""
+        return self.restaurado_em is None and self.purgado_em is None

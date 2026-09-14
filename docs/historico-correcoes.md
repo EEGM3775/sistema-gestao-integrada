@@ -10,6 +10,266 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D123 — a tela dizia que excluir era irreversível, e escondia o que o cliente pagou · ✅ corrigido 13/09/2026
+
+Achado pelo dono, no mesmo dia em que a lixeira entrou, olhando o modal de excluir obra:
+
+> *"Esta ação não pode ser desfeita. E essa mensagem não considera o usuário que pagou pelo lixo."*
+
+**São dois defeitos, e o segundo é o pior.** O primeiro é que a frase virou **falsa**: desde o
+[D116](#d116), excluir marca a lápide e o registro volta inteiro. O segundo é que ela **esconde o
+produto** — a janela de recuperação é exatamente o que a paywall da lixeira vende
+(`lixo_retencao_dias`, §5.5g do [`planos.py`](../payment/planos.py)). Uma tela que avisa "não dá para
+desfazer" faz o cliente pagar por um recurso que ele nunca descobre, e ainda o assusta na hora de
+usar o produto.
+
+**Meu erro de método:** construí a lixeira inteira — modelo, política, purga, página, permissões — e
+não voltei nas telas que **falam sobre exclusão**. O comportamento mudou em 16 modelos; as mensagens
+continuaram descrevendo o sistema de ontem.
+
+**A correção é um componente, não uma string.** São 16 modelos com lixeira em 7 módulos, cada um com
+o seu diálogo: corrigir texto a texto garante que o 17º nasça mentindo de novo e que os prazos
+divirjam entre telas. Agora há [`AvisoDaLixeira`](../frontend/src/components/AvisoDaLixeira.tsx) (e
+`useTextoDaLixeira` para o `window.confirm`, que não aceita JSX), com a frase num lugar só. Regra
+registrada na [§8 do frontend-convencoes.md](frontend-convencoes.md).
+
+**O prazo vem do servidor, e isso não é preciosismo:** é 3 dias no `free`, 15 nos contratados e 30 no
+Sob Medida. Um `15` escrito no frontend prometeria duas semanas a quem tem três dias — e a pessoa só
+descobriria no dia em que fosse restaurar, que é o pior dia possível para descobrir.
+
+**Um segundo defeito apareceu junto, e era meu também.** Ao pôr `lixo_retencao_dias` em
+`QUOTAS_APLICADAS` (para viajar na claim, que é de onde a exclusão lê o prazo), ele entrou também na
+lista de **medidores** de `/api/plano/` — e a home desenha toda quota como barra de progresso. Ele
+aparecia como *"null de 15"*, um medidor quebrado ao lado dos que funcionam, porque **janela não tem
+uso a contar**. Agora `/api/plano/` separa `quotas` (quantidade, tem barra) de `janelas` (tempo, tem
+frase), e o rótulo cru virou "dias de lixeira".
+
+**O que NÃO mudou, de propósito:** cancelar boleto no Asaas e cancelar NFS-e na NFE.io continuam
+dizendo que são irreversíveis, porque são. Ter lixeira no nosso banco não desfaz ato em sistema de
+terceiro — e o `Contact` do CRM, que não herda `Excluivel`, continua sem promessa de restauração.
+
+---
+### D122 — a página do lixo se contradizia: "1 na lixeira" e "nada na lixeira" · ✅ corrigido 13/09/2026
+
+Achado pelo dono, usando a tela recém-entregue: o painel dizia **"Na lixeira: 1"** e a tabela logo
+abaixo dizia **"Nada na lixeira"**, na mesma tela, ao mesmo tempo.
+
+**A causa é uma peculiaridade deste projeto.** Não há `DEFAULT_PAGINATION_CLASS` global no DRF — cada
+módulo declara o seu. ViewSet **sem** paginador devolve um **array puro**, e não o envelope
+`{count, next, previous, results}`. O `LixoViewSet` nasceu sem paginador; a tela lia `results` e
+recebia `undefined`, que virou lista vazia. O `resumo/` é um objeto e por isso funcionava — era a
+única metade certa de uma tela que se contradizia.
+
+**O agravante é que eu já contava com a paginação sem ela existir:** o `resumo/` foi escrito
+justamente porque *"a página pagina 25 itens, e '3 obras, 12 clientes' não pode sair de uma página de
+25"*. O endpoint que compensava a paginação existia; a paginação, não.
+
+**A correção** segue a régua da casa: `LixoPageNumberPagination` lendo `PAGINA_PADRAO["lixo"]` e
+`PAGINA_MAXIMA["lixo"]` do [`planos.py`](../payment/planos.py) (25 e 200), e o paginador registrado em
+`PaginacaoTests.PAGINADORES` — o teste do `nucleo` cobra os dois lados e foi ele que apontou a
+segunda metade do serviço.
+
+**O teste que passou a existir não afere status.** Afere que **a lista e o resumo concordam**: um
+teste de `200 OK` passaria com o defeito de pé, porque array puro também é 200. Junto vieram dois
+métodos que eu havia declarado no serializer e esquecido de escrever (`restaurado_por_nome`,
+`purgado_por_nome`) — só apareceram quando um teste finalmente serializou a resposta pela API, e não
+pelo modelo.
+
+**Lição além do lixo:** neste projeto, ViewSet novo **tem de** declarar paginador. Sem ele o contrato
+de resposta muda de forma calada, e o cliente que espera `results` vê uma lista vazia em vez de um
+erro.
+
+---
+### D121 — o índice de unicidade da obra estava corrompido, e não havia validador · ✅ corrigido 13/09/2026
+
+Achado fazendo o rebuild que aplicaria a lixeira: o `sgi-erp` entrou em *restart loop* porque a
+migration `obras/0006` não conseguia reconstruir `unique_obra_empreendimento` —
+*"could not create unique index: Duplicate keys exist"*.
+
+**Duas falhas somadas, e a segunda escondia a primeira.**
+
+**1. Não havia validador de unicidade no `ObraSerializer`.** As duas `UniqueConstraint` da `Obra` são
+**condicionais** e incluem `tenant` (que é read-only), e o DRF descarta as duas coisas. O
+`ObraSerializer` também não herdava o `TenantScopedModelSerializer`, que é quem reconstrói essa
+validação na casa. Resultado: nome repetido nunca era conferido na aplicação — ia direto ao banco e
+voltaria como `IntegrityError`, isto é, **500**.
+
+**2. O índice do banco de desenvolvimento estava fisicamente corrompido.** A prova é a divergência
+entre os dois caminhos de leitura da mesma linha:
+
+```
+SET enable_seqscan=off  → count = 1     (via índice)
+SET enable_seqscan=on   → count = 2     (via heap)
+```
+
+O índice se declarava `indisvalid`, mas **não continha** a entrada de uma das linhas. Por isso não
+barrou nada: em 21/08/2026 uma re-execução do seed criou uma segunda *"Torre A — Fundações"* no mesmo
+empreendimento (cópia carbono da de 18/07, com as datas ~34 dias à frente porque o seed as calcula a
+partir de "hoje"), e ninguém percebeu — a falha 1 não conferia na aplicação, e a falha 2 não conferia
+no banco.
+
+**Por que só apareceu agora.** A lixeira acrescentou `excluido_em__isnull=True` às duas constraints
+(para que obra na lixeira não segure o nome), e isso obriga o Django a **derrubar e recriar** o
+índice. Recriar é ler o heap inteiro — e aí a duplicata que o índice corrompido escondia virou erro.
+Foi a reconstrução que revelou, não que causou.
+
+**As três correções:**
+
+- **o índice** foi reconstruído pela própria migration, agora a partir do heap real. Os dois caminhos
+  de leitura voltaram a concordar;
+- **o dado**: a obra 14 foi renomeada para *"Torre A — Fundações (05/2026)"* — pelo mesmo esquema que
+  a regra nova usa, e sem apagar nada;
+- **o validador passou a existir**, com a forma que o dono escolheu no mesmo dia: em vez de 500 mudo
+  ou de uma parede, a recusa é **400 com o conflito e um nome livre sugerido**. Desenho em
+  [modulos/obras.md](modulos/obras.md); 13 testes em
+  [obras/test_nomes.py](../backend/obras/test_nomes.py).
+
+**O que fica de lição além da obra:** `UniqueConstraint` condicional é invisível para o DRF. Onde o
+modelo tem uma e o serializer não herda `TenantScopedModelSerializer`, **não há validação** — a
+duplicata só é barrada pelo banco, como 500. O `obras` era o caso; vale varrer os demais quando
+houver ocasião.
+
+---
+### D116 — a exclusão reversível não existia, e a obra que rodou não saía · ✅ corrigido 13/09/2026
+
+Aberto em 23/08/2026, escrevendo o E2E da PDCA.1: **uma obra que ganhou plano nunca mais saía pela
+API**. `CalendarioTrabalho.obra` é `CASCADE` e `Cronograma.calendario` é `PROTECT`; os dois entram na
+mesma fila de exclusão e o coletor do Django **não isenta o que já está na fila** — ele vê o
+`PROTECT` e recusa o `DELETE` inteiro. O sintoma feio (500 mudo) foi fechado no mesmo dia pelo
+[D117](#d117); a exclusão em si ficou aberta.
+
+**O achado dizia que a escolha era "de sequência, não de desenho". Era de desenho.** A
+[prancha do lixo](arquitetura/lixo.md) foi escrita antes de os módulos existirem e prescrevia
+*hard-delete + snapshot JSON*. Medida contra o código de hoje, ela **contradizia a decisão do dono**
+em três pontos:
+
+1. `Orcamento.obra` é `PROTECT` — a obra com orçamento não sairia nem pelo endpoint novo;
+2. `Cronograma.obra` é `CASCADE` e `eh_modelo` é marca no próprio cronograma — apagar a obra levaria
+   junto a biblioteca de padrões que o dono mandou preservar (*"deixa o plano para poder ser usado
+   como modelo em outra obra"*);
+3. as palavras dele descreviam outra coisa: *"coloca como «Obra excluída por «usuário» na data»"* é
+   **lápide**, não mudança de lugar.
+
+**A decisão de 13/09/2026** — *"O lixo é uma página à parte. Como é custo para o programa, terá uma
+paywall. O lixo é apagado depois de 15 dias. O lixo pode ser restaurado através da página de lixo."* —
+fechou o desenho em **duas etapas**: a lápide é a janela reversível; a purga do 15º dia é o que o
+nome "lixo" descreve. Desenho inteiro em [arquitetura/lixo.md](arquitetura/lixo.md).
+
+**Por que a lápide não é o "mecanismo paralelo" que o achado temia.** O medo era obrigar toda consulta
+de todo módulo a lembrar do filtro. O filtro entrou no **gerente padrão** — o mesmo caminho por onde
+os 259 `TenantScopedModel` já leem —, então serializer, relação reversa, agregação de serviço e
+ViewSet herdaram o corte sem uma linha. `_base_manager` continua sem filtro, que é o que mantém
+`conta_pagar.obra` resolvendo uma obra na lixeira.
+
+**Quatro defeitos que a implementação encontrou, e que valem para além da lixeira:**
+
+- **o nó do D116 valia para toda obra com plano, não só para a exclusão.** Na purga ele voltaria: sem
+  soltar o calendário antes, *nenhuma* obra que chegou a ter cronograma venceria o prazo, e a lixeira
+  encheria de obras imortais. Desatado no receptor do `modulopdca`, que é o módulo dono;
+- **`Cronograma.obra` virou nulável** (para o modelo órfão sobreviver) e isso quebrou o lock do
+  apontamento de avanço: `Atividade.Meta.ordering` começa por `cronograma`, que expandia para
+  `Cronograma.Meta.ordering = ["obra", …]`, que expandia para o `Meta.ordering` da `Obra` — um LEFT
+  OUTER JOIN, e o Postgres recusa `SELECT ... FOR UPDATE` sobre o lado nulável de um outer join. A
+  cadeia era indireta e quebrava em `services.apontar`, sem mencionar cronograma nenhum. Corrigido
+  ordenando por `obra_id` (a coluna, não o nome do campo, que não monta join);
+- **a condição nas `UniqueConstraint` tirou a validação do DRF.** As 19 uniques ganharam
+  `excluido_em__isnull=True` para que um CPF na lixeira não segure o recadastro por 15 dias — e o DRF
+  descarta constraint condicional, rebaixando duplicata de **400 com o campo apontado** para **500 com
+  `IntegrityError`**. O `TenantScopedUniqueSerializerMixin` passou a reconhecer essa condição
+  específica, e só ela: o queryset do validador é o `_default_manager`, que já aplica o mesmo corte;
+- **a purga que falha não pode mentir.** Se o `PROTECT` de um módulo recusar, o item **fica** na
+  lixeira com o motivo escrito em `falha_na_purga`, e a tela mostra a recusa ao lado dele. O silêncio
+  era exatamente o defeito que abriu este achado.
+
+**O que a paywall vende é a JANELA, não um teto de itens** (`planos.py` §5.5g). Um teto de quantidade
+só teria dois modos de agir: barrar a exclusão com a lixeira cheia — impedir alguém de apagar porque
+apagou demais, que quebra a regra do `quotas.py` de que quota trava só a criação — ou purgar o mais
+antigo, destruindo dado ainda dentro do prazo prometido. A janela corta o mesmo custo sem nenhum dos
+dois efeitos.
+
+**Uma premissa da engenharia, aberta à revisão do dono:** a purga leva os **orçamentos** da obra
+junto (`Orcamento.obra` é `PROTECT`, e sem isso a obra nunca venceria o prazo), preserva o
+**cronograma modelo** e não toca no que já é `SET_NULL` — título do ERP, nota fiscal e movimentação
+de estoque sobrevivem sem a obra, que era o desenho do `moduloerp` antes desta fatia. Reverter é
+apagar `moduloorcamento/signals.py`: a purga passa a ser recusada pelo banco e a obra fica visível na
+lixeira dizendo por quê.
+
+Cobrado por 26 testes em [nucleo/test_lixo.py](../backend/nucleo/test_lixo.py).
+
+---
+### D118 — o select de calendário do plano novo nascia vazio · ✅ corrigido 13/09/2026
+
+Achado pelo dono, usando a tela: *"quando tento criar um novo plano aparece sem nenhum calendário."*
+
+**Duas causas somadas, e só uma é defeito.**
+
+**1. Cadastro.** O expediente é cadastro que alguém faz **uma vez** por empresa, e a demo não tinha
+nenhum até a carga da PDCA.2 — que criou um, e **preso a uma obra**. Empresa sem expediente
+cadastrado tem select vazio, e isso está certo; o que estava errado é a tela não dizer isso nem
+apontar o caminho.
+
+**2. Defeito.** A tela perguntava `GET /api/pdca/calendarios/?obra=<id>`, e `obra` é filtro **exato**:
+ele casa `obra_id = 7` e portanto **exclui os calendários da empresa**, que têm `obra` nulo
+justamente por valerem para todas as obras. A régua do próprio backend é outra e está escrita em
+[`services.calendario_da_obra`](../backend/modulopdca/services.py) desde a PDCA.0 — *"o da obra, se
+houver; senão o padrão da empresa"* —, e é ela que o cálculo usa. A listagem seguia uma regra
+diferente da do cálculo, e o resultado é o pior tipo de tela vazia: a que existe dado e não aparece.
+
+O irmão do defeito estava do outro lado, na aplicação de plano modelo
+([PlanoModelo.tsx](../frontend/src/modules/pdca/components/PlanoModelo.tsx)): lá a listagem vinha
+**sem filtro nenhum** (200 linhas) e o recorte era feito no cliente — o padrão que o **F2** da revisão
+manda tirar dos selects —, o que ainda por cima oferecia, por um instante, o calendário de uma obra
+vizinha, que o serializer recusa no submit.
+
+**Correção.** `?para_obra=<id>` no [`CalendarioTrabalhoViewSet`](../backend/modulopdca/views.py):
+**o da obra + os da empresa**, nunca o de outra obra, ordenados com o específico antes do geral — que
+é a ordem em que eles vencem no cálculo. O filtro exato `?obra=` continua existindo para quem quer
+exatamente aquilo. As duas telas passaram a usar a rota nova, e a de criar plano ganhou o **estado
+vazio que explica**: *"esta empresa ainda não tem expediente cadastrado"*, com link para
+`/app/pdca/expediente` e a consequência dita em uma linha — sem calendário o plano até nasce, mas o
+CPM não calcula.
+
+**Por que o plano pode nascer sem calendário, e o que isso significa.** `Cronograma.calendario` é
+nulo-permitido de propósito: nulo é a resposta honesta *"a empresa ainda não disse quando
+trabalha"*. O que ele **não** faz é inventar segunda a sexta — `calcular_cpm` recusa com motivo. Na
+prática, plano sem calendário é EAP sem prazo: sem datas não há barra no Gantt, não há curva S e a
+fila de avanço não sabe o que deveria estar acontecendo hoje.
+
+**Cobertura.** Cinco testes novos em `modulopdca.tests.CalendariosQueServemAObraTests` — o da obra e o
+da empresa juntos, o da obra vizinha nunca, a obra recém-cadastrada enxergando o da empresa (o caso
+que voltava vazio), a ordem específico-antes-do-geral e o `?obra=` continuando exato. O semeador da
+demo passou a criar o **padrão da empresa** além do da obra, que é o arranjo real.
+
+### D117 — a recusa de integridade referencial chegava como 500 mudo · ✅ corrigido 23/08/2026
+
+Achado escrevendo o E2E da PDCA.1, no passo mais banal do teste: apagar a obra que ele mesmo tinha
+criado. Veio **500**.
+
+**Causa.** `ProtectedError` (e o irmão `RestrictedError`) não é `APIException`. O DRF só converte o
+que conhece; o resto sobe. Então uma **regra de negócio legítima** — *"não apague o calendário que um
+cronograma usa"* — chegava ao cliente como erro de servidor, sem nome e sem endereço. Vale para toda
+`PROTECT` do sistema, e o sistema tem várias; a PDCA só foi quem esbarrou primeiro.
+
+**E a segunda camada, que escondeu a primeira.** Com `DEBUG` ligado, a página de erro do Django
+tentava imprimir os objetos protegidos, chamou `Cronograma.__str__` num objeto com **campos
+diferidos** e disparou um `refresh_from_db` numa linha em processo de exclusão: `DoesNotExist` por
+cima do erro original. O log guardava o rastro do renderizador de template — **não** o da causa — e o
+corpo da resposta vinha vazio. Duas horas de diagnóstico para uma frase de regra de negócio.
+
+**Correção.** [`nucleo/excecoes.py`](../backend/nucleo/excecoes.py): tratador de exceções do DRF que
+delega tudo ao padrão e só acrescenta as duas de integridade referencial, devolvendo **409** com o
+motivo, a lista de dependentes e o total. Registrado em `REST_FRAMEWORK['EXCEPTION_HANDLER']`.
+
+A mensagem é montada com `verbose_name` + `pk`, e **nunca** com `str(obj)`. Não é preciosismo: é
+exatamente o `str()` que derrubou a página de erro, e um tratador que quebra ao explicar um erro é
+pior que não ter tratador. Há teste cobrando isso —
+[`IntegridadeReferencialTests`](../backend/modulopdca/tests.py) — junto com os outros três: 409 e não
+500, a recusa nomeando quem depende, e o calendário sem plano algum saindo normalmente.
+
+Fica aberta a pergunta de produto que o achado descobriu por baixo: **obra com plano publicado deve
+poder ser excluída?** — [D116 em pendencias.md](pendencias.md).
+
+---
 ### A operação de plataforma morava dentro de um produto vendido, e o hub oferecia upsell ao dono · ✅ corrigido 22/08/2026
 
 Três achados do dono na mesma passada, olhando a tela depois da ORC.8. Os três

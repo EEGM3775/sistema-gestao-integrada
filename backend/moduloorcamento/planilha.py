@@ -170,7 +170,12 @@ def proxima_versao(obra_id) -> int:
     cada um numerava por conta própria e o POST não numerava, nascia sempre v1.
     """
     maior = (
-        Orcamento.objects.filter(obra_id=obra_id)
+        # `todos`, e não `objects`: o gerente padrão filtra a lápide (D116), e um
+        # orçamento na lixeira devolveria um número **já usado**. Número de versão
+        # é identidade numa cadeia de revisão, não rótulo — reusá-lo faria a
+        # restauração colidir com o orçamento que nasceu no lugar dele, e faria
+        # "v3" significar duas planilhas diferentes no histórico da obra.
+        Orcamento.todos.filter(obra_id=obra_id)
         .order_by("-versao")
         .values_list("versao", flat=True)
         .first()

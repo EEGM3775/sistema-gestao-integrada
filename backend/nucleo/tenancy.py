@@ -12,7 +12,9 @@ Utilitários de multi-tenancy do backend.
 """
 from contextlib import contextmanager
 
+from django.conf import settings
 from django.db import connection, models, transaction
+from django.utils.translation import gettext_lazy as _
 
 
 def _set_config(key, value):
@@ -179,6 +181,29 @@ class TenantScopedViewSetMixin:
         else:
             serializer.save()
 
+    def perform_destroy(self, instance):
+        """`DELETE` em quem é `Excluivel` **marca a lápide**; nos demais, apaga.
+
+        É aqui que a lixeira chega aos módulos sem que nenhum deles saiba dela:
+        os 118 ViewSets da casa já passam por este mixin, e quem herdar
+        `Excluivel` no modelo muda de comportamento sozinho. O módulo não importa
+        o `nucleo/lixo.py` — o `nucleo` é que é importado por todos.
+
+        O motivo vem por query param porque `DELETE` não carrega corpo em boa
+        parte dos clientes HTTP; é opcional, e a tela manda o que o usuário
+        digitou no modal de confirmação.
+        """
+        from .lixo import mover_para_lixo
+
+        if isinstance(instance, Excluivel):
+            mover_para_lixo(
+                instance,
+                usuario=getattr(self.request, "user", None),
+                motivo=(self.request.query_params.get("motivo") or "").strip(),
+            )
+        else:
+            instance.delete()
+
 
 class TenantScopedAPIViewMixin:
     """
@@ -203,3 +228,103 @@ class TenantScopedAPIViewMixin:
         return scope_queryset_by_tenant(
             queryset, getattr(self.request, "user", None), self.tenant_field
         )
+
+
+# ---------------------------------------------------------------------------
+# A lápide — exclusão reversível de plataforma (D116)
+# ---------------------------------------------------------------------------
+# > **Decisão do dono, 23/08/2026:** *"Coloca como «Obra excluída por «usuário»
+# > na data xx/xx/xx». Deixa o plano para poder ser usado como modelo em outra
+# > obra."* · **13/09/2026:** *"O lixo é uma página à parte. Como é custo para o
+# > programa, terá uma paywall. O lixo é apagado depois de 15 dias. O lixo pode
+# > ser restaurado através da página de lixo."*
+#
+# São **duas etapas**, e é isso que resolve o nó do D116:
+#
+#   1. **Excluir marca a lápide.** A linha continua no banco, fora de toda
+#      listagem, e o objeto inteiro — cronograma, orçamento, apontamento, título
+#      no ERP — continua de pé. Restaurar é limpar a marca: não há payload para
+#      desserializar, nem ID para reinserir, nem sequência para reajustar.
+#   2. **A purga do 15º dia apaga de verdade**, e só aí o `CASCADE`/`PROTECT`
+#      dos módulos entra em cena (política em `nucleo/lixo.py`).
+#
+# **Por que a marca fica no próprio modelo, e não numa cópia em JSON.** A prancha
+# do lixo (docs/arquitetura/lixo.md) nasceu em 2026 desenhando *hard-delete* +
+# snapshot, antes de os módulos existirem. Medido contra o código de hoje, aquele
+# mecanismo **contradiz a decisão de 23/08**: `Cronograma.obra` é `CASCADE` e
+# `eh_modelo` é uma marca no próprio cronograma, então apagar a obra levaria o
+# plano modelo junto — e `Orcamento.obra` é `PROTECT`, então a obra que tem
+# orçamento nem sairia. A lápide preserva os dois de graça.
+#
+# **Por que isto não é o "mecanismo paralelo" que o D116 temia.** O medo era
+# obrigar toda consulta de todo módulo a lembrar do filtro. Não é o caso: o
+# filtro entra no **gerente padrão**, que é o mesmo caminho por onde 259 modelos
+# já leem. Serializer, relação reversa (`obra.etapas`), agregação de serviço e
+# ViewSet herdam o corte sem escrever uma linha. Quem precisa do excluído pede
+# `Model.todos` **por escrito** — e é só o lixo que precisa.
+#
+# Django detalhe, e é ele que torna o desenho seguro: com `base_manager_name`
+# **não** declarado, o `_base_manager` que o ORM usa para travessia de FK e para
+# `refresh_from_db()` é um `Manager` simples criado na hora — sem o filtro. Ou
+# seja, `conta_pagar.obra` continua devolvendo a obra na lixeira (o título tem de
+# saber de quem ele é), enquanto `Obra.objects` não a lista. Declarar
+# `base_manager_name = "todos"` daria no mesmo; não declarar nada é menos código
+# e o comportamento é o documentado pelo Django.
+class ExcluivelQuerySet(models.QuerySet):
+    """Os dois recortes, nomeados — para que o chamador diga qual quer."""
+
+    def vivos(self):
+        return self.filter(excluido_em__isnull=True)
+
+    def no_lixo(self):
+        return self.filter(excluido_em__isnull=False)
+
+
+class GerenteVivos(models.Manager.from_queryset(ExcluivelQuerySet)):
+    """Gerente **padrão**: enxerga só o que não está na lixeira."""
+
+    def get_queryset(self):
+        return super().get_queryset().filter(excluido_em__isnull=True)
+
+
+class Excluivel(models.Model):
+    """Base abstrata de quem pode ir para a lixeira.
+
+    Herdar isto **muda o `DELETE` da API**: o `perform_destroy` do
+    `TenantScopedViewSetMixin` passa a marcar a lápide em vez de apagar. Quem não
+    herda continua com exclusão física, que é o certo para o que é acessório
+    (rateio, item de nota, exceção de calendário) — lixeira de tudo viraria
+    depósito de ruído, e o que o dono pediu para poder desfazer é o objeto de
+    valor, não a linha filha dele.
+    """
+
+    #: A data é a lápide **e** o relógio da purga: `excluido_em + retenção do
+    #: plano` é quando esta linha morre de verdade. Indexada porque a varredura
+    #: diária da purga filtra exatamente por ela.
+    excluido_em = models.DateTimeField(
+        null=True, blank=True, db_index=True, verbose_name=_("Excluído em"),
+    )
+    #: `SET_NULL` porque a lápide sobrevive ao desligamento de quem apagou — o
+    #: registro de que a linha saiu vale mesmo depois de o autor deixar a
+    #: empresa. A tela cai para "usuário removido" e a data continua de pé.
+    excluido_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="+", verbose_name=_("Excluído por"),
+    )
+    motivo_exclusao = models.TextField(
+        blank=True, default="", verbose_name=_("Motivo da exclusão"),
+    )
+
+    #: A ORDEM IMPORTA: o primeiro gerente declarado é o `_default_manager`, e é
+    #: ele que a relação reversa e o serializer usam.
+    objects = GerenteVivos()
+    #: A porta explícita para o que está na lixeira. Só o `nucleo/lixo.py` e o
+    #: `admin` deveriam precisar dela.
+    todos = models.Manager.from_queryset(ExcluivelQuerySet)()
+
+    class Meta:
+        abstract = True
+
+    @property
+    def esta_no_lixo(self) -> bool:
+        return self.excluido_em is not None

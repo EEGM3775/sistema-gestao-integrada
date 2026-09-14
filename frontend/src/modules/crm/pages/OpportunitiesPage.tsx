@@ -1,3 +1,4 @@
+import { useTextoDaLixeira } from '@/hooks/useRetencaoDoLixo'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, Search, RefreshCw, BarChart3 } from 'lucide-react'
@@ -9,6 +10,7 @@ import type { Opportunity, OpportunityPayload } from '../types'
  * Lista de Oportunidades - /app/crm/opportunities
  */
 export default function OpportunitiesPage() {
+  const textoLixeira = useTextoDaLixeira()
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [formOpen, setFormOpen] = useState(false)
@@ -34,7 +36,7 @@ export default function OpportunitiesPage() {
   }
 
   const handleDelete = async (id: string) => {
-    if (confirm('Tem certeza que deseja excluir esta oportunidade?')) {
+    if (confirm(textoLixeira('esta oportunidade'))) {
       await deleteMutation.mutateAsync(id)
       refetch()
     }

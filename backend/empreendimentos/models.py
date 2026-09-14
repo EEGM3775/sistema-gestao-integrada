@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from django.db import models
 from django.db.models import Q
-from nucleo.tenancy import TenantScopedModel
+from nucleo.tenancy import Excluivel, TenantScopedModel
 from django.utils.translation import gettext_lazy as _
 
 # Choices for Empreendimento.status_empreendimento
@@ -45,7 +45,7 @@ TIPO_CUSTO_CHOICES = [
 ]
 
 
-class Empreendimento(TenantScopedModel):
+class Empreendimento(TenantScopedModel, Excluivel):
     empreendimento_id = models.AutoField(primary_key=True)
     empreendimento = models.CharField(max_length=255, verbose_name=_("Nome do Empreendimento"))
     razao_social = models.CharField(max_length=255, verbose_name=_("Razão Social"))
@@ -80,8 +80,8 @@ class Empreendimento(TenantScopedModel):
         ]
         # Unicidade por-tenant (Fase 8.3).
         constraints = [
-            models.UniqueConstraint(fields=['tenant', 'razao_social'], name='empreend_razao_unica_por_tenant'),
-            models.UniqueConstraint(fields=['tenant', 'cnpj'], name='empreend_cnpj_unico_por_tenant'),
+            models.UniqueConstraint(fields=['tenant', 'razao_social'], condition=models.Q(excluido_em__isnull=True), name='empreend_razao_unica_por_tenant'),
+            models.UniqueConstraint(fields=['tenant', 'cnpj'], condition=models.Q(excluido_em__isnull=True), name='empreend_cnpj_unico_por_tenant'),
         ]
 
     def __str__(self):

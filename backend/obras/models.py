@@ -2,9 +2,9 @@
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.db.models import Q, UniqueConstraint
-from nucleo.tenancy import TenantScopedModel
+from nucleo.tenancy import Excluivel, TenantScopedModel
 
-class Obra(TenantScopedModel):
+class Obra(TenantScopedModel, Excluivel):
     STATUS_OBRA_CHOICES = [
         ("planejamento", _("Planejamento")),
         ("em_execucao", _("Em Execução")),
@@ -49,14 +49,14 @@ class Obra(TenantScopedModel):
         # tenant. A variante com empreendimento já era escopada pela FK-pai, mas
         # incluímos o tenant por consistência/defesa.
         constraints = [
-            UniqueConstraint(fields=['tenant', 'empreendimento', 'nome_obra'], condition=Q(empreendimento__isnull=False), name='unique_obra_empreendimento'),
-            UniqueConstraint(fields=['tenant', 'nome_obra'], condition=Q(empreendimento__isnull=True), name='unique_obra_sem_empreendimento'),
+            UniqueConstraint(fields=['tenant', 'empreendimento', 'nome_obra'], condition=Q(empreendimento__isnull=False) & Q(excluido_em__isnull=True), name='unique_obra_empreendimento'),
+            UniqueConstraint(fields=['tenant', 'nome_obra'], condition=Q(empreendimento__isnull=True) & Q(excluido_em__isnull=True), name='unique_obra_sem_empreendimento'),
         ]
 
     def __str__(self):
         return self.nome_obra
 
-class EtapaObra(TenantScopedModel):
+class EtapaObra(TenantScopedModel, Excluivel):
     STATUS_ETAPA_CHOICES = [
         ("planejamento", _("Planejamento")),
         ("em_execucao", _("Em Execução")),
@@ -89,7 +89,7 @@ class EtapaObra(TenantScopedModel):
     def __str__(self):
         return f"{self.obra.nome_obra} - {self.nome_etapa}"
 
-class DocumentoObra(TenantScopedModel):
+class DocumentoObra(TenantScopedModel, Excluivel):
     TIPO_DOCUMENTO_CHOICES = [
         ("projeto", _("Projeto")),
         ("relatorio", _("Relatório")),

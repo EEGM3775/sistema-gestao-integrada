@@ -479,6 +479,48 @@ empresa, de dado que **não é da empresa** — é dado público do governo. Ent
   aprovado é régua histórica — não muda porque a base do mês seguinte mudou ou porque alguém editou o
   item no catálogo.
 
+### 11.2 Excluir orçamento: a trava protege a empresa, não tutela o usuário
+
+> **Decisão do dono, 13/09/2026:** *"Quero que a trava seja o limite para não atrapalhar o usuário em
+> sua empresa, mas também não pode limitar o usuário: um orçamento que não pode ser usado também não
+> pode atrapalhar o usuário de ter outro orçamento, já que a paywall limita quantidades."*
+
+| Status | Exclui? | Por quê |
+|---|---|---|
+| **Rascunho** | ✅ | tentativa em andamento, não rege nada |
+| **Cancelado** | ✅ | morto por definição |
+| **Superado** | ✅ | foi trocado por revisão; não rege nada |
+| **Aprovado** | ❌ **409** | é a base contratual contra a qual medições foram feitas |
+
+**O aprovado não é beco sem saída** — e é isso que separa trava de tutela: cancelar já existe, é um
+clique, e abre o caminho. A recusa **diz isso** em vez de só negar. Nunca há estado do qual não se
+saia.
+
+**O defeito que isto corrigiu não era falta de trava — era a régua errada.** O `perform_destroy`
+chamava `_exigir_editavel`, que é a regra da **escrita** (só rascunho). O aprovado estava protegido,
+sim; o efeito colateral é que **cancelado e superado também não saíam**, e o usuário ficava com
+documento morto que o sistema se recusava a deixá-lo limpar — exatamente a armadilha que a decisão
+acima veio fechar.
+
+> **Editar e excluir são réguas diferentes.** Um superado não aceita escrita (é história de revisão)
+> mas aceita exclusão (não rege nada). Reusar a régua da escrita para a exclusão foi o que criou o
+> problema — e é um erro fácil de repetir em qualquer módulo com máquina de estados.
+
+**Vai para a lixeira** ([D116](../arquitetura/lixo.md)): o `Orcamento` herda `Excluivel`, então
+excluir marca a lápide e a planilha inteira — com as sete tabelas filhas — volta intacta dentro do
+prazo do plano. A tela só mostra o botão onde o servidor deixa sair; o aprovado não ganha botão
+trancado, porque oferecer a porta para depois recusar é pior que não oferecer.
+
+**O número da versão nunca é reciclado.** `proxima_versao` lê por `Orcamento.todos`, incluindo o que
+está na lixeira: versão é **identidade** numa cadeia de revisão, não rótulo. Se o número voltasse a
+ser oferecido, restaurar colidiria com o orçamento que nasceu no lugar do excluído — e "v3" passaria
+a significar duas planilhas diferentes no histórico da obra. É o oposto do que se faz com **nome**,
+que a lixeira libera de imediato ([obras.md](obras.md)): nome é rótulo e se reusa; número de versão,
+não.
+
+**A quantidade de orçamentos por plano continua indefinida** — não há quota sobre a planilha hoje.
+Registrado em [D124](../pendencias.md).
+
 ## 12. Sub-fatias
 
 | Fatia | Escopo |

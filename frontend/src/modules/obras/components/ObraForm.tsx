@@ -5,6 +5,41 @@ import type { Obra, ObraFormData, StatusObra, Empreendimento } from '@/types'
 import { FieldError, FormErrorBanner, parseApiErrors, type FieldErrors } from '@/utils/formErrors'
 import { minVigenciaISO, maxVigenciaISO, validateISO_Vigencia } from '@/utils/dates'
 
+/**
+ * O 400 de nome repetido (decisão do dono, 13/09/2026).
+ *
+ * A regra de unicidade **continua valendo** — o que mudou é que a recusa deixou
+ * de ser uma parede: ela diz *qual* obra conflita, para a pessoa reconhecer se é
+ * a mesma que ela já tem, e traz um nome livre pronto.
+ */
+interface ConflitoDeNome {
+  conflito: {
+    obra_id: number
+    nome_obra: string
+    status_obra: string
+    data_inicio_prevista: string | null
+    data_fim_prevista: string | null
+    etapas: number
+    /** O número que separa a obra de verdade da casca cadastrada e abandonada. */
+    atividades: number
+  }
+  sugestao_nome: string
+}
+
+function extrairConflito(err: unknown): ConflitoDeNome | null {
+  const data = (err as { response?: { data?: unknown } })?.response?.data as
+    | Partial<ConflitoDeNome>
+    | undefined
+  if (!data?.conflito) return null
+  return { conflito: data.conflito, sugestao_nome: data.sugestao_nome ?? '' }
+}
+
+function dataBR(iso: string | null) {
+  if (!iso) return '—'
+  const [a, m, d] = iso.split('-')
+  return `${d}/${m}/${a}`
+}
+
 function maskCurrency(v: string): string {
   const digits = v.replace(/\D/g, '').slice(0, 15)
   if (!digits) return ''
@@ -55,6 +90,8 @@ export const ObraForm: React.FC<Props> = ({ open, onClose, onSave, initial }) =>
   const [form, setForm]             = useState<ObraFormData>(EMPTY)
   const [saving, setSaving]         = useState(false)
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
+  /** O 400 de nome repetido, quando o servidor manda o conflito e a sugestão. */
+  const [conflito, setConflito] = useState<ConflitoDeNome | null>(null)
   const [empreendimentos, setEmpreendimentos] = useState<Empreendimento[]>([])
 
   const overlayRef         = useRef<HTMLDivElement>(null)
@@ -89,8 +126,13 @@ export const ObraForm: React.FC<Props> = ({ open, onClose, onSave, initial }) =>
     setFieldErrors({})
   }, [initial, open])
 
-  const set = (field: keyof ObraFormData, value: string | number | null) =>
+  const set = (field: keyof ObraFormData, value: string | number | null) => {
+    // Trocar o nome ou o empreendimento muda o escopo da unicidade — o aviso
+    // anterior deixa de valer, e mantê-lo na tela acusaria um conflito que já
+    // não existe.
+    if (field === 'nome_obra' || field === 'empreendimento') setConflito(null)
     setForm(f => ({ ...f, [field]: value }))
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -108,9 +150,18 @@ export const ObraForm: React.FC<Props> = ({ open, onClose, onSave, initial }) =>
       onClose()
     } catch (err) {
       setFieldErrors(parseApiErrors(err))
+      setConflito(extrairConflito(err))
     } finally {
       setSaving(false)
     }
+  }
+
+  /** Aceita o nome que o servidor propôs — um clique, sem redigitar. */
+  const aceitarSugestao = () => {
+    if (!conflito?.sugestao_nome) return
+    setForm(f => ({ ...f, nome_obra: conflito.sugestao_nome }))
+    setConflito(null)
+    setFieldErrors({})
   }
 
   if (!open) return null
@@ -152,6 +203,63 @@ export const ObraForm: React.FC<Props> = ({ open, onClose, onSave, initial }) =>
               onFocus={e => (e.currentTarget.style.borderColor = 'var(--color-brand)')}
               onBlur={e => (e.currentTarget.style.borderColor = '#e2e8f0')} />
             <FieldError msg={fieldErrors.nome_obra} />
+
+            {conflito && (
+              <div
+                style={{
+                  marginTop: 8, padding: '10px 12px', borderRadius: 8,
+                  border: '1px solid #f0c36d', background: '#fdf6e3',
+                  fontSize: 12.5, color: '#6b4d09',
+                }}
+              >
+                <div style={{ fontWeight: 650, marginBottom: 6 }}>
+                  Já existe uma obra com este nome neste empreendimento
+                </div>
+
+                {/* O cartão da obra que conflita. Sem ele a pessoa não consegue
+                    decidir o que importa: é a mesma obra (e ela deveria usar a
+                    que já existe) ou é outra de verdade? */}
+                <div style={{ marginBottom: 8, lineHeight: 1.6 }}>
+                  <div><b>{conflito.conflito.nome_obra}</b></div>
+                  <div>
+                    início {dataBR(conflito.conflito.data_inicio_prevista)} ·{' '}
+                    {conflito.conflito.status_obra.replace('_', ' ')} ·{' '}
+                    {conflito.conflito.atividades > 0
+                      ? `${conflito.conflito.atividades} atividades no plano`
+                      : 'sem plano montado'}
+                  </div>
+                </div>
+
+                {conflito.sugestao_nome ? (
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <span>É outra obra? Sugerimos:</span>
+                    <code
+                      style={{
+                        background: '#fff', border: '1px solid #e8d9a8',
+                        borderRadius: 5, padding: '2px 6px',
+                      }}
+                    >
+                      {conflito.sugestao_nome}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={aceitarSugestao}
+                      style={{
+                        border: '1px solid #d9a441', background: '#fff',
+                        borderRadius: 6, padding: '3px 10px', cursor: 'pointer',
+                        fontSize: 12, fontWeight: 600, color: '#6b4d09',
+                      }}
+                    >
+                      Usar este nome
+                    </button>
+                  </div>
+                ) : (
+                  // O gerador desistiu (muitas homônimas). Avisar sem propor é
+                  // melhor que propor um nome que o banco vai recusar.
+                  <div>É outra obra? Escolha um nome que as separe.</div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-4">

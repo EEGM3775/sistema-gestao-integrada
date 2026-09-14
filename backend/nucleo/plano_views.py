@@ -17,7 +17,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from payment.planos import ORDEM_PLANOS, PLANO_PADRAO, PLANOS
+from payment.planos import ORDEM_PLANOS, PLANO_PADRAO, PLANOS, QUOTAS_DE_JANELA
 from payment.regras import proximo_plano
 
 from .quotas import RECURSOS_CONTADOS, ROTULOS, uso_atual
@@ -69,8 +69,32 @@ class PlanoView(TenantScopedAPIViewMixin, APIView):
             slug = PLANO_PADRAO
         quotas_claim = getattr(user, "iam_quotas", None) or {}
 
+        # ---------------------------------------------------------------------
+        # Janela não é medidor, e por isso sai da lista das quotas
+        # ---------------------------------------------------------------------
+        # `lixo_retencao_dias` (D116) diz **por quantos dias** dá para desfazer
+        # uma exclusão. Não há o que contar: `uso` é `None` para sempre, e a tela
+        # da home desenha toda quota como barra — ele apareceria como "null de
+        # 15", um medidor quebrado ao lado dos que funcionam.
+        #
+        # Continua viajando na claim do JWT (é de lá que o `nucleo/lixo.py` lê o
+        # prazo na hora de excluir) e continua sendo decisão comercial no
+        # `planos.py` §5.5g. O que muda é só **como a tela lê**: quantidade tem
+        # barra, tempo tem frase.
+        janelas = [
+            {
+                "recurso": recurso,
+                "rotulo": ROTULOS.get(recurso, recurso),
+                "dias": limite,
+            }
+            for recurso in QUOTAS_DE_JANELA
+            if (limite := quotas_claim.get(recurso)) is not None
+        ]
+
         medidores = []
         for recurso, limite in quotas_claim.items():
+            if recurso in QUOTAS_DE_JANELA:
+                continue
             externa = QUOTAS_EXTERNAS.get(recurso)
             contavel = recurso in RECURSOS_CONTADOS and tenant_id and not externa
             uso = uso_atual(recurso, tenant_id) if contavel else None
@@ -96,6 +120,8 @@ class PlanoView(TenantScopedAPIViewMixin, APIView):
             {
                 "plano": _plano_resumo(slug),
                 "quotas": medidores,
+                # Os limites que são de TEMPO, não de quantidade — ver acima.
+                "janelas": janelas,
                 "proximo_plano": _proximo_plano_resumo(slug),
                 # A vitrine inteira, para a tela de upgrade não repetir preço em
                 # código de frontend — que é como ela ficaria desatualizada.

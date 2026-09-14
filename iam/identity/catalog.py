@@ -237,7 +237,46 @@ CATALOGO: tuple[Perm, ...] = (
     #     (A importação de BCF do PRA.3 NÃO tem permissão própria: ela cria
     #     marcação, então é `marcacao.edit` — e a parede dela é comercial, o
     #     formato `bcf` em payment/planos.py.)
+    # --- PDCA — planejar, executar, verificar, agir (módulo 'pdca') ---
+    #     A fatia PDCA.0 traz a fundação: onde (a hierarquia construtiva) e
+    #     quando (o calendário de trabalho). O resto do vocabulário da §8 da
+    #     planta — `pdca.cronograma.*`, `pdca.medicao.*`, `pdca.nc.*` — entra
+    #     junto da fatia que o implementa: permissão declarada antes do endpoint
+    #     é interruptor ligado a nada na tela de papéis (a lição do D28).
+    Perm("pdca.local.view", "Ver a hierarquia de locais da obra", "pdca"),
+    Perm("pdca.local.edit", "Criar/editar locais e gerar a árvore em lote", "pdca"),
+    Perm("pdca.local.delete", "Excluir local da obra", "pdca"),
+    #     Calendário de TRABALHO, não o de eventos (`calendario.evento.*`, base).
+    #     São coisas diferentes: um diz quando a empresa trabalha e governa o
+    #     prazo do cronograma; o outro é a agenda compartilhada.
+    Perm("pdca.calendario.view", "Ver calendários de trabalho e dias úteis", "pdca"),
+    Perm("pdca.calendario.edit", "Definir jornada, dias trabalhados e exceções", "pdca"),
+    #     PDCA.1 — o plano de tempo. São QUATRO verbos, e não o par
+    #     `view`/`edit`, porque montar um plano e assumi-lo perante a obra são
+    #     atos diferentes: `edit` mexe no rascunho; `publicar` transforma o
+    #     rascunho na régua contra a qual o atraso de todo mundo passa a ser
+    #     medido; `replanejar` admite que a régua anterior não vale mais e abre
+    #     outra. É a segregação que o ORC.6 provou necessária — quem executa não
+    #     aprova —, aplicada ao prazo em vez de ao custo.
+    Perm("pdca.cronograma.view", "Ver o cronograma, o caminho crítico e a linha de base", "pdca"),
+    Perm("pdca.cronograma.edit", "Montar a WBS, durações e precedências no rascunho", "pdca"),
+    Perm("pdca.cronograma.publicar", "Publicar o cronograma (rascunho → vigente)", "pdca"),
+    Perm("pdca.cronograma.replanejar", "Replanejar — abrir a versão seguinte com motivo", "pdca"),
+    #     PDCA.2 — o avanço. Ler e apontar são **verbos diferentes de pessoas
+    #     diferentes**: a diretoria e o gestor de contrato leem o percentual da
+    #     obra; quem aponta é quem está no canteiro. E apontar não é `edit`: o
+    #     lançamento nasce e não muda mais (o livro é append-only), então um
+    #     verbo chamado "editar" prometeria na tela de papéis um poder que a API
+    #     não tem.
+    Perm("pdca.avanco.view", "Ver o avanço apontado e a curva S realizada", "pdca"),
+    Perm("pdca.avanco.apontar", "Apontar avanço de atividade (e estornar o próprio erro)", "pdca"),
     # --- Obras/empreendimentos e cadastros base (sem entitlement de módulo) ---
+    #     O percentual da etapa é digitado à mão desde sempre. Com atividades do
+    #     PDCA vinculadas a ela, ele passa a ser **apurado** — e esta permissão é
+    #     a que devolve a caneta a alguém (planta do PDCA §11.2). Nasce no grupo
+    #     `base`, e não no `pdca`: quem a exerce é o dono da etapa, que existe
+    #     mesmo em tenant que não contrata o módulo.
+    Perm("obra.etapa.percentual_manual", "Digitar o percentual da etapa mesmo quando ele é apurado pelo cronograma", "base"),
     Perm("obra.empreendimento.view", "Ver empreendimentos", "base"),
     Perm("obra.empreendimento.edit", "Gerir empreendimentos", "base"),
     Perm("obra.empreend_conta.view", "Ver contas bancárias do empreendimento", "base"),
@@ -296,7 +335,31 @@ CATALOGO: tuple[Perm, ...] = (
     Perm("plataforma.lgpd.exportar", "Exportar dados de titular (LGPD)", "plataforma"),
     Perm("plataforma.lgpd.excluir", "Excluir/anonimizar titular (LGPD)", "plataforma"),
     Perm("plataforma.lixo.view", "Ver a lixeira", "plataforma"),
-    Perm("plataforma.lixo.restaurar", "Restaurar/purgar itens da lixeira", "plataforma"),
+    Perm("plataforma.lixo.restaurar", "Restaurar item da lixeira", "plataforma"),
+    #     Purgar saiu de dentro de `.restaurar` (D116): restaurar devolve dado à
+    #     circulação, purgar **destrói antes do prazo** o que ainda dava para
+    #     recuperar. Quem confere o que foi apagado por engano não é
+    #     necessariamente quem pode encurtar a janela de 15 dias que o plano
+    #     vendeu — e `gestor_lixo` continua tendo os dois pelo `.*`.
+    Perm("plataforma.lixo.purgar", "Purgar item da lixeira antes do prazo (irreversível)", "plataforma"),
+    #     A escada de atesto (PDCA.0) mora no `nucleo` e é de PLATAFORMA: quantas
+    #     assinaturas o dinheiro precisa antes de sair é decisão da empresa, e
+    #     vale para a medição de obra hoje e para o pagamento acima de alçada do
+    #     ERP depois. **Atestar não tem permissão aqui** de propósito: quem manda
+    #     é o degrau, que declara a permissão que exige (§8 da planta do PDCA) —
+    #     um `…aprovacao.atestar` genérico daria a quem o tivesse a alçada de
+    #     todos os degraus de uma vez, que é o oposto do que a escada existe para
+    #     fazer.
+    #     **`.edit` fica com o administrador do tenant de propósito**, e isto é
+    #     uma exceção consciente à lição do D28 (permissão sem persona só o admin
+    #     exerce). Criar um degrau que exige a permissão X é, na prática,
+    #     **decidir quem tem alçada sobre o dinheiro** — mesma classe de ato que
+    #     `plataforma.papel.gerir`, que também é só do admin pelo mesmo motivo.
+    #     Uma persona de fábrica com este verbo poderia rebaixar a própria escada
+    #     que a controla. `.view` vai para a `diretoria`: quem responde pela
+    #     empresa precisa enxergar quantas assinaturas o dinheiro atravessa.
+    Perm("plataforma.fluxo_aprovacao.view", "Ver os fluxos de aprovação da empresa", "plataforma"),
+    Perm("plataforma.fluxo_aprovacao.edit", "Definir a escada de aprovação (níveis e alçadas)", "plataforma"),
 )
 
 # Índice por código e conjunto de todos os códigos válidos (para conformidade).
@@ -326,6 +389,12 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
         "mapa.local.view", "mapa.feicao.view", "mapa.ortofoto.view",
         "prancheta.documento.view", "prancheta.marcacao.view",
         "plataforma.config.view", "plataforma.integracao.view",
+        # Quantas assinaturas o dinheiro atravessa antes de sair é leitura de
+        # quem responde pela empresa. Definir a escada continua sendo do admin.
+        "plataforma.fluxo_aprovacao.view",
+        # Lê o planejamento da obra pelo mesmo motivo que lê o custo dela.
+        "pdca.local.view", "pdca.calendario.view", "pdca.cronograma.view",
+        "pdca.avanco.view",
     ],
     # RH completo, MENOS o prontuário médico (segregação médico × gestor).
     "rh_gestor": [
@@ -384,6 +453,25 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
         # do campo está encerrado. Sem isto, o D28 se repetiria — verbo criado,
         # e na prática só o admin do tenant o exerce.
         "prancheta.marcacao.*",
+        # PDCA.0: quem responde pela obra desenha o esqueleto dela. A árvore de
+        # locais é cadastro de obra antes de ser insumo de cronograma — é o
+        # endereço da não-conformidade e do apontamento, que esta persona já
+        # governa pelo diário. O calendário de trabalho é só leitura: mudar a
+        # jornada muda o prazo de todas as obras que herdam o padrão, e isso é
+        # do `planejador`.
+        #
+        # PDCA.1: **lê** o cronograma, e não o edita. Quem responde pela obra
+        # precisa saber o que está no caminho crítico para decidir onde põe a
+        # equipe — mas mudar o plano publicado é replanejar, e replanejar é o
+        # ato que move o prazo contratual da obra inteira.
+        "pdca.local.*", "pdca.calendario.view", "pdca.cronograma.view",
+        #
+        # PDCA.2: **aponta**. Quem responde pela obra é quem responde pelo quanto
+        # ela andou — é a mesma pessoa que já assina o diário. E leva o
+        # `percentual_manual` junto: com o cronograma vinculado à etapa o número
+        # passa a ser apurado, e destravar a caneta na exceção (a etapa que o
+        # plano ainda não cobre) é decisão de quem gere a obra, não de TI.
+        "pdca.avanco.*", "obra.etapa.percentual_manual",
     ],
     # Campo: apontamentos do diário + upload de drone (sem gestão).
     # Lê a prancha vigente no celular — é o caso de uso central da Prancheta, e
@@ -398,6 +486,10 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
         # PRA.3 — apontar o que está errado no desenho É o trabalho do campo, e
         # é a razão de a fatia existir. Sem `resolver`: quem aponta não fecha.
         "prancheta.marcacao.view", "prancheta.marcacao.edit",
+        # PDCA.2 — apontar quanto a frente andou é o gesto do canteiro, e é a
+        # razão de a fatia existir. Lê o cronograma para saber **em que**
+        # apontar; não o edita, que é ato de quem assume o prazo.
+        "pdca.cronograma.view", "pdca.avanco.view", "pdca.avanco.apontar",
     ],
     # Analista de drone: processamento e medições. Ganhou o acervo e a missão —
     # é a mesma pessoa que hoje já opera o voo, agora com o plano na plataforma.
@@ -487,6 +579,39 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
         "obra.obra.view", "obra.empreendimento.view",
         "mapa.local.view",
     ],
+    # Planejador: a persona que a PDCA.0 estreia. Desenha o esqueleto da obra
+    # (a hierarquia de locais) e diz quando se trabalha — e é só isso que existe
+    # para fazer nesta fatia. Lê o orçamento porque a régua de custo por etapa é
+    # o que vai pesar a atividade na PDCA.1, e lê obra/mapa porque é onde a
+    # árvore se pendura. Não toca em financeiro, cadastro comercial nem estoque.
+    #
+    # **As outras quatro personas da §8 da planta** — `engenheiro_de_obra`,
+    # `gestor_contratos`, `tecnico_qualidade` e o fiscal de obra — chegam com a
+    # fatia que lhes dá verbo (PDCA.2, .3, .5, .7). Criá-las agora produziria
+    # papel que só sabe ler dois cadastros, e a tela de papéis passaria a
+    # oferecer quatro personas indistinguíveis entre si. É a mesma lição do D28,
+    # do outro lado: permissão sem persona não se exerce, persona sem permissão
+    # não se explica.
+    #
+    # (O nome do fiscal de obra terá de ser `fiscal_de_obra`: `fiscal` já é a
+    # persona de nota fiscal, e são pessoas diferentes em empresas diferentes.)
+    "planejador": [
+        # PDCA.1: é a persona do plano de tempo, e por isso leva os quatro
+        # verbos do cronograma — inclusive `publicar` e `replanejar`. Numa
+        # construtora com departamento de planejamento, é este cargo que assume
+        # o prazo; separar `publicar` daqui só faria sentido se houvesse alguém
+        # acima dele no organograma do planejamento, e não há — quem está acima
+        # é a diretoria, que lê.
+        "pdca.local.*", "pdca.calendario.*", "pdca.cronograma.*",
+        # PDCA.2: **lê** o avanço — é contra o plano dele que o desvio é
+        # medido. Apontar é do canteiro; o planejador que apontasse o
+        # próprio avanço estaria conferindo o próprio dever de casa.
+        "pdca.avanco.view",
+        "obra.obra.view", "obra.empreendimento.view", "obra.diario.view",
+        "orcamento.orcamento.view", "orcamento.item.view", "orcamento.relatorio.view",
+        "calendario.evento.view", "mapa.local.view",
+        "prancheta.documento.view",
+    ],
     # Gestor da lixeira (exclusão reversível — ver arquitetura/lixo.md).
     "gestor_lixo": ["plataforma.lixo.*"],
     # Papel default de leitura básica (antes era morto).
@@ -507,13 +632,14 @@ DESCRICOES_TEMPLATE: dict[str, str] = {
     "tesouraria": "Cobranças e boletos (Asaas), baixa de recebíveis e conciliação.",
     "fiscal": "Emissão e gestão de notas fiscais.",
     "comercial": "CRM completo: leads, oportunidades, contas, contatos e agenda comercial.",
-    "engenharia": "Empreendimentos, obras, diário de obra (com IA) e agenda técnica.",
-    "campo": "Registro de diário de obra e envio de imagens de drone. Sem gestão.",
+    "engenharia": "Empreendimentos, obras, diário de obra (com IA), agenda técnica e o avanço físico da obra (aponta e destrava o percentual da etapa).",
+    "campo": "Registro de diário de obra, apontamento de avanço das frentes e envio de imagens de drone. Sem gestão.",
     "drone_analista": "Processamento, medições e anotações de projetos de drone.",
     "auditor": "Somente leitura ampla + trilha de auditoria e operações de titular (LGPD).",
     "suprimentos": "Suprimentos: catálogo de produtos, ofertas/preços de fornecedores e centros de custo.",
     "almoxarife": "Estoque e logística interna: saldos, movimentações, requisições, transferências, devoluções, lotes e inventário.",
     "orcamentista": "Planilha orçamentária da obra: bases referenciais (SINAPI/ORSE), composições, curva ABC e orçado × realizado. Aprova e revisa o orçamento.",
+    "planejador": "Planejamento da obra: cronograma (WBS, CPM, linha de base), hierarquia de locais, calendário de trabalho e leitura do avanço apontado.",
     "topografo": "Território: georreferenciamento, camadas e feições do mapa, acervo de ortofotos e planos de voo.",
     "projetista": "Acervo de projeto: cadastra documentos, envia revisões e PUBLICA a revisão vigente — a que o canteiro executa.",
     "gestor_lixo": "Restauração e expurgo de itens da lixeira (exclusão reversível).",

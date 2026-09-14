@@ -143,11 +143,44 @@ A IAM tem um seed ([iam/seed_demo.py](../iam/seed_demo.py)) que cria os módulos
 exemplo. Atrás do gateway:
 
 ```bash
-cd iam && ../.venv/bin/python manage.py shell < seed_demo.py
+docker compose exec -T iam python manage.py shell < iam/seed_demo.py
+# ou, rodando a IAM local:  cd iam && ../.venv/bin/python manage.py shell < seed_demo.py
 ```
 
-- `demo` / `demo123` — tem os módulos `crm`/`rh`/`erp_financeiro` (+ `drone`) e o papel `financeiro`.
-- `semdrone` / `semdrone123` — usuário sem `drone` (e papel `operacional`), para testar 403/RBAC.
+| Usuário | Senha | Para que serve |
+|---|---|---|
+| `demo` | `demo123` | Power-user: todos os módulos do tenant e quinze papéis (inclui `planejador` + `engenharia`) |
+| `campo` | `campo123` | O canteiro: **aponta e não decide** — marcação da Prancheta sem resolver (PRA.3), avanço do PDCA sem editar o plano (PDCA.2) |
+| `semdrone` | `semdrone123` | Sem o módulo `drone` e com papel `operacional` — exercita 403 de camada 1 e mascaramento |
+| `acme` | `acme123` | Outro tenant: é a fronteira |
+| `admin` | `admin123` | Admin do tenant (gere papéis e permissões na tela) |
+| `dono` | `dono123` | Supervisor da plataforma (base-mãe, incidente ANPD) — não atravessa tenant |
+
+Os dados de negócio vêm depois, no backend:
+
+```bash
+docker compose exec -T erp python manage.py shell < backend/seed_demo_data.py   # cadastros base
+docker compose exec erp python manage.py semear_carteira_demo --tenant demo     # carteira de clientes
+docker compose exec erp python manage.py semear_pdca_demo --tenant demo         # obra planejada E em execução
+```
+
+O **`semear_pdca_demo`** é o que dá o que olhar no PDCA: ele planeja uma obra que **já existe** no
+seed — reaproveitando as etapas e o orçamento aprovado dela —, publica o cronograma e **aponta o
+avanço semana a semana** num plano que começou no passado. Sem esse passado a curva realizada é um
+ponto só, e o desvio, que é o número da reunião de obra, não existe. Como ele usa uma obra de
+verdade, a cobertura do orçamento **não** fecha em 100% e uma folha fica sem peso de propósito: é o
+denominador que a tela existe para mostrar.
+
+```bash
+# refazer a carga (apaga cronograma, apontamentos e locais daquela obra)
+docker compose exec erp python manage.py semear_pdca_demo --tenant demo --obra 7 --limpar
+# obra mais adiantada / mais atrasada
+docker compose exec erp python manage.py semear_pdca_demo --tenant demo --aderencia 0.95
+```
+
+Ele imprime, no fim, o que a tela deve mostrar (avanço físico, previsto até hoje, desvio, realizado
+em R$ e o percentual apurado de cada etapa) e o endereço do plano — conferir a tela contra essas
+linhas é o teste de fumaça mais barato do módulo.
 
 ## Ferramentas de bancada (`ferramentas/`)
 

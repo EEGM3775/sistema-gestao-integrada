@@ -17,9 +17,20 @@ Aqui reconstruímos essa validação escopada ao tenant do request:
   `UniqueConstraint` do modelo que começa por `tenant`, sem boilerplate por
   campo. Basta o serializer herdar o mixin.
 """
-from django.db.models import UniqueConstraint
+from django.db.models import Q, UniqueConstraint
 from rest_framework import serializers
 from rest_framework.validators import UniqueTogetherValidator
+
+#: A condição que a lixeira (D116) acrescentou a 17 `UniqueConstraint`s: a
+#: unicidade vale **entre os vivos**, para que um CPF na lixeira não fique
+#: segurando o recadastro por 15 dias.
+#:
+#: Ela é tratada à parte das demais condições por um motivo exato: o queryset do
+#: validador é o `_default_manager`, e nos modelos `Excluivel` esse gerente
+#: **já** filtra a lápide. Ou seja, a condição não precisa ser reproduzida — ela
+#: já está no queryset. Qualquer outra condição continua sendo motivo para pular,
+#: porque aí o queryset de fato não a representa.
+CONDICAO_DA_LAPIDE = Q(excluido_em__isnull=True)
 
 
 class TenantReadOnlyFieldMixin:
@@ -86,7 +97,14 @@ class TenantScopedUniqueSerializerMixin(TenantReadOnlyFieldMixin):
         for constraint in getattr(model._meta, "constraints", []):
             if not isinstance(constraint, UniqueConstraint):
                 continue
-            if "tenant" not in constraint.fields or constraint.condition is not None:
+            if "tenant" not in constraint.fields:
+                continue
+            # Condição nenhuma, ou exatamente a da lápide (que o `_default_manager`
+            # já aplica). Sem esta exceção, pôr a lixeira nos 7 módulos teria
+            # rebaixado 17 duplicatas de **400 com o campo apontado** para **500
+            # com `IntegrityError`** — o defeito que este arquivo inteiro existe
+            # para evitar, reintroduzido pela porta dos fundos.
+            if constraint.condition is not None and constraint.condition != CONDICAO_DA_LAPIDE:
                 continue
             others = [f for f in constraint.fields if f != "tenant"]
             if not others or not all(f in source_to_name for f in others):

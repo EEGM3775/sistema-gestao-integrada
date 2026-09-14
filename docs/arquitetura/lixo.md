@@ -1,306 +1,267 @@
-# Sistema de Lixo — Exclusão Segura com Auditoria
+# Sistema de Lixo — exclusão reversível com auditoria
 
-> Plano de arquitetura para exclusão reversível de registros no SGI.
-> **Status: 📋 Planejado** — implementação ocorre após todos os módulos principais existirem.
-> Esta prancha define o contrato de implementação para que todos os módulos sejam projetados
-> de forma compatível desde o início.
+> Prancha da exclusão reversível do SGI. Descreve o **desenho**, sem status nem datas — o status
+> está no [roadmap.md](../roadmap.md).
+>
+> **Esta prancha foi reescrita quando a implementação aconteceu.** A versão anterior desenhava
+> *hard-delete + snapshot JSON* e foi escrita antes de os módulos existirem; medida contra o código
+> real, ela não satisfazia a decisão do dono. O que mudou e por quê está na [§10](#10-o-que-mudou-em-relação-ao-desenho-de-2026).
 
 ---
 
-## 1. Decisões de design
+## 1. A decisão do dono
 
-| Decisão | Escolha | Justificativa |
+> *"Coloca como «Obra excluída por «usuário» na data xx/xx/xx». Deixa o plano para poder ser usado
+> como modelo em outra obra."* — 23/08/2026
+>
+> *"O lixo é uma página à parte. Como é custo para o programa, terá uma paywall. O lixo é apagado
+> depois de 15 dias. O lixo pode ser restaurado através da página de lixo."* — 13/09/2026
+
+As duas frases, juntas, descrevem **duas etapas** — e é a separação delas que sustenta todo o resto:
+
+| Etapa | O que acontece | Quando |
 |---|---|---|
-| **Modelo de armazenamento** | Tabela genérica separada (`Lixo`) | Separa fisicamente dados ativos de excluídos; evita poluir queries de negócio com filtros de soft-delete em todos os ViewSets |
-| **Quem pode restaurar/purgar** | Papel `gestor_lixo` (intra-tenant) | Mais granular que `admin`; não depende de admin da plataforma para decisões internas do tenant |
-| **Retenção** | Auto-purge configurável por tenant + purge manual pelo `gestor_lixo` | Flexibilidade operacional; tenant controla o próprio ciclo de vida |
-| **Escopo** | Todos os módulos principais | Implementação única na base → herança em todos os modelos sem retrabalho |
+| **Lápide** | O registro é marcado (`excluído por fulano em dd/mm`), some de toda listagem e **continua inteiro no banco**. Nada cascateia. | No `DELETE` |
+| **Purga** | O registro é apagado de verdade, e só aí o `CASCADE`/`PROTECT` de cada módulo entra em cena. | No fim do prazo do plano |
+
+A lápide é a janela reversível; a purga é o que o nome "lixo" descreve.
 
 ---
 
-## 2. Modelo de dados
+## 2. Por que lápide, e não cópia em JSON
 
-### 2.1 Tabela `Lixo`
+Três razões, todas medidas contra o código que existe:
 
-```python
-class Lixo(models.Model):
-    """
-    Repositório genérico de registros excluídos de qualquer módulo.
-    Nunca é editado após criação — é imutável até purge ou restauração.
-    """
-    # Identidade do item no lixo
-    lixo_id         = models.AutoField(primary_key=True)   # próprio ID, nunca reutilizado
-    tenant          = models.ForeignKey('nucleo.Tenant', on_delete=models.PROTECT)
-    modelo_origem   = models.CharField(max_length=100)     # ex: 'Empreendimento', 'Obra'
-    app_origem      = models.CharField(max_length=100)     # ex: 'empreendimentos', 'obras'
-    objeto_id       = models.PositiveBigIntegerField()     # ID original do registro
+1. **O `PROTECT` tornava a exclusão impossível.** `Orcamento.obra` é `PROTECT`: uma obra com
+   orçamento não sai por `DELETE`, então um endpoint que *move* o objeto para outra tabela devolveria
+   409 justamente nas obras que alguém quer tirar da frente. A lápide não consulta `PROTECT` nenhum —
+   ela não apaga.
+2. **O snapshot mataria o plano modelo.** `Cronograma.obra` é `CASCADE` e `eh_modelo` é uma marca no
+   próprio cronograma. Apagar a obra fisicamente levaria junto a biblioteca de padrões da empresa —
+   exatamente o que a decisão de 23/08 mandou preservar.
+3. **Restaurar vira trivial.** Sem payload para desserializar, sem `INSERT` com id explícito, sem
+   `setval()` em sequência, sem conflito de id. Restaurar é `UPDATE ... SET excluido_em = NULL`.
 
-    # Snapshot completo do objeto no momento da exclusão
-    payload         = models.JSONField()                   # todos os campos + relacionamentos
-
-    # Auditoria de exclusão
-    deleted_at      = models.DateTimeField(auto_now_add=True)
-    deleted_by      = models.ForeignKey('nucleo.Usuario', on_delete=models.PROTECT,
-                                        related_name='itens_excluidos')
-    motivo_exclusao = models.TextField(blank=True)         # razão fornecida pelo usuário
-
-    # Auditoria de restauração (preenchido se o item foi restaurado)
-    restored_at     = models.DateTimeField(null=True, blank=True)
-    restored_by     = models.ForeignKey('nucleo.Usuario', on_delete=models.SET_NULL,
-                                        null=True, blank=True, related_name='itens_restaurados')
-
-    # Auditoria de purge permanente
-    purged_at       = models.DateTimeField(null=True, blank=True)
-    purged_by       = models.ForeignKey('nucleo.Usuario', on_delete=models.SET_NULL,
-                                        null=True, blank=True, related_name='itens_purgados')
-
-    class Meta:
-        db_table = 'lixo'
-        indexes = [
-            models.Index(fields=['tenant', 'modelo_origem']),
-            models.Index(fields=['tenant', 'deleted_at']),
-        ]
-        # Cada objeto_id só pode aparecer UMA vez como ativo no lixo (sem purge)
-        constraints = [
-            models.UniqueConstraint(
-                fields=['tenant', 'modelo_origem', 'objeto_id'],
-                condition=models.Q(purged_at__isnull=True, restored_at__isnull=True),
-                name='lixo_unico_ativo'
-            )
-        ]
-```
-
-### 2.2 Configuração de retenção por tenant
-
-```python
-class ConfiguracaoLixo(models.Model):
-    """
-    Política de retenção do lixo para o tenant.
-    Configurável pelo gestor_lixo via API/UI.
-    """
-    tenant             = models.OneToOneField('nucleo.Tenant', on_delete=models.CASCADE,
-                                              related_name='configuracao_lixo')
-    auto_purge_ativo   = models.BooleanField(default=False)
-    retencao_dias      = models.PositiveIntegerField(default=30)   # 0 = somente manual
-    notificar_antes    = models.PositiveIntegerField(default=7)    # dias antes do purge automático
-    data_atualizacao   = models.DateTimeField(auto_now=True)
-    atualizado_por     = models.ForeignKey('nucleo.Usuario', on_delete=models.SET_NULL, null=True)
-```
+**E o medo que o desenho antigo tinha do soft-delete não se aplica aqui.** O receio era obrigar toda
+consulta de todo módulo a lembrar do filtro. Não é o caso: o filtro entra no **gerente padrão**, que
+é o caminho por onde os modelos já leem. Serializer, relação reversa (`obra.etapas`), agregação de
+serviço e ViewSet herdam o corte sem escrever uma linha.
 
 ---
 
-## 3. Garantia de ID — sem reutilização
+## 3. Modelo de dados
 
-O SGI adota PostgreSQL como banco de registro. PostgreSQL garante que sequências de autoincrement
-**nunca retrocedem**: mesmo após deletar um registro, a sequência continua avançando.
+### 3.1 A lápide — `nucleo.tenancy.Excluivel`
 
-### Regra de ouro
+Base abstrata. Herdar isto **muda o `DELETE` da API**: o `perform_destroy` do
+`TenantScopedViewSetMixin` passa a marcar em vez de apagar.
 
-> **Um `objeto_id` no lixo (não purgado, não restaurado) indica que aquele ID está "reservado".**
-> O ID só é considerado liberado após o item ser purgado (`purged_at IS NOT NULL`).
-> Na prática, PostgreSQL não vai reutilizá-lo de qualquer forma — esta regra é uma garantia
-> semântica adicional para auditoria.
+| Campo | Papel |
+|---|---|
+| `excluido_em` | A lápide **e** o relógio da purga. Indexado. |
+| `excluido_por` | `SET_NULL` — a lápide sobrevive ao desligamento de quem apagou. |
+| `motivo_exclusao` | O que o usuário escreveu no modal. |
 
-### Fluxo de IDs
+Dois gerentes, e **a ordem importa**:
 
-```
-Criação   → empreendimento_id = 42  (sequência em 42)
-Exclusão  → registro movido para Lixo com objeto_id = 42
-           → sequência agora em 43; próximo registro será 43
-Restauração → INSERT em empreendimentos com empreendimento_id = 42 explícito
-            → ajuste de sequência: SELECT setval('empreendimentos_empreendimento_id_seq',
-                                                  MAX(empreendimento_id)) FROM empreendimentos
-Purge     → linha do Lixo hard-deletada → ID 42 "liberado" semanticamente (mas nunca vai ser
-             gerado pela sequência de novo, pois ela já passou de 42)
-```
+- `objects` (padrão) — filtra a lápide. É o que a relação reversa e o serializer usam.
+- `todos` — a porta explícita para o que está na lixeira. Só o `nucleo/lixo.py` e o `admin` precisam.
 
-### Prevenção de conflito na restauração
+> **Detalhe de Django que torna o desenho seguro.** Com `base_manager_name` **não** declarado, o
+> `_base_manager` que o ORM usa para travessia de FK e `refresh_from_db()` é um `Manager` simples,
+> sem o filtro. `conta_pagar.obra` continua devolvendo a obra na lixeira — o título tem de saber de
+> quem ele é —, enquanto `Obra.objects` não a lista.
 
-Antes de restaurar, o sistema verifica:
-1. `objeto_id` não existe na tabela origem → prossegue
-2. `objeto_id` existe → bloqueia com erro `409 Conflict` (situação anormal — investigar)
+### 3.2 O índice — `nucleo.Lixo`
 
----
+Uma linha por objeto que foi para a lixeira. **Não guarda o dado** — guarda onde ele está e o que
+aconteceu com ele. Existe por dois motivos que a lápide sozinha não resolve:
 
-## 4. Controle de acesso — papel `gestor_lixo`
+1. **a página é uma consulta só** — sem ela, listar "o que este tenant excluiu" varreria as 16
+   tabelas que herdam `Excluivel`, ordenaria em Python e paginaria à mão;
+2. **a auditoria sobrevive à purga** — apagado o objeto, esta linha fica, com `purgado_em`
+   preenchido. É o que ainda responde "quem apagou o quê, quando e por quê".
 
-| Operação | Usuário comum | `gestor_lixo` | Admin plataforma |
-|---|---|---|---|
-| Mover para o lixo | ✅ | ✅ | ✅ |
-| Ver itens no lixo | ❌ | ✅ | ✅ |
-| Restaurar item | ❌ | ✅ | ✅ |
-| Purgar item permanentemente | ❌ | ✅ | ✅ |
-| Configurar retenção automática | ❌ | ✅ | ✅ |
-| Ver log de auditoria do lixo | ❌ | ✅ | ✅ |
+Campos: `alvo_tipo` (`ContentType`) + `alvo_id`; `rotulo` (o `str()` do objeto no instante da
+exclusão — depois da purga é a única coisa que ainda diz o que era); os três de auditoria
+desnormalizados da lápide; `purgar_em`; e os pares `restaurado_em/por`, `purgado_em/por`, mais
+`falha_na_purga`.
 
-O papel `gestor_lixo` é um entitlement intra-tenant atribuído na IAM ao nível de `Role`
-(ver [acesso-e-permissoes.md](../acesso-e-permissoes.md)).
-O guard no backend: `RequireRole('gestor_lixo')` nos endpoints sensíveis.
+**`purgar_em` é gravado, não calculado.** O prazo é congelado no instante da exclusão a partir do
+plano vigente. Calcular na varredura faria um downgrade encurtar retroativamente a janela de quem já
+tinha apagado.
 
----
+**Constraint:** um objeto está no máximo **uma vez** na lixeira — `UniqueConstraint` parcial sobre
+(`tenant`, `alvo_tipo`, `alvo_id`) onde `restaurado_em` e `purgado_em` são nulos.
 
-## 5. Fluxo de operações
+### 3.3 A unicidade solta a lápide
 
-### 5.1 Excluir (mover para lixo)
+As `UniqueConstraint` dos modelos com lixeira ganharam `condition=Q(excluido_em__isnull=True)`: um
+CPF na lixeira **não** segura o recadastro pelo prazo inteiro. Sem isso o usuário exclui, tenta
+cadastrar de novo e leva "já existe" sobre um registro que não consegue ver em lugar nenhum.
 
-```
-Usuário clica "Excluir" → Modal de confirmação (obrigatório, com campo motivo opcional)
-  ↓
-POST /api/lixo/mover/
-  payload: { modelo: 'Empreendimento', objeto_id: 42, motivo: '...' }
-  ↓
-Backend:
-  1. Busca o registro (scoped ao tenant)
-  2. Serializa com todos os campos para JSON
-  3. Cria entrada em Lixo
-  4. Hard-deleta o registro original
-  5. Retorna 200 com lixo_id criado
-```
-
-### 5.2 Restaurar
-
-```
-gestor_lixo clica "Restaurar" na tela do lixo
-  ↓
-POST /api/lixo/{lixo_id}/restaurar/
-  ↓
-Backend:
-  1. Verifica papel gestor_lixo
-  2. Verifica que objeto_id NÃO existe na tabela origem (anti-conflito)
-  3. Deserializa payload → INSERT com ID explícito
-  4. Atualiza sequência se necessário
-  5. Marca restored_at e restored_by no Lixo
-  6. Retorna 200 com o objeto restaurado
-```
-
-### 5.3 Purgar permanentemente
-
-```
-gestor_lixo clica "Purgar" (ação irreversível)
-  ↓
-DELETE /api/lixo/{lixo_id}/purgar/
-  ↓
-Backend:
-  1. Verifica papel gestor_lixo
-  2. Registra purged_at e purged_by (log de auditoria antes do hard-delete)
-  3. Hard-deleta a linha do Lixo
-  4. Retorna 204
-```
-
-### 5.4 Auto-purge (Celery task)
-
-```python
-# Roda diariamente via Celery beat
-@shared_task
-def auto_purge_lixo():
-    configs = ConfiguracaoLixo.objects.filter(auto_purge_ativo=True, retencao_dias__gt=0)
-    for config in configs:
-        cutoff = timezone.now() - timedelta(days=config.retencao_dias)
-        itens = Lixo.objects.filter(
-            tenant=config.tenant,
-            deleted_at__lt=cutoff,
-            restored_at__isnull=True,
-            purged_at__isnull=True,
-        )
-        for item in itens:
-            item.purged_at = timezone.now()
-            item.purged_by = None   # sistema, não usuário
-            item.save()
-            item.delete()           # hard-delete após registrar auditoria
-```
+O `TenantScopedUniqueSerializerMixin` reconhece essa condição específica e mantém o validador de
+DRF — o queryset dele é o `_default_manager`, que **já** aplica o mesmo corte. Sem essa exceção, as
+duplicatas cairiam de *400 com o campo apontado* para *500 com `IntegrityError`*.
 
 ---
 
-## 6. API (endpoints planejados)
+## 4. Quem pode o quê
 
-| Método | Endpoint | Papel | Descrição |
-|---|---|---|---|
-| `POST` | `/api/lixo/mover/` | qualquer autenticado | Move objeto para o lixo |
-| `GET` | `/api/lixo/` | `gestor_lixo` | Lista itens do lixo do tenant |
-| `GET` | `/api/lixo/{lixo_id}/` | `gestor_lixo` | Detalhe de um item (payload completo) |
-| `POST` | `/api/lixo/{lixo_id}/restaurar/` | `gestor_lixo` | Restaura o registro original |
-| `DELETE` | `/api/lixo/{lixo_id}/purgar/` | `gestor_lixo` | Purge permanente |
-| `GET` | `/api/lixo/configuracao/` | `gestor_lixo` | Lê configuração de retenção |
-| `PUT` | `/api/lixo/configuracao/` | `gestor_lixo` | Atualiza configuração de retenção |
+| Operação | Quem | Permissão |
+|---|---|---|
+| Excluir (marcar a lápide) | quem já podia excluir | a do próprio módulo — **nenhuma nova** |
+| Ver a lixeira | `gestor_lixo` | `plataforma.lixo.view` |
+| Restaurar | `gestor_lixo` | `plataforma.lixo.restaurar` |
+| Purgar antes do prazo | `gestor_lixo` | `plataforma.lixo.purgar` |
 
-Todos os endpoints filtram por tenant automaticamente (TenantScopedViewSetMixin).
+Admin do tenant e superusuário passam, como em toda a casa.
 
----
+**Excluir não ganhou verbo novo de propósito:** quem já podia apagar continua podendo, e o que mudou
+é que agora dá para voltar atrás. Trancar a exclusão atrás de uma permissão nova tornaria a lixeira
+um rebaixamento de permissão disfarçado de melhoria.
 
-## 7. Frontend (planejado)
-
-Tela acessível por `/app/lixo` — visível apenas para `gestor_lixo`:
-
-```
-┌───────────────────────────────────────────────────────────────────┐
-│  🗑 Lixo                             [⚙ Configurar retenção]     │
-├──────────────┬────────────────────────────────────────────────────┤
-│  Filtros:    │                                                    │
-│  [Módulo ▼]  │  Tabela: Módulo | Nome | Excluído por | Data      │
-│  [Data ▼]    │        |      |            | Ações [Restaurar][🗑] │
-│              │  ...                                               │
-│              │  Paginação                                         │
-└──────────────┴────────────────────────────────────────────────────┘
-```
-
-Modal de purge permanente:
-- Aviso em vermelho com texto do item a ser purgado
-- Campo de confirmação: o usuário digita o nome do item para confirmar
-- Botão "Purgar permanentemente" habilitado só após digitação correta
+**Purgar saiu de dentro de restaurar:** restaurar devolve dado à circulação; purgar destrói, antes do
+prazo, o que ainda dava para recuperar. Quem confere o que foi apagado por engano não é
+necessariamente quem pode encurtar a janela que o plano vendeu.
 
 ---
 
-## 8. Escopo de módulos — todos os principais
+## 5. A paywall é a JANELA, não um teto de itens
 
-| Módulo Django | Modelos com suporte ao lixo |
+`lixo_retencao_dias` por plano ([`planos.py` §5.5g](../../payment/planos.py)). Um teto de
+**quantidade** só teria dois modos de agir, e os dois são piores:
+
+- **barrar a exclusão** com a lixeira cheia — quebra a regra que o `nucleo/quotas.py` já defende
+  (*quota trava só a criação; editar e excluir seguem livres*), e na versão mais perversa dela:
+  impedir alguém de apagar porque apagou demais;
+- **purgar o mais antigo** para abrir espaço — destruir dado ainda dentro do prazo prometido, calado.
+
+A janela regula o mesmo custo sem nenhum dos dois efeitos: o que entra sai sozinho, e quanto mais
+barato o plano, mais rápido sai.
+
+---
+
+## 6. Fluxo
+
+### 6.1 Excluir
+
+```
+DELETE /api/<modulo>/<recurso>/<id>/?motivo=...
+  → TenantScopedViewSetMixin.perform_destroy
+  → é Excluivel?  sim → nucleo.lixo.mover_para_lixo   (lápide + linha no Lixo, uma transação)
+                  não → instance.delete()             (exclusão física, como sempre foi)
+```
+
+Não existe `POST /api/lixo/mover/`. O que põe um objeto na lixeira é o `DELETE` do próprio módulo,
+onde o usuário está e onde a autorização dele já roda.
+
+### 6.2 Restaurar · 6.3 Purgar
+
+```
+POST   /api/lixo/{id}/restaurar/   → tira a lápide
+POST   /api/lixo/{id}/purgar/      → emite `antes_de_purgar`, apaga de verdade
+DELETE /api/lixo/{id}/purgar/      → o mesmo (o verbo que descreve o ato)
+```
+
+### 6.4 A varredura
+
+`nucleo.purgar_lixo_vencido`, de hora em hora no beat. Lê `purgar_em` e **não consulta plano nenhum**.
+Lista sob `rls_bypass()` (task não tem tenant armado; sem isso enxergaria zero linhas para sempre) e
+**apaga dentro do contexto do tenant de cada item**. Transação **por item**: uma obra que recusa não
+desfaz a purga das outras.
+
+---
+
+## 7. O contrato com os módulos — `antes_de_purgar`
+
+O `nucleo` é importado por todos e não pode importar nenhum de volta: ele não sabe o que está
+apagando. Antes do `DELETE` definitivo ele emite `antes_de_purgar` (sender = classe do alvo), e o
+módulo dono decide o que precisa sobreviver. Mesmo contrato do `aprovacao_concluida`.
+
+**Levantar exceção no receptor aborta a purga** — e é legítimo: é como um módulo diz "este objeto não
+pode morrer ainda". O motivo vai para `Lixo.falha_na_purga`, o item **fica** na lixeira, visível, e a
+tela mostra a recusa ao lado dele. Purga que falha não mente.
+
+Receptores hoje:
+
+| Módulo | O que faz | Por quê |
+|---|---|---|
+| `modulopdca` | desliga da obra os cronogramas `eh_modelo` (e solta o calendário deles) | decisão do dono: o modelo sobrevive à obra |
+| `modulopdca` | solta o calendário dos cronogramas **comuns** antes do `CASCADE` | desata o nó `CASCADE`/`PROTECT` que abriu o D116 |
+| `moduloorcamento` | apaga os orçamentos da obra | `Orcamento.obra` é `PROTECT`; sem isso a obra nunca venceria o prazo |
+
+> **O nó do D116, e onde ele foi desatado.** `CalendarioTrabalho.obra` é `CASCADE` e
+> `Cronograma.calendario` é `PROTECT`. Os dois entram na mesma fila de exclusão, e o coletor do
+> Django **não isenta o que já está na fila**: ele vê um `PROTECT` apontando para o calendário e
+> recusa o `DELETE` inteiro. Soltar o calendário antes resolve porque o `PROTECT` deixa de existir no
+> instante do `DELETE`. O lugar certo para isso é o módulo dono, não o `nucleo`.
+
+---
+
+## 8. A tela
+
+A listagem é **paginada** (`PAGINA_PADRAO["lixo"]` = 25, teto 200, no [`planos.py`](../../payment/planos.py)) —
+neste projeto não há paginação padrão do DRF, e ViewSet sem paginador devolve array puro em vez do
+envelope `{count, results}`. Foi o que fez a tela dizer "1 na lixeira" e "nada na lixeira" ao mesmo
+tempo no primeiro dia ([D122](../historico-correcoes.md)).
+
+`/app/lixo`, na seção **Administração** da sidebar, trancada por `plataforma.lixo.view` (cadeado, não
+omissão: é porta que existe para a pessoa — ela pode pedir o papel ao admin).
+
+**O relógio é o assunto.** A coluna que mais importa não é o que foi apagado, é quanto tempo falta;
+o que vence em 3 dias ou menos vem marcado, e "vencido" não vira zero. O modal de purga exige digitar
+o nome do item, porque aquele botão apaga antes do prazo que o plano prometeu.
+
+Três medidores no topo: o que está na lixeira, o que **venceu e ainda está aqui** (normalmente zero —
+diferente de zero por muito tempo significa que a varredura parou) e o que tem falha de purga.
+
+---
+
+## 9. Escopo — os modelos com lixeira
+
+| App | Modelos |
 |---|---|
 | `empreendimentos` | `Empreendimento` |
 | `obras` | `Obra`, `EtapaObra`, `DocumentoObra` |
 | `clientes` | `Cliente`, `ClienteEmpreendimento`, `ContratoCliente` |
 | `fornecedores` | `Fornecedor` |
-| `moduloerp` | `ContaPagar`, `ContaReceber`, `NotaFiscalEmitida` |
-| `rh` | `Funcionario`, `Cargo` |
-| `modulocrm` | `Lead`, `Oportunidade`, `Conta` |
+| `moduloerp` | `ContaPagar`, `ContaReceber`, `NotaFiscal` |
+| `moduloorcamento` | `Orcamento` — com trava por status: aprovado não sai (ver [moduloorcamento.md](../modulos/moduloorcamento.md)) |
+| `rh` | `Cargo`, `Funcionario` |
+| `modulocrm` | `Lead`, `Account`, `Opportunity` |
 
-> Registros filhos (ex: `CobrancaCliente`, `DocumentoDiario`) seguem o pai — se o pai vai para
-> o lixo, os filhos também; se o pai é restaurado, os filhos são restaurados juntos (o payload
-> inclui os filhos serializados).
+O que **não** herda `Excluivel` continua com exclusão física, e isso é o certo para o acessório
+(rateio, item de nota, exceção de calendário): lixeira de tudo viraria depósito de ruído. O que o
+dono pediu para poder desfazer é o objeto de valor, não a linha filha dele.
 
----
-
-## 9. Considerações de segurança e LGPD
-
-- **Dados PII em repouso no lixo:** o payload JSON pode conter CPF, dados bancários, etc.
-  Aplicar a mesma política de mascaramento da Fase 9 (RBAC de campo) ao visualizar payloads.
-- **Retenção e LGPD:** o direito ao esquecimento (art. 18 LGPD) exige que dados pessoais
-  sejam purgados quando solicitado. O `auto_purge` com `retencao_dias` deve respeitar
-  prazos legais. A implementação definitiva de retenção LGPD está na **Fase 9**.
-- **Auditoria imutável:** as colunas `deleted_at/by`, `restored_at/by`, `purged_at/by`
-  nunca devem ser editadas — somente `INSERT`. O endpoint de mover deve ser idempotente:
-  se o `objeto_id` já está no lixo (não purgado), retornar `409`.
+Entrar com o 17º modelo é herdar a base e gerar a migration — a tela, a varredura, a permissão e a
+paywall já valem para ele.
 
 ---
 
-## 10. Sequência de implementação
+## 10. O que mudou em relação ao desenho de 2026
 
-A implementação acontece **após** os módulos de negócio estarem construídos:
+| Desenho anterior | O que ficou | Por quê |
+|---|---|---|
+| `Lixo.payload` com o objeto e os filhos em JSON | **removido** | o objeto nunca sai do lugar |
+| Hard-delete na exclusão | **lápide**; o hard-delete foi para a purga | `PROTECT` impedia; e o plano modelo morria junto |
+| §3 "Garantia de ID — sem reutilização", `setval()`, conflito 409 | **sem assunto** | restaurar não reinsere nada |
+| `POST /api/lixo/mover/` | **removido** | o `DELETE` do módulo já autoriza e já sabe o alvo |
+| Papel via `RequireRole('gestor_lixo')` | **permissões** `plataforma.lixo.*` | é o catálogo que a casa usa desde a Fase 9 |
+| Purga hard-deleta a linha do `Lixo` | a linha **fica**, com `purgado_em` | apagar o log no momento em que ele vira a única prova |
+| Retenção padrão 30 dias, configurável por tenant | **`lixo_retencao_dias` por plano**, 15 nos contratados | decisão do dono: é paywall, não configuração |
+| `ConfiguracaoLixo` (auto-purge on/off, notificar antes) | **não existe** | a purga não é opcional — é ela que corta o custo |
 
-```
-Fase C (módulos core) completa
-  ↓
-Criar app Django 'lixo' com modelos Lixo + ConfiguracaoLixo
-  ↓
-Adicionar role 'gestor_lixo' na IAM + RequireRole no backend
-  ↓
-Endpoint POST /api/lixo/mover/ + wiring nos ViewSets de cada módulo
-  ↓
-Endpoints restaurar + purgar
-  ↓
-Celery task auto_purge_lixo
-  ↓
-Frontend: tela /app/lixo (gestor_lixo)
-  ↓
-Configuração de retenção (UI + API)
-  ↓
-Testes E2E: phase_lixo_test.py
-```
+---
+
+## 11. LGPD
+
+O payload em JSON era o problema de PII em repouso que a prancha anterior previa — ele não existe
+mais. O que fica é o `rotulo` (o nome do objeto) e o nome de quem apagou.
+
+A lápide **não** é anonimização: um titular que exerce o direito ao esquecimento precisa que o dado
+saia de verdade, e para isso existe a purga manual do `gestor_lixo`, que não espera o prazo. O
+tratamento completo do art. 18 continua endereçado ao fluxo de LGPD da Fase 9
+([acesso-e-permissoes.md](../acesso-e-permissoes.md)), que é quem sabe *quais* colunas são do titular
+— a lixeira sabe apenas que o registro saiu de circulação.

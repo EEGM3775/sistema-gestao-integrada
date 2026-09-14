@@ -4,6 +4,7 @@ import {
   LayoutDashboard, Building2, HardHat, Users, Truck,
   BarChart3, UserCog, TrendingUp, Brain, Plane, Package,
   PanelLeft, Lock, ShieldCheck, Network, Warehouse, Calculator, DatabaseZap,
+  GanttChartSquare, Trash2,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { Quarteirao } from '@/components/brand/Quarteirao'
@@ -17,6 +18,14 @@ interface NavItem {
   to: string
   module?: string       // entitlement code — se definido, item some se não tiver o módulo
   adminOnly?: boolean    // só aparece para admin do tenant
+  /** Permissão do catálogo da IAM que o item exige (D116, a lixeira).
+   *
+   *  Diferente de `platformOnly`: isto **tranca**, não omite. A régua do dono
+   *  (22/08/2026) é a intenção — porta que existe para a pessoa aparece com
+   *  cadeado, e esta existe: quem não tem o papel `gestor_lixo` pode pedi-lo ao
+   *  admin da empresa, que é caminho real. O que se omite é o que não é dela de
+   *  jeito nenhum, e a lixeira é da empresa. */
+  permission?: string
   /** Só para o supervisor da plataforma — e **omitido**, não trancado.
    *
    *  A diferença com `adminOnly` é deliberada e é decisão do dono (22/08/2026):
@@ -65,6 +74,7 @@ const NAV_SECTIONS: NavSection[] = [
       { label: 'Suprimentos',      icon: <Package />,     to: '/app/scm',        module: 'scm',            implemented: true },
       { label: 'Estoque & Logística', icon: <Warehouse />, to: '/app/sil',       module: 'sil',            implemented: true },
       { label: 'Orçamento',        icon: <Calculator />,  to: '/app/orcamento',  module: 'orcamento',      implemented: true },
+      { label: 'Planejamento (PDCA)', icon: <GanttChartSquare />, to: '/app/pdca',   module: 'pdca',           implemented: true },
       { label: 'Drone',            icon: <Plane />,       to: '/app/drone',      module: 'drone',          implemented: false },
     ],
   },
@@ -73,6 +83,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { label: 'Papéis e Acessos', icon: <ShieldCheck />, to: '/app/admin/papeis',   adminOnly: true, implemented: true },
       { label: 'Usuários',         icon: <Users />,       to: '/app/admin/usuarios', adminOnly: true, implemented: true },
+      { label: 'Lixo',             icon: <Trash2 />,      to: '/app/lixo',           permission: 'plataforma.lixo.view', implemented: true },
     ],
   },
   {
@@ -100,7 +111,7 @@ function iniciais(nome: string): string {
 }
 
 export const AppSidebar: React.FC = () => {
-  const { hasModule, isTenantAdmin, isPlatformAdmin, user } = useAuth()
+  const { hasModule, hasPermission, isTenantAdmin, isPlatformAdmin, user } = useAuth()
   const [collapsed, setCollapsed] = useState(() =>
     localStorage.getItem('sgi_sidebar_collapsed') === 'true'
   )
@@ -117,6 +128,7 @@ export const AppSidebar: React.FC = () => {
     if (!it.implemented) return { interativo: false, motivo: it.badge?.kind === 'soon' ? 'Em breve' : 'Em construção' }
     if (it.module && !hasModule(it.module)) return { interativo: false, motivo: 'Módulo não contratado' }
     if (it.adminOnly && !isTenantAdmin) return { interativo: false, motivo: 'Somente administradores' }
+    if (it.permission && !hasPermission(it.permission)) return { interativo: false, motivo: 'Somente o gestor da lixeira' }
     return { interativo: true }
   }
 

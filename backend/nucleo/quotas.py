@@ -72,6 +72,19 @@ RECURSOS_CONTADOS: dict[str, str] = {
     # aos milhares; limitar "bancos" deixaria um único banco com 200 mil linhas
     # passar batido.
     "banco_preco_linhas": "moduloorcamento.ItemBancoPreco",
+    # PDCA.1b — o cronograma marcado como modelo. A tabela é a mesma dos planos
+    # comuns, então esta quota é a primeira que conta um **recorte** dela: ver
+    # `FILTRO_DO_RECURSO` logo abaixo.
+    "planos_modelo": "modulopdca.Cronograma",
+}
+
+# Quando a quota não é "quantas linhas a tabela tem", e sim "quantas linhas de um
+# certo tipo". Nasceu com `planos_modelo`, e nasceu como mapa em vez de código
+# especial porque o caso não é excepcional: quota sobre estado de uma linha
+# (modelo × comum, arquivado × ativo) tende a se repetir, e a alternativa — um
+# `if recurso == "planos_modelo"` dentro do contador — é a que não escala.
+FILTRO_DO_RECURSO: dict[str, dict] = {
+    "planos_modelo": {"eh_modelo": True},
 }
 
 # Rótulo legível para a mensagem do 402 e para o medidor da UI.
@@ -81,6 +94,10 @@ ROTULOS: dict[str, str] = {
     "clientes": "clientes",
     "fornecedores": "fornecedores",
     "banco_preco_linhas": "linhas de banco de preço próprio",
+    "planos_modelo": "planos modelo",
+    # Janela, não contagem — o rótulo é lido numa frase ("15 dias para
+    # desfazer"), nunca ao lado de uma barra de progresso. Ver `plano_views`.
+    "lixo_retencao_dias": "dias de lixeira",
 }
 
 
@@ -134,7 +151,8 @@ def uso_atual(recurso: str, tenant_id) -> int:
     devolveria o total de TODAS as empresas. Mesmo motivo pelo qual
     `scope_queryset_by_tenant` existe ao lado da política do banco.
     """
-    return modelo_do_recurso(recurso).objects.filter(tenant_id=tenant_id).count()
+    consulta = modelo_do_recurso(recurso).objects.filter(tenant_id=tenant_id)
+    return consulta.filter(**FILTRO_DO_RECURSO.get(recurso, {})).count()
 
 
 def limite_do_usuario(user, recurso: str):
