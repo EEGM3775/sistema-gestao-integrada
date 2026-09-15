@@ -10,6 +10,643 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D144 — a dica do avanço mandava digitar um número que o servidor recusava · ✅ corrigido 15/09/2026
+
+Achado pelo dono na grade da semana, tentando fechar a frente `2.2 Armação da fundação`:
+
+> `'2.2' já está em 97.64% — este apontamento levaria a 100.04%, e o avanço não passa de 100%.`
+
+Ele tinha digitado **2,4** — que foi exatamente o que a tela mandou: a dica do campo dizia *"Restam
+2.4 pontos para fechar esta frente"*, com `(100 - atual).toFixed(1)`. Faltavam **2,36**. A frente
+ficava impossível de fechar pela tela, e a recusa parecia arbitrária: o número recusado era o número
+sugerido.
+
+**A regra do servidor está certa e fica** — avanço não passa de 100%. O errado era a tela mandar
+digitar um número que ela mesma sabia estar arredondado.
+
+**Correção:** o resto passou a ser calculado com a precisão que a coluna aceita (`percentual` é
+`7,4`), e virou **um clique**: `fechar (+2,36)` preenche o campo com o valor exato. Número que o
+sistema manda digitar tem de ser o número que o sistema aceita — e, podendo, o sistema digita.
+
+---
+### D143 — contrato por administração mostrava uma grade de itens que não paga nada · ✅ corrigido 15/09/2026
+
+*"A parte mais importante da medição não consigo editar"*, com o elemento colado: um
+`<input readonly value="0">`. Ele estava na **prévia** de um contrato **por administração**, e havia
+dois defeitos no mesmo lugar.
+
+**O primeiro é do regime.** Nesse regime o que se paga é `custo reembolsável + taxa`, e os itens não
+entram na conta (`totais_da_medicao` os ignora — §4.4 da planta). A prévia mostrava a grade assim
+mesmo: colunas, proposta, e até o aviso *"1 de 1 itens não têm atividade ligada… digite a quantidade
+depois de abrir a medição"* — instrução impossível, porque a medição desse regime não tem grade
+nenhuma. A tela oferecia um instrumento que não vale ali e mandava fazer algo que não existe.
+
+**O segundo é de interface, e vale para todas as telas.** `<input readonly>` é mentira: tem borda,
+cursor e fundo de campo, convida a clicar e não aceita nada. Em leitura, número é **texto**.
+
+**Correção:** a prévia e a medição de contrato por administração mostram o instrumento do regime (o
+custo declarado, com a taxa e o bruto ao lado) e **não** a grade; o cockpit ganhou um bloco *"Como
+este contrato é medido"* que diz a regra onde o gestor procura a grade, incluindo a saída — se a
+intenção é pagar por quantidade medida, o regime é **preço unitário**, e dá para trocar enquanto não
+houver medição. E a célula somente-leitura da grade deixou de ser `input` em qualquer tela.
+
+---
+### D142 — a planilha contratual dizia "não se edita" e a API editava · ✅ corrigido 15/09/2026
+
+Achado pelo dono em minutos: a tela do contrato afirmava *"o contrato saiu do rascunho: a planilha
+não se edita mais aqui"* e ele mudou uma quantidade contratada de **53.150 para 631.500** num
+contrato com medição em aprovação. A trava existia só no frontend (uma prop `editavel`); a API
+aceitava o `PATCH` — e junto com ela o comando de bancada, a importação e qualquer aba antiga aberta
+no navegador.
+
+**Regra que mora só na interface não é regra: é aviso.**
+
+**E a primeira correção foi pior que o defeito.** Fechei a planilha por *status*: só rascunho edita.
+Em minutos o dono encontrou o beco — contrato **vigente sem itens** ficava impossível de preencher,
+com a tela pedindo *"cadastre os itens para poder medir"* e nenhum caminho para fazê-lo. A saída
+pelo aditivo seria pior ainda: item nascido de aditivo tem contratado original zero, e a planilha
+inteira entraria no contrato como se fosse acréscimo.
+
+**A régua certa não é o status — é se alguém já mediu contra ela.** Antes da primeira medição não há
+nada a preservar: nenhum número foi calculado sobre a planilha, nenhum título saiu. Depois, mudá-la
+reescreveria o denominador de um documento assinado, e o caminho é o aditivo. Medição cancelada ou
+reprovada não fecha nada — é a mesma régua do `_EM_VOO` que já governa o acumulado.
+
+**Correção em três partes, e a ordem importa:**
+
+1. a regra virou uma função só — `services.planilha_editavel`, que devolve *se* e *por quê*;
+2. a **view** a aplica (é ela que protege bancada, importação e aba velha);
+3. o **serializer** a publica (`planilha_editavel`, `planilha_fechada_porque`), e a tela passou a
+   ler a resposta em vez de reimplementar a regra — que foi o que permitiu, em primeiro lugar, a
+   tela dizer uma coisa e a API fazer outra.
+
+Junto, a grade vazia deixou de mandar cadastrar itens sem dizer onde: ela traz o botão que leva à
+planilha. Mensagem que manda fazer algo sem mostrar o caminho é um beco.
+
+---
+### D141 — a tela da medição ficava **em branco** ao abrir um boletim · ✅ corrigido 15/09/2026
+
+Achado pelo dono no mesmo dia da entrega, clicando numa medição da lista do contrato: a página sumia.
+O console dizia tudo:
+
+> `r.deducoes.map is not a function`
+
+**A causa é de uma linha.** O `get_totais` do `MedicaoSerializer` fazia:
+
+```python
+return {chave: str(valor) for chave, valor in totais.items()}
+```
+
+Um nível só. Funcionava enquanto os totais eram escalares; a PDCA.4 acrescentou a **lista de
+deduções** dentro deles, e `str([])` é a string `"[]"`. O boletim percorre essa lista, e string não
+tem `.map` — a árvore do React caía inteira, deixando só a casca da plataforma na tela.
+
+**Correção:** `_decimais_em_string`, recursivo, que converte **só** `Decimal` e preserva a estrutura
+— a mesma função que o `views.py` já tinha para os endpoints montados à mão (`_str_decimais`), e que
+o serializer não usava porque na PDCA.3 não precisava. O `get_resumo` do aditivo, que tinha o mesmo
+achatamento com um `isinstance(int)` no meio, passou a usar a mesma função.
+
+A lição é a de sempre com `str()` em estrutura: ele **sempre** funciona, e por isso o defeito só
+aparece no dia em que o valor deixa de ser escalar — em produção, na tela de quem abriu o documento.
+
+---
+### D140 — a aba travava ao abrir o endereço antigo `?medicao=` · ✅ corrigido 15/09/2026
+
+*"Então trava tudo e some as páginas."* Duas coisas no mesmo clique, e esta é a segunda.
+
+A `ContratoPage` redireciona o endereço antigo para o documento. O efeito dependia do objeto
+devolvido por `useSearchParams()` — e o React Router **recria essa instância a cada renderização**.
+Resultado: o efeito rodava sempre, chamava `navigate`, o `navigate` renderizava, o efeito rodava de
+novo. Na reprodução com Playwright: **31 requisições em 5 segundos** e a aba sem responder.
+
+**Correção:** depender da **string** (`params.get('medicao')`), que só muda quando a URL muda. O
+teste de navegador passou a medir o que importa — *com a tela parada não pode haver requisição* — em
+vez de confiar em inspeção visual.
+
+---
+### D139 — zerar uma linha da grade fazia a proposta voltar sozinha · ✅ corrigido 15/09/2026
+
+Achado por leitura do código enquanto se investigava o D141, e nunca reportado por ninguém — o que é
+a parte incômoda: **é um defeito silencioso que paga a mais**.
+
+A grade de um documento aberto começava em `quantidade_medida || quantidade_proposta`. O gestor
+zerava uma linha que decidiu não medir; o autosave gravava o zero; o servidor apagava a linha (linha
+sem quantidade não vira `ItemMedicao`, por desenho); o `contexto/` devolvia `quantidade_medida: 0`;
+e a grade, sem conseguir distinguir *"zerei"* de *"não mexi"*, recolocava a proposta — e o autosave
+a gravava de volta. O número apagado reaparecia, e num documento que vira título a pagar.
+
+**Correção:** `useGradeEditavel` passou a receber com que valor **começa** — `'proposta'` na prévia
+(onde não há documento) e `'documento'` na medição aberta, onde o começo é o que está gravado,
+**inclusive o zero**. A rede é um F5 no teste de navegador: digita, recarrega, o valor continua lá;
+zera, recarrega, continua zero.
+
+---
+### D138 — a medição aberta pelo link direto mostrava "já medido" **negativo** · ✅ corrigido 15/09/2026
+
+Achado pelo dono, colando `…/contratos/22?medicao=14` no navegador: *"item medições em contrato tá
+muito mal feito"*. Era mais que feio — os números estavam errados, e só nesse caminho de entrada.
+
+**A causa.** A `ContratoPage` desligava a busca da prévia quando havia medição aberta
+(`useProposta(aberta ? undefined : id, …)`) e, ao mesmo tempo, **montava a grade a partir dela**:
+
+```ts
+quantidade_ja_medida: String(jaMedido - Number(naMedicao?.quantidade ?? 0))
+saldo: String(Number(item.quantidade_contratada) - jaMedido + Number(naMedicao?.quantidade ?? 0))
+```
+
+Em carga fria (link colado, F5, favorito) `proposta.data` é `undefined`, então `jaMedido = 0` e:
+
+- **já medido** saía **negativo** (`0 − o que esta medição mediu`);
+- **saldo** saía **acima do contratado**;
+- o critério virava `direto` para todas as linhas, apagando a marca de "sem vínculo";
+- e a **trava de excesso da grade**, que compara contra esse saldo, deixava de morder — justamente
+  no caminho em que os números estavam errados.
+
+Chegando pela prévia, o `keepPreviousData` emprestava a proposta anterior e os números melhoravam
+**por acidente**: a mesma tela mostrava coisas diferentes conforme a porta pela qual se entrava.
+
+**A correção não foi consertar a conta — foi tirá-la da tela.** `GET /api/pdca/medicoes/{id}/contexto/`
+devolve a grade inteira já resolvida (contratado original, aditivos, contratado atual, acumulado
+anterior **excluindo esta medição**, proposta, estoque anterior, saldo). A grade passou a ser um
+componente que recebe números e devolve edições, e não calcula nenhum. É a mesma doutrina do CPM e
+do saldo do contrato (§4.9 e §5.5 da planta): **dinheiro tem uma fonte só**.
+
+---
+### D137 — digitar a grade e clicar em Submeter aprovava os números **antigos**, em silêncio · ✅ corrigido 15/09/2026
+
+"Salvar grade" e "Submeter" eram botões independentes, e submeter mandava só `{id}`: o servidor
+validava e congelava **o que estava gravado**, não o que estava na tela. Não havia estado "sujo",
+nem aviso ao sair da página. O resultado é a pior classe de defeito de software de dinheiro — o
+documento é aprovado, o `ContaPagar` é emitido, e **nada na tela indica que algo se perdeu**.
+
+**Correção:** autosave com debounce de 1,5 s ([autosave.ts](../frontend/src/modules/pdca/autosave.ts)),
+selo permanente de estado (`salvando… / não salvo / salvo às 14:32 / falhou`), `beforeunload` com
+gravação pendente, e **submeter grava antes de submeter** — recusando-se a enviar se a gravação não
+terminou. O botão "Salvar grade" sumiu: ele existia porque o sistema não sabia gravar sozinho.
+
+Três detalhes que o autosave precisou acertar: a assinatura nasce do que veio do servidor (senão a
+montagem do componente contaria como edição e reescreveria `origem` de linhas que ninguém tocou), o
+estado só volta a "salvo" se nada novo foi digitado durante a chamada, e `salvarAgora` existe para o
+gesto que não pode esperar.
+
+---
+### D136 — a lista de medições trazia todas as linhas de todos os boletins · ✅ corrigido 15/09/2026
+
+A barra lateral do contrato escreve `#3 · aprovada · R$ 40.000` e pedia `page_size=100` do serializer
+completo: **todos os `ItemMedicao` de todas as medições**, mais `totais` e `escada` calculados por
+linha. Numa carteira com 40 boletins de 300 linhas, meio megabyte de JSON e ~200 consultas para
+desenhar quarenta linhas de texto — e o `get_escada` fazia `obj.aprovacoes.order_by(...)`, que
+**invalida o `prefetch_related`** e vira uma consulta por medição.
+
+**Correção:** `?resumo=1` com `MedicaoResumoSerializer` (sem `itens` nem `deducoes`), `prefetch` de
+`aprovacoes`/`nivel_atual`/`atestos`, e a escada ordenada **em Python** sobre o cache do prefetch.
+Quem abre um documento pede o documento (`retrieve`); quem lista quer o cabeçalho.
+
+---
+### D135 — contrato por administração era impossível de medir pela tela · ✅ corrigido 15/09/2026
+
+O regime existe no backend desde a PDCA.3 com tudo que precisa — `custo_reembolsavel`,
+`taxa_administracao_aplicada`, `custo_origem` — e **não tinha campo nenhum no frontend**. O gestor
+abria a medição (que nasce sem custo), tentava submeter e recebia *"informe o custo reembolsável do
+período"*, sem lugar para informá-lo. Regime inteiro sem porta.
+
+A causa é estrutural, e por isso a correção não foi só acrescentar um `input`: a medição **não tem
+`PATCH`** (o documento tem ciclo de vida, e um `PATCH` genérico atravessaria o congelamento), e o
+custo não cabia em `linhas/` — no regime de administração não existe linha nenhuma. Entrou
+`POST /medicoes/{id}/cabecalho/`, que muda os dois campos do documento que não são a grade (custo e
+observação) e só em rascunho. A `MedicaoPage` mostra o bloco de custo no lugar da grade quando o
+regime é administração, com a taxa congelada e o bruto ao lado.
+
+---
+### D134 — reprovar medição não pedia motivo · ✅ corrigido 15/09/2026
+
+A planta manda registrar o atesto com *autor, data e observação* (§4.4), o `Atesto` do `nucleo`
+guarda o campo desde a PDCA.0, e a tela mandava `{"aprovar": false}` e pronto. Quem montou o boletim
+recebia o documento de volta sem nenhuma informação sobre o que corrigir — e a próxima versão
+voltava com o mesmo problema.
+
+**Correção:** `AtestarSerializer` exige `observacao` quando `aprovar` é falso (aprovar sem comentário
+continua legítimo: a assinatura já é a mensagem), e as duas telas — medição e aditivo — pedem o
+motivo num modal que explica por quê. As assinaturas passaram a viajar no payload da escada
+(`escada.atestos`), e é isso que o **boletim imprime**: quem decidiu cada degrau, quando, e com que
+permissão.
+
+---
+### D133 — item de contrato sem quantidade devolvia 500 com página de depuração · ✅ corrigido 15/09/2026
+
+Achado pelo dono, cadastrando um item na planilha contratual recém-criada (D132) sem preencher a
+quantidade. A resposta foi a página de erro do Django:
+
+> `IntegrityError at /api/pdca/itens-contrato/` — *new row violates check constraint
+> "pdca_item_contrato_quantidade_positiva"*
+
+**A regra estava certa, e fica.** A `CheckConstraint` existe para que nenhum caminho de escrita a
+contorne — comando de bancada e importação incluídos. O errado era *como* a recusa chegava, e é
+**exatamente a mesma classe de defeito** que motivou o `nucleo/excecoes.py` na PDCA.1, quando um
+`ProtectedError` virava 500: a regra de negócio caberia numa frase e chegava como três camadas de
+ruído.
+
+**A causa imediata foi minha inconsistência.** Eu tinha escrito, no `ContratoObraSerializer`, o
+comentário que diz a doutrina — *"a `CheckConstraint` do model é a rede de baixo; aqui a mesma regra
+vira **mensagem**"* — e não fiz isso no `ItemContratoSerializer`. As duas travas numéricas do item
+(quantidade > 0, preço ≥ 0) existiam só no banco.
+
+**Correção em três camadas, e cada uma tem um papel diferente:**
+
+1. **O serializer diz qual campo**, na língua de quem preenche, e explica a consequência: *"um item de
+   quantidade zero atravessaria a medição inteira sem erro e produziria um título de R$ 0,00 que
+   ninguém consegue explicar"*. Preço negativo aponta o caminho certo — supressão é aditivo.
+2. **O formulário barra antes de sair da tela**, com o motivo **ao lado do botão desabilitado**: botão
+   apagado sem explicação faz a pessoa procurar o erro no campo errado.
+3. **`IntegrityError` deixou de ser 500 na plataforma inteira.** `nucleo/excecoes.py` agora traduz
+   violação de *check* para **400** e de *unicidade* para **409**, nomeando a regra para o suporte.
+   Isso é a **rede de baixo**, não a validação: ele vê o nome da constraint, não o formulário, e por
+   isso **não inventa qual campo errou** — traduzir `pdca_item_contrato_quantidade_positiva` para "a
+   quantidade está errada" acertaria neste caso e erraria no próximo. FK inexistente e `NOT NULL`
+   continuam **500** de propósito: não são dado do usuário fora de faixa, são bug de quem escreveu o
+   caminho, e um 400 os esconderia atrás de uma mensagem de formulário.
+
+**Um defeito dentro da própria correção**, achado pelo teste que a cobre: o extrator do nome da
+constraint pegava o **primeiro** par de aspas da mensagem do Postgres — que é a **tabela**
+(`modulopdca_itemcontrato`), não a regra. Devolvia ao suporte a informação que ele já tinha pela rota,
+escondendo a que faltava. Passou a buscar por `constraint "…"`.
+
+---
+### D132 — o formulário de contrato tinha cinco defeitos, e o quinto era o pior · ✅ corrigido 15/09/2026
+
+Achados pelo dono **abrindo o "+ novo contrato" e olhando**. Quatro eram do formulário; o quinto era
+a ausência de uma tela inteira.
+
+**1. O valor não se apresentava em real.** A caixa mostrava `500000`, e ninguém sabe se são quinhentos
+mil reais ou cinco mil. A casa **já tinha a convenção** — `utils/money.ts`, dinheiro em centavos
+inteiros, `maskMoney` na exibição — e eu escrevi o formulário ignorando-a, com string livre.
+
+**2. O zero à esquerda sobrevivia.** `<input type="number">` controlado pelo React guardava `12` no
+estado e deixava `012` na caixa: o DOM e o sistema divergiam, e quem digitou via um número que o
+sistema não tinha.
+
+**3. O select de fornecedores nascia vazio.** `/api/fornecedores/` responde **lista crua**, não
+página, e o código lia `.results` — `undefined` num array. O mesmo formato que o E2E já havia me
+mostrado dois dias antes, no `pdca3_medicao_test.py`; eu tratei lá e repeti o erro aqui.
+
+**4. O rodapé saía da tela em janela baixa.** O `Modal` com `alto` prende cabeçalho e rodapé e entrega
+a sobra ao miolo — mas **só se o filho colaborar** (`overflowY` + `minHeight: 0`), o que a doc do
+componente diz e o meu formulário não fazia. Os botões de salvar ficavam inalcançáveis.
+
+**5. Não havia como cadastrar a planilha contratual.** A API (`/api/pdca/itens-contrato/`) e os três
+hooks existiam desde a PDCA.3, e **nenhuma tela os chamava**. Dava para criar o contrato, a grade de
+medição dizia *"cadastre os itens para poder medir"*, e não havia onde. É a lição da PRA.5c se
+repetindo — o botão não estava desabilitado, estava **ausente** — um dia depois de eu escrever um
+teste de navegador cujo cabeçalho cita essa lição pelo nome.
+
+**A correção dos quatro primeiros virou kit, e não remendo local.** `components/malha/Campos.tsx`
+traz `CampoMoeda`, `CampoInteiro` e `CampoDecimal`, que resolvem os três defeitos do
+`<input type="number">` de uma vez: o valor se apresenta como a pessoa o escreve, o zero à esquerda
+morre na entrada, e a roda do mouse não altera o número (o `type="number"` troca um prazo de pagamento
+quando alguém rola a página com o cursor em cima). São theme-aware por token — a promoção do
+`MoneyInput` do ERP, que pinta cor fixa e some no tema escuro.
+
+**Um sexto defeito apareceu ao testar, e é do mesmo kit.** Campo numérico nunca está vazio: mostra
+`0,00`. Clicar e digitar **acrescentava** ao zero, e quem digitasse `8000` num campo de preço recebia
+`R$ 80.000,00` em vez de `R$ 80,00` — um número errado plausível o bastante para ser salvo. Os três
+campos passaram a selecionar ao focar, que a `GradeDeMedicao` já fazia na célula e que agora é
+propriedade do kit em vez de lembrança de quem escreve o próximo formulário.
+
+**E o teste que achou isso tinha ele próprio dois defeitos**, registrados porque são armadilhas de
+quem escreve E2E: `"80.000,00" in corpo` dá **verde sobre `80.000.000,00`** (substring), e
+`toLocaleString('pt-BR')` separa o `R$` do número com **espaço não-quebrável**, então
+`"R$ 80.000,00" in corpo` falha sobre uma tela que mostra exatamente isso. Os dois viraram helper e
+asserção exata em [pdca3_formulario_browser_test.py](../testes/e2e/pdca3_formulario_browser_test.py),
+que cobre os seis achados em janela de 620 px — a altura em que o defeito nº 4 aparece.
+
+---
+### D130 — a escada de atesto só se configurava por API, e ela segura dinheiro · ✅ corrigido 15/09/2026
+
+Aberto em 14/09, junto da PDCA.3, e **fechado no dia seguinte por ter mordido o dono** — que é a
+forma mais barata de um achado provar que era real.
+
+> *"Eu sou o admin. Quem solicitou não pode atestar o próprio pedido."*
+
+**O que aconteceu.** Ele abriu uma medição, submeteu e tentou atestar. O motor recusou, e a recusa
+estava **certa**: é a segregação da §8 da planta (*quem executa não aprova*), e ela protege a
+empresa. O defeito não era a regra — era que a saída existia e **ninguém tinha como encontrá-la**.
+
+A máquina de aprovação nasceu na PDCA.0 (23/08) com API completa e nenhuma tela, e com a válvula que
+a própria planta descreve: `FluxoAprovacao.permite_autoatesto`, *"escolha escrita do cliente para a
+obra pequena onde o mesmo engenheiro apura e assina"*. Escrita — mas não havia onde escrever.
+Enquanto a escada não tinha cliente real isso era um seam adormecido; com a PDCA.3 ela passou a
+decidir se um título a pagar existe, e o resultado foi um documento parado sem caminho.
+
+**A correção tem três partes, e a ordem importa:**
+
+1. **A recusa passou a dizer a saída.** `nucleo/aprovacao.py` nomeia agora a permissão do degrau
+   (para quem lê saber *a quem pedir*), o nome do fluxo (para o administrador saber *qual mexer*) e
+   as três saídas possíveis — outra pessoa ateste, cancelar e reabrir em nome de quem assina, ou
+   ligar o autoatesto. Uma recusa que só enuncia a regra deixa quem esbarrou sem nada a fazer.
+2. **`GET /api/aprovacao/fluxos/alvos/`** — sem ele nenhuma tela poderia existir: `FluxoAprovacao.alvo`
+   é um `ContentType`, e o id não é adivinhável nem estável entre instalações. A descoberta é **por
+   construção**: um modelo aparece ali no instante em que declara a `GenericRelation` para
+   `PedidoAprovacao`, que é o gesto com que um módulo se candidata a ser aprovado. Um catálogo escrito
+   à mão em paralelo seria a segunda verdade que envelhece na fatia seguinte.
+3. **A tela** (`/app/admin/aprovacoes`), na **Administração** e não dentro do módulo que a escada
+   aprova — definir alçada é da mesma classe que definir papel: decidir quem manda no dinheiro ×
+   quem vê o quê. Lista de escadas por documento, degraus com a permissão que cada um exige,
+   conferência antes de alguém depender da escada, e o **interruptor de autoatesto com o porquê
+   escrito ao lado** — que é o que esta tela existe para tornar descobrível.
+
+**Um defeito achado ao construir a tela, e ele valia a viagem.** A reordenação de degraus, feita do
+jeito óbvio (dois `PATCH` trocando `ordem`), não é atômica e esbarra na `UniqueConstraint(fluxo,
+ordem)`: precisa de um valor temporário, e uma falha entre as duas escritas deixa a escada com
+numeração quebrada — `validar_fluxo` passa a recusá-la e **o documento que dependia dela para de
+andar sem que ninguém o tenha tocado**. Virou `aprovacao.reordenar_niveis`, numa transação, com a
+numeração 1..N derivada da posição (a tela não tem como inventar um buraco). O espaço de manobra é
+um intervalo **alto**, e não negativo: `ordem` é `PositiveSmallIntegerField`, e o caminho óbvio
+estoura o check do banco no meio da transação — o teste pegou isso na primeira execução.
+
+---
+### D131 — os E2E da PDCA.3 sujavam o ambiente, e a faxina deles mentia · ✅ corrigido 15/09/2026
+
+Achado junto do D130, investigando o pedido preso do dono: o contrato em que ele esbarrou **era meu**
+— resíduo de um teste de ponta a ponta, com o número `TELA-7ac44` e a obra `E2E PDCA.3 tela d0577b`.
+
+**A faxina dos dois E2E apagava só a obra**, e isso parecia suficiente. Não é: a exclusão da obra é a
+**lixeira** (lápide, não `DELETE`), então tudo o que pendurava nela sobrevivia — e o que pendurava
+era contrato, medição e, nas aprovadas, **`ContaPagar` no financeiro**. Em 15/09 o ambiente de
+demonstração tinha **14 obras, 12 contratos, 6 medições e 4 títulos** de teste, indistinguíveis de
+dado real para quem abrisse a tela.
+
+A ironia é que a parte que mais sujou é a que a fatia garante de propósito: **medição aprovada não se
+apaga**. O teste não tinha como limpar aquilo pela API, e não dizia isso — apenas marcava a faxina
+como feita.
+
+**Correção em duas metades:**
+
+- **`manage.py limpar_residuo_e2e`** devolve o ambiente, e existe como comando (e não como um
+  `delete()` no shell) porque **a ordem das exclusões é o conteúdo**: `Medicao.retifica` é `PROTECT`
+  (a retificadora protege a original, que é o desenho), o `PedidoAprovacao` aponta por `ContentType`
+  sem cascata, o `ApontamentoAvanco` é `PROTECT` sobre a atividade, e a obra esbarra no nó do
+  [D116](#) — `CalendarioTrabalho.obra` é `CASCADE` × `Cronograma.calendario` é `PROTECT`. Para esse
+  último o comando **emite `antes_de_purgar`** em vez de reescrever a solução: o módulo já tem a
+  resposta em `modulopdca/signals.py`, e uma segunda cópia envelheceria em paralelo;
+- **os testes passaram a declarar o que deixam.** A faxina faz o que a API permite e **imprime** o
+  que sobrou e o comando que resolve. Teste que diz "limpei" sem ter limpado é a mesma classe de
+  defeito que a régua deste projeto persegue no produto — dado desonesto.
+
+---
+### D127 — o item de contrato nascia sem tenant, e a RLS recusava com um 500 seco · ✅ corrigido 14/09/2026
+
+Achado pelo **E2E da PDCA.3 na primeira execução**, e a suíte unitária não tinha como pegá-lo.
+
+`ItemContratoViewSet.perform_create` existe para conferir duas coisas antes de gravar — o teto de
+itens do plano e se o contrato ainda aceita mudança de planilha. A primeira escrita dele terminava
+com `serializer.save()`, o que parecia natural e **engolia a injeção de tenant** do
+`TenantScopedViewSetMixin`: é o `perform_create` da base que faz
+`serializer.save(tenant_id=request.user.tenant_id)`.
+
+A linha nascia com `tenant_id` nulo, a política RLS fail-closed da tabela recusava o INSERT, e o
+cliente recebia **500 sem mensagem** — `new row violates row-level security policy`, que não chega ao
+usuário.
+
+**Por que os testes de unidade passavam.** Eles criam `ItemContrato` pelo ORM, com `tenant=`
+explícito, porque o que aquelas classes exercitam é a matemática da medição. O único caminho que
+reproduz o defeito é o **HTTP**, que é justamente o que a tela usa.
+
+**Correção:** `super().perform_create(serializer)` no lugar do `save()` direto (e o mesmo no
+`perform_update`, pelo mesmo motivo — ele *reforça* o tenant, impedindo que um payload mova a linha).
+Dois testes novos entram pela API e conferem `tenant_id` depois de criar e depois de editar, para que
+a regressão volte a ser barata de pegar.
+
+**A lição, que não é sobre este endpoint:** sobrescrever `perform_create` num viewset com mixin de
+tenancy é seguro **só** com `super()` no fim. Qualquer viewset futuro que precise validar antes de
+gravar cai no mesmo buraco, e o sintoma (500 mudo da RLS) não aponta para a causa.
+
+---
+### D128 — liberar retenção caía na permissão de EDITAR contrato · ✅ corrigido 14/09/2026
+
+Achado no mesmo E2E, um passo depois do D127, e este é de **segregação de alçada**, não de plumbing.
+
+A ação `liberar-retencao/` vive no `ContratoObraViewSet`, cujo `permission_map` diz
+`write: pdca.contrato.edit`. Sem uma entrada própria no `action_permission_map`, o `RequirePermission`
+resolvia a ação pelo mapa genérico — e **quem monta a planilha contratual podia devolver a caução
+sozinho**: a mesma pessoa definindo o percentual retido e mandando o dinheiro de volta ao empreiteiro.
+
+O E2E cobrava que o `gestor_contratos` levasse 403 ali, e ele passava com 201.
+
+**Correção:** `liberar_retencao → pdca.medicao.atestar` no `action_permission_map`. Liberar retenção é
+ato da mesma classe que atestar medição — é dinheiro saindo —, e não da classe que cadastra o
+contrato. Duas ações vizinhas ganharam mapa explícito na mesma leva (`proposta-de-medicao` virou
+`pdca.medicao.view`, porque a prévia mostra *o que se pagaria*, e `retencao` ficou em
+`pdca.contrato.view`).
+
+**O que isto ensina sobre `@action` em viewset com `permission_map`:** todo verbo de domínio que não é
+o CRUD do recurso precisa de linha própria no `action_permission_map`. O silêncio não é neutro — ele
+herda a permissão do CRUD, e num viewset de cadastro essa permissão é sempre a mais fraca das duas.
+
+---
+### D129 — a recusa que nomeia a cláusula de retenção era inalcançável pela API · ✅ corrigido 14/09/2026
+
+Terceiro achado do mesmo E2E, e o mais fácil de não ver.
+
+`services.solicitar_liberacao` recusa a liberação sem condição declarada com uma mensagem que **cita a
+cláusula do próprio contrato** (*"a cláusula deste contrato diz: recebimento definitivo da obra"*).
+Ela existe porque quem libera caução precisa saber o que declarar, e não adivinhar.
+
+Só que o `SolicitarLiberacaoSerializer` declarava `condicao_atendida = CharField()`, e o `CharField`
+do DRF **recusa string em branco antes**, com *"este campo não pode ser em branco"*. A validação do
+serializer roda antes do serviço, então a mensagem útil nunca chegava a ninguém: era código morto
+atrás de uma validação genérica.
+
+**Correção:** `allow_blank=True` no campo. Não é frouxidão — a obrigatoriedade continua existindo e
+continua sendo cobrada; ela só passou a ser cobrada por **quem tem o contexto para explicá-la**. O
+teste unitário que verifica a frase ganhou o comentário que amarra as duas coisas, para que alguém
+"corrigindo" o `allow_blank` no futuro veja por que ele está lá.
+
+---
+### D50 — as regressões do S8 provavam o caminho que não é o de produção · ✅ corrigido 14/09/2026
+
+Aberto em 02/08/2026, junto do D46. Quatro erros em `S8IssuerAudienceTests`, todos
+`jwt.exceptions.InvalidKeyError`.
+
+**O vermelho era o sintoma menos importante.** A causa é que o teste assinava o próprio token com
+`settings.SIMPLE_JWT["SIGNING_KEY"]` — e no contêiner o backend é **resource server**: recebe
+`JWT_PUBLIC_KEY_PATH`, verifica, e não emite nada. Quem assina é a IAM. Então `ALGORITHM` é `RS256` e
+`SIGNING_KEY` é **string vazia por desenho**. Conferido na máquina:
+
+```
+ALGORITHM   = RS256
+SIGNING_KEY = ''
+VERIFYING   = -----BEGIN PUBLIC KEY-----...
+```
+
+Não havia defeito no backend para corrigir: o teste pedia à configuração de produção uma capacidade
+que ela nega de propósito, e acertadamente.
+
+**O que importava é que no CI eles passavam.** Lá não há `JWT_PUBLIC_KEY_PATH` — a chave efêmera só
+existe no passo do `check --deploy` —, o arranjo do S3 cai no ramo **HS256** e assina com o
+`JWT_SECRET`. As quatro regressões que provam o S8 (`iss`/`aud` obrigatórios) exercitavam, portanto,
+**só a configuração que não é a de produção**; a que é — RS256, sem privada — era exatamente onde
+elas não rodavam. Um erro no caminho RS256 passaria pelo gate sem ninguém ver.
+
+**A correção é o par RSA efêmero**, gerado no próprio arquivo (`_par_efemero`, com `lru_cache` porque
+gerar 2048 bits custa dezenas de milissegundos e o par só precisa não vir de fora). A privada assina,
+a pública entra como `VERIFYING_KEY` por `override_settings` na classe. O `deepcopy` do
+`SIMPLE_JWT` real é deliberado: `ISSUER` e `AUDIENCE` continuam vindo do settings, senão o teste
+passaria a provar os valores que ele mesmo escreveu, que é o oposto do que a regressão existe para
+fazer.
+
+Funciona porque o `rest_framework_simplejwt.settings` liga `reload_api_settings` ao sinal
+`setting_changed` — o `TokenBackend` é remontado, em vez de ficar preso ao que foi lido no import.
+Isso foi conferido antes de escrever o conserto, não depois.
+
+**Descartada a alternativa do `skipUnless`**, que a própria pendência já classificava como mais
+fraca: apaga o vermelho e deixa a lacuna intacta. Pior que o estado anterior, porque um erro conhecido
+ao menos incomoda, enquanto um `skip` vira paisagem.
+
+**Dois testes novos guardam o conserto**, e existem porque o alvo aqui é cobertura e não cor:
+
+- `test_o_que_roda_aqui_e_rs256_de_verdade` — sem ele a lacuna volta em silêncio: bastaria alguém
+  remover o `override_settings` num ambiente com `JWT_SECRET` para os quatro testes passarem verdes
+  provando o caminho errado, que foi precisamente o estado anterior;
+- `test_assinatura_de_outra_chave_rsa_e_recusada` — a contraprova. Token com `iss`/`aud` perfeitos,
+  RS256, bem formado, assinado por **outra** privada. Se passasse, o par efêmero teria afrouxado a
+  verificação e os outros quatro estariam provando nada.
+
+Conferido nas **duas** configurações de chave: com `JWT_PUBLIC_KEY_PATH` (contêiner) e sem ela (como
+o CI roda), os 12 testes do arquivo passam — e em ambos os casos
+`test_o_que_roda_aqui_e_rs256_de_verdade` confirma que o algoritmo exercitado é RS256. O teste deixou
+de perguntar como a máquina está configurada, que é a mesma doença do [D125](#d125) numa segunda
+forma.
+
+Com ele fecha o último vermelho da suíte: **1.736 testes, zero falhas**.
+
+---
+### D126 — o `.env` de dev tirava `iam` do `ALLOWED_HOSTS` e matava toda chamada serviço→serviço · ✅ corrigido 14/09/2026
+
+Achado caçando o [D125](#d125), e ele é maior do que o teste que o revelou: **não era problema de
+suíte, era de ambiente de trabalho inteiro.**
+
+O backend pede o JWT de serviço à IAM em `http://iam:8001/auth/service-token/` — `iam` é o nome de
+DNS da rede do compose. O [`.env`](../.env) da máquina trazia:
+
+```
+IAM_ALLOWED_HOSTS=localhost,127.0.0.1
+```
+
+e com isso **toda** chamada serviço→serviço morria em `DisallowedHost`, respondida como **400**. O
+`deploy/compose/base.yml` tem o default certo (`localhost,127.0.0.1,iam,gateway`) e o
+`deploy/env/dev.env.example` também — o `.env` real é que ficou para trás e sobrescreve os dois.
+
+**O que estava quebrado em silêncio:** a Fase 10.8 inteira. Excluir uma obra deveria desvincular os
+projetos de drone que apontavam para ela; o desvínculo pedia o token, levava 400, entrava em retry e
+terminava na DLQ. Nada disso aparece na tela de quem excluiu — a obra some e os projetos ficam
+órfãos, que é exatamente a pendência da Fase 3 que o 10.8 existe para fechar.
+
+**Por que ninguém tinha visto:** o `.env` não é versionado, o erro só se manifesta em chamada
+assíncrona, e o único caminho que a exercitava — apagar uma obra de verdade — não existia na suíte
+até a lixeira do [D116](#d116) criar a purga.
+
+Corrigido com o valor do `dev.env.example` e um comentário no `.env` dizendo o que quebra sem `iam` e
+`gateway`, para a linha não voltar a encolher. Conferido no stack vivo: `/auth/service-token/`
+responde **200** com `modules: ["drone"]` e `svc: true`.
+
+---
+### D125 — a suíte fazia HTTP de verdade, e o resultado dependia da máquina · ✅ corrigido 14/09/2026
+
+Achado rodando a suíte inteira depois da [PDCA.2](roadmap.md), com **8 erros em `nucleo.test_lixo`** —
+a fatia do [D116](#d116), que tinha entrado verde no dia anterior.
+
+**A cadeia:** `purgar()` → `Obra.delete()` → `post_delete` do
+[`drone_sync`](../backend/nucleo/drone_sync.py) → `desvincular_projetos_drone.delay(...)`. A suíte
+força `CELERY_TASK_ALWAYS_EAGER = True`, e sob *eager* `.delay()` não enfileira: **executa**.
+Executar essa task é fazer HTTP para a IAM e para o drone de dentro de um `TestCase`.
+
+**A lixeira não criou o defeito — ela criou o primeiro caminho que passava por ele.** Até o D116,
+nenhum teste apagava uma `Obra` fisicamente; a purga foi o primeiro, e encontrou um sinal que estava
+lá desde a Fase 10.8 esperando alguém chegar.
+
+**O que torna isto grave não é a falha, é a forma dela.** O resultado da suíte dependia do `.env` da
+máquina:
+
+| `DRONE_SERVICE_URL` | Resultado |
+| --- | --- |
+| vazia | 31/31 OK |
+| preenchida | 8 erros |
+
+É exatamente a armadilha que o [`config/settings.py`](../backend/config/settings.py) já descreve ter
+fechado uma vez — *"a suíte não pode depender de como está a máquina de quem a roda"*, escrito quando
+o próprio `CELERY_TASK_ALWAYS_EAGER` vinha do ambiente. A regra estava escrita; voltou por outra
+porta, que é a variável do módulo em vez da do motor.
+
+**A correção tem duas metades deliberadamente diferentes:**
+
+- **`DRONE_SERVICE_URL` fixada** na classe base (`@override_settings`), em vez de lida do ambiente —
+  o teste passa a responder sempre a mesma coisa;
+- **`.delay` trocado por espião, e não desligado.** Zerar a URL também silenciaria a rede, e era o
+  conserto de uma linha — mas silenciaria junto o **sinal**: o teste passaria a exercitar uma
+  configuração que não é a de produção, e o dia em que a purga parasse de avisar o drone nenhum teste
+  notaria. Com o espião o caminho continua inteiro até a borda.
+
+E o acoplamento que era acidental virou **cobrado**, em `test_a_purga_avisa_o_drone_e_excluir_nao`:
+a purga avisa o drone, e **excluir não**. A segunda metade é a que a lixeira inventou e ninguém tinha
+escrito — antes do D116 excluir *era* apagar. Avisar o drone na lápide seria errado: o desvínculo é
+irreversível e a restauração não o desfaz, então uma obra excluída por engano e restaurada voltaria
+sem os projetos de drone dela.
+
+O contrato da task em si — pedir o token, chamar o drone, tratar o retry — continua em
+`test_drone_sync.py`, que sempre fez isso do jeito certo e serviu de molde.
+
+---
+### D120 — a foto do apontamento de avanço não tinha porta de mídia · ✅ corrigido 14/09/2026
+
+Levantado em 13/09/2026 ao fechar o [D116](#d116), da **PDCA.2**. O
+[teste do D70](../backend/funcoesimpexp/test_d70_portas_de_midia.py) — que existe precisamente para
+que a lista de prefixos de `/media/` não volte a crescer sozinha — acusou o campo pelo nome:
+
+> `modulopdca.ApontamentoAvanco.foto → 'pdca_apontamento/'` — FileField sem porta no `funcoesimpexp`.
+
+**Eram dois defeitos de gravidade diferente**, e o segundo é o que aperta:
+
+- **em produção o arquivo não abria.** Sem porta ele sai por `/media/`, que o gateway responde
+  **404** — a foto era gravada e ficava inalcançável. O pior desfecho para uma evidência, porque o
+  sistema aceita o envio e só falha na hora de mostrar;
+- **em dev com `DEBUG=True` era o oposto, e pior.** O Django serve o binário direto, **fora de auth,
+  fora de entitlement e fora da RLS**: a foto de obra de um tenant ficava legível por quem tivesse a
+  URL.
+
+**A correção tem duas metades, e o teste do D70 só cobrava a primeira.** A porta em si é
+[`modulopdca/impexp.py`](../backend/modulopdca/impexp.py), no molde dos outros nove prefixos. Mas
+declarar o `Recurso` faria o teste passar **com o vazamento inteiro de pé**: o serializer tinha
+`fields = "__all__"`, e um `FileField` em `__all__` publica a URL de `/media/` no JSON. Quem lesse a
+lista de apontamentos continuava recebendo o endereço vazado, agora com uma porta ao lado que ninguém
+usava.
+
+A troca do endereço ficou no `to_representation` do `ApontamentoAvancoSerializer`, e não num campo
+declarado, porque **o mesmo nome serve aos dois sentidos**: na entrada `foto` é o `FileField` que o
+`UploadValidationMixin` confere contra o teto do tenant; na saída é um endereço nosso. Declarar
+`foto` como `SerializerMethodField` tornaria o campo somente-leitura e derrubaria o upload; criar um
+`foto_url` ao lado deixaria o `/media/` publicado do mesmo jeito. Apontamento sem foto continua
+devolvendo `null`, e não uma URL que responderia 404.
+
+**`permissoes_entrega` é só a leitura (`pdca.avanco.view`), e isso é decisão e não descuido.** Apontar
+e ver são pessoas diferentes pela planta (§8): `campo` aponta, `planejador` e `diretoria` só leem.
+Exigir `pdca.avanco.apontar` para abrir a foto tiraria do planejador a evidência do avanço que ele
+está conferindo — fecharia com a régua da escrita um ato que é de leitura. É a mesma separação que a
+Prancheta precisou fazer para o `campo` não perder o desenho no canteiro.
+
+**O rastro fica `RASTRO_AUDITADO`** (o padrão do `entregar_campo`): a foto é dado do cliente saindo do
+perímetro (R12) e, diferente da miniatura do diário, é **prova de medição** — a PDCA.3 faz dinheiro
+sair do avanço que ela documenta. O risco de afogar a trilha ([D67](#d67)) não se aplica na mesma
+medida: o diário mostra dezenas de miniaturas por página, aqui é no máximo uma foto por lançamento e
+a maioria não tem nenhuma.
+
+Cinco testes novos em `FotoDoApontamentoTests` cobrem o que a declaração não cobre — a porta **abrir**:
+a API nunca publica `/media/`, sem foto vem `null`, quem só lê o avanço consegue abrir, quem não tem
+a permissão não, e a foto do vizinho dá **404** (e não 403, que confirmaria a existência do id).
+Conferido também no stack vivo, pelo gateway com token real: upload `201`, a URL publicada é a da
+porta, o download responde `200 image/png` com `attachment` e `nosniff`, os bytes conferem, sem token
+é `401` — e o `/media/` antigo responde `404`.
+
+---
 ### D123 — a tela dizia que excluir era irreversível, e escondia o que o cliente pagou · ✅ corrigido 13/09/2026
 
 Achado pelo dono, no mesmo dia em que a lixeira entrou, olhando o modal de excluir obra:

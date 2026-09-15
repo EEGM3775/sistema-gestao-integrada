@@ -40,7 +40,7 @@ class LixoSerializer(serializers.ModelSerializer):
     #: `app_label.model` — o que a tela usa para agrupar e filtrar.
     modelo = serializers.SerializerMethodField()
     #: O nome que uma pessoa lê ("Obra", "Cliente"), vindo do `verbose_name` do
-    #: modelo. Não é hardcoded aqui: o 17º modelo a entrar na lixeira aparece com
+    #: modelo. Não é hardcoded aqui: um modelo novo a entrar na lixeira aparece com
     #: o nome certo sem tocar neste arquivo.
     modelo_rotulo = serializers.SerializerMethodField()
     estado = serializers.SerializerMethodField()

@@ -385,7 +385,7 @@ primeira.
 
 | Arquivo | Papel |
 |---|---|
-| [`backend/nucleo/plano_views.py`](../../backend/nucleo/plano_views.py) | `GET /api/plano/` — plano vigente, medidores (uso × limite), próximo degrau e o catálogo com preços (tudo lido de `payment/`, nada hardcoded no front) |
+| [`backend/nucleo/plano_views.py`](../../backend/nucleo/plano_views.py) | `GET /api/plano/` — plano vigente, medidores (uso × limite), **janelas** (limites de TEMPO, como `lixo_retencao_dias`: vêm separados porque janela não tem uso a contar e viraria medidor quebrado), próximo degrau e o catálogo com preços (tudo lido de `payment/`, nada hardcoded no front) |
 | [`backend/nucleo/test_quotas.py`](../../backend/nucleo/test_quotas.py) | testes da trava de objeto + **a rede que barra divergência** entre `QUOTAS_APLICADAS` e `RECURSOS_CONTADOS` |
 | [`iam/identity/test_quotas.py`](../../iam/identity/test_quotas.py) · [`test_planos.py`](../../iam/identity/test_planos.py) | testes da trava de seats e das regras/claim |
 | [frontend.md §5.16](../frontend.md) | a UI do paywall — planejada (**fase G**), ainda não construída |

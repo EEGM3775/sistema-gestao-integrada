@@ -270,6 +270,31 @@ CATALOGO: tuple[Perm, ...] = (
     #     não tem.
     Perm("pdca.avanco.view", "Ver o avanço apontado e a curva S realizada", "pdca"),
     Perm("pdca.avanco.apontar", "Apontar avanço de atividade (e estornar o próprio erro)", "pdca"),
+    #     PDCA.3 — o dinheiro. O contrato tem o par `view`/`edit` (montar a
+    #     planilha contratual é um ato só), mas a medição tem **três** verbos,
+    #     porque são três pessoas:
+    #       · `view` lê o boletim — gestor, diretoria, quem recebe relatório;
+    #       · `apurar` abre a medição do período e confere a proposta que nasceu
+    #         do avanço. É o gesto de quem acompanha a obra;
+    #       · `atestar` decide. É o que faz o dinheiro sair, e é por isso que ele
+    #         não é `edit`: aprovar não é uma edição mais forte, é outro ato.
+    #     Quem apura não ateste — a máquina do `nucleo` já recusa o autoatesto
+    #     por padrão, e separar os verbos aqui é o que torna essa recusa
+    #     configurável (o tenant liga `permite_autoatesto` por escrito) em vez de
+    #     acidental.
+    Perm("pdca.contrato.view", "Ver contratos de obra, itens e saldo", "pdca"),
+    Perm("pdca.contrato.edit", "Cadastrar contrato e montar a planilha contratual", "pdca"),
+    Perm("pdca.medicao.view", "Ver medições e o que elas pagam", "pdca"),
+    Perm("pdca.medicao.apurar", "Abrir a medição do período e conferir a proposta", "pdca"),
+    Perm("pdca.medicao.atestar", "Atestar medição e liberar retenção — o dinheiro sai daqui", "pdca"),
+    # PDCA.4 — o contrato deixa de ser imutável, e os dois verbos seguem a
+    #     mesma separação da medição: **montar** o aditivo é do gestor de
+    #     contratos; **autorizar** a empresa a gastar acima do contratado é
+    #     de quem tem alçada. Juntar os dois numa pessoa faria quem negocia
+    #     com o empreiteiro aprovar sozinho o próprio acréscimo — que é o
+    #     achado clássico de auditoria de obra.
+    Perm("pdca.aditivo.edit", "Montar aditivo de contrato (quantidade, preço, item, prazo)", "pdca"),
+    Perm("pdca.aditivo.aprovar", "Aprovar aditivo — autoriza gastar acima do contratado", "pdca"),
     # --- Obras/empreendimentos e cadastros base (sem entitlement de módulo) ---
     #     O percentual da etapa é digitado à mão desde sempre. Com atividades do
     #     PDCA vinculadas a ela, ele passa a ser **apurado** — e esta permissão é
@@ -395,6 +420,17 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
         # Lê o planejamento da obra pelo mesmo motivo que lê o custo dela.
         "pdca.local.view", "pdca.calendario.view", "pdca.cronograma.view",
         "pdca.avanco.view",
+        # PDCA.3 — **o único verbo de escrita desta persona, e ele é uma
+        # assinatura, não uma edição.** A §5.3 da planta põe "fiscal / gerente"
+        # na fila de atesto, e o gerente que existe hoje neste catálogo é este.
+        # Dar o `atestar` a quem já lê contrato e medição é o que torna a
+        # escada montável no primeiro dia, sem o tenant precisar desenhar uma
+        # persona antes de emitir a primeira medição. O que ela **não** ganha é
+        # `apurar`: quem monta o boletim é o `gestor_contratos`, e juntar os dois
+        # numa pessoa é exatamente o que a §8 manda separar.
+        "pdca.contrato.view", "pdca.medicao.view", "pdca.medicao.atestar",
+        # PDCA.4: aprova aditivo pelo mesmo motivo — é alçada, não edição.
+        "pdca.aditivo.aprovar",
     ],
     # RH completo, MENOS o prontuário médico (segregação médico × gestor).
     "rh_gestor": [
@@ -607,10 +643,41 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
         # medido. Apontar é do canteiro; o planejador que apontasse o
         # próprio avanço estaria conferindo o próprio dever de casa.
         "pdca.avanco.view",
+        # PDCA.3: lê o contrato e a medição — o plano dele é o denominador do
+        # que se mede. Não apura nem ateste: são atos do contrato, não do prazo.
+        "pdca.contrato.view", "pdca.medicao.view",
         "obra.obra.view", "obra.empreendimento.view", "obra.diario.view",
         "orcamento.orcamento.view", "orcamento.item.view", "orcamento.relatorio.view",
         "calendario.evento.view", "mapa.local.view",
         "prancheta.documento.view",
+    ],
+    # PDCA.3 — a persona que a planta §8 previu, entrando com a fatia que lhe dá
+    # verbo. Ela é **nova de verdade**, e não gêmea de ninguém: a `engenharia`
+    # responde pela execução (aponta avanço, assina diário), o `financeiro` paga
+    # o título depois de pronto, e entre os dois havia um vazio — quem fecha o
+    # contrato com o empreiteiro, confere a medição do período e a leva à
+    # assinatura. Numa construtora esse cargo existe com nome próprio.
+    #
+    # **Apura e não ateste.** Leva `pdca.medicao.apurar`, não `atestar`: montar o
+    # boletim e decidir que ele vira dinheiro são os dois lados que a §8 manda
+    # separar. Quem ateste é quem o tenant puser nos degraus da escada — em
+    # geral a `diretoria` ou um papel próprio do cliente.
+    "gestor_contratos": [
+        "pdca.contrato.*", "pdca.medicao.view", "pdca.medicao.apurar",
+        # PDCA.4: **monta** o aditivo e não o aprova, exatamente como a
+        # medição — quem negocia o acréscimo não é quem o autoriza.
+        "pdca.aditivo.edit",
+        # Lê o plano e o avanço porque é deles que a medição nasce: conferir a
+        # proposta sem poder ver o apontamento que a gerou é conferir no escuro.
+        "pdca.cronograma.view", "pdca.avanco.view", "pdca.local.view",
+        "obra.obra.view", "obra.empreendimento.view", "obra.diario.view",
+        "cadastro.fornecedor.view",
+        # O orçamento é a régua contra a qual o preço contratado é julgado.
+        "orcamento.orcamento.view", "orcamento.item.view",
+        # **Lê** o título que a medição gerou, e não mexe nele: o ERP decide
+        # quando o dinheiro sai da conta (§7 da planta — o PDCA não paga).
+        "erp.conta_pagar.view",
+        "plataforma.fluxo_aprovacao.view",
     ],
     # Gestor da lixeira (exclusão reversível — ver arquitetura/lixo.md).
     "gestor_lixo": ["plataforma.lixo.*"],
@@ -640,6 +707,7 @@ DESCRICOES_TEMPLATE: dict[str, str] = {
     "almoxarife": "Estoque e logística interna: saldos, movimentações, requisições, transferências, devoluções, lotes e inventário.",
     "orcamentista": "Planilha orçamentária da obra: bases referenciais (SINAPI/ORSE), composições, curva ABC e orçado × realizado. Aprova e revisa o orçamento.",
     "planejador": "Planejamento da obra: cronograma (WBS, CPM, linha de base), hierarquia de locais, calendário de trabalho e leitura do avanço apontado.",
+    "gestor_contratos": "Contratos de empreitada: planilha contratual, medição do período apurada a partir do avanço e acompanhamento do saldo. Apura a medição; quem ateste é a escada de aprovação.",
     "topografo": "Território: georreferenciamento, camadas e feições do mapa, acervo de ortofotos e planos de voo.",
     "projetista": "Acervo de projeto: cadastra documentos, envia revisões e PUBLICA a revisão vigente — a que o canteiro executa.",
     "gestor_lixo": "Restauração e expurgo de itens da lixeira (exclusão reversível).",

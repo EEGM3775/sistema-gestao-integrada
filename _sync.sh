@@ -13,6 +13,9 @@ docker cp backend/modulopdca/views.py      sgi-erp:/app/modulopdca/views.py
 docker cp backend/modulopdca/urls.py       sgi-erp:/app/modulopdca/urls.py
 docker cp backend/modulopdca/admin.py      sgi-erp:/app/modulopdca/admin.py
 docker cp backend/modulopdca/tests.py      sgi-erp:/app/modulopdca/tests.py
+docker cp backend/modulopdca/signals.py    sgi-erp:/app/modulopdca/signals.py
+docker cp backend/modulopdca/apps.py       sgi-erp:/app/modulopdca/apps.py
+docker cp backend/modulopdca/impexp.py     sgi-erp:/app/modulopdca/impexp.py
 docker cp backend/config/urls.py           sgi-erp:/app/config/urls.py
 docker cp backend/obras/serializers.py     sgi-erp:/app/obras/serializers.py
 docker cp backend/nucleo/test_tetos_no_payment.py sgi-erp:/app/nucleo/test_tetos_no_payment.py

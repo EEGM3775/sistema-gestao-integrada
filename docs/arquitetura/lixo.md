@@ -77,7 +77,7 @@ Dois gerentes, e **a ordem importa**:
 Uma linha por objeto que foi para a lixeira. **Não guarda o dado** — guarda onde ele está e o que
 aconteceu com ele. Existe por dois motivos que a lápide sozinha não resolve:
 
-1. **a página é uma consulta só** — sem ela, listar "o que este tenant excluiu" varreria as 16
+1. **a página é uma consulta só** — sem ela, listar "o que este tenant excluiu" varreria as 17
    tabelas que herdam `Excluivel`, ordenaria em Python e paginaria à mão;
 2. **a auditoria sobrevive à purga** — apagado o objeto, esta linha fica, com `purgado_em`
    preenchido. É o que ainda responde "quem apagou o quê, quando e por quê".

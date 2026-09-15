@@ -2,8 +2,9 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import * as api from './api/pdcaApi'
 import { pdcaKeys } from './api/queryKeys'
 import type {
-  AplicacaoDeModelo, Apontamento, Atividade, Calendario, Cronograma, EdicaoEmLote,
-  ExcecaoCalendario, Granularidade, LinhaDeApontamento, Precedencia,
+  AplicacaoDeModelo, Apontamento, Atividade, Calendario, Contrato, Cronograma,
+  EdicaoEmLote, ExcecaoCalendario, Granularidade, ItemDeContrato,
+  LinhaDeApontamento, LinhaDeAditivo, LinhaDeDeducao, LinhaParaApi, Precedencia,
 } from './types'
 
 type Params = Record<string, unknown>
@@ -450,5 +451,432 @@ export function useEstornar(cronogramaId: number | undefined) {
     mutationFn: ({ id, motivo }: { id: number; motivo: string }) =>
       api.apontamentos.estornar(id, motivo),
     onSuccess: invalidar,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// PDCA.3 — contrato, medição e retenção
+// ---------------------------------------------------------------------------
+
+export function useContratos(params: Params = {}, ativo = true) {
+  return useQuery({
+    queryKey: pdcaKeys.contratos.lista(params),
+    queryFn: () => api.contratos.listar({ page_size: 100, ...params }),
+    enabled: ativo,
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function useContrato(id: number | undefined) {
+  return useQuery({
+    queryKey: pdcaKeys.contratos.detalhe(id ?? 0),
+    queryFn: () => api.contratos.obter(id as number),
+    enabled: id != null,
+  })
+}
+
+/**
+ * As frentes do **plano vigente** da obra, para o vínculo do item de contrato.
+ *
+ * Só do vigente, e só as **folhas**: medir contra uma sintética somaria o
+ * avanço dos filhos duas vezes, e medir contra um plano em rascunho amarraria o
+ * contrato a uma versão que ainda vai mudar.
+ */
+export function useAtividadesDoContrato(obraId: number | undefined) {
+  return useQuery({
+    queryKey: [...pdcaKeys.raiz, 'vinculos', 'atividades', obraId ?? 0],
+    queryFn: async () => {
+      const planos = await api.cronogramas.listar({
+        obra: obraId, status: 'vigente', page_size: 1,
+      })
+      const vigente = planos.results?.[0]
+      if (!vigente) return []
+      const gantt = await api.cronogramas.gantt(vigente.cronograma_id)
+      return (gantt.atividades ?? []).filter(a => !a.tem_filhos)
+    },
+    enabled: obraId != null,
+  })
+}
+
+export function useItensDoContrato(id: number | undefined) {
+  return useQuery({
+    queryKey: pdcaKeys.contratos.itens(id ?? 0),
+    queryFn: async () => (await api.itensContrato.listar(id as number)).results,
+    enabled: id != null,
+  })
+}
+
+export function useSaldoDoContrato(id: number | undefined) {
+  return useQuery({
+    queryKey: pdcaKeys.contratos.saldo(id ?? 0),
+    queryFn: () => api.contratos.saldo(id as number),
+    enabled: id != null,
+  })
+}
+
+/** A prévia da medição. `enabled` só com as duas datas: pedir a proposta com
+ *  metade do período traria uma janela que ninguém escolheu. */
+export function useProposta(id: number | undefined, inicio: string, fim: string) {
+  return useQuery({
+    queryKey: pdcaKeys.contratos.proposta(id ?? 0, inicio, fim),
+    queryFn: () => api.contratos.proposta(id as number, inicio, fim),
+    enabled: id != null && !!inicio && !!fim,
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function useMedicoes(params: Params = {}, ativo = true) {
+  return useQuery({
+    queryKey: pdcaKeys.medicoes.lista(params),
+    queryFn: () => api.medicoes.listar({ page_size: 100, ...params }),
+    enabled: ativo,
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function useMedicao(id: number | undefined) {
+  return useQuery({
+    queryKey: pdcaKeys.medicoes.detalhe(id ?? 0),
+    queryFn: () => api.medicoes.obter(id as number),
+    enabled: id != null,
+  })
+}
+
+/**
+ * Toda escrita de medição invalida o **contrato inteiro**, e não só a medição.
+ *
+ * O motivo é o §4.9: saldo, retenção e acumulado não são colunas — são somas
+ * feitas na leitura sobre todas as medições. Invalidar só o documento editado
+ * deixaria o cabeçalho do contrato mostrando o saldo anterior ao lado da grade
+ * já atualizada, que é dado errado com cara de certo.
+ */
+function useInvalidarContrato(contratoId: number | undefined) {
+  const qc = useQueryClient()
+  return () => {
+    if (contratoId != null) {
+      qc.invalidateQueries({ queryKey: pdcaKeys.contratos.detalhe(contratoId) })
+      qc.invalidateQueries({ queryKey: pdcaKeys.contratos.saldo(contratoId) })
+      qc.invalidateQueries({ queryKey: pdcaKeys.contratos.retencao(contratoId) })
+    }
+    qc.invalidateQueries({ queryKey: [...pdcaKeys.raiz, 'medicoes'] })
+    qc.invalidateQueries({ queryKey: [...pdcaKeys.raiz, 'medicao'] })
+    qc.invalidateQueries({ queryKey: [...pdcaKeys.raiz, 'liberacoes'] })
+  }
+}
+
+export function useCriarContrato() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: Partial<Contrato>) => api.contratos.criar(payload),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [...pdcaKeys.raiz, 'contratos'] }),
+  })
+}
+
+export function useAtualizarContrato(id: number | undefined) {
+  const invalidar = useInvalidarContrato(id)
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: Partial<Contrato>) =>
+      api.contratos.atualizar(id as number, payload),
+    onSuccess: () => {
+      invalidar()
+      qc.invalidateQueries({ queryKey: [...pdcaKeys.raiz, 'contratos'] })
+    },
+  })
+}
+
+export function useExcluirContrato() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => api.contratos.excluir(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [...pdcaKeys.raiz, 'contratos'] }),
+  })
+}
+
+function useInvalidarItens(contratoId: number | undefined) {
+  const qc = useQueryClient()
+  const invalidarContrato = useInvalidarContrato(contratoId)
+  return () => {
+    if (contratoId != null) {
+      qc.invalidateQueries({ queryKey: pdcaKeys.contratos.itens(contratoId) })
+    }
+    // A planilha contratual é o denominador do saldo — mexer nela muda o
+    // cabeçalho, e a prévia de qualquer período passa a valer outra coisa.
+    qc.invalidateQueries({ queryKey: [...pdcaKeys.raiz, 'contrato'] })
+    invalidarContrato()
+  }
+}
+
+export function useCriarItemDeContrato(contratoId: number | undefined) {
+  const invalidar = useInvalidarItens(contratoId)
+  return useMutation({
+    mutationFn: (payload: Partial<ItemDeContrato>) => api.itensContrato.criar(payload),
+    onSuccess: invalidar,
+  })
+}
+
+export function useAtualizarItemDeContrato(contratoId: number | undefined) {
+  const invalidar = useInvalidarItens(contratoId)
+  return useMutation({
+    mutationFn: ({ id, payload }: { id: number; payload: Partial<ItemDeContrato> }) =>
+      api.itensContrato.atualizar(id, payload),
+    onSuccess: invalidar,
+  })
+}
+
+export function useExcluirItemDeContrato(contratoId: number | undefined) {
+  const invalidar = useInvalidarItens(contratoId)
+  return useMutation({
+    mutationFn: (id: number) => api.itensContrato.excluir(id),
+    onSuccess: invalidar,
+  })
+}
+
+/**
+ * **A grade da medição — uma chamada, uma verdade.**
+ *
+ * Substituiu a aritmética que a página fazia: ela montava
+ * `saldo = contratado − já medido` a partir de uma prévia que só era buscada
+ * quando *não* havia medição aberta, e quem entrasse pelo link direto de um
+ * boletim via "já medido" **negativo**, saldo acima do contratado e a trava de
+ * excesso desligada. Agora o contexto vem pronto do servidor.
+ */
+export function useContextoDeMedicao(id: number | undefined) {
+  return useQuery({
+    queryKey: pdcaKeys.medicoes.contexto(id ?? 0),
+    queryFn: () => api.medicoes.contexto(id as number),
+    enabled: id != null,
+  })
+}
+
+/** De quando a próxima medição deveria falar — encadeada na anterior. */
+export function usePeriodoSugerido(contratoId: number | undefined) {
+  return useQuery({
+    queryKey: pdcaKeys.contratos.periodo(contratoId ?? 0),
+    queryFn: () => api.contratos.periodoSugerido(contratoId as number),
+    enabled: contratoId != null,
+  })
+}
+
+/** O cabeçalho do rascunho — custo reembolsável e observação. */
+export function useSalvarCabecalho(contratoId: number | undefined) {
+  const invalidar = useInvalidarContrato(contratoId)
+  return useMutation({
+    mutationFn: ({ id, ...payload }: {
+      id: number; custo_reembolsavel?: string | null; observacao?: string
+    }) => api.medicoes.cabecalho(id, payload),
+    onSuccess: invalidar,
+  })
+}
+
+/** As deduções do rascunho — o que sai do bruto e **não volta**. */
+export function useSalvarDeducoes(contratoId: number | undefined) {
+  const invalidar = useInvalidarContrato(contratoId)
+  return useMutation({
+    mutationFn: ({ id, deducoes }: { id: number; deducoes: LinhaDeDeducao[] }) =>
+      api.medicoes.deducoes(id, deducoes),
+    onSuccess: invalidar,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// PDCA.4 — aditivo
+// ---------------------------------------------------------------------------
+
+export function useAditivos(params: Params = {}, ativo = true) {
+  return useQuery({
+    queryKey: pdcaKeys.aditivos.lista(params),
+    queryFn: () => api.aditivos.listar({ page_size: 100, ...params }),
+    enabled: ativo,
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function useAditivo(id: number | undefined) {
+  return useQuery({
+    queryKey: pdcaKeys.aditivos.detalhe(id ?? 0),
+    queryFn: () => api.aditivos.obter(id as number),
+    enabled: id != null,
+  })
+}
+
+/**
+ * Toda escrita de aditivo invalida o **contrato inteiro**, e mais do que a
+ * medição: o aditivo aprovado muda a *régua* — o contratado atual, o preço
+ * vigente, a planilha (item novo) e até a vigência. Invalidar só o documento
+ * deixaria a grade de medição medindo contra o saldo de ontem.
+ */
+function useInvalidarAditivo(contratoId: number | undefined) {
+  const qc = useQueryClient()
+  const invalidarContrato = useInvalidarContrato(contratoId)
+  return () => {
+    qc.invalidateQueries({ queryKey: [...pdcaKeys.raiz, 'aditivos'] })
+    qc.invalidateQueries({ queryKey: [...pdcaKeys.raiz, 'aditivo'] })
+    if (contratoId != null) {
+      qc.invalidateQueries({ queryKey: pdcaKeys.contratos.itens(contratoId) })
+    }
+    invalidarContrato()
+  }
+}
+
+export function useAbrirAditivo(contratoId: number | undefined) {
+  const invalidar = useInvalidarAditivo(contratoId)
+  return useMutation({
+    mutationFn: (payload: {
+      contrato: number
+      objeto: string
+      justificativa: string
+      data_assinatura?: string | null
+      nova_data_fim?: string | null
+      itens?: LinhaDeAditivo[]
+    }) => api.aditivos.abrir(payload),
+    onSuccess: invalidar,
+  })
+}
+
+export function useSalvarItensDoAditivo(contratoId: number | undefined) {
+  const invalidar = useInvalidarAditivo(contratoId)
+  return useMutation({
+    mutationFn: ({ id, itens }: { id: number; itens: LinhaDeAditivo[] }) =>
+      api.aditivos.itens(id, itens),
+    onSuccess: invalidar,
+  })
+}
+
+export function useSubmeterAditivo(contratoId: number | undefined) {
+  const invalidar = useInvalidarAditivo(contratoId)
+  return useMutation({
+    mutationFn: (id: number) => api.aditivos.submeter(id),
+    onSuccess: invalidar,
+  })
+}
+
+export function useAtestarAditivo(contratoId: number | undefined) {
+  const invalidar = useInvalidarAditivo(contratoId)
+  return useMutation({
+    mutationFn: ({ id, aprovar, observacao }: {
+      id: number; aprovar: boolean; observacao?: string
+    }) => api.aditivos.atestar(id, aprovar, observacao ?? ''),
+    onSuccess: invalidar,
+  })
+}
+
+export function useCancelarAditivo(contratoId: number | undefined) {
+  const invalidar = useInvalidarAditivo(contratoId)
+  return useMutation({
+    mutationFn: ({ id, motivo }: { id: number; motivo?: string }) =>
+      api.aditivos.cancelar(id, motivo ?? ''),
+    onSuccess: invalidar,
+  })
+}
+
+export function useExcluirAditivo(contratoId: number | undefined) {
+  const invalidar = useInvalidarAditivo(contratoId)
+  return useMutation({
+    mutationFn: (id: number) => api.aditivos.excluir(id),
+    onSuccess: invalidar,
+  })
+}
+
+export function useAbrirMedicao(contratoId: number | undefined) {
+  const invalidar = useInvalidarContrato(contratoId)
+  return useMutation({
+    mutationFn: (payload: {
+      contrato: number; inicio: string; fim: string
+      linhas?: LinhaParaApi[]
+      custo_reembolsavel?: string | null
+      observacao?: string
+    }) => api.medicoes.abrir(payload),
+    onSuccess: invalidar,
+  })
+}
+
+export function useSalvarLinhas(contratoId: number | undefined) {
+  const invalidar = useInvalidarContrato(contratoId)
+  return useMutation({
+    mutationFn: ({ id, linhas }: { id: number; linhas: LinhaParaApi[] }) =>
+      api.medicoes.linhas(id, linhas),
+    onSuccess: invalidar,
+  })
+}
+
+export function useSubmeterMedicao(contratoId: number | undefined) {
+  const invalidar = useInvalidarContrato(contratoId)
+  return useMutation({
+    mutationFn: ({ id, observacao }: { id: number; observacao?: string }) =>
+      api.medicoes.submeter(id, observacao ?? ''),
+    onSuccess: invalidar,
+  })
+}
+
+export function useAtestarMedicao(contratoId: number | undefined) {
+  const invalidar = useInvalidarContrato(contratoId)
+  return useMutation({
+    mutationFn: ({ id, aprovar, observacao }: {
+      id: number; aprovar: boolean; observacao?: string
+    }) => api.medicoes.atestar(id, aprovar, observacao ?? ''),
+    onSuccess: invalidar,
+  })
+}
+
+export function useRetificarMedicao(contratoId: number | undefined) {
+  const invalidar = useInvalidarContrato(contratoId)
+  return useMutation({
+    mutationFn: ({ id, motivo }: { id: number; motivo: string }) =>
+      api.medicoes.retificar(id, motivo),
+    onSuccess: invalidar,
+  })
+}
+
+export function useCancelarMedicao(contratoId: number | undefined) {
+  const invalidar = useInvalidarContrato(contratoId)
+  return useMutation({
+    mutationFn: ({ id, motivo }: { id: number; motivo?: string }) =>
+      api.medicoes.cancelar(id, motivo ?? ''),
+    onSuccess: invalidar,
+  })
+}
+
+export function useExcluirMedicao(contratoId: number | undefined) {
+  const invalidar = useInvalidarContrato(contratoId)
+  return useMutation({
+    mutationFn: (id: number) => api.medicoes.excluir(id),
+    onSuccess: invalidar,
+  })
+}
+
+export function useRetencao(contratoId: number | undefined) {
+  return useQuery({
+    queryKey: pdcaKeys.contratos.retencao(contratoId ?? 0),
+    queryFn: () => api.contratos.retencao(contratoId as number),
+    enabled: contratoId != null,
+  })
+}
+
+export function useLiberarRetencao(contratoId: number | undefined) {
+  const invalidar = useInvalidarContrato(contratoId)
+  return useMutation({
+    mutationFn: (payload: { valor: string; data: string; condicao_atendida: string }) =>
+      api.contratos.liberarRetencao(contratoId as number, payload),
+    onSuccess: invalidar,
+  })
+}
+
+export function useLiberacoes(params: Params = {}, ativo = true) {
+  return useQuery({
+    queryKey: pdcaKeys.liberacoes(params),
+    queryFn: async () => (await api.liberacoes.listar(params)).results,
+    enabled: ativo,
+  })
+}
+
+/** Busca server-side, como todo select novo desde o F2. A normalização de forma
+ *  (lista crua × página) mora no cliente de API — ver a nota lá. */
+export function useFornecedoresOpt(busca: string, ativo = true) {
+  return useQuery({
+    queryKey: pdcaKeys.vinculos.fornecedores(busca),
+    queryFn: () => api.fornecedoresOpt(busca),
+    enabled: ativo,
+    placeholderData: keepPreviousData,
   })
 }

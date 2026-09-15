@@ -123,7 +123,12 @@ demo = upsert_user(
     # sil, orcamento, maps, prancheta, pdca).
     ["financeiro", "tesouraria", "fiscal", "comercial", "engenharia",
      "drone_analista", "rh_gestor", "rh_medico", "rh_financeiro", "suprimentos", "almoxarife",
-     "orcamentista", "topografo", "projetista", "planejador"],
+     "orcamentista", "topografo", "projetista", "planejador",
+     # PDCA.3. Entra no power-user porque é ele que exercita o caminho principal
+     # da fatia (montar contrato, apurar medição) — e entra **sem** o poder de
+     # atestar, que é a persona seguinte: o `demo` apurando e aprovando o próprio
+     # boletim tornaria a segregação da §8 indemonstrável com token real.
+     "gestor_contratos"],
 )
 semdrone = upsert_user(tenant, "semdrone", "semdrone123", ["erp_financeiro"], ["operacional"])
 # O `engenharia` aqui não é enfeite: é o único ator do seed capaz de provar a
@@ -157,6 +162,14 @@ acme = upsert_user(acme_tenant, "acme", "acme123", ["drone"], ["operacional", "e
 # contraprova (tem `planejador` + `engenharia`, que editam o plano) e o `admin`
 # menos ainda (herda o catálogo inteiro).
 campo = upsert_user(tenant, "campo", "campo123", ["drone", "prancheta", "pdca"], ["campo"])
+# **PDCA.3 precisou do terceiro par, e pelo mesmo motivo dos dois anteriores.**
+# A fatia inteira gira em torno de *quem apura não ateste* (§8), e sem um ator que
+# **só** ateste isso é indemonstrável com token real: o `demo` apura (tem
+# `gestor_contratos`) e o `admin` herda o catálogo do tenant. Este usuário leva a
+# persona `diretoria`, que é o "gerente" da §5.3 — lê contrato e medição, assina o
+# degrau, e **não** monta o boletim que assina.
+gerente = upsert_user(tenant, "gerente", "gerente123",
+                      ["erp_financeiro", "orcamento", "pdca"], ["diretoria"])
 # Admin do tenant 'demo': gere papéis/personas e permissões na tela de Administração.
 admin = upsert_user(
     tenant, "admin", "admin123", ["drone", "erp_financeiro", "crm", "rh"], [], is_admin=True
@@ -214,3 +227,10 @@ print("  semdrone -> modulos:", semdrone.modulos_efetivos(), "| papeis:", semdro
 print("  acme     -> modulos:", acme.modulos_efetivos(), "| papeis:", acme.nomes_perfis())
 print("  campo    -> modulos:", campo.modulos_efetivos(), "| papeis:", campo.nomes_perfis(),
       "| resolve marcacao:", "prancheta.marcacao.resolver" in campo.permissoes_efetivas())
+# A linha que prova a segregação da PDCA.3 no próprio seed: os dois lados
+# impressos um embaixo do outro, cada um com o verbo que o outro não tem.
+print("  demo     -> apura medicao:", "pdca.medicao.apurar" in demo.permissoes_efetivas(),
+      "| ateste:", "pdca.medicao.atestar" in demo.permissoes_efetivas())
+print("  gerente  -> modulos:", gerente.modulos_efetivos(), "| papeis:", gerente.nomes_perfis(),
+      "| apura medicao:", "pdca.medicao.apurar" in gerente.permissoes_efetivas(),
+      "| ateste:", "pdca.medicao.atestar" in gerente.permissoes_efetivas())

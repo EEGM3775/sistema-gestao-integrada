@@ -34,5 +34,34 @@ export const pdcaKeys = {
     itens: (orcamento: number, busca: string) =>
       [...pdcaKeys.raiz, 'vinculos', 'itens', orcamento, busca] as const,
     responsaveis: (busca: string) => [...pdcaKeys.raiz, 'vinculos', 'responsaveis', busca] as const,
+    fornecedores: (busca: string) => [...pdcaKeys.raiz, 'vinculos', 'fornecedores', busca] as const,
   },
+  /** PDCA.3. O saldo é chave **própria**, e não parte do detalhe do contrato:
+   *  ele muda a cada medição aprovada, e invalidá-lo junto com o cadastro faria
+   *  a tela recarregar a planilha contratual inteira a cada atesto. */
+  contratos: {
+    lista: (params: Record<string, unknown>) => [...pdcaKeys.raiz, 'contratos', params] as const,
+    detalhe: (id: number) => [...pdcaKeys.raiz, 'contrato', id] as const,
+    itens: (id: number) => [...pdcaKeys.raiz, 'contrato', id, 'itens'] as const,
+    saldo: (id: number) => [...pdcaKeys.raiz, 'contrato', id, 'saldo'] as const,
+    retencao: (id: number) => [...pdcaKeys.raiz, 'contrato', id, 'retencao'] as const,
+    /** A prévia é cacheada pelo **período**: o gestor compara meses indo e
+     *  voltando, e refazer a chamada a cada troca perderia a comparação. */
+    proposta: (id: number, inicio: string, fim: string) =>
+      [...pdcaKeys.raiz, 'contrato', id, 'proposta', inicio, fim] as const,
+    periodo: (id: number) => [...pdcaKeys.raiz, 'contrato', id, 'periodo'] as const,
+  },
+  medicoes: {
+    lista: (params: Record<string, unknown>) => [...pdcaKeys.raiz, 'medicoes', params] as const,
+    detalhe: (id: number) => [...pdcaKeys.raiz, 'medicao', id] as const,
+    /** A grade do documento. Chave própria porque ela muda a cada gravação da
+     *  grade, e o detalhe do documento não precisa recarregar junto. */
+    contexto: (id: number) => [...pdcaKeys.raiz, 'medicao', id, 'contexto'] as const,
+  },
+  aditivos: {
+    lista: (params: Record<string, unknown>) => [...pdcaKeys.raiz, 'aditivos', params] as const,
+    detalhe: (id: number) => [...pdcaKeys.raiz, 'aditivo', id] as const,
+  },
+  liberacoes: (params: Record<string, unknown>) =>
+    [...pdcaKeys.raiz, 'liberacoes', params] as const,
 }

@@ -10,18 +10,82 @@ Divergência derruba TODA a autenticação — por isso a regressão existe: é 
 config que quebra silenciosamente num deploy e só aparece como "ninguém consegue
 entrar".
 """
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from unittest import mock
 
 import jwt
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from django.conf import settings
 from django.core.cache import cache
+from django.test import override_settings
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.test import APIRequestFactory, APITestCase
 from rest_framework.throttling import UserRateThrottle
 
 from nucleo.authentication import IamJWTAuthentication
 from nucleo.models import Notificacao, Tenant, Usuario
+
+
+@lru_cache(maxsize=1)
+def _par_efemero():
+    """Um par RSA gerado aqui, para o teste poder assinar — o D50.
+
+    **O backend não tem chave privada, e isso está certo.** Ele é *resource
+    server*: recebe `JWT_PUBLIC_KEY_PATH`, verifica, e não emite nada. Quem
+    assina é a IAM. Então `SIGNING_KEY` é string vazia por desenho, e o teste que
+    assinava com ela morria em `InvalidKeyError` — não por defeito do backend,
+    mas por pedir à configuração de produção uma capacidade que ela nega de
+    propósito.
+
+    **O vermelho era o menor dos dois problemas.** No CI estes testes *passavam*:
+    lá não há `JWT_PUBLIC_KEY_PATH`, o arranjo do S3 cai no ramo HS256 e assina
+    com o `JWT_SECRET`. As quatro regressões que provam o S8 exercitavam, então,
+    só a configuração que **não** é a de produção — e a que é (RS256, sem
+    privada) era exatamente onde elas não rodavam. Um erro no caminho RS256
+    passaria pelo gate sem ninguém ver.
+
+    Com o par efêmero o teste deixa de perguntar como a máquina está configurada:
+    assina com a privada daqui, verifica com a pública daqui, e é **RS256 sempre**
+    — no CI, no contêiner e no laptop. É a mesma doença do
+    [D125](../../docs/historico-correcoes.md), que era teste dependente de
+    ambiente, numa segunda forma.
+
+    `lru_cache` porque gerar RSA de 2048 bits custa dezenas de milissegundos e o
+    par não precisa ser diferente a cada teste — o que ele precisa é não vir de
+    fora.
+    """
+    chave = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    privada = chave.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+    publica = chave.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode()
+    return privada, publica
+
+
+def _jwt_com_par_efemero():
+    """`SIMPLE_JWT` igual ao de produção, trocando só o arranjo de chaves.
+
+    `deepcopy` e não um dicionário novo: `ISSUER`, `AUDIENCE` e o resto têm de
+    continuar vindo do settings real, senão o teste passaria a provar os valores
+    que ele mesmo escreveu — que é o oposto do que a regressão do S8 existe para
+    fazer.
+    """
+    privada, publica = _par_efemero()
+    config = deepcopy(settings.SIMPLE_JWT)
+    config.update({
+        "ALGORITHM": "RS256",
+        "SIGNING_KEY": privada,
+        "VERIFYING_KEY": publica,
+    })
+    return config
 
 
 def _payload(**overrides):
@@ -45,17 +109,26 @@ def _payload(**overrides):
     return base
 
 
+def _assinar(payload):
+    """Assina com a privada efêmera, sempre em RS256 — ver `_par_efemero`."""
+    privada, _ = _par_efemero()
+    return jwt.encode(payload, privada, algorithm="RS256")
+
+
 def _token(**overrides):
-    return jwt.encode(
-        _payload(**overrides),
-        settings.SIMPLE_JWT["SIGNING_KEY"],
-        algorithm=settings.SIMPLE_JWT["ALGORITHM"],
-    )
+    return _assinar(_payload(**overrides))
 
 
+@override_settings(SIMPLE_JWT=_jwt_com_par_efemero())
 class S8IssuerAudienceTests(APITestCase):
     """A validação roda na classe de autenticação, então é ali que se testa —
-    passar por uma view misturaria o resultado com entitlement e permissão."""
+    passar por uma view misturaria o resultado com entitlement e permissão.
+
+    O `override_settings` troca **só as chaves** (D50). Ele chega mesmo ao
+    verificador: o `rest_framework_simplejwt.settings` liga `reload_api_settings`
+    ao sinal `setting_changed`, então o `TokenBackend` é remontado em vez de
+    ficar preso ao que foi lido no import.
+    """
 
     def setUp(self):
         self.auth = IamJWTAuthentication()
@@ -64,6 +137,40 @@ class S8IssuerAudienceTests(APITestCase):
     def _autenticar(self, token):
         request = self.factory.get("/api/notificacoes/", HTTP_AUTHORIZATION=f"Bearer {token}")
         return self.auth.authenticate(request)
+
+    def test_o_que_roda_aqui_e_rs256_de_verdade(self):
+        """O D50 em uma linha — e ele não era sobre o vermelho.
+
+        Era sobre estas regressões exercitarem **só** o ramo HS256, que é a
+        configuração do CI e não a de produção. Sem esta asserção a lacuna volta
+        em silêncio: bastaria alguém remover o `override_settings` num ambiente
+        com `JWT_SECRET` para os quatro testes abaixo passarem verdes provando o
+        caminho errado — que foi exatamente o estado anterior.
+        """
+        self.assertEqual(settings.SIMPLE_JWT["ALGORITHM"], "RS256")
+        self.assertIn("BEGIN PRIVATE KEY", settings.SIMPLE_JWT["SIGNING_KEY"])
+        self.assertIn("BEGIN PUBLIC KEY", settings.SIMPLE_JWT["VERIFYING_KEY"])
+        # E os valores que a regressão do S8 existe para provar continuam vindo
+        # do settings real, não do dicionário do teste.
+        self.assertEqual(_payload()["iss"], settings.SIMPLE_JWT["ISSUER"])
+        self.assertEqual(_payload()["aud"], settings.SIMPLE_JWT["AUDIENCE"])
+
+    def test_assinatura_de_outra_chave_rsa_e_recusada(self):
+        """A contraprova do par efêmero: ele não pode ter afrouxado a verificação.
+
+        Um token com `iss`/`aud` perfeitos, RS256, bem formado — e assinado por
+        **outra** privada. Se isto passasse, os quatro testes abaixo estariam
+        provando nada.
+        """
+        intrusa = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        pem = intrusa.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        ).decode()
+        token = jwt.encode(_payload(), pem, algorithm="RS256")
+        with self.assertRaises(AuthenticationFailed):
+            self._autenticar(token)
 
     def test_token_bem_formado_e_aceito(self):
         resultado = self._autenticar(_token())
@@ -86,11 +193,7 @@ class S8IssuerAudienceTests(APITestCase):
         for claim in ("iss", "aud"):
             payload = _payload()
             del payload[claim]
-            token = jwt.encode(
-                payload,
-                settings.SIMPLE_JWT["SIGNING_KEY"],
-                algorithm=settings.SIMPLE_JWT["ALGORITHM"],
-            )
+            token = _assinar(payload)
             with self.subTest(claim=claim), self.assertRaises(AuthenticationFailed):
                 self._autenticar(token)
 

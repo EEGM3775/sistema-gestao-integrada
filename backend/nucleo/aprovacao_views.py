@@ -24,7 +24,9 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 
-from .aprovacao import cancelar, decidir, pendentes_para, validar_fluxo
+from .aprovacao import (
+    cancelar, decidir, pendentes_para, reordenar_niveis, validar_fluxo,
+)
 from .models import Atesto, FluxoAprovacao, NivelAprovacao, PedidoAprovacao
 from .permissions import RequirePermission
 from .tenancy import TenantScopedViewSetMixin
@@ -96,6 +98,71 @@ class FluxoAprovacaoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     required_resource = "plataforma.fluxo_aprovacao"
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["alvo", "ativo", "padrao"]
+
+    @action(detail=False, methods=["get"])
+    def alvos(self, request):
+        """Que tipos de documento aceitam escada — para a tela poder oferecê-los.
+
+        **Existe porque sem isto a configuração é impossível pela API.** O
+        `FluxoAprovacao.alvo` é um `ContentType`, e o id dele não é adivinhável
+        nem estável entre instalações; uma tela de administração que precisasse
+        dele teria de pedir ao usuário um número que ele não tem de onde tirar.
+
+        A descoberta é **por construção, não por lista escrita à mão**: um
+        modelo entra aqui no instante em que declara a `GenericRelation` para
+        `PedidoAprovacao` — que é exatamente o gesto com que um módulo se
+        candidata a ser aprovado. Manter um catálogo em paralelo criaria a
+        segunda verdade que envelhece na fatia seguinte (foi o que aconteceu com
+        o `medicao: False` do `status/` do PDCA, e foi um teste que pegou).
+        """
+        from django.apps import apps
+        from django.contrib.contenttypes.fields import GenericRelation
+        from django.contrib.contenttypes.models import ContentType
+
+        encontrados = []
+        for modelo in apps.get_models():
+            aponta = any(
+                isinstance(campo, GenericRelation)
+                and campo.related_model is PedidoAprovacao
+                for campo in modelo._meta.private_fields
+            )
+            if not aponta:
+                continue
+            ct = ContentType.objects.get_for_model(modelo)
+            encontrados.append({
+                "id": ct.pk,
+                "codigo": f"{ct.app_label}.{ct.model}",
+                "rotulo": str(modelo._meta.verbose_name).capitalize(),
+                "modulo": ct.app_label,
+            })
+        return Response(sorted(encontrados, key=lambda a: a["codigo"]))
+
+    @action(detail=True, methods=["post"])
+    def reordenar(self, request, pk=None):
+        """Reescreve a ordem dos degraus **numa transação só**.
+
+        Existe porque a alternativa — a tela trocando `ordem` de dois degraus com
+        dois `PATCH` — não é atômica e esbarra na `UniqueConstraint(fluxo,
+        ordem)`. O caminho ingênuo precisa de um valor temporário, e uma falha no
+        meio deixa a escada com numeração quebrada: `validar_fluxo` passa a
+        recusá-la, e o documento que dependia dela para de andar **sem que
+        ninguém tenha mexido nele**.
+
+        Recebe `{"niveis": [id, id, ...]}` na ordem desejada; a numeração 1..N é
+        derivada da posição, e não enviada — assim a tela não tem como inventar
+        um buraco.
+        """
+        fluxo = self.get_object()
+        ids = request.data.get("niveis")
+        if not isinstance(ids, list) or not ids:
+            raise ValidationError({"niveis": "Envie a lista de ids na ordem desejada."})
+        try:
+            fluxo = reordenar_niveis(fluxo, [int(i) for i in ids])
+        except (TypeError, ValueError):
+            raise ValidationError({"niveis": "A lista precisa conter ids numéricos."})
+        except DjangoValidationError as erro:
+            raise ValidationError({"niveis": erro.messages})
+        return Response(self.get_serializer(fluxo).data)
 
     @action(detail=True, methods=["get"])
     def validar(self, request, pk=None):

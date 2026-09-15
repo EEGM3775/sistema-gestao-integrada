@@ -19,6 +19,15 @@ export { Btn } from './Btn'
 export { Modal } from './Modal'
 
 /**
+ * Entrada numérica — dinheiro, contagem e decimal. Promovidos do `MoneyInput`
+ * local do ERP, que pinta cor fixa e some no tema escuro. Estes saem só de
+ * token e resolvem os três defeitos do `<input type="number">` controlado:
+ * o valor mostrado difere do digitado, o zero à esquerda sobrevive no DOM, e a
+ * roda do mouse altera o número sem ninguém pedir.
+ */
+export { CampoMoeda, CampoInteiro, CampoDecimal, paraNumero, daApi } from './Campos'
+
+/**
  * MAP.1 — a superfície espacial. Fica aqui, e não num kit do módulo Maps,
  * porque obra, fornecedor, almoxarifado e voo caem no MESMO mapa: um mapa por
  * módulo repetiria a dívida dos kits paralelos.

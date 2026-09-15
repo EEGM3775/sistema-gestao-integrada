@@ -154,8 +154,16 @@ de sinal contrário (`estorna`), não por edição — o avanço é a base de di
 reescrito é dinheiro sem rastro. A trava mora no `save()` do model, e não só na API: a viewset não
 expõe `PUT`/`PATCH`/`DELETE`, mas viewset é *uma* porta — o comando de bancada, a importação e a
 fatia de WhatsApp entram por outras. Carrega `origem` (`web` / `whatsapp` / `app`) no mesmo idioma que
-o diário já usa, e foto (pela porta única de arquivo da plataforma, que é por onde o teto de bytes já
-é imposto).
+o diário já usa, e foto — **pela porta única da plataforma nos dois sentidos**. Na subida é o
+`UploadValidationMixin`, que é por onde o teto de bytes e a lista de tipos do tenant já são impostos;
+na descida é o recurso `pdca.avanco_foto` do `funcoesimpexp`
+(`GET /api/impexp/pdca.avanco_foto/arquivo/foto/<apontamento>/`), e nunca `/media/` — que o gateway
+não serve e que, num dev com `DEBUG=True`, entregaria o binário fora de auth, de entitlement e da
+RLS. O JSON publica esse endereço no próprio campo `foto`, e `null` quando não há foto.
+
+**A entrega é gateada por `pdca.avanco.view`, e não pelo par de escrita.** Apontar e ver são pessoas
+diferentes (§8): exigir `pdca.avanco.apontar` para abrir a foto tiraria do planejador a evidência do
+avanço que ele está conferindo — seria fechar com a régua da escrita um ato que é de leitura.
 
 **O percentual é um delta, não um acumulado.** 30% na segunda e 25% na quinta deixam a atividade em
 55%; a leitura acumulada é derivada, nunca gravada. Guardar o acumulado em coluna obrigaria a
@@ -199,15 +207,112 @@ sistema* (§11.3).
 Quantidade contratada e preço unitário. A trava que o mercado ensina: **medição acumulada não pode
 exceder contratado + aditivos**.
 
-**`AditivoContrato`** / **`ItemAditivo`** — acréscimo, supressão, prazo ou reajuste, com motivo e
-aprovação própria. Duas regras vindas da prática: a quantidade final de um item **não pode ficar
-abaixo do que já foi medido**, e o item aditado fica **marcado** nas medições seguintes. O efeito no
-custo já existe do outro lado — `RevisaoOrcamento` do tipo `aditivo` — e o PDCA amarra o documento, o
-saldo e o prazo a ele.
+> **Quando a planilha fecha para edição direta: quando alguém já mediu contra ela.** Não é o status
+> do contrato — é o uso. Antes da primeira medição em voo não há nada a preservar: nenhum número foi
+> calculado sobre a planilha e nenhum título saiu, então corrigir uma quantidade é corrigir um
+> cadastro. Depois, mudá-la reescreveria o denominador de um documento assinado, e o caminho é o
+> **aditivo**. Medição cancelada ou reprovada não fecha nada, pela mesma régua do `_EM_VOO` que
+> governa o acumulado.
+>
+> A regra é **uma função** (`services.planilha_editavel`) que a view aplica e o serializer publica
+> (`planilha_editavel`, `planilha_fechada_porque`). As duas coisas importam: fechar só na tela deixa
+> a API, o comando de bancada e a aba velha passando por fora; e deixar a tela reimplementar a regra
+> foi o que produziu, em 15/09/2026, uma tela dizendo *"não se edita mais aqui"* enquanto a API
+> aceitava a edição ([D142](../historico-correcoes.md)).
+
+**`AditivoContrato`** / **`ItemAditivo`** — acréscimo, supressão, revisão de preço, inclusão de item
+e prorrogação, com objeto, **justificativa** e escada de aprovação própria
+(`pdca.aditivo.edit|aprovar` — montar e autorizar são de pessoas diferentes, como apurar e atestar).
+O efeito no custo já existe do outro lado — `RevisaoOrcamento` do tipo `aditivo` — e o PDCA amarra o
+documento, o saldo e o prazo a ele.
+
+> **O contratado original nunca é reescrito.** `ItemContrato.quantidade_contratada` é o do dia da
+> assinatura, e o que vale hoje é **derivado**: `atual = original + Σ deltas de aditivos aprovados`
+> (§4.9 — derivar, não guardar a segunda verdade). Toda trava do módulo confere contra o *atual*;
+> nenhuma confere contra o campo. A consequência é que a linha **nascida de aditivo** tem quantidade
+> original zero e a quantidade inteira no `ItemAditivo` — é o que faz a regra valer sem exceção em
+> nenhuma linha, e é a única razão de a `CheckConstraint` de quantidade positiva ter a ressalva do
+> `aditivo_origem`.
+>
+> **O preço é a exceção declarada**: ele é reescrito na linha do contrato, porque o `ItemMedicao`
+> congela o preço do dia e nenhuma medição passada é afetada — e o `ItemAditivo` guarda o anterior,
+> senão "revisou o preço" não diz de quanto para quanto.
+>
+> **As três travas** (`services.validar_aditivo`): a quantidade final de um item **nunca** cai abaixo
+> do que já foi medido e estocado; no regime público o acréscimo acumulado é conferido contra o
+> contratado **original** e o limite **digitado** no contrato (25% + 25% são 56% do assinado, não
+> 50% — conferir contra o valor já aditado é o erro que a lei existe para impedir); e aditivo em
+> rascunho ou na escada **não move saldo nenhum**, como o rascunho de medição.
+
+**`DeducaoMedicao`** — o que sai do bruto **além** da retenção contratual, tipado (INSS, ISS, IRRF,
+amortização de adiantamento, material fornecido pela contratante, multa, outros). A diferença entre
+dedução e retenção não é contábil, é de destino: retenção é dinheiro que a construtora **segura e
+devolve** quando a cláusula é cumprida; dedução é dinheiro que **não volta**. Somar as duas num
+percentual só faria a `LiberacaoRetencao` oferecer de volta imposto que nunca foi da construtora.
+Percentual **ou** valor, nunca os dois (constraint no banco), com a base declarada quando o
+percentual não incide sobre o bruto inteiro.
 
 **`Medicao`** / **`ItemMedicao`** — o boletim do período. **Nasce do avanço**, não ao lado dele
 (§11.4): o sistema propõe a quantidade a partir dos apontamentos do período, o gestor confere, ajusta
-e só então submete. Bruto → retenção → **líquido**, e o líquido vira `conta_pagar_ref` no ERP.
+e só então submete. Bruto → retenção → **deduções** → **líquido**, e o líquido vira `conta_pagar_ref`
+no ERP.
+
+> **Material estocado é saldo, não delta.** `ItemMedicao.quantidade_estocada` é a coluna E da G703
+> (*materials presently stored*): material posto na obra, pago e ainda não aplicado. Cada medição
+> declara o estoque que existe **naquele momento**, e o que se paga de material nela é a **diferença**
+> contra o que a anterior declarava — fosse delta, um estoque parado dois meses apareceria como zero
+> e ninguém veria que há material pago sem aplicar. Quando o material é aplicado, o estoque cai e a
+> quantidade executada sobe: as duas diferenças se cancelam, e por isso **ninguém paga duas vezes**
+> pela mesma unidade. O acumulado que trava soma executado **mais** estocado, porque os dois ocupam
+> contrato.
+>
+> **Os períodos são uma corrente.** A próxima medição começa no dia seguinte ao fim da anterior
+> (`/contratos/{id}/periodo-sugerido/`), e período que **se sobrepõe** ao de outra medição em voo é
+> recusado: dois períodos que se cruzam pagam o mesmo avanço duas vezes, e a trava do acumulado só
+> perceberia quando a soma estourasse o contratado — que pode ser muitos meses depois. A
+> retificadora é a exceção declarada: ela repete o período de propósito, porque está corrigindo
+> aquele período.
+
+> **Como a proposta encontra o avanço.** O `ItemContrato` tem **dois** vínculos opcionais, e eles não
+> são redundantes: `item_orcado` é a *régua de custo* (contratado contra o orçamento aprovado) e
+> `atividade` é a *ponte do avanço*. Na obra com orçamento os dois se encontram sozinhos — a
+> `Atividade` já carrega `item_orcado` desde a PDCA.1 —; o vínculo direto existe para a obra que **não
+> tem orçamento**, que senão não conseguiria medir a partir do avanço. Havendo mais de uma atividade
+> na mesma linha, a média é **ponderada pelo peso** (o mesmo `peso_de` da árvore do avanço) e a
+> resposta **declara o critério**: sem peso em nenhuma, cai para média simples e diz isso.
+>
+> **O que congela, e o que continua derivado.** O `ItemMedicao` guarda a quantidade **e o preço
+> unitário do dia**, do jeito que uma nota fiscal guarda — não é agregado, é o *insumo* congelado, e
+> sem ele corrigir um preço de contrato em 2027 reescreveria o valor de uma medição paga em 2026.
+> Bruto, retenção, líquido, saldo e acumulado continuam somados na leitura (§4.9).
+>
+> **Três somas diferentes de "já medido", e confundi-las é o erro caro.** O acumulado que **trava**
+> conta as medições aprovadas *e* as que estão na escada — contar só as aprovadas deixaria duas
+> medições subirem em paralelo, cada uma passando sozinha e as duas juntas estourando o contratado. O
+> **retido disponível** conta só as aprovadas, porque retenção que ainda não foi descontada de nada
+> não é dinheiro retido. E o **rascunho não ocupa saldo**: ele é intenção, e somá-lo faria o saldo
+> encolher quando o gestor abre uma medição só para estudar.
+
+**`LiberacaoRetencao`** — o dinheiro retido voltando ao empreiteiro *(decisão do dono, 14/09/2026: a
+liberação entra na PDCA.3, e não numa fatia posterior — reter sem poder liberar deixa o ciclo do
+dinheiro pela metade)*. Tem **escada própria**, e não herda a da medição: quem ateste medição confere
+*serviço executado*; quem libera caução confere *condição contratual cumprida* — perguntas diferentes,
+em momentos diferentes, muitas vezes por pessoas diferentes. O teto é o saldo **derivado** (retido nas
+aprovadas − já liberado), e o título que ela gera é **próprio**, nunca uma baixa na conta da medição
+que reteve: aquela conta pode já estar quitada, e a retenção costuma voltar meses depois com
+vencimento seu.
+
+**O regime de administração mede custo, e o custo é declarado** — *e a tela do módulo segue isso até
+o fim*: a prévia e a medição de um contrato por administração mostram o **custo**, não a grade de
+itens, porque ali os itens não entram na conta. Mostrá-los era oferecer um instrumento que não vale
+no regime ([D143](../historico-correcoes.md)). A planilha contratual continua valendo como
+referência de custo, e o cockpit diz isso onde o gestor procuraria a grade. `Medicao.custo_reembolsavel` não sai
+do avanço nem de nenhum lançamento que o sistema tenha hoje — quem o conhece é a folha, a nota do
+material e o aplicado do SIL. Enquanto a PDCA.9 e o seam do SIL não chegam, ele é **digitado**, e o
+campo `custo_origem` viaja junto dizendo *"informado pelo gestor"*. *(Decisão do dono, 14/09/2026: o
+regime entra com custo manual. A régua de dado honesto é cumprida **declarando a origem**, não
+escondendo o número: no dia em que a apropriação existir, `apropriado` entra sem migração de dado e
+sem reinterpretar o passado.)*
 
 **`FluxoAprovacao`** / **`NivelAprovacao`** / **`Atesto`** — a aprovação em **mais de um nível**
 (§11.5): engenheiro → gerente de contrato → fiscal, cada nível exigindo uma permissão e registrando
@@ -337,12 +442,27 @@ a **linha de compromisso** que o time arrasta sobre o plano convertendo as ativi
 da semana. É um **canvas de arrastar**, não um formulário — e é usado em reunião, em tela grande e
 sensível ao toque, com várias pessoas em volta. Formulário mataria a reunião.
 
-**4 · Grade de medição — planilha, com trava**
-Contratado · acumulado anterior · **este período** · saldo, linha a linha, com edição na célula,
-navegação por teclado (Tab/Enter, colar de planilha) e o bloqueio de exceder o contratado + aditivos
-acontecendo **na hora da digitação**, não na submissão. Quem opera isso passa o dia aqui; cada clique
-a mais é multiplicado por centenas de linhas. É a evolução natural do `FinanceDataTable` que o ERP já
-tem.
+**4 · Grade de medição — planilha, com trava, na régua da G703**
+Contratado original · **aditivos** · contratado atual · acumulado anterior · **este período** ·
+**material estocado** · acumulado · % · saldo, linha a linha — a ordem da G703, que é a ordem em que a
+conferência acontece. Edição na célula, navegação por teclado (Tab/Enter, colar de coluna de
+planilha) e o bloqueio de exceder o contratado atual **na hora da digitação**, não na submissão. Quem
+opera isso passa o dia aqui; cada clique a mais é multiplicado por centenas de linhas.
+
+Três propriedades que não são detalhe de implementação:
+
+- **a grade não calcula nada.** Contratado, aditivo, acumulado e saldo vêm resolvidos de
+  `/medicoes/{id}/contexto/`. Montar a conta no navegador foi o que fez a mesma medição mostrar
+  números diferentes conforme a porta de entrada ([D138](../historico-correcoes.md));
+- **ela grava sozinha.** Autosave com debounce e selo de estado; submeter grava antes de enviar. Dois
+  botões independentes para "salvar" e "submeter" fizeram documento ser aprovado com número antigo,
+  em silêncio ([D137](../historico-correcoes.md));
+- **acima de 80 linhas ela vira janela.** O teto do plano é 2.000 itens por contrato, e 2.000
+  `<input>` no DOM engasgam entre a tecla e o caractere.
+
+Cada linha responde *de onde saiu este número* (a **memória de cálculo**: as atividades, o avanço de
+cada uma no período e o peso que teve, com link para o cronograma) e carrega a **nota de quem
+mediu**, que sai impressa no boletim.
 
 **5 · Campo — o oposto de tudo acima**
 Uma mão, luva, sol, e às vezes sem sinal. Alvos grandes, **uma pergunta por vez** em vez de formulário
@@ -509,7 +629,7 @@ necessária — quem executa não aprova:
 
 `pdca.local.*` · `pdca.cronograma.view|edit|publicar|replanejar` · `pdca.avanco.view|apontar` ·
 `pdca.programacao.view|comprometer|encerrar` · `pdca.restricao.*` · `pdca.contrato.view|edit` ·
-`pdca.medicao.view|apurar|atestar` · `pdca.aditivo.edit|aprovar` ·
+`pdca.medicao.view|apurar|atestar` · `pdca.aditivo.edit|aprovar` (✅ PDCA.4) ·
 `pdca.verificacao.modelo_edit|aplicar` · `pdca.nc.abrir|tratar|verificar_eficacia` · `pdca.ssma.*` ·
 `pdca.apropriacao.*` · `pdca.risco.*` · `pdca.garantia.*`
 
@@ -528,6 +648,17 @@ Uma permissão nasce **fora** deste grupo, no grupo `base`: **`obra.etapa.percen
 Personas de fábrica: `planejador`, `engenheiro_de_obra`, `gestor_contratos`, `tecnico_qualidade`,
 `fiscal_de_obra`. As existentes (`orcamentista`, `almoxarife`, `suprimentos`) ganham só leitura do que
 lhes diz respeito.
+
+> **A PDCA.3 estreou a `gestor_contratos`, e ela é nova de verdade** — não é gêmea de ninguém, que é o
+> teste que a nota abaixo impõe. A `engenharia` responde pela execução (aponta avanço, assina diário),
+> o `financeiro` paga o título depois de pronto, e entre os dois havia um vazio: quem fecha o contrato
+> com o empreiteiro, confere a medição do período e a leva à assinatura. Ela **apura e não ateste** —
+> leva `pdca.medicao.apurar`, nunca `atestar`.
+>
+> **Quem ateste é a `diretoria`**, que já existe e é o "gerente" da §5.3. Ela recebeu da PDCA.3 o
+> **único verbo de escrita que tem em todo o catálogo**, e ele é uma assinatura, não uma edição:
+> `pdca.medicao.atestar`. Dar o atesto a quem já lê contrato e medição é o que torna a escada montável
+> no primeiro dia, sem o tenant precisar desenhar uma persona antes de emitir a primeira medição.
 
 > **O nome do fiscal.** `fiscal` já é a persona de **nota fiscal** no catálogo da IAM, e são pessoas
 > diferentes em empresas diferentes — daí `fiscal_de_obra`.
@@ -557,9 +688,18 @@ e o teste do `nucleo` prende constante a consumidor. A §5.5c do `planos.py` tra
 (locais por obra, profundidade da hierarquia, locais por geração — que é o corte síncrono × job desta
 fatia — e níveis de aprovação); a §5.5d os cinco do cronograma; a §5.5e o do lote de células; e a
 **§5.5f os dois da PDCA.2** — apontamentos por lote (a grade da semana) e pontos da curva S (acima
-dele o servidor engrossa a granularidade e **declara** qual valeu). *Fotos e bytes por apontamento*
-não viraram constante: o arquivo sobe pela porta única da plataforma, que já lê o teto do tenant —
-declarar outro aqui criaria um segundo número para a mesma pergunta.
+dele o servidor engrossa a granularidade e **declara** qual valeu); e a **§5.5h os dois da PDCA.3** —
+itens por contrato e linhas por medição, que são o mesmo número de propósito (a primeira medição de
+uma empreitada por preço unitário toca legitimamente **todos** os itens). *Fotos e bytes por
+apontamento* não viraram constante: o arquivo sobe pela porta única da plataforma, que já lê o teto do
+tenant — declarar outro aqui criaria um segundo número para a mesma pergunta.
+
+> **O que da PDCA.3 NÃO virou teto, e por quê.** A **retenção** (percentual, natureza, condição) é
+> cláusula que o cliente negocia com o fornecedor dele — mesma classe do prazo de pagamento e do
+> limite legal de acréscimo do regime público; a §5.6 do `planos.py` já traça essa fronteira. E o
+> **valor da medição** não tem teto: pareceria prudência e seria a pior espécie de trava, porque a
+> obra grande é justamente a que paga o plano caro. Quem protege a empresa contra o número errado é a
+> escada de atesto, que é gente conferindo — não uma constante.
 
 ## 9. O campo — três caminhos, em fases declaradas
 
@@ -687,8 +827,8 @@ O **commit não acompanha a fatia**: ele é do dono e vem ao final do módulo (�
 | **PDCA.1** | Cronograma versionado, `Atividade` (WBS), `Precedencia`, CPM, linha de base, vínculos opcionais com `EtapaObra` e `ItemOrcado` |
 | **PDCA.1b** | Plano modelo (biblioteca de padrões da empresa, com quota de plano), escrita em lote, renumeração da EAP, tela de expediente, filtros de trabalho, ações em bloco e exportação (PNG/CSV) |
 | **PDCA.2** | `ApontamentoAvanco`, avanço ponderado, curva S física × financeira, e a tomada do `percentual_conclusao` com a permissão de override |
-| **PDCA.3** | `ContratoObra`, `ItemContrato`, `Medicao` nascendo do avanço, retenção, escada de atesto, título ao ERP |
-| **PDCA.4** | `AditivoContrato` com as travas, saldo de contrato e o regime público opcional |
+| **PDCA.3** | `ContratoObra`, `ItemContrato`, `Medicao` nascendo do avanço, retenção **e sua liberação**, escada de atesto, título ao ERP |
+| **PDCA.4** | `AditivoContrato`/`ItemAditivo` com as três travas, `DeducaoMedicao` tipada, material estocado (coluna E da G703), período encadeado, e a medição como **documento com endereço próprio** (apurar × boletim) |
 | **PDCA.5** | Last Planner: `Restricao`, `ProgramacaoSemanal`, PPC e catálogo de causas |
 | **PDCA.6** | Linha de balanço sobre `LocalObra` — ritmo, sincronia de equipes, gargalo |
 | **PDCA.7** | Verificação (FVS), `NaoConformidade` com pino da Prancheta, `PlanoAcao` 5W2H e verificação de eficácia |

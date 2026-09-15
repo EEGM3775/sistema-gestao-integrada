@@ -26,7 +26,14 @@ dinheiro sem rastro. O avanço da folha é a soma dos seus apontamentos; o do
 pai é a média ponderada pelo peso dos filhos; e a curva S deixa de ter só a
 linha prevista.
 
-Planta: docs/modulos/modulopdca.md §4.1, §4.2 e §4.3.
+**Fatia PDCA.3: o dinheiro.** O avanço deixa de ser só leitura e passa a sair
+do caixa. `ContratoObra` e `ItemContrato` são *o que foi combinado*; `Medicao`
+e `ItemMedicao` são *o que se paga deste período*, **proposto a partir do
+avanço** e conferido por gente (§11.4); e a escada de atesto do `nucleo`
+congela o documento no último degrau, gerando o título no ERP (§11.5). A
+`LiberacaoRetencao` fecha o ciclo do que ficou retido.
+
+Planta: docs/modulos/modulopdca.md §4.1, §4.2, §4.3 e §4.4.
 """
 from __future__ import annotations
 
@@ -34,7 +41,7 @@ from django.contrib.contenttypes.fields import GenericRelation
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
-from nucleo.tenancy import TenantScopedModel
+from nucleo.tenancy import Excluivel, TenantScopedModel
 
 
 class NivelLocal(models.TextChoices):
@@ -824,3 +831,1065 @@ class ApontamentoAvanco(TenantScopedModel):
                 "de sinal contrário (estorno), em vez de editar este."
             )
         super().save(*args, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# PDCA.3 — contrato, medição e o título que sai para o ERP
+# ---------------------------------------------------------------------------
+#
+# Aqui o módulo atravessa a fronteira do dinheiro pela primeira vez, e é por
+# isso que esta é a fatia com mais trava por linha de código da casa.
+#
+# Três decisões da planta governam tudo o que vem abaixo:
+#
+# 1. **Avanço e medição são duas coisas** (§11.4). O avanço é da *atividade* e
+#    existe sempre — inclusive na equipe própria, que não tem contrato. A
+#    medição é do *contrato* e nasce **proposta** a partir do avanço do período,
+#    para o gestor conferir e ajustar. Unificar obrigaria toda atividade a ter
+#    contrato; separar sem derivação produziria dois números divergindo sem
+#    ninguém notar.
+# 2. **Medição aprovada congela** (§11.5). Correção é medição **retificadora**,
+#    nunca edição — o mesmo rigor do orçamento aprovado, pelo mesmo motivo: é
+#    dinheiro saindo.
+# 3. **Saldo de contrato é derivado** (§4.9). Não há coluna de acumulado
+#    medido, de saldo nem de total: `services` soma os itens. Guardar o agregado
+#    criaria a segunda verdade que diverge da primeira.
+#
+# **O que FICA gravado, e por que isso não contradiz a (3).** O `ItemMedicao`
+# guarda a quantidade **e o preço unitário do dia**, do jeito que uma nota
+# fiscal guarda. Não é agregado: é o *insumo* congelado. Sem ele, corrigir o
+# preço de um item de contrato em 2027 reescreveria o valor de uma medição paga
+# em 2026 — que é exatamente o rastro que uma auditoria de obra procura e não
+# encontra. A soma continua sendo feita na leitura; o que não muda mais são as
+# parcelas.
+
+
+class RegimeContrato(models.TextChoices):
+    """Como o contrato mede — e são três matemáticas diferentes, não três nomes.
+
+    - **preço unitário**: mede-se `quantidade × preço` de cada item. É o regime
+      da empreitada por item, e o único em que o avanço físico converte direto
+      em quantidade a pagar.
+    - **preço global**: mede-se o **percentual** do valor fechado. O item
+      continua existindo (é a régua de quanto cada frente pesa), mas o que se
+      paga é a fração do todo.
+    - **administração**: mede-se o **custo reembolsável** do período mais a taxa
+      de administração. O custo não sai do avanço — sai da folha, da nota do
+      material e do aplicado —, e por isso ele é **declarado** na medição com a
+      origem junto (`OrigemCusto`), em vez de fingir que foi apurado.
+    """
+
+    UNITARIO = "unitario", _("Preço unitário")
+    GLOBAL = "global", _("Preço global")
+    ADMINISTRACAO = "administracao", _("Administração (custo + taxa)")
+
+
+class NaturezaRetencao(models.TextChoices):
+    """O que aquele dinheiro retido **é** — e isto governa quando ele volta.
+
+    Não é enfeite de relatório: caução contratual e retenção técnica liberam em
+    momentos diferentes (a primeira no encerramento do contrato, a segunda na
+    aceitação definitiva do serviço), e quem libera é pessoa diferente. Guardar
+    só o percentual deixaria a `LiberacaoRetencao` sem conseguir dizer que
+    condição estava sendo atendida.
+    """
+
+    NENHUMA = "nenhuma", _("Sem retenção")
+    CAUCAO = "caucao", _("Caução contratual")
+    GARANTIA = "garantia", _("Garantia de execução")
+    TECNICA = "tecnica", _("Retenção técnica")
+
+
+class ContratoObra(TenantScopedModel, Excluivel):
+    """O que foi combinado com o empreiteiro — e a régua contra a qual toda
+    medição desta obra é conferida.
+
+    **Usa o `Fornecedor` que já existe, e não um cadastro próprio** (§7 — o
+    módulo *não* cadastra fornecedor). O cadastro da casa já é neutro quanto a
+    ser de material ou de serviço, que é a razão de ele servir aqui sem ganhar
+    um "tipo empreiteiro" que a tela teria de manter em dia.
+
+    **`PROTECT` na obra e no fornecedor.** Contrato é documento com valor
+    jurídico; apagar a obra e levar junto o contrato que gerou pagamento é
+    perder a prova de para onde o dinheiro foi. Quem tentar leva 409 com o
+    motivo (`nucleo/excecoes.py`), e o caminho honesto é a lixeira — o contrato
+    entra nela (herda `Excluivel`), o que dá o prazo do plano para desfazer sem
+    que a linha suma do banco.
+
+    **O regime público é opção, não regime do sistema** (§11.3). Nem toda obra
+    com dinheiro público segue o mesmo estatuto, e software que impõe a regra
+    pela origem do dinheiro erra na exceção. Por isso `regime_publico` é um
+    interruptor do usuário, e o limite legal de acréscimo é um **número que ele
+    digita** — não uma constante nossa. E ele não vai para `payment/planos.py`:
+    é regra de domínio, não teto comercial (§5.6 do `planos.py`).
+    """
+
+    class Status(models.TextChoices):
+        RASCUNHO = "rascunho", _("Rascunho")
+        VIGENTE = "vigente", _("Vigente")
+        SUSPENSO = "suspenso", _("Suspenso")
+        ENCERRADO = "encerrado", _("Encerrado")
+        CANCELADO = "cancelado", _("Cancelado")
+
+    contrato_id = models.AutoField(primary_key=True)
+
+    obra = models.ForeignKey(
+        "obras.Obra", on_delete=models.PROTECT, related_name="contratos_pdca",
+        verbose_name=_("Obra"),
+    )
+    fornecedor = models.ForeignKey(
+        "fornecedores.Fornecedor", on_delete=models.PROTECT,
+        related_name="contratos_pdca", verbose_name=_("Empreiteiro"),
+    )
+
+    #: O número do contrato **da empresa**, não o nosso id. É por ele que o
+    #: gestor procura, e é ele que aparece no título do ERP — um `ContaPagar`
+    #: dizendo "Medição 3 do contrato 42" não ajuda quem confere a fatura contra
+    #: a pasta do contrato.
+    numero = models.CharField(max_length=40, verbose_name=_("Número do contrato"))
+    objeto = models.TextField(verbose_name=_("Objeto"))
+
+    regime = models.CharField(
+        max_length=16, choices=RegimeContrato.choices,
+        default=RegimeContrato.UNITARIO, verbose_name=_("Regime"),
+    )
+
+    #: O valor fechado. **Obrigatório no global e na administração**, ausente no
+    #: unitário — lá o valor é a soma dos itens, e guardar um total ao lado da
+    #: soma é a segunda verdade do §4.9. A constraint abaixo cobra isso.
+    valor_global = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True,
+        verbose_name=_("Valor global"),
+    )
+
+    #: A taxa do regime de administração, em %. Só ela é margem do empreiteiro;
+    #: o resto é reembolso de custo.
+    taxa_administracao = models.DecimalField(
+        max_digits=6, decimal_places=3, null=True, blank=True,
+        verbose_name=_("Taxa de administração (%)"),
+    )
+
+    data_inicio = models.DateField(verbose_name=_("Início da vigência"))
+    data_fim = models.DateField(
+        null=True, blank=True, verbose_name=_("Fim da vigência"),
+    )
+    garantia_meses = models.PositiveSmallIntegerField(
+        default=0, verbose_name=_("Garantia (meses)"),
+    )
+
+    # --- A cláusula de retenção (§4.4) ------------------------------------
+    #: Os três campos andam juntos de propósito: o percentual diz *quanto*, a
+    #: natureza diz *o que é* e a condição diz *quando volta*. Guardar só o
+    #: percentual deixaria a liberação sem conseguir declarar o que foi
+    #: cumprido, e o dinheiro retido viraria saldo sem dono.
+    retencao_percentual = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0,
+        verbose_name=_("Retenção (%)"),
+    )
+    retencao_natureza = models.CharField(
+        max_length=12, choices=NaturezaRetencao.choices,
+        default=NaturezaRetencao.NENHUMA, verbose_name=_("Natureza da retenção"),
+    )
+    retencao_condicao_liberacao = models.TextField(
+        blank=True, verbose_name=_("Condição de liberação da retenção"),
+    )
+
+    # --- Regime público (§11.3), ligado pelo usuário ----------------------
+    regime_publico = models.BooleanField(
+        default=False, verbose_name=_("Regime público"),
+    )
+    #: O teto legal de acréscimo, **digitado**. 25% é o caso comum da Lei
+    #: 14.133, 50% o da reforma de edifício — e existe contrato que não segue
+    #: nenhum dos dois. O sistema confere contra o número que o usuário
+    #: declarou; escolher o número por ele seria errar na exceção.
+    limite_acrescimo_percentual = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True,
+        verbose_name=_("Limite legal de acréscimo (%)"),
+    )
+
+    #: Quantos dias o título leva para vencer, contados da aprovação da medição.
+    #: Fica aqui, e não em `planos.py`, porque **não é teto**: é cláusula
+    #: comercial do contrato, que varia de empreiteiro para empreiteiro (§5.6).
+    prazo_pagamento_dias = models.PositiveSmallIntegerField(
+        default=30, verbose_name=_("Prazo de pagamento (dias)"),
+    )
+
+    status = models.CharField(
+        max_length=10, choices=Status.choices, default=Status.RASCUNHO,
+        verbose_name=_("Status"),
+    )
+    observacao = models.TextField(blank=True, verbose_name=_("Observação"))
+    criado_em = models.DateTimeField(auto_now_add=True)
+    atualizado_em = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _("Contrato de obra")
+        verbose_name_plural = _("Contratos de obra")
+        ordering = ["-criado_em"]
+        constraints = [
+            # Número único por obra, e não por tenant: a mesma construtora usa
+            # "001" em obras diferentes, e proibir isso obrigaria a inventar
+            # prefixo. Condicionado à lápide, como todo unique da casa desde a
+            # Fase 8 — contrato na lixeira não deve bloquear o número.
+            models.UniqueConstraint(
+                fields=["tenant", "obra", "numero"],
+                condition=models.Q(excluido_em__isnull=True),
+                name="pdca_contrato_numero_unico_por_obra",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(retencao_percentual__gte=0)
+                & models.Q(retencao_percentual__lte=100),
+                name="pdca_contrato_retencao_entre_zero_e_cem",
+            ),
+            # Vigência que termina antes de começar é erro de digitação que só
+            # aparece meses depois, na medição que "não cabe no período".
+            models.CheckConstraint(
+                condition=models.Q(data_fim__isnull=True)
+                | models.Q(data_fim__gte=models.F("data_inicio")),
+                name="pdca_contrato_vigencia_coerente",
+            ),
+            # Global e administração precisam do valor fechado; o unitário não
+            # deve tê-lo (é a soma dos itens — §4.9). A trava mora no banco
+            # porque o valor global é o denominador da medição por percentual:
+            # nulo ali é divisão por nada no meio de um cálculo de dinheiro.
+            models.CheckConstraint(
+                condition=(
+                    models.Q(regime=RegimeContrato.UNITARIO, valor_global__isnull=True)
+                    | models.Q(regime=RegimeContrato.GLOBAL, valor_global__isnull=False)
+                    | models.Q(
+                        regime=RegimeContrato.ADMINISTRACAO, valor_global__isnull=False
+                    )
+                ),
+                name="pdca_contrato_valor_global_conforme_regime",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["tenant", "obra"], name="pdca_contrato_obra_idx"),
+            models.Index(fields=["tenant", "status"], name="pdca_contrato_status_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.numero} · {self.objeto[:40]}"
+
+
+class ItemContrato(TenantScopedModel):
+    """A linha do contrato — *o que* foi contratado, *quanto* e por *qual preço*.
+
+    **Dois vínculos opcionais, e eles não são redundantes.** `item_orcado` é a
+    **régua de custo**: contratado contra o orçamento aprovado, é o que permite
+    dizer se o preço fechado ficou acima ou abaixo do orçado. `atividade` é a
+    **ponte do avanço**: é por ela que a medição sabe quanto a frente andou no
+    período.
+
+    Na obra que tem orçamento, os dois se encontram sozinhos — a `Atividade` já
+    carrega `item_orcado` desde a PDCA.1, e a proposta acha as atividades pelo
+    item orçado sem precisar do vínculo direto. O campo `atividade` existe para
+    a obra que **não** tem orçamento: sem ele, o contrato dessa obra não teria
+    como nascer do avanço e a medição voltaria a ser digitação. Preencher os
+    dois é legítimo, e o direto ganha — é o mais específico.
+
+    **Não herda `Excluivel`, e é de propósito.** Item é linha filha de um
+    documento — a mesma classe do rateio e do item de nota, que o `Excluivel`
+    declara fora da lixeira. O que vai para a lixeira é o contrato inteiro.
+    """
+
+    item_contrato_id = models.AutoField(primary_key=True)
+
+    contrato = models.ForeignKey(
+        ContratoObra, on_delete=models.CASCADE, related_name="itens",
+        verbose_name=_("Contrato"),
+    )
+
+    #: A régua de custo. `SET_NULL`: reorganizar o orçamento não pode apagar a
+    #: linha contratada — o contrato foi assinado, e ele continua valendo mesmo
+    #: que a planilha que o originou seja substituída.
+    item_orcado = models.ForeignKey(
+        "moduloorcamento.ItemOrcado", null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="itens_contratados",
+        verbose_name=_("Item orçado"),
+    )
+    #: A ponte do avanço, quando não há orçamento no meio. `SET_NULL` pelo mesmo
+    #: motivo, com uma consequência declarada: perdido o vínculo, a proposta
+    #: automática para de funcionar **para esta linha** e a medição diz isso, em
+    #: vez de propor zero.
+    atividade = models.ForeignKey(
+        Atividade, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="itens_contratados", verbose_name=_("Atividade"),
+    )
+
+    #: O aditivo que **trouxe esta linha ao contrato**, quando ela não nasceu
+    #: com ele. É o que a grade de medição marca (§4.4: *"o item aditado fica
+    #: marcado nas medições seguintes"*), e é também o que autoriza a única
+    #: linha de contrato com quantidade original zero — a quantidade dela mora
+    #: no `ItemAditivo`, para a regra *atual = original + Σ deltas* valer sem
+    #: exceção em nenhuma linha.
+    aditivo_origem = models.ForeignKey(
+        "AditivoContrato", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="itens_criados", verbose_name=_("Criado pelo aditivo"),
+    )
+
+    codigo = models.CharField(max_length=40, verbose_name=_("Item"))
+    descricao = models.CharField(max_length=255, verbose_name=_("Descrição"))
+    unidade = models.CharField(max_length=20, blank=True, verbose_name=_("Unidade"))
+    ordem = models.PositiveIntegerField(default=0, verbose_name=_("Ordem"))
+
+    #: `14,4` e `15,4` acompanham o `ItemOrcado`, e não o dinheiro de duas casas
+    #: do ERP: aqui ainda se multiplica. Arredondar o unitário para centavo
+    #: antes de multiplicar por 1.200 m³ erra em dezenas de reais — o
+    #: arredondamento é do **produto**, na fronteira com o ERP, e não da parcela.
+    quantidade_contratada = models.DecimalField(
+        max_digits=14, decimal_places=4, verbose_name=_("Quantidade contratada"),
+    )
+    preco_unitario = models.DecimalField(
+        max_digits=15, decimal_places=4, verbose_name=_("Preço unitário"),
+    )
+
+    observacao = models.TextField(blank=True, verbose_name=_("Observação"))
+    criado_em = models.DateTimeField(auto_now_add=True)
+    atualizado_em = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _("Item de contrato")
+        verbose_name_plural = _("Itens de contrato")
+        ordering = ["contrato_id", "ordem", "item_contrato_id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["contrato", "codigo"],
+                name="pdca_item_contrato_codigo_unico",
+            ),
+            # Quantidade zerada passaria pela medição inteira sem erro e
+            # produziria um título de R$ 0,00 — documento que ninguém consegue
+            # explicar depois. Negativo é supressão, e supressão é **aditivo**,
+            # não linha de contrato.
+            #
+            # **A exceção é o item que nasceu de aditivo**, e ela é o que mantém
+            # uma regra só para todo o contrato: `contratado_atual = original +
+            # Σ deltas aprovados`. Item novo tem original zero e a quantidade
+            # inteira no `ItemAditivo` — sem isso, a linha aditada seria a única
+            # em que a soma contaria a mesma quantidade duas vezes.
+            models.CheckConstraint(
+                condition=models.Q(quantidade_contratada__gt=0)
+                | models.Q(aditivo_origem__isnull=False),
+                name="pdca_item_contrato_quantidade_positiva",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(preco_unitario__gte=0),
+                name="pdca_item_contrato_preco_nao_negativo",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["tenant", "contrato"], name="pdca_item_ctr_contrato_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.codigo} · {self.descricao[:40]}"
+
+    @property
+    def valor_contratado(self):
+        return self.quantidade_contratada * self.preco_unitario
+
+
+class AcaoAditivo(models.TextChoices):
+    """O que **este aditivo faz com esta linha**.
+
+    Quatro verbos, e não um campo livre, porque cada um tem uma trava diferente:
+    acréscimo bate no limite legal do regime público, supressão bate no já
+    medido, revisão de preço não pode reescrever medição paga e inclusão precisa
+    de código, descrição e unidade que a linha ainda não tem.
+    """
+
+    ACRESCIMO = "acrescimo", _("Acréscimo de quantidade")
+    SUPRESSAO = "supressao", _("Supressão de quantidade")
+    PRECO = "preco", _("Revisão de preço")
+    INCLUSAO = "inclusao", _("Inclusão de item novo")
+
+
+class AditivoContrato(TenantScopedModel, Excluivel):
+    """O contrato mudando **por escrito** — quantidade, preço, item ou prazo.
+
+    **Por que não basta editar a planilha contratual.** Sem este documento, a
+    correção de uma quantidade contratada é um `PATCH` no `ItemContrato`: o
+    número muda, o saldo muda junto, e ninguém consegue mais dizer *o que foi
+    combinado no dia da assinatura* nem *quem autorizou a diferença*. É o mesmo
+    buraco que a medição retificadora fecha do lado do pagamento — e é o
+    primeiro achado de qualquer auditoria de contrato de obra.
+
+    **O contratado original nunca é reescrito.** O `quantidade_contratada` do
+    `ItemContrato` continua sendo o do dia da assinatura, e o que vale hoje é
+    derivado: `atual = original + Σ deltas de aditivos aprovados` (§4.9 —
+    derivar, não guardar a segunda verdade). O **preço** é a exceção declarada:
+    ele é reescrito na linha, porque o `ItemMedicao` congela o preço do dia e
+    nenhuma medição passada é afetada — e o `ItemAditivo` guarda o anterior.
+
+    **Tem escada de atesto própria** (`pdca.aditivo.aprovar`), e ela não é a da
+    medição: quem confere serviço executado não é quem autoriza a empresa a
+    gastar 25% a mais do que contratou. Enquanto o aditivo não é aprovado ele
+    **não muda saldo nenhum** — é intenção, como o rascunho de medição.
+
+    **As três travas que o mercado ensina** (§4.4), todas na aplicação:
+
+    1. a quantidade final de um item **nunca** cai abaixo do que já foi medido;
+    2. no regime público, o acréscimo acumulado respeita o limite **digitado**
+       no contrato (o sistema não escolhe 25% nem 50% por ninguém);
+    3. preço revisado não toca em medição congelada — só vale daqui para frente.
+    """
+
+    class Status(models.TextChoices):
+        RASCUNHO = "rascunho", _("Rascunho")
+        EM_APROVACAO = "em_aprovacao", _("Em aprovação")
+        APROVADO = "aprovado", _("Aprovado")
+        REPROVADO = "reprovado", _("Reprovado")
+        CANCELADO = "cancelado", _("Cancelado")
+
+    aditivo_id = models.AutoField(primary_key=True)
+
+    #: `PROTECT` pelo mesmo motivo da medição: o aditivo é a prova de que o
+    #: contratado mudou. Apagar o contrato e levá-lo junto apagaria o porquê de
+    #: o saldo ser o que é.
+    contrato = models.ForeignKey(
+        ContratoObra, on_delete=models.PROTECT, related_name="aditivos",
+        verbose_name=_("Contrato"),
+    )
+
+    #: Sequencial **por contrato**, como a empresa numera ("2º aditivo").
+    numero = models.PositiveIntegerField(verbose_name=_("Número"))
+
+    objeto = models.TextField(verbose_name=_("Objeto do aditivo"))
+    #: O *porquê*, separado do *o quê*. É o campo que a auditoria lê primeiro, e
+    #: é obrigatório na entrada — a mesma régua do motivo da retificadora.
+    justificativa = models.TextField(verbose_name=_("Justificativa"))
+
+    data_assinatura = models.DateField(
+        null=True, blank=True, verbose_name=_("Data da assinatura"),
+    )
+    #: Prorrogação de prazo. Nula quando o aditivo não mexe em vigência — e um
+    #: aditivo **só** de prazo é caso comum, por isso ele não exige item nenhum.
+    nova_data_fim = models.DateField(
+        null=True, blank=True, verbose_name=_("Nova data de fim"),
+    )
+
+    status = models.CharField(
+        max_length=12, choices=Status.choices, default=Status.RASCUNHO,
+        verbose_name=_("Status"),
+    )
+
+    #: Rótulo durável, no molde do resto do módulo.
+    criado_por = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Criado por"),
+    )
+    criado_em = models.DateTimeField(auto_now_add=True)
+    aplicado_em = models.DateTimeField(
+        null=True, blank=True, verbose_name=_("Aplicado em"),
+    )
+
+    aprovacoes = GenericRelation(
+        "nucleo.PedidoAprovacao",
+        content_type_field="alvo_tipo", object_id_field="alvo_id",
+    )
+
+    class Meta:
+        verbose_name = _("Aditivo de contrato")
+        verbose_name_plural = _("Aditivos de contrato")
+        ordering = ["contrato_id", "-numero"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["contrato", "numero"],
+                condition=models.Q(excluido_em__isnull=True),
+                name="pdca_aditivo_numero_unico_por_contrato",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["tenant", "contrato", "status"],
+                name="pdca_aditivo_ctr_status_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Aditivo {self.numero} · contrato {self.contrato_id}"
+
+    @property
+    def esta_congelado(self) -> bool:
+        return self.status in (
+            self.Status.APROVADO, self.Status.REPROVADO, self.Status.CANCELADO,
+        )
+
+
+class ItemAditivo(TenantScopedModel):
+    """A linha do aditivo — *o que muda nesta linha do contrato*.
+
+    `item_contrato` é nulo **só até o aditivo ser aprovado**, e só na inclusão:
+    o item novo nasce no momento da aplicação, e é então que a linha passa a
+    apontar para ele. Antes disso, a descrição do item que virá mora aqui
+    (`codigo_novo`, `descricao_nova`, `unidade_nova`) — é o que permite montar,
+    conferir e aprovar um aditivo de inclusão sem sujar a planilha contratual
+    com uma linha que ainda não foi autorizada.
+
+    `quantidade_delta` é **assinado**: positivo acrescenta, negativo suprime. É
+    a mesma escolha do `ApontamentoAvanco` e do `ItemMedicao` da retificadora, e
+    pelo mesmo motivo — soma de deltas dá o acumulado sem que ninguém precise
+    reescrever o número anterior.
+    """
+
+    item_aditivo_id = models.AutoField(primary_key=True)
+
+    aditivo = models.ForeignKey(
+        AditivoContrato, on_delete=models.CASCADE, related_name="itens",
+        verbose_name=_("Aditivo"),
+    )
+    #: `PROTECT`: a linha do aditivo é a razão da quantidade atual do item.
+    item_contrato = models.ForeignKey(
+        ItemContrato, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="aditivos", verbose_name=_("Item do contrato"),
+    )
+
+    acao = models.CharField(
+        max_length=10, choices=AcaoAditivo.choices, verbose_name=_("Ação"),
+    )
+
+    quantidade_delta = models.DecimalField(
+        max_digits=14, decimal_places=4, default=0,
+        verbose_name=_("Δ quantidade"),
+    )
+    #: O preço que passa a valer. Nulo mantém o que está na linha.
+    preco_unitario = models.DecimalField(
+        max_digits=15, decimal_places=4, null=True, blank=True,
+        verbose_name=_("Preço unitário novo"),
+    )
+    #: O preço de antes, copiado na **aplicação**. Sem ele, "revisou o preço"
+    #: não diz de quanto para quanto, e a linha do aditivo vira número solto.
+    preco_unitario_anterior = models.DecimalField(
+        max_digits=15, decimal_places=4, null=True, blank=True,
+        verbose_name=_("Preço unitário anterior"),
+    )
+
+    # --- Só na inclusão: o item que ainda não existe ----------------------
+    codigo_novo = models.CharField(
+        max_length=40, blank=True, verbose_name=_("Código do item novo"),
+    )
+    descricao_nova = models.CharField(
+        max_length=255, blank=True, verbose_name=_("Descrição do item novo"),
+    )
+    unidade_nova = models.CharField(
+        max_length=20, blank=True, verbose_name=_("Unidade do item novo"),
+    )
+
+    observacao = models.TextField(blank=True, verbose_name=_("Observação"))
+
+    class Meta:
+        verbose_name = _("Item de aditivo")
+        verbose_name_plural = _("Itens de aditivo")
+        ordering = ["aditivo_id", "item_aditivo_id"]
+        constraints = [
+            # Uma linha por item em cada aditivo. Duas somariam em silêncio, e o
+            # gestor conferiria um total que nenhuma linha da tela explica.
+            models.UniqueConstraint(
+                fields=["aditivo", "item_contrato"],
+                condition=models.Q(item_contrato__isnull=False),
+                name="pdca_item_aditivo_unico_por_aditivo",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(preco_unitario__isnull=True)
+                | models.Q(preco_unitario__gte=0),
+                name="pdca_item_aditivo_preco_nao_negativo",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["tenant", "item_contrato"],
+                name="pdca_item_adt_item_ctr_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.get_acao_display()} · {self.quantidade_delta}"
+
+
+class OrigemCusto(models.TextChoices):
+    """De onde veio o número do custo reembolsável (regime de administração).
+
+    **Existe porque a régua do projeto proíbe dado fabricado.** O custo do
+    regime de administração não nasce do avanço nem de nenhum lançamento que o
+    sistema tenha hoje — quem o conhece é a folha de pagamento, a nota do
+    material e o aplicado do SIL. Enquanto a apropriação de HH (PDCA.9) e o
+    seam do SIL não estiverem ligados, ele é **digitado**; e um número digitado
+    que se apresenta como apurado é exatamente o que a régua chama de dado
+    fabricado.
+
+    A saída não é recusar o regime — é **declarar a origem junto do número**, de
+    modo que a tela e o relatório digam "informado pelo gestor" em vez de
+    deixarem quem lê supor que o sistema apurou. No dia em que a PDCA.9 chegar,
+    `APROPRIADO` entra sem migração de dado e sem reinterpretar o passado.
+    """
+
+    INFORMADO = "informado", _("Informado pelo gestor")
+    APROPRIADO = "apropriado", _("Apropriado pelo sistema")
+
+
+class Medicao(TenantScopedModel, Excluivel):
+    """O boletim do período — *quanto se paga desta vez*.
+
+    **Nasce do avanço, não ao lado dele** (§11.4): `services.propor_medicao` lê
+    os apontamentos do período e propõe a quantidade de cada item; o gestor
+    confere, ajusta e só então submete. O que ele ajustou fica visível, porque
+    `ItemMedicao` guarda **as duas** quantidades — a proposta e a medida.
+
+    **Aprovada, congela** (§11.5). O último degrau da escada de atesto fecha o
+    documento: nada mais se edita, e a correção é uma medição **retificadora**,
+    que aponta para a corrigida (`retifica`). É o mesmo rigor do orçamento
+    aprovado, pelo mesmo motivo — deste documento sai um título a pagar.
+
+    **`conta_pagar_ref` é seam frouxo, não FK** — um `PositiveIntegerField` com
+    o id da `ContaPagar`, no mesmo padrão que o `PedidoCompra` do SCM já usa. O
+    PDCA não depende do app financeiro (a §7 é explícita: *não paga*), e uma FK
+    faria o módulo de planejamento parar de migrar numa instalação que não
+    contrate o ERP.
+
+    > **Primeiro título gerado de verdade na plataforma.** O `conta_pagar_ref`
+    > do SCM existe desde 07/2026 e nunca foi preenchido por ninguém — era seam
+    > inerte. A medição aprovada é a primeira escrita real nessa fronteira.
+    """
+
+    class Status(models.TextChoices):
+        RASCUNHO = "rascunho", _("Rascunho")
+        EM_APROVACAO = "em_aprovacao", _("Em aprovação")
+        APROVADA = "aprovada", _("Aprovada")
+        REPROVADA = "reprovada", _("Reprovada")
+        CANCELADA = "cancelada", _("Cancelada")
+
+    medicao_id = models.AutoField(primary_key=True)
+
+    #: `PROTECT`: a medição é a prova do pagamento. Apagar o contrato e levar as
+    #: medições junto apagaria o porquê de cada título que saiu.
+    contrato = models.ForeignKey(
+        ContratoObra, on_delete=models.PROTECT, related_name="medicoes",
+        verbose_name=_("Contrato"),
+    )
+
+    #: Sequencial **por contrato**, como o empreiteiro numera ("3ª medição").
+    numero = models.PositiveIntegerField(verbose_name=_("Número"))
+
+    periodo_inicio = models.DateField(verbose_name=_("Início do período"))
+    periodo_fim = models.DateField(verbose_name=_("Fim do período"))
+
+    status = models.CharField(
+        max_length=12, choices=Status.choices, default=Status.RASCUNHO,
+        verbose_name=_("Status"),
+    )
+
+    #: A medição que esta corrige. É o que substitui a edição do documento
+    #: congelado: a errada continua legível, a correção aponta para ela, e a
+    #: soma dá o número certo — o mesmo desenho do estorno do apontamento.
+    retifica = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="retificacoes", verbose_name=_("Retifica a medição"),
+    )
+
+    #: O percentual de retenção **do dia em que a medição foi criada**. Copiado
+    #: da cláusula do contrato de propósito: mudar a cláusula em 2027 não pode
+    #: reescrever o líquido de uma medição paga em 2026.
+    retencao_percentual_aplicado = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0,
+        verbose_name=_("Retenção aplicada (%)"),
+    )
+
+    # --- Regime de administração (e só ele) -------------------------------
+    custo_reembolsavel = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True,
+        verbose_name=_("Custo reembolsável do período"),
+    )
+    #: A taxa do dia, congelada pelo mesmo motivo do percentual de retenção.
+    taxa_administracao_aplicada = models.DecimalField(
+        max_digits=6, decimal_places=3, null=True, blank=True,
+        verbose_name=_("Taxa de administração aplicada (%)"),
+    )
+    custo_origem = models.CharField(
+        max_length=12, choices=OrigemCusto.choices, default=OrigemCusto.INFORMADO,
+        verbose_name=_("Origem do custo"),
+    )
+
+    #: O seam frouxo para o ERP — id da `ContaPagar` gerada na aprovação.
+    conta_pagar_ref = models.PositiveIntegerField(
+        null=True, blank=True, verbose_name=_("Ref. da conta a pagar (ERP)"),
+    )
+
+    #: Rótulos duráveis, no molde do `ApontamentoAvanco.apontado_por`: o
+    #: registro sobrevive ao desligamento da pessoa.
+    apurada_por = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Apurada por"),
+    )
+    apurada_em = models.DateTimeField(auto_now_add=True)
+    congelada_em = models.DateTimeField(
+        null=True, blank=True, verbose_name=_("Congelada em"),
+    )
+
+    observacao = models.TextField(blank=True, verbose_name=_("Observação"))
+
+    aprovacoes = GenericRelation(
+        "nucleo.PedidoAprovacao",
+        content_type_field="alvo_tipo", object_id_field="alvo_id",
+    )
+
+    class Meta:
+        verbose_name = _("Medição")
+        verbose_name_plural = _("Medições")
+        ordering = ["contrato_id", "-numero"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["contrato", "numero"],
+                condition=models.Q(excluido_em__isnull=True),
+                name="pdca_medicao_numero_unico_por_contrato",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(periodo_fim__gte=models.F("periodo_inicio")),
+                name="pdca_medicao_periodo_coerente",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(retencao_percentual_aplicado__gte=0)
+                & models.Q(retencao_percentual_aplicado__lte=100),
+                name="pdca_medicao_retencao_entre_zero_e_cem",
+            ),
+            # Custo reembolsável negativo viraria título negativo no ERP — que o
+            # `ContaPagar` aceita e ninguém consegue baixar.
+            models.CheckConstraint(
+                condition=models.Q(custo_reembolsavel__isnull=True)
+                | models.Q(custo_reembolsavel__gte=0),
+                name="pdca_medicao_custo_nao_negativo",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["tenant", "contrato", "status"],
+                name="pdca_medicao_ctr_status_idx",
+            ),
+            models.Index(
+                fields=["tenant", "periodo_fim"], name="pdca_medicao_periodo_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Medição {self.numero} · contrato {self.contrato_id}"
+
+    @property
+    def esta_congelada(self) -> bool:
+        """Aprovada e reprovada não se editam mais. **Cancelada também não** —
+        um documento retirado que voltasse a ser editável seria o caminho para
+        reaproveitar número de medição, que é o que uma auditoria procura."""
+        return self.status in (
+            self.Status.APROVADA, self.Status.REPROVADA, self.Status.CANCELADA,
+        )
+
+
+class ItemMedicao(TenantScopedModel):
+    """A linha do boletim — quanto **deste** item andou no período.
+
+    **Guarda três números, e cada um responde a uma pergunta diferente:**
+
+    - `quantidade` é o que se paga. É o que o gestor confirmou.
+    - `quantidade_proposta` é o que o sistema calculou a partir do avanço. Fica
+      guardado para a tela poder mostrar *"o gestor ajustou de 120 para 95"* —
+      sem isso, o ajuste é invisível e a proposta automática vira uma caixa
+      preta que ninguém audita.
+    - `preco_unitario` é o preço **do dia**, copiado do item de contrato. É o
+      que congela o documento de verdade (ver a nota do cabeçalho do bloco).
+
+    `percentual_avanco_periodo` é o rastro de *como* a proposta foi feita: o
+    avanço físico que a originou. Nulo quando a linha foi digitada — e a
+    diferença entre nulo e zero importa, porque zero é "não andou" e nulo é
+    "ninguém mediu isto pelo avanço".
+    """
+
+    class Origem(models.TextChoices):
+        AVANCO = "avanco", _("Proposta pelo avanço")
+        MANUAL = "manual", _("Digitada")
+
+    item_medicao_id = models.AutoField(primary_key=True)
+
+    medicao = models.ForeignKey(
+        Medicao, on_delete=models.CASCADE, related_name="itens",
+        verbose_name=_("Medição"),
+    )
+    #: `PROTECT`: apagar um item de contrato que já foi medido apagaria a razão
+    #: de uma linha paga.
+    item_contrato = models.ForeignKey(
+        ItemContrato, on_delete=models.PROTECT, related_name="medicoes",
+        verbose_name=_("Item do contrato"),
+    )
+
+    quantidade = models.DecimalField(
+        max_digits=14, decimal_places=4, verbose_name=_("Quantidade medida"),
+    )
+    #: **Saldo** de material posto na obra e ainda não aplicado — não delta.
+    #:
+    #: É a coluna E da G703 (*materials presently stored*), e ela é a única
+    #: quantidade do documento que **não** é do período: cada medição declara o
+    #: estoque que existe **agora**, e o que se paga de material nesta é a
+    #: diferença contra o que a medição anterior declarava. Fosse delta, um
+    #: estoque parado dois meses apareceria como zero e o gestor não veria que
+    #: ainda há material pago sem aplicar.
+    #:
+    #: A aplicação do material não devolve nada: ele sai daqui (o estoque cai) e
+    #: entra em `quantidade` (o serviço executado). As duas diferenças se
+    #: cancelam, e por isso **ninguém paga duas vezes** pela mesma unidade.
+    quantidade_estocada = models.DecimalField(
+        max_digits=14, decimal_places=4, default=0,
+        verbose_name=_("Material estocado (saldo)"),
+    )
+    quantidade_proposta = models.DecimalField(
+        max_digits=14, decimal_places=4, null=True, blank=True,
+        verbose_name=_("Quantidade proposta"),
+    )
+    preco_unitario = models.DecimalField(
+        max_digits=15, decimal_places=4, verbose_name=_("Preço unitário"),
+    )
+    percentual_avanco_periodo = models.DecimalField(
+        max_digits=7, decimal_places=4, null=True, blank=True,
+        verbose_name=_("Avanço do período (%)"),
+    )
+    origem = models.CharField(
+        max_length=8, choices=Origem.choices, default=Origem.AVANCO,
+        verbose_name=_("Origem da linha"),
+    )
+    observacao = models.TextField(blank=True, verbose_name=_("Observação"))
+
+    class Meta:
+        verbose_name = _("Item de medição")
+        verbose_name_plural = _("Itens de medição")
+        ordering = ["medicao_id", "item_medicao_id"]
+        constraints = [
+            # Um item por medição. Duas linhas do mesmo item na mesma medição
+            # somariam em silêncio e estourariam o acumulado sem que a grade
+            # mostrasse onde.
+            models.UniqueConstraint(
+                fields=["medicao", "item_contrato"],
+                name="pdca_item_medicao_unico_por_medicao",
+            ),
+            # Quantidade negativa **é** permitida, e só aqui: é como a
+            # retificadora devolve quantidade medida a mais. O piso de zero mora
+            # no acumulado, que o serviço confere — não nesta linha isolada.
+            models.CheckConstraint(
+                condition=models.Q(preco_unitario__gte=0),
+                name="pdca_item_medicao_preco_nao_negativo",
+            ),
+            # Estoque negativo não é devolução — é erro de digitação. A
+            # devolução de material estocado é ele **cair**, e cair a zero já
+            # devolve tudo. O teto (executado + estocado ≤ contratado) é do
+            # acumulado e mora no serviço, como o da quantidade.
+            models.CheckConstraint(
+                condition=models.Q(quantidade_estocada__gte=0),
+                name="pdca_item_medicao_estocado_nao_negativo",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["tenant", "item_contrato"],
+                name="pdca_item_med_item_ctr_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.item_contrato_id} · {self.quantidade}"
+
+    @property
+    def valor(self):
+        return self.quantidade * self.preco_unitario
+
+
+class TipoDeducao(models.TextChoices):
+    """O que está sendo descontado da medição — **tipado, não texto livre**.
+
+    O tipo não é decoração: é o que permite ao financeiro conciliar a guia de
+    INSS com as medições que a originaram, e ao gestor responder *"por que o
+    empreiteiro recebeu 82% do que mediu?"* sem abrir cinco documentos.
+
+    `OUTROS` existe porque a lista nunca fecha, e ele **exige descrição** — a
+    trava mora no serviço, pelo mesmo motivo que o motivo da retificadora é
+    obrigatório.
+    """
+
+    INSS = "inss", _("Retenção de INSS")
+    ISS = "iss", _("Retenção de ISS")
+    IRRF = "irrf", _("Retenção de IRRF")
+    ADIANTAMENTO = "adiantamento", _("Amortização de adiantamento")
+    MATERIAL = "material", _("Material fornecido pela contratante")
+    MULTA = "multa", _("Multa contratual")
+    OUTROS = "outros", _("Outros")
+
+
+class DeducaoMedicao(TenantScopedModel):
+    """O que sai do bruto **além da retenção contratual**.
+
+    **Por que não bastava a retenção.** O `retencao_percentual_aplicado` é uma
+    cláusula do contrato: dinheiro que a construtora segura e **devolve** quando
+    a condição é cumprida (`LiberacaoRetencao`). Imposto retido não volta — vai
+    para a União —, adiantamento amortizado já foi pago antes, e multa é
+    penalidade. Somar tudo num percentual só faria a `LiberacaoRetencao` oferecer
+    de volta dinheiro que nunca foi da construtora.
+
+    **Percentual ou valor, nunca os dois.** O percentual guarda a *regra* (11%
+    sobre a mão de obra) e a base guarda sobre *o quê*; o valor guarda o número
+    quando não há regra (uma multa de R$ 3.500). Gravar os dois deixaria a tela
+    sem saber qual mostrar quando eles divergissem — e eles divergem no dia em
+    que alguém corrige um e esquece o outro.
+
+    **Congela com a medição**, sem campo novo: a linha pertence ao documento, e
+    o documento não se edita depois de aprovado. O valor aplicado é derivado da
+    base e do percentual gravados aqui (§4.9).
+    """
+
+    deducao_id = models.AutoField(primary_key=True)
+
+    medicao = models.ForeignKey(
+        Medicao, on_delete=models.CASCADE, related_name="deducoes",
+        verbose_name=_("Medição"),
+    )
+
+    tipo = models.CharField(
+        max_length=14, choices=TipoDeducao.choices, verbose_name=_("Tipo"),
+    )
+    descricao = models.CharField(
+        max_length=255, blank=True, verbose_name=_("Descrição"),
+    )
+
+    #: A base sobre a qual o percentual incide. Nula significa **o bruto da
+    #: medição** — o caso comum. Preenchida, é a parcela declarada (a mão de
+    #: obra dentro do bruto, para o INSS), e guardá-la é o que torna a conta
+    #: conferível dois anos depois, quando ninguém lembra qual era a base.
+    base_calculo = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True,
+        verbose_name=_("Base de cálculo"),
+    )
+    percentual = models.DecimalField(
+        max_digits=6, decimal_places=3, null=True, blank=True,
+        verbose_name=_("Percentual (%)"),
+    )
+    valor = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True,
+        verbose_name=_("Valor"),
+    )
+
+    class Meta:
+        verbose_name = _("Dedução da medição")
+        verbose_name_plural = _("Deduções da medição")
+        ordering = ["medicao_id", "deducao_id"]
+        constraints = [
+            # Exatamente um dos dois. A trava é do banco porque o líquido desta
+            # medição vira título a pagar: uma linha com os dois campos daria
+            # dois líquidos possíveis para o mesmo documento assinado.
+            models.CheckConstraint(
+                condition=(
+                    models.Q(percentual__isnull=False, valor__isnull=True)
+                    | models.Q(percentual__isnull=True, valor__isnull=False)
+                ),
+                name="pdca_deducao_percentual_ou_valor",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(percentual__isnull=True)
+                | (models.Q(percentual__gte=0) & models.Q(percentual__lte=100)),
+                name="pdca_deducao_percentual_entre_zero_e_cem",
+            ),
+            # Dedução negativa seria acréscimo disfarçado — e acréscimo de
+            # medição é linha de item, que a grade mostra e a trava do acumulado
+            # confere.
+            models.CheckConstraint(
+                condition=models.Q(valor__isnull=True) | models.Q(valor__gte=0),
+                name="pdca_deducao_valor_nao_negativo",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["tenant", "medicao"], name="pdca_deducao_medicao_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.get_tipo_display()} · medição {self.medicao_id}"
+
+
+class LiberacaoRetencao(TenantScopedModel, Excluivel):
+    """O dinheiro retido voltando ao empreiteiro.
+
+    *(Decisão do dono, 14/09/2026: a liberação entra na PDCA.3, e não numa fatia
+    posterior — reter sem poder liberar deixa o ciclo do dinheiro pela metade.)*
+
+    **Tem escada própria, e não herda a da medição.** Quem ateste medição
+    confere serviço executado; quem libera caução confere uma **condição
+    contratual cumprida** (obra recebida, garantia vencida, aceitação
+    definitiva). São perguntas diferentes, feitas em momentos diferentes e
+    muitas vezes por pessoas diferentes — por isso a `LiberacaoRetencao` é alvo
+    próprio da máquina do `nucleo`, e o tenant pode montar para ela uma escada
+    que não é a da medição.
+
+    **`condicao_atendida` não é campo decorativo.** A cláusula do contrato diz
+    *quando* a retenção volta; este campo é onde quem solicita declara que
+    aquilo aconteceu. Valor liberado sem a condição escrita é exatamente o
+    achado que uma auditoria de contrato registra.
+
+    **O teto é derivado** (§4.9): não há coluna de "saldo retido". O que se pode
+    liberar é `retido nas medições aprovadas − já liberado`, somado na leitura
+    por `services.retencao_disponivel`.
+    """
+
+    class Status(models.TextChoices):
+        RASCUNHO = "rascunho", _("Rascunho")
+        EM_APROVACAO = "em_aprovacao", _("Em aprovação")
+        APROVADA = "aprovada", _("Aprovada")
+        REPROVADA = "reprovada", _("Reprovada")
+        CANCELADA = "cancelada", _("Cancelada")
+
+    liberacao_id = models.AutoField(primary_key=True)
+
+    contrato = models.ForeignKey(
+        ContratoObra, on_delete=models.PROTECT, related_name="liberacoes",
+        verbose_name=_("Contrato"),
+    )
+    valor = models.DecimalField(
+        max_digits=15, decimal_places=2, verbose_name=_("Valor a liberar"),
+    )
+    data = models.DateField(verbose_name=_("Data da liberação"))
+    condicao_atendida = models.TextField(verbose_name=_("Condição atendida"))
+    status = models.CharField(
+        max_length=12, choices=Status.choices, default=Status.RASCUNHO,
+        verbose_name=_("Status"),
+    )
+    conta_pagar_ref = models.PositiveIntegerField(
+        null=True, blank=True, verbose_name=_("Ref. da conta a pagar (ERP)"),
+    )
+    solicitada_por = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Solicitada por"),
+    )
+    criado_em = models.DateTimeField(auto_now_add=True)
+    congelada_em = models.DateTimeField(null=True, blank=True)
+
+    aprovacoes = GenericRelation(
+        "nucleo.PedidoAprovacao",
+        content_type_field="alvo_tipo", object_id_field="alvo_id",
+    )
+
+    class Meta:
+        verbose_name = _("Liberação de retenção")
+        verbose_name_plural = _("Liberações de retenção")
+        ordering = ["-data", "-liberacao_id"]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(valor__gt=0),
+                name="pdca_liberacao_valor_positivo",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["tenant", "contrato", "status"],
+                name="pdca_liberacao_ctr_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Liberação de {self.valor} · contrato {self.contrato_id}"
+
+    @property
+    def esta_congelada(self) -> bool:
+        return self.status in (
+            self.Status.APROVADA, self.Status.REPROVADA, self.Status.CANCELADA,
+        )

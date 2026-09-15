@@ -14,7 +14,18 @@ export interface StatusModulo {
     cronograma: boolean
     modelo: boolean
     avanco: boolean
+    contrato: boolean
     medicao: boolean
+    retencao: boolean
+    /** Verdadeiro desde a PDCA.4: com aditivo, a trava do acumulado passou a
+     *  ser contra o contratado **atual** (original + deltas aprovados). */
+    aditivo: boolean
+    deducoes: boolean
+    material_estocado: boolean
+    /** O que a fatia **não** fecha, dito na própria capacidade — para a tela
+     *  não oferecer botão que não foi feito. */
+    importar_planilha_do_empreiteiro: boolean
+    anexo_por_linha: boolean
   }
   /** Os tetos que a **tela** precisa respeitar antes de mandar a requisição.
    *  Vêm do servidor de propósito: quem decide o número é o dono, e o cliente
@@ -24,6 +35,11 @@ export interface StatusModulo {
     atividades_por_cronograma: number
     profundidade_wbs: number
     apontamentos_por_lote: number
+    itens_por_contrato: number
+    linhas_por_medicao: number
+    itens_por_aditivo: number
+    aditivos_abertos_por_contrato: number
+    deducoes_por_medicao: number
   }
 }
 
@@ -431,4 +447,424 @@ export interface ResultadoDoApontamentoEmLote {
   apontamentos: number
   etapas_sincronizadas: number
   teto: number
+}
+
+// ---------------------------------------------------------------------------
+// PDCA.3 — contrato, medição e retenção
+// ---------------------------------------------------------------------------
+//
+// **Todo dinheiro é `string`, e nunca `number`.** O `float` do JSON tem 53 bits
+// de mantissa e não representa centavo exatamente: R$ 1.234,57 chegaria como
+// 1234.5699999999999. O backend serializa `Decimal` como string por isso, e o
+// tipo aqui acompanha — converter para `number` na borda reintroduziria o erro
+// que a escolha do backend evitou.
+
+export type RegimeContrato = 'unitario' | 'global' | 'administracao'
+export type NaturezaRetencao = 'nenhuma' | 'caucao' | 'garantia' | 'tecnica'
+export type StatusContrato = 'rascunho' | 'vigente' | 'suspenso' | 'encerrado' | 'cancelado'
+export type StatusMedicao =
+  | 'rascunho' | 'em_aprovacao' | 'aprovada' | 'reprovada' | 'cancelada'
+
+export interface Contrato {
+  contrato_id: number
+  obra: number
+  obra_nome: string
+  fornecedor: number
+  fornecedor_nome: string
+  numero: string
+  objeto: string
+  regime: RegimeContrato
+  regime_rotulo: string
+  valor_global: string | null
+  taxa_administracao: string | null
+  data_inicio: string
+  data_fim: string | null
+  garantia_meses: number
+  retencao_percentual: string
+  retencao_natureza: NaturezaRetencao
+  retencao_natureza_rotulo: string
+  retencao_condicao_liberacao: string
+  regime_publico: boolean
+  limite_acrescimo_percentual: string | null
+  prazo_pagamento_dias: number
+  status: StatusContrato
+  status_rotulo: string
+  observacao: string
+  itens_count: number
+  medicoes_count: number
+  /** **A regra de quando a planilha ainda aceita edição, vinda do servidor.**
+   *  Ela fecha quando alguém já mediu contra ela — não quando o contrato sai do
+   *  rascunho. Reimplementá-la aqui foi o que fez a tela dizer "não se edita
+   *  mais" enquanto a API aceitava a edição. */
+  planilha_editavel: boolean
+  planilha_fechada_porque: string
+}
+
+export interface ItemDeContrato {
+  item_contrato_id: number
+  contrato: number
+  item_orcado: number | null
+  item_orcado_descricao: string | null
+  atividade: number | null
+  atividade_nome: string | null
+  codigo: string
+  descricao: string
+  unidade: string
+  ordem: number
+  quantidade_contratada: string
+  preco_unitario: string
+  valor_contratado: string
+  /** Sem isto a tela não consegue explicar por que uma linha não recebeu
+   *  proposta — e "sem vínculo" é um estado que o gestor precisa ver no
+   *  cadastro, não descobrir na hora de medir. */
+  tem_vinculo_de_avanco: boolean
+  observacao: string
+  /** **O que vale hoje** — original + aditivos aprovados. Vem resolvido do
+   *  servidor: `quantidade_contratada` é o do dia da assinatura, e num contrato
+   *  aditado ele deixou de ser o limite. */
+  quantidade_atual: string
+  quantidade_aditivada: string
+}
+
+export interface RetencaoDoContrato {
+  retido: string
+  liberado: string
+  disponivel: string
+  natureza: NaturezaRetencao
+  condicao: string
+}
+
+export interface SaldoDoContrato {
+  contrato_id: number
+  regime: RegimeContrato
+  valor_contratado: string
+  medido_aprovado: string
+  medido_em_aprovacao: string
+  /** Fica **fora** do saldo e aparece à parte: rascunho é intenção, e somá-lo
+   *  faria o saldo encolher quando o gestor abre uma medição para estudar. */
+  medido_rascunho: string
+  saldo: string
+  retencao: RetencaoDoContrato
+  itens: number
+  itens_fechados: number
+  medicoes: number
+  /** PDCA.4 — o contratado em três números, porque o do dia da assinatura
+   *  deixou de ser o limite no instante do primeiro aditivo. */
+  valor_original: string
+  valor_aditivado: string
+  deducoes_aprovadas: string
+  material_estocado: string
+  aditivos: number
+  aditivos_abertos: number
+  periodo_sugerido: PeriodoSugerido
+}
+
+/** Por que a linha não recebeu proposta automática. `sem_vinculo` é diferente
+ *  de zero: zero é "não andou", sem vínculo é "ninguém mediu isto pelo avanço". */
+export type CriterioDaProposta = 'direto' | 'ponderado' | 'media_simples' | 'sem_vinculo'
+
+
+export interface PropostaDeMedicao {
+  contrato_id: number
+  regime: RegimeContrato
+  periodo: { inicio: string; fim: string }
+  linhas: LinhaDaGrade[]
+  /** O denominador da honestidade, na régua do `cobertura_do_orcamento`. */
+  cobertura: { itens: number; sem_vinculo: number; codigos_sem_vinculo: string[] }
+}
+
+export interface ItemDeMedicao {
+  item_medicao_id: number
+  medicao: number
+  item_contrato: number
+  codigo: string
+  descricao: string
+  unidade: string
+  quantidade: string
+  /** **Saldo** de material posto na obra e ainda não aplicado — a coluna E da
+   *  G703. O que se paga de material nesta medição é a diferença contra o que
+   *  a anterior declarava. */
+  quantidade_estocada: string
+  quantidade_proposta: string | null
+  preco_unitario: string
+  percentual_avanco_periodo: string | null
+  origem: 'avanco' | 'manual'
+  origem_rotulo: string
+  valor: string
+  /** Quanto o gestor mexeu na proposta. É o que torna o ajuste auditável. */
+  ajuste: string | null
+  observacao: string
+}
+
+export interface TotaisDaMedicao {
+  /** `Σ quantidade × preço` — o serviço executado no período. */
+  executado: string
+  /** O que **entrou** em estoque no período (negativo quando foi aplicado). */
+  material_estocado: string
+  bruto: string
+  retencao: string
+  retencao_percentual: string
+  deducoes: {
+    deducao_id: number
+    tipo: TipoDeducao
+    tipo_rotulo: string
+    descricao: string
+    percentual: string | null
+    base_calculo: string | null
+    valor: string
+  }[]
+  total_deducoes: string
+  liquido: string
+}
+
+/** O degrau em que a medição está parada — para a tela dizer *de quem* se
+ *  espera a decisão, em vez de um "em aprovação" que não ajuda ninguém. */
+export interface EscadaDaMedicao {
+  pedido_id: number
+  estado: string
+  nivel: string | null
+  permissao_exigida: string | null
+  solicitante: string
+  /** As assinaturas: quem decidiu cada degrau, quando e com que autoridade. */
+  atestos: {
+    atesto_id: number
+    nivel_ordem: number
+    nivel_nome: string
+    decisao: 'aprovado' | 'reprovado'
+    autor: string
+    permissao_conferida: string
+    decidido_em: string
+    observacao: string
+  }[]
+}
+
+export interface Medicao {
+  medicao_id: number
+  contrato: number
+  contrato_numero: string
+  fornecedor_nome: string
+  obra_nome: string
+  /** O id da obra — a fila de decisão monta com ele o endereço
+   *  `/app/pdca/obra/:id/contratos/:id`, sem uma consulta por linha. */
+  contrato_obra: number
+  regime: RegimeContrato
+  numero: number
+  periodo_inicio: string
+  periodo_fim: string
+  status: StatusMedicao
+  status_rotulo: string
+  retifica: number | null
+  retencao_percentual_aplicado: string
+  custo_reembolsavel: string | null
+  taxa_administracao_aplicada: string | null
+  custo_origem: 'informado' | 'apropriado'
+  custo_origem_rotulo: string
+  /** O id da `ContaPagar` no ERP. Seam frouxo, sem FK — o PDCA não paga (§7). */
+  conta_pagar_ref: number | null
+  apurada_por: string
+  apurada_em: string
+  congelada_em: string | null
+  observacao: string
+  itens: ItemDeMedicao[]
+  deducoes: Deducao[]
+  totais: TotaisDaMedicao
+  escada: EscadaDaMedicao | null
+}
+
+export interface ResultadoDaSubmissao {
+  estado: 'aprovada' | 'em_aprovacao'
+  escada: number | null
+  /** Ressalvas que não impedem — a principal é o custo de administração
+   *  digitado, que a régua de dado honesto manda declarar em vez de esconder. */
+  avisos: string[]
+  medicao: Medicao
+}
+
+export interface LiberacaoDeRetencao {
+  liberacao_id: number
+  contrato: number
+  contrato_numero: string
+  fornecedor_nome: string
+  valor: string
+  data: string
+  condicao_atendida: string
+  status: StatusMedicao
+  status_rotulo: string
+  conta_pagar_ref: number | null
+  solicitada_por: string
+}
+
+// ---------------------------------------------------------------------------
+// PDCA.4 — aditivo, deduções e a grade no padrão G703
+// ---------------------------------------------------------------------------
+
+export type AcaoAditivo = 'acrescimo' | 'supressao' | 'preco' | 'inclusao'
+export type StatusAditivo =
+  | 'rascunho' | 'em_aprovacao' | 'aprovado' | 'reprovado' | 'cancelado'
+
+export type TipoDeducao =
+  | 'inss' | 'iss' | 'irrf' | 'adiantamento' | 'material' | 'multa' | 'outros'
+
+export interface Deducao {
+  deducao_id: number
+  medicao: number
+  tipo: TipoDeducao
+  tipo_rotulo: string
+  descricao: string
+  base_calculo: string | null
+  percentual: string | null
+  valor: string | null
+  /** O que esta linha efetivamente tira — derivado do bruto no servidor. */
+  valor_aplicado: string
+}
+
+/** A entrada da reescrita: percentual **ou** valor, nunca os dois. */
+export interface LinhaDeDeducao {
+  tipo: TipoDeducao
+  descricao?: string
+  base_calculo?: string | null
+  percentual?: string | null
+  valor?: string | null
+}
+
+export interface ItemDeAditivo {
+  item_aditivo_id: number
+  aditivo: number
+  item_contrato: number | null
+  acao: AcaoAditivo
+  acao_rotulo: string
+  quantidade_delta: string
+  preco_unitario: string | null
+  preco_unitario_anterior: string | null
+  codigo: string
+  descricao: string
+  unidade: string
+  /** A quantidade que a linha tem hoje — o denominador do delta. `null` na
+   *  inclusão, porque a linha ainda não existe. */
+  quantidade_atual: string | null
+  observacao: string
+}
+
+export interface ResumoDoAditivo {
+  acrescimo: string
+  supressao: string
+  revisao_de_preco: string
+  liquido: string
+  contratado_original: string
+  percentual_sobre_original: string | null
+  itens: number
+}
+
+export interface Aditivo {
+  aditivo_id: number
+  contrato: number
+  contrato_numero: string
+  contrato_obra: number
+  fornecedor_nome: string
+  numero: number
+  objeto: string
+  justificativa: string
+  data_assinatura: string | null
+  nova_data_fim: string | null
+  status: StatusAditivo
+  status_rotulo: string
+  criado_por: string
+  criado_em: string
+  aplicado_em: string | null
+  itens: ItemDeAditivo[]
+  resumo: ResumoDoAditivo
+  escada: EscadaDaMedicao | null
+}
+
+export interface LinhaDeAditivo {
+  acao: AcaoAditivo
+  item_contrato_id?: number | null
+  quantidade_delta?: string
+  preco_unitario?: string | null
+  codigo_novo?: string
+  descricao_nova?: string
+  unidade_nova?: string
+  observacao?: string
+}
+
+/** De quando a próxima medição deveria falar — encadeada na anterior. */
+export interface PeriodoSugerido {
+  inicio: string
+  fim: string
+  ultima_medicao: {
+    medicao_id: number
+    numero: number
+    periodo_fim: string
+    status: StatusMedicao
+  } | null
+  lacuna_dias: number
+}
+
+/**
+ * Uma linha da grade, **inteira, como o servidor a calculou**.
+ *
+ * As dez colunas da G703 estão todas aqui, e nenhuma é derivada no navegador —
+ * é o contrato desta tela desde que abrir uma medição pelo link direto passou a
+ * mostrar "já medido" negativo e saldo acima do contratado (a página montava a
+ * conta a partir de uma prévia que nem sempre existia).
+ */
+export interface LinhaDaGrade {
+  item_contrato_id: number
+  codigo: string
+  descricao: string
+  unidade: string
+  /** O que vale **hoje**: original + aditivos aprovados. */
+  quantidade_contratada: string
+  quantidade_original: string
+  quantidade_aditivada: string
+  nasceu_de_aditivo: boolean
+  quantidade_ja_medida: string
+  saldo: string
+  quantidade_proposta: string
+  percentual_avanco_periodo: string | null
+  criterio: CriterioDaProposta
+  limitada_pelo_saldo: boolean
+  preco_unitario: string
+  atividades: number[]
+  /** **De onde saiu a proposta** — uma entrada por atividade, com o avanço que
+   *  ela apontou no período e o peso que teve na média. Vem junto da linha
+   *  porque sai da mesma consulta do servidor. */
+  memoria: {
+    atividade_id: number
+    codigo: string
+    nome: string
+    percentual: string
+    peso: string | null
+    origem_do_peso: string
+  }[]
+  /** O que está gravado no documento aberto (zero fora dele). */
+  quantidade_medida: string
+  /** **Saldo** de material posto na obra, não delta. */
+  quantidade_estocada: string
+  estocado_anterior: string
+  origem: 'avanco' | 'manual' | null
+  observacao: string
+}
+
+/** A grade de uma medição que existe — uma chamada, uma verdade. */
+export interface ContextoDeMedicao {
+  medicao_id: number
+  numero: number
+  status: StatusMedicao
+  editavel: boolean
+  contrato_id: number
+  regime: RegimeContrato
+  periodo: { inicio: string; fim: string }
+  linhas: LinhaDaGrade[]
+  cobertura: { itens: number; sem_vinculo: number; codigos_sem_vinculo: string[] }
+  totais: TotaisDaMedicao
+  escada: EscadaDaMedicao | null
+}
+
+/** O que a tela manda de volta por linha. */
+export interface LinhaParaApi {
+  item_contrato_id: number
+  quantidade: string
+  quantidade_estocada?: string
+  observacao?: string
 }

@@ -32,6 +32,9 @@ PORTAS = {
     "documentos_clientes": "cadastro.documento_cliente",
     "documentos_obras": "obra.documento",
     "diario_obra_media": "obra.diario_midia",
+    # PDCA.2 — a foto de campo do apontamento de avanço. Chegou sem porta e foi
+    # este teste que a pegou (D120), que é o que ele existe para fazer.
+    "pdca_apontamento": "pdca.avanco_foto",
     # Fiscal — dois apps escrevem em `nfe_xmls/`, e por isso prefixo não é dono:
     # o `CustoEmpreendimento` tem gate próprio (`obra.custo_nfe`)
     "nfe_xmls": ("erp.nota_fiscal", "obra.custo_nfe"),

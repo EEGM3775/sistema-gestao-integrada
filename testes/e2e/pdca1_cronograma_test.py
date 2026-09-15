@@ -131,8 +131,12 @@ recursos = (st or {}).get("recursos", {})
 check("`cronograma` está de pé", recursos.get("cronograma") is True)
 check("`locais` e `calendario` também (PDCA.0)",
       recursos.get("locais") is True and recursos.get("calendario") is True)
-check("e `medicao` continua declarada como ausente (PDCA.3)",
-      recursos.get("medicao") is False)
+# A PDCA.3 ligou `medicao`; o que ainda não existe passou a ser o aditivo, e a
+# asserção seguiu o desenho em vez de sair. É ela que impede o `status/` de
+# voltar a prometer o que não há — o motivo pelo qual este check existe.
+check("`medicao` está de pé (PDCA.3)", recursos.get("medicao") is True)
+check("e `aditivo` continua declarado como ausente (PDCA.4)",
+      recursos.get("aditivo") is False)
 
 # ------------------------------------------------------------ 3. a obra do teste
 print("\n3. A obra do teste — e o expediente dela")

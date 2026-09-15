@@ -11,12 +11,13 @@ from __future__ import annotations
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import F, Q
+from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import (
     filters, mixins, permissions, status, views, viewsets,
 )
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 
 from nucleo.busca import BuscaSemAcento
@@ -25,32 +26,55 @@ from nucleo.quotas import checar_quota
 from nucleo.tenancy import TenantScopedViewSetMixin
 from payment.planos import (
     PDCA_PROFUNDIDADE_MAXIMA_WBS,
+    PDCA_TETO_ADITIVOS_ABERTOS_POR_CONTRATO,
+    PDCA_TETO_DEDUCOES_POR_MEDICAO,
+    PDCA_TETO_ITENS_POR_ADITIVO,
     PDCA_TETO_APONTAMENTOS_POR_LOTE,
     PDCA_TETO_ATIVIDADES_POR_CRONOGRAMA,
+    PDCA_TETO_ITENS_POR_CONTRATO,
     PDCA_TETO_LINHAS_POR_LOTE,
+    PDCA_TETO_LINHAS_POR_MEDICAO,
 )
 
 from . import services
 from .models import (
-    ApontamentoAvanco, Atividade, CalendarioTrabalho, Cronograma,
-    ExcecaoCalendario, LocalObra, Precedencia,
+    AditivoContrato, ApontamentoAvanco, Atividade, CalendarioTrabalho,
+    ContratoObra, Cronograma, ExcecaoCalendario, ItemContrato,
+    LiberacaoRetencao, LocalObra, Medicao, Precedencia,
 )
 from .pagination import PdcaPageNumberPagination
 from .serializers import (
+    AbrirAditivoSerializer,
+    AbrirMedicaoSerializer,
+    AditivoContratoSerializer,
+    AtestarSerializer,
+    CabecalhoDeMedicaoSerializer,
+    LinhaDeAditivoSerializer,
+    LinhaDeDeducaoSerializer,
+    MedicaoResumoSerializer,
     ApontamentoAvancoSerializer,
     ApontamentoEmLoteSerializer,
     AplicarModeloSerializer,
     AtividadeSerializer,
     CalendarioTrabalhoSerializer,
+    ContratoObraSerializer,
     CronogramaSerializer,
     ExcecaoCalendarioSerializer,
     GeracaoEmLoteSerializer,
+    ItemContratoSerializer,
+    LiberacaoRetencaoSerializer,
+    LinhaDeMedicaoSerializer,
     LocalObraSerializer,
     LoteSerializer,
     EstornoSerializer,
     MarcarModeloSerializer,
+    MedicaoSerializer,
     PrecedenciaSerializer,
+    PropostaDeMedicaoSerializer,
     ReplanejarSerializer,
+    RetificarSerializer,
+    SolicitarLiberacaoSerializer,
+    SubmeterSerializer,
 )
 
 
@@ -66,14 +90,31 @@ class PdcaStatusView(views.APIView):
             "status": "ativo",
             # A tela precisa saber o que existe para não oferecer o que ainda não
             # foi construído — dado honesto vale para a própria capacidade.
-            "fatia": "PDCA.2",
+            "fatia": "PDCA.4",
             "recursos": {
                 "locais": True,
                 "calendario": True,
                 "cronograma": True,
                 "modelo": True,
                 "avanco": True,
-                "medicao": False,
+                "contrato": True,
+                "medicao": True,
+                "retencao": True,
+                # PDCA.4 — o aditivo existe, e com ele a trava do acumulado
+                # passou a ser contra o contratado **atual** (original + deltas
+                # aprovados), e não contra o do dia da assinatura.
+                "aditivo": True,
+                "deducoes": True,
+                "material_estocado": True,
+                # O que a PDCA.4 **não** fecha, dito na própria capacidade: a
+                # planilha do empreiteiro entra colando coluna na grade, não por
+                # um wizard de xlsx com conferência lado a lado; e o anexo por
+                # linha de medição é texto — a evidência fotográfica mora no
+                # apontamento de avanço, e a memória de cálculo é a ponte até
+                # ela. A tela precisa saber disto para não oferecer botão que
+                # não foi feito.
+                "importar_planilha_do_empreiteiro": False,
+                "anexo_por_linha": False,
             },
             # Os tetos que a TELA precisa respeitar antes de mandar a requisição.
             # Só estes: quem decide o número continua sendo o dono, em
@@ -86,6 +127,13 @@ class PdcaStatusView(views.APIView):
                 "atividades_por_cronograma": PDCA_TETO_ATIVIDADES_POR_CRONOGRAMA,
                 "profundidade_wbs": PDCA_PROFUNDIDADE_MAXIMA_WBS,
                 "apontamentos_por_lote": PDCA_TETO_APONTAMENTOS_POR_LOTE,
+                "itens_por_contrato": PDCA_TETO_ITENS_POR_CONTRATO,
+                "linhas_por_medicao": PDCA_TETO_LINHAS_POR_MEDICAO,
+                "itens_por_aditivo": PDCA_TETO_ITENS_POR_ADITIVO,
+                "aditivos_abertos_por_contrato": (
+                    PDCA_TETO_ADITIVOS_ABERTOS_POR_CONTRATO
+                ),
+                "deducoes_por_medicao": PDCA_TETO_DEDUCOES_POR_MEDICAO,
             },
         })
 
@@ -860,3 +908,810 @@ class ApontamentoAvancoViewSet(TenantScopedViewSetMixin,
         except DjangoValidationError as erro:
             raise ValidationError({"linhas": erro.messages})
         return Response(resultado, status=status.HTTP_201_CREATED)
+
+
+# ---------------------------------------------------------------------------
+# PDCA.3 — contrato, medição e liberação de retenção
+# ---------------------------------------------------------------------------
+#
+# A segregação da planta §8 aparece aqui como **três verbos para a medição**, e
+# não o par `view`/`edit`:
+#
+#   - `pdca.medicao.view` — ler. É do gestor, da diretoria e de quem recebe
+#     relatório;
+#   - `pdca.medicao.apurar` — abrir o boletim e conferir a proposta. É o gesto
+#     de quem acompanha a obra;
+#   - `pdca.medicao.atestar` — decidir. É o que faz o dinheiro sair.
+#
+# Quem apura **não** ateste, e a máquina do `nucleo` já recusa o autoatesto por
+# padrão. Separar os dois verbos aqui é o que torna essa recusa configurável em
+# vez de acidental — um tenant que queira a mesma pessoa nos dois papéis liga
+# `permite_autoatesto` no fluxo, por escrito.
+
+
+def _quem_e(request) -> str:
+    """Rótulo durável de quem agiu, no molde do resto do módulo."""
+    return (
+        getattr(request.user, "get_full_name", lambda: "")()
+        or getattr(request.user, "username", "")
+    )
+
+
+def _meu_contrato(request, contrato_id):
+    """O contrato, conferido contra o tenant de quem pede.
+
+    A RLS já recusaria o cruzamento no banco, mas ela devolve "não existe" — e
+    quem está montando um aditivo precisa saber a diferença entre um id errado e
+    um contrato de outra empresa.
+    """
+    if not contrato_id:
+        raise ValidationError({"contrato": "Informe o contrato."})
+    contrato = ContratoObra.objects.filter(pk=contrato_id).first()
+    if contrato is None:
+        raise ValidationError({"contrato": "Contrato não encontrado."})
+    meu = getattr(request.user, "tenant_id", None)
+    if meu is not None and contrato.tenant_id != meu:
+        raise ValidationError({"contrato": "Este contrato não é desta empresa."})
+    return contrato
+
+
+def _exige(request, permissao: str, motivo: str) -> None:
+    """Confere uma permissão **além** da do portão, com a mesma leitura
+    fail-closed do `RequirePermission`: admin de tenant e superusuário passam,
+    os demais precisam do código exato na claim.
+
+    É o que separa "submeter" de "aprovar" no tenant que ainda não montou
+    escada — ali submeter aprova em um passo, e quem não tem a permissão de
+    decidir não pode exercê-la por falta de configuração alheia.
+    """
+    usuario = request.user
+    if getattr(usuario, "is_tenant_admin", False) or getattr(
+        usuario, "is_superuser", False
+    ):
+        return
+    if permissao not in (getattr(usuario, "iam_permissions", None) or []):
+        raise PermissionDenied(motivo)
+
+
+class ContratoObraViewSet(BasePdcaViewSet):
+    """O que foi combinado com o empreiteiro, e o cockpit do saldo.
+
+    **Só dois verbos** (`view`/`edit`), diferente da medição: montar o contrato é
+    um ato só. A segregação que importa está do outro lado — quem monta o
+    contrato pode não ser quem ateste a medição que nasce dele.
+    """
+
+    queryset = ContratoObra.objects.select_related("obra", "fornecedor")
+    serializer_class = ContratoObraSerializer
+    permission_map = {"view": "pdca.contrato.view", "write": "pdca.contrato.edit"}
+    action_permission_map = {
+        "saldo": "pdca.contrato.view",
+        "proposta_de_medicao": "pdca.medicao.view",
+        "periodo_sugerido": "pdca.medicao.view",
+        "retencao": "pdca.contrato.view",
+        # **Liberar retenção é ato de atesto, não de cadastro.** Sem esta linha
+        # a ação cairia no `write` do mapa acima (`pdca.contrato.edit`) e quem
+        # monta a planilha contratual poderia devolver a caução sozinho — a
+        # mesma pessoa definindo o valor retido e mandando-o de volta. É a
+        # segregação da §8 aplicada ao dinheiro que estava parado.
+        "liberar_retencao": "pdca.medicao.atestar",
+    }
+    filterset_fields = ["obra", "fornecedor", "status", "regime", "regime_publico"]
+    search_fields = ["numero", "objeto", "fornecedor__razao_social"]
+    ordering_fields = ["criado_em", "numero", "data_inicio"]
+
+    @action(detail=True, methods=["get"])
+    def saldo(self, request, pk=None):
+        """Contratado × medido × saldo × retenção — derivado inteiro (§4.9).
+
+        É a leitura que abre a tela do contrato. Vem do servidor, e não montada
+        no navegador a partir da lista de medições, pelo mesmo motivo do CPM:
+        é número de dinheiro, e dois lugares somando dariam duas verdades.
+        """
+        contrato = self.get_object()
+        dados = services.saldo_do_contrato(contrato)
+        return Response(_str_decimais(dados))
+
+    @action(detail=True, methods=["get"], url_path="proposta-de-medicao")
+    def proposta_de_medicao(self, request, pk=None):
+        """A prévia: o que se mediria neste período, **sem gravar nada**.
+
+        Existe separada do `abrir` porque o gesto do gestor é olhar antes de
+        decidir. Abrir a medição só para ver a proposta encheria o contrato de
+        rascunhos que ele teria de apagar depois — e cada rascunho apagado é uma
+        linha na lixeira.
+        """
+        contrato = self.get_object()
+        entrada = PropostaDeMedicaoSerializer(data=request.query_params)
+        entrada.is_valid(raise_exception=True)
+        try:
+            proposta = services.propor_medicao(
+                contrato,
+                inicio=entrada.validated_data["inicio"],
+                fim=entrada.validated_data["fim"],
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"periodo": erro.messages})
+        return Response(_str_decimais(proposta))
+
+    @action(detail=True, methods=["get"], url_path="periodo-sugerido")
+    def periodo_sugerido(self, request, pk=None):
+        """De quando a **próxima** medição deveria falar.
+
+        Medição de obra é uma corrente: o período começa no dia seguinte ao fim
+        do anterior. A tela abria sempre em "primeiro do mês → hoje", o que
+        produzia sobreposição no mês medido quinzenalmente e buraco no mês em
+        que a medição atrasou — e nenhum dos dois aparecia em lugar nenhum.
+        """
+        contrato = self.get_object()
+        return Response(_str_decimais(services.sugerir_periodo(contrato)))
+
+    @action(detail=True, methods=["get"], url_path="retencao")
+    def retencao(self, request, pk=None):
+        """Retido, liberado e disponível — as três parcelas, não só o saldo."""
+        contrato = self.get_object()
+        return Response(_str_decimais(services.retencao_disponivel(contrato)))
+
+    @action(detail=True, methods=["post"], url_path="liberar-retencao")
+    def liberar_retencao(self, request, pk=None):
+        """Põe na escada o pedido de devolver o retido.
+
+        **Escada própria, não a da medição** (ver o model): quem ateste medição
+        confere serviço executado; quem libera caução confere condição
+        contratual cumprida.
+        """
+        contrato = self.get_object()
+        entrada = SolicitarLiberacaoSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        try:
+            resultado = services.solicitar_liberacao(
+                contrato=contrato,
+                valor=entrada.validated_data["valor"],
+                data=entrada.validated_data["data"],
+                condicao_atendida=entrada.validated_data["condicao_atendida"],
+                solicitante=request.user,
+                por=_quem_e(request),
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"valor": erro.messages})
+        return Response(
+            {
+                "estado": resultado["estado"],
+                "escada": resultado["escada"],
+                "liberacao": LiberacaoRetencaoSerializer(
+                    resultado["liberacao"], context=self.get_serializer_context(),
+                ).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class ItemContratoViewSet(BasePdcaViewSet):
+    """As linhas do contrato. O teto do `planos.py` é cobrado na criação."""
+
+    queryset = ItemContrato.objects.select_related(
+        "contrato", "item_orcado", "atividade",
+    )
+    serializer_class = ItemContratoSerializer
+    permission_map = {"view": "pdca.contrato.view", "write": "pdca.contrato.edit"}
+    filterset_fields = ["contrato", "item_orcado", "atividade"]
+    search_fields = ["codigo", "descricao"]
+    ordering_fields = ["ordem", "codigo"]
+
+    def perform_create(self, serializer):
+        """Confere o teto e o estado do contrato, e **delega a gravação**.
+
+        O `super()` no fim não é formalidade: é ele que injeta o `tenant_id` do
+        usuário (`TenantScopedViewSetMixin.perform_create`). Um `serializer.save()`
+        direto aqui gravaria a linha sem tenant — e a RLS fail-closed da tabela
+        recusa o INSERT com um 500 seco, que foi exatamente o que o E2E pegou
+        nesta view antes de esta linha existir.
+        """
+        contrato = serializer.validated_data["contrato"]
+        try:
+            services.validar_teto_de_itens(contrato)
+        except DjangoValidationError as erro:
+            raise ValidationError({"contrato": erro.messages})
+        self._so_com_contrato_editavel(contrato)
+        super().perform_create(serializer)
+
+    def perform_update(self, serializer):
+        contrato = serializer.instance.contrato
+        self._so_com_contrato_editavel(contrato)
+        super().perform_update(serializer)
+
+    def perform_destroy(self, instance):
+        self._so_com_contrato_editavel(instance.contrato)
+        if instance.medicoes.exists():
+            raise ValidationError({
+                "detail": (
+                    f"O item {instance.codigo} já foi medido — excluí-lo apagaria "
+                    f"a razão de uma linha paga. Se ele não vale mais, a saída é "
+                    f"o aditivo de supressão."
+                ),
+            })
+        super().perform_destroy(instance)
+
+    def _so_com_contrato_editavel(self, contrato) -> None:
+        """**A planilha contratual fecha quando alguém já mediu contra ela.**
+
+        A regra mora em `services.planilha_editavel`, e esta view só a aplica —
+        a mesma função responde ao serializer, para a tela nunca oferecer um
+        botão que a API vai recusar.
+
+        **Esta trava nasceu de um achado do dono** (15/09/2026): a tela dizia
+        *"a planilha não se edita mais aqui"* e a API aceitava a edição do mesmo
+        jeito — ele mudou uma quantidade contratada de 53.150 para 631.500 num
+        contrato com medição em aprovação. Regra que mora só na interface não é
+        regra: é aviso. O comando de bancada, a importação e a aba antiga
+        aberta no navegador continuam passando por aqui.
+        """
+        aberta, motivo = services.planilha_editavel(contrato)
+        if not aberta:
+            raise ValidationError({"contrato": motivo})
+
+
+
+class MedicaoViewSet(TenantScopedViewSetMixin,
+                     mixins.ListModelMixin,
+                     mixins.RetrieveModelMixin,
+                     mixins.DestroyModelMixin,
+                     viewsets.GenericViewSet):
+    """O boletim do período — **abre, submete, retifica; não se edita por PUT**.
+
+    Não é `ModelViewSet`, e pelo mesmo motivo do apontamento: o documento tem
+    ciclo de vida, e um `PATCH` genérico publicaria um caminho que atravessa o
+    congelamento. Criar é `abrir/` (que roda a proposta); mudar a grade é
+    `linhas/` e só em rascunho; corrigir depois de aprovada é `retificar/`.
+
+    `DELETE` existe e vai para a **lixeira** (o `Excluivel` no model), não para o
+    banco — e só em rascunho: medição que já subiu a escada é documento com
+    decisão registrada.
+    """
+
+    queryset = Medicao.objects.select_related(
+        "contrato", "contrato__obra", "contrato__fornecedor", "retifica",
+    ).prefetch_related(
+        "itens", "itens__item_contrato", "deducoes",
+        # Sem estes dois, `escada` dispara uma consulta **por medição** — 100
+        # consultas para desenhar a lista lateral de um contrato antigo.
+        "aprovacoes", "aprovacoes__nivel_atual", "aprovacoes__atestos",
+    )
+    serializer_class = MedicaoSerializer
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
+    required_module = "pdca"
+    pagination_class = PdcaPageNumberPagination
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
+    permission_map = {"view": "pdca.medicao.view", "write": "pdca.medicao.apurar"}
+    action_permission_map = {
+        "abrir": "pdca.medicao.apurar",
+        "linhas": "pdca.medicao.apurar",
+        "submeter": "pdca.medicao.apurar",
+        "retificar": "pdca.medicao.apurar",
+        "cancelar": "pdca.medicao.apurar",
+        # Decidir é verbo de outra pessoa (planta §8). Quando há escada
+        # configurada, o motor do `nucleo` confere a permissão do **degrau** e
+        # esta aqui é só o portão de entrada; sem escada, ela é a decisão.
+        "atestar": "pdca.medicao.atestar",
+    }
+    filterset_fields = ["contrato", "status", "contrato__obra"]
+    search_fields = ["observacao", "apurada_por", "contrato__numero"]
+    ordering_fields = ["numero", "periodo_fim", "apurada_em"]
+
+    def get_serializer_class(self):
+        """`?resumo=1` devolve a medição **sem as linhas**.
+
+        Quem lista quer o cabeçalho; quem abre um documento pede o documento. A
+        lista da tela do contrato mandava todos os itens de todas as medições —
+        meio megabyte de JSON para escrever quarenta linhas de texto.
+        """
+        if self.action == "list" and self.request.query_params.get("resumo") in (
+            "1", "true",
+        ):
+            return MedicaoResumoSerializer
+        return super().get_serializer_class()
+
+    @action(detail=False, methods=["post"])
+    def abrir(self, request):
+        """Abre o boletim do período a partir da proposta do avanço."""
+        contrato_id = request.data.get("contrato")
+        if not contrato_id:
+            raise ValidationError({"contrato": "Informe o contrato."})
+        contrato = self._meu_contrato(contrato_id)
+
+        entrada = AbrirMedicaoSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        dados = entrada.validated_data
+        linhas = dados.get("linhas")
+        try:
+            medicao = services.criar_medicao(
+                contrato=contrato,
+                inicio=dados["inicio"],
+                fim=dados["fim"],
+                por=_quem_e(request),
+                linhas=(
+                    [
+                        {"item_contrato_id": l["item_contrato_id"],
+                         "quantidade": l["quantidade"]}
+                        for l in linhas
+                    ] if linhas is not None else None
+                ),
+                custo_reembolsavel=dados.get("custo_reembolsavel"),
+                observacao=dados.get("observacao", ""),
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        return Response(
+            self.get_serializer(medicao).data, status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["get"])
+    def contexto(self, request, pk=None):
+        """**A grade desta medição, inteira, calculada no servidor.**
+
+        Devolve uma linha por item do contrato — com contratado original,
+        aditivos, contratado atual, acumulado anterior (já **sem** esta
+        medição), proposta do período, material estocado, saldo e o que está
+        gravado aqui —, mais os totais e o degrau da escada.
+
+        **Existe porque a tela não pode fazer esta conta.** A primeira escrita
+        da página montava `saldo = contratado − já medido` no navegador, a
+        partir de uma prévia que só era buscada quando *não* havia medição
+        aberta. Quem chegasse pelo link direto de uma medição via "já medido"
+        **negativo** e saldo acima do contratado — e, como a trava de excesso da
+        grade compara contra esse saldo, ela também parava de funcionar
+        exatamente ali. Um endpoint, uma verdade.
+        """
+        medicao = self.get_object()
+        try:
+            dados = services.contexto_de_medicao(medicao)
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        dados["escada"] = self.get_serializer(medicao).data.get("escada")
+        return Response(_str_decimais(dados))
+
+    @action(detail=True, methods=["post"])
+    def cabecalho(self, request, pk=None):
+        """Os campos do documento que não são a grade, em rascunho.
+
+        São dois — custo reembolsável e observação —, e eles não cabiam em
+        `linhas/`: no regime de **administração** não há linha nenhuma, o que se
+        mede é o custo, e sem este endpoint esse regime inteiro ficava sem porta
+        na tela (abria a medição e nunca conseguia submetê-la).
+        """
+        medicao = self.get_object()
+        self._so_rascunho(medicao)
+        entrada = CabecalhoDeMedicaoSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        dados = entrada.validated_data
+
+        campos = []
+        if "custo_reembolsavel" in dados:
+            medicao.custo_reembolsavel = dados["custo_reembolsavel"]
+            campos.append("custo_reembolsavel")
+        if "observacao" in dados:
+            medicao.observacao = dados["observacao"]
+            campos.append("observacao")
+        if campos:
+            medicao.save(update_fields=campos)
+        return Response(self.get_serializer(medicao).data)
+
+    @action(detail=True, methods=["post"])
+    def deducoes(self, request, pk=None):
+        """Reescreve as deduções do rascunho — substitui, não soma.
+
+        Retenção contratual **não** entra aqui: ela é cláusula do contrato,
+        congelada no nascimento do documento, e volta para o empreiteiro pela
+        `LiberacaoRetencao`. O que entra são os descontos que **não voltam** —
+        imposto retido, amortização de adiantamento, multa.
+        """
+        medicao = self.get_object()
+        self._so_rascunho(medicao)
+        entrada = LinhaDeDeducaoSerializer(
+            data=request.data.get("deducoes", []), many=True,
+        )
+        entrada.is_valid(raise_exception=True)
+        try:
+            resultado = services.reescrever_deducoes(
+                medicao=medicao,
+                deducoes=[dict(linha) for linha in entrada.validated_data],
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"deducoes": erro.messages})
+        return Response(_str_decimais(resultado))
+
+    @action(detail=True, methods=["post"])
+    def linhas(self, request, pk=None):
+        """Reescreve a grade do rascunho — o gestor conferindo item a item.
+
+        Substitui, não soma: a grade da tela é o documento inteiro, e um
+        endpoint que acumulasse faria dois envios acidentais dobrarem a medição.
+        """
+        medicao = self.get_object()
+        self._so_rascunho(medicao)
+        entrada = LinhaDeMedicaoSerializer(data=request.data.get("linhas", []), many=True)
+        entrada.is_valid(raise_exception=True)
+        try:
+            resultado = services.reescrever_linhas(
+                medicao=medicao, linhas=entrada.validated_data,
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"linhas": erro.messages})
+        return Response(_str_decimais(resultado))
+
+    @action(detail=True, methods=["post"])
+    def submeter(self, request, pk=None):
+        """Rascunho → escada de atesto (ou aprovação em um passo, sem fluxo).
+
+        **Sem fluxo configurado o caminho é de um passo, e ele exige
+        `pdca.medicao.atestar`** — não o `apurar` que abriu o documento. Sem
+        essa conferência, um tenant que ainda não montou a escada daria a quem
+        apura o poder de aprovar o próprio boletim, que é exatamente a
+        segregação que a fatia existe para manter.
+        """
+        from nucleo import aprovacao as motor
+
+        medicao = self.get_object()
+        entrada = SubmeterSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+
+        if motor.fluxo_para(medicao, tenant_id=medicao.tenant_id) is None:
+            self._exige(request, "pdca.medicao.atestar", (
+                "Esta empresa não tem escada de aprovação configurada para "
+                "medição, então submeter aprovaria em um passo — e aprovar exige "
+                "'pdca.medicao.atestar', que você não tem. Peça ao administrador "
+                "do tenant que monte o fluxo em /api/aprovacao/fluxos/ (alvo "
+                "'modulopdca.medicao'), para separar quem apura de quem decide."
+            ))
+        try:
+            resultado = services.submeter_medicao(
+                medicao=medicao, solicitante=request.user,
+                observacao=entrada.validated_data.get("observacao", ""),
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+
+        medicao.refresh_from_db()
+        return Response({
+            "estado": resultado["estado"],
+            "escada": resultado["escada"],
+            "avisos": resultado["avisos"],
+            "medicao": self.get_serializer(medicao).data,
+        })
+
+    @action(detail=True, methods=["post"])
+    def retificar(self, request, pk=None):
+        """Abre a medição que corrige uma já congelada (§11.5)."""
+        medicao = self.get_object()
+        entrada = RetificarSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        try:
+            nova = services.retificar(
+                medicao=medicao,
+                motivo=entrada.validated_data["motivo"],
+                por=_quem_e(request),
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"motivo": erro.messages})
+        return Response(
+            self.get_serializer(nova).data, status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["post"])
+    def atestar(self, request, pk=None):
+        """Um degrau da escada, decidido a partir da tela da medição.
+
+        É um encaminhador fino para `/api/aprovacao/`, e existe por um motivo de
+        produto: quem ateste está **olhando a medição** — a grade, os itens, o
+        líquido. Obrigá-lo a sair para outra tela para clicar em "aprovar"
+        separaria a decisão da evidência, que é o oposto do que a escada existe
+        para garantir.
+
+        Quem decide de verdade é o motor do `nucleo`: ele confere a permissão
+        **do degrau**, recusa o autoatesto e trava a linha do pedido. Esta view
+        não redecide nada disso.
+        """
+        from nucleo import aprovacao as motor
+
+        medicao = self.get_object()
+        pedido = motor.pedido_de(medicao)
+        if pedido is None:
+            raise ValidationError({
+                "detail": (
+                    "Esta medição não está em nenhuma escada de aprovação "
+                    f"(status: {medicao.get_status_display().lower()})."
+                ),
+            })
+        entrada = AtestarSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        try:
+            pedido = motor.decidir(
+                pedido=pedido, usuario=request.user,
+                aprovar=entrada.validated_data["aprovar"],
+                observacao=entrada.validated_data.get("observacao", ""),
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+
+        medicao.refresh_from_db()
+        return Response({
+            "estado_do_pedido": pedido.estado,
+            "nivel_atual": getattr(pedido.nivel_atual, "nome", None),
+            "medicao": self.get_serializer(medicao).data,
+        })
+
+    @action(detail=True, methods=["post"])
+    def cancelar(self, request, pk=None):
+        """Retira o documento sem decidir o mérito.
+
+        Cancelar **também congela** (ver `Medicao.esta_congelada`): um documento
+        retirado que voltasse a ser editável seria o caminho para reaproveitar
+        número de medição.
+        """
+        from nucleo import aprovacao as motor
+
+        medicao = self.get_object()
+        if medicao.esta_congelada:
+            raise ValidationError({
+                "detail": (
+                    f"A medição já está {medicao.get_status_display().lower()} e "
+                    f"não se cancela."
+                ),
+            })
+        pedido = motor.pedido_de(medicao)
+        if pedido is not None:
+            try:
+                motor.cancelar(
+                    pedido=pedido, usuario=request.user,
+                    motivo=request.data.get("motivo", ""),
+                )
+            except DjangoValidationError as erro:
+                raise ValidationError({"detail": erro.messages})
+        medicao.status = Medicao.Status.CANCELADA
+        medicao.congelada_em = timezone.now()
+        medicao.save(update_fields=["status", "congelada_em"])
+        return Response(self.get_serializer(medicao).data)
+
+    def perform_destroy(self, instance):
+        self._so_rascunho(instance)
+        super().perform_destroy(instance)
+
+    # --- apoio ------------------------------------------------------------
+    def _meu_contrato(self, contrato_id):
+        return _meu_contrato(self.request, contrato_id)
+
+    def _so_rascunho(self, medicao) -> None:
+        if medicao.status != Medicao.Status.RASCUNHO:
+            raise ValidationError({
+                "detail": (
+                    f"A medição está {medicao.get_status_display().lower()} e não "
+                    f"aceita mais mudança. Para corrigir uma medição aprovada, "
+                    f"use 'retificar'."
+                ),
+            })
+
+    def _exige(self, request, permissao: str, motivo: str) -> None:
+        _exige(request, permissao, motivo)
+
+
+class AditivoContratoViewSet(TenantScopedViewSetMixin,
+                             mixins.ListModelMixin,
+                             mixins.RetrieveModelMixin,
+                             mixins.DestroyModelMixin,
+                             viewsets.GenericViewSet):
+    """O aditivo — **abre, submete, aprova; não se edita por PUT**.
+
+    Mesma forma da medição, pelo mesmo motivo: o documento tem ciclo de vida, e
+    um `PATCH` genérico publicaria um caminho que atravessa a aprovação. Criar é
+    `abrir/`, mudar as linhas é `itens/` e só em rascunho, decidir é `atestar/`.
+
+    **Aprovar é `pdca.aditivo.aprovar`, e montar é `pdca.aditivo.edit`.** A
+    separação é a mesma da medição e existe pela mesma razão: quem negocia o
+    acréscimo com o empreiteiro não pode ser quem autoriza a empresa a gastá-lo.
+    """
+
+    queryset = AditivoContrato.objects.select_related(
+        "contrato", "contrato__obra", "contrato__fornecedor",
+    ).prefetch_related(
+        "itens", "itens__item_contrato",
+        "aprovacoes", "aprovacoes__nivel_atual", "aprovacoes__atestos",
+    )
+    serializer_class = AditivoContratoSerializer
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
+    required_module = "pdca"
+    pagination_class = PdcaPageNumberPagination
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
+    permission_map = {"view": "pdca.contrato.view", "write": "pdca.aditivo.edit"}
+    action_permission_map = {
+        "abrir": "pdca.aditivo.edit",
+        "itens": "pdca.aditivo.edit",
+        "submeter": "pdca.aditivo.edit",
+        "cancelar": "pdca.aditivo.edit",
+        "atestar": "pdca.aditivo.aprovar",
+    }
+    filterset_fields = ["contrato", "status", "contrato__obra"]
+    search_fields = ["objeto", "justificativa", "contrato__numero"]
+    ordering_fields = ["numero", "criado_em"]
+
+    @action(detail=False, methods=["post"])
+    def abrir(self, request):
+        """Abre o aditivo em rascunho. Não move saldo nenhum ainda."""
+        entrada = AbrirAditivoSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        dados = entrada.validated_data
+        contrato = _meu_contrato(request, dados["contrato"])
+        try:
+            aditivo = services.criar_aditivo(
+                contrato=contrato,
+                objeto=dados["objeto"],
+                justificativa=dados["justificativa"],
+                data_assinatura=dados.get("data_assinatura"),
+                nova_data_fim=dados.get("nova_data_fim"),
+                por=_quem_e(request),
+                itens=[dict(linha) for linha in dados.get("itens", [])],
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        return Response(
+            self.get_serializer(aditivo).data, status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["post"])
+    def itens(self, request, pk=None):
+        """Reescreve as linhas do rascunho — substitui, não soma."""
+        aditivo = self.get_object()
+        entrada = LinhaDeAditivoSerializer(
+            data=request.data.get("itens", []), many=True,
+        )
+        entrada.is_valid(raise_exception=True)
+        try:
+            resultado = services.reescrever_itens_do_aditivo(
+                aditivo=aditivo, itens=[dict(linha) for linha in entrada.validated_data],
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"itens": erro.messages})
+        return Response(_str_decimais(resultado))
+
+    @action(detail=True, methods=["post"])
+    def submeter(self, request, pk=None):
+        """Rascunho → escada (ou aprovação em um passo, sem fluxo configurado).
+
+        Sem escada, submeter **aprova e aplica** — e por isso exige
+        `pdca.aditivo.aprovar`, não o `edit` que montou o documento. É a mesma
+        conferência que a medição faz, pela mesma razão.
+        """
+        from nucleo import aprovacao as motor
+
+        aditivo = self.get_object()
+        if motor.fluxo_para(aditivo, tenant_id=aditivo.tenant_id) is None:
+            _exige(request, "pdca.aditivo.aprovar", (
+                "Esta empresa não tem escada de aprovação configurada para "
+                "aditivo, então submeter aprovaria em um passo — e aprovar exige "
+                "'pdca.aditivo.aprovar', que você não tem. Peça ao administrador "
+                "do tenant que monte o fluxo em /api/aprovacao/fluxos/ (alvo "
+                "'modulopdca.aditivocontrato')."
+            ))
+        try:
+            resultado = services.submeter_aditivo(
+                aditivo=aditivo, solicitante=request.user,
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+
+        aditivo.refresh_from_db()
+        return Response(_str_decimais({
+            "estado": resultado["estado"],
+            "escada": resultado["escada"],
+            "avisos": resultado["avisos"],
+            "aditivo": self.get_serializer(aditivo).data,
+        }))
+
+    @action(detail=True, methods=["post"])
+    def atestar(self, request, pk=None):
+        """Um degrau da escada, decidido de dentro da tela do aditivo."""
+        from nucleo import aprovacao as motor
+
+        aditivo = self.get_object()
+        entrada = AtestarSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        pedido = motor.pedido_de(aditivo)
+        if pedido is None:
+            raise ValidationError({
+                "detail": (
+                    "Este aditivo não está em nenhuma escada de aprovação "
+                    f"(status: {aditivo.get_status_display().lower()})."
+                ),
+            })
+        try:
+            pedido = motor.decidir(
+                pedido=pedido, usuario=request.user,
+                aprovar=entrada.validated_data["aprovar"],
+                observacao=entrada.validated_data.get("observacao", ""),
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+
+        aditivo.refresh_from_db()
+        return Response({
+            "estado_do_pedido": pedido.estado,
+            "nivel_atual": getattr(pedido.nivel_atual, "nome", None),
+            "aditivo": self.get_serializer(aditivo).data,
+        })
+
+    @action(detail=True, methods=["post"])
+    def cancelar(self, request, pk=None):
+        """Retira o aditivo sem decidir o mérito."""
+        from nucleo import aprovacao as motor
+
+        aditivo = self.get_object()
+        if aditivo.esta_congelado:
+            raise ValidationError({
+                "detail": (
+                    f"O aditivo já está {aditivo.get_status_display().lower()} e "
+                    f"não se cancela."
+                ),
+            })
+        pedido = motor.pedido_de(aditivo)
+        if pedido is not None:
+            try:
+                motor.cancelar(
+                    pedido=pedido, usuario=request.user,
+                    motivo=request.data.get("motivo", ""),
+                )
+            except DjangoValidationError as erro:
+                raise ValidationError({"detail": erro.messages})
+        aditivo.status = AditivoContrato.Status.CANCELADO
+        aditivo.save(update_fields=["status"])
+        return Response(self.get_serializer(aditivo).data)
+
+    def perform_destroy(self, instance):
+        if instance.status != AditivoContrato.Status.RASCUNHO:
+            raise ValidationError({
+                "detail": (
+                    f"O aditivo está {instance.get_status_display().lower()} e não "
+                    f"vai para a lixeira — documento com decisão registrada fica."
+                ),
+            })
+        super().perform_destroy(instance)
+
+
+class LiberacaoRetencaoViewSet(TenantScopedViewSetMixin,
+                               mixins.ListModelMixin,
+                               mixins.RetrieveModelMixin,
+                               viewsets.GenericViewSet):
+    """Leitura das liberações. **Criar é pelo contrato** (`liberar-retencao/`),
+    porque o teto é o saldo retido daquele contrato — e um `POST` solto aqui
+    convidaria a criar a linha sem passar pela conferência do saldo."""
+
+    queryset = LiberacaoRetencao.objects.select_related(
+        "contrato", "contrato__fornecedor",
+    )
+    serializer_class = LiberacaoRetencaoSerializer
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
+    required_module = "pdca"
+    pagination_class = PdcaPageNumberPagination
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
+    permission_map = {"view": "pdca.contrato.view", "write": "pdca.medicao.atestar"}
+    filterset_fields = ["contrato", "status"]
+    search_fields = ["condicao_atendida", "solicitada_por"]
+    ordering_fields = ["data", "valor"]
+
+
+def _str_decimais(dados):
+    """`Decimal` vira string no JSON, recursivamente.
+
+    O `float` do JSON tem 53 bits de mantissa e **não representa centavo
+    exatamente** — é a razão de o DRF serializar `DecimalField` como string por
+    padrão. Estes endpoints devolvem dicionários montados à mão, fora de um
+    serializer, e sem esta passada o dinheiro sairia como float: R$ 1.234,57
+    viraria 1234.5699999999999 na tela do gestor.
+    """
+    from decimal import Decimal as _D
+
+    if isinstance(dados, _D):
+        return str(dados)
+    if isinstance(dados, dict):
+        return {chave: _str_decimais(valor) for chave, valor in dados.items()}
+    if isinstance(dados, (list, tuple)):
+        return [_str_decimais(valor) for valor in dados]
+    return dados

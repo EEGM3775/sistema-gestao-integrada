@@ -87,6 +87,48 @@ def validar_fluxo(fluxo: FluxoAprovacao) -> None:
         )
 
 
+#: Faixa de manobra do `reordenar_niveis`. **Não é teto de plano** (§5.6 do
+#: `planos.py`): é constante física do algoritmo — o intervalo onde os degraus
+#: estacionam entre as duas passadas, escolhido por caber no `SmallInteger`
+#: (32.767) e nunca colidir com uma ordem real.
+_ESTACIONAMENTO = 30_000
+
+
+@transaction.atomic
+def reordenar_niveis(fluxo: FluxoAprovacao, ids: list[int]) -> FluxoAprovacao:
+    """Reescreve a ordem dos degraus de uma escada, **tudo ou nada**.
+
+    **Por que não é a tela que faz isso com dois `PATCH`.** A
+    `UniqueConstraint(fluxo, ordem)` é imediata: trocar 1↔2 exige um valor
+    temporário, e uma falha entre as duas escritas deixa a escada com numeração
+    quebrada — `validar_fluxo` passa a recusá-la e o documento que dependia dela
+    para de andar **sem que ninguém o tenha tocado**.
+
+    **Duas passadas, estacionando alto e não em negativo.** `ordem` é
+    `PositiveSmallIntegerField`: o negativo, que seria o espaço óbvio, viola o
+    check do banco e derruba a transação no meio.
+
+    A numeração 1..N é **derivada da posição** na lista, e não recebida — assim
+    quem chama não tem como inventar um buraco na escada.
+    """
+    atuais = {n.pk: n for n in fluxo.niveis.all()}
+    if sorted(ids) != sorted(atuais):
+        raise ValidationError(
+            "A lista precisa conter exatamente os degraus deste fluxo, cada um "
+            "uma vez — reordenar não cria nem apaga degrau."
+        )
+
+    for posicao, nivel_id in enumerate(ids, start=1):
+        NivelAprovacao.objects.filter(pk=nivel_id).update(
+            ordem=_ESTACIONAMENTO + posicao,
+        )
+    for posicao, nivel_id in enumerate(ids, start=1):
+        NivelAprovacao.objects.filter(pk=nivel_id).update(ordem=posicao)
+
+    fluxo.refresh_from_db()
+    return fluxo
+
+
 def fluxo_para(alvo, *, tenant_id: int) -> FluxoAprovacao | None:
     """O fluxo padrão ativo daquele tipo de alvo, ou `None` se o tenant não
     configurou nenhum — e `None` é resposta legítima: módulo sem escada
@@ -190,8 +232,20 @@ def decidir(*, pedido: PedidoAprovacao, usuario, aprovar: bool,
         and pedido.solicitado_por_id
         and pedido.solicitado_por_id == getattr(usuario, "pk", None)
     ):
+        # **A recusa diz a saída, e a saída é uma decisão escrita.** A regra
+        # existe para proteger a empresa, não para tutelar o usuário — e na obra
+        # pequena o mesmo engenheiro apura e assina. Sem esta frase, quem esbarra
+        # (inclusive o administrador do tenant, que é quem pode resolver) fica
+        # com um documento parado e nenhum caminho: a válvula existe desde a
+        # PDCA.0 e ninguém tinha como descobri-la.
         raise PermissionDenied(
-            "Quem solicitou não pode atestar o próprio pedido."
+            "Quem solicitou não pode atestar o próprio pedido — é a segregação "
+            "que protege a empresa: quem executa não aprova. Três saídas: peça a "
+            f"outra pessoa com '{nivel.permissao_exigida}' que ateste; cancele o "
+            "pedido e reabra em nome de quem vai assinar; ou, se na sua operação "
+            "a mesma pessoa apura e assina mesmo, o administrador liga "
+            f"'Permitir autoatesto' no fluxo '{pedido.fluxo.nome}' "
+            "(Administração → Aprovações)."
         )
     if not pode_atestar(usuario, nivel):
         raise PermissionDenied(

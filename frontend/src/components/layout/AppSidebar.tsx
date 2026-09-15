@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Building2, HardHat, Users, Truck,
   BarChart3, UserCog, TrendingUp, Brain, Plane, Package,
   PanelLeft, Lock, ShieldCheck, Network, Warehouse, Calculator, DatabaseZap,
-  GanttChartSquare, Trash2,
+  GanttChartSquare, Trash2, FileSignature,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { Quarteirao } from '@/components/brand/Quarteirao'
@@ -74,6 +74,12 @@ const NAV_SECTIONS: NavSection[] = [
       { label: 'Suprimentos',      icon: <Package />,     to: '/app/scm',        module: 'scm',            implemented: true },
       { label: 'Estoque & Logística', icon: <Warehouse />, to: '/app/sil',       module: 'sil',            implemented: true },
       { label: 'Orçamento',        icon: <Calculator />,  to: '/app/orcamento',  module: 'orcamento',      implemented: true },
+      // **Um item só para o PDCA** *(decisão do dono, 15/09/2026: "medição tem
+      // que ficar dentro de pdca")*. A PDCA.3 chegou a ter entrada própria aqui
+      // — o argumento era que o gestor de contratos não abre o Gantt (§5.3) —,
+      // e o dono decidiu o contrário: o módulo é um, e a medição é uma das
+      // ferramentas dele. Ela é alcançada pela obra, dentro de `/app/pdca`, que
+      // é a unidade de trabalho declarada do módulo (§5.1).
       { label: 'Planejamento (PDCA)', icon: <GanttChartSquare />, to: '/app/pdca',   module: 'pdca',           implemented: true },
       { label: 'Drone',            icon: <Plane />,       to: '/app/drone',      module: 'drone',          implemented: false },
     ],
@@ -83,6 +89,10 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { label: 'Papéis e Acessos', icon: <ShieldCheck />, to: '/app/admin/papeis',   adminOnly: true, implemented: true },
       { label: 'Usuários',         icon: <Users />,       to: '/app/admin/usuarios', adminOnly: true, implemented: true },
+      // Quantas assinaturas o dinheiro atravessa. Mesma classe que "Papéis e
+      // Acessos" — definir alçada é decidir quem manda no dinheiro, como
+      // definir papel é decidir quem vê o quê (D130).
+      { label: 'Aprovações',       icon: <FileSignature />, to: '/app/admin/aprovacoes', adminOnly: true, implemented: true },
       { label: 'Lixo',             icon: <Trash2 />,      to: '/app/lixo',           permission: 'plataforma.lixo.view', implemented: true },
     ],
   },

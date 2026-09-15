@@ -1,12 +1,18 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { CalendarClock, CalendarDays, GanttChartSquare, Library, Plus } from 'lucide-react'
+import {
+  CalendarClock, CalendarDays, FileSignature, GanttChartSquare, Library, Plus,
+  ShieldAlert,
+} from 'lucide-react'
 import { Btn, Card, Empty, Loading, Modal, Pill } from '@/components/malha'
 import type { PillKind } from '@/components/malha'
 import { useAuth } from '@/hooks/useAuth'
 import { FieldError, FormErrorBanner, parseApiErrors, type FieldErrors } from '@/utils/formErrors'
 import { maxVigenciaISO, minVigenciaISO, validateISO_Vigencia } from '@/utils/dates'
-import { useCalendarios, useCriarCronograma, useCronogramas, useModelos, useObras } from '../hooks'
+import {
+  useCalendarios, useContratos, useCriarCronograma, useCronogramas, useMedicoes,
+  useModelos, useObras,
+} from '../hooks'
 import { ModalAplicarModelo } from '../components/PlanoModelo'
 import type { Cronograma, StatusCronograma } from '../types'
 
@@ -20,8 +26,18 @@ export default function ObrasPage() {
   const navegar = useNavigate()
   const { hasPermission } = useAuth()
   const podeCriar = hasPermission('pdca.cronograma.edit')
+  const podeVerContrato = hasPermission('pdca.contrato.view')
+  const podeVerMedicao = hasPermission('pdca.medicao.view')
   const obras = useObras()
   const cronogramas = useCronogramas({ page_size: 200 })
+  //: A contagem por obra, só para o cartão dizer se há o que abrir. Uma chamada
+  //: para a carteira inteira, e não uma por cartão — N+1 numa lista de obras é
+  //: o defeito que a régua do projeto nomeia desde o F2.
+  const contratos = useContratos({ page_size: 300 }, podeVerContrato)
+  //: **A fila de decisão da empresa inteira.** É a única pergunta deste módulo
+  //: que não pertence a uma obra — *de quem se espera assinatura agora* —, e por
+  //: isso ela ficou aqui, na raiz, quando os contratos desceram para a obra.
+  const emAprovacao = useMedicoes({ status: 'em_aprovacao' }, podeVerMedicao)
   const [criando, setCriando] = useState(false)
   const [aplicandoEm, setAplicandoEm] = useState<{ obra: number; nome: string } | null>(null)
   //: Só para decidir se o botão de aplicar nasce ativo. A biblioteca inteira só
@@ -38,6 +54,16 @@ export default function ObrasPage() {
     return mapa
   }, [cronogramas.data])
 
+  const contratosPorObra = useMemo(() => {
+    const mapa = new Map<number, number>()
+    for (const c of contratos.data?.results ?? []) {
+      mapa.set(c.obra, (mapa.get(c.obra) ?? 0) + 1)
+    }
+    return mapa
+  }, [contratos.data])
+
+  const fila = emAprovacao.data?.results ?? []
+
   if (obras.isLoading || cronogramas.isLoading) return <Loading o="as obras e os cronogramas" />
 
   const lista = obras.data ?? []
@@ -48,9 +74,10 @@ export default function ObrasPage() {
         <div>
           <h1 style={{ margin: 0, fontSize: 26 }}>Planejamento</h1>
           <p style={{ margin: '6px 0 0', color: 'var(--ink-2)', fontSize: 14, maxWidth: 620 }}>
-            O plano de tempo da obra: estrutura analítica, precedências, caminho crítico e linha de
-            base. A unidade de trabalho aqui é a <strong>obra</strong> — escolha uma para abrir o
-            cronograma dela.
+            O plano de tempo da obra e o que se paga por ele: estrutura analítica,
+            caminho crítico, avanço apontado e a medição do empreiteiro. A unidade
+            de trabalho aqui é a <strong>obra</strong> — escolha uma para abrir o
+            cronograma ou os contratos dela.
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -62,6 +89,54 @@ export default function ObrasPage() {
           )}
         </div>
       </header>
+
+      {/* **Requer decisão** — a fila de atesto da empresa inteira.
+          Some quando está vazia: um card permanentemente escrito "nada a
+          decidir" treina o olho a ignorar a região onde a decisão vai aparecer. */}
+      {fila.length > 0 && (
+        <Card style={{ borderColor: 'var(--accent)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <ShieldAlert size={16} style={{ color: 'var(--accent-ink)' }} />
+            <strong style={{ fontSize: 14.5 }}>Requer sua decisão</strong>
+            <Pill kind="accent" pulse>
+              {fila.length} {fila.length === 1 ? 'medição' : 'medições'} na escada
+            </Pill>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {fila.map(m => (
+              <button
+                key={m.medicao_id}
+                onClick={() => navegar(
+                  `/app/pdca/obra/${m.contrato_obra}/contratos/${m.contrato}?medicao=${m.medicao_id}`,
+                )}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left',
+                  padding: '8px 10px', border: '1px solid var(--line)', borderRadius: 8,
+                  background: 'var(--surface)', color: 'var(--ink)', cursor: 'pointer',
+                  fontSize: 13.5, width: '100%',
+                }}
+              >
+                <span style={{ fontWeight: 600 }}>
+                  Medição {m.numero} · {m.contrato_numero}
+                </span>
+                <span style={{ color: 'var(--ink-2)' }}>{m.obra_nome}</span>
+                <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+                  {m.escada?.nivel && (
+                    <span style={{ color: 'var(--ink-3)', fontSize: 12.5 }}>
+                      parada em <strong>{m.escada.nivel}</strong>
+                    </span>
+                  )}
+                  <span className="num" style={{ fontWeight: 600 }}>
+                    {Number(m.totais.liquido).toLocaleString('pt-BR', {
+                      style: 'currency', currency: 'BRL',
+                    })}
+                  </span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {lista.length === 0 ? (
         <Empty>Nenhuma obra cadastrada. O cronograma pertence a uma obra — cadastre a obra primeiro.</Empty>
@@ -116,6 +191,27 @@ export default function ObrasPage() {
                         </div>
                       )}
                     </>
+                  )}
+
+                  {/* **A segunda ferramenta da obra** *(decisão do dono,
+                      15/09/2026: a medição fica dentro do PDCA)*. Aparece mesmo
+                      na obra sem plano: o contrato pode ser assinado antes de o
+                      cronograma existir — o que a medição precisa do plano é a
+                      *proposta* automática, e a tela diz isso quando falta. */}
+                  {podeVerContrato && (
+                    <div style={{ paddingTop: 10, borderTop: '1px solid var(--line)' }}>
+                      <Btn
+                        variant="ghost"
+                        onClick={() => navegar(`/app/pdca/obra/${obra.obra_id}/contratos`)}
+                      >
+                        <FileSignature size={15} /> Contratos e medição
+                        {contratosPorObra.get(obra.obra_id) ? (
+                          <span style={{ color: 'var(--ink-3)', fontWeight: 400 }}>
+                            ({contratosPorObra.get(obra.obra_id)})
+                          </span>
+                        ) : null}
+                      </Btn>
+                    </div>
                   )}
                 </div>
               </Card>

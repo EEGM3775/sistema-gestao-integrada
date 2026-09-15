@@ -231,13 +231,29 @@ Os primitivos da Malha vivem em [components/malha/](../frontend/src/components/m
 | `KpiTile` | Mosaico de KPI: valor real **ou** o selo `EmBreve`; exige a base do número |
 | `SectionHead` | Cabeçalho de seção, opcionalmente com a cor de estágio (`--st-*`) |
 | `Spinner`/`Loading`/`Empty`/`EmBreve` | Estados; `Loading` sempre diz **o quê** carrega |
+| `CampoMoeda`/`CampoInteiro`/`CampoDecimal` | Entrada numérica. **Nenhum é `<input type="number">`**, e a ausência é o conteúdo — ver abaixo |
 | `BotaoExportar`/`WizardImportacao`/`WizardArquivos` | As três portas de import/export de **todo** módulo ([impexp §10](modulos/funcoesimpexp.md)). Somem sozinhos quando `/api/impexp/recursos/` não lista o recurso para esta pessoa — nenhum recebe prop de permissão |
+
+> **Por que nenhum campo numérico é `<input type="number">`** ([D132](historico-correcoes.md), achado
+> pelo dono no formulário de contrato). O elemento nativo tem três defeitos que só aparecem em uso:
+> **(a)** controlado pelo React, ele guarda `12` no estado e deixa `012` na caixa — o DOM e o sistema
+> divergem, e quem digitou vê um número que o sistema não tem; **(b)** a **roda do mouse altera o
+> valor** quando alguém rola a página com o cursor em cima, o que troca um prazo de pagamento sem
+> ninguém perceber; **(c)** ele não fala português — dinheiro é `1.234,56`, não `1234.56`.
+>
+> Os três campos da Malha resolvem isso e **selecionam ao focar**: campo numérico nunca está vazio,
+> mostra `0,00`, e sem a seleção clicar e digitar *acrescenta* ao zero — quem digita `8000` num preço
+> recebe `R$ 80.000,00` em vez de `R$ 80,00`, errado de um jeito plausível o bastante para ser salvo.
+> Dinheiro trafega em **centavos inteiros** (`utils/money.ts`) e só vira decimal na borda da API;
+> percentual trafega como **texto**, porque precisa aceitar `"5,"` enquanto se digita.
 
 > **Dívida conhecida:** SCM e SIL nasceram antes deste diretório e têm cópias locais do kit
 > (`modules/scm/pages/SuprimentosPage.tsx` e `modules/sil/ui.tsx` definem `Card`/`Pill`/`Btn`/
 > `Modal` próprios). Cada um migra para `components/malha/` na sua vez. O ERP tem um terceiro kit,
 > específico de finanças, em `modules/erp/components/shared/` (`FilterBar`, `FinanceDataTable`,
-> `MoneyInput`, `Sheet`) — esse é legítimo, é de domínio, não de fundação.
+> `MoneyInput`, `Sheet`) — esse é legítimo, é de domínio, não de fundação. **Menos o `MoneyInput`**,
+> que é fundação e foi promovido: ele pinta cor fixa (`#e2e8f0`, `#FFFFFF`) e some no tema escuro; o
+> `CampoMoeda` da Malha o substitui, e o do ERP migra na vez daquele módulo.
 
 **shadcn/ui não foi adotado** — a versão original desta seção planejava `src/components/ui/` gerado
 por `npx shadcn add`, o que nunca aconteceu. Os primitivos são escritos no projeto (acima) e os
@@ -474,6 +490,7 @@ Utiliza `createBrowserRouter` com rotas aninhadas.
   /app/calendario       → CalendarioPage       (base)
   /app/admin/papeis     → PersonasPage ✅       (adminOnly — Papéis e Acessos, Fase 9.A)
   /app/admin/usuarios   → UsuariosPage ✅       (adminOnly — Usuários e seus papéis, Fase 9.A)
+  /app/lixo             → LixoPage ✅            (permission: plataforma.lixo.view — a lixeira, D116)
   *                     → NotFoundPage
 ```
 
@@ -1176,6 +1193,120 @@ Sobre o Gantt, três camadas que só existem porque a planilha é o dia inteiro 
 **Plano modelo** (`components/PlanoModelo.tsx`) é a resposta de tela para o pedido do dono: salvar um
 cronograma como padrão da empresa e aplicá-lo a uma obra nova, direto do cartão da obra sem plano na
 `ObrasPage`. O que se repete é a estrutura; as datas nascem do calendário da obra nova.
+
+#### Contratos e medição (PDCA.3)
+
+**A medição mora dentro do PDCA, e é alcançada pela obra** *(decisão do dono, 15/09/2026)*. A
+primeira escrita lhe deu item próprio na barra lateral e endereço cross-obra (`/app/pdca/contratos`,
+com `?obra=` como filtro); o argumento era o da §5.3 — quem vive aqui é o **gestor de contratos**,
+que não abre o Gantt. O dono decidiu pela unidade do módulo, e ela é a **obra** (§5.1), como já era
+para tudo o mais. O endereço é `/app/pdca/obra/:obraId/contratos`, e o caminho de dedo é
+**Planejamento → o cartão da obra → Contratos e medição**.
+
+A pergunta que restava e que realmente **não** pertence a uma obra — *de quem se espera assinatura
+agora* — virou a **fila de decisão na raiz do módulo** (`/app/pdca`, na `ObrasPage`): as medições
+paradas numa escada, de todas as obras, cada uma dizendo em que degrau está e quanto segura. Ela
+**some quando está vazia** — um card permanentemente escrito "nada a decidir" treina o olho a ignorar
+a região onde a decisão vai aparecer — e só é carregada para quem tem `pdca.medicao.view`.
+
+- **`ContratosPage`** (`/app/pdca/obra/:obraId/contratos`) — os contratos **daquela obra**, com a fila
+  de decisão dela em cima. O botão de novo contrato já chega com a obra travada: quem entrou por aqui
+  já respondeu essa pergunta, e reabri-la convidaria a criar o contrato na obra errada.
+- **`ContratoPage`** — o **cockpit**, e só isso: cabeçalho com o saldo derivado (contratado
+  original · aditivado · atual · aprovado · na escada · **em rascunho, à parte** · material na obra ·
+  saldo · itens fechados), a **fila de decisão** no topo, medições, aditivos, retenção e a planilha
+  contratual. **Não se digita medição aqui** — cada item da fila é um link para o lugar onde a
+  decisão acontece.
+  *(Na primeira escrita ela fazia tudo numa rolagem só, 740 linhas, e a medição era um `?medicao=14`
+  que reconfigurava um card no meio da tela. Três defeitos vinham daí —
+  [D138](historico-correcoes.md), [D137](historico-correcoes.md) e a planilha contratual editável em
+  contrato vigente, que o aditivo substituiu.)*
+- **`PreviaDeMedicaoPage`** (`…/contratos/:c/previa`) — *o que se mediria neste período*, **somente
+  leitura**, com um botão: abrir a medição. A prévia editável foi retirada de propósito: havia duas
+  superfícies de digitação para o mesmo número, e o que se digitava na prévia era carregado na
+  abertura — quem conferia ali e voltava depois não sabia mais qual dos dois estados era o documento.
+  O período nasce **encadeado** na última medição, e a tela avisa quando ele se sobrepõe.
+- **`MedicaoPage`** (`…/contratos/:c/medicoes/:m`) — o documento, em dois modos. **Apurar**: grade
+  viva, deduções, custo do regime de administração, autosave com selo permanente de estado, submeter
+  que grava antes de enviar. **Boletim**: só as linhas medidas, bruto → retenção → deduções →
+  líquido, a **escada de atesto com quem assinou, quando e com que permissão**, o título gerado no
+  ERP, campos de assinatura e `@media print` — é o papel que se leva a campo.
+- **`PainelAditivos`** — o contrato mudando por escrito: acréscimo, supressão, revisão de preço, item
+  novo e prorrogação, com justificativa obrigatória e escada própria. Enquanto não é aprovado,
+  **não move saldo nenhum**, e a tela diz isso.
+- **`PainelDeDeducoes`** — o que sai do bruto e não volta (INSS, ISS, IRRF, adiantamento, material da
+  contratante, multa). Percentual **ou** valor, com a base declarada quando o percentual não incide
+  sobre o bruto inteiro; o rodapé mostra a conta inteira até o título.
+- **`PlanilhaContratual`** — o que foi contratado, em que quantidade e por qual preço, com o total
+  somado na frente de quem lê. Vem **antes** da grade de medição de propósito: é a régua, e sem ela a
+  grade não tem o que propor. No regime global ela mostra a **divergência contra o valor fechado**,
+  porque é isso que o backend recusa na hora de medir — e descobrir semanas depois, com o empreiteiro
+  esperando, é o pior momento. O ícone de *sem vínculo* aparece no **cadastro** do item, e não só na
+  medição: é um estado que o gestor precisa ver quando ainda dá para corrigir.
+  *(Ela não existia na primeira escrita da fatia — a API e os hooks estavam prontos e nenhuma tela os
+  chamava, [D132](historico-correcoes.md). A lição da PRA.5c repetida no dia seguinte a ser citada.)*
+  **Ela só é editável enquanto o contrato está em rascunho.** Assinado, mudar quantidade, preço ou
+  incluir item é **aditivo** — é ele que guarda o que mudou, o porquê e quem autorizou, e é por isso
+  que o contratado original nunca é reescrito.
+
+**`GradeDeMedicao`** é o instrumento 4 da §5.2, e a frase que o define está lá: *planilha, com trava*.
+
+- Colunas na régua da **G703**, o padrão de boletim do mercado — **contratado (com o aditivo
+  marcado) · já medido · saldo · proposto · este período · material estocado · valor** —, com edição
+  na célula, `Enter`/setas andando na coluna e **colar uma coluna de planilha** caindo nas linhas
+  seguintes: é o gesto real de quem mede, porque o empreiteiro manda a planilha dele.
+- **Nenhum número da grade é calculado no navegador.** Tudo vem de `/medicoes/{id}/contexto/`. A
+  primeira escrita montava `saldo = contratado − já medido` na tela, a partir de uma prévia que só
+  era buscada em um dos caminhos de entrada: pelo link direto, "já medido" saía **negativo** e a
+  trava de excesso desligava ([D138](historico-correcoes.md)).
+- **Ela grava sozinha**, com debounce e selo de estado, e submeter grava antes de enviar
+  ([D137](historico-correcoes.md)).
+- **Acima de 80 linhas vira janela**: só as visíveis vão ao DOM, porque o teto do plano é 2.000 itens
+  por contrato.
+- **Cada linha se explica.** Clicar no valor proposto abre a **memória de cálculo**: as atividades que
+  o alimentaram, o avanço de cada uma no período, o peso que teve — com link para a frente no
+  cronograma. É a integração visível que a §1.6 pede, e o antídoto para a proposta automática virar
+  caixa preta. No mesmo lugar entra a **nota de quem mediu**, que sai impressa no boletim.
+- **A trava é na digitação, não na submissão.** Passar do saldo pinta a célula e escreve o excesso
+  na hora. Guardar a recusa para o fim faria o gestor preencher 200 linhas e receber *"o acumulado do
+  item 4.2 excede"* sem saber qual das 200 causou.
+- **A coluna *Proposto* não some quando ele edita.** É ela que torna o ajuste auditável na tela — o
+  mesmo motivo pelo qual o backend guarda `quantidade_proposta` ao lado da quantidade medida.
+- **Linha sem vínculo é marcada, não zerada.** Zero é "não andou"; sem vínculo é "ninguém mediu isto
+  pelo avanço", e confundir os dois faz assinar achando que o serviço parou quando o que faltou foi o
+  cadastro. O rodapé diz quantos itens ficaram sem vínculo, na régua do denominador declarado.
+- **Bruto → retenção → deduções → líquido vem do servidor.** A soma que a grade mostra enquanto se
+  digita é feedback; o dinheiro do documento é conta de uma fonte só — a mesma razão que manteve o
+  CPM fora do navegador.
+- **Material estocado é saldo, não delta.** A célula pede *quanto existe agora* na obra, e a coluna
+  mostra ao lado **quanto disso é do período** — que é o que a medição paga. Estoque que ficou
+  parado aparece como zero no período e continua visível como saldo.
+
+O título gerado aparece como **leitura** ao lado da medição (um chip com o id do `ContaPagar`), nunca
+editável: o PDCA não paga, e quem decide quando o dinheiro sai do caixa é o ERP.
+
+O formulário do contrato **mostra o campo quando a regra passa a valer**: regime global pede o valor
+fechado, administração pede valor e taxa, e ligar *regime público* revela o limite legal de acréscimo
+— que é **digitado pelo usuário**, porque nem toda obra com verba pública segue o mesmo estatuto e
+escolher o percentual por ele erraria na exceção.
+
+#### Administração → Aprovações (D130)
+
+`/app/admin/aprovacoes`, atrás do mesmo guard de `admin/papeis`: **definir alçada é da mesma classe
+que definir papel** — decidir quem manda no dinheiro × quem vê o quê. Por isso não mora dentro do
+módulo que a escada aprova.
+
+Existe porque a máquina de atesto nasceu na PDCA.0 com API completa e nenhuma tela, e a PDCA.3 a
+transformou em algo que decide se um título a pagar existe. O que ela torna descobrível, e que era
+invisível, é o **autoatesto**: a regra padrão é *quem executa não aprova*, e na obra pequena o mesmo
+engenheiro apura e assina — a planta chama isso de *"escolha escrita do cliente"*, e escrita é aqui.
+O interruptor vem com o porquê ao lado, não sozinho.
+
+Três decisões da tela: o degrau exige uma **permissão, não uma pessoa** (a escada continua de pé
+quando alguém sai de férias, e muda-se quem assina mexendo no papel); o documento a aprovar vem de
+uma **lista** servida por `/api/aprovacao/fluxos/alvos/` (o `ContentType.id` não é adivinhável); e a
+reordenação de degraus vai ao servidor **numa transação** — trocar `ordem` com dois `PATCH` esbarra
+na constraint e pode deixar a escada quebrada, travando um documento que ninguém tocou.
 
 Stack: TanStack Query (`modules/pdca/hooks.ts` sobre `pdcaApi`), kit Malha compartilhado, SVG próprio
 para o Gantt (nenhuma biblioteca de Gantt), paleta de gráficos compartilhada com o Orçamento.

@@ -32,7 +32,7 @@ E, da PDCA.2:
   engrossa **declarando** qual valeu;
 - o percentual da etapa vira **apurado**, e a caneta passa a ter dono.
 """
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
@@ -50,8 +50,10 @@ from payment.planos import (
 
 from . import services
 from .models import (
-    ApontamentoAvanco, Atividade, CalendarioTrabalho, Cronograma,
-    ExcecaoCalendario, LocalObra, NivelLocal, Precedencia,
+    ApontamentoAvanco, Atividade, CalendarioTrabalho, ContratoObra, Cronograma,
+    ExcecaoCalendario, ItemContrato, ItemMedicao, LiberacaoRetencao, LocalObra,
+    Medicao, NaturezaRetencao, NivelLocal, OrigemCusto, Precedencia,
+    RegimeContrato,
 )
 
 
@@ -422,14 +424,25 @@ class AcessoAoModuloTests(APITestCase):
         cronograma porque o módulo respondeu 'ativo'."""
         self._autenticar()
         dados = self.client.get("/api/pdca/status/").json()
-        self.assertEqual(dados["fatia"], "PDCA.2")
+        self.assertEqual(dados["fatia"], "PDCA.4")
         self.assertTrue(dados["recursos"]["locais"])
         self.assertTrue(dados["recursos"]["cronograma"])
         self.assertTrue(dados["recursos"]["modelo"])
         self.assertTrue(dados["recursos"]["avanco"])
+        self.assertTrue(dados["recursos"]["contrato"])
+        self.assertTrue(dados["recursos"]["medicao"])
+        self.assertTrue(dados["recursos"]["retencao"])
+        # PDCA.4: o aditivo passou a existir, e com ele a trava do acumulado
+        # deixou de ser contra o contratado do dia da assinatura.
+        self.assertTrue(dados["recursos"]["aditivo"])
+        self.assertTrue(dados["recursos"]["deducoes"])
+        self.assertTrue(dados["recursos"]["material_estocado"])
         # O que ainda NÃO existe continua dizendo que não existe: é a mesma
-        # honestidade, agora sobre a fatia seguinte.
-        self.assertFalse(dados["recursos"]["medicao"])
+        # honestidade, agora sobre o que a PDCA.4 deixou de fora. A planilha do
+        # empreiteiro entra colando coluna, não por wizard de xlsx; e o anexo
+        # por linha é texto, porque a foto mora no apontamento de avanço.
+        self.assertFalse(dados["recursos"]["importar_planilha_do_empreiteiro"])
+        self.assertFalse(dados["recursos"]["anexo_por_linha"])
 
     def test_o_status_entrega_os_tetos_que_a_tela_precisa_respeitar(self):
         """A tela fatia o que cola em blocos, e o tamanho do bloco é do dono. Se
@@ -2217,6 +2230,130 @@ class ApiDoAvancoTests(APITestCase):
         self.assertEqual(ApontamentoAvanco.objects.filter(tenant=self.vizinha).count(), 0)
 
 
+#: Os bytes iniciais de um PNG. A porta única reconhece formato pelo conteúdo
+#: (D65), não pela extensão — um arquivo de teste com bytes de mentira seria
+#: recusado antes de chegar ao que estes testes medem.
+ASSINATURA_PNG = b"\x89PNG\r\n\x1a\n"
+
+
+class FotoDoApontamentoTests(APITestCase):
+    """D120 — a foto de campo sai pela porta única, e não por `/media/`.
+
+    O [teste do D70](../funcoesimpexp/test_d70_portas_de_midia.py) cobra a
+    **declaração** da porta: ele varre os `FileField` e exige que cada prefixo
+    tenha recurso. O que ele não sabe fazer é abrir a porta — e uma porta
+    declarada que não abre continua deixando a foto inalcançável, que era
+    metade do achado. É o que está escrito aqui.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.tenant = Tenant.objects.create(slug="pdca-foto", nome="Construtora Foto")
+        cls.vizinha = Tenant.objects.create(slug="pdca-foto-viz", nome="Vizinha")
+        cls.obra = Obra.objects.create(
+            tenant=cls.tenant, nome_obra="Obra da Foto", endereco="Rua 14",
+        )
+        cls.calendario = CalendarioTrabalho.objects.create(
+            tenant=cls.tenant, nome="Comercial", obra=cls.obra,
+        )
+        cls.usuario = Usuario.objects.create(username="fotografo", tenant=cls.tenant)
+
+    def setUp(self):
+        Feriado.objects.all().delete()
+        self.cronograma = Cronograma.objects.create(
+            tenant=self.tenant, obra=self.obra, descricao="Plano",
+            data_inicio=date(2026, 6, 1), calendario=self.calendario,
+            status=Cronograma.Status.VIGENTE,
+        )
+        self.a = Atividade.objects.create(
+            tenant=self.tenant, cronograma=self.cronograma, codigo="1",
+            nome="Fundação", duracao_dias=5, peso_informado=Decimal("100"),
+            profundidade=1,
+        )
+
+    def _autenticar(self, usuario=None, permissions=("pdca.avanco.view",)):
+        usuario = usuario or self.usuario
+        usuario.iam_modules = ["pdca"]
+        usuario.iam_permissions = list(permissions)
+        self.client.force_authenticate(user=usuario)
+
+    def _apontar_com_foto(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        apontamento = services.registrar_apontamento(
+            atividade=self.a, percentual=Decimal("30"), data=date(2026, 6, 3),
+        )
+        apontamento.foto.save(
+            "frente.png", SimpleUploadedFile("frente.png", ASSINATURA_PNG + b" conteudo"),
+            save=False,
+        )
+        # `save()` do model é a parede do append-only — o `update` é o caminho
+        # honesto para anexar o binário a uma linha que já existe num teste.
+        ApontamentoAvanco.objects.filter(pk=apontamento.pk).update(foto=apontamento.foto.name)
+        apontamento.refresh_from_db()
+        return apontamento
+
+    def test_a_api_nunca_publica_media(self):
+        """O vazamento em si: com `DEBUG=True` a URL de `/media/` entrega o
+        binário fora de auth, de entitlement e da RLS."""
+        apontamento = self._apontar_com_foto()
+        self._autenticar()
+        dados = self.client.get(f"/api/pdca/apontamentos/{apontamento.pk}/").json()
+
+        self.assertNotIn("/media/", dados["foto"])
+        self.assertEqual(
+            dados["foto"],
+            f"/api/impexp/pdca.avanco_foto/arquivo/foto/{apontamento.pk}/",
+        )
+
+    def test_apontamento_sem_foto_devolve_nulo_e_nao_uma_url_que_da_404(self):
+        apontamento = services.registrar_apontamento(
+            atividade=self.a, percentual=Decimal("10"), data=date(2026, 6, 4),
+        )
+        self._autenticar()
+        dados = self.client.get(f"/api/pdca/apontamentos/{apontamento.pk}/").json()
+        self.assertIsNone(dados["foto"])
+
+    def test_a_porta_abre_para_quem_so_le_o_avanco(self):
+        """`planejador` e `diretoria` não apontam — e precisam ver a evidência
+        do avanço que estão conferindo (planta §8)."""
+        apontamento = self._apontar_com_foto()
+        self._autenticar(permissions=("pdca.avanco.view",))
+
+        resposta = self.client.get(
+            f"/api/impexp/pdca.avanco_foto/arquivo/foto/{apontamento.pk}/"
+        )
+        # `FileResponse` não tem `.content` — é streaming, e é o que prova que
+        # o binário está saindo pela porta em vez de um JSON de erro.
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(b"".join(resposta.streaming_content), ASSINATURA_PNG + b" conteudo")
+        self.assertIn("attachment", resposta["Content-Disposition"])
+        self.assertEqual(resposta["X-Content-Type-Options"], "nosniff")
+        # Tipo declarado por NÓS, do mapa fechado — e não adivinhado pelo nome
+        # que veio no upload.
+        self.assertEqual(resposta["Content-Type"], "image/png")
+
+    def test_sem_a_permissao_de_ler_o_avanco_a_porta_nao_abre(self):
+        apontamento = self._apontar_com_foto()
+        self._autenticar(permissions=("pdca.cronograma.view",))
+        resposta = self.client.get(
+            f"/api/impexp/pdca.avanco_foto/arquivo/foto/{apontamento.pk}/"
+        )
+        self.assertIn(resposta.status_code, (403, 404))
+
+    def test_a_foto_do_vizinho_nao_abre(self):
+        """404 e não 403 de propósito: responder 403 a um id de outro tenant
+        confirmaria que ele existe."""
+        apontamento = self._apontar_com_foto()
+        intruso = Usuario.objects.create(username="intruso-foto", tenant=self.vizinha)
+        self._autenticar(usuario=intruso, permissions=("pdca.avanco.view",))
+
+        resposta = self.client.get(
+            f"/api/impexp/pdca.avanco_foto/arquivo/foto/{apontamento.pk}/"
+        )
+        self.assertEqual(resposta.status_code, 404)
+
+
 class PercentualManualPelaApiTests(APITestCase):
     """A caneta do percentual apurado tem dono (planta §11.2)."""
 
@@ -2357,3 +2494,1969 @@ class CalendariosQueServemAObraTests(APITestCase):
         """`?obra=` não mudou: quem quer só os daquela obra continua tendo."""
         nomes = self._nomes(f"/api/pdca/calendarios/?obra={self.obra.pk}")
         self.assertEqual(nomes, ["Turno com sábado"])
+
+
+# ===========================================================================
+# PDCA.3 — contrato, medição e o título que sai para o ERP
+# ===========================================================================
+#
+# O que estes testes protegem, em uma frase cada:
+#
+# - a medição **nasce do avanço**, e o ajuste do gestor fica visível;
+# - o **acumulado não estoura o contratado**, nem por duas medições em paralelo;
+# - a medição aprovada **congela** e vira **um título líquido** no ERP;
+# - a **retenção** é descontada, somada na leitura e liberada só até o saldo;
+# - **quem apura não ateste**, com e sem escada configurada;
+# - contrato com pagamento **não é purgado** da lixeira.
+
+
+class BaseContrato(TestCase):
+    """Cenário comum da PDCA.3: obra, plano vigente com duas frentes apontadas,
+    e um contrato de preço unitário sobre elas."""
+
+    @classmethod
+    def setUpTestData(cls):
+        from fornecedores.models import Fornecedor
+
+        cls.tenant = Tenant.objects.create(slug="pdca-ctr", nome="Construtora Contrato")
+        cls.obra = Obra.objects.create(
+            tenant=cls.tenant, nome_obra="Obra do contrato", endereco="Rua da Medição",
+        )
+        cls.fornecedor = Fornecedor.objects.create(
+            tenant=cls.tenant, razao_social="Empreiteira Alfa",
+            email="alfa@example.com",
+        )
+        cls.calendario = CalendarioTrabalho.objects.create(
+            tenant=cls.tenant, nome="Comercial", obra=cls.obra,
+        )
+
+    def setUp(self):
+        Feriado.objects.all().delete()
+        self.cronograma = Cronograma.objects.create(
+            tenant=self.tenant, obra=self.obra, descricao="Plano",
+            data_inicio=date(2026, 6, 1), calendario=self.calendario,
+            status=Cronograma.Status.VIGENTE,
+        )
+        self.alvenaria = Atividade.objects.create(
+            tenant=self.tenant, cronograma=self.cronograma, codigo="1",
+            nome="Alvenaria", duracao_dias=20, profundidade=1,
+        )
+        self.reboco = Atividade.objects.create(
+            tenant=self.tenant, cronograma=self.cronograma, codigo="2",
+            nome="Reboco", duracao_dias=15, profundidade=1,
+        )
+        self.contrato = self.criar_contrato()
+        self.item_alv = self.criar_item(
+            "1.1", "Alvenaria de blocos", qtd="1000", preco="80",
+            atividade=self.alvenaria,
+        )
+        self.item_reb = self.criar_item(
+            "1.2", "Reboco interno", qtd="500", preco="40",
+            atividade=self.reboco,
+        )
+
+    def criar_contrato(self, **extra):
+        campos = dict(
+            tenant=self.tenant, obra=self.obra, fornecedor=self.fornecedor,
+            numero=extra.pop("numero", "001/2026"),
+            objeto="Alvenaria e revestimento",
+            data_inicio=date(2026, 6, 1), data_fim=date(2026, 12, 31),
+            status=ContratoObra.Status.VIGENTE,
+        )
+        campos.update(extra)
+        return ContratoObra.objects.create(**campos)
+
+    def criar_item(self, codigo, descricao, *, qtd, preco, contrato=None, **extra):
+        return ItemContrato.objects.create(
+            tenant=self.tenant, contrato=contrato or self.contrato,
+            codigo=codigo, descricao=descricao, unidade="m2",
+            quantidade_contratada=Decimal(qtd), preco_unitario=Decimal(preco),
+            **extra,
+        )
+
+    def apontar(self, atividade, percentual, dia):
+        return ApontamentoAvanco.objects.create(
+            tenant=self.tenant, atividade=atividade,
+            data=dia, percentual=Decimal(percentual),
+        )
+
+
+class PropostaDeMedicaoTests(BaseContrato):
+    """§11.4 — a medição **nasce do avanço**, e não ao lado dele."""
+
+    def test_a_proposta_converte_avanco_do_periodo_em_quantidade(self):
+        """30% de 1.000 m² apontados em junho propõem 300 m² na medição de junho.
+
+        É a fatia inteira em uma asserção: o número que o gestor confere não foi
+        digitado por ninguém — saiu do livro do canteiro.
+        """
+        self.apontar(self.alvenaria, "30", date(2026, 6, 15))
+        proposta = services.propor_medicao(
+            self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        linha = next(l for l in proposta["linhas"] if l["codigo"] == "1.1")
+        self.assertEqual(linha["quantidade_proposta"], Decimal("300"))
+        self.assertEqual(linha["percentual_avanco_periodo"], Decimal("30"))
+
+    def test_o_apontamento_fora_da_janela_nao_entra(self):
+        """A data do apontamento é o dia em que o serviço **andou**, não o dia em
+        que alguém digitou — é por ela que a janela corta."""
+        self.apontar(self.alvenaria, "30", date(2026, 5, 20))
+        self.apontar(self.alvenaria, "10", date(2026, 6, 15))
+        proposta = services.propor_medicao(
+            self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        linha = next(l for l in proposta["linhas"] if l["codigo"] == "1.1")
+        self.assertEqual(linha["quantidade_proposta"], Decimal("100"))
+
+    def test_o_estorno_se_cancela_sozinho_dentro_da_janela(self):
+        """O avanço é delta e o estorno é negativo: somar a janela já é a conta
+        certa. Subtrair acumulados de duas datas reabriria a porta que o
+        append-only fechou."""
+        self.apontar(self.alvenaria, "30", date(2026, 6, 10))
+        self.apontar(self.alvenaria, "-10", date(2026, 6, 12))
+        proposta = services.propor_medicao(
+            self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        linha = next(l for l in proposta["linhas"] if l["codigo"] == "1.1")
+        self.assertEqual(linha["quantidade_proposta"], Decimal("200"))
+
+    def test_item_sem_vinculo_aparece_declarado_e_nao_como_zero(self):
+        """Zero é 'não andou'; sem vínculo é 'ninguém mediu isto pelo avanço'.
+
+        A grade tem de distinguir os dois, senão o gestor assina uma linha
+        achando que o serviço parou quando o que faltou foi o cadastro.
+        """
+        solto = self.criar_item("1.3", "Serviço avulso", qtd="10", preco="5")
+        proposta = services.propor_medicao(
+            self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        linha = next(l for l in proposta["linhas"] if l["codigo"] == "1.3")
+        self.assertEqual(linha["criterio"], "sem_vinculo")
+        self.assertIsNone(linha["percentual_avanco_periodo"])
+        self.assertEqual(proposta["cobertura"]["sem_vinculo"], 1)
+        self.assertIn("1.3", proposta["cobertura"]["codigos_sem_vinculo"])
+        self.assertEqual(solto.medicoes.count(), 0)
+
+    def test_a_proposta_mostra_o_contrato_inteiro_mesmo_sem_avanco(self):
+        """"Não medi isto" tem de ser uma decisão visível, e não uma linha que
+        sumiu da grade."""
+        proposta = services.propor_medicao(
+            self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        self.assertEqual(len(proposta["linhas"]), 2)
+
+    def test_a_proposta_nao_passa_do_saldo_e_diz_que_limitou(self):
+        """Avanço errado não propaga para uma proposta impossível — e o corte é
+        **declarado**, senão o gestor confere um número que o servidor mudou."""
+        self.apontar(self.alvenaria, "80", date(2026, 6, 10))
+        primeira = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        # **Aprovada**, e não em rascunho: o rascunho não ocupa saldo por
+        # desenho (ver `saldo_do_contrato`) — ele é intenção, e um saldo que
+        # encolhe quando o gestor abre uma medição para estudar seria pior que
+        # o corte que este teste protege.
+        services._congelar_medicao(primeira, aprovada=True)
+        self.apontar(self.alvenaria, "40", date(2026, 7, 10))
+        proposta = services.propor_medicao(
+            self.contrato, inicio=date(2026, 7, 1), fim=date(2026, 7, 31),
+        )
+        linha = next(l for l in proposta["linhas"] if l["codigo"] == "1.1")
+        # 80% já medidos; 40% pediriam 400 m², mas só restam 200.
+        self.assertEqual(linha["quantidade_proposta"], Decimal("200"))
+        self.assertTrue(linha["limitada_pelo_saldo"])
+
+    def test_duas_atividades_no_mesmo_item_ponderam_pelo_peso(self):
+        """Duas frentes de tamanhos diferentes não contribuem igual para uma
+        linha de contrato — é o mesmo `peso_de` da árvore do avanço."""
+        grande = Atividade.objects.create(
+            tenant=self.tenant, cronograma=self.cronograma, codigo="3",
+            nome="Frente grande", duracao_dias=10, profundidade=1,
+            peso_informado=Decimal("300"),
+        )
+        pequena = Atividade.objects.create(
+            tenant=self.tenant, cronograma=self.cronograma, codigo="4",
+            nome="Frente pequena", duracao_dias=10, profundidade=1,
+            peso_informado=Decimal("100"),
+        )
+        self.apontar(grande, "40", date(2026, 6, 10))
+        self.apontar(pequena, "80", date(2026, 6, 10))
+        percentual, criterio = services.avanco_do_periodo(
+            [grande, pequena], date(2026, 6, 1), date(2026, 6, 30),
+        )
+        self.assertEqual(criterio, "ponderado")
+        # (300×40 + 100×80) / 400 = 50
+        self.assertEqual(percentual, Decimal("50"))
+
+
+class GradeDaMedicaoTests(BaseContrato):
+    """O boletim aberto, conferido e reescrito — e o ajuste ficando visível."""
+
+    def test_abrir_sem_linhas_aceita_a_proposta_inteira(self):
+        self.apontar(self.alvenaria, "30", date(2026, 6, 15))
+        self.apontar(self.reboco, "20", date(2026, 6, 20))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        quantidades = {
+            item.item_contrato.codigo: item.quantidade
+            for item in medicao.itens.all()
+        }
+        self.assertEqual(quantidades, {
+            "1.1": Decimal("300"), "1.2": Decimal("100"),
+        })
+
+    def test_a_linha_zerada_nao_vira_registro(self):
+        """O contrato inteiro aparece na **proposta**; gravar um `ItemMedicao` de
+        zero encheria o documento de linhas que não pagam nada."""
+        self.apontar(self.alvenaria, "30", date(2026, 6, 15))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        self.assertEqual(medicao.itens.count(), 1)
+
+    def test_o_ajuste_do_gestor_fica_visivel_ao_lado_da_proposta(self):
+        """Sem isto a proposta automática vira caixa preta que ninguém audita."""
+        self.apontar(self.alvenaria, "30", date(2026, 6, 15))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+            linhas=[{"item_contrato_id": self.item_alv.pk, "quantidade": Decimal("250")}],
+        )
+        linha = medicao.itens.get()
+        self.assertEqual(linha.quantidade, Decimal("250"))
+        self.assertEqual(linha.quantidade_proposta, Decimal("300"))
+        self.assertEqual(linha.origem, ItemMedicao.Origem.MANUAL)
+
+    def test_reescrever_substitui_e_nao_soma(self):
+        """Dois envios acidentais não podem dobrar a medição — e a tela mostra o
+        documento inteiro, então o endpoint substitui."""
+        self.apontar(self.alvenaria, "30", date(2026, 6, 15))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        for _ in range(2):
+            services.reescrever_linhas(medicao=medicao, linhas=[
+                {"item_contrato_id": self.item_alv.pk, "quantidade": Decimal("100")},
+            ])
+        self.assertEqual(medicao.itens.count(), 1)
+        self.assertEqual(medicao.itens.get().quantidade, Decimal("100"))
+
+    def test_reescrever_preserva_a_memoria_da_proposta(self):
+        """Apagar o que o sistema tinha calculado transformaria 'ajustou de 300
+        para 100' em apenas '100'."""
+        self.apontar(self.alvenaria, "30", date(2026, 6, 15))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        services.reescrever_linhas(medicao=medicao, linhas=[
+            {"item_contrato_id": self.item_alv.pk, "quantidade": Decimal("100")},
+        ])
+        linha = medicao.itens.get()
+        self.assertEqual(linha.quantidade_proposta, Decimal("300"))
+        self.assertEqual(linha.percentual_avanco_periodo, Decimal("30"))
+
+    def test_medir_contrato_em_rascunho_e_recusado(self):
+        """Título a pagar de documento que ninguém assinou."""
+        self.contrato.status = ContratoObra.Status.RASCUNHO
+        self.contrato.save(update_fields=["status"])
+        with self.assertRaises(ValidationError) as erro:
+            services.criar_medicao(
+                contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+            )
+        self.assertIn("vigente", str(erro.exception))
+
+    def test_medir_antes_do_inicio_da_vigencia_e_recusado(self):
+        with self.assertRaises(ValidationError) as erro:
+            services.criar_medicao(
+                contrato=self.contrato, inicio=date(2026, 5, 1), fim=date(2026, 5, 31),
+            )
+        self.assertIn("vigência", str(erro.exception))
+
+    def test_a_numeracao_e_sequencial_por_contrato(self):
+        """"3ª medição" é como o empreiteiro numera — e o número é do contrato,
+        não da empresa."""
+        outro = self.criar_contrato(numero="002/2026")
+        self.criar_item("1", "Outro serviço", qtd="10", preco="10", contrato=outro)
+        self.apontar(self.alvenaria, "10", date(2026, 6, 15))
+        primeira = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        segunda = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 7, 1), fim=date(2026, 7, 31),
+        )
+        do_outro = services.criar_medicao(
+            contrato=outro, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+            linhas=[],
+        )
+        self.assertEqual([primeira.numero, segunda.numero], [1, 2])
+        self.assertEqual(do_outro.numero, 1)
+
+
+class TravaDoAcumuladoTests(BaseContrato):
+    """A trava que o mercado ensina (§4.4): medido acumulado ≤ contratado."""
+
+    def test_o_acumulado_acima_do_contratado_e_recusado_com_o_excesso(self):
+        self.apontar(self.alvenaria, "100", date(2026, 6, 10))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+            linhas=[{"item_contrato_id": self.item_alv.pk, "quantidade": Decimal("1200")}],
+        )
+        with self.assertRaises(ValidationError) as erro:
+            services.validar_medicao(medicao)
+        mensagem = str(erro.exception)
+        self.assertIn("1200", mensagem)
+        self.assertIn("1000", mensagem)
+        self.assertIn("aditivo", mensagem)
+
+    def test_duas_medicoes_na_escada_nao_estouram_o_contratado_juntas(self):
+        """**A razão de o acumulado contar as `EM_APROVACAO`.** Contar só as
+        aprovadas deixaria as duas passarem sozinhas e estourarem juntas — e o
+        estouro só apareceria depois de os dois títulos existirem."""
+        fluxo, _ = _escada_de_medicao(self.tenant)
+        aprovador = Usuario.objects.create(username="aprov-acum", tenant=self.tenant)
+        solicitante = Usuario.objects.create(username="solic-acum", tenant=self.tenant)
+
+        self.apontar(self.alvenaria, "60", date(2026, 6, 10))
+        primeira = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        services.submeter_medicao(medicao=primeira, solicitante=solicitante)
+        self.assertEqual(
+            Medicao.objects.get(pk=primeira.pk).status, Medicao.Status.EM_APROVACAO,
+        )
+
+        segunda = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 7, 1), fim=date(2026, 7, 31),
+            linhas=[{"item_contrato_id": self.item_alv.pk, "quantidade": Decimal("500")}],
+        )
+        with self.assertRaises(ValidationError) as erro:
+            services.validar_medicao(segunda)
+        self.assertIn("excede o contratado", str(erro.exception))
+        self.assertIsNotNone(aprovador)
+        self.assertIsNotNone(fluxo)
+
+    def test_a_validacao_junta_todos_os_problemas_de_uma_vez(self):
+        """Parar no primeiro faria o gestor corrigir uma linha, resubmeter e
+        descobrir a segunda — três idas e vindas para um documento que ele vê
+        inteiro na tela."""
+        self.apontar(self.alvenaria, "100", date(2026, 6, 10))
+        self.apontar(self.reboco, "100", date(2026, 6, 10))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+            linhas=[
+                {"item_contrato_id": self.item_alv.pk, "quantidade": Decimal("1200")},
+                {"item_contrato_id": self.item_reb.pk, "quantidade": Decimal("700")},
+            ],
+        )
+        with self.assertRaises(ValidationError) as erro:
+            services.validar_medicao(medicao)
+        self.assertEqual(len(erro.exception.messages), 2)
+
+    def test_revalidar_a_propria_medicao_nao_a_conta_duas_vezes(self):
+        """Sem o `excluir_medicao_id`, uma medição em aprovação reprovaria contra
+        si mesma no momento do último atesto."""
+        self.apontar(self.alvenaria, "100", date(2026, 6, 10))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        medicao.status = Medicao.Status.EM_APROVACAO
+        medicao.save(update_fields=["status"])
+        services.validar_medicao(medicao)  # não levanta
+
+
+class TituloNoErpTests(BaseContrato):
+    """A fronteira com o ERP — a §6 da planta: *medição aprovada → título
+    líquido → `ContaPagar`*."""
+
+    def test_a_medicao_aprovada_congela_e_gera_um_titulo_liquido(self):
+        from moduloerp.models import ContaPagar
+
+        self.contrato.retencao_percentual = Decimal("5")
+        self.contrato.retencao_natureza = NaturezaRetencao.TECNICA
+        self.contrato.prazo_pagamento_dias = 30
+        self.contrato.save()
+
+        self.apontar(self.alvenaria, "30", date(2026, 6, 15))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        services._congelar_medicao(medicao, aprovada=True)
+
+        medicao.refresh_from_db()
+        self.assertEqual(medicao.status, Medicao.Status.APROVADA)
+        self.assertIsNotNone(medicao.congelada_em)
+        self.assertIsNotNone(medicao.conta_pagar_ref)
+
+        conta = ContaPagar.objects.get(pk=medicao.conta_pagar_ref)
+        # 300 m² × R$ 80 = R$ 24.000 bruto; 5% de retenção = R$ 1.200.
+        self.assertEqual(conta.valor, Decimal("22800.00"))
+        self.assertEqual(conta.fornecedor_id, self.fornecedor.pk)
+        self.assertIn("Medição 1", conta.descricao)
+        self.assertIn("retenção", conta.descricao)
+
+    def test_o_primeiro_titulo_de_verdade_da_plataforma_e_este(self):
+        """O `conta_pagar_ref` do SCM existe desde 07/2026 e nunca foi
+        preenchido por ninguém. Esta é a primeira escrita real na fronteira — o
+        teste existe para que ela não volte a ser seam inerte."""
+        self.apontar(self.alvenaria, "10", date(2026, 6, 15))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        services._congelar_medicao(medicao, aprovada=True)
+        self.assertIsNotNone(medicao.conta_pagar_ref)
+
+    def test_a_medicao_reprovada_congela_sem_gerar_titulo(self):
+        self.apontar(self.alvenaria, "30", date(2026, 6, 15))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        services._congelar_medicao(medicao, aprovada=False)
+        medicao.refresh_from_db()
+        self.assertEqual(medicao.status, Medicao.Status.REPROVADA)
+        self.assertIsNone(medicao.conta_pagar_ref)
+
+    def test_medicao_de_valor_zero_nao_gera_titulo(self):
+        """Caso real — a retificadora que zera uma anterior. Um `ContaPagar` de
+        R$ 0,00 é documento que ninguém consegue baixar nem explicar."""
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+            linhas=[],
+        )
+        self.assertIsNone(services.gerar_titulo_de_medicao(medicao))
+
+    def test_o_vencimento_sai_do_prazo_do_contrato(self):
+        """É cláusula comercial do contrato, não teto de plano (§5.6)."""
+        from moduloerp.models import ContaPagar
+        from django.utils import timezone as tz
+
+        self.contrato.prazo_pagamento_dias = 45
+        self.contrato.save(update_fields=["prazo_pagamento_dias"])
+        self.apontar(self.alvenaria, "10", date(2026, 6, 15))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        services._congelar_medicao(medicao, aprovada=True)
+        conta = ContaPagar.objects.get(pk=medicao.conta_pagar_ref)
+        self.assertEqual(
+            conta.data_vencimento, tz.localdate() + timedelta(days=45),
+        )
+
+
+class RetencaoTests(BaseContrato):
+    """Reter e liberar — o ciclo inteiro do dinheiro que fica parado."""
+
+    def setUp(self):
+        super().setUp()
+        self.contrato.retencao_percentual = Decimal("5")
+        self.contrato.retencao_natureza = NaturezaRetencao.CAUCAO
+        self.contrato.retencao_condicao_liberacao = (
+            "Recebimento definitivo da obra pelo contratante."
+        )
+        self.contrato.save()
+        self.usuario = Usuario.objects.create(username="gestor-ret", tenant=self.tenant)
+
+    def _medir_e_aprovar(self, percentual="30"):
+        self.apontar(self.alvenaria, percentual, date(2026, 6, 15))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        services._congelar_medicao(medicao, aprovada=True)
+        return medicao
+
+    def test_o_percentual_de_retencao_e_congelado_no_nascimento(self):
+        """Mudar a cláusula em 2027 não pode reescrever o líquido de uma medição
+        paga em 2026."""
+        medicao = self._medir_e_aprovar()
+        self.contrato.retencao_percentual = Decimal("10")
+        self.contrato.save(update_fields=["retencao_percentual"])
+        medicao.refresh_from_db()
+        self.assertEqual(medicao.retencao_percentual_aplicado, Decimal("5.00"))
+        self.assertEqual(
+            services.totais_da_medicao(medicao)["retencao"], Decimal("1200.00"),
+        )
+
+    def test_o_retido_e_somado_na_leitura_e_nao_guardado(self):
+        """§4.9 — saldo de contrato é derivado. Não há coluna de 'retido'."""
+        self._medir_e_aprovar()
+        saldo = services.retencao_disponivel(self.contrato)
+        self.assertEqual(saldo["retido"], Decimal("1200.00"))
+        self.assertEqual(saldo["liberado"], Decimal("0.00"))
+        self.assertEqual(saldo["disponivel"], Decimal("1200.00"))
+
+    def test_medicao_em_aprovacao_nao_conta_como_retida(self):
+        """Retenção de medição que ainda sobe a escada não foi descontada de
+        nada — contá-la ofereceria para liberação um dinheiro que ninguém
+        segurou ainda."""
+        self.apontar(self.alvenaria, "30", date(2026, 6, 15))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        medicao.status = Medicao.Status.EM_APROVACAO
+        medicao.save(update_fields=["status"])
+        self.assertEqual(
+            services.retencao_disponivel(self.contrato)["retido"], Decimal("0.00"),
+        )
+
+    def test_liberar_gera_titulo_proprio_e_nao_mexe_no_da_medicao(self):
+        """A retenção volta meses depois, com vencimento próprio — e a conta da
+        medição pode já estar quitada. O extrato do empreiteiro mostra duas
+        entradas porque houve dois pagamentos."""
+        from moduloerp.models import ContaPagar
+
+        medicao = self._medir_e_aprovar()
+        resultado = services.solicitar_liberacao(
+            contrato=self.contrato, valor=Decimal("1200"), data=date(2027, 1, 15),
+            condicao_atendida="Obra recebida em 20/12/2026, termo anexo.",
+            solicitante=self.usuario,
+        )
+        liberacao = resultado["liberacao"]
+        liberacao.refresh_from_db()
+        self.assertEqual(liberacao.status, LiberacaoRetencao.Status.APROVADA)
+        self.assertIsNotNone(liberacao.conta_pagar_ref)
+        self.assertNotEqual(liberacao.conta_pagar_ref, medicao.conta_pagar_ref)
+
+        conta = ContaPagar.objects.get(pk=liberacao.conta_pagar_ref)
+        self.assertEqual(conta.valor, Decimal("1200.00"))
+        self.assertEqual(conta.data_vencimento, date(2027, 1, 15))
+        self.assertIn("Liberação de retenção", conta.descricao)
+
+    def test_liberar_acima_do_retido_e_recusado_com_as_tres_parcelas(self):
+        """O teto é o saldo, e ele é derivado. A mensagem diz as parcelas porque
+        'saldo insuficiente' não deixa o gestor conferir contra o extrato."""
+        self._medir_e_aprovar()
+        with self.assertRaises(ValidationError) as erro:
+            services.solicitar_liberacao(
+                contrato=self.contrato, valor=Decimal("5000"), data=date(2027, 1, 15),
+                condicao_atendida="Obra recebida.", solicitante=self.usuario,
+            )
+        mensagem = str(erro.exception)
+        self.assertIn("1200", mensagem)
+        self.assertIn("5000", mensagem)
+
+    def test_liberar_sem_declarar_a_condicao_e_recusado(self):
+        """Valor liberado sem a condição escrita é o achado que uma auditoria de
+        contrato registra — o campo existe para que ele não exista."""
+        self._medir_e_aprovar()
+        with self.assertRaises(ValidationError) as erro:
+            services.solicitar_liberacao(
+                contrato=self.contrato, valor=Decimal("100"), data=date(2027, 1, 15),
+                condicao_atendida="   ", solicitante=self.usuario,
+            )
+        # A recusa mostra a cláusula do contrato, para quem pede saber o que
+        # precisa declarar em vez de adivinhar. É por causa desta frase que o
+        # `SolicitarLiberacaoSerializer` aceita texto em branco: o `CharField`
+        # padrão recusaria antes, com "este campo não pode ser em branco", e
+        # esta mensagem nunca chegaria a quem está liberando caução.
+        self.assertIn("Recebimento definitivo", str(erro.exception))
+
+    def test_duas_liberacoes_nao_devolvem_mais_do_que_foi_retido(self):
+        self._medir_e_aprovar()
+        services.solicitar_liberacao(
+            contrato=self.contrato, valor=Decimal("1000"), data=date(2027, 1, 15),
+            condicao_atendida="Parcial.", solicitante=self.usuario,
+        )
+        with self.assertRaises(ValidationError):
+            services.solicitar_liberacao(
+                contrato=self.contrato, valor=Decimal("500"), data=date(2027, 2, 15),
+                condicao_atendida="Restante.", solicitante=self.usuario,
+            )
+
+
+class RegimesDeContratoTests(BaseContrato):
+    """Três regimes, três matemáticas — e a honestidade do custo digitado."""
+
+    def test_no_unitario_o_valor_do_contrato_e_a_soma_dos_itens(self):
+        """E não um total guardado ao lado dela, que seria a segunda verdade."""
+        self.assertEqual(
+            services.valor_contratado(self.contrato), Decimal("100000.00"),
+        )
+
+    def test_no_global_a_soma_dos_itens_precisa_fechar_com_o_valor(self):
+        """É a planilha contratual que diz quanto cada frente vale; divergir
+        dela faria a medição por percentual mentir sobre o todo."""
+        contrato = self.criar_contrato(
+            numero="003/2026", regime=RegimeContrato.GLOBAL,
+            valor_global=Decimal("50000"),
+        )
+        self.criar_item(
+            "1", "Empreitada", qtd="1", preco="40000", contrato=contrato,
+            atividade=self.alvenaria,
+        )
+        self.apontar(self.alvenaria, "50", date(2026, 6, 15))
+        medicao = services.criar_medicao(
+            contrato=contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        with self.assertRaises(ValidationError) as erro:
+            services.validar_medicao(medicao)
+        self.assertIn("não fecha", str(erro.exception))
+
+    def test_na_administracao_o_bruto_e_custo_mais_taxa(self):
+        contrato = self.criar_contrato(
+            numero="004/2026", regime=RegimeContrato.ADMINISTRACAO,
+            valor_global=Decimal("200000"), taxa_administracao=Decimal("12"),
+        )
+        medicao = services.criar_medicao(
+            contrato=contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+            linhas=[], custo_reembolsavel=Decimal("30000"),
+        )
+        totais = services.totais_da_medicao(medicao)
+        self.assertEqual(totais["bruto"], Decimal("33600.00"))
+
+    def test_o_custo_digitado_viaja_com_a_origem_declarada(self):
+        """**A régua de dado honesto é cumprida pelo REGISTRO, não por um aviso.**
+
+        O dono decidiu que o regime de administração entra com custo manual
+        (14/09/2026), e a saída não é recusar o regime: é gravar **de onde veio
+        o número**, para o boletim imprimir "custo informado pelo gestor" ao
+        lado de quem o informou. Quem ateste lê isso no documento que está
+        assinando.
+
+        O que saiu daqui foi o **aviso** que repetia a mesma frase em toda
+        submissão — *"a apropriação de HH (PDCA.9) ainda não está ligada"*. Ele
+        não pedia ação nenhuma, aparecia sempre, e falava a língua do roadmap e
+        não a de quem mede a obra (*"que mensagem bosta pro usuário final"*,
+        15/09/2026). Aviso que aparece sempre e não pede nada ensina a ignorar a
+        faixa de avisos — onde um dia aparece algo que importa.
+        """
+        contrato = self.criar_contrato(
+            numero="005/2026", regime=RegimeContrato.ADMINISTRACAO,
+            valor_global=Decimal("200000"), taxa_administracao=Decimal("10"),
+        )
+        medicao = services.criar_medicao(
+            contrato=contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+            linhas=[], custo_reembolsavel=Decimal("10000"),
+        )
+        # O registro: fica no documento, e o boletim o imprime.
+        self.assertEqual(medicao.custo_origem, OrigemCusto.INFORMADO)
+        self.assertEqual(medicao.get_custo_origem_display(), "Informado pelo gestor")
+
+        # E a submissão não gasta a faixa de avisos com isso.
+        avisos = services.validar_medicao(medicao)["avisos"]
+        self.assertFalse(
+            any("apropriação" in a or "PDCA" in a for a in avisos),
+            f"aviso de roadmap na tela do gestor: {avisos}",
+        )
+
+    def test_administracao_sem_custo_e_recusada(self):
+        contrato = self.criar_contrato(
+            numero="006/2026", regime=RegimeContrato.ADMINISTRACAO,
+            valor_global=Decimal("200000"), taxa_administracao=Decimal("10"),
+        )
+        medicao = services.criar_medicao(
+            contrato=contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+            linhas=[],
+        )
+        with self.assertRaises(ValidationError) as erro:
+            services.validar_medicao(medicao)
+        self.assertIn("custo reembolsável", str(erro.exception))
+
+    def test_o_banco_recusa_valor_global_no_regime_errado(self):
+        """A `CheckConstraint` é a rede de baixo — vale para o comando de
+        bancada e para a importação, não só para o formulário."""
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                ContratoObra.objects.create(
+                    tenant=self.tenant, obra=self.obra, fornecedor=self.fornecedor,
+                    numero="099/2026", objeto="Erro",
+                    regime=RegimeContrato.GLOBAL, valor_global=None,
+                    data_inicio=date(2026, 6, 1),
+                )
+
+
+class RetificacaoTests(BaseContrato):
+    """§11.5 — aprovada congela; a correção é um documento novo."""
+
+    def test_so_medicao_aprovada_se_retifica(self):
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+            linhas=[],
+        )
+        with self.assertRaises(ValidationError) as erro:
+            services.retificar(medicao=medicao, motivo="qualquer")
+        self.assertIn("aprovada", str(erro.exception))
+
+    def test_a_retificadora_nasce_vazia_e_aponta_para_a_corrigida(self):
+        """Copiar as linhas com sinal trocado pareceria conveniência e seria uma
+        armadilha: a retificação quase nunca é 'estorna tudo'."""
+        self.apontar(self.alvenaria, "30", date(2026, 6, 15))
+        original = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        services._congelar_medicao(original, aprovada=True)
+        nova = services.retificar(
+            medicao=original, motivo="O item 1.1 mediu 300 e eram 250.",
+        )
+        self.assertEqual(nova.retifica_id, original.pk)
+        self.assertEqual(nova.itens.count(), 0)
+        self.assertEqual(nova.periodo_inicio, original.periodo_inicio)
+        self.assertIn("mediu 300", nova.observacao)
+
+    def test_nao_se_retifica_a_mesma_medicao_duas_vezes(self):
+        self.apontar(self.alvenaria, "30", date(2026, 6, 15))
+        original = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        services._congelar_medicao(original, aprovada=True)
+        services.retificar(medicao=original, motivo="primeira")
+        with self.assertRaises(ValidationError) as erro:
+            services.retificar(medicao=original, motivo="segunda")
+        self.assertIn("já está sendo retificada", str(erro.exception))
+
+    def test_a_retificadora_devolve_quantidade_com_linha_negativa(self):
+        """Quantidade negativa **é** permitida, e só no item de medição: é como
+        a retificadora devolve o que foi medido a mais. O piso de zero mora no
+        acumulado."""
+        self.apontar(self.alvenaria, "30", date(2026, 6, 15))
+        original = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        services._congelar_medicao(original, aprovada=True)
+        nova = services.retificar(medicao=original, motivo="mediu a mais")
+        services.reescrever_linhas(medicao=nova, linhas=[
+            {"item_contrato_id": self.item_alv.pk, "quantidade": Decimal("-50")},
+        ])
+        services.validar_medicao(nova)  # não levanta: 300 − 50 = 250 ≤ 1000
+        self.assertEqual(
+            services.totais_da_medicao(nova)["bruto"], Decimal("-4000.00"),
+        )
+
+    def test_a_retificadora_nao_devolve_mais_do_que_foi_medido(self):
+        self.apontar(self.alvenaria, "30", date(2026, 6, 15))
+        original = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        services._congelar_medicao(original, aprovada=True)
+        nova = services.retificar(medicao=original, motivo="exagerada")
+        services.reescrever_linhas(medicao=nova, linhas=[
+            {"item_contrato_id": self.item_alv.pk, "quantidade": Decimal("-500")},
+        ])
+        with self.assertRaises(ValidationError) as erro:
+            services.validar_medicao(nova)
+        self.assertIn("negativo", str(erro.exception))
+
+
+def _escada_de_medicao(tenant, permissao="pdca.medicao.atestar", niveis=1):
+    """Monta o fluxo padrão de medição do tenant, com N degraus."""
+    from django.contrib.contenttypes.models import ContentType
+    from nucleo.models import FluxoAprovacao, NivelAprovacao
+
+    fluxo = FluxoAprovacao.objects.create(
+        tenant=tenant, codigo="medicao", nome="Aprovação de medição",
+        alvo=ContentType.objects.get_for_model(Medicao), padrao=True, ativo=True,
+    )
+    criados = [
+        NivelAprovacao.objects.create(
+            tenant=tenant, fluxo=fluxo, ordem=i + 1,
+            nome=f"Degrau {i + 1}", permissao_exigida=permissao,
+        )
+        for i in range(niveis)
+    ]
+    return fluxo, criados
+
+
+class EscadaDeAtestoTests(BaseContrato):
+    """A PDCA.3 é o **primeiro cliente real** da máquina do `nucleo` (PDCA.0)."""
+
+    def setUp(self):
+        super().setUp()
+        self.solicitante = Usuario.objects.create(
+            username="apurador", tenant=self.tenant,
+        )
+        self.solicitante.iam_permissions = ["pdca.medicao.apurar"]
+        self.aprovador = Usuario.objects.create(
+            username="fiscal", tenant=self.tenant,
+        )
+        self.aprovador.iam_permissions = ["pdca.medicao.atestar"]
+        self.apontar(self.alvenaria, "30", date(2026, 6, 15))
+
+    def _medicao(self):
+        return services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+
+    def test_sem_escada_configurada_submeter_aprova_em_um_passo(self):
+        """É o contrato escrito do motor: `fluxo_para` devolvendo `None` é
+        resposta legítima, não erro de configuração."""
+        medicao = self._medicao()
+        resultado = services.submeter_medicao(
+            medicao=medicao, solicitante=self.solicitante,
+        )
+        self.assertEqual(resultado["estado"], "aprovada")
+        self.assertIsNone(resultado["escada"])
+        medicao.refresh_from_db()
+        self.assertEqual(medicao.status, Medicao.Status.APROVADA)
+        self.assertIsNotNone(medicao.conta_pagar_ref)
+
+    def test_com_escada_a_medicao_fica_parada_no_degrau(self):
+        _escada_de_medicao(self.tenant)
+        medicao = self._medicao()
+        resultado = services.submeter_medicao(
+            medicao=medicao, solicitante=self.solicitante,
+        )
+        self.assertEqual(resultado["estado"], "em_aprovacao")
+        medicao.refresh_from_db()
+        self.assertEqual(medicao.status, Medicao.Status.EM_APROVACAO)
+        # Nada de título ainda: o dinheiro só sai depois do último degrau.
+        self.assertIsNone(medicao.conta_pagar_ref)
+
+    def test_o_ultimo_degrau_congela_e_gera_o_titulo_pelo_sinal(self):
+        """**O contrato do `nucleo` fechando o ciclo:** o motor não sabe o que
+        aprovou; quem congela e gera o título é o receptor do `modulopdca`."""
+        from nucleo import aprovacao as motor
+
+        _escada_de_medicao(self.tenant)
+        medicao = self._medicao()
+        services.submeter_medicao(medicao=medicao, solicitante=self.solicitante)
+
+        pedido = motor.pedido_de(medicao)
+        motor.decidir(pedido=pedido, usuario=self.aprovador, aprovar=True)
+
+        medicao.refresh_from_db()
+        self.assertEqual(medicao.status, Medicao.Status.APROVADA)
+        self.assertIsNotNone(medicao.conta_pagar_ref)
+
+    def test_quem_solicitou_nao_ateste_o_proprio_pedido(self):
+        """A segregação da §8, vinda de graça do motor — mas o teste existe
+        porque é ela que a fatia inteira protege."""
+        from django.core.exceptions import PermissionDenied
+        from nucleo import aprovacao as motor
+
+        _escada_de_medicao(self.tenant)
+        self.solicitante.iam_permissions = [
+            "pdca.medicao.apurar", "pdca.medicao.atestar",
+        ]
+        medicao = self._medicao()
+        services.submeter_medicao(medicao=medicao, solicitante=self.solicitante)
+        pedido = motor.pedido_de(medicao)
+        with self.assertRaises(PermissionDenied):
+            motor.decidir(pedido=pedido, usuario=self.solicitante, aprovar=True)
+
+    def test_o_degrau_intermediario_nao_gera_titulo(self):
+        from nucleo import aprovacao as motor
+
+        _escada_de_medicao(self.tenant, niveis=2)
+        medicao = self._medicao()
+        services.submeter_medicao(medicao=medicao, solicitante=self.solicitante)
+
+        pedido = motor.pedido_de(medicao)
+        motor.decidir(pedido=pedido, usuario=self.aprovador, aprovar=True)
+        medicao.refresh_from_db()
+        self.assertEqual(medicao.status, Medicao.Status.EM_APROVACAO)
+        self.assertIsNone(medicao.conta_pagar_ref)
+
+        outro = Usuario.objects.create(username="gerente", tenant=self.tenant)
+        outro.iam_permissions = ["pdca.medicao.atestar"]
+        motor.decidir(pedido=motor.pedido_de(medicao), usuario=outro, aprovar=True)
+        medicao.refresh_from_db()
+        self.assertEqual(medicao.status, Medicao.Status.APROVADA)
+        self.assertIsNotNone(medicao.conta_pagar_ref)
+
+    def test_reprovar_encerra_e_nao_gera_titulo(self):
+        from nucleo import aprovacao as motor
+
+        _escada_de_medicao(self.tenant)
+        medicao = self._medicao()
+        services.submeter_medicao(medicao=medicao, solicitante=self.solicitante)
+        motor.decidir(
+            pedido=motor.pedido_de(medicao), usuario=self.aprovador, aprovar=False,
+        )
+        medicao.refresh_from_db()
+        self.assertEqual(medicao.status, Medicao.Status.REPROVADA)
+        self.assertIsNone(medicao.conta_pagar_ref)
+
+    def test_o_sinal_reenviado_nao_gera_um_segundo_titulo(self):
+        """Idempotência do receptor: a escada tem `select_for_update` contra a
+        corrida de milissegundos, mas o replay de fila entra por fora."""
+        from nucleo import aprovacao as motor
+        from moduloerp.models import ContaPagar
+
+        _escada_de_medicao(self.tenant)
+        medicao = self._medicao()
+        services.submeter_medicao(medicao=medicao, solicitante=self.solicitante)
+        pedido = motor.pedido_de(medicao)
+        motor.decidir(pedido=pedido, usuario=self.aprovador, aprovar=True)
+        antes = ContaPagar.objects.count()
+
+        medicao.refresh_from_db()
+        motor.aprovacao_concluida.send(
+            sender=Medicao, pedido=pedido, alvo=medicao, aprovado=True,
+        )
+        self.assertEqual(ContaPagar.objects.count(), antes)
+
+    def test_submeter_algo_que_nao_e_rascunho_e_recusado(self):
+        medicao = self._medicao()
+        services.submeter_medicao(medicao=medicao, solicitante=self.solicitante)
+        medicao.refresh_from_db()
+        with self.assertRaises(ValidationError):
+            services.submeter_medicao(medicao=medicao, solicitante=self.solicitante)
+
+
+class ApiDaMedicaoTests(APITestCase):
+    """As duas camadas de acesso e a segregação dos três verbos, pela API."""
+
+    @classmethod
+    def setUpTestData(cls):
+        from fornecedores.models import Fornecedor
+
+        cls.tenant = Tenant.objects.create(slug="pdca-med-api", nome="Construtora Med")
+        cls.obra = Obra.objects.create(
+            tenant=cls.tenant, nome_obra="Obra API", endereco="Rua 9",
+        )
+        cls.fornecedor = Fornecedor.objects.create(
+            tenant=cls.tenant, razao_social="Empreiteira API", email="api@example.com",
+        )
+        cls.contrato = ContratoObra.objects.create(
+            tenant=cls.tenant, obra=cls.obra, fornecedor=cls.fornecedor,
+            numero="010/2026", objeto="Serviços", data_inicio=date(2026, 6, 1),
+            status=ContratoObra.Status.VIGENTE,
+        )
+        cls.cronograma = Cronograma.objects.create(
+            tenant=cls.tenant, obra=cls.obra, descricao="Plano",
+            data_inicio=date(2026, 6, 1), status=Cronograma.Status.VIGENTE,
+        )
+        cls.atividade = Atividade.objects.create(
+            tenant=cls.tenant, cronograma=cls.cronograma, codigo="1",
+            nome="Serviço", duracao_dias=10, profundidade=1,
+        )
+        cls.item = ItemContrato.objects.create(
+            tenant=cls.tenant, contrato=cls.contrato, codigo="1.1",
+            descricao="Serviço", unidade="m2", atividade=cls.atividade,
+            quantidade_contratada=Decimal("100"), preco_unitario=Decimal("10"),
+        )
+        # **A planilha contratual só se edita em rascunho** (achado do dono,
+        # 15/09/2026). Os testes que exercitam o cadastro de item usam este
+        # contrato; o vigente acima serve para provar a recusa.
+        cls.contrato_rascunho = ContratoObra.objects.create(
+            tenant=cls.tenant, obra=cls.obra, fornecedor=cls.fornecedor,
+            numero="011/2026", objeto="Contrato ainda em montagem",
+            data_inicio=date(2026, 6, 1),
+            status=ContratoObra.Status.RASCUNHO,
+        )
+        cls.item_rascunho = ItemContrato.objects.create(
+            tenant=cls.tenant, contrato=cls.contrato_rascunho, codigo="1.1",
+            descricao="Serviço", unidade="m2",
+            quantidade_contratada=Decimal("100"), preco_unitario=Decimal("10"),
+        )
+        ApontamentoAvanco.objects.create(
+            tenant=cls.tenant, atividade=cls.atividade,
+            data=date(2026, 6, 10), percentual=Decimal("50"),
+        )
+        cls.usuario = Usuario.objects.create(username="gestor-api", tenant=cls.tenant)
+
+    def _autenticar(self, permissions=("pdca.medicao.view",), modules=("pdca",)):
+        self.usuario.iam_modules = list(modules)
+        self.usuario.iam_permissions = list(permissions)
+        self.client.force_authenticate(user=self.usuario)
+
+    def test_sem_o_modulo_a_camada_1_barra(self):
+        self._autenticar(modules=())
+        self.assertEqual(self.client.get("/api/pdca/medicoes/").status_code, 403)
+
+    def test_criar_item_de_contrato_pela_api_grava_o_tenant(self):
+        """**Achado pelo E2E, e o teste de unidade não pegava.**
+
+        O `perform_create` do `ItemContratoViewSet` confere o teto e o estado do
+        contrato antes de gravar — e a primeira escrita dele chamava
+        `serializer.save()` direto, engolindo a injeção de `tenant_id` do
+        `TenantScopedViewSetMixin`. A linha nascia sem tenant e a RLS
+        fail-closed recusava o INSERT com um **500 seco**.
+
+        Os testes desta fatia criavam `ItemContrato` pelo ORM (com `tenant=`
+        explícito) e por isso passavam por cima do buraco. Este entra pela API,
+        que é o caminho que a tela usa.
+        """
+        self._autenticar(permissions=("pdca.contrato.view", "pdca.contrato.edit"))
+        resposta = self.client.post("/api/pdca/itens-contrato/", {
+            "contrato": self.contrato_rascunho.pk, "codigo": "9.9",
+            "descricao": "Item criado pela API", "unidade": "m3",
+            "quantidade_contratada": "10", "preco_unitario": "25",
+        }, format="json")
+        self.assertEqual(resposta.status_code, 201, resposta.content)
+        criado = ItemContrato.objects.get(pk=resposta.json()["item_contrato_id"])
+        self.assertEqual(criado.tenant_id, self.tenant.pk)
+
+    def test_item_sem_quantidade_e_recusado_com_mensagem_e_nao_com_500(self):
+        """**D133 — achado pelo dono cadastrando um item sem quantidade.**
+
+        A `CheckConstraint` do model recusava (e é ela que protege o comando de
+        bancada e a importação), mas era a **primeira** a falar: a recusa subia
+        como `IntegrityError` e o cliente recebia **500 com página de
+        depuração** — a mesma classe de defeito que o `ProtectedError` motivou
+        em `nucleo/excecoes.py`.
+
+        O que se cobra aqui é o par: **400**, e a mensagem no **campo certo**.
+        """
+        self._autenticar(permissions=("pdca.contrato.view", "pdca.contrato.edit"))
+        resposta = self.client.post("/api/pdca/itens-contrato/", {
+            "contrato": self.contrato_rascunho.pk, "codigo": "8.8",
+            "descricao": "Item sem quantidade", "unidade": "",
+            "quantidade_contratada": "0", "preco_unitario": "0.00",
+        }, format="json")
+        self.assertEqual(resposta.status_code, 400, resposta.content)
+        corpo = resposta.json()
+        self.assertIn("quantidade_contratada", corpo)
+        self.assertIn("maior que zero", str(corpo["quantidade_contratada"]))
+
+    def test_preco_negativo_e_recusado_apontando_o_aditivo(self):
+        """Negativo é supressão, e supressão é aditivo — não linha de contrato."""
+        self._autenticar(permissions=("pdca.contrato.view", "pdca.contrato.edit"))
+        resposta = self.client.post("/api/pdca/itens-contrato/", {
+            "contrato": self.contrato_rascunho.pk, "codigo": "8.9",
+            "descricao": "Item de preço negativo",
+            "quantidade_contratada": "10", "preco_unitario": "-5.00",
+        }, format="json")
+        self.assertEqual(resposta.status_code, 400, resposta.content)
+        self.assertIn("aditivo", str(resposta.json()["preco_unitario"]))
+
+    def test_atualizar_item_pela_api_nao_perde_o_tenant(self):
+        """O irmão do anterior: `perform_update` reforça o tenant, e sobrescrevê-lo
+        sem `super()` deixaria o `PATCH` mover a linha para tenant nenhum."""
+        self._autenticar(permissions=("pdca.contrato.view", "pdca.contrato.edit"))
+        resposta = self.client.patch(
+            f"/api/pdca/itens-contrato/{self.item_rascunho.pk}/",
+            {"descricao": "Renomeado"}, format="json",
+        )
+        self.assertEqual(resposta.status_code, 200, resposta.content)
+        self.item_rascunho.refresh_from_db()
+        self.assertEqual(self.item_rascunho.tenant_id, self.tenant.pk)
+        self.assertEqual(self.item_rascunho.descricao, "Renomeado")
+
+    def test_a_planilha_fecha_quando_alguem_ja_mediu_contra_ela(self):
+        """**Achado do dono, 15/09/2026 — e a régua certa levou duas tentativas.**
+
+        A tela dizia *"a planilha não se edita mais aqui"* e a API aceitava a
+        edição do mesmo jeito: ele mudou uma quantidade contratada de 53.150
+        para 631.500 num contrato com medição em aprovação. Regra que mora só na
+        interface não é regra: é aviso.
+
+        A **primeira** correção fechou a planilha assim que o contrato saía de
+        rascunho, e criou um beco pior que o defeito: contrato vigente sem itens
+        ficava impossível de preencher, com a tela pedindo os itens e nenhum
+        caminho para cadastrá-los. A régua certa é **se alguém já mediu**: antes
+        da primeira medição não há nada a preservar; depois, mudar a planilha
+        reescreveria o denominador de um documento assinado.
+        """
+        self._autenticar(permissions=("pdca.contrato.view", "pdca.contrato.edit"))
+
+        # Contrato vigente e SEM medição: a planilha continua aberta — é o beco
+        # que a primeira versão desta trava criou.
+        livre = self.client.patch(
+            f"/api/pdca/itens-contrato/{self.item.pk}/",
+            {"descricao": "ainda dá para ajustar"}, format="json",
+        )
+        self.assertEqual(livre.status_code, 200, livre.content)
+        self.assertTrue(
+            self.client.get(
+                f"/api/pdca/contratos/{self.contrato.pk}/",
+            ).json()["planilha_editavel"],
+        )
+
+        # Agora alguém mede contra ela.
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        services._congelar_medicao(medicao, aprovada=True)
+
+        corpo = self.client.get(f"/api/pdca/contratos/{self.contrato.pk}/").json()
+        self.assertFalse(corpo["planilha_editavel"])
+        self.assertIn("aditivo", corpo["planilha_fechada_porque"])
+
+        alterar = self.client.patch(
+            f"/api/pdca/itens-contrato/{self.item.pk}/",
+            {"quantidade_contratada": "631500"}, format="json",
+        )
+        self.assertEqual(alterar.status_code, 400, alterar.content)
+        self.assertIn("aditivo", str(alterar.json()))
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.quantidade_contratada, Decimal("100.0000"))
+        # E medição **cancelada** não fecha a planilha: ela não ocupa saldo e
+        # não produziu efeito nenhum.
+
+        incluir = self.client.post("/api/pdca/itens-contrato/", {
+            "contrato": self.contrato.pk, "codigo": "7.7",
+            "descricao": "Item que deveria ser aditivo", "unidade": "m2",
+            "quantidade_contratada": "10", "preco_unitario": "5",
+        }, format="json")
+        self.assertEqual(incluir.status_code, 400, incluir.content)
+
+        apagar = self.client.delete(f"/api/pdca/itens-contrato/{self.item.pk}/")
+        self.assertEqual(apagar.status_code, 400, apagar.content)
+
+    def test_a_previa_nao_grava_nada(self):
+        """Abrir a medição só para ver a proposta encheria o contrato de
+        rascunhos que o gestor teria de apagar depois."""
+        # A prévia é leitura **de medição**, não de contrato: ela mostra o que
+        # se pagaria. Quem só cadastra planilha contratual não precisa ver isso.
+        self._autenticar(permissions=("pdca.contrato.view", "pdca.medicao.view"))
+        resposta = self.client.get(
+            f"/api/pdca/contratos/{self.contrato.pk}/proposta-de-medicao/"
+            f"?inicio=2026-06-01&fim=2026-06-30"
+        )
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(
+            Decimal(resposta.json()["linhas"][0]["quantidade_proposta"]),
+            Decimal("50"),
+        )
+        self.assertEqual(Medicao.objects.count(), 0)
+
+    def test_apurar_nao_da_o_direito_de_aprovar_sem_escada(self):
+        """**A trava de segregação da fatia.** Sem escada configurada, submeter
+        aprova em um passo — então submeter exige `atestar`, não `apurar`. Sem
+        isto, quem apura aprovaria o próprio boletim em todo tenant que ainda
+        não montou o fluxo, que é a maioria no primeiro dia."""
+        self._autenticar(permissions=("pdca.medicao.view", "pdca.medicao.apurar"))
+        criar = self.client.post("/api/pdca/medicoes/abrir/", {
+            "contrato": self.contrato.pk,
+            "inicio": "2026-06-01", "fim": "2026-06-30",
+        }, format="json")
+        self.assertEqual(criar.status_code, 201)
+        medicao_id = criar.json()["medicao_id"]
+
+        resposta = self.client.post(
+            f"/api/pdca/medicoes/{medicao_id}/submeter/", {}, format="json",
+        )
+        self.assertEqual(resposta.status_code, 403)
+        self.assertIn("atestar", resposta.json()["detail"])
+
+    def test_com_atestar_o_caminho_de_um_passo_funciona(self):
+        self._autenticar(permissions=(
+            "pdca.medicao.view", "pdca.medicao.apurar", "pdca.medicao.atestar",
+        ))
+        criar = self.client.post("/api/pdca/medicoes/abrir/", {
+            "contrato": self.contrato.pk,
+            "inicio": "2026-06-01", "fim": "2026-06-30",
+        }, format="json")
+        medicao_id = criar.json()["medicao_id"]
+        resposta = self.client.post(
+            f"/api/pdca/medicoes/{medicao_id}/submeter/", {}, format="json",
+        )
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(resposta.json()["estado"], "aprovada")
+
+    def test_com_escada_configurada_apurar_basta_para_submeter(self):
+        """Havendo escada, submeter não aprova nada — quem decide é o degrau."""
+        _escada_de_medicao(self.tenant)
+        self._autenticar(permissions=("pdca.medicao.view", "pdca.medicao.apurar"))
+        criar = self.client.post("/api/pdca/medicoes/abrir/", {
+            "contrato": self.contrato.pk,
+            "inicio": "2026-06-01", "fim": "2026-06-30",
+        }, format="json")
+        medicao_id = criar.json()["medicao_id"]
+        resposta = self.client.post(
+            f"/api/pdca/medicoes/{medicao_id}/submeter/", {}, format="json",
+        )
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(resposta.json()["estado"], "em_aprovacao")
+
+    def test_a_medicao_nao_aceita_put_nem_patch(self):
+        """O documento tem ciclo de vida; um `PATCH` genérico publicaria um
+        caminho que atravessa o congelamento."""
+        self._autenticar(permissions=("pdca.medicao.view", "pdca.medicao.apurar"))
+        medicao = Medicao.objects.create(
+            tenant=self.tenant, contrato=self.contrato, numero=1,
+            periodo_inicio=date(2026, 6, 1), periodo_fim=date(2026, 6, 30),
+        )
+        for verbo in (self.client.put, self.client.patch):
+            resposta = verbo(
+                f"/api/pdca/medicoes/{medicao.pk}/", {"numero": 9}, format="json",
+            )
+            self.assertEqual(resposta.status_code, 405)
+
+    def test_o_dinheiro_sai_como_string_e_nao_como_float(self):
+        """O `float` do JSON tem 53 bits de mantissa e **não representa centavo
+        exatamente** — R$ 1.234,57 viraria 1234.5699999999999 na tela."""
+        self._autenticar(permissions=("pdca.contrato.view",))
+        dados = self.client.get(
+            f"/api/pdca/contratos/{self.contrato.pk}/saldo/"
+        ).json()
+        self.assertIsInstance(dados["valor_contratado"], str)
+        self.assertIsInstance(dados["retencao"]["retido"], str)
+
+    def test_o_tenant_vizinho_nao_ve_contrato_nenhum(self):
+        vizinha = Tenant.objects.create(slug="pdca-med-viz", nome="Vizinha")
+        intruso = Usuario.objects.create(username="intruso-med", tenant=vizinha)
+        intruso.iam_modules = ["pdca"]
+        intruso.iam_permissions = ["pdca.contrato.view", "pdca.medicao.view"]
+        self.client.force_authenticate(user=intruso)
+        self.assertEqual(
+            self.client.get("/api/pdca/contratos/").json()["count"], 0,
+        )
+        self.assertEqual(
+            self.client.get(
+                f"/api/pdca/contratos/{self.contrato.pk}/saldo/"
+            ).status_code, 404,
+        )
+
+
+class SaldoDoContratoTests(BaseContrato):
+    """§4.9 — derivado inteiro, sem uma coluna guardada."""
+
+    def test_o_saldo_separa_aprovado_de_escada_de_rascunho(self):
+        """O rascunho fica **fora** do saldo e aparece à parte: ele é intenção, e
+        somá-lo mostraria um saldo que some quando o gestor abre uma medição
+        só para estudar."""
+        self.apontar(self.alvenaria, "30", date(2026, 6, 15))
+        aprovada = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        services._congelar_medicao(aprovada, aprovada=True)
+        services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 7, 1), fim=date(2026, 7, 31),
+            linhas=[{"item_contrato_id": self.item_alv.pk, "quantidade": Decimal("100")}],
+        )
+        saldo = services.saldo_do_contrato(self.contrato)
+        self.assertEqual(saldo["valor_contratado"], Decimal("100000.00"))
+        self.assertEqual(saldo["medido_aprovado"], Decimal("24000.00"))
+        self.assertEqual(saldo["medido_rascunho"], Decimal("8000.00"))
+        self.assertEqual(saldo["saldo"], Decimal("76000.00"))
+
+    def test_o_item_totalmente_medido_conta_como_fechado(self):
+        self.apontar(self.alvenaria, "100", date(2026, 6, 15))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        services._congelar_medicao(medicao, aprovada=True)
+        saldo = services.saldo_do_contrato(self.contrato)
+        self.assertEqual(saldo["itens_fechados"], 1)
+        self.assertEqual(saldo["itens"], 2)
+
+
+class LixeiraDoContratoTests(BaseContrato):
+    """A lixeira dá o direito de desfazer; ela não dá o direito de apagar a
+    prova de para onde o dinheiro foi."""
+
+    def test_contrato_com_titulo_nao_e_purgado(self):
+        from nucleo import lixo
+
+        self.apontar(self.alvenaria, "30", date(2026, 6, 15))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        services._congelar_medicao(medicao, aprovada=True)
+
+        usuario = Usuario.objects.create(username="quem-apagou", tenant=self.tenant)
+        item = lixo.mover_para_lixo(self.contrato, usuario=usuario)
+        item = lixo.purgar(item, usuario=usuario)
+
+        self.assertIsNone(item.purgado_em)
+        self.assertIn("título no financeiro", item.falha_na_purga)
+        self.assertTrue(ContratoObra.todos.filter(pk=self.contrato.pk).exists())
+
+    def test_contrato_sem_titulo_purga_normalmente(self):
+        """A trava é sobre o rastro financeiro, não sobre contrato em geral."""
+        from nucleo import lixo
+
+        limpo = self.criar_contrato(numero="777/2026")
+        usuario = Usuario.objects.create(username="quem-apagou-2", tenant=self.tenant)
+        item = lixo.purgar(
+            lixo.mover_para_lixo(limpo, usuario=usuario), usuario=usuario,
+        )
+        self.assertIsNotNone(item.purgado_em)
+        self.assertFalse(ContratoObra.todos.filter(pk=limpo.pk).exists())
+
+
+class TetosDaPdca3Tests(BaseContrato):
+    """Todo teto vive em `payment/planos.py` — e o teste prende constante a
+    consumidor, senão o número vira intenção."""
+
+    def test_o_teto_de_itens_por_contrato_e_cobrado(self):
+        from payment.planos import PDCA_TETO_ITENS_POR_CONTRATO
+
+        with self.assertRaises(ValidationError) as erro:
+            services.validar_teto_de_itens(
+                self.contrato, acrescentando=PDCA_TETO_ITENS_POR_CONTRATO,
+            )
+        self.assertIn(str(PDCA_TETO_ITENS_POR_CONTRATO)[:1], str(erro.exception))
+
+    def test_o_teto_de_linhas_por_medicao_e_cobrado(self):
+        from payment.planos import PDCA_TETO_LINHAS_POR_MEDICAO
+
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+            linhas=[],
+        )
+        demais = [
+            {"item_contrato_id": self.item_alv.pk, "quantidade": Decimal("1")}
+        ] * (PDCA_TETO_LINHAS_POR_MEDICAO + 1)
+        with self.assertRaises(ValidationError) as erro:
+            services.reescrever_linhas(medicao=medicao, linhas=demais)
+        self.assertIn("no máximo", str(erro.exception))
+
+    def test_o_status_publica_os_tetos_da_fatia(self):
+        """A tela lê o que vale hoje em vez de carregar uma cópia que envelhece
+        no bundle."""
+        from payment.planos import (
+            PDCA_TETO_ITENS_POR_CONTRATO, PDCA_TETO_LINHAS_POR_MEDICAO,
+        )
+
+        usuario = Usuario.objects.create(username="leitor-teto", tenant=self.tenant)
+        usuario.iam_modules = ["pdca"]
+        usuario.iam_permissions = ["pdca.contrato.view"]
+        from rest_framework.test import APIClient
+
+        cliente = APIClient()
+        cliente.force_authenticate(user=usuario)
+        tetos = cliente.get("/api/pdca/status/").json()["tetos"]
+        self.assertEqual(tetos["itens_por_contrato"], PDCA_TETO_ITENS_POR_CONTRATO)
+        self.assertEqual(tetos["linhas_por_medicao"], PDCA_TETO_LINHAS_POR_MEDICAO)
+
+
+class ContextoDaMedicaoTests(BaseContrato):
+    """**O defeito que originou a reescrita da tela**, agora com rede.
+
+    A página montava `saldo = contratado − já medido` no navegador, com dados de
+    uma prévia que só era buscada quando *não* havia medição aberta. Quem
+    entrasse pelo link direto de um boletim (`/medicoes/14`) via "já medido"
+    **negativo**, saldo acima do contratado e — porque a trava de excesso
+    compara contra esse saldo — a trava desligada.
+
+    O conserto foi mover a conta inteira para o servidor. Estes testes são o que
+    impede a aritmética de voltar para a tela.
+    """
+
+    def test_o_contexto_exclui_a_propria_medicao_do_acumulado(self):
+        self.apontar(self.alvenaria, "30", date(2026, 6, 10))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        contexto = services.contexto_de_medicao(medicao)
+        linha = next(
+            l for l in contexto["linhas"] if l["item_contrato_id"] == self.item_alv.pk
+        )
+        # 300 m² estão NESTA medição: o acumulado "anterior" é zero, e o saldo é
+        # o contratado inteiro. Nunca negativo, nunca acima do contratado.
+        self.assertEqual(linha["quantidade_ja_medida"], Decimal("0"))
+        self.assertEqual(linha["saldo"], Decimal("1000"))
+        self.assertEqual(linha["quantidade_medida"], Decimal("300"))
+        self.assertGreaterEqual(linha["quantidade_ja_medida"], 0)
+
+    def test_o_contexto_conta_as_medicoes_anteriores(self):
+        self.apontar(self.alvenaria, "30", date(2026, 6, 10))
+        primeira = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        services._congelar_medicao(primeira, aprovada=True)
+        self.apontar(self.alvenaria, "20", date(2026, 7, 10))
+        segunda = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 7, 1), fim=date(2026, 7, 31),
+        )
+        linha = next(
+            l for l in services.contexto_de_medicao(segunda)["linhas"]
+            if l["item_contrato_id"] == self.item_alv.pk
+        )
+        self.assertEqual(linha["quantidade_ja_medida"], Decimal("300"))
+        self.assertEqual(linha["saldo"], Decimal("700"))
+
+    def test_o_contexto_traz_o_contrato_inteiro_e_a_memoria(self):
+        """A grade mostra o contrato inteiro para que "não medi isto" seja uma
+        decisão visível — e cada linha diz de onde a proposta saiu."""
+        self.apontar(self.alvenaria, "10", date(2026, 6, 10))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        contexto = services.contexto_de_medicao(medicao)
+        self.assertEqual(len(contexto["linhas"]), 2)
+        linha = next(
+            l for l in contexto["linhas"] if l["item_contrato_id"] == self.item_alv.pk
+        )
+        self.assertEqual(len(linha["memoria"]), 1)
+        self.assertEqual(linha["memoria"][0]["nome"], "Alvenaria")
+        self.assertEqual(linha["memoria"][0]["percentual"], Decimal("10"))
+
+
+class PeriodoEncadeadoTests(BaseContrato):
+    """Medição de obra é uma corrente: um período começa onde o outro acabou."""
+
+    def test_o_periodo_sugerido_comeca_no_dia_seguinte_ao_ultimo(self):
+        self.apontar(self.alvenaria, "10", date(2026, 6, 10))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        services._congelar_medicao(medicao, aprovada=True)
+        sugerido = services.sugerir_periodo(self.contrato)
+        self.assertEqual(sugerido["inicio"], date(2026, 7, 1))
+        self.assertEqual(sugerido["ultima_medicao"]["numero"], 1)
+
+    def test_o_primeiro_periodo_comeca_na_vigencia(self):
+        self.assertEqual(
+            services.sugerir_periodo(self.contrato)["inicio"], self.contrato.data_inicio,
+        )
+
+    def test_periodo_sobreposto_e_recusado(self):
+        """Dois períodos que se cruzam pagam o mesmo avanço duas vezes — e a
+        trava do acumulado só perceberia quando a soma estourasse o contratado,
+        que pode ser muitos meses depois."""
+        self.apontar(self.alvenaria, "10", date(2026, 6, 10))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        services._congelar_medicao(medicao, aprovada=True)
+        with self.assertRaises(ValidationError) as erro:
+            services.criar_medicao(
+                contrato=self.contrato, inicio=date(2026, 6, 15), fim=date(2026, 7, 15),
+            )
+        self.assertIn("sobrepõe", str(erro.exception))
+
+    def test_a_retificadora_repete_o_periodo_de_proposito(self):
+        """A exceção declarada: ela **corrige** aquele período."""
+        self.apontar(self.alvenaria, "10", date(2026, 6, 10))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        services._congelar_medicao(medicao, aprovada=True)
+        nova = services.retificar(medicao=medicao, motivo="mediu a mais")
+        self.assertEqual(nova.periodo_inicio, medicao.periodo_inicio)
+        self.assertEqual(nova.periodo_fim, medicao.periodo_fim)
+
+
+class DeducoesDaMedicaoTests(BaseContrato):
+    """O que sai do bruto **além** da retenção — e não volta."""
+
+    def medicao_de_8000(self):
+        self.apontar(self.alvenaria, "10", date(2026, 6, 10))
+        return services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+
+    def test_o_liquido_desconta_retencao_e_deducoes(self):
+        self.contrato.retencao_percentual = Decimal("5")
+        self.contrato.save()
+        medicao = self.medicao_de_8000()
+        services.reescrever_deducoes(medicao=medicao, deducoes=[
+            {"tipo": "inss", "percentual": Decimal("11")},
+            {"tipo": "multa", "valor": Decimal("500")},
+        ])
+        totais = services.totais_da_medicao(medicao)
+        self.assertEqual(totais["bruto"], Decimal("8000.00"))
+        self.assertEqual(totais["retencao"], Decimal("400.00"))
+        # 11% de 8.000 = 880, mais 500 de multa.
+        self.assertEqual(totais["total_deducoes"], Decimal("1380.00"))
+        self.assertEqual(totais["liquido"], Decimal("6220.00"))
+
+    def test_a_base_declarada_manda_no_percentual(self):
+        """Sem base, o percentual incide sobre o bruto. Com base, sobre a
+        parcela declarada — que é como o INSS de fato funciona."""
+        medicao = self.medicao_de_8000()
+        services.reescrever_deducoes(medicao=medicao, deducoes=[
+            {"tipo": "inss", "percentual": Decimal("11"),
+             "base_calculo": Decimal("2000")},
+        ])
+        self.assertEqual(
+            services.totais_da_medicao(medicao)["total_deducoes"], Decimal("220.00"),
+        )
+
+    def test_percentual_e_valor_juntos_sao_recusados(self):
+        medicao = self.medicao_de_8000()
+        with self.assertRaises(ValidationError):
+            services.reescrever_deducoes(medicao=medicao, deducoes=[
+                {"tipo": "iss", "percentual": Decimal("5"), "valor": Decimal("100")},
+            ])
+        with self.assertRaises(ValidationError):
+            services.reescrever_deducoes(medicao=medicao, deducoes=[{"tipo": "iss"}])
+
+    def test_outros_exige_descricao(self):
+        medicao = self.medicao_de_8000()
+        with self.assertRaises(ValidationError) as erro:
+            services.reescrever_deducoes(medicao=medicao, deducoes=[
+                {"tipo": "outros", "valor": Decimal("100")},
+            ])
+        self.assertIn("descrição", str(erro.exception))
+
+    def test_deducao_maior_que_o_bruto_nao_passa_na_validacao(self):
+        """Título negativo é documento que ninguém consegue baixar."""
+        medicao = self.medicao_de_8000()
+        services.reescrever_deducoes(medicao=medicao, deducoes=[
+            {"tipo": "multa", "valor": Decimal("9000")},
+        ])
+        with self.assertRaises(ValidationError) as erro:
+            services.validar_medicao(medicao)
+        self.assertIn("líquido ficaria negativo", str(erro.exception))
+
+    def test_o_titulo_sai_pelo_liquido_com_deducoes(self):
+        medicao = self.medicao_de_8000()
+        services.reescrever_deducoes(medicao=medicao, deducoes=[
+            {"tipo": "iss", "percentual": Decimal("5")},
+        ])
+        services._congelar_medicao(medicao, aprovada=True)
+        medicao.refresh_from_db()
+        from moduloerp.models import ContaPagar
+
+        conta = ContaPagar.objects.get(pk=medicao.conta_pagar_ref)
+        self.assertEqual(conta.valor, Decimal("7600.00"))
+        self.assertIn("deduções", conta.descricao)
+
+    def test_so_o_rascunho_aceita_deducao(self):
+        medicao = self.medicao_de_8000()
+        services._congelar_medicao(medicao, aprovada=True)
+        with self.assertRaises(ValidationError):
+            services.reescrever_deducoes(medicao=medicao, deducoes=[
+                {"tipo": "iss", "percentual": Decimal("5")},
+            ])
+
+
+class MaterialEstocadoTests(BaseContrato):
+    """A coluna E da G703 — material posto na obra e ainda não aplicado.
+
+    **É saldo, não delta**: cada medição declara o estoque que existe naquele
+    momento, e o que se paga é a diferença contra o que a anterior declarava.
+    """
+
+    def test_o_estoque_paga_a_diferenca_e_nao_o_saldo(self):
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+            linhas=[{"item_contrato_id": self.item_alv.pk, "quantidade": Decimal("0"),
+                     "quantidade_estocada": Decimal("100")}],
+        )
+        self.assertEqual(
+            services.totais_da_medicao(medicao)["bruto"], Decimal("8000.00"),
+        )
+        services._congelar_medicao(medicao, aprovada=True)
+
+        # Segunda medição: o MESMO estoque de 100 continua lá. Não se paga de novo.
+        segunda = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 7, 1), fim=date(2026, 7, 31),
+            linhas=[{"item_contrato_id": self.item_alv.pk, "quantidade": Decimal("0"),
+                     "quantidade_estocada": Decimal("100")}],
+        )
+        self.assertEqual(
+            services.totais_da_medicao(segunda)["bruto"], Decimal("0.00"),
+        )
+
+    def test_material_aplicado_sai_do_estoque_e_entra_como_servico(self):
+        """O material vira serviço: o estoque cai, a quantidade sobe, e as duas
+        diferenças se cancelam — ninguém paga duas vezes pela mesma unidade."""
+        primeira = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+            linhas=[{"item_contrato_id": self.item_alv.pk, "quantidade": Decimal("0"),
+                     "quantidade_estocada": Decimal("100")}],
+        )
+        services._congelar_medicao(primeira, aprovada=True)
+        segunda = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 7, 1), fim=date(2026, 7, 31),
+            linhas=[{"item_contrato_id": self.item_alv.pk,
+                     "quantidade": Decimal("100"),
+                     "quantidade_estocada": Decimal("0")}],
+        )
+        totais = services.totais_da_medicao(segunda)
+        self.assertEqual(totais["executado"], Decimal("8000.00"))
+        self.assertEqual(totais["material_estocado"], Decimal("-8000.00"))
+        self.assertEqual(totais["bruto"], Decimal("0.00"))
+
+    def test_executado_mais_estocado_nao_passam_do_contratado(self):
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+            linhas=[{"item_contrato_id": self.item_alv.pk,
+                     "quantidade": Decimal("600"),
+                     "quantidade_estocada": Decimal("500")}],
+        )
+        with self.assertRaises(ValidationError) as erro:
+            services.validar_medicao(medicao)
+        self.assertIn("excede o contratado", str(erro.exception))
+
+    def test_o_saldo_da_grade_desconta_o_material_ja_estocado(self):
+        primeira = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+            linhas=[{"item_contrato_id": self.item_alv.pk, "quantidade": Decimal("0"),
+                     "quantidade_estocada": Decimal("400")}],
+        )
+        services._congelar_medicao(primeira, aprovada=True)
+        proposta = services.propor_medicao(
+            self.contrato, inicio=date(2026, 7, 1), fim=date(2026, 7, 31),
+        )
+        linha = next(
+            l for l in proposta["linhas"] if l["item_contrato_id"] == self.item_alv.pk
+        )
+        self.assertEqual(linha["saldo"], Decimal("600"))
+        self.assertEqual(linha["estocado_anterior"], Decimal("400"))
+
+
+class AditivoTests(BaseContrato):
+    """PDCA.4 — o contrato mudando por escrito.
+
+    A régua é uma só, e vale para toda linha: **contratado atual = original +
+    Σ deltas de aditivos aprovados**. O campo do `ItemContrato` nunca é
+    reescrito, e é ele o denominador do limite legal.
+    """
+
+    def aditivo(self, **extra):
+        campos = dict(
+            contrato=self.contrato, objeto="Acréscimo de alvenaria",
+            justificativa="Projeto revisado aumentou a área do bloco B",
+        )
+        campos.update(extra)
+        return services.criar_aditivo(**campos)
+
+    def test_o_aditivo_em_rascunho_nao_move_saldo(self):
+        antes = services.valor_contratado(self.contrato)
+        self.aditivo(itens=[{
+            "acao": "acrescimo", "item_contrato_id": self.item_alv.pk,
+            "quantidade_delta": Decimal("200"),
+        }])
+        self.assertEqual(services.valor_contratado(self.contrato), antes)
+
+    def test_o_acrescimo_aprovado_aumenta_o_contratado_e_o_saldo(self):
+        aditivo = self.aditivo(itens=[{
+            "acao": "acrescimo", "item_contrato_id": self.item_alv.pk,
+            "quantidade_delta": Decimal("200"),
+        }])
+        services._congelar_aditivo(aditivo, aprovado=True)
+
+        atual = services.contratado_atual_por_item(self.contrato)
+        self.assertEqual(atual[self.item_alv.pk], Decimal("1200"))
+        # O campo do item continua sendo o do dia da assinatura.
+        self.item_alv.refresh_from_db()
+        self.assertEqual(self.item_alv.quantidade_contratada, Decimal("1000"))
+        # 1200 × 80 + 500 × 40 = 116.000
+        self.assertEqual(services.valor_contratado(self.contrato), Decimal("116000.00"))
+
+    def test_a_supressao_nao_pode_cair_abaixo_do_ja_medido(self):
+        self.apontar(self.alvenaria, "50", date(2026, 6, 10))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        services._congelar_medicao(medicao, aprovada=True)  # 500 m² medidos
+
+        aditivo = self.aditivo(itens=[{
+            "acao": "supressao", "item_contrato_id": self.item_alv.pk,
+            "quantidade_delta": Decimal("-600"),
+        }])
+        with self.assertRaises(ValidationError) as erro:
+            services.validar_aditivo(aditivo)
+        self.assertIn("abaixo do que já foi medido", str(erro.exception))
+
+    def test_a_inclusao_cria_item_com_original_zero(self):
+        """A regra `atual = original + Σ deltas` vale **sem exceção**: item novo
+        tem original zero e a quantidade inteira no `ItemAditivo`."""
+        aditivo = self.aditivo(itens=[{
+            "acao": "inclusao", "codigo_novo": "1.3",
+            "descricao_nova": "Impermeabilização", "unidade_nova": "m2",
+            "quantidade_delta": Decimal("300"), "preco_unitario": Decimal("60"),
+        }])
+        services._congelar_aditivo(aditivo, aprovado=True)
+
+        novo = self.contrato.itens.get(codigo="1.3")
+        self.assertEqual(novo.quantidade_contratada, Decimal("0"))
+        self.assertEqual(novo.aditivo_origem_id, aditivo.pk)
+        atual = services.contratado_atual_por_item(self.contrato)
+        self.assertEqual(atual[novo.pk], Decimal("300"))
+
+    def test_a_inclusao_recusa_codigo_que_ja_existe(self):
+        with self.assertRaises(ValidationError) as erro:
+            self.aditivo(itens=[{
+                "acao": "inclusao", "codigo_novo": "1.1",
+                "descricao_nova": "Duplicata", "quantidade_delta": Decimal("10"),
+                "preco_unitario": Decimal("10"),
+            }])
+        self.assertIn("já existe", str(erro.exception))
+
+    def test_a_revisao_de_preco_nao_reescreve_medicao_congelada(self):
+        self.apontar(self.alvenaria, "10", date(2026, 6, 10))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        services._congelar_medicao(medicao, aprovada=True)
+        antes = services.totais_da_medicao(medicao)["bruto"]
+
+        aditivo = self.aditivo(
+            objeto="Reajuste", itens=[{
+                "acao": "preco", "item_contrato_id": self.item_alv.pk,
+                "preco_unitario": Decimal("100"),
+            }],
+        )
+        services._congelar_aditivo(aditivo, aprovado=True)
+
+        self.item_alv.refresh_from_db()
+        self.assertEqual(self.item_alv.preco_unitario, Decimal("100.0000"))
+        # O documento pago continua valendo o que valia.
+        self.assertEqual(services.totais_da_medicao(medicao)["bruto"], antes)
+        linha = aditivo.itens.get(item_contrato=self.item_alv)
+        self.assertEqual(linha.preco_unitario_anterior, Decimal("80.0000"))
+
+    def test_o_regime_publico_confere_contra_o_limite_digitado(self):
+        self.contrato.regime_publico = True
+        self.contrato.limite_acrescimo_percentual = Decimal("25")
+        self.contrato.save()
+        # Contratado original: 1000×80 + 500×40 = 100.000. 25% = 25.000.
+        aditivo = self.aditivo(itens=[{
+            "acao": "acrescimo", "item_contrato_id": self.item_alv.pk,
+            "quantidade_delta": Decimal("400"),  # 32.000
+        }])
+        with self.assertRaises(ValidationError) as erro:
+            services.validar_aditivo(aditivo)
+        self.assertIn("acima do limite de 25", str(erro.exception))
+
+    def test_o_limite_publico_conta_contra_o_ORIGINAL_e_nao_o_aditado(self):
+        """20% + 20% são 44% do assinado, não 40% — e é por isso que o
+        denominador é o contratado original."""
+        self.contrato.regime_publico = True
+        self.contrato.limite_acrescimo_percentual = Decimal("25")
+        self.contrato.save()
+        primeiro = self.aditivo(itens=[{
+            "acao": "acrescimo", "item_contrato_id": self.item_alv.pk,
+            "quantidade_delta": Decimal("200"),  # 16.000 = 16%
+        }])
+        services._congelar_aditivo(primeiro, aprovado=True)
+
+        # +16% = 32% do ORIGINAL (não 32% do já aditado, que daria menos).
+        segundo = self.aditivo(itens=[{
+            "acao": "acrescimo", "item_contrato_id": self.item_alv.pk,
+            "quantidade_delta": Decimal("200"),
+        }])
+        with self.assertRaises(ValidationError) as erro:
+            services.validar_aditivo(segundo)
+        self.assertIn("32", str(erro.exception))
+
+    def test_a_prorrogacao_move_a_vigencia(self):
+        aditivo = self.aditivo(
+            objeto="Prorrogação", nova_data_fim=date(2027, 3, 31), itens=[],
+        )
+        services._congelar_aditivo(aditivo, aprovado=True)
+        self.contrato.refresh_from_db()
+        self.assertEqual(self.contrato.data_fim, date(2027, 3, 31))
+
+    def test_o_aditivo_vazio_e_recusado(self):
+        aditivo = self.aditivo(itens=[])
+        with self.assertRaises(ValidationError) as erro:
+            services.validar_aditivo(aditivo)
+        self.assertIn("não muda nada", str(erro.exception))
+
+    def test_a_medicao_mede_contra_o_contratado_ADITADO(self):
+        """O fecho da fatia: aditivo aprovado abre saldo para medir."""
+        self.apontar(self.alvenaria, "100", date(2026, 6, 10))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        services._congelar_medicao(medicao, aprovada=True)  # 1000 m², item fechado
+
+        aditivo = self.aditivo(itens=[{
+            "acao": "acrescimo", "item_contrato_id": self.item_alv.pk,
+            "quantidade_delta": Decimal("200"),
+        }])
+        services._congelar_aditivo(aditivo, aprovado=True)
+
+        segunda = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 7, 1), fim=date(2026, 7, 31),
+            linhas=[{"item_contrato_id": self.item_alv.pk, "quantidade": Decimal("200")}],
+        )
+        # Passa: 1000 + 200 = 1200 = contratado atual.
+        self.assertEqual(services.validar_medicao(segunda)["avisos"], [])
+
+    def test_o_teto_de_aditivos_abertos_morde(self):
+        from payment.planos import PDCA_TETO_ADITIVOS_ABERTOS_POR_CONTRATO
+
+        for n in range(PDCA_TETO_ADITIVOS_ABERTOS_POR_CONTRATO):
+            services.criar_aditivo(
+                contrato=self.contrato, objeto=f"Aditivo {n}",
+                justificativa="teste do teto",
+            )
+        with self.assertRaises(ValidationError) as erro:
+            services.criar_aditivo(
+                contrato=self.contrato, objeto="Um a mais",
+                justificativa="teste do teto",
+            )
+        self.assertIn("em aberto", str(erro.exception))
+
+
+class ApiDaPdca4Tests(APITestCase):
+    """As portas novas, pelo HTTP — inclusive as permissões."""
+
+    def setUp(self):
+        from fornecedores.models import Fornecedor
+
+        self.tenant = Tenant.objects.create(slug="pdca4-api", nome="Construtora API")
+        self.obra = Obra.objects.create(
+            tenant=self.tenant, nome_obra="Obra API", endereco="Rua API",
+        )
+        fornecedor = Fornecedor.objects.create(
+            tenant=self.tenant, razao_social="Empreiteira API", email="api@example.com",
+        )
+        self.contrato = ContratoObra.objects.create(
+            tenant=self.tenant, obra=self.obra, fornecedor=fornecedor,
+            numero="API/2026", objeto="Serviços", data_inicio=date(2026, 6, 1),
+            status=ContratoObra.Status.VIGENTE,
+        )
+        self.item = ItemContrato.objects.create(
+            tenant=self.tenant, contrato=self.contrato, codigo="1.1",
+            descricao="Serviço", unidade="m2",
+            quantidade_contratada=Decimal("100"), preco_unitario=Decimal("10"),
+        )
+        self.usuario = Usuario.objects.create(username="gestor4", tenant=self.tenant)
+        self.usuario.iam_modules = ["pdca"]
+        self.usuario.iam_permissions = [
+            "pdca.contrato.view", "pdca.contrato.edit", "pdca.medicao.view",
+            "pdca.medicao.apurar", "pdca.medicao.atestar", "pdca.aditivo.edit",
+            "pdca.aditivo.aprovar",
+        ]
+        self.client.force_authenticate(user=self.usuario)
+
+    def test_o_contexto_responde_a_grade_inteira(self):
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+            linhas=[{"item_contrato_id": self.item.pk, "quantidade": Decimal("10")}],
+        )
+        resposta = self.client.get(f"/api/pdca/medicoes/{medicao.pk}/contexto/")
+        self.assertEqual(resposta.status_code, 200)
+        corpo = resposta.json()
+        self.assertEqual(corpo["numero"], medicao.numero)
+        self.assertTrue(corpo["editavel"])
+        self.assertEqual(len(corpo["linhas"]), 1)
+        # Dinheiro e quantidade viajam como STRING — float não representa centavo.
+        self.assertIsInstance(corpo["linhas"][0]["saldo"], str)
+        self.assertIsInstance(corpo["totais"]["liquido"], str)
+
+    def test_a_lista_resumida_nao_traz_as_linhas(self):
+        services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+            linhas=[{"item_contrato_id": self.item.pk, "quantidade": Decimal("10")}],
+        )
+        completa = self.client.get(
+            f"/api/pdca/medicoes/?contrato={self.contrato.pk}&resumo=0",
+        ).json()["results"][0]
+        self.assertIn("itens", completa)
+
+        resumida = self.client.get(
+            f"/api/pdca/medicoes/?contrato={self.contrato.pk}&resumo=1",
+        ).json()["results"][0]
+        self.assertNotIn("itens", resumida)
+        self.assertIn("totais", resumida)
+
+    def test_o_cabecalho_grava_o_custo_do_regime_de_administracao(self):
+        self.contrato.regime = RegimeContrato.ADMINISTRACAO
+        self.contrato.valor_global = Decimal("50000")
+        self.contrato.taxa_administracao = Decimal("12")
+        self.contrato.save()
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+            linhas=[],
+        )
+        resposta = self.client.post(
+            f"/api/pdca/medicoes/{medicao.pk}/cabecalho/",
+            {"custo_reembolsavel": "10000.00"}, format="json",
+        )
+        self.assertEqual(resposta.status_code, 200)
+        medicao.refresh_from_db()
+        self.assertEqual(medicao.custo_reembolsavel, Decimal("10000.00"))
+        self.assertEqual(resposta.json()["totais"]["bruto"], "11200.00")
+
+    def test_reprovar_sem_motivo_e_recusado(self):
+        """A planta manda registrar o atesto com autor, data e **observação**."""
+        _escada_de_medicao(self.tenant)
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+            linhas=[{"item_contrato_id": self.item.pk, "quantidade": Decimal("10")}],
+        )
+        self.client.post(f"/api/pdca/medicoes/{medicao.pk}/submeter/", {}, format="json")
+
+        # **Quem apurou não ateste** — o motor recusa o autoatesto por padrão,
+        # e é a segregação da §8. A decisão vem de outra pessoa.
+        fiscal = Usuario.objects.create(username="fiscal4", tenant=self.tenant)
+        fiscal.iam_modules = ["pdca"]
+        fiscal.iam_permissions = ["pdca.medicao.view", "pdca.medicao.atestar"]
+        self.client.force_authenticate(user=fiscal)
+
+        recusa = self.client.post(
+            f"/api/pdca/medicoes/{medicao.pk}/atestar/",
+            {"aprovar": False}, format="json",
+        )
+        self.assertEqual(recusa.status_code, 400)
+        self.assertIn("observacao", recusa.json())
+
+        ok = self.client.post(
+            f"/api/pdca/medicoes/{medicao.pk}/atestar/",
+            {"aprovar": False, "observacao": "o item 1.1 não bate com o diário"},
+            format="json",
+        )
+        self.assertEqual(ok.status_code, 200)
+
+    def test_o_aditivo_abre_submete_e_aplica_pela_api(self):
+        resposta = self.client.post("/api/pdca/aditivos/abrir/", {
+            "contrato": self.contrato.pk,
+            "objeto": "Acréscimo",
+            "justificativa": "projeto revisado",
+            "itens": [{
+                "acao": "acrescimo", "item_contrato_id": self.item.pk,
+                "quantidade_delta": "50",
+            }],
+        }, format="json")
+        self.assertEqual(resposta.status_code, 201)
+        aditivo_id = resposta.json()["aditivo_id"]
+        self.assertEqual(resposta.json()["resumo"]["acrescimo"], "500.00")
+
+        submissao = self.client.post(
+            f"/api/pdca/aditivos/{aditivo_id}/submeter/", {}, format="json",
+        )
+        self.assertEqual(submissao.status_code, 200)
+        self.assertEqual(submissao.json()["estado"], "aprovado")
+
+        atual = services.contratado_atual_por_item(self.contrato)
+        self.assertEqual(atual[self.item.pk], Decimal("150"))
+
+    def test_quem_so_monta_aditivo_nao_aprova_sozinho(self):
+        """Sem escada configurada, submeter aprova em um passo — e por isso
+        exige `pdca.aditivo.aprovar`, não o `edit` que montou o documento."""
+        self.usuario.iam_permissions = [
+            "pdca.contrato.view", "pdca.medicao.view", "pdca.aditivo.edit",
+        ]
+        aditivo = services.criar_aditivo(
+            contrato=self.contrato, objeto="Acréscimo", justificativa="x",
+            itens=[{"acao": "acrescimo", "item_contrato_id": self.item.pk,
+                    "quantidade_delta": Decimal("10")}],
+        )
+        resposta = self.client.post(
+            f"/api/pdca/aditivos/{aditivo.pk}/submeter/", {}, format="json",
+        )
+        self.assertEqual(resposta.status_code, 403)
+        self.assertIn("pdca.aditivo.aprovar", resposta.json()["detail"])
+
+    def test_os_totais_nao_achatam_a_lista_de_deducoes(self):
+        """**A estrutura sobrevive à serialização, e só o `Decimal` vira string.**
+
+        A primeira escrita do `get_totais` fazia `str(valor)` num nível só, e
+        isso transformava a lista de deduções na string `"[]"`. O boletim
+        percorre essa lista: a tela da medição ficava **em branco**
+        (`r.deducoes.map is not a function`), e foi assim que o dono achou —
+        clicando numa medição da lista.
+
+        O mesmo vale para o resumo do aditivo, que carrega inteiro e decimal
+        lado a lado.
+        """
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+            linhas=[{"item_contrato_id": self.item.pk, "quantidade": Decimal("10")}],
+        )
+        services.reescrever_deducoes(medicao=medicao, deducoes=[
+            {"tipo": "iss", "percentual": Decimal("5")},
+        ])
+
+        corpo = self.client.get(f"/api/pdca/medicoes/{medicao.pk}/").json()
+        totais = corpo["totais"]
+        self.assertIsInstance(totais["deducoes"], list)
+        self.assertEqual(len(totais["deducoes"]), 1)
+        self.assertEqual(totais["deducoes"][0]["tipo"], "iss")
+        # Dinheiro continua string — o float do JSON não representa centavo.
+        self.assertIsInstance(totais["deducoes"][0]["valor"], str)
+        self.assertIsInstance(totais["liquido"], str)
+
+        # E na lista resumida, que é outro caminho de serialização.
+        resumida = self.client.get(
+            f"/api/pdca/medicoes/?contrato={self.contrato.pk}&resumo=1",
+        ).json()["results"][0]
+        self.assertIsInstance(resumida["totais"]["deducoes"], list)
+
+        # O resumo do aditivo: decimais viram string, a contagem continua int.
+        aditivo = services.criar_aditivo(
+            contrato=self.contrato, objeto="x", justificativa="y",
+            itens=[{"acao": "acrescimo", "item_contrato_id": self.item.pk,
+                    "quantidade_delta": Decimal("5")}],
+        )
+        resumo = self.client.get(f"/api/pdca/aditivos/{aditivo.pk}/").json()["resumo"]
+        self.assertIsInstance(resumo["acrescimo"], str)
+        self.assertIsInstance(resumo["itens"], int)
+
+    def test_o_periodo_sugerido_responde_pelo_contrato(self):
+        resposta = self.client.get(
+            f"/api/pdca/contratos/{self.contrato.pk}/periodo-sugerido/",
+        )
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(resposta.json()["inicio"], "2026-06-01")

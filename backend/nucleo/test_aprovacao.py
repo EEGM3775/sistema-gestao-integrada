@@ -26,7 +26,7 @@ from payment.planos import PDCA_TETO_NIVEIS_APROVACAO
 
 from .aprovacao import (
     abrir, aprovacao_concluida, cancelar, decidir, fluxo_para, pedido_de,
-    pendentes_para, validar_fluxo,
+    pendentes_para, reordenar_niveis, validar_fluxo,
 )
 from .models import Atesto, FluxoAprovacao, NivelAprovacao, PedidoAprovacao, Tenant, Usuario
 
@@ -319,3 +319,116 @@ class CancelamentoTests(BaseEscada):
         )
         self.assertEqual(pedido.estado, PedidoAprovacao.Estado.CANCELADO)
         self.assertIn("documento retirado", pedido.resumo)
+
+
+class RecusaDeAutoatestoDizASaidaTests(BaseEscada):
+    """**A recusa mais provável da máquina precisa dizer o caminho.**
+
+    *(Achado do dono, 15/09/2026, usando a tela: ele submeteu a medição como
+    administrador do tenant e levou "Quem solicitou não pode atestar o próprio
+    pedido" — com o documento parado e nenhuma saída à vista.)*
+
+    A regra está certa e fica. O defeito era a mensagem: a válvula que a planta
+    prevê (`permite_autoatesto`, *"escolha escrita do cliente para a obra
+    pequena"*) existia desde a PDCA.0 e **ninguém tinha como descobri-la**.
+    """
+
+    def test_a_recusa_nomeia_as_saidas_e_o_interruptor(self):
+        self.solicitante.iam_permissions = [PERM_ENGENHEIRO]
+        pedido = abrir(alvo=self.alvo, solicitante=self.solicitante)
+        with self.assertRaises(PermissionDenied) as erro:
+            decidir(pedido=pedido, usuario=self.solicitante, aprovar=True)
+        mensagem = str(erro.exception)
+        # A permissão do degrau, para quem lê saber a quem pedir.
+        self.assertIn(PERM_ENGENHEIRO, mensagem)
+        # O nome do fluxo, para o administrador achar qual mexer.
+        self.assertIn(self.fluxo.nome, mensagem)
+        # E o endereço do interruptor — sem isto, a válvula segue invisível.
+        self.assertIn("autoatesto", mensagem.lower())
+        self.assertIn("Aprovações", mensagem)
+
+    def test_com_autoatesto_ligado_o_mesmo_gesto_passa(self):
+        """O interruptor não é decorativo: ligá-lo resolve de fato, e o atesto
+        continua guardando autor e data — o que muda é quem pode assinar, não
+        se o registro existe."""
+        self.fluxo.permite_autoatesto = True
+        self.fluxo.save(update_fields=["permite_autoatesto"])
+        self.solicitante.iam_permissions = [PERM_ENGENHEIRO]
+
+        pedido = abrir(alvo=self.alvo, solicitante=self.solicitante)
+        pedido = decidir(pedido=pedido, usuario=self.solicitante, aprovar=True)
+        atesto = Atesto.objects.get(pedido=pedido, nivel_ordem=1)
+        self.assertEqual(atesto.autor_id, self.solicitante.pk)
+        self.assertEqual(atesto.decisao, Atesto.Decisao.APROVADO)
+
+
+class ReordenarDegrausTests(BaseEscada):
+    """Reordenar tem de ser **atômico**, e é por isso que mora no servidor.
+
+    A alternativa — a tela trocando `ordem` de dois degraus com dois `PATCH` —
+    esbarra na `UniqueConstraint(fluxo, ordem)`, precisa de um valor temporário,
+    e uma falha no meio deixa a escada com numeração quebrada: `validar_fluxo`
+    passa a recusá-la e o documento que dependia dela para de andar **sem que
+    ninguém o tenha tocado**.
+    """
+
+    def test_inverter_dois_degraus_mantem_a_escada_valida(self):
+        niveis = list(self.fluxo.niveis.order_by("ordem"))
+        reordenar_niveis(self.fluxo, [niveis[1].pk, niveis[0].pk])
+
+        agora = list(self.fluxo.niveis.order_by("ordem"))
+        self.assertEqual([n.ordem for n in agora], [1, 2])
+        self.assertEqual(agora[0].pk, niveis[1].pk)
+        validar_fluxo(self.fluxo)  # não levanta
+
+    def test_a_ordem_nova_governa_quem_assina_primeiro(self):
+        """A prova de que reordenar **significa** alguma coisa: invertidos os
+        degraus, é o gerente que abre a escada, e o engenheiro que fecha."""
+        niveis = list(self.fluxo.niveis.order_by("ordem"))
+        reordenar_niveis(self.fluxo, [niveis[1].pk, niveis[0].pk])
+
+        pedido = abrir(alvo=self.alvo, solicitante=self.solicitante)
+        with self.assertRaises(PermissionDenied):
+            decidir(pedido=pedido, usuario=self.engenheiro, aprovar=True)
+        pedido = decidir(pedido=pedido, usuario=self.gerente, aprovar=True)
+        self.assertEqual(pedido.estado, PedidoAprovacao.Estado.EM_APROVACAO)
+        pedido = decidir(pedido=pedido, usuario=self.engenheiro, aprovar=True)
+        self.assertEqual(pedido.estado, PedidoAprovacao.Estado.APROVADO)
+
+    def test_lista_incompleta_e_recusada_em_vez_de_apagar_degrau(self):
+        """Reordenar não cria nem apaga degrau. Sem esta trava, mandar um id só
+        renumeraria aquele para 1 e deixaria os outros onde estavam — escada
+        com dois degraus 1, ou com buraco."""
+        niveis = list(self.fluxo.niveis.order_by("ordem"))
+        with self.assertRaises(ValidationError):
+            reordenar_niveis(self.fluxo, [niveis[0].pk])
+        self.assertEqual(
+            [n.ordem for n in self.fluxo.niveis.order_by("ordem")], [1, 2],
+        )
+
+
+class AlvosDescobertosTests(TestCase):
+    """`alvos/` descobre **por construção**, e não por lista escrita à mão.
+
+    Um modelo entra ali no instante em que declara a `GenericRelation` para
+    `PedidoAprovacao` — que é exatamente o gesto com que um módulo se candidata a
+    ser aprovado. Manter um catálogo em paralelo criaria a segunda verdade que
+    envelhece na fatia seguinte.
+    """
+
+    def test_a_medicao_e_o_cronograma_aparecem_entre_os_alvos(self):
+        from django.apps import apps
+        from django.contrib.contenttypes.fields import GenericRelation
+
+        encontrados = set()
+        for modelo in apps.get_models():
+            if any(
+                isinstance(campo, GenericRelation)
+                and campo.related_model is PedidoAprovacao
+                for campo in modelo._meta.private_fields
+            ):
+                ct = ContentType.objects.get_for_model(modelo)
+                encontrados.add(f"{ct.app_label}.{ct.model}")
+
+        self.assertIn("modulopdca.medicao", encontrados)
+        self.assertIn("modulopdca.liberacaoretencao", encontrados)

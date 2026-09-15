@@ -374,7 +374,7 @@ uma forma já exercitada — `contexto_requerido` para o destino, `dados_do_arqu
 um cliente ou um produto. Passá-los por uma conferência seria pedir a uma pessoa que aprovasse o que a
 plataforma acabou de produzir sozinha.
 
-## 7.3 A saída já atravessou inteira — as nove portas do D70
+## 7.3 A saída já atravessou inteira — as portas do D70
 
 **A tabela acima é sobre ENTRADA, e a saída andou primeiro.** A distinção é a mesma que o
 `ArquivoEntregue` faz: entregar é deixar sair um binário que o recurso já guarda; importar é a
@@ -396,17 +396,28 @@ conjunto de permissões, e juntar o ASO com o RG trocaria em silêncio o gate do
 | `obra.diario_midia` | [modulodiario/impexp.py](../../backend/modulodiario/impexp.py) | `midia` | `obra.diario.view` |
 | `obra.custo_nfe` | [empreendimentos/impexp.py](../../backend/empreendimentos/impexp.py) | `xml` | `obra.empreend_custo.view` |
 | `erp.nota_fiscal` | [moduloerp/impexp.py](../../backend/moduloerp/impexp.py) | `nfse_pdf/xml` · `nfe_pdf/xml` · `entrada_pdf/xml` | `erp.nf.view` |
+| `pdca.avanco_foto` | [modulopdca/impexp.py](../../backend/modulopdca/impexp.py) | `foto` | `pdca.avanco.view` |
 
 **Três regras que este lote fixou, e valem para quem vier depois:**
 
 1. **Prefixo não é dono; modelo é.** `nfe_xmls/` é escrito por dois apps, com gates diferentes —
    fechar "o prefixo do ERP" deixaria o XML do custo do empreendimento aberto.
-2. **Entregar não obriga a importar.** Estes oito recursos só têm `entregar_arquivo`; a régua que a
+2. **Entregar não obriga a importar.** Estes recursos só têm `entregar_arquivo`; a régua que a
    PRA.5b inverteu é o que permite isso, e é o que separou o conserto de leitura da migração de
    entrada (IE.4–IE.7 continuam de pé, na mesma ordem).
 3. **Recurso de fundação declara `entitlement = None`.** `cadastro.*` e `obra.*` moram no módulo
    `base` do catálogo: cobrar entitlement ali faria a ficha do cliente exigir assinatura que ninguém
    vende. É o precedente do `maps.local`.
+
+**A lista não fechou em nove, e não era para fechar.** `pdca.avanco_foto` entrou depois, quando a
+PDCA.2 criou `pdca_apontamento/` sem porta e o teste do D70 a acusou pelo nome
+([D120](../historico-correcoes.md)) — que é exatamente o que ele existe para fazer. O que esse caso
+acrescentou às três regras acima é uma **quarta**, e ela custou o dobro do conserto:
+
+4. **Declarar a porta não fecha o vazamento — o serializer também publica endereço.** Um `FileField`
+   em `fields = "__all__"` emite a URL de `/media/` no JSON, e o teste do D70 não olha para
+   serializers: ele varre modelos. Dá para satisfazê-lo com o vazamento inteiro de pé. Quem declarar
+   um recurso de arquivo tem de trocar o endereço na saída também, com `url_do_arquivo`.
 
 O que o módulo dono ganha de graça: `nosniff`, `attachment`, tipo declarado por nós, nome saneado,
 trilha (R12) e a checagem de tenant — via `entregar_campo` e `buscar_do_tenant`, que subiram para

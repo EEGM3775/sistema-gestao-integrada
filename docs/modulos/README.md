@@ -21,7 +21,7 @@
 | `moduloscm` | **`scm`** | [moduloscm.md](moduloscm.md) | Suprimentos: catálogo → demanda → cotação → pedido → recebimento (backend ✅; sem UI) |
 | `modulosil` | **`sil`** | [modulosil.md](modulosil.md) | Estoque & logística interna (full-stack ✅): saldo valorado, requisição, inventário, **EPI/NR-6**, **ferramentaria**, **curva ABC**, **aplicado por obra/etapa** (Operação × Gestão) |
 | `moduloorcamento` | **`orcamento`** | [moduloorcamento.md](moduloorcamento.md) | Orçamento de obra: **base referencial de plataforma** (SINAPI/ORSE, importada por comando) + adoção no catálogo do tenant ✅; planilha, composição/BDI, curva S e as quatro colunas (orçado × comprometido × aplicado × realizado) 🚧 |
-| `modulopdca` | **`pdca`** | [modulopdca.md](modulopdca.md) | Planejar → executar → verificar → agir: hierarquia de locais da obra e calendário de trabalho (fundação); cronograma/CPM, **avanço apontado e curva S realizada**, Last Planner, medição contratual e verificação nas fatias seguintes |
+| `modulopdca` | **`pdca`** | [modulopdca.md](modulopdca.md) | Planejar → executar → verificar → agir: hierarquia de locais da obra e calendário de trabalho (fundação); cronograma/CPM, **avanço apontado e curva S realizada**, **contrato e medição que nascem do avanço e geram o título no ERP**; Last Planner, aditivo e verificação nas fatias seguintes |
 | `moduloapi` | — (base) | [moduloapi.md](moduloapi.md) | Credenciais de APIs externas (Google OAuth) |
 | `nucleo` | — (base) | [nucleo.md](nucleo.md) | Identidade/tenancy/auditoria (espelho da IAM) |
 | `modulocalendar` | — (base) | [modulocalendar.md](modulocalendar.md) | Eventos/tarefas de calendário |

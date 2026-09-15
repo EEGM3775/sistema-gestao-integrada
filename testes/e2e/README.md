@@ -38,6 +38,11 @@ da raiz e o frontend servido — em geral `:5173` no modo de desenvolvimento.
 | `phase*_test.py`, `phase4_e2e.py` | As fases da plataforma: RS256, RBAC, tenancy, auditoria, WebSocket de serviço |
 | `pra*_test.py` | Prancheta ponta a ponta — escala, hachura, upload de acervo, o módulo pelo gateway |
 | `pdca1_cronograma_test.py` | PDCA ponta a ponta — WBS, rede, CPM sobre o calendário da obra, arrastar, publicar, replanejar e a linha de base |
+| `pdca3_medicao_test.py` | PDCA.3 — contrato, medição nascendo do avanço, trava do contratado, escada de atesto (quem apura não ateste) e o **título gerado no ERP**; retenção retida e liberada em título próprio |
+| `pdca4_aditivo_test.py` | PDCA.4 — o `contexto/` da medição (a rede do **D138**: acumulado nunca negativo, saldo nunca acima do contratado), deduções tipadas entre a retenção e o líquido, material estocado pagando a **diferença**, aditivo com escada própria abrindo saldo, e as travas de supressão abaixo do já medido e de período sobreposto |
+| `pdca3_grade_browser_test.py` | PDCA.3 no **navegador** — o caminho de dedo até a carteira, as colunas da grade e a **trava acendendo na digitação** (a única parte do instrumento que não dá para provar por API). Pede `LD_LIBRARY_PATH=~/.local/chromium-libs` |
+| `pdca3_formulario_browser_test.py` | Os seis achados do "+ novo contrato" (D132): valor em real, zero à esquerda, select de fornecedores, rodapé em **janela baixa (620 px)**, a planilha contratual e a seleção ao focar. Pede `LD_LIBRARY_PATH` |
+| `aprovacoes_admin_browser_test.py` | Administração → Aprovações (D130) — a escada na tela, e o **autoatesto ligado pela tela e conferido na API**. Pede `LD_LIBRARY_PATH` |
 | `map6_maps_test.py`, `orc6_orcamento_test.py`, `orc8_carga_base_test.py`, `ie_impexp_test.py`, `d70_*`, `d23_*`, `phaseC_*` | Um módulo ou um achado específico, no stack vivo |
 | `amostras_pra8.py` | **Apoio**: os bytes de amostra (DWG, DXF, PDF, RVT) que o `pra8` usa — importado como módulo irmão |
 | `d11_mailpit_helper.py` | **Apoio**: lê o Mailpit para conferir e-mail de verdade |

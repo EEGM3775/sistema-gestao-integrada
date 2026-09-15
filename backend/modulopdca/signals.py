@@ -1,5 +1,17 @@
 # backend/modulopdca/signals.py
-"""O que o PDCA precisa fazer quando a plataforma vai apagar uma obra de verdade.
+"""Os dois lados do sinal na fronteira do módulo: a purga e a escada de atesto.
+
+**A purga** (D116) é o contrato do `nucleo/lixo.py`: a plataforma avisa antes do
+`DELETE` e o módulo dono decide o que sobrevive.
+
+**A escada** (PDCA.3) é o contrato gêmeo do `nucleo/aprovacao.py`: o motor
+termina a escada, emite `aprovacao_concluida` e **não sabe o que aprovou** —
+congelar a medição e gerar o título é daqui. É o mesmo desenho, pelo mesmo
+motivo: o `nucleo` é importado por todos e não pode importar nenhum de volta.
+
+---
+
+O que o PDCA precisa fazer quando a plataforma vai apagar uma obra de verdade.
 
 Primeiro cliente do sinal `antes_de_purgar` do `nucleo/lixo.py` (D116), e ele
 existe por uma frase do dono:
@@ -22,10 +34,14 @@ import logging
 from django.db.models.signals import pre_delete
 from django.dispatch import receiver
 
+from nucleo.aprovacao import aprovacao_concluida
 from nucleo.lixo import antes_de_purgar
 from obras.models import Obra
 
-from .models import Atividade, Cronograma
+from .models import (
+    AditivoContrato, Atividade, ContratoObra, Cronograma, LiberacaoRetencao,
+    Medicao,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -114,4 +130,150 @@ def alertar_purga_sem_lixeira(sender, instance, **kwargs):
         logger.warning(
             "pdca_plano_modelo_em_risco",
             extra={"obra_id": instance.pk, "cronogramas": sobreviventes},
+        )
+
+
+# ---------------------------------------------------------------------------
+# PDCA.3 — o que acontece quando a escada de atesto termina
+# ---------------------------------------------------------------------------
+#
+# O `nucleo.aprovacao` emite `aprovacao_concluida` com `sender` = a classe do
+# alvo, o que permite conectar **sem filtro em Python**: cada receptor abaixo só
+# acorda para o seu tipo de documento.
+#
+# **Falha aqui não desfaz o atesto** — é decisão escrita do motor: *"a decisão de
+# quem tem alçada é verdade independente de o efeito colateral ter dado certo"*.
+# Por isso estes receptores logam e deixam o objeto num estado legível, em vez de
+# levantar e apagar a assinatura do fiscal. O que eles **não** podem fazer é
+# falhar em silêncio: o `logger.exception` do motor grava o pedido junto, e o
+# documento fica visível na tela com o estado real.
+
+
+@receiver(aprovacao_concluida, sender=Medicao, dispatch_uid="pdca_medicao_atestada")
+def congelar_medicao_atestada(sender, pedido, alvo, aprovado, **kwargs):
+    """Último degrau da medição → congela e (se aprovada) gera o título no ERP.
+
+    `alvo` vem `None` quando o objeto já não existe — o motor busca a instância
+    e ela pode ter ido para a lixeira entre o atesto e o anúncio. Não é erro: é
+    o caso em que não há o que congelar, e seguir adiante criaria um
+    `ContaPagar` para um documento que ninguém consegue mais abrir.
+    """
+    if alvo is None:
+        logger.warning(
+            "pdca_medicao_sumiu_antes_do_congelamento",
+            extra={"pedido_id": pedido.pk, "alvo_id": pedido.alvo_id},
+        )
+        return
+    if alvo.esta_congelada:
+        # Idempotência: um reenvio do sinal não pode gerar um segundo título.
+        # A escada já tem o `select_for_update` que impede a corrida de
+        # milissegundos; isto cobre o reenvio manual e o replay de fila.
+        logger.info(
+            "pdca_medicao_ja_congelada",
+            extra={"medicao_id": alvo.pk, "status": alvo.status},
+        )
+        return
+
+    from . import services
+
+    services._congelar_medicao(alvo, aprovada=aprovado)
+    logger.info(
+        "pdca_medicao_congelada",
+        extra={
+            "medicao_id": alvo.pk, "aprovada": aprovado,
+            "conta_pagar_ref": alvo.conta_pagar_ref,
+        },
+    )
+
+
+@receiver(aprovacao_concluida, sender=LiberacaoRetencao,
+          dispatch_uid="pdca_liberacao_atestada")
+def congelar_liberacao_atestada(sender, pedido, alvo, aprovado, **kwargs):
+    """Último degrau da liberação → devolve o retido pelo ERP, em título próprio."""
+    if alvo is None:
+        logger.warning(
+            "pdca_liberacao_sumiu_antes_do_congelamento",
+            extra={"pedido_id": pedido.pk, "alvo_id": pedido.alvo_id},
+        )
+        return
+    if alvo.esta_congelada:
+        logger.info(
+            "pdca_liberacao_ja_congelada",
+            extra={"liberacao_id": alvo.pk, "status": alvo.status},
+        )
+        return
+
+    from . import services
+
+    services._congelar_liberacao(alvo, aprovada=aprovado)
+    logger.info(
+        "pdca_liberacao_congelada",
+        extra={
+            "liberacao_id": alvo.pk, "aprovada": aprovado,
+            "conta_pagar_ref": alvo.conta_pagar_ref,
+        },
+    )
+
+
+@receiver(aprovacao_concluida, sender=AditivoContrato,
+          dispatch_uid="pdca_aditivo_aprovado")
+def congelar_aditivo_aprovado(sender, pedido, alvo, aprovado, **kwargs):
+    """Último degrau do aditivo → congela e, aprovado, **aplica no contrato**.
+
+    Aplicar é o que separa este receptor dos outros dois: a medição aprovada
+    gera um título e a liberação devolve dinheiro, mas o aditivo **muda a régua**
+    — cria item novo, revisa preço, move a vigência. Por isso o serviço revalida
+    antes de aplicar: entre a submissão e o atesto podem passar dias, e nesse
+    intervalo uma medição pode ter consumido o saldo que a supressão ia tirar.
+    """
+    if alvo is None:
+        logger.warning(
+            "pdca_aditivo_sumiu_antes_da_aplicacao",
+            extra={"pedido_id": pedido.pk, "alvo_id": pedido.alvo_id},
+        )
+        return
+    if alvo.esta_congelado:
+        # Idempotência: um reenvio do sinal não pode aplicar o aditivo duas
+        # vezes — e aplicar duas vezes criaria o item novo em duplicata.
+        logger.info(
+            "pdca_aditivo_ja_congelado",
+            extra={"aditivo_id": alvo.pk, "status": alvo.status},
+        )
+        return
+
+    from . import services
+
+    services._congelar_aditivo(alvo, aprovado=aprovado)
+    logger.info(
+        "pdca_aditivo_congelado",
+        extra={
+            "aditivo_id": alvo.pk, "aprovado": aprovado,
+            "aplicado_em": str(alvo.aplicado_em),
+        },
+    )
+
+
+@receiver(antes_de_purgar, sender=ContratoObra, dispatch_uid="pdca_purga_contrato")
+def recusar_purga_de_contrato_com_titulo(sender, alvo, item, **kwargs):
+    """Contrato que já gerou pagamento não some da base — nem pela purga.
+
+    A lixeira dá ao usuário o direito de desfazer; ela não dá o direito de
+    apagar a prova de para onde o dinheiro foi. Um contrato cujas medições
+    geraram `ContaPagar` deixaria, se purgado, títulos no ERP apontando para um
+    documento inexistente — e a conciliação do contador acabaria num id órfão.
+
+    Recusar **dentro** da transação da purga é o comportamento certo, e o mesmo
+    que o plano modelo usa: melhor uma purga recusada, com o motivo escrito no
+    item da lixeira, do que um rastro financeiro perdido em silêncio.
+    """
+    from django.core.exceptions import ValidationError
+
+    com_titulo = Medicao.todos.filter(
+        contrato=alvo, conta_pagar_ref__isnull=False,
+    ).count()
+    if com_titulo:
+        raise ValidationError(
+            f"O contrato {alvo.numero} tem {com_titulo} medição(ões) que geraram "
+            f"título no financeiro. Contrato com pagamento não é apagado — "
+            f"encerre-o em vez de excluí-lo."
         )

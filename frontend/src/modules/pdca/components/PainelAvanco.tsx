@@ -42,6 +42,23 @@ const RECORTES: { chave: Recorte; rotulo: string; ajuda: string }[] = [
  * esta semana" e "está em 65%", e a primeira é a pergunta que alguém no canteiro
  * sabe responder olhando o serviço.
  */
+/**
+ * Quanto falta para a frente fechar — **com a precisão que a API aceita**.
+ *
+ * `100 - 97.64` em ponto flutuante é `2.3599999999999994`; o campo aceita
+ * quatro casas (a coluna `percentual` é `7,4`). Arredondar para **uma** casa,
+ * como a dica fazia, produz 2,4 — que leva o acumulado a 100,04% e é recusado,
+ * deixando a frente sem como ser fechada pela tela.
+ */
+function restanteDe(atual: number): number {
+  return Number(Math.max(100 - atual, 0).toFixed(4))
+}
+
+/** O número como o campo espera — vírgula, e sem zeros à direita. */
+function paraCampo(valor: number): string {
+  return String(valor).replace('.', ',')
+}
+
 export default function PainelAvanco({
   cronograma, atividades, avanco, podeApontar, tetoDoLote,
 }: Props) {
@@ -251,7 +268,7 @@ export default function PainelAvanco({
                           title={
                             l.atividade.eh_marco
                               ? 'Marco: 100 para cumprir, -100 para desfazer'
-                              : `Restam ${(100 - l.atual).toFixed(1)} pontos para fechar esta frente`
+                              : `Restam ${paraCampo(restanteDe(l.atual))} pontos para fechar esta frente`
                           }
                           style={{
                             width: 74, textAlign: 'right', border: '1px solid var(--line)',
@@ -261,6 +278,33 @@ export default function PainelAvanco({
                         />
                         <span style={{ color: 'var(--ink-3)' }}>%</span>
                       </div>
+                      {/* **Fechar a frente em um clique, com o número EXATO.**
+                          A dica dizia "restam 2.4 pontos" quando restavam 2,36
+                          — arredondada para uma casa. Quem seguia a dica levava
+                          *"'2.2' já está em 97.64% — este apontamento levaria a
+                          100.04%"*, e a frente ficava impossível de fechar pela
+                          tela. Número que o sistema manda digitar tem de ser o
+                          número que o sistema aceita. */}
+                      {!l.atividade.eh_marco && !l.concluida && podeApontar
+                        && cronograma.status === 'vigente'
+                        && restanteDe(l.atual) > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setRascunho(atual => ({
+                            ...atual,
+                            [l.atividade.atividade_id]: paraCampo(restanteDe(l.atual)),
+                          }))}
+                          title="Preenche o que falta para esta frente fechar em 100%"
+                          style={{
+                            display: 'block', marginLeft: 'auto', marginTop: 3,
+                            background: 'none', border: 'none', padding: 0,
+                            cursor: 'pointer', fontSize: 11,
+                            color: 'var(--ink-3)', textDecoration: 'underline',
+                          }}
+                        >
+                          fechar (+{paraCampo(restanteDe(l.atual))})
+                        </button>
+                      )}
                     </Td>
                   </tr>
                 ))}

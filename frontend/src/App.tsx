@@ -27,6 +27,7 @@ import LixoPage from './modules/lixo/pages/LixoPage'
 import BasesOficiaisPage from './modules/sistema/pages/BasesOficiaisPage'
 import PersonasPage from './modules/admin/pages/PersonasPage'
 import UsuariosPage from './modules/admin/pages/UsuariosPage'
+import AprovacoesPage from './modules/admin/pages/AprovacoesPage'
 import { erpRoutes } from './modules/erp/routes'
 import { crmRoutes } from './modules/crm/routes'
 import { scmRoutes } from './modules/scm/routes'
@@ -96,6 +97,10 @@ function App() {
           <Route element={<AdminRoute />}>
             <Route path="admin/papeis" element={<PersonasPage />} />
             <Route path="admin/usuarios" element={<UsuariosPage />} />
+            {/* Definir alçada é da mesma classe que definir papel: decidir quem
+                manda no dinheiro × quem vê o quê. Daí morar aqui, atrás do
+                mesmo guard, e não dentro do módulo que a escada aprova. */}
+            <Route path="admin/aprovacoes" element={<AprovacoesPage />} />
 
           {/* ── LIXO — a exclusão reversível da plataforma (D116). Não é módulo
                (não tem entitlement) nem é só do admin: quem alcança é o papel

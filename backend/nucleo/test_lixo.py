@@ -17,11 +17,12 @@ achado, é ela que carrega o nó `CASCADE`/`PROTECT`, e é sobre ela que a decis
 do dono foi escrita.
 """
 from datetime import date, timedelta
+from unittest.mock import patch
 
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 from django.utils import timezone
 
@@ -29,15 +30,47 @@ from modulopdca.models import CalendarioTrabalho, Cronograma
 from obras.models import EtapaObra, Obra
 from payment.planos import LIXO_RETENCAO_PADRAO_DIAS
 
+from . import drone_sync
 from .lixo import (
     antes_de_purgar, alvo_de, item_de, mover_para_lixo, purgar, purgar_vencidos,
     restaurar, retencao_dias,
 )
 from .models import Lixo, Tenant, Usuario
 
+#: URL de mentira, fixada de propósito — ver `BaseLixeira`.
+DRONE_DE_MENTIRA = "http://drone.invalido"
 
+
+@override_settings(DRONE_SERVICE_URL=DRONE_DE_MENTIRA)
 class BaseLixeira(TestCase):
-    """Uma empresa, uma obra com plano — exatamente o cenário do D116."""
+    """Uma empresa, uma obra com plano — exatamente o cenário do D116.
+
+    **Por que o drone aparece num arquivo sobre lixeira.** A purga é o primeiro
+    caminho da suíte que apaga uma `Obra` de verdade, e `post_delete` de `Obra`
+    é onde mora o desvínculo do drone (`drone_sync`, Fase 10.8). Com
+    `CELERY_TASK_ALWAYS_EAGER` — que a suíte força sempre, ver
+    `config/settings.py` — `.delay()` não enfileira: **executa**, e executar essa
+    task é fazer HTTP para a IAM e para o drone de dentro de um teste.
+
+    Os dois cuidados abaixo existem por causa disso, e são deliberadamente
+    diferentes um do outro:
+
+    - **`DRONE_SERVICE_URL` fixada** em vez de lida do ambiente. Sem isso o
+      resultado da suíte dependia da máquina: com a variável vazia os 31 testes
+      passavam, com ela preenchida 8 erravam. É a mesma armadilha que o
+      `settings.py` já descreve ter fechado uma vez para o próprio
+      `CELERY_TASK_ALWAYS_EAGER` — *a suíte não pode depender de como está a
+      máquina de quem a roda* —, e ela voltou por outra porta;
+    - **`.delay` trocado por espião**, e não desligado. Zerar a URL também
+      silenciaria a rede, mas silenciaria junto o sinal: o teste passaria a
+      exercitar uma configuração que não é a de produção, e o dia em que a purga
+      parasse de avisar o drone nenhum teste notaria. Com o espião o caminho
+      continua inteiro até a borda, e o que ele recebeu fica **cobrado** em
+      `test_a_purga_avisa_o_drone`.
+
+    O contrato da task em si — pedir o token à IAM, chamar o drone, tratar o
+    retry — é de `test_drone_sync.py`, e continua lá.
+    """
 
     @classmethod
     def setUpTestData(cls):
@@ -47,6 +80,10 @@ class BaseLixeira(TestCase):
         cls.usuario.iam_quotas = {"lixo_retencao_dias": 15}
 
     def setUp(self):
+        espiao = patch.object(drone_sync.desvincular_projetos_drone, "delay")
+        self.drone_delay = espiao.start()
+        self.addCleanup(espiao.stop)
+
         self.obra = Obra.objects.create(
             tenant=self.tenant, nome_obra="Residencial Aurora", endereco="Rua 1",
         )
@@ -240,6 +277,23 @@ class PurgaTests(BaseLixeira):
         self.assertEqual(modelo.nome_modelo, "Torre 20 pavimentos")
         # E o plano COMUM morreu com a obra, que é o desenho.
         self.assertFalse(Cronograma.objects.filter(pk=self.cronograma.pk).exists())
+
+    def test_a_purga_avisa_o_drone_e_excluir_nao(self):
+        """A fronteira que a lixeira criou, escrita — ver `BaseLixeira`.
+
+        As duas metades importam, e a segunda é a que a lixeira inventou: antes
+        do D116 excluir **era** apagar, e o drone era avisado no ato. Agora
+        excluir só marca a lápide, e avisar ali seria errado — o desvínculo é
+        irreversível e a restauração não o desfaz, então uma obra excluída por
+        engano e restaurada em seguida voltaria sem os projetos de drone dela.
+        O aviso espera a purga, que é quando a obra realmente deixa de existir.
+        """
+        item = mover_para_lixo(self.obra, usuario=self.usuario)
+        self.drone_delay.assert_not_called()
+
+        pk = self.obra.pk
+        purgar(item, usuario=self.usuario)
+        self.drone_delay.assert_called_once_with(str(self.tenant.id), "obra", pk)
 
     def test_a_lixeira_guarda_o_rotulo_depois_de_nao_haver_mais_o_que(self):
         item = mover_para_lixo(self.obra, usuario=self.usuario)

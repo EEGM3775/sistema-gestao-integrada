@@ -13,7 +13,7 @@
 
 | O que | Para onde | Por quê |
 | --- | --- | --- |
-| 125 achados corrigidos | [historico-correcoes.md](historico-correcoes.md) | Corrigido não é pendência — é histórico |
+| 143 achados corrigidos | [historico-correcoes.md](historico-correcoes.md) | Corrigido não é pendência — é histórico |
 | D29 · D30 · D32 (Maps) | [modulos/modulomaps.md](modulos/modulomaps.md) | Desvio consciente da planta, com gatilho de reabertura |
 | D35 · D36 · D37 · D55 (Prancheta) | [modulos/moduloprancheta.md](modulos/moduloprancheta.md) | Limite declarado do desenho, não defeito |
 | D74 (antivírus) | [modulos/funcoesimpexp.md](modulos/funcoesimpexp.md) | Decisão do dono, adiada com método definido |
@@ -148,28 +148,6 @@ coisas que hoje não existem, e esquecer qualquer uma recria a armadilha que est
 3. **o degrau por plano**, nos cinco níveis, como todo o resto do §4 do `planos.py`.
 
 Não trava nada hoje. É decisão comercial, e o dono pediu para registrar em vez de decidir agora.
-
-### D120 — a foto do apontamento de avanço não tem porta de mídia · 🟠 aberto 13/09/2026
-
-Achado rodando a suíte inteira ao fechar o [D116](historico-correcoes.md); é da **PDCA.2**, não da
-lixeira. O teste [`funcoesimpexp.test_d70_portas_de_midia`](../backend/funcoesimpexp/test_d70_portas_de_midia.py)
-falha com:
-
-> `modulopdca.ApontamentoAvanco.foto → 'pdca_apontamento/'` — FileField sem porta no `funcoesimpexp`.
-
-**O que isso significa na prática**, e são duas coisas de gravidade diferente:
-
-- **em produção o arquivo não abre**: sem porta, ele sairia por `/media/`, que o gateway responde
-  **404**. A foto que o campo tira e envia junto do apontamento fica gravada e inalcançável;
-- **em dev com `DEBUG=True` é o oposto, e pior**: o Django serve o binário direto, **fora de auth,
-  fora de entitlement e fora da RLS** — a foto de obra de um tenant fica legível por quem tiver a URL.
-
-**A correção** é a que o próprio teste dita: declarar um `Recurso` de natureza `arquivo` com
-`entregar_arquivo` e registrá-lo na tabela de portas. É o mesmo caminho que os outros módulos com
-arquivo já percorreram (D70).
-
-Não foi corrigido junto do D116 por ser de outra fatia — mexer no contrato de mídia da PDCA.2
-enquanto se fecha a lixeira misturaria dois assuntos numa revisão só.
 
 ### D115 — a demo nasce com o dobro de clientes que o plano dela permite · 🟠 aberto 22/08/2026
 
@@ -453,30 +431,6 @@ e o `dxf2dwg` que o escreveria vive só no *build stage*.
 **Para fechar:** mover `gerar_amostras.py` para um caminho versionado (o candidato natural é um
 management command, ao lado do `medir_cobertura_dwg`), de modo que a origem das amostras volte a ser
 código revisável em vez de um arquivo que existe na máquina de quem o rodou.
-
-### D50 — As 4 regressões do S8 não rodam onde o sistema está configurado como em produção · 🟡 aberto
-
-Apurado em 02/08/2026 ao rodar a suíte completa junto do **D46**: `manage.py test` no container `erp`
-dá **901 testes com 4 erros**, todos em `nucleo/test_s8_jwt_throttle.py::S8IssuerAudienceTests`, e
-todos com a mesma causa — `jwt.exceptions.InvalidKeyError`. Nada a ver com a fatia; o defeito é do
-**arranjo de chaves**, e é anterior.
-
-O teste assina o próprio token com `settings.SIMPLE_JWT["SIGNING_KEY"]`. No container o backend é
-**resource server**: tem `JWT_PUBLIC_KEY_PATH` e **não tem** privada, então `ALGORITHM` é `RS256` e
-`SIGNING_KEY` é **string vazia** — assinar é impossível, por desenho. No CI a suíte roda **sem**
-`JWT_PUBLIC_KEY_PATH` ([ci.yml](../.github/workflows/ci.yml) — a chave efêmera só existe no passo do
-`check --deploy`), cai no ramo HS256 do **S3** e assina com o `JWT_SECRET`. Daí o teste passar lá e
-errar aqui.
-
-**Por que isso importa mais do que parece:** são as regressões que provam o **S8** (`iss`/`aud`
-obrigatórios), e elas só exercitam o backend na configuração que **não** é a de produção. A
-configuração que é — RS256, sem privada — é exatamente onde elas não rodam. Um erro no caminho RS256
-passaria pelo gate.
-
-**Correção sugerida:** gerar um par RSA efêmero no `setUp` do teste e assinar com a privada dele
-(a pública já vira `VERIFYING_KEY` por `override_settings`), tornando-o independente de como o
-ambiente está configurado. Alternativa mais fraca: `skipUnless` que declare o pulo — resolve o
-vermelho, não a lacuna de cobertura.
 
 ### D54 — Marcação e medição anteriores à PRA.1c ficam sem folha · 🟡 aberto
 

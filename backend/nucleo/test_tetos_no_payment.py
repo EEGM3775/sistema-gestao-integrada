@@ -528,6 +528,113 @@ class TetosDoPdcaTests(SimpleTestCase):
         e a engrossada de granularidade nunca aconteceria na prática."""
         self.assertLessEqual(planos.PDCA_TETO_PONTOS_CURVA_S, 2_000)
 
+    def test_o_contrato_e_a_medicao_leem_os_tetos_do_payment(self):
+        """PDCA.3 — os dois números da fatia do dinheiro saem do arquivo do dono."""
+        from modulopdca import services
+
+        self.assertIs(
+            services.PDCA_TETO_ITENS_POR_CONTRATO,
+            planos.PDCA_TETO_ITENS_POR_CONTRATO,
+        )
+        self.assertIs(
+            services.PDCA_TETO_LINHAS_POR_MEDICAO,
+            planos.PDCA_TETO_LINHAS_POR_MEDICAO,
+        )
+
+    def test_o_aditivo_e_as_deducoes_leem_os_tetos_do_payment(self):
+        """PDCA.4 — os três números da fatia que muda o contrato."""
+        from modulopdca import services
+
+        self.assertIs(
+            services.PDCA_TETO_ITENS_POR_ADITIVO, planos.PDCA_TETO_ITENS_POR_ADITIVO,
+        )
+        self.assertIs(
+            services.PDCA_TETO_ADITIVOS_ABERTOS_POR_CONTRATO,
+            planos.PDCA_TETO_ADITIVOS_ABERTOS_POR_CONTRATO,
+        )
+        self.assertIs(
+            services.PDCA_TETO_DEDUCOES_POR_MEDICAO,
+            planos.PDCA_TETO_DEDUCOES_POR_MEDICAO,
+        )
+
+    def test_o_aditivo_nao_reescreve_o_contrato_inteiro(self):
+        """**Metade do contrato, e a metade é o ponto.** Aditivo que muda mais da
+        metade da planilha não é aditivo — é contrato novo, e é assim que o
+        mercado trata. Um teto igual ao do contrato deixaria de dizer isso."""
+        self.assertLessEqual(
+            planos.PDCA_TETO_ITENS_POR_ADITIVO,
+            planos.PDCA_TETO_ITENS_POR_CONTRATO // 2,
+        )
+
+    def test_poucos_aditivos_abertos_por_vez(self):
+        """Dois aditivos abertos sobre as mesmas linhas se conferem, cada um,
+        contra o mesmo saldo — e passam os dois. O teto é pequeno de propósito:
+        ele existe para o fluxo ser "fecha um, abre o próximo"."""
+        self.assertLessEqual(planos.PDCA_TETO_ADITIVOS_ABERTOS_POR_CONTRATO, 10)
+
+    def test_as_deducoes_nao_viram_planilha(self):
+        """A medição brasileira típica tem de três a seis deduções. O teto deixa
+        folga para o contrato que detalha por frente, e fecha a porta para colar
+        uma planilha inteira de descontos linha a linha."""
+        self.assertLessEqual(planos.PDCA_TETO_DEDUCOES_POR_MEDICAO, 100)
+
+    def test_o_limite_legal_de_acrescimo_NAO_esta_no_payment(self):
+        """A fronteira da §5.6, exercida.
+
+        25% é o caso comum da Lei 14.133, 50% o da reforma de edifício, e existe
+        contrato que não segue nenhum dos dois. O número é **do contrato**
+        (`limite_acrescimo_percentual`, digitado pelo usuário), não do plano —
+        escolhê-lo pelo cliente seria errar exatamente na exceção.
+        """
+        suspeitos = [
+            nome for nome in dir(planos)
+            if "ACRESCIMO" in nome or "ADITIVO_PERCENTUAL" in nome
+        ]
+        self.assertEqual(suspeitos, [])
+
+        from modulopdca.models import ContratoObra
+
+        self.assertTrue(
+            ContratoObra._meta.get_field("limite_acrescimo_percentual").null,
+            "o limite legal continua sendo um campo do contrato, e opcional",
+        )
+
+    def test_a_medicao_alcanca_o_contrato_inteiro(self):
+        """**O teto de linhas por medição NÃO pode ser menor que o de itens.**
+
+        A primeira medição de uma empreitada por preço unitário toca
+        legitimamente todos os itens do contrato. Um teto menor aqui criaria o
+        contrato que não pode ser medido de uma vez — trava sem benefício, já que
+        o custo da apuração é linear e o teto do contrato já o cobre.
+        """
+        self.assertGreaterEqual(
+            planos.PDCA_TETO_LINHAS_POR_MEDICAO,
+            planos.PDCA_TETO_ITENS_POR_CONTRATO,
+        )
+
+    def test_o_contrato_cabe_dentro_do_cronograma(self):
+        """O contrato é um **recorte** do plano, nunca o plano inteiro: contrato
+        maior que o cronograma é sinal de planilha colada no lugar errado."""
+        self.assertLessEqual(
+            planos.PDCA_TETO_ITENS_POR_CONTRATO,
+            planos.PDCA_TETO_ATIVIDADES_POR_CRONOGRAMA,
+        )
+
+    def test_a_retencao_nao_virou_teto_de_plano(self):
+        """**A fronteira da §5.6, cobrada.** Percentual de retenção, prazo de
+        pagamento e limite legal de acréscimo são **cláusula do contrato** que o
+        cliente negocia com o fornecedor dele — não teto comercial nosso. Um
+        número desses aparecendo no `planos.py` seria o dono decidindo uma
+        cláusula que não é dele, e o cliente descobrindo isso no meio de uma
+        negociação.
+        """
+        proibidos = [
+            nome for nome in dir(planos)
+            if nome.startswith("PDCA_")
+            and any(p in nome for p in ("RETENCAO", "PRAZO_PAGAMENTO", "ACRESCIMO"))
+        ]
+        self.assertEqual(proibidos, [], f"cláusula virou teto de plano: {proibidos}")
+
     def test_a_quota_de_plano_modelo_existe_em_todo_degrau(self):
         """Quota ausente num degrau é `KeyError` no meio de um POST; quota **0**
         é a resposta honesta "seu plano não vende isto"."""

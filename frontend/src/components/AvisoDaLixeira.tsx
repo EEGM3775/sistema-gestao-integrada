@@ -20,9 +20,9 @@ import { useRetencaoDoLixo } from '@/hooks/useRetencaoDoLixo'
  *    que avisa "não dá para desfazer" faz o cliente pagar por um recurso que ele
  *    nunca descobre — e ainda o assusta na hora de usar o produto.
  *
- * **Por que é um componente, e não uma string corrigida em cada modal.** São 16
- * modelos com lixeira, em 7 módulos, cada um com o seu diálogo. Corrigir texto a
- * texto garante que o 17º nasça mentindo de novo, e que os prazos divirjam entre
+ * **Por que é um componente, e não uma string corrigida em cada modal.** São 17
+ * modelos com lixeira, em 8 módulos, cada um com o seu diálogo. Corrigir texto a
+ * texto garante que o próximo nasça mentindo de novo, e que os prazos divirjam entre
  * telas. Aqui a frase é uma só, lê o prazo do plano de um lugar só, e a tela
  * seguinte só precisa montar o componente.
  *

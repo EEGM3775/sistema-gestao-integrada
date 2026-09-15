@@ -89,7 +89,7 @@ Nenhuma migration é necessária: `Tenant.plano` guarda só o **slug** do plano,
 | **Criar/remover um plano** | `planos.py` · entrada em `PLANOS` **+** o slug em `ORDEM_PLANOS` |
 | **Criar/remover um add-on** ou mexer no **excedente** | `addons.py` · `ADDONS` / `EXCEDENTES` |
 | Afrouxar/apertar o **teto de requisições** | `planos.py` · `RATE_BASE_HORA` · `RATE_POR_SEAT_HORA` · `RATE_TETO_INFRA_HORA` |
-| **Ligar/desligar** a trava de um recurso **que já é contado** | `planos.py` · `QUOTAS_APLICADAS` (§4) — só `seats`, `empreendimentos`, `obras`, `clientes`, `fornecedores` são contados hoje |
+| **Ligar/desligar** a trava de um recurso **que já é contado** | `planos.py` · `QUOTAS_APLICADAS` (§4) — hoje contam `seats`, `empreendimentos`, `obras`, `clientes`, `fornecedores`, `banco_preco_linhas` e `planos_modelo`. **`lixo_retencao_dias` não é contagem**: é `QUOTAS_DE_JANELA` (tempo, não quantidade) — viaja na mesma claim, mas o `/api/plano/` o devolve em `janelas`, não em `quotas`, porque janela não tem barra de progresso |
 | Mudar o **tamanho de arquivo** que entra (planilha) | `planos.py` · `PLANOS[<plano>]["impexp_max_mb"]` · teto duro em `IMPEXP_TETO_INFRA_MB` (§5.2) |
 | Mudar o **tamanho de prancha** que entra (CAD/BIM/geo) | `planos.py` · `PRANCHETA_MB_POR_FORMATO` (§5.3) · teto duro em `IMPEXP_TETO_INFRA_ARQUIVO_MB` |
 | Mudar o **orçamento de uma conversão** (memória/relógio) | `planos.py` · `PRANCHETA_CONVERSAO_MEMORIA_MB` · `PRANCHETA_CONVERSAO_SEGUNDOS` (§5.4) |

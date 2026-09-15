@@ -1332,6 +1332,84 @@ LIXO_RETENCAO_PADRAO_DIAS: int = 15
 LIXO_TETO_PURGAS_POR_VOLTA: int = 200
 
 # ---------------------------------------------------------------------------
+# 5.5h Contrato, medição e liberação de retenção (PDCA.3)
+# ---------------------------------------------------------------------------
+# A fatia em que o módulo passa a **fazer dinheiro sair**: o avanço apontado
+# vira medição, a medição sobe a escada de atesto e, aprovada, gera o título no
+# ERP. Dois números novos, os dois da família de sempre — tamanho de documento.
+#
+#   - `PDCA_TETO_ITENS_POR_CONTRATO` — quantas linhas um contrato comporta. O
+#     gesto que ele serve é a **planilha contratual** colada de uma vez, e a
+#     ordem de grandeza é a do orçamento que a originou: contrato de empreitada
+#     global de uma torre tem dezenas de itens; o de infraestrutura urbana, por
+#     serviço e por trecho, chega às centenas. **2.000** cobre os dois com folga
+#     e é metade do teto de atividades por cronograma de propósito — o contrato
+#     é um recorte do plano, nunca o plano inteiro, e um contrato maior que o
+#     cronograma é sinal de que alguém colou a planilha errada.
+#   - `PDCA_TETO_LINHAS_POR_MEDICAO` — quantas linhas uma medição apura numa
+#     chamada. É o mesmo número, e é de propósito: a medição de um período pode
+#     legitimamente tocar **todos** os itens do contrato (é o que acontece na
+#     primeira medição de uma empreitada por preço unitário). Um teto menor aqui
+#     criaria o contrato que não pode ser medido de uma vez — trava sem
+#     benefício, porque o custo da apuração é linear e já está coberto pelo teto
+#     do contrato.
+#
+# **Por que a retenção NÃO tem teto aqui.** O percentual retido, a natureza e a
+# condição de liberação são **cláusula do contrato**, digitadas pelo cliente —
+# mesma classe do `prazo_pagamento_dias` e do limite legal de acréscimo do
+# regime público. A §5.6 já traça essa fronteira: o que o cliente negocia com o
+# fornecedor dele não é teto comercial nosso. O único limite da liberação é o
+# saldo efetivamente retido, que é **derivado** (§4.9 da planta) e conferido no
+# serviço, não um número de plano.
+#
+# **Nem o valor do título.** Um teto de reais por medição pareceria prudência e
+# seria a pior espécie de trava: a obra grande é justamente a que paga o plano
+# caro, e barrar a medição dela pelo valor é impedir o cliente de usar o produto
+# exatamente quando ele mais vale. Quem protege a empresa contra o número errado
+# é a escada de atesto, que é gente conferindo — não uma constante.
+#
+# Números escolhidos pela engenharia com a ordem de grandeza da obra real, na
+# mesma condição provisória da §5.5d: editá-los é editar este bloco e mais nada.
+PDCA_TETO_ITENS_POR_CONTRATO: int = 2_000
+PDCA_TETO_LINHAS_POR_MEDICAO: int = 2_000
+
+# ---------------------------------------------------------------------------
+# 5.5i Aditivo e deduções da medição (PDCA.4)
+# ---------------------------------------------------------------------------
+# A fatia que fecha o ciclo do contrato: ele deixa de ser imutável (aditivo) e o
+# pagamento deixa de ser só bruto menos retenção (deduções). Três números, todos
+# da mesma família dos anteriores — tamanho de documento, nunca valor.
+#
+#   - `PDCA_TETO_ITENS_POR_ADITIVO` — quantas linhas um aditivo muda de uma vez.
+#     **Metade do teto do contrato**, e a metade é o ponto: aditivo que reescreve
+#     mais da metade da planilha não é aditivo, é contrato novo — e é assim que o
+#     mercado trata. Ainda assim, 1.000 linhas cobrem com folga a revisão de
+#     preço em massa de uma obra de infraestrutura, que é o caso real mais largo.
+#   - `PDCA_TETO_ADITIVOS_ABERTOS_POR_CONTRATO` — quantos podem estar em rascunho
+#     ou na escada ao mesmo tempo. **Não** é teto de quantos o contrato pode ter
+#     na vida (isso seria limitar o negócio do cliente): é o número de documentos
+#     **abertos**, e ele é pequeno porque dois aditivos abertos sobre as mesmas
+#     linhas se conferem, cada um, contra o mesmo saldo — e passam os dois. Cinco
+#     é folgado para o fluxo real, em que se fecha um antes de abrir o próximo.
+#   - `PDCA_TETO_DEDUCOES_POR_MEDICAO` — quantas linhas de desconto um boletim
+#     comporta. A medição brasileira típica tem três a seis (INSS, ISS, IRRF,
+#     amortização de adiantamento, material da contratante, multa); **40** deixa
+#     espaço para o contrato que detalha retenção por frente sem virar porta para
+#     colar uma planilha inteira de descontos linha a linha.
+#
+# **O limite legal de acréscimo continua NÃO estando aqui** — é o campo
+# `limite_acrescimo_percentual` do contrato, digitado pelo usuário (§11.3 da
+# planta e a fronteira da §5.6). 25% é o caso comum da Lei 14.133, 50% o da
+# reforma de edifício, e existe contrato que não segue nenhum dos dois: escolher
+# o número pelo cliente seria errar exatamente na exceção.
+#
+# **Nem o valor do aditivo**, pela mesma razão do valor da medição: quem protege
+# a empresa contra o número errado é a escada de atesto, que é gente conferindo.
+PDCA_TETO_ITENS_POR_ADITIVO: int = 1_000
+PDCA_TETO_ADITIVOS_ABERTOS_POR_CONTRATO: int = 5
+PDCA_TETO_DEDUCOES_POR_MEDICAO: int = 40
+
+# ---------------------------------------------------------------------------
 # 5.6 O que NÃO é limite — e por isso continua no código de engenharia
 # ---------------------------------------------------------------------------
 # A régua é "todo teto ou limite vive aqui", e ela tem uma fronteira: número que
