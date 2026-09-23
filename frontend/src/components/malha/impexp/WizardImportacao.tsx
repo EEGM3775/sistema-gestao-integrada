@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle, Check, CheckCheck, Download, FileDown, FileWarning, Upload, X,
 } from 'lucide-react'
@@ -13,6 +14,7 @@ import {
 } from './api'
 import type {
   LinhaConferencia, PedidoDeDePara, RecursoImpExp, ResumoImportacao, SituacaoLinha,
+  StatusImportacao,
 } from './api'
 import { useConferencia, useMapas, useRecurso } from './hooks'
 
@@ -59,6 +61,7 @@ export function WizardImportacao({
   recurso, contexto, rotulo = 'Importar', tam = 'sm', onConcluida,
 }: Props) {
   const { recurso: declaracao } = useRecurso(recurso)
+  const cache = useQueryClient()
   const [aberto, setAberto] = useState(false)
   const [passo, setPasso] = useState<Passo>('destino')
   const [importacaoId, setImportacaoId] = useState<number>()
@@ -157,6 +160,11 @@ export function WizardImportacao({
                   setOcupado(true)
                   try {
                     await remapearImportacao(importacaoId, mapa)
+                    // Sem invalidar, o passo `lendo` reabre com a resposta
+                    // ANTERIOR em cache — aquela que pedia o de-para — e manda
+                    // a tela de volta para a pergunta que acabou de ser
+                    // respondida, antes de a releitura chegar.
+                    await cache.invalidateQueries({ queryKey: ['impexp', 'importacao', importacaoId] })
                     setPedidoDePara(null)
                     setPasso('lendo')
                   } finally { setOcupado(false) }
@@ -177,6 +185,109 @@ export function WizardImportacao({
         </Modal>
       )}
     </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Retomar — o lote que ficou esperando alguém
+// ---------------------------------------------------------------------------
+
+/**
+ * Os estados em que uma importação **ainda depende de uma decisão humana**, e
+ * portanto tem de poder ser reaberta.
+ *
+ * `lendo` é o job em andamento — que pode estar parado esperando o de-para.
+ * `conferindo` é a régua R1 em pé: linhas classificadas, nada gravado, ninguém
+ * decidiu. `erro` é a leitura que falhou e cuja mensagem só existe dentro do
+ * diálogo. Os demais (`aplicada`, `descartada`, `desfeita`) acabaram: reabrir
+ * não teria o que perguntar.
+ */
+export const IMPORTACAO_RETOMAVEL: readonly StatusImportacao[] = [
+  'lendo', 'conferindo', 'erro',
+]
+
+export const podeRetomar = (status: StatusImportacao): boolean =>
+  IMPORTACAO_RETOMAVEL.includes(status)
+
+/**
+ * Reabre uma importação já criada, no passo em que ela parou.
+ *
+ * **O defeito que isto conserta:** o wizard só existia enquanto a janela estava
+ * aberta. Quem fechava a aba — ou quem tinha a leitura terminando em segundo
+ * plano — voltava e encontrava uma linha no histórico dizendo "Conferência" ou
+ * "Erro na leitura", sem nada clicável. O lote existia, o arquivo estava
+ * guardado no servidor, a conferência estava pronta, e o único caminho era subir
+ * a planilha de novo. Pior no caso que mais precisa de gente: o de-para (R4),
+ * que é uma **pergunta**, ficava sem lugar para ser respondida.
+ *
+ * Reusa os mesmos três passos do wizard — é o mesmo diálogo, entrando pelo meio.
+ */
+export function RetomarImportacao({ recurso, importacaoId, onFechar, onConcluida }: {
+  recurso: string
+  importacaoId: number
+  onFechar: () => void
+  onConcluida?: (resumo: ResumoImportacao) => void
+}) {
+  const { recurso: declaracao } = useRecurso(recurso)
+  const cache = useQueryClient()
+  // Entra sempre por `lendo`: o passo consulta o lote e se redireciona sozinho
+  // (conferência, de-para ou erro). Assim há um caminho só para decidir onde a
+  // importação parou, e ele é o mesmo do wizard.
+  const [passo, setPasso] = useState<Exclude<Passo, 'destino'>>('lendo')
+  const [pedidoDePara, setPedidoDePara] = useState<PedidoDeDePara | null>(null)
+  const [ocupado, setOcupado] = useState(false)
+
+  if (!declaracao) return null
+
+  return (
+    <Modal
+      titulo={`Importar · ${declaracao.rotulo}`}
+      largura={passo === 'conferencia' ? 940 : 620}
+      onClose={onFechar}
+    >
+      {passo === 'lendo' && (
+        <PassoLendo
+          id={importacaoId}
+          onPronta={resumo => {
+            if (resumo.aguarda_de_para) {
+              setPedidoDePara({
+                code: 'colunas_nao_reconhecidas',
+                detail: resumo.mensagem,
+                cabecalhos_vistos: resumo.cabecalhos_vistos,
+                obrigatorias: resumo.obrigatorias,
+                colunas: resumo.colunas_do_recurso,
+              })
+              setPasso('de_para')
+            } else {
+              setPasso('conferencia')
+            }
+          }}
+        />
+      )}
+      {passo === 'de_para' && pedidoDePara && (
+        <PassoDePara
+          pedido={pedidoDePara} recurso={recurso} ocupado={ocupado}
+          onMapear={async mapa => {
+            // O arquivo continua no servidor: relê de lá, sem pedir upload.
+            setOcupado(true)
+            try {
+              await remapearImportacao(importacaoId, mapa)
+              await cache.invalidateQueries({ queryKey: ['impexp', 'importacao', importacaoId] })
+              setPedidoDePara(null)
+              setPasso('lendo')
+            } finally { setOcupado(false) }
+          }}
+        />
+      )}
+      {passo === 'conferencia' && (
+        <PassoConferencia
+          id={importacaoId}
+          declaracao={declaracao}
+          onFechar={onFechar}
+          onConcluida={resumo => { onConcluida?.(resumo); onFechar() }}
+        />
+      )}
+    </Modal>
   )
 }
 
@@ -307,23 +418,49 @@ function PassoDePara({ pedido, recurso, ocupado, onMapear }: {
       {!!salvos?.length && (
         <div style={{ marginBottom: 14 }}>
           <div style={{ ...CAPS, marginBottom: 6 }}>Mapas salvos</div>
-          <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', minWidth: 0 }}>
             {salvos.map(m => (
-              <Btn key={m.mapa_id} tam="sm" onClick={() => onMapear(m.mapa)}>{m.nome}</Btn>
+              <Btn key={m.mapa_id} tam="sm" onClick={() => onMapear(m.mapa)} title={m.nome}>
+                <span style={{
+                  maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom',
+                }}>{m.nome}</span>
+              </Btn>
             ))}
           </div>
         </div>
       )}
 
-      <div style={{ display: 'grid', gap: 9 }}>
+      {/*
+        * **Largura fixa, custe o que custar ao texto.** O `<select>` nativo
+        * mede-se pela opção mais longa, e a opção mais longa aqui é um cabeçalho
+        * de planilha alheia — "Descrição completa do insumo conforme tabela
+        * referencial…". Como flex item ele tem `min-width: auto`, então essa
+        * largura virava a largura mínima da linha, da coluna e do diálogo: o
+        * popup saía pela lateral da tela e não havia como trazê-lo de volta.
+        * `minWidth: 0` devolve o controle ao layout; o título inteiro continua
+        * legível no `title` e ao abrir a lista.
+        */}
+      <div style={{ display: 'grid', gap: 9, minWidth: 0 }}>
         {pedido.colunas.map(coluna => (
-          <label key={coluna.campo} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ flex: '0 0 40%', fontSize: 12.5, color: 'var(--ink)' }}>
+          <label
+            key={coluna.campo}
+            style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}
+          >
+            <span style={{
+              flex: '0 0 38%', minWidth: 0, fontSize: 12.5, color: 'var(--ink)',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }} title={coluna.rotulo}>
               {coluna.rotulo}
               {coluna.obrigatoria && <b style={{ color: 'var(--danger-ink)' }}> *</b>}
             </span>
             <select
               value={mapa[coluna.campo] ?? ''}
+              title={
+                mapa[coluna.campo] === undefined
+                  ? 'Nenhuma coluna do arquivo escolhida'
+                  : `coluna ${mapa[coluna.campo] + 1}: ${cabecalhos[mapa[coluna.campo]] || '(sem título)'}`
+              }
               onChange={e => setMapa(m => {
                 const proximo = { ...m }
                 if (e.target.value === '') delete proximo[coluna.campo]
@@ -331,7 +468,8 @@ function PassoDePara({ pedido, recurso, ocupado, onMapear }: {
                 return proximo
               })}
               style={{
-                flex: 1, padding: '6px 10px', fontSize: 12.5, color: 'var(--ink)',
+                flex: 1, minWidth: 0, maxWidth: '100%',
+                padding: '6px 10px', fontSize: 12.5, color: 'var(--ink)',
                 background: 'var(--surface)', border: '1px solid var(--line)',
                 borderRadius: 'var(--r-sm)',
               }}
@@ -417,6 +555,7 @@ function PassoConferencia({ id, declaracao, onFechar, onConcluida }: {
         <div style={{
           display: 'flex', gap: 9, padding: '10px 12px', borderRadius: 'var(--r-sm)',
           background: 'var(--danger-soft)', color: 'var(--danger-ink)', fontSize: 12.5,
+          minWidth: 0, overflowWrap: 'anywhere',
         }}>
           <FileWarning size={15} style={{ flex: 'none', marginTop: 2 }} />
           <span><b>{data.arquivo}</b> — {data.mensagem}</span>
@@ -436,8 +575,14 @@ function PassoConferencia({ id, declaracao, onFechar, onConcluida }: {
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
-        <div style={{ flex: 1, minWidth: 200 }}>
-          <div style={{ fontSize: 13, fontWeight: 650, color: 'var(--ink)' }}>{data.arquivo}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            title={data.arquivo}
+            style={{
+              fontSize: 13, fontWeight: 650, color: 'var(--ink)',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}
+          >{data.arquivo}</div>
           <div style={{ fontSize: 11.5, color: 'var(--ink-3)', marginTop: 2 }}>
             {data.total} linhas lidas · <b>nada foi gravado ainda</b>
           </div>

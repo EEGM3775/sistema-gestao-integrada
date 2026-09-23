@@ -11,6 +11,8 @@ import { apiDecimalToCents, centsToApiDecimal } from '@/utils/money'
 import { FormErrorBanner, parseApiErrors } from '@/utils/formErrors'
 import type { BaixaPayload } from '../../types'
 
+import { minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
+
 /**
  * Quitação manual (total ou parcial) de uma `ContaPagar`/`ContaReceber` —
  * mesmo formulário para os dois lados (D.1.1 §13: `dar_baixa()` compartilhado
@@ -82,7 +84,7 @@ export function BaixaForm({ saldoAberto, onSubmit, onCancel }: BaixaFormProps) {
       </Field>
 
       <Field label="Data do pagamento" error={errors.data?.message}>
-        <input type="date" style={inputStyle} {...register('data')} />
+        <input type="date" min={minCalendarioISO} max={maxCalendarioISO} style={inputStyle} {...register('data')} />
       </Field>
 
       <div className="grid grid-cols-3 gap-3">

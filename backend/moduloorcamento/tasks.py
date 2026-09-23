@@ -207,9 +207,15 @@ def agendar_cargas_do_mes(self, referencia: str | None = None) -> dict:
 
     Três recusas, e cada uma existe para o agendamento não virar ruído:
 
+    Quatro recusas, e cada uma existe para o agendamento não virar ruído:
+
     - fonte sem template não é tentada (a decisão nº 1);
-    - fonte cujo formato o motor não sabe ler não é tentada — hoje só a SINAPI
-      tem leitor do arquivo largo, e agendar as outras seria agendar falha;
+    - fonte cujo formato o motor não sabe ler não é tentada — agendar o que não
+      se sabe ler é agendar falha;
+    - **fonte que publica um menu de documentos não é tentada.** A EMBASA põe 65
+      tabelas por semestre no ar e nenhuma é "a do mês"; um agendamento que
+      escolhesse por ela estaria escolhendo o preço de uma região para quem orça
+      em outra. Esta fonte entra pela lista, com alguém decidindo;
     - competência já carregada com sucesso não é tentada de novo. A carga é
       idempotente, mas repeti-la todo dia é gastar minutos de worker para
       reescrever exatamente os mesmos preços.
@@ -230,6 +236,8 @@ def agendar_cargas_do_mes(self, referencia: str | None = None) -> dict:
                 motivo = "sem template de URL"
             elif fonte.fonte not in motor.fontes_conhecidas():
                 motivo = "o motor ainda não lê o formato desta fonte"
+            elif motor.exige_escolha_de_documento(fonte.fonte):
+                motivo = "a fonte publica vários documentos — a carga é por escolha"
 
             competencia = oficial.competencia_alvo(fonte.defasagem_meses, hoje)
             if not motivo and CargaBase.objects.filter(

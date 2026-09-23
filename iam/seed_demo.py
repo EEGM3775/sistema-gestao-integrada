@@ -14,7 +14,7 @@ Papéis de fábrica: criados por `sync_authz` a partir dos templates do catálog
 comercial, engenharia, campo, drone_analista, auditor, gestor_lixo, operacional).
 
 Usuários:
-  demo     / demo123     -> tenant demo | módulos: drone,erp,crm,rh,scm,sil,orcamento,maps,prancheta | papéis: financeiro + RH + suprimentos + almoxarife + orcamentista + topografo + projetista
+  demo     / demo123     -> tenant demo | módulos: drone,erp,crm,rh,scm,sil,orcamento,maps,prancheta | papéis: financeiro + RH + suprimentos + almoxarife + orcamentista + topografo + projetista + gestor_contratos + tecnico_qualidade (os dois últimos SEM o verbo que aprova — ver o comentário deles)
   semdrone / semdrone123 -> tenant demo | módulos: erp_financeiro    | papel: operacional (restrito — exercita mascaramento)
   acme     / acme123     -> tenant acme | módulos: drone             | papel: operacional
   campo    / campo123    -> tenant demo | módulos: drone,prancheta,pdca | papel: campo (aponta, não resolve — PRA.3; aponta avanço, não edita o plano — PDCA.2)
@@ -128,7 +128,15 @@ demo = upsert_user(
      # da fatia (montar contrato, apurar medição) — e entra **sem** o poder de
      # atestar, que é a persona seguinte: o `demo` apurando e aprovando o próprio
      # boletim tornaria a segregação da §8 indemonstrável com token real.
-     "gestor_contratos"],
+     "gestor_contratos",
+     # PDCA.7, pela mesma régua e com a mesma omissão deliberada. Ela exercita o
+     # caminho principal da fatia — escrever o método da empresa, aplicar a
+     # ficha, abrir a NC e montar o 5W2H — e **não** leva
+     # `pdca.nc.verificar_eficacia`, que é do `gerente` (diretoria) e do
+     # `fiscal_de_obra`. O `demo` consertando e assinando que o próprio conserto
+     # funcionou tornaria o laço da §4.5 indemonstrável com token real, que é
+     # exatamente o que o `gestor_contratos` evitou na medição.
+     "tecnico_qualidade"],
 )
 semdrone = upsert_user(tenant, "semdrone", "semdrone123", ["erp_financeiro"], ["operacional"])
 # O `engenharia` aqui não é enfeite: é o único ator do seed capaz de provar a

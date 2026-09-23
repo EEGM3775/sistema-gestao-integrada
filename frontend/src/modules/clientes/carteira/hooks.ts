@@ -61,6 +61,10 @@ export function useGruposCarteira(params: {
   })
   return {
     grupos: consulta.data?.grupos ?? [],
+    // O total vem do servidor, contado distinto sobre o mesmo recorte. Somar os
+    // grupos aqui seria contar duas vezes quem pertence a dois.
+    total: consulta.data?.count ?? 0,
+    somaDosGrupos: consulta.data?.somaDosGrupos ?? 0,
     podeFinanceiro: consulta.data?.podeFinanceiro ?? false,
     podeDocumento: consulta.data?.podeDocumento ?? false,
     carregando: consulta.isLoading,

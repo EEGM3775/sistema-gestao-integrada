@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { Aviso, Btn, Field, inp, Modal, mono, Select } from '../ui'
 import { paraDecimal } from '../lib'
-import type { ObraOpt, Orcamento } from '../types'
+import SeletorDeBase from './SeletorDeBase'
+import type { BaseResumo, ObraOpt, Orcamento } from '../types'
 
 /** Criar a planilha do zero.
  *
@@ -12,7 +13,9 @@ import type { ObraOpt, Orcamento } from '../types'
  */
 export default function ModalNovoOrcamento({ obras, bases, existentes, obraFixa, salvando, onFechar, onCriar }: {
   obras: ObraOpt[]
-  bases: { base_id: number; rotulo: string }[]
+  // Resumo inteiro, e não `{base_id, rotulo}`: o seletor encadeado escolhe por
+  // fonte, UF, mês e regime — eixos que o rótulo pronto não devolve.
+  bases: BaseResumo[]
   existentes: Orcamento[]
   /** Aberto de dentro de uma obra, a obra já vem escolhida — o passo de
    *  navegação já respondeu essa pergunta, e repetir a pergunta é atrito. */
@@ -80,10 +83,13 @@ export default function ModalNovoOrcamento({ obras, bases, existentes, obraFixa,
       </Field>
       <Field label="Descrição"><input value={form.descricao} onChange={e => setForm(f => ({ ...f, descricao: e.target.value }))} placeholder="Ex.: Orçamento executivo — Residencial Alfa" style={inp} /></Field>
       <Field label="Base de preço" dica="A data-base do orçamento é copiada da publicação e sobrevive a ela.">
-        <Select value={form.base_referencial} onChange={e => setForm(f => ({ ...f, base_referencial: e.target.value }))} style={{ width: '100%', maxWidth: 'none' }}>
-          <option value="">Sem base — preço digitado à mão</option>
-          {bases.map(b => <option key={b.base_id} value={b.base_id}>{b.rotulo}</option>)}
-        </Select>
+        <SeletorDeBase
+          bases={bases}
+          valor={form.base_referencial === '' ? '' : Number(form.base_referencial)}
+          onChange={v => setForm(f => ({ ...f, base_referencial: v === '' ? '' : String(v) }))}
+          rotuloVazio="Sem base — preço digitado à mão"
+          style={{ width: '100%' }}
+        />
       </Field>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
         <Field label="BDI (%)"><input value={form.bdi_percentual} onChange={e => setForm(f => ({ ...f, bdi_percentual: e.target.value }))} style={{ ...inp, ...mono }} /></Field>

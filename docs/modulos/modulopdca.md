@@ -192,10 +192,39 @@ entra na programação** — é a regra que separa o LPS de uma lista de tarefas
 
 **`ProgramacaoSemanal`** / **`ItemProgramacao`** — o que a equipe **se comprometeu** a fazer na semana.
 No fim do ciclo cada item é cumprido ou não; o não-cumprido exige **causa**, escolhida de um catálogo
-(`CausaNaoCumprimento`, de fábrica e extensível por tenant). O **PPC** é a razão entre os dois, e o
-ranking de causas é o que alimenta o "Act".
+(`CausaNaoCumprimento`, de fábrica e extensível por tenant). O **PPC** é a razão entre os dois,
+**ponderada pelo peso do compromisso** (§11.11), e o ranking de causas é o que alimenta o "Act".
+
+Três colunas do cartão sustentam a §11.11: `peso`/`peso_origem` (quanto ele vale no índice e de onde
+o número saiu, congelados quando o cartão entra no quadro) e `arrastado_de`/`vezes_arrastado` (de qual
+cartão da semana anterior ele veio, e há quantas semanas está de pé). Na semana, `encerrada_antes_do_fim`
+e `motivo_encerramento_antecipado` marcam o ponto apurado antes do prazo.
 
 ### 4.4 Contrato, medição, aditivo
+
+> **De onde vem a régua desta fatia** *(levantamento de 15/09/2026, pedido pelo dono: "pesquise como
+> grandes sistemas fazem e analise o melhor jeito")*. Três sistemas foram olhados, e cada um decidiu
+> uma coisa aqui:
+>
+> - **AIA G702/G703** — o formulário de medição que o mercado americano usa há décadas. Dele vêm as
+>   **colunas e a ordem delas**, que é a ordem em que a conferência acontece: contratado original →
+>   aditivos → contratado atual → acumulado anterior → este período → **material estocado** →
+>   acumulado → % → saldo. Faltavam quatro dessas colunas, e o *material presently stored* trouxe
+>   junto a regra de que ele é **saldo, não delta**.
+> - **Procore** — a fatura/medição é **documento de primeira classe**, com tela própria, rascunho que
+>   se salva para continuar depois e workflow de aprovação roteado. Daí a decisão de dar endereço
+>   próprio à medição e separar *apurar* de *boletim*. O rascunho negociado antes de virar documento
+>   oficial tem nome lá (*pencil copy*) — é a nossa prévia, com a diferença declarada: a prévia é
+>   **leitura**, porque duas superfícies editáveis para o mesmo número foi exatamente o defeito que a
+>   primeira escrita desta tela teve.
+> - **Sienge** — o vocabulário e o fluxo brasileiros: contrato → medição → **boletim** (relatório
+>   próprio) → liberação para pagamento → aditivo. E a lembrança de que o boletim soma mais do que
+>   bruto menos retenção: *"totais retidos como sinal, permuta ou imposto, descontos, faturamento
+>   direto"* — que virou a `DeducaoMedicao` tipada.
+>
+> O que **não** se copiou: o medir por %, por quantidade ou por valor do Sienge. Aqui a entrada é
+> **quantidade**, com o percentual espelhado e não editável *(decisão do dono, 15/09/2026)* — três
+> caminhos para o mesmo número dão três arredondamentos para a mesma linha.
 
 **`ContratoObra`** — obra, `fornecedor` (o cadastro único, que já é neutro quanto a ser de material ou
 de serviço), objeto, **regime** (preço unitário, preço global, administração), vigência, garantia e a
@@ -364,10 +393,31 @@ separa tratar de arquivar.
 
 ### 4.6 SSMA
 
-**`DialogoSeguranca`** (DDS) com participantes de `rh.Funcionario`, **`Ocorrencia`** (quase-acidente /
-incidente / acidente, com CAT e dias perdidos) e **`EntregaEPI`**, que aponta `catalogo.Item` — EPI já
-é uma natureza do catálogo — e cujo movimento de estoque é do SIL. O PDCA registra a **entrega e a
-validade**; quem baixa o saldo é quem sempre baixou.
+**`DialogoSeguranca`** (DDS) + **`ParticipanteDDS`** — a roda antes do turno e a **lista de presença**,
+que é a única parte do DDS que prova alguma coisa. Encerrar fecha a lista (nome acrescentado três dias
+depois não é presença) e **escreve no Diário de Obra**: o diálogo faz parte do que aconteceu na obra
+naquele dia. O DDS **não é obrigatório por nome em norma nenhuma** — "diálogo" aparece uma vez nas NRs,
+na NR-1 item 1.4.4.1 —, e é o principal **indicador proativo** que a construtora tem.
+
+**`Ocorrencia`** + **`AnexoOcorrencia`** — do quase-acidente ao óbito, com os campos da CAT que **só a
+obra conhece** (hora, agente causador, situação geradora, parte do corpo e lado, último dia trabalhado,
+horas trabalhadas antes, registro policial) e o bloco clínico atrás de verbo próprio, que é a **primeira
+PII do grupo `pdca`**. `registrar` e `classificar` são verbos separados: quem é medido não classifica a
+própria medida. A CAT é **devida mesmo sem afastamento**; o sistema avisa o prazo (1º dia útil; imediato
+na morte) e guarda o protocolo — **a transmissão do evento eSocial S-2210 é da folha**, e uma segunda
+porta para um ato com prazo legal criaria duas verdades sobre se a CAT foi comunicada.
+
+**O EPI não tem modelo aqui** *(decisão do dono, 20/09/2026)*. `EntregaEPI` vive em
+[`modulosil`](modulosil.md) desde 25/07/2026, completo — item do catálogo, colaborador do RH, CA e
+validade, troca, devolução, baixa de estoque. Recriá-lo produziria duas verdades sobre o mesmo capacete
+(o saldo podendo baixar sem a ficha existir, e a ficha existindo sem o saldo baixar) e contradiria a §7
+desta planta, que diz que o PDCA **não** movimenta estoque. A SSMA **lê**, sob `sil.epi.view`, com a
+indisponibilidade declarada quando o tenant não contrata o SIL. O grão é a **obra**, e não a frente:
+dizer quem está com EPI vencido *numa frente* exige saber quem está em qual frente, e isso é `Efetivo`,
+da PDCA.9.
+
+*(A versão anterior desta seção mandava a fatia criar `EntregaEPI`, em contradição com a §7. O desenho
+mudou, e é por isso que o texto mudou.)*
 
 ### 4.7 Apropriação e produtividade
 
@@ -413,63 +463,39 @@ Acima do contexto existe **uma** leitura multi-obra, e ela é para quem dirige, 
 o painel de carteira — SPI/CPI, PPC e desvio de prazo por obra, lado a lado, com a obra em pior estado
 na frente.
 
-### 5.2 Cinco instrumentos, cinco físicas de interação
+### 5.2 O desenho da tela mora em documento próprio
 
-O erro seria forçar cinco necessidades diferentes no mesmo molde de página. Elas não têm o mesmo
-usuário, nem o mesmo dispositivo, nem a mesma gramática de gesto.
+A primeira escrita desta seção descrevia cinco instrumentos e virou, na construção, um conjunto de
+páginas soltas no menu — um assunto do banco por porta. O desenho foi refeito do zero sobre o eixo
+que o mercado provou (cadência, não assunto), e vive agora em
+**[modulopdca-frontend.md](modulopdca-frontend.md)**: os seis postos de trabalho, a espinha que os
+atravessa, a superfície de campo, o que o desenho cobra do backend e o faseamento.
 
-**1 · Gantt — árvore + linha do tempo sincronizadas**
-Não é tabela com barras coloridas. É um *split view*: a WBS à esquerda (árvore expansível,
-**virtualizada** — cronograma real passa de mil linhas) e a linha do tempo à direita, com rolagem
-vertical acoplada e horizontal independente. Os gestos que definem a ferramenta: **arrastar a barra**
-para reprogramar, **ligar duas barras** para criar precedência, **destacar o caminho crítico**,
-**sobrepor a linha de base** como fantasma atrás do plano vigente (é a leitura que responde *"atrasou
-quanto desde que a gente combinou?"*) e **trocar a escala** de dia para semana, mês e trimestre.
+O que continua valendo daqui: a **unidade de trabalho é a obra** (§5.1), **quem usa o quê** (§5.3) e
+os limites que a construção do Gantt fixou (§5.4).
 
-**2 · Linha de balanço — o gesto é inverso ao do Gantt**
-Eixo Y é **localização** (a `LocalObra` da §4.1), eixo X é tempo, e cada serviço é uma **reta
-inclinada** cuja inclinação **é o ritmo**. No Gantt você arrasta uma barra pronta; aqui você **desenha
-a linha**, clicando na localização de início e arrastando pela duração e pelas localizações — é assim
-que o Vico Schedule Planner opera, e é o gesto que faz o planejador pensar em ritmo em vez de em
-duração. Duas linhas que **se cruzam** são duas equipes no mesmo lugar: a tela precisa gritar isso,
-porque é o conflito que a LOB existe para achar. (O ganho relatado do flowline sobre o Gantt é de pelo
-menos 10% de prazo, sem consumir mais recurso.)
+#### As quatro rotas que não são recurso de router
 
-**3 · Quadro de programação — post-it, e de propósito**
-O Last Planner nasceu numa parede com post-its, e o software que pegou (Touchplan) venceu justamente
-por **parecer a parede**: cartões que se arrastam, uma área de rascunho de onde se puxam atividades, e
-a **linha de compromisso** que o time arrasta sobre o plano convertendo as atividades em compromissos
-da semana. É um **canvas de arrastar**, não um formulário — e é usado em reunião, em tela grande e
-sensível ao toque, com várias pessoas em volta. Formulário mataria a reunião.
+A API do módulo é um `DefaultRouter` sobre 24 recursos, mais `status/` e **quatro leituras que
+atravessam** — registradas à mão em `urls.py` porque não têm dono:
 
-**4 · Grade de medição — planilha, com trava, na régua da G703**
-Contratado original · **aditivos** · contratado atual · acumulado anterior · **este período** ·
-**material estocado** · acumulado · % · saldo, linha a linha — a ordem da G703, que é a ordem em que a
-conferência acontece. Edição na célula, navegação por teclado (Tab/Enter, colar de coluna de
-planilha) e o bloqueio de exceder o contratado atual **na hora da digitação**, não na submissão. Quem
-opera isso passa o dia aqui; cada clique a mais é multiplicado por centenas de linhas.
+| Rota | O que devolve | Permissão |
+|---|---|---|
+| `GET /api/pdca/carteira/` | As obras lado a lado, com as pendências discriminadas. `?obras=1,2` recorta | só o módulo; cada coluna cobra a sua |
+| `GET /api/pdca/hoje/?obra=N` | **Fila + pulso + o que mudou**, numa leitura. `?mudancas=0` e `?dias=` ajustam a terceira | idem |
+| `GET /api/pdca/busca/?q=` | As sete espécies do módulo, sem acento, cortadas por espécie. `?obra=N` restringe | idem |
+| `GET /api/pdca/minhas-frentes/` | **O que está no nome de quem pede**, na semana corrente: compromisso, trava, conserto e ficha. `?obra=N` recorta; `?como=` troca o nome procurado | idem |
 
-Três propriedades que não são detalhe de implementação:
+As quatro declaram **só `RequireModule`**, e o recorte por permissão acontece dentro do serviço —
+uma leitura que junta cinco assuntos não tem um recurso dono, e exigir um recusaria a página a
+quem trabalha nos outros quatro. O desenho e as três regras que elas seguem estão na
+[§10.1 do documento da tela](modulopdca-frontend.md).
 
-- **a grade não calcula nada.** Contratado, aditivo, acumulado e saldo vêm resolvidos de
-  `/medicoes/{id}/contexto/`. Montar a conta no navegador foi o que fez a mesma medição mostrar
-  números diferentes conforme a porta de entrada ([D138](../historico-correcoes.md));
-- **ela grava sozinha.** Autosave com debounce e selo de estado; submeter grava antes de enviar. Dois
-  botões independentes para "salvar" e "submeter" fizeram documento ser aprovado com número antigo,
-  em silêncio ([D137](../historico-correcoes.md));
-- **acima de 80 linhas ela vira janela.** O teto do plano é 2.000 itens por contrato, e 2.000
-  `<input>` no DOM engasgam entre a tecla e o caractere.
-
-Cada linha responde *de onde saiu este número* (a **memória de cálculo**: as atividades, o avanço de
-cada uma no período e o peso que teve, com link para o cronograma) e carrega a **nota de quem
-mediu**, que sai impressa no boletim.
-
-**5 · Campo — o oposto de tudo acima**
-Uma mão, luva, sol, e às vezes sem sinal. Alvos grandes, **uma pergunta por vez** em vez de formulário
-denso, foto como cidadão de primeira classe (com data e coordenada carimbadas sozinhas, sem o
-inspetor anotar nada), voz aceita como entrada. É o teste que a literatura de campo usa: *o inspetor
-segurando o telefone com uma mão só, no canteiro, usa isto?* Grade e Gantt reprovam nesse teste, e é
-por isso que o campo **não** pode ser a mesma tela reduzida.
+**A frente do canteiro casa por nome, e não por FK**, porque `responsavel`, `quem` e `inspetor` são
+rótulo durável em todo o módulo — a decisão é anterior a esta leitura e está nos próprios modelos:
+quem assume a frente é com frequência o encarregado da empreiteira, e quem destrava é o projetista
+ou o fiscal da prefeitura. O casamento é sem acento e sem caixa, e a resposta diz **contra qual
+nome** procurou; `?como=` existe para quem o escritório registrou com outro rótulo.
 
 ### 5.3 Quem usa o quê
 
@@ -481,49 +507,16 @@ por isso que o campo **não** pode ser a mesma tela reduzida.
 | Gestor de contratos | Escritório | Grade de medição, saldo, aditivo |
 | Técnico da qualidade | Canteiro | Verificação item a item, plano de ação |
 | Fiscal / gerente | Onde estiver | Fila de atesto — decidir, com o que precisa para decidir junto |
-| Diretor | Escritório | Carteira multi-obra: SPI/CPI, PPC, desvio |
+| Diretor | Escritório | Carteira multi-obra: avanço × linha de base, PPC, conformidade, segurança |
 
-### 5.4 O que une os instrumentos (já que não é o layout)
+> **SPI e CPI saíram desta linha, e a saída é decisão.** As duas são de valor agregado: o SPI exige
+> valor planejado por período e o CPI exige **custo real**, que mora no ERP e ainda não é apropriado
+> por atividade (é a PDCA.9). Prometer as siglas e calculá-las com o que há hoje daria índice com
+> nome de norma e conta inventada — a mesma recusa que as taxas de frequência e gravidade da §4.6
+> já fazem. A carteira entrega as quatro leituras que o módulo **mede**, e cada uma diz em cima de
+> quantos serviços foi feita.
 
-Não é o molde da página — é o **dado** e o **ato**:
-
-- **a mesma atividade** aparece como barra no Gantt, reta na LOB, cartão no quadro e linha na medição;
-  selecionar num lugar seleciona nos outros;
-- **todo instrumento termina num ato que conclui** — atestar, comprometer, remover restrição, tratar,
-  replanejar. Fila de decisão existe, mas ela **mora dentro do contexto da obra**, não num hub que
-  soma o que não se soma;
-- **dado honesto**: avanço sem apontamento aparece como *"sem apuração"*, nunca como 0% — e o número
-  sempre diz se é apurado ou informado (§11.2). Fabricar avanço aqui é pior que em qualquer outro
-  módulo: é o número que vai para o cliente e para o pagamento do empreiteiro.
-
-### 5.5 As bibliotecas — e a fronteira de licença
-
-O projeto entrega o frontend **ao navegador do cliente**, o que faz de qualquer biblioteca JS uma
-distribuição. Copyleft aqui é o caso perigoso, não o teórico — a mesma disciplina que recusou o
-PyMuPDF (AGPL) em favor do `pikepdf` está em [THIRD-PARTY-LICENSES.md](../../THIRD-PARTY-LICENSES.md).
-**Só entra licença permissiva.**
-
-| Instrumento | Caminho |
-|---|---|
-| **Gantt** | Biblioteca **MIT** (o campo tem opções reais: DHTMLX Community, SVAR React Gantt, `gantt-task-react`, Frappe Gantt). As comerciais — Bryntum (~US$ 940/dev) e DHTMLX PRO (~US$ 699) — ficam fora enquanto uma MIT der conta. **Nenhuma GPL**, mesmo "community" |
-| **Linha de balanço** | **Não existe biblioteca.** É SVG próprio — e o projeto já faz SVG denso e interativo na [Prancheta](moduloprancheta.md) |
-| **Quadro de programação** | Canvas de arrastar próprio; nada de biblioteca de kanban genérica, que traz um modelo de coluna que não é o do quadro semanal |
-| **Grade de medição** | `@tanstack/react-table`, já no projeto, com edição em célula |
-| **Curva S, EVM, PPC** | `recharts`, já no projeto |
-| **Mapa da frente** | `maplibre-gl`, já no projeto |
-
-O CPM **roda no servidor**, não no browser: é fonte de verdade para dinheiro e prazo, o teto de
-tamanho é do dono ([`planos.py`](../../payment/planos.py)) e recalcular num laptop fraco daria
-resultado diferente do recalculado no servidor.
-
-### 5.6 O que da régua continua valendo
-
-Identidade Malha (tokens, tema claro e escuro, tipografia), as [convenções
-obrigatórias](../frontend-convencoes.md) — busca sem acento, dinheiro, datas, upload, omitir × trancar
-—, **não-CRUD**, **dados honestos** e **integração visível entre módulos**. O que não vale é copiar a
-forma: hub, lentes e nomenclatura são do domínio de cada módulo, e o deste pediu outra coisa.
-
-### 5.7 O que a construção do Gantt fixou — e os limites declarados
+### 5.4 O que a construção do Gantt fixou — e os limites declarados
 
 O desenho acima é a intenção; abaixo estão as decisões que só aparecem quando a ferramenta existe, e
 os limites que ela assume de olhos abertos.
@@ -570,8 +563,8 @@ os limites que ela assume de olhos abertos.
   um código do segundo bloco colidir com o primeiro — por isso ela tem endpoint próprio, limitado
   pelo teto da **árvore**, com prévia antes de mexer em dezenas de códigos de uma vez.
 - **A grade da semana é a física 4 aplicada ao avanço.** O apontamento na web não ganhou tela própria
-  nem formulário por atividade: virou **planilha com trava**, no mesmo molde da grade de medição da
-  §5.2 — a fila abre no que *deveria estar acontecendo hoje*, ordenada por crítica → vencida → vence
+  nem formulário por atividade: virou **planilha com trava**, no mesmo molde da grade de medição
+  ([o desenho](modulopdca-frontend.md)) — a fila abre no que *deveria estar acontecendo hoje*, ordenada por crítica → vencida → vence
   antes (não pela EAP), com o previsto e o acumulado ao lado do campo de digitar, e o envio inteiro
   numa transação. **O que se digita é o delta**, e não o acumulado: "andou 15% esta semana" é a
   pergunta que alguém no canteiro responde olhando o serviço; "está em 65%" é uma conta que ele faria
@@ -600,8 +593,8 @@ os limites que ela assume de olhos abertos.
 |---|---|
 | [Orçamento](moduloorcamento.md) | Régua orçada por etapa/atividade; a **curva S financeira passa a derivar do cronograma físico**, em vez de a distribuição por competência ser digitada; aditivo ↔ `RevisaoOrcamento` |
 | [SIL](modulosil.md) | Aplicado de material por `(obra, etapa)` ao lado do avanço físico — consumo × produção |
-| [SCM](moduloscm.md) | Restrição de material vira **demanda**; item de serviço contratado conversa com o pedido |
-| [ERP](moduloerp.md) | Medição aprovada → **título líquido** → `ContaPagar`. O ERP decide quando sai do caixa |
+| [SCM](moduloscm.md) | Restrição de material vira **demanda** (✅ PDCA.5 — `Demanda.origem = restricao`, uma por restrição); item de serviço contratado conversa com o pedido |
+| [ERP](moduloerp.md) | Medição aprovada → **título líquido** → `ContaPagar`. O ERP decide quando sai do caixa. **E a fronteira anda nos dois sentidos**: cancelar a medição aprovada cancela o título junto, na mesma transação — a menos que ele já tenha recebido baixa, e aí a recusa manda retificar (§11.12) |
 | RH | Responsável, equipe, efetivo, DDS, EPI |
 | [Diário](modulodiario.md) | Apontamento e NC podem **nascer no diário do dia**, inclusive por WhatsApp; e o diário passa a mostrar o que estava programado |
 | [Prancheta](moduloprancheta.md) | NC ancorada no desenho (`Marcacao`), exportada em **BCF** com o resto |
@@ -628,10 +621,35 @@ Entitlement `pdca` (já reservado). Grupo de permissões `pdca`, com a segregaç
 necessária — quem executa não aprova:
 
 `pdca.local.*` · `pdca.cronograma.view|edit|publicar|replanejar` · `pdca.avanco.view|apontar` ·
-`pdca.programacao.view|comprometer|encerrar` · `pdca.restricao.*` · `pdca.contrato.view|edit` ·
+`pdca.programacao.view|comprometer|encerrar` (✅ PDCA.5) · `pdca.restricao.view|edit|remover`
+(✅ PDCA.5) · `pdca.contrato.view|edit` ·
 `pdca.medicao.view|apurar|atestar` · `pdca.aditivo.edit|aprovar` (✅ PDCA.4) ·
-`pdca.verificacao.modelo_edit|aplicar` · `pdca.nc.abrir|tratar|verificar_eficacia` · `pdca.ssma.*` ·
+`pdca.verificacao.view|modelo_edit|aplicar` · `pdca.nc.view|abrir|tratar|verificar_eficacia`
+(✅ PDCA.7) · `pdca.dds.view|registrar` ·
+`pdca.ocorrencia.view|registrar|classificar|emitir_cat|dado_medico` (✅ PDCA.8) ·
 `pdca.apropriacao.*` · `pdca.risco.*` · `pdca.garantia.*`
+
+> **O `pdca.ssma.*` que esta lista reservava não era realizável, e virou dois recursos.** O catálogo
+> cobra código com **exatamente dois pontos** (`modulo.recurso.acao`, conferido em
+> `iam/identity/tests.py`), então `pdca.ssma.dds.registrar` quebraria a suíte — e um recurso `ssma`
+> único empilharia num só nome coisas com donos diferentes. A PDCA.8 fez o que a PDCA.7 fez com
+> `verificacao` e `nc`: dois recursos, porque são dois objetos com ciclos de vida distintos.
+>
+> **A segregação da fatia é `registrar` × `classificar`**, e ela é nova nesta casa. As anteriores
+> separavam quem faz de quem aprova (`apurar` × `atestar`, `tratar` × `verificar_eficacia`); esta
+> separa **quem é medido de quem classifica a própria medida**. Registrar tem de ser de baixo atrito
+> — o quase-acidente é o dado mais valioso da segurança e o mais fácil de não anotar —, mas dizer
+> *"foi com afastamento, nove dias"* muda o indicador pelo qual a frente é cobrada.
+>
+> **`emitir_cat` não vai para a persona de segurança.** Quem protocola CAT no INSS é o RH, e duas
+> portas para um ato com prazo legal e multa criariam duas verdades sobre se ela foi comunicada.
+> **`dado_medico`** abre lesão, CID e atestado: é a primeira PII do grupo `pdca` (LGPD art. 11), e
+> para classificar o acidente ninguém precisa do diagnóstico.
+
+> **Os dois `view` da PDCA.7 não estavam nesta lista, e entraram.** A linha
+> acima enumerava só os verbos de escrita da verificação; todo recurso desta
+> casa tem um `view`, e sem eles as duas telas de leitura da fatia — a fila de
+> decisão e o painel de conformidade — não teriam porta.
 
 O nível de aprovação da medição **não** cria permissões numeradas: cada `NivelAprovacao` declara
 **qual permissão** ele exige, e o tenant compõe a escada com os papéis que já tem.
@@ -646,8 +664,20 @@ Uma permissão nasce **fora** deste grupo, no grupo `base`: **`obra.etapa.percen
 > "editar" prometeria na tela de papéis um poder que a API não tem.
 
 Personas de fábrica: `planejador`, `engenheiro_de_obra`, `gestor_contratos`, `tecnico_qualidade`,
-`fiscal_de_obra`. As existentes (`orcamentista`, `almoxarife`, `suprimentos`) ganham só leitura do que
-lhes diz respeito.
+`fiscal_de_obra`, `tecnico_seguranca`. As existentes (`orcamentista`, `almoxarife`, `suprimentos`)
+ganham só leitura do que lhes diz respeito.
+
+> **A PDCA.8 estreou a `tecnico_seguranca`, que a lista acima não previa** — é o TST do SESMT (NR-4),
+> o cargo que a obra acima de certo porte é obrigada a ter. Ela passa no teste da gêmea, e por pouco:
+> divide com o `tecnico_qualidade` o miolo da verificação (aplicar ficha, abrir e tratar NC, travar a
+> frente), porque inspeção de segurança **é** a máquina da §4.5 com outro domínio. O que as separa são
+> os dois extremos — ela tem `dds.*` e `ocorrencia.*`, que nenhuma outra persona de obra tem, e **não**
+> tem `verificacao.modelo_edit`, que é o verbo exclusivo do técnico de qualidade. É por isso que os
+> verbos de SSMA **não** foram dados ao técnico de qualidade: dar-lhe os dois tornaria as personas a
+> mesma lista.
+>
+> Ela leva também `sil.epi.view` — é o que faz o seam do EPI funcionar sem duplicar a entrega (§4.6) —
+> e **não** leva `emitir_cat` nem `dado_medico`.
 
 > **A PDCA.3 estreou a `gestor_contratos`, e ela é nova de verdade** — não é gêmea de ninguém, que é o
 > teste que a nota abaixo impõe. A `engenharia` responde pela execução (aponta avanço, assina diário),
@@ -676,6 +706,49 @@ lhes diz respeito.
 > `pdca.avanco.apontar` (apontar quanto a frente andou é o gesto do canteiro, e é a razão de a fatia
 > existir) sem poder editar o plano; `planejador` e `diretoria` ganharam só `pdca.avanco.view` — o
 > planejador que apontasse o próprio avanço estaria conferindo o próprio dever de casa.
+>
+> **A PDCA.5 confirmou a decisão em vez de revê-la.** Era a fatia que mais teria pretexto para criar
+> a `engenheiro_de_obra` — a §5.3 põe esse cargo no quadro de programação, no apontamento e nas
+> restrições —, e criá-la produziria exatamente a gêmea da `engenharia`: os dois papéis teriam a
+> mesma lista. A `engenharia` levou os cinco verbos do ciclo (`pdca.restricao.*`,
+> `pdca.programacao.*`), porque ele é dela de ponta a ponta: registra a trava, declara que ela saiu,
+> monta o quadro, assume e julga.
+>
+> **A `campo` ganhou `pdca.restricao.edit`, e o argumento é o mesmo do apontamento**: quem descobre
+> que o material não chegou e que a frente anterior não liberou a área é quem está no canteiro, e
+> obrigá-lo a telefonar para alguém registrar isso é o que faz o log de restrição nascer
+> desatualizado. O que ela **não** tem é `remover` — declarar que a trava saiu libera o serviço para
+> ser assumido, e esse é ato de quem responde pela obra. `planejador` e `diretoria` ficaram na
+> leitura: o PPC é indicador de direção, e o planejador que julgasse o próprio plano cumprido
+> estaria, de novo, conferindo o próprio dever de casa. A `suprimentos` ganhou
+> `pdca.restricao.view` — é o outro lado do seam, e quem compra precisa ver o que a demanda está
+> segurando na obra.
+>
+> **Por que `remover` é verbo, e não um `edit` mais forte.** A §5.4 põe "remover restrição" ao lado
+> de atestar e comprometer — é **ato que conclui**: ele libera a atividade para entrar na
+> programação, e carrega a nota que a reunião seguinte lê. Quem abre a pendência não é
+> necessariamente quem pode declarar que ela acabou.
+>
+> **A PDCA.7 estreou as duas últimas personas previstas — e as duas passam no teste da gêmea.**
+> O **`tecnico_qualidade`** é o único cargo desta casa cujo trabalho *é* a máquina de verificação:
+> ele leva o `verificacao.modelo_edit`, que nenhuma outra persona tem (escrever o método da empresa
+> muda o que **toda** obra confere), aplica a ficha e monta o plano de ação — e não toca em
+> cronograma, contrato nem medição, que é o que o separa da `engenharia`. O **`fiscal_de_obra`** é o
+> outro lado: **não executa nada** e assina os dois atos que encerram, a medição e a
+> não-conformidade. Nenhum dos dois repete a lista de alguém que já existe.
+>
+> **A segregação desta fatia é `tratar` × `verificar_eficacia`**, e ela é a forma que a medição já
+> tem entre `apurar` e `atestar`: quem montou o conserto não assina que o conserto funcionou. Por
+> isso `tecnico_qualidade`, `engenharia` e `campo` **não** têm `verificar_eficacia`, e `diretoria` e
+> `fiscal_de_obra` o têm sem ter `tratar`. Não vira beco de D130: `fiscal_de_obra` nasce de fábrica e
+> o admin de tenant atravessa, então a primeira NC de um tenant de uma pessoa só encerra no dia um.
+>
+> **`modelo_edit` é separado de `aplicar` pelo mesmo raciocínio, com um detalhe que decide.** Um
+> `edit` único daria a quem está na frente o poder de afrouxar o critério da FVS **no momento exato
+> em que ela reprovasse** — que é quando alguém quer. A `campo` ganhou `verificacao.aplicar` e
+> `nc.abrir` (responder a ficha e fotografar o defeito são o gesto do canteiro, e é a razão de a
+> fatia existir) sem `tratar`: decidir o que a obra vai fazer a respeito é de quem responde por ela.
+> A `suprimentos` não ganhou nada aqui — NC não vira compra.
 
 **Tetos em [`payment/planos.py`](../../payment/planos.py)**, como todo limite do sistema: atividades por
 cronograma, profundidade da WBS, locais por obra e profundidade da hierarquia, itens por contrato,
@@ -692,7 +765,17 @@ dele o servidor engrossa a granularidade e **declara** qual valeu); e a **§5.5h
 itens por contrato e linhas por medição, que são o mesmo número de propósito (a primeira medição de
 uma empreitada por preço unitário toca legitimamente **todos** os itens). *Fotos e bytes por
 apontamento* não viraram constante: o arquivo sobe pela porta única da plataforma, que já lê o teto do
-tenant — declarar outro aqui criaria um segundo número para a mesma pergunta.
+tenant — declarar outro aqui criaria um segundo número para a mesma pergunta. A **§5.5j traz os
+quatro da PDCA.5** — cartões por programação (o quadro é parede de reunião: acima disso ninguém o lê
+inteiro), restrições abertas por obra (o *constraint log* é para zerar, não para acumular), causas
+por tenant (a causa só serve se for escolhida da mesma lista toda semana) e semanas na série de PPC,
+que é o irmão do teto de pontos da curva S.
+
+> **O PPC não tem teto, e não tem meta.** É a tentação óbvia desta fatia: a literatura registra ~54%
+> em obra convencional e 80–85% com LPS maduro (§2.1), e seria fácil cravar 85 como "meta do plano".
+> O número é **resultado medido**, não limite de uso — a fronteira da §5.6 —, e meta de desempenho é
+> acordo entre o cliente e a equipe dele, da mesma classe do percentual de retenção que a §5.5h
+> recusou. O sistema mede e mostra; quem cobra é gente.
 
 > **O que da PDCA.3 NÃO virou teto, e por quê.** A **retenção** (percentual, natureza, condição) é
 > cláusula que o cliente negocia com o fornecedor dele — mesma classe do prazo de pagamento e do
@@ -791,6 +874,129 @@ aprovado. A máquina de fluxo nasce em `nucleo` (§4.4).
 *(22/08/2026.)* FVS, inspeção de segurança, vistoria de entrega e checagem ambiental compartilham
 modelo, aplicação, evidência e tratamento. Ver §4.5.
 
+### 11.11 A ficha guarda a pergunta que respondeu
+
+*(PDCA.7.)* `ItemVerificacao.texto` e `.criterio` são **cópia do modelo, não referência** — a decisão
+que transforma a ficha em prova.
+
+O modelo é vivo, e tem de ser: a empresa aperta o critério de prumo de 3 mm para 2 mm no ano
+seguinte, e faz bem. Se a ficha lesse o texto pelo FK, toda inspeção do ano anterior passaria a
+**afirmar que conferiu 2 mm** — e a auditoria do PBQP-H encontraria um sistema que reescreve o
+passado sozinho, sem ninguém ter mentido em campo algum. É a mesma razão que congela preço no
+`ItemMedicao`: o documento guarda o que foi respondido, não o que se pergunta hoje.
+
+A consequência prática é que **editar o modelo pelo `/admin` é seguro** — e é por isso que o
+`ModeloVerificacao` é o único desta fatia que não é somente leitura lá.
+
+E é o congelamento que obriga o ranking do §4.5 a agrupar por `item_modelo`, e não pelo texto: o
+texto é cópia por resposta, e agrupar por ele contaria a mesma pergunta N vezes. A resposta órfã —
+item acrescentado em campo, ou modelo apagado — fica fora do ranking e é **declarada** na leitura,
+em vez de sumir na conta.
+
+### 11.12 "Ação concluída" não encerra a não-conformidade
+
+*(PDCA.7.)* É a regra que separa tratar de arquivar, e sem ela a fatia não valeria a pena existir.
+
+O caminho fácil seria encerrar a NC quando o último `PlanoAcao` fosse marcado como concluído. Isso
+é **quem consertou dizendo que consertou** — e é exatamente como a maior parte dos sistemas de
+qualidade, de papel e de software, perde o valor inteiro do ciclo: ninguém volta à frente. O que
+encerra é a `VerificacaoEficacia`, que é alguém olhando de novo e registrando o que viu.
+
+Três consequências que vêm daí:
+
+- **`eficaz=False` é o resultado mais útil dos dois.** Não encerra nada: devolve a NC para
+  tratamento, porque o plano anterior comprovadamente não resolveu, e o que vem a seguir é um plano
+  novo. A sequência de verificações fica inteira (o modelo é append-only na prática) e é a história
+  honesta de quantas tentativas o conserto levou — a régua do estorno do `ApontamentoAvanco`.
+- **Vale a última, não a primeira.** Uma NC verificada como eficaz em março e reaberta em maio por
+  ter voltado a falhar não encerra pela leitura de março.
+- **A trava mora no `services`, e não numa `CheckConstraint`**, por uma razão física: ela olha
+  **outra tabela**, e check de banco não atravessa tabela. O que o banco protege é o que cabe numa
+  linha — e ali ele protege o que importa: desvio sem observação é recusado pelo banco também,
+  porque o "não aplicável" em tudo é a porta pela qual uma ficha inteira passa sem ninguém verificar
+  nada.
+
+### 11.13 A gravidade da NC tem dente: ela para o serviço de verdade
+
+*(PDCA.7.)* `NaoConformidade.restricao` é o seam **vivo** com o Last Planner, e existe para que
+"crítica — para o serviço" não seja adjetivo.
+
+Sem o elo, o sistema diria que o serviço está parado e a equipe se comprometeria com ele na
+segunda-feira seguinte — porque o quadro da PDCA.5 só olha `Restricao`. Com ele, `gerar-restricao/`
+abre uma trava de tipo `AREA` na atividade, e ela deixa de poder entrar na programação até alguém
+declarar que a trava saiu.
+
+**`AREA`, e não um nono tipo.** A oitava família da PDCA.5 é *"a frente anterior não liberou o
+local"*, e é literalmente o que uma NC aberta faz: o serviço está lá, executado errado, e a frente
+seguinte não entra. Um tipo `qualidade` partiria o ranking de restrição em dois vocabulários para o
+mesmo impedimento físico.
+
+**Exige a atividade, e a recusa diz isso.** Restrição sem alvo não bloqueia nada (regra da PDCA.5), e
+a NC do canteiro nem sempre tem uma — a trinca vista a caminho do almoxarifado não sabe de que
+serviço veio. E exige **duas** permissões: `pdca.nc.tratar` mais `pdca.restricao.edit`, na régua do
+`gerar-demanda` da restrição — parar a frente é ato do quadro da semana, e deixar que só a permissão
+de tratar o fizesse criaria uma porta lateral para ele.
+
+**O caminho de volta é o da PDCA.5, não um novo:** quem destrava é quem remove a restrição, com a
+nota de como. A NC encerra pelo seu próprio laço, e as duas coisas são independentes de propósito —
+liberar a frente para trabalhar e declarar o defeito tratado não são o mesmo ato.
+
+### 11.15 A gravidade é perguntada no item, não no fim da ficha
+
+*(Decisão do dono, 16/09/2026, olhando o painel de gravidade da primeira obra
+verificada: "essa pergunta deveria ser feita em cada item e não no final, porque
+aí fica parecendo que um desalinhamento na porta é grave igual a falta de uma
+maçaneta".)*
+
+A primeira escrita da PDCA.7 perguntava a gravidade **uma vez**, no diálogo de
+conclusão da ficha, e carimbava o mesmo rótulo em todos os itens reprovados. O
+painel então somava *"3 maiores"* sobre três coisas de tamanhos diferentes — e
+um ranking que agrupa o que não é do mesmo tamanho não ranqueia nada. É o mesmo
+mecanismo que faria o ranking de causas da PDCA.5 parar de funcionar se a causa
+fosse escolhida **por semana** em vez de por compromisso.
+
+**A gravidade é propriedade do defeito**, então mora em `ItemVerificacao`
+(`gravidade`, nula fora do reprovado) e não no gesto que abre as NCs.
+
+**E é perguntada no item porque é lá que dá para responder.** Quem conclui a
+ficha pode não ser quem a respondeu — o `campo` responde, qualquer um com
+`aplicar` conclui — e pode nem ter estado na frente. Quem acabou de olhar o
+defeito sabe se ele se corrige na hora ou se para o serviço; quem lê uma lista
+depois, não.
+
+Três consequências:
+
+- **obrigatória no reprovado, recusada nos outros três resultados**, com trava na
+  aplicação e no banco. O segundo lado é o menos óbvio e importa igual: um item
+  que ficou *conforme* com uma gravidade pendurada (porque alguém marcou "não
+  conforme", pesou e depois corrigiu) contaria no painel um defeito que não
+  existe;
+- **`abrir-ncs/` não recebe corpo.** Cada NC nasce com o peso do seu item. O
+  serializer de entrada foi removido, e a ausência está declarada no arquivo para
+  que ninguém o reintroduza achando que faltou;
+- **o diálogo de conclusão mostra, não pergunta.** Ele lista o que vai abrir com
+  o peso de cada um; mudar um peso é voltar à pergunta, antes de concluir.
+
+Os rótulos dizem **o que cada degrau autoriza** — *corrige-se na frente*, *o
+serviço não é aceito assim*, *para o serviço* — e não "baixa/média/alta". É a
+diferença entre classificar e decidir, e é o que faz o técnico escolher certo com
+uma mão no celular.
+
+### 11.14 A biblioteca de fichas nasce vazia
+
+*(PDCA.7.)* O catálogo de causas da PDCA.5 nasce semeado; a biblioteca de modelos de verificação,
+**não** — e a assimetria é a decisão, não um esquecimento.
+
+Rótulo de falha é vocabulário comum a todo canteiro, e um catálogo vazio faria a primeira reunião
+inventar texto livre, que é o que o modelo existe para impedir. FVS não é isso: ela é o **método
+desta empresa** escrito — o que ela aprendeu a conferir, com o critério numérico que ela adota —, e é
+contra ela que o organismo certificador audita. Uma ficha de fábrica seria aplicada sem ser lida, e a
+empresa se certificaria contra o nosso chute.
+
+O que a fatia oferece no lugar é o **`duplicar`**, que é o gesto real: quem tem quarenta FVS tem
+quarenta variações de três linhas, e digitar a segunda inteira é onde o critério de uma diverge do da
+outra por descuido.
+
 ### 11.7 O frontend não segue a forma dos outros módulos
 
 *(22/08/2026.)* Cada módulo tem necessidade própria de tela, e a do PDCA foi pesquisada e resolvida
@@ -799,8 +1005,179 @@ por si — não herdada do SCM, do SIL ou do Maps. A régua do projeto continua 
 **forma** — hub, lentes e nomenclatura.
 
 Três consequências que vêm do domínio, e não caberiam no molde dos outros: a unidade de trabalho é a
-**obra**, não o tenant (§5.1); os cinco instrumentos têm **gramáticas de gesto incompatíveis** entre
-si (§5.2); e o frontend **nasce junto de cada fatia**, não como uma fatia final (§12).
+**obra**, não o tenant (§5.1); os instrumentos têm **gramáticas de gesto incompatíveis** entre
+si ([o desenho](modulopdca-frontend.md)); e o frontend **nasce junto de cada fatia**, não como uma
+fatia final (§12).
+
+### 11.10 O PPC é binário, e a execução parcial fica ao lado dele
+
+*(decisão de desenho, 15/09/2026, respondendo a "existe a possibilidade de a obra ter sido executada
+parcialmente".)*
+
+A observação é certa e o remédio óbvio é errado. Um compromisso de 200 m² de alvenaria pode sair em
+150 m², e marcar isso como "não saiu" parece injusto com quem trabalhou. A tentação é dar crédito
+parcial: 150/200 = 0,75 no lugar de 0.
+
+**Não.** O PPC é `compromissos cumpridos ÷ compromissos assumidos`, **binário por definição**, e a
+dureza é o mecanismo. Com crédito parcial o time aprende a prometer demais e a entregar uma fração:
+o índice estabiliza em uns 70% para sempre e deixa de medir a **confiabilidade do plano**, que é a
+única coisa que ele mede. A binariedade é o que força o compromisso a ser dimensionado para caber na
+semana — e dimensionar direito é o que o Last Planner ensina.
+
+**Mas o número existe e não pode ser jogado fora.** A obra que assumiu 20 pontos e entregou 12 fez
+12, e um cartão que só diz "não saiu" faz o sistema parecer dizer que ela não fez nada. Duas
+consequências, as duas ruins: a equipe desconfia do índice, e **quem julga julga de memória**.
+
+A saída é a régua de integração do projeto — *o que conversa no backend conversa na tela*: o avanço
+já está apurado no [`ApontamentoAvanco`](#43-execução-e-verificação) da PDCA.2, lançado pelo campo no
+dia. O cartão passa a mostrá-lo **ao lado** do compromisso:
+
+> `prometeu 20 pts · campo apontou 12 pts`
+
+Nada é digitado de novo, e é por isso que o número é confiável. Ele serve para **julgar com a prova
+na frente**, e as causas de fábrica para o caso já existem: `PLAN-MAL-DIM` (serviço mal dimensionado
+no plano) e `MO-PRODUT` (produtividade abaixo da prevista).
+
+**E ele nunca entra no PPC.** Na semana encerrada a leitura aparece com nome próprio e a etiqueta
+*"não entra no PPC"*, porque as duas coisas são verdade ao mesmo tempo: o plano não foi confiável (é
+o que o índice mede) e a equipe trabalhou (é o que isto mostra). Somar as duas num número só
+destruiria a primeira.
+
+**`null` não é zero.** Cartão sem apontamento diz *"sem apontamento do campo nesta semana"*, não
+"0 pts": pode ser que ninguém tenha apontado, não que nada tenha andado — e fabricar o zero acusaria
+a equipe de uma parada que talvez não tenha havido.
+
+> **Isto continua valendo depois do peso da §11.11, e as duas coisas não se confundem.** O
+> **cumprimento** é binário — saiu ou não saiu, e 150 de 200 m² é "não saiu". O **peso** decide quanto
+> cada "saiu" vale no índice. Dar crédito de 0,75 pela execução parcial é o que esta seção recusa;
+> dizer que a concretagem da laje pesa mais que a limpeza do canteiro é outra pergunta, e a §11.11
+> responde sim a ela. O que o arrasto (§11.11) acrescentou é que o pedaço que ficou por fazer vira o
+> previsto do cartão da semana seguinte — em vez de virar crédito parcial nesta.
+
+### 11.11 O PPC pesa, a semana futura não fecha, e o que não saiu continua
+
+*(três decisões do dono, 15/09/2026, na mesma leva de relatos sobre o quadro da semana.)*
+
+**a) O índice é ponderado, e o peso sai do planejamento.** Contar cartões dizia que assumir a
+concretagem da laje e assumir a limpeza do canteiro valem o mesmo: a semana que entrega a laje e perde
+a limpeza marcava os mesmos 50% da que entrega a limpeza e perde a laje. O dono decidiu que o peso
+*"sai do planejamento — o planejamento pega o peso pelo orçamento (orçamento tem o físico-financeiro)
+ou pelo tempo que o usuário colocou"*, e que o ponderado **substitui** o clássico.
+
+A escada é a do `peso_de` do avanço, com um degrau a mais no fim (`services.peso_do_compromisso`):
+
+| origem | de onde vem | quando vale |
+| --- | --- | --- |
+| `orcado` | `ItemOrcado.total_com_bdi` da atividade vinculada | há vínculo com o orçamento |
+| `informado` | `Atividade.peso_informado` | o planejador digitou um peso |
+| `duracao` | `Atividade.duracao_dias` | há duração no cronograma |
+| `igual` | 1 por cartão | **nenhum** cartão do quadro tem régua — é o PPC clássico |
+
+O degrau da duração existe **só aqui**: o avanço do cronograma pergunta *quanto da obra está feito*, e
+ali duração seria régua errada (semana de cura de concreto não é obra feita); o PPC pergunta *quanto do
+que se assumiu saiu*, e duração é a régua de esforço que toda obra tem mesmo sem orçamento vinculado.
+
+**O peso é congelado quando o cartão entra no quadro**, na régua do `retencao_percentual_aplicado` da
+medição: reprecificar o orçamento em dezembro não pode reescrever o PPC de agosto. Cartão sem régua
+(marco, atividade sem duração nem vínculo) fica **fora da divisão** e é contado em `sem_peso` ao lado
+do índice — a régua do `folhas_sem_peso` do avanço. E **a base viaja com o número** (`peso_bases`), na
+leitura da semana, em cada ponto da série, no tooltip, na tabela e na legenda: 70% pesado por dinheiro
+e 70% contando cartões são duas frases diferentes.
+
+> **Continua sem teto e sem meta** (§5.5j do `planos.py`). Peso é a unidade do índice; meta seria um
+> valor a atingir, e essa continua sendo conversa entre a empresa e a equipe dela.
+
+**b) A semana que ainda não acabou não se encerra sem alçada e sem motivo.** `encerrar` conferia o
+status e os julgamentos pendentes, nunca o calendário: na segunda de manhã dava para fechar a semana
+que ia até domingo. Não virou porta trancada — existe a obra que para na quinta de um feriado
+prolongado, e recusar faria o time julgar de memória na segunda seguinte. Virou **porta com chave e
+assinatura**: `pdca.programacao.encerrar_antecipado` + motivo por escrito, e a semana fica marcada na
+série com símbolo próprio (losango no eixo, distinto da bolinha da semana reaberta — ela pode ser as
+duas coisas).
+
+**c) O compromisso que não saiu continua de pé.** A semana encerrada era um fim de linha: o cartão
+"não saiu" ficava no quadro de trás e a seguinte nascia vazia. O que se perdia não era o clique de
+puxar de novo — era **o fato de aquele compromisso estar na segunda semana seguida**, que é o que faz a
+reunião perguntar o que está travando em vez de perguntar por que o índice caiu.
+
+`services.arrastar_pendentes` roda no fim de `encerrar` (e tem porta própria, `arrastar/`, para a
+semana reaberta e rejulgada). O cartão novo leva **o que ficou por fazer** — previsto menos apontado,
+que é o item parcialmente concluído da §11.10 —, o responsável, o local e o contador; **não** leva a
+nota nem a causa, que são o julgamento da semana que passou. Três recusas deliberadas: não arrasta
+para semana já comprometida, respeita o teto de cartões e **arrasta mesmo o que está travado** — a
+restrição volta com o cartão, `comprometer` recusa a semana enquanto ela estiver lá, e a trava aparece
+no quadro da reunião em vez de o serviço sumir.
+
+### 11.12 Cancelar a medição cancela o título — e o título pago tranca o cancelamento
+
+*(decisão do dono, 15/09/2026: "quando cancelo medição em PDCA não cancela o pagamento em ERP… também
+tem a questão de já estar quitado".)*
+
+A §7 diz que o PDCA **não paga**, e isso continua verdade: ele não dá baixa, não escolhe data de
+pagamento, não conversa com o banco. Mas ele **gera** o título, e o que gera tem de saber desfazer —
+senão a `ContaPagar` fica aberta no financeiro apontando para um boletim que não existe mais, e a
+conciliação descobre no fim do mês.
+
+`services.cancelar_medicao` é o caminho único, com três portas:
+
+| estado da medição | o que acontece |
+| --- | --- |
+| rascunho · em aprovação | retira o documento. Não há título, e não pede motivo — não houve efeito |
+| aprovada, título `ABERTO` | cancela os dois **na mesma transação**; motivo obrigatório; auditoria dos dois lados |
+| aprovada, título com baixa (parcial **ou** quitado) | **recusa**, dizendo quanto já foi pago, e manda retificar |
+
+**A régua do quitado é a mesma que já governa esta casa:** o que virou dinheiro se corrige por
+documento novo, não apagando o antigo. Existe uma `Transacao` lançada, e um título cancelado com baixa
+em cima é um buraco que a conciliação não fecha nunca. A verificação olha `valor_pago > 0` **antes** do
+status, porque o caso traiçoeiro é a baixa parcial — o título ainda é `PARCIAL`, parece vivo, e já saiu
+dinheiro.
+
+**O aviso e a trava saem do mesmo lugar** (`services.estado_do_titulo`, servido no
+`MedicaoSerializer.titulo_erp`): o diálogo da tela mostra o título, o valor e o vencimento antes do
+clique, e com baixa em cima o botão de confirmar nem arma. Dois lugares para a mesma regra divergiriam
+na primeira mudança dela. O campo fica **fora** do `MedicaoResumoSerializer` — é uma consulta por
+linha, e a lista desenha o status do boletim, não o do título (a lição do D136).
+
+**A permissão é a de atestar, não a de apurar:** derrubar um título a pagar é alçada de quem autorizou
+o dinheiro a sair.
+
+### 11.9 A semana errada tem volta, e a volta é registrada
+
+*(decisão de desenho, 15/09/2026, respondendo a "e se o usuário tiver errado na semana?".)*
+
+O ciclo do Last Planner é de mão única — rascunho → comprometida → encerrada —, e ele **precisa** ser,
+senão o PPC deixa de medir compromisso e passa a medir quem soube editar a lista a tempo. Mas mão
+única não pode virar beco: julgamento é feito em reunião, com gente cansada no fim da semana, e erro
+ali é normal. Sem volta, uma causa lançada errada fica para sempre — e o estrago não é do índice, é do
+**ranking**, que é o que decide o que a empresa muda. Uma causa errada contada durante um ano manda a
+obra consertar o problema que ela não tem.
+
+**Por que reabrir, e não retificar.** A medição da PDCA.3 congela e se corrige por um documento novo,
+porque ela virou dinheiro: existe um título no ERP que não pode ser reescrito. Aqui não há documento a
+reconciliar — o PPC é **derivado, nunca gravado** (§4.9) —, então reabrir e rejulgar simplesmente
+recalcula. A régua aplicável é a do `ApontamentoAvanco` (§4.3): o erro se corrige **com motivo
+declarado**, não se apaga.
+
+**Um degrau por vez**, e o custo de cada um é diferente:
+
+| De → para | O julgamento | De quem é o ato |
+|---|---|---|
+| `encerrada` → `comprometida` | **fica** — corrige-se só o que está errado | quem julga (`programacao.encerrar`) |
+| `comprometida` → `rascunho` | **é apagado** — semana não assumida não tem julgamento | quem assume (`programacao.comprometer`) |
+
+Descer dois degraus custa duas reaberturas, cada uma com a sua frase — porque é exatamente o gesto que
+merece dois registros. E a permissão muda com o degrau de propósito: um código só para os dois daria a
+quem julga o poder de desmontar o quadro que a equipe assumiu, ou — pior — daria a quem monta a parede
+o poder de apagar o índice que ela produziu.
+
+**Enquanto reaberta, a semana sai da série de PPC e do ranking de causas.** Ela deixou de ser apurada,
+e contá-la com o julgamento velho seria publicar um número que o próprio sistema declarou em revisão.
+
+**Sem prazo, e o que protege o histórico é a correção aparecer.** A tentação seria só deixar reabrir a
+semana recente; mas erro achado tarde é o mais caro de não poder consertar, e a retificadora da
+medição — que mexe em dinheiro — também não tem prazo. O que impede a reescrita silenciosa da história
+é o selo: quem lê a série vê quais semanas foram reabertas, quantas vezes e por quê, e a reunião que
+discutiu o número antigo não é contrariada em silêncio.
 
 ### 11.8 O commit é do dono, e vem no fim do módulo
 
@@ -831,8 +1208,8 @@ O **commit não acompanha a fatia**: ele é do dono e vem ao final do módulo (�
 | **PDCA.4** | `AditivoContrato`/`ItemAditivo` com as três travas, `DeducaoMedicao` tipada, material estocado (coluna E da G703), período encadeado, e a medição como **documento com endereço próprio** (apurar × boletim) |
 | **PDCA.5** | Last Planner: `Restricao`, `ProgramacaoSemanal`, PPC e catálogo de causas |
 | **PDCA.6** | Linha de balanço sobre `LocalObra` — ritmo, sincronia de equipes, gargalo |
-| **PDCA.7** | Verificação (FVS), `NaoConformidade` com pino da Prancheta, `PlanoAcao` 5W2H e verificação de eficácia |
-| **PDCA.8** | SSMA: DDS, ocorrência, EPI |
+| **PDCA.7** ✅ | Verificação (FVS), `NaoConformidade` com pino da Prancheta, `PlanoAcao` 5W2H e verificação de eficácia |
+| **PDCA.8** ✅ | SSMA: DDS com lista de presença, ocorrência com os campos da CAT e o bloco clínico sob PII. **O EPI é lido do SIL, não recriado** (§4.6) |
 | **PDCA.9** | Apropriação, produtividade e EVM em homem-hora |
 | **PDCA.10** | Riscos e marcos |
 | **PDCA.11** | Pós-obra: vistoria, punch list, garantia, chamado |

@@ -2,7 +2,7 @@
 // orçamentista passa horas numa grade de centenas de linhas, e cada pixel de
 // chrome é linha de planilha que sai da tela.
 import { type ButtonHTMLAttributes, type CSSProperties, type HTMLAttributes, type MouseEvent, type ReactNode, type SelectHTMLAttributes } from 'react'
-import { ChevronDown, ChevronRight, Inbox, Lock } from 'lucide-react'
+import { ChevronDown, ChevronRight, Inbox, Lock, Search, X } from 'lucide-react'
 import type { Kind } from './lib'
 
 export const mono: CSSProperties = { fontFamily: 'var(--mono)', fontVariantNumeric: 'tabular-nums' }
@@ -128,6 +128,46 @@ export function Select({ children, style, ...rest }: SelectHTMLAttributes<HTMLSe
       backgroundSize: '5px 5px,5px 5px', backgroundRepeat: 'no-repeat',
       maxWidth: 260, textOverflow: 'ellipsis', ...style,
     }}>{children}</select>
+  )
+}
+
+/** A caixa de busca do módulo: lupa dentro do campo e um X para limpar.
+ *
+ *  Estava copiada tela a tela com o mesmo `top: 9` medido a olho, e o botão de
+ *  limpar não existia em nenhuma delas — quem filtrava uma lista de 12 mil itens
+ *  tinha de apagar o texto à mão para ver a lista inteira de novo. */
+export function CampoBusca({ valor, onChange, placeholder, style, autoFocus }: {
+  valor: string
+  onChange: (v: string) => void
+  placeholder?: string
+  style?: CSSProperties
+  autoFocus?: boolean
+}) {
+  return (
+    <div style={{ position: 'relative', flex: 1, minWidth: 220, ...style }}>
+      <Search size={14} style={{ position: 'absolute', left: 10, top: 9, color: 'var(--ink-3)', pointerEvents: 'none' }} />
+      <input
+        value={valor}
+        autoFocus={autoFocus}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        style={{ ...inp, paddingLeft: 30, paddingRight: valor ? 30 : 10 }}
+      />
+      {valor && (
+        <button
+          onClick={() => onChange('')}
+          title="Limpar a busca"
+          aria-label="Limpar a busca"
+          style={{
+            position: 'absolute', right: 6, top: 6, width: 20, height: 20, padding: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4,
+            border: 'none', background: 'none', color: 'var(--ink-3)', cursor: 'pointer',
+          }}
+        >
+          <X size={13} />
+        </button>
+      )}
+    </div>
   )
 }
 

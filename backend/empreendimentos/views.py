@@ -10,7 +10,10 @@ from nucleo.quotas import QuotaEnforcedMixin
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from .models import Empreendimento, ContaBancariaEmpreendimento, CustoEmpreendimento, Unidade
+from .models import (
+    SITUACAO_UNIDADE_CHOICES, ContaBancariaEmpreendimento, CustoEmpreendimento,
+    Empreendimento, Unidade,
+)
 from .serializers import (
     EmpreendimentoSerializer, ContaBancariaEmpreendimentoSerializer,
     CustoEmpreendimentoSerializer, UnidadeSerializer,
@@ -109,6 +112,67 @@ class UnidadeViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
                 status=409,
             )
         return super().destroy(request, *args, **kwargs)
+
+    @action(detail=False, methods=['get'], url_path='resumo')
+    def resumo(self, request):
+        """`GET /api/unidades/resumo/?empreendimento=<id>[&…mesmos filtros]`
+
+        O que a aba Unidades precisa saber sobre o **estoque inteiro**, e que a
+        página carregada não sabe dizer.
+
+        Duas coisas, e as duas eram números errados com cara de certos:
+
+        - **`por_situacao`** — "40 à venda · 160 vendidas" contado no banco, sobre
+          todas as unidades que passam pelos filtros, e com as quatro situações
+          (não só duas). Contar as linhas já baixadas dava o resumo das
+          *primeiras 100*, que num loteamento de 800 lotes é uma amostra
+          apresentada como total.
+        - **`quadras`** — todas as quadras do empreendimento, para o seletor. O
+          filtro que se monta das linhas carregadas só oferece as quadras que já
+          desceram, e então filtrar por quadra exige rolar até o fim e clicar em
+          "Carregar mais" — pedir ao usuário que carregue tudo para poder não
+          carregar tudo.
+
+        A lista de quadras **ignora de propósito o filtro de quadra**: um seletor
+        que se reduz ao valor já escolhido não deixa trocar de escolha. Ela
+        respeita, sim, o empreendimento e a busca, que é o recorte em que a
+        pessoa está trabalhando.
+        """
+        qs = self.filter_queryset(self.get_queryset())
+        contagens = dict(
+            qs.order_by().values_list('situacao').annotate(n=Count('unidade_id'))
+        )
+
+        # A base do seletor: o mesmo recorte, menos a própria quadra.
+        base_quadras = self.get_queryset()
+        empreendimento = request.query_params.get('empreendimento')
+        if empreendimento:
+            base_quadras = base_quadras.filter(empreendimento_id=empreendimento)
+        quadras = [
+            q for q in base_quadras.order_by().values_list('quadra', flat=True).distinct() if q
+        ]
+
+        return Response({
+            'total': sum(contagens.values()),
+            'por_situacao': {
+                codigo: contagens.get(codigo, 0) for codigo, _ in SITUACAO_UNIDADE_CHOICES
+            },
+            'situacoes': [
+                {'valor': codigo, 'rotulo': str(rotulo), 'total': contagens.get(codigo, 0)}
+                for codigo, rotulo in SITUACAO_UNIDADE_CHOICES
+            ],
+            # Ordem natural, a mesma da grade: "10" depois de "2".
+            'quadras': sorted(quadras, key=_chave_natural_texto),
+        })
+
+
+def _chave_natural_texto(valor: str) -> tuple:
+    """A mesma leitura humana da grade, em Python: numérico quando dá, texto
+    quando não. "Quadra A" e "12-B" existem no cadastro, então a chave precisa
+    aguentar as duas — e o que é número tem de vir na ordem de número."""
+    texto = (valor or '').strip()
+    digitos = ''.join(c for c in texto if c.isdigit())
+    return (0, int(digitos), texto) if digitos else (1, 0, texto.lower())
 
 
 def ordenar_por_endereco(qs):

@@ -4,6 +4,18 @@ Orquestra a integração Asaas: garante o `customer`, cria a cobrança e aplica 
 baixa automática a partir do webhook. A lógica e os models de negócio
 continuam no `moduloerp` (`Boleto`, `ContaReceber`) — este módulo só traduz
 entre o protocolo Asaas e esses models (ver moduloerp.md §6).
+
+**O que o SGI escreve no boleto, e o que não é dele.** O `POST /payments` leva
+exatamente seis campos: `customer`, `billingType`, `value`, `dueDate`,
+`description` e `externalReference` (ver `client.criar_payment`). Tudo o mais
+que aparece impresso — o campo *Instruções*, com frases do tipo "Não receber
+com cheque", o comportamento após o vencimento, juros e multa de boleto — é
+**configuração da conta Asaas**, escolhida no painel do gateway, e vale para
+toda cobrança emitida por aquela conta. Mudá-lo é lá, não aqui; nenhuma linha
+deste módulo pode alterá-lo, e fingir o contrário seria vender controle que não
+existe. O que é nosso, e portanto ajustável aqui, é a **descrição** (montada em
+`clientes.plano_pagamento.descricao_do_titulo`) e o **vencimento** enviado (ver
+`vencimento_bancario`).
 """
 import logging
 import unicodedata
@@ -322,12 +334,39 @@ def _registrar_boleto_erro(conta_receber, exc):
     )
 
 
+def vencimento_bancario(conta_receber):
+    """A data pagável do título: o vencimento do contrato, ou o próximo dia útil.
+
+    **O título não muda; o boleto sim.** `ContaReceber.data_vencimento` é o que
+    foi combinado no contrato e é por ele que se conta atraso, juros e multa —
+    mexer nele para caber no calendário do banco reescreveria a dívida. O que se
+    ajusta é a data impressa no boleto (`Boleto.data_vencimento`, e o `dueDate`
+    que vai ao gateway), porque um boleto com vencimento no sábado não é pagável
+    no sábado: ele nasce, na prática, vencido.
+
+    A praça é a do **imóvel** — os feriados que valem são os do município do
+    empreendimento, não os da cidade do comprador. Quando o título não tem
+    empreendimento (lançamento avulso do financeiro), sobra fim de semana +
+    feriado nacional, que já é melhor que nada.
+
+    Devolve `(data, motivo)`; `motivo` vazio significa que a data do contrato já
+    era útil e nada foi empurrado.
+    """
+    from clientes.vencimento import ajuste_da_conta
+
+    return ajuste_da_conta(conta_receber).explicar(conta_receber.data_vencimento)
+
+
 def gerar_cobranca_asaas(conta_receber):
     """
     Cria a cobrança no Asaas para uma `ContaReceber` e grava/atualiza o
     `Boleto` correspondente (status `EMITIDO`, `gateway_id`, `url_pdf`,
     `linha_digitavel`). Idempotente por conta: reaproveita o `Boleto`
     existente em vez de duplicar a cobrança no gateway.
+
+    O `dueDate` enviado é o **dia útil bancário** (ver `vencimento_bancario`), e
+    é ele que fica gravado em `Boleto.data_vencimento`: o boleto e o gateway
+    contam a mesma história, e o título segue com a data do contrato.
 
     Se o Asaas recusar, o erro é PERSISTIDO num `Boleto` status ERRO (com os
     códigos/mensagens do gateway) para a UI mostrar — não fica invisível. Erro
@@ -340,13 +379,14 @@ def gerar_cobranca_asaas(conta_receber):
     if boleto_existente:
         return boleto_existente
 
+    vencimento, motivo_do_ajuste = vencimento_bancario(conta_receber)
     try:
         customer_id = garantir_customer_asaas(conta_receber.cliente)
         client = AsaasClient()
         pagamento = client.criar_payment(
             customer_id=customer_id,
             valor=conta_receber.saldo_aberto,
-            vencimento=conta_receber.data_vencimento,
+            vencimento=vencimento,
             descricao=conta_receber.descricao,
             external_reference=conta_receber.conta_receber_id,
         )
@@ -363,11 +403,20 @@ def gerar_cobranca_asaas(conta_receber):
         conta_receber=conta_receber,
         status=Boleto.StatusBoleto.EMITIDO,
         valor=conta_receber.saldo_aberto,
-        data_vencimento=conta_receber.data_vencimento,
+        data_vencimento=vencimento,
         gateway_id=pagamento.get('id', ''),
         url_pdf=pagamento.get('bankSlipUrl') or pagamento.get('invoiceUrl') or '',
         linha_digitavel=pagamento.get('identificationField') or '',
-        dados_retorno_api={'emissao': pagamento},
+        dados_retorno_api={
+            'emissao': pagamento,
+            # Por que a data do boleto difere da do título — a resposta fica
+            # junto do boleto, que é onde a pergunta é feita.
+            **({'ajuste_de_vencimento': {
+                'contratual': conta_receber.data_vencimento.isoformat(),
+                'bancario': vencimento.isoformat(),
+                'motivo': motivo_do_ajuste,
+            }} if motivo_do_ajuste else {}),
+        },
     )
     return boleto
 

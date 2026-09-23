@@ -369,6 +369,61 @@ class PlanoVooTests(MapsTestBase):
         campos.update(extra)
         return PlanoVoo.objects.create(**campos)
 
+    def test_do_local_cria_o_plano_por_raio_e_declara_a_procedencia_da_area(self):
+        """A porta que faltava: sem ela a aba de voo só sabia mostrar o vazio.
+
+        E ela **diz de onde veio a área**: um círculo em volta do pin não é o
+        canteiro, e quem vai pedir autorização de voo precisa da diferença.
+        """
+        local = self._local(nome="Canteiro Aurora")
+        self.autenticar()
+        resposta = self.client.post("/api/maps/planos-voo/do-local/", {
+            "local": local.pk, "raio_m": 300,
+        }, format="json")
+
+        self.assertEqual(resposta.status_code, 201)
+        self.assertEqual(resposta.data["origem_da_area"], "raio")
+        self.assertEqual(resposta.data["raio_m"], 300)
+        plano = PlanoVoo.objects.get(pk=resposta.data["plano"]["plano_id"])
+        self.assertEqual(plano.tenant_id, self.tenant.pk)
+        self.assertTrue(plano.area.contains(local.ponto))
+
+        # E o plano recém-criado calcula, que é o gesto seguinte na tela.
+        calculo = self.client.post(f"/api/maps/planos-voo/{plano.pk}/calcular/")
+        self.assertEqual(calculo.status_code, 200)
+        self.assertGreater(calculo.data["memoria"]["waypoints"], 2)
+
+    def test_do_local_prefere_o_perimetro_desenhado(self):
+        """Mesma ordem da cerca: quem desenhou o canteiro tem o polígono certo."""
+        local = self._local(nome="Com perímetro")
+        local.area = self._area()
+        local.save(update_fields=["area"])
+        self.autenticar()
+        resposta = self.client.post("/api/maps/planos-voo/do-local/",
+                                    {"local": local.pk}, format="json")
+
+        self.assertEqual(resposta.status_code, 201)
+        self.assertEqual(resposta.data["origem_da_area"], "perimetro")
+        self.assertIsNone(resposta.data["raio_m"])
+
+    def test_do_local_sem_coordenada_recusa_com_motivo(self):
+        local = Local.objects.create(tenant=self.tenant, nome="Sem ponto", tipo=Local.Tipo.AVULSO)
+        self.autenticar()
+        resposta = self.client.post("/api/maps/planos-voo/do-local/",
+                                    {"local": local.pk}, format="json")
+
+        self.assertEqual(resposta.status_code, 400)
+        self.assertIn("geocodifique", resposta.data["detail"].lower())
+
+    def test_do_local_nao_alcanca_local_de_outro_tenant(self):
+        alheio = self._local(nome="Do vizinho", tenant=self.tenant_b)
+        self.autenticar()
+        resposta = self.client.post("/api/maps/planos-voo/do-local/",
+                                    {"local": alheio.pk}, format="json")
+
+        self.assertEqual(resposta.status_code, 400)
+        self.assertFalse(PlanoVoo.objects.filter(nome__contains="Do vizinho").exists())
+
     def test_altura_sai_do_gsd_e_da_geometria_da_camera(self):
         """2 cm/px, focal 8,8 mm, 5472 px, sensor 13,2 mm → ~72,9 m."""
         altura = voo.altura_para_gsd(2, 8.8, 5472, 13.2)
@@ -591,3 +646,102 @@ class SincronizacaoTests(MapsTestBase):
             local = services.sincronizar_local(entidade, tipo)
             self.assertEqual(local.tipo, tipo)
             self.assertEqual(local.tenant_id, self.tenant.pk)
+
+
+# ---------------------------------------------------------------------------
+# A unidade imobiliária no mapa — medidas, confrontações e a rua
+# ---------------------------------------------------------------------------
+class UnidadeNoMapaTests(MapsTestBase):
+    """Um lote no mapa vinha com área e mais nada.
+
+    **Área não descreve terreno.** O que vai ao contrato, à matrícula e à
+    conversa com o vizinho é *quanto mede cada lado* e *com quem cada lado
+    divide* — e o lado da frente é a rua, de onde sai o endereço. O cadastro já
+    guardava tudo isso (`empreendimentos.Unidade`); o mapa é que não mostrava.
+    """
+
+    def _unidade(self, **campos):
+        from empreendimentos.models import Unidade
+
+        emp = Empreendimento.objects.create(
+            tenant=self.tenant, empreendimento="Residencial Acácias",
+            razao_social=f"Acácias {campos.get('lote', '01')} SA",
+            cnpj=f"1122233300{campos.get('lote', '01')}81"[:18],
+            telefone="71999990000", endereco="Rua das Acácias, s/n",
+            cidade="Salvador", estado="BA",
+        )
+        padrao = dict(
+            tenant=self.tenant, empreendimento=emp, quadra="4", lote="06",
+            endereco="Rua das Acácias, 120",
+            medida_frente=Decimal("12.00"), confrontante_frente="Rua das Acácias",
+            medida_fundo=Decimal("12.00"), confrontante_fundo="Lote 14",
+            medida_lateral_direita=Decimal("30.00"), confrontante_lateral_direita="Lote 05",
+        )
+        padrao.update(campos)
+        return Unidade.objects.create(**padrao)
+
+    def _local_da_unidade(self, unidade):
+        return Local.objects.create(
+            tenant=self.tenant, nome=unidade.rotulo, tipo=Local.Tipo.UNIDADE,
+            unidade=unidade, ponto=Point(*SALVADOR, srid=4326), precisao=Precisao.EXATA,
+            logradouro="Rua das Acácias", numero="120", cidade="Salvador", uf="BA",
+        )
+
+    def test_a_tabela_de_locais_traz_medidas_e_confrontacoes(self):
+        self._local_da_unidade(self._unidade())
+        self.autenticar()
+        linha = next(
+            l for l in self.client.get("/api/maps/locais/").data["results"]
+            if l["tipo"] == "unidade"
+        )
+        detalhe = linha["unidade_detalhe"]
+        self.assertEqual(detalhe["rua"], "Rua das Acácias")
+        # Três lados preenchidos, três devolvidos — o quarto não vira linha vazia.
+        self.assertEqual(len(detalhe["confrontacoes"]), 3)
+        self.assertEqual(detalhe["confrontacoes"][0]["lado"], "frente")
+        self.assertEqual(detalhe["confrontacoes"][0]["medida"], "12.00")
+        self.assertIn("Rua das Acácias", detalhe["memorial"])
+
+    def test_rua_confere_apesar_de_abreviatura_acento_e_numero(self):
+        """O memorial e o endereço nunca são digitados iguais. Exigir igualdade
+        literal acusaria divergência em todo cadastro correto."""
+        unidade = self._unidade(
+            confrontante_frente="R. das Acacias", endereco="Rua das Acácias, 120 — Centro")
+        self.assertIs(services.rua_confere(unidade), True)
+
+    def test_rua_diferente_do_endereco_e_apontada(self):
+        unidade = self._unidade(
+            confrontante_frente="Avenida Brasil", endereco="Rua das Acácias, 120")
+        self.assertIs(services.rua_confere(unidade), False)
+
+    def test_sem_como_comparar_devolve_indefinido_e_nao_falso(self):
+        """Cadastro incompleto não é cadastro errado — acusar divergência onde
+        só falta dado ensina a ignorar o aviso."""
+        self.assertIsNone(services.rua_confere(self._unidade(confrontante_frente="")))
+        self.assertIsNone(
+            services.rua_confere(self._unidade(lote="07", endereco="", confrontante_frente="Rua A"))
+        )
+
+    def test_o_logradouro_do_local_serve_de_comparacao(self):
+        """A unidade pode não ter endereço próprio: o `Local` tem, e é o mesmo
+        endereço — usá-lo evita um 'sem como conferir' que não é verdade."""
+        unidade = self._unidade(endereco="", confrontante_frente="Rua das Acácias")
+        local = self._local_da_unidade(unidade)
+        self.assertIs(services.rua_confere(unidade, local), True)
+
+    def test_a_fila_de_decisao_conta_as_divergentes(self):
+        self._local_da_unidade(
+            self._unidade(confrontante_frente="Avenida Brasil", endereco="Rua das Acácias, 120"))
+        self.autenticar()
+        fila = self.client.get("/api/maps/mapa/").data["requer_decisao"]
+        divergente = next(i for i in fila if i["tipo"] == "rua_divergente")
+        self.assertEqual(divergente["quantidade"], 1)
+
+    def test_local_de_outro_tipo_nao_ganha_o_detalhe(self):
+        self._local(nome="Canteiro")
+        self.autenticar()
+        linha = next(
+            l for l in self.client.get("/api/maps/locais/").data["results"]
+            if l["tipo"] == "avulso"
+        )
+        self.assertIsNone(linha["unidade_detalhe"])

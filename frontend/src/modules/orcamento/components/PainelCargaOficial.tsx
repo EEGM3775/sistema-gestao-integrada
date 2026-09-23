@@ -19,8 +19,8 @@ import {
 } from '../ui'
 import { dataBR, FONTE_ROTULO, mesBR } from '../lib'
 import {
-  useCargas, useDispararCarga, useEnviarArquivoDaCarga, useEstadoDaCarga,
-  useRepetirCarga, useSalvarFonteOficial,
+  useCargas, useDispararCarga, useDocumentosDisponiveis, useEnviarArquivoDaCarga,
+  useEstadoDaCarga, useRepetirCarga, useSalvarFonteOficial,
 } from '../hooks'
 import type { CargaBase, EstadoCarga, FonteOficial } from '../types'
 
@@ -51,8 +51,14 @@ function ResumoDaCorrida({ carga }: { carga: CargaBase }) {
               importação é idempotente e conferir 800 mil linhas seria teatro. O
               que resolve é dizer quantos itens entram por publicação — e é aí
               que se percebe o arquivo errado. */}
+          {/* O nome que a fonte deu à tabela, quando ela publica várias — é a
+              conferência de que veio o documento certo, com escopo, convenção
+              coletiva e a leis sociais do cabeçalho do arquivo. */}
+          {resumo.rotulo && (
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>{resumo.rotulo}</div>
+          )}
           <div style={{ ...CAPS, fontSize: 9, marginBottom: 5 }}>
-            {publicacoes.length} publicação(ões) · planilha {resumo.planilha || '—'}
+            {publicacoes.length} publicação(ões) · arquivo {resumo.planilha || '—'}
             {resumo.aba_analitica
               ? ` · analítica "${resumo.aba_analitica}" (${resumo.linhas_analiticas ?? 0} linhas)`
               : ' · sem aba analítica'}
@@ -95,7 +101,13 @@ export default function PainelCargaOficial() {
   const [editando, setEditando] = useState<Partial<FonteOficial> | null>(null)
   const [competencia, setCompetencia] = useState('')
   const [fonteEscolhida, setFonteEscolhida] = useState('sinapi')
+  const [documento, setDocumento] = useState('')
   const [recado, setRecado] = useState('')
+
+  const fonteDaLista = estado?.fontes.find(f => f.fonte === fonteEscolhida)
+  // A lista só é buscada para a fonte que publica várias — nas outras ela seria
+  // um download por nada, e a resposta caberia num item só.
+  const menu = useDocumentosDisponiveis(fonteEscolhida, !!fonteDaLista?.exige_documento)
 
   // 403 = não é dono da plataforma. O painel simplesmente não existe para essa
   // pessoa; a tela de bases segue inteira sem ele.
@@ -103,14 +115,26 @@ export default function PainelCargaOficial() {
   if (isLoading || !estado) return <Loading texto="Conferindo a carga oficial…" />
 
   const emAndamento = estado.em_andamento
-  const fonte = estado.fontes.find(f => f.fonte === fonteEscolhida)
-  const podeBaixar = !!fonte?.template_url && !!fonte?.carga_automatica
+  const fonte = fonteDaLista
+  const exigeDocumento = !!fonte?.exige_documento
+  const documentos = (menu.data?.documentos ?? []).filter(d => d.carregavel)
+  const podeBaixar =
+    !!fonte?.template_url && !!fonte?.carga_automatica
+    && (!exigeDocumento || !!documento)
+
+  const trocarFonte = (nova: string) => {
+    setFonteEscolhida(nova)
+    // O documento pertence à fonte anterior; carregá-lo na nova seria disparar
+    // a tabela de uma fonte com o nome de outra.
+    setDocumento('')
+  }
 
   const aoDisparar = async (somenteResumo: boolean) => {
     setRecado('')
     const nova = await disparar.mutateAsync({
       fonte: fonteEscolhida,
       competencia: competencia || undefined,
+      url: documento || undefined,
       somente_resumo: somenteResumo,
     })
     setRecado(
@@ -138,13 +162,42 @@ export default function PainelCargaOficial() {
       <Card style={{ padding: '14px 16px', marginBottom: 11 }}>
         <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <Field label="Fonte">
-            <Select value={fonteEscolhida} onChange={e => setFonteEscolhida(e.target.value)}>
+            <Select value={fonteEscolhida} onChange={e => trocarFonte(e.target.value)}>
               {estado.fontes.length === 0 && <option value="sinapi">SINAPI</option>}
               {estado.fontes.map(f => (
                 <option key={f.fonte} value={f.fonte}>{FONTE_ROTULO[f.fonte] ?? f.fonte_nome}</option>
               ))}
             </Select>
           </Field>
+
+          {/* **A caixa que só aparece quando a fonte publica várias tabelas.**
+              A EMBASA põe 65 no ar por semestre — expansão, operação de água e
+              de esgoto, cada uma pela convenção coletiva da região — e nenhuma
+              é "a do mês". Um botão sozinho aqui esconderia a única pergunta que
+              importa, e escolher por quem carrega é escolher o preço de uma
+              região para quem orça em outra. */}
+          {exigeDocumento && (
+            <Field
+              label="Tabela"
+              dica="A fonte publica várias por período. A identidade real (escopo, convenção, leis sociais) vem do cabeçalho do próprio arquivo, na leitura."
+            >
+              <Select
+                value={documento}
+                onChange={e => setDocumento(e.target.value)}
+                disabled={menu.isLoading || documentos.length === 0}
+                style={{ maxWidth: 340 }}
+              >
+                <option value="">
+                  {menu.isLoading ? 'Buscando a lista…'
+                    : documentos.length === 0 ? 'Nenhuma tabela publicada'
+                      : 'Escolha a tabela…'}
+                </option>
+                {documentos.map(d => (
+                  <option key={d.slug} value={d.url}>{d.rotulo}</option>
+                ))}
+              </Select>
+            </Field>
+          )}
           <Field
             label="Competência"
             dica="Vazio usa o mês que a defasagem da fonte indica — a SINAPI publica M por volta do dia 10 de M+1."
@@ -160,8 +213,9 @@ export default function PainelCargaOficial() {
             disabled={!podeBaixar || !!emAndamento || disparar.isPending}
             onClick={() => aoDisparar(false)}
             title={
-              podeBaixar ? 'Baixa o pacote oficial e grava as publicações'
-                : 'Cadastre o template da URL desta fonte primeiro'
+              podeBaixar ? 'Baixa o arquivo oficial e grava as publicações'
+                : exigeDocumento && !documento ? 'Escolha primeiro qual tabela carregar'
+                  : 'Cadastre o template da URL desta fonte primeiro'
             }
           >
             <CloudDownload size={14} />Carregar agora
@@ -178,7 +232,7 @@ export default function PainelCargaOficial() {
               pode parar a carga. */}
           <label>
             <input
-              type="file" accept=".zip,.xlsx" style={{ display: 'none' }}
+              type="file" accept=".zip,.xlsx,.pdf" style={{ display: 'none' }}
               disabled={!!emAndamento || enviar.isPending}
               onChange={e => {
                 const arquivo = e.target.files?.[0]
@@ -222,6 +276,18 @@ export default function PainelCargaOficial() {
               O arquivo largo (27 UFs em colunas) é o da Caixa; as outras bases continuam
               entrando pelo comando <span style={mono}>importar_base_referencial</span>,
               um arquivo por UF.
+            </span>
+          </Aviso>
+        )}
+        {/* A fonte fora do ar não é erro do pedido, é o estado do mundo — e a
+            caixa vazia sozinha parece "não há nada publicado", que é a leitura
+            errada e a que faz alguém esperar em vez de enviar o arquivo. */}
+        {exigeDocumento && menu.data?.erro && (
+          <Aviso tom="amber">
+            <AlertTriangle size={15} style={{ flex: 'none', marginTop: 1 }} />
+            <span>
+              Não deu para ler a lista de tabelas da fonte: {menu.data.erro} O envio
+              manual do arquivo continua valendo.
             </span>
           </Aviso>
         )}

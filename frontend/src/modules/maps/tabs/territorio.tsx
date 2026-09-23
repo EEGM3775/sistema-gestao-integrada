@@ -1,15 +1,19 @@
 import { useMemo, useState } from 'react'
 import {
-  Calculator, CalendarClock, Download, Layers, Plane, Route as RouteIcon, ShieldAlert, Timer,
+  Calculator, CalendarClock, Download, Layers, Plane, Plus, Route as RouteIcon, ShieldAlert,
+  Spline, Timer, TriangleAlert,
 } from 'lucide-react'
 import { Btn, Card, Empty, KpiTile, Loading, Mapa, Num, Pill, SectionHead } from '@/components/malha'
 import type { CamadaGeoJSON, CamadaRaster } from '@/components/malha'
 import { exportarPlano, tilesDaOrtofoto } from '../api'
 import {
-  useCalcularPlano, useCamadas, useFeicoes, useOrtofotos, useOtimizarRota, usePlanos, useRotas,
+  useCalcularPlano, useCamadas, useCriarPlanoDoLocal, useFeicoes, useLocais, useOrtofotos,
+  useOtimizarRota, usePlanos, useRotas, useStatusMaps, useTracarRota,
 } from '../hooks'
 import type { MemoriaDoVoo, ViolacaoDeJanela } from '../types'
 import type { Say } from './operacao'
+
+import { minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
 
 const selectEstilo: React.CSSProperties = {
   padding: '7px 11px', borderRadius: 8, border: '1px solid var(--line)',
@@ -53,7 +57,7 @@ export function Camadas() {
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)' }}>
               <CalendarClock size={15} style={{ color: 'var(--ink-3)' }} />
               até
-              <input type="date" value={ate} onChange={(e) => setAte(e.target.value)} style={selectEstilo} />
+              <input type="date" min={minCalendarioISO} max={maxCalendarioISO} value={ate} onChange={(e) => setAte(e.target.value)} style={selectEstilo} />
             </label>
           }
         >
@@ -156,6 +160,90 @@ export function Acervo({ say }: { say: Say }) {
   )
 }
 
+/**
+ * **De onde nasce um plano de voo** — a porta que faltava.
+ *
+ * A aba sabia listar, calcular e exportar. Não sabia **criar**: o único caminho
+ * para um `PlanoVoo` era o admin do Django ou um POST à mão com o polígono em
+ * GeoJSON. Por isso ela só mostrava o vazio, e o vazio explicava o conceito sem
+ * oferecer o gesto — "não consigo ver plano de voo".
+ *
+ * A área vem de um **local que a empresa já tem**, na mesma ordem da cerca de
+ * canteiro: perímetro desenhado se houver, círculo de raio se não. O raio é a
+ * saída honesta enquanto não há ferramenta de desenhar polígono na tela — e a
+ * resposta do backend diz qual dos dois valeu, porque voar sobre um círculo em
+ * volta do pin não é voar sobre o canteiro.
+ */
+function NovoPlanoDeVoo({ say }: { say: Say }) {
+  const { data: locais } = useLocais({ page_size: 200 })
+  const criar = useCriarPlanoDoLocal()
+  const [local, setLocal] = useState<number | null>(null)
+  const [raio, setRaio] = useState(150)
+
+  const comCoordenada = (locais?.results ?? []).filter((l) => l.ponto)
+  const escolhido = comCoordenada.find((l) => l.local_id === local)
+  const temPerimetro = !!escolhido?.area
+
+  return (
+    <Card>
+      <SectionHead sub="A altura não se digita: ela sai do GSD alvo com a geometria da câmera. Aqui se escolhe só onde voar.">
+        Novo plano de voo
+      </SectionHead>
+
+      {comCoordenada.length === 0 ? (
+        <Empty>
+          Nenhum local com coordenada ainda. Georreferencie uma obra em Operação → Locais
+          antes de planejar o voo — sem ponto não há área.
+        </Empty>
+      ) : (
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <select value={local ?? ''} onChange={(e) => setLocal(Number(e.target.value) || null)}
+            style={{ ...selectEstilo, minWidth: 240 }}>
+            <option value="">Onde voar…</option>
+            {comCoordenada.map((l) => (
+              <option key={l.local_id} value={l.local_id}>
+                {l.nome}{l.area ? ' (tem perímetro)' : ''}
+              </option>
+            ))}
+          </select>
+
+          {/* O raio some quando o local tem perímetro: oferecê-lo ali seria
+              oferecer trocar o desenho certo por um círculo. */}
+          {local != null && !temPerimetro && (
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 9, fontSize: 13, color: 'var(--ink-2)' }}>
+              raio
+              <input type="range" min={50} max={1000} step={25} value={raio}
+                onChange={(e) => setRaio(Number(e.target.value))} style={{ width: 140 }} />
+              <Num size={13}>{`${raio} m`}</Num>
+            </label>
+          )}
+
+          <Btn variant="primary" tam="sm" disabled={local == null || criar.isPending}
+            onClick={() => local != null && criar.mutate(
+              { local, ...(temPerimetro ? {} : { raio_m: raio }) },
+              {
+                onSuccess: (r) => say(r.origem_da_area === 'perimetro'
+                  ? `Plano criado sobre o perímetro de ${escolhido?.nome}. Agora calcule.`
+                  : `Plano criado num círculo de ${r.raio_m} m em volta de ${escolhido?.nome}. Agora calcule.`),
+                onError: () => say('Não deu para criar o plano — confira se o local tem coordenada.'),
+              },
+            )}>
+            <Plus size={13} /> Criar plano
+          </Btn>
+
+          {local != null && (
+            <span style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+              {temPerimetro
+                ? 'A área será o perímetro desenhado deste local.'
+                : 'Sem perímetro desenhado: a área será um círculo em volta do pin.'}
+            </span>
+          )}
+        </div>
+      )}
+    </Card>
+  )
+}
+
 /* ═══════════ Planos de voo ═══════════ */
 export function Voos({ say }: { say: Say }) {
   const { data, isLoading } = usePlanos()
@@ -166,15 +254,19 @@ export function Voos({ say }: { say: Say }) {
   const linhas = data?.results ?? []
   if (!linhas.length) {
     return (
-      <Empty>
-        Nenhum plano de voo. Um plano nasce da área da obra + o GSD desejado — a altura
-        é calculada pela geometria da câmera, nunca digitada solta.
-      </Empty>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <NovoPlanoDeVoo say={say} />
+        <Empty>
+          Nenhum plano de voo ainda. Um plano nasce da área da obra + o GSD desejado — a altura
+          é calculada pela geometria da câmera, nunca digitada solta.
+        </Empty>
+      </div>
     )
   }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <NovoPlanoDeVoo say={say} />
       {linhas.map((plano) => {
         const mem = memoria[plano.plano_id]
         const semAutorizacao = !plano.autorizacao_protocolo
@@ -256,22 +348,32 @@ export function Voos({ say }: { say: Say }) {
 /* ═══════════ Rotas de entrega ═══════════ */
 export function Rotas({ say }: { say: Say }) {
   const { data, isLoading } = useRotas()
+  const { data: status } = useStatusMaps(true)
   const otimizar = useOtimizarRota()
+  const tracar = useTracarRota()
   const [violacoes, setViolacoes] = useState<Record<number, ViolacaoDeJanela[]>>({})
 
   if (isLoading) return <Loading o="as rotas" />
   const linhas = data?.results ?? []
+  // `undefined` enquanto o status não voltou: não se declara ausência de motor
+  // antes de saber. O aviso só aparece quando a resposta disse `false`.
+  const semMotorDeRota = status?.provedores?.motor_rota === false
+
   if (!linhas.length) {
     return (
-      <Empty>
-        Nenhuma rota planejada. Uma rota sai de um almoxarifado e passa pelos canteiros —
-        a ordem é calculada por tempo de viagem, e as janelas de horário são conferidas.
-      </Empty>
+      <>
+        {semMotorDeRota && <AvisoSemMotorDeRota />}
+        <Empty>
+          Nenhuma rota planejada. Uma rota sai de um almoxarifado e passa pelos canteiros —
+          a ordem é calculada por tempo de viagem, e as janelas de horário são conferidas.
+        </Empty>
+      </>
     )
   }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {semMotorDeRota && <AvisoSemMotorDeRota />}
       {linhas.map((rota) => {
         const furos = violacoes[rota.rota_id] ?? []
         return (
@@ -283,6 +385,21 @@ export function Rotas({ say }: { say: Say }) {
                   {rota.procedencia && (
                     <Pill kind={rota.procedencia === 'osrm' ? 'good' : 'slate'}>{rota.procedencia_rotulo}</Pill>
                   )}
+                  {/* **Traçar ≠ otimizar, e faltava o primeiro.** `tracar/`
+                      existe no backend desde a MAP.2 e o cliente da API já o
+                      expunha — só não havia botão nenhum que o chamasse. Sem
+                      ele, a única forma de desenhar a rota era mandar reordenar
+                      as paradas, o que é outra decisão: quem já acertou a ordem
+                      na mão queria a linha, não um novo sequenciamento. */}
+                  <Btn tam="sm"
+                    onClick={() => tracar.mutate(rota.rota_id, {
+                      onSuccess: (r) => say(r.procedencia === 'osrm'
+                        ? `Traçado pelas ruas — ${r.distancia_km} km`
+                        : `Traçado em linha reta (sem motor de rota) — ${r.distancia_km} km`),
+                      onError: () => say('Alguma parada está sem coordenada — geocodifique antes.'),
+                    })}>
+                    <Spline size={13} /> Traçar
+                  </Btn>
                   <Btn variant="primary" tam="sm"
                     onClick={() => otimizar.mutate(rota.rota_id, {
                       onSuccess: (r) => {
@@ -337,6 +454,41 @@ export function Rotas({ say }: { say: Say }) {
         )
       })}
     </div>
+  )
+}
+
+/**
+ * **A rota por ruas que falta, dita na tela.**
+ *
+ * O traçado de rua vem de um OSRM self-host, e sem `OSRM_URL` configurada o
+ * backend desenha a reta entre paradas e carimba `procedencia=estimada`. O
+ * carimbo estava certo e era invisível: a pilha mostrava "Estimativa em linha
+ * reta" numa pílula cinza ao lado do nome, e quem olhava o mapa via uma linha
+ * ligando os pontos — que é exatamente a aparência de uma rota. Daí "falta rota
+ * por ruas": a capacidade não existe nesta instalação, e a tela não dizia.
+ *
+ * Dizer aqui é a régua de dado honesto do módulo (planta §9): número aproximado
+ * que se declara aproximado é útil; o mesmo número passando por rota de rua faz
+ * o comprador prometer prazo que não cumpre.
+ */
+function AvisoSemMotorDeRota() {
+  return (
+    <Card style={{ marginBottom: 16, borderColor: 'var(--accent-soft)' }}>
+      <div style={{ display: 'flex', gap: 11, alignItems: 'flex-start' }}>
+        <TriangleAlert size={17} style={{ color: 'var(--accent-ink)', flex: 'none', marginTop: 1 }} />
+        <div>
+          <b style={{ fontSize: 13.5, color: 'var(--ink)' }}>
+            Esta instalação não tem motor de rota — a distância é em linha reta
+          </b>
+          <p style={{ fontSize: 12.5, color: 'var(--ink-3)', marginTop: 4, maxWidth: 640 }}>
+            Sem um OSRM configurado (<code>OSRM_URL</code>), o traçado é a reta entre as paradas e a
+            duração sai de uma velocidade média conservadora. A <b>ordem</b> das paradas continua
+            sendo otimizada e é útil; o <b>quilômetro</b> e o <b>prazo</b> são estimativa, e toda rota
+            traçada assim fica marcada como <i>Estimativa em linha reta</i>.
+          </p>
+        </div>
+      </div>
+    </Card>
   )
 }
 

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import {
-  Check, ChevronLeft, ChevronRight, Database, PackageSearch, Plus, Search, Sparkles, X,
+  AlertTriangle, Check, ChevronLeft, ChevronRight, Database, PackageSearch, Plus, Search,
+  Sparkles, X,
 } from 'lucide-react'
 import {
   Aviso, BotaoAnalitica, Btn, CAPS, Field, inp, LegendaLista, Loading, MarcaCatalogo,
@@ -11,6 +12,7 @@ import { brl, FONTE_ROTULO, num } from '../lib'
 import * as api from '../api/orcamentoApi'
 import { orcKeys } from '../api/queryKeys'
 import { useBasesResumo, useComposicaoReferencia } from '../hooks'
+import SeletorDeBase from './SeletorDeBase'
 import type { CatalogoItem, InsumoReferencia } from '../types'
 
 type Origem = 'base' | 'catalogo' | 'novo'
@@ -129,24 +131,40 @@ export interface Escolha { itemCatalogoId: number; descricao: string }
 
 /** As três origens que todo software de orçamento oferece no "inserir item":
  *  a base oficial, o catálogo da própria empresa e a criação de um item novo. */
-export default function InserirItemModal({ onFechar, onInserir, inserindo }: {
+export default function InserirItemModal({ onFechar, onInserir, inserindo, baseDoOrcamento }: {
   onFechar: () => void
   onInserir: (escolhas: Escolha[]) => Promise<void> | void
   inserindo: boolean
+  /** A publicação **do orçamento** — que não é a mesma coisa que a publicação
+   *  navegada aqui, e é a diferença que fazia a linha nascer zerada sem aviso.
+   *  Ver o aviso montado abaixo. */
+  baseDoOrcamento: number | null
 }) {
   const [origem, setOrigem] = useState<Origem>('base')
   const { data: bases } = useBasesResumo()
   const [baseId, setBaseId] = useState<number | ''>('')
   const [busca, setBusca] = useState('')
   const [tipo, setTipo] = useState<'' | 'insumo' | 'composicao'>('')
+  // A base oficial vem numerada por código, e código da SINAPI não tem relação
+  // com assunto: procurar "aterro" pelo código devolve os aterros espalhados no
+  // meio da lista, entre coisas que nada têm a ver. Quem percorre catálogo
+  // procura por nome.
+  const [ordem, setOrdem] = useState<'codigo' | 'descricao'>('codigo')
   const [marcados, setMarcados] = useState<Map<number, InsumoReferencia>>(new Map())
   const [marcadosCatalogo, setMarcadosCatalogo] = useState<Map<number, CatalogoItem>>(new Map())
   const [espiando, setEspiando] = useState<number | null>(null)
   const [erro, setErro] = useState('')
 
+  // Abre na publicação **do orçamento**, não na mais recente do banco: é dela
+  // que sai o preço da linha. Abrir em outra era oferecer o catálogo certo com
+  // o preço errado — o item entrava a zero porque o código não existia na base
+  // do orçamento, e nada na tela dizia por quê. Cai na primeira da lista só
+  // quando o orçamento não tem base (e aí o aviso âmbar explica o zero).
   useEffect(() => {
-    if (baseId === '' && bases && bases.length > 0) setBaseId(bases[0].base_id)
-  }, [bases, baseId])
+    if (baseId !== '' || !bases || bases.length === 0) return
+    const doOrcamento = bases.find(b => b.base_id === baseDoOrcamento)
+    setBaseId(doOrcamento?.base_id ?? bases[0].base_id)
+  }, [bases, baseId, baseDoOrcamento])
 
   // 100 é o teto do servidor (`PAGINA_MAXIMA["orcamento"]` em planos.py), então
   // "a lista toda" não cabe numa requisição: 12,5 mil linhas viriam em 126. O que
@@ -159,14 +177,20 @@ export default function InserirItemModal({ onFechar, onInserir, inserindo }: {
 
   // Filtro que muda invalida a página em que se estava: manter `pagina=7` depois
   // de digitar uma busca de 3 resultados devolveria uma lista vazia.
-  useEffect(() => { setPagina(1) }, [baseId, busca, tipo, porPagina])
+  useEffect(() => { setPagina(1) }, [baseId, busca, tipo, porPagina, ordem])
 
   const paramsRef = useMemo(
     () => ({
       base: baseId || undefined, search: busca || undefined, tipo: tipo || undefined,
+      // O desempate por `codigo` não é detalhe: descrição não é única — a SINAPI
+      // publica dezenas de "CONSTRUÇÃO DE BASE E SUB-BASE..." que só diferem no
+      // fim do texto. Sem critério estável, duas páginas do mesmo resultado
+      // podem repetir uma linha e engolir outra, porque o banco não garante
+      // ordem entre empates.
+      ordering: ordem === 'descricao' ? 'descricao,codigo' : 'codigo',
       page_size: porPagina, page: pagina,
     }),
-    [baseId, busca, tipo, porPagina, pagina],
+    [baseId, busca, tipo, ordem, porPagina, pagina],
   )
   const referencias = useQuery({
     queryKey: orcKeys.referencias.list(paramsRef),
@@ -306,14 +330,48 @@ export default function InserirItemModal({ onFechar, onInserir, inserindo }: {
             </Aviso>
           ) : (
             <>
-              <div style={{ display: 'flex', gap: 8, marginBottom: 11, flexWrap: 'wrap' }}>
-                <Select value={baseId} onChange={e => setBaseId(Number(e.target.value))} style={{ maxWidth: 290 }}>
-                  {bases.map(b => <option key={b.base_id} value={b.base_id}>{b.rotulo}</option>)}
-                </Select>
+              {/* **Duas "bases" diferentes, e só uma estava à vista.** A caixa
+                  ao lado escolhe onde PROCURAR o item; o preço que a linha
+                  recebe vem da publicação DO ORÇAMENTO, definida lá atrás na
+                  criação — onde a primeira opção é "Sem base — preço digitado à
+                  mão". Quem não reparou inseria tudo a custo zero e só
+                  descobria na grade, sem nada na tela ligando uma coisa à
+                  outra. O aviso não muda a regra de preço (a data-base do
+                  orçamento é que manda, e misturar publicações quebraria isso):
+                  ele só para de esconder a consequência. */}
+              {baseDoOrcamento === null ? (
+                <Aviso tom="amber">
+                  <AlertTriangle size={15} style={{ flex: 'none', marginTop: 1 }} />
+                  <span>
+                    Este orçamento está <b>sem base de preço</b>, então as linhas vão entrar com
+                    <b> custo zero</b> — escolher a publicação aqui só define onde procurar o item.
+                    Defina a base do orçamento (ou use <b>Reprecificar</b> depois) para os preços virem juntos.
+                  </span>
+                </Aviso>
+              ) : baseId !== '' && baseId !== baseDoOrcamento ? (
+                <Aviso tom="amber">
+                  <AlertTriangle size={15} style={{ flex: 'none', marginTop: 1 }} />
+                  <span>
+                    Você está navegando uma publicação <b>diferente</b> da do orçamento. O preço da
+                    linha vem sempre da publicação do orçamento — e fica <b>zero</b> se o código não
+                    existir lá.
+                  </span>
+                </Aviso>
+              ) : null}
+              <div style={{ display: 'flex', gap: 8, marginBottom: 11, marginTop: 11, flexWrap: 'wrap' }}>
+                <SeletorDeBase bases={bases} valor={baseId} onChange={setBaseId} />
                 <Select value={tipo} onChange={e => setTipo(e.target.value as '' | 'insumo' | 'composicao')}>
                   <option value="">Insumos e composições</option>
                   <option value="composicao">Só composições (serviços)</option>
                   <option value="insumo">Só insumos</option>
+                </Select>
+                <Select
+                  value={ordem}
+                  onChange={e => setOrdem(e.target.value as 'codigo' | 'descricao')}
+                  title="Ordem da lista"
+                >
+                  <option value="codigo">Ordem por código</option>
+                  <option value="descricao">Ordem alfabética</option>
                 </Select>
                 <div style={{ position: 'relative', flex: 1, minWidth: 200 }}>
                   <Search size={14} style={{ position: 'absolute', left: 10, top: 9, color: 'var(--ink-3)' }} />

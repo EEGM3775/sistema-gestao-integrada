@@ -56,6 +56,19 @@ interface Props {
   altura?: number | string
   centro?: [number, number]
   zoom?: number
+  /**
+   * Voa até um ponto quando ele muda — o "me mostra ONDE isto está".
+   *
+   * `centro` só vale na criação do mapa, de propósito (recriar o enquadramento a
+   * cada render mataria o pan de quem está navegando). Mas a tabela de locais
+   * precisava justamente disso: clicar numa linha e ver o pin. Sem esta porta, o
+   * botão da tabela não tinha como mexer no mapa e ficava sem efeito visível —
+   * era metade do "o localizar não faz nada".
+   *
+   * `null` não faz nada; o `selo` existe para pedir a MESMA coordenada de novo
+   * (clicar duas vezes na mesma linha) e ainda assim voar.
+   */
+  foco?: { lon: number; lat: number; zoom?: number; selo?: number } | null
   /** Enquadra automaticamente tudo que foi passado (default: sim). */
   ajustar?: boolean
   satelite?: boolean
@@ -114,7 +127,7 @@ function paraFeatures(pontos: PontoMapa[]): GeoJSON.FeatureCollection {
 
 export function Mapa({
   pontos = [], camadas = [], rasters = [], altura = 460,
-  centro, zoom = 4, ajustar = true, satelite = false,
+  centro, zoom = 4, foco = null, ajustar = true, satelite = false,
   onSelecionar, onClicarMapa,
 }: Props) {
   const container = useRef<HTMLDivElement>(null)
@@ -186,6 +199,18 @@ export function Mapa({
     pontos.forEach((p) => limites.extend([p.lon, p.lat]))
     mapa.current.fitBounds(limites, { padding: 64, maxZoom: 14, duration: 420 })
   }, [pontos, ajustar, pronto])
+
+  // ── foco ─────────────────────────────────────────────────────────────────
+  // Declarado DEPOIS do enquadramento de propósito: quando os dois mudam na
+  // mesma renderização (a tabela filtra e pede foco no mesmo clique), quem tem
+  // de vencer é o pedido explícito, não o "enquadre tudo".
+  useEffect(() => {
+    if (!mapa.current || !pronto || !foco) return
+    mapa.current.flyTo({ center: [foco.lon, foco.lat], zoom: foco.zoom ?? 15, duration: 700 })
+    // Os CAMPOS e não o objeto: quem chama monta `{lon, lat}` na renderização, e
+    // depender da identidade dele refaria o voo a cada render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [foco?.lon, foco?.lat, foco?.zoom, foco?.selo, pronto])
 
   // ── seleção ──────────────────────────────────────────────────────────────
   useEffect(() => {

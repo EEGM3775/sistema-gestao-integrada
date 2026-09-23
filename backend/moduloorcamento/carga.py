@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import io
 import logging
+import re
 import zipfile
 from dataclasses import dataclass, field
 from datetime import date
@@ -313,12 +314,14 @@ def escolher_planilha(dentro: dict[str, bytes]) -> tuple[str, bytes]:
     return nome, planilhas[nome]
 
 
-def _abrir_workbook(conteudo: bytes):
+def _abrir_workbook(conteudo: bytes, *, formulas: bool = False):
     try:
         from openpyxl import load_workbook
     except ImportError as exc:  # pragma: no cover - declarada em requirements
         raise CargaInvalida("openpyxl não instalado — necessário para ler .xlsx.") from exc
-    return load_workbook(filename=io.BytesIO(conteudo), read_only=True, data_only=True)
+    return load_workbook(
+        filename=io.BytesIO(conteudo), read_only=True, data_only=not formulas
+    )
 
 
 def _cabecalho_largo(linhas: list[list]) -> tuple[int, dict[str, int], dict[str, int]]:
@@ -373,15 +376,37 @@ def _cabecalho_largo(linhas: list[list]) -> tuple[int, dict[str, int], dict[str,
     return max(linha_campos, linha_ufs) + 1, campos, ufs
 
 
-def ler_aba_larga(workbook, nome_aba: str, tipo: str, regime: str) -> TabelaLarga:
-    """Lê uma aba `ISD`/`ICD`/`ISE`/`CSD`/`CCD`/`CSE` inteira."""
+def _coluna_crua(workbook, nome_aba: str, posicao: int | None) -> list:
+    """Uma coluna só, sem resolver valor — para ler a fórmula por trás da célula.
+
+    Materializa a coluna e não a aba: são ~8 mil strings em vez de meio milhão
+    de células, e o teto de memória da carga é do dono (§5.5b do planos.py).
+    """
+    if posicao is None:
+        return []
+    return [_celula(list(linha), posicao) for linha in workbook[nome_aba].iter_rows(values_only=True)]
+
+
+def ler_aba_larga(workbook, nome_aba: str, tipo: str, regime: str, formulas=None) -> TabelaLarga:
+    """Lê uma aba `ISD`/`ICD`/`ISE`/`CSD`/`CCD`/`CSE` inteira.
+
+    `formulas` é o mesmo arquivo aberto sem resolver valor (`data_only=False`).
+    Existe por causa da coluna de código das abas de composição, que é um
+    `=HYPERLINK(...)` cujo valor em cache é `0` — ver `codigo_de_formula`.
+    """
     planilha = workbook[nome_aba]
     linhas = [list(linha) for linha in planilha.iter_rows(values_only=True)]
     inicio, campos, ufs = _cabecalho_largo(linhas)
     tabela = TabelaLarga(tipo=tipo, regime=regime, ufs=tuple(sorted(ufs)))
+    coluna_codigo = campos.get("codigo")
+    crus = _coluna_crua(formulas, nome_aba, coluna_codigo) if formulas is not None else []
 
-    for linha in linhas[inicio:]:
-        codigo = _texto(_celula(linha, campos.get("codigo")))
+    for indice, linha in enumerate(linhas[inicio:], start=inicio):
+        codigo = _texto(_celula(linha, coluna_codigo))
+        if indice < len(crus):
+            da_formula = codigo_de_formula(crus[indice])
+            if da_formula:
+                codigo = da_formula
         descricao = _texto(_celula(linha, campos.get("descricao")))
         if not codigo or not descricao:
             continue
@@ -401,6 +426,20 @@ def ler_aba_larga(workbook, nome_aba: str, tipo: str, regime: str) -> TabelaLarg
             _texto(_celula(linha, campos.get("grupo"))),
             precos,
         ))
+    # A gravação é **por código** (`itens_da_uf` monta um dicionário). Código
+    # repetido não duplica linha: apaga a anterior. Se a aba trouxe muita linha
+    # e pouco código distinto, seguir daqui grava um punhado de itens no lugar
+    # da publicação inteira — e foi exatamente o que aconteceu em 08/2026, com
+    # um "OK" na tela. Recusar é o único jeito de isso não passar calado.
+    distintos = {linha[0] for linha in tabela.linhas}
+    if len(tabela.linhas) >= 100 and len(distintos) * 2 < len(tabela.linhas):
+        raise CargaInvalida(
+            f"A aba {nome_aba} tem {len(tabela.linhas)} linhas de dado e só "
+            f"{len(distintos)} código(s) distinto(s) — a gravação é por código, "
+            "então isto gravaria uma fração da publicação. A causa conhecida é a "
+            "coluna de código vir como fórmula (=HYPERLINK) e ser lida pelo valor "
+            "em cache, que é 0 em toda linha."
+        )
     return tabela
 
 
@@ -519,6 +558,32 @@ def _limpar_codigo(valor) -> str:
     return codigo[:-2] if codigo.endswith(".0") else codigo
 
 
+# O código da composição nas abas CSD/CCD/CSE **não é um número**: é um
+# `=HYPERLINK(...)` que salta para a linha da composição na aba Analítico. O
+# valor que o Excel deixou em cache nessas células é `0`, então ler a planilha
+# por valor — `data_only=True`, que é o certo para o preço — devolve o mesmo
+# código para todas as linhas, o dicionário por código colapsa e a publicação
+# inteira vira **uma** composição. Foi assim que a carga de 08/2026 gravou 81
+# composições onde havia ~680 mil, com um "OK" na tela.
+#
+# O código verdadeiro aparece duas vezes dentro da fórmula: no `MATCH(...)` que
+# acha a linha e no rótulo exibido, que é o último argumento. Lemos o rótulo
+# primeiro porque é ele que a Caixa mostra na planilha; o `MATCH` é a rede.
+_CODIGO_NO_ROTULO = re.compile(r',\s*"?(\d+)"?\s*\)\s*$')
+_CODIGO_NO_MATCH = re.compile(r'MATCH\(\s*"?(\d+)"?\s*,')
+
+
+def codigo_de_formula(valor) -> str:
+    """O código de dentro do `=HYPERLINK(...)`. `""` quando não é fórmula."""
+    if not isinstance(valor, str) or not valor.startswith("="):
+        return ""
+    for padrao in (_CODIGO_NO_ROTULO, _CODIGO_NO_MATCH):
+        achado = padrao.search(valor)
+        if achado:
+            return achado.group(1)
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # A corrida
 # ---------------------------------------------------------------------------
@@ -539,10 +604,32 @@ class Leitura:
     aba_analitica: str = ""
     planilha: str = ""
     avisos: list[str] = field(default_factory=list)
+    # ORC.8b — os três campos que a EMBASA trouxe, e que ficam vazios na SINAPI.
+    #
+    # `variante` é o eixo de identidade que uma fonte pode ter **além** de UF,
+    # mês e regime: a EMBASA publica, para o mesmo semestre e o mesmo regime,
+    # seis tabelas com os mesmos códigos e preços diferentes, uma por convenção
+    # coletiva. Sem este eixo elas colidiriam na chave da publicação e a última
+    # carga sobrescreveria as cinco anteriores — silenciosamente, porque o
+    # `update_or_create` faria exatamente o que lhe pedem.
+    #
+    # `competencia` é a data-base que o **artefato** declara. O arquivo nacional
+    # da SINAPI não a declara (ela vem do nome e de quem pede a carga); o PDF da
+    # EMBASA declara ("Relatório de Serviços Junho/2026"), e a publicação de
+    # semestre torna adivinhar o mês pela defasagem um palpite ruim.
+    variante: str = ""
+    competencia: date | None = None
+    rotulo: str = ""
+    extras: dict = field(default_factory=dict)
 
     @property
     def publicacoes(self) -> list[tuple[str, str]]:
-        """`(uf, regime)` de tudo que esta leitura produziria, sem repetir."""
+        """`(uf, regime)` de tudo que esta leitura produziria, sem repetir.
+
+        A `variante` não entra na tupla porque ela é do **documento**, não da
+        linha: uma leitura tem uma variante só, e repeti-la em cada par seria
+        carregar a mesma constante por toda a gravação.
+        """
         pares = {(uf, t.regime) for t in self.tabelas for uf in t.ufs}
         return sorted(pares)
 
@@ -574,16 +661,37 @@ class Leitura:
             "total_publicacoes": len(por_publicacao),
             "linhas_analiticas": len(self.analitica),
             "itens_sem_preco_em_nenhuma_uf": sum(t.sem_preco for t in self.tabelas),
+            "variante": self.variante,
+            "rotulo": self.rotulo,
+            "competencia_lida": (
+                self.competencia.isoformat() if self.competencia else ""
+            ),
+            **self.extras,
             "avisos": self.avisos,
         }
 
 
-def ler_pacote(conteudo: bytes, nome: str = "") -> Leitura:
-    """Do bytes ao `Leitura` — sem tocar no banco."""
+def ler_pacote(conteudo: bytes, nome: str = "", fonte: str = Fonte.SINAPI) -> Leitura:
+    """Do bytes ao `Leitura` — sem tocar no banco.
+
+    `fonte` escolhe o leitor, e o default é a SINAPI porque ela foi a única por
+    toda a ORC.8: quem já chamava esta função continua chamando igual. O despacho
+    é uma condicional e não um registro de plugins de propósito — são dois
+    formatos, e uma tabela de despacho para dois casos esconde mais do que
+    organiza. Quando for o terceiro, vira tabela.
+    """
+    if fonte == Fonte.EMBASA:
+        # Import tardio: `embasa` lê `Leitura`, `TabelaLarga` e `CargaInvalida`
+        # daqui, e o par só não é ciclo porque este lado o resolve na chamada.
+        from . import embasa
+
+        return embasa.ler_documento(conteudo, nome)
+
     dentro = abrir_pacote(conteudo, nome)
     nome_planilha, bytes_planilha = escolher_planilha(dentro)
     leitura = Leitura(planilha=nome_planilha)
     workbook = _abrir_workbook(bytes_planilha)
+    formulas = _abrir_workbook(bytes_planilha, formulas=True)
     try:
         presentes = {
             normalizar(aba).upper(): aba
@@ -593,7 +701,7 @@ def ler_pacote(conteudo: bytes, nome: str = "") -> Leitura:
             aba = presentes.get(sigla)
             if aba is None:
                 continue
-            leitura.tabelas.append(ler_aba_larga(workbook, aba, tipo, regime))
+            leitura.tabelas.append(ler_aba_larga(workbook, aba, tipo, regime, formulas))
         if not leitura.tabelas:
             # A causa quase sempre é a mesma, e o erro precisa dizê-la: o
             # arquivo é do formato **longo** (1 ZIP por UF × regime, até
@@ -614,6 +722,7 @@ def ler_pacote(conteudo: bytes, nome: str = "") -> Leitura:
             )
     finally:
         workbook.close()
+        formulas.close()
 
     if len(leitura.publicacoes) > planos.ORCAMENTO_CARGA_TETO_PUBLICACOES:
         raise CargaInvalida(
@@ -658,9 +767,15 @@ def gravar_publicacoes(
     for uf, regime in leitura.publicacoes:
         base, nova = BaseReferencial.objects.get_or_create(
             fonte=fonte, uf=uf, mes_referencia=competencia, regime_encargos=regime,
+            variante=leitura.variante,
             defaults={"importada_por_nome": por, "url_origem": url_origem},
         )
-        if not base.rotulo:
+        # O rótulo que a **fonte** sabe dar vence o automático: "EMBASA BA
+        # 06/2026 · Expansão SINTRACOM (LS H 158,56%)" diz qual das seis tabelas
+        # do semestre é esta, e o automático só saberia repetir a variante crua.
+        if leitura.rotulo:
+            base.rotulo = leitura.rotulo[:120]
+        elif not base.rotulo:
             base.rotulo = base.rotulo_automatico()
         if por:
             base.importada_por_nome = por
@@ -738,16 +853,36 @@ def executar(carga: CargaBase, conteudo: bytes | None = None) -> CargaBase:
     try:
         if conteudo is None:
             configuracao = FonteOficial.objects.filter(fonte=carga.fonte).first()
-            if configuracao is None:
+            # Corrida que já traz o endereço dispensa o cadastro: o que a
+            # `FonteOficial` resolve é *qual* URL, e essa já foi respondida. A
+            # conferência de que o endereço é legítimo é de quem criou a corrida
+            # (a view amarra ao host cadastrado), não de quem a executa.
+            if configuracao is None and not carga.url_origem:
                 raise oficial.CargaIndisponivel(
                     "Esta fonte não tem endereço configurado. Cadastre o template da "
                     "URL antes de pedir a carga automática.",
                     motivo="sem_template",
                 )
-            url = configuracao.url_para(carga.competencia)
+            # Corrida que já nasceu com endereço manda nele. É o que faz a EMBASA
+            # funcionar sem inventar um segundo motor: a fonte não tem "o"
+            # arquivo do mês — tem 65 tabelas por semestre, e quem dispara a
+            # corrida escolheu uma. Para a SINAPI o campo nasce vazio e o
+            # template decide, como na ORC.8.
+            url = carga.url_origem or configuracao.url_para(carga.competencia)
+            if not carga.url_origem and exige_escolha_de_documento(carga.fonte):
+                raise oficial.CargaIndisponivel(
+                    "Esta fonte publica um **menu** de tabelas, não um arquivo do "
+                    "mês, e nenhuma delas é 'a principal' — a EMBASA põe 65 no ar "
+                    "por semestre, entre expansão, operação de água e de esgoto, "
+                    "cada uma por convenção coletiva. Escolha o documento em "
+                    "`documentos-disponiveis` e dispare a carga com a URL dele.",
+                    motivo="sem_documento",
+                )
             anotar(f"baixando de {url[:120]}", CargaBase.Estado.BAIXANDO)
             carga.url_origem = url[:500]
-            sessao = oficial.sessao_aquecida(configuracao.pagina_referencia)
+            sessao = oficial.sessao_aquecida(
+                configuracao.pagina_referencia if configuracao else ""
+            )
             try:
                 baixado = oficial.baixar(
                     url, sessao=sessao,
@@ -762,7 +897,20 @@ def executar(carga: CargaBase, conteudo: bytes | None = None) -> CargaBase:
         carga.bytes_lidos = len(conteudo)
         carga.arquivo_nome = (nome or "")[:255]
         anotar("lendo o arquivo", CargaBase.Estado.LENDO)
-        leitura = ler_pacote(conteudo, nome)
+        leitura = ler_pacote(conteudo, nome, fonte=carga.fonte)
+
+        # **A data-base do artefato manda sobre a que foi pedida.** Quando o
+        # documento a declara, ela é a única que não é palpite: a competência da
+        # corrida nasce de uma defasagem em meses, e a EMBASA publica por
+        # semestre — pedir "agosto" e receber a tabela de junho é o normal, não
+        # a exceção. Gravar junho debaixo de agosto seria datar preço errado, que
+        # é o defeito que não aparece até alguém comparar orçado com realizado.
+        if leitura.competencia and leitura.competencia != carga.competencia:
+            leitura.avisos.append(
+                f"A corrida pediu {carga.competencia:%m/%Y} e o documento declara "
+                f"{leitura.competencia:%m/%Y} — vale a do documento."
+            )
+            carga.competencia = leitura.competencia
 
         resumo = leitura.resumo()
         desconhecidas = conferir_classes(carga.fonte, leitura.classes)
@@ -846,10 +994,74 @@ def competencia_sugerida(fonte: str, hoje: date | None = None) -> date:
 def fontes_conhecidas() -> list[str]:
     """As fontes que o motor sabe carregar sozinho hoje.
 
-    Só a SINAPI, e dizê-lo é o ponto: `Fonte` aceita seis desde a ORC.0 e o
-    importador manual é genérico, mas o **formato largo** é o arquivo da Caixa.
+    Duas: a SINAPI (formato largo, o ZIP da Caixa) e a EMBASA (PDF, a tabela de
+    saneamento da Bahia). Dizer **quais** é o ponto: `Fonte` aceita sete desde a
+    ORC.0 e o importador manual é genérico, mas cada fonte publica do seu jeito.
     ORSE, SICRO, SEINFRA e SEDOP continuam entrando pelo comando até alguém
     escrever o leitor de cada uma — e a tela precisa dizer isso em vez de
     oferecer um botão que só falha.
     """
-    return [Fonte.SINAPI]
+    return [Fonte.SINAPI, Fonte.EMBASA]
+
+
+# Fontes em que "a publicação do mês" não é **uma** coisa, e por isso a corrida
+# precisa dizer qual documento quer. A EMBASA publica por semestre, e são 65
+# tabelas carregáveis — expansão, operação de água e de esgoto, cada uma por
+# convenção coletiva. Nenhuma delas é a principal, e escolher por ela seria
+# escolher o preço de uma região para quem orça em outra.
+FONTES_COM_MENU: frozenset[str] = frozenset({Fonte.EMBASA})
+
+
+def exige_escolha_de_documento(fonte: str) -> bool:
+    """A corrida desta fonte só faz sentido com um documento escolhido.
+
+    É o que tira a EMBASA da varredura mensal: um agendamento que dispara "a
+    carga da EMBASA" sem dizer qual tabela só sabe falhar, todo mês, no mesmo
+    dia — e um agendamento que sempre falha é pior que agendamento nenhum,
+    porque ensina a ignorar o alarme.
+    """
+    return fonte in FONTES_COM_MENU
+
+
+def documentos_disponiveis(fonte: str, competencia: date | None = None) -> list[dict]:
+    """O **menu** de artefatos que a fonte oferece — o que a tela lista.
+
+    Existe porque "a publicação do mês" deixou de ser uma coisa só. A SINAPI tem
+    um arquivo por competência e o template o resolve; a EMBASA tem 65 tabelas
+    por semestre, divididas por escopo (expansão, operação de água, de esgoto) e
+    por convenção coletiva, e nenhuma delas é a principal. Sem esta lista, a
+    única saída seria pedir que alguém colasse a URL à mão — e colar a URL errada
+    é indistinguível de colar a certa até o preço sair na planilha.
+
+    O que sai daqui é menu, não verdade: espécie e rótulo vêm do nome do
+    arquivo. Quem decide onde o preço entra é o cabeçalho do PDF, na leitura.
+    """
+    if fonte == Fonte.EMBASA:
+        from . import embasa
+
+        configuracao = FonteOficial.objects.filter(fonte=fonte).first()
+        pagina = (configuracao.template_url if configuracao else "") or embasa.PAGINA_PADRAO
+        return [
+            {
+                "url": documento.url,
+                "rotulo": documento.rotulo,
+                "slug": documento.slug,
+                "especie": documento.especie,
+                "carregavel": documento.carregavel,
+            }
+            for documento in embasa.baixar_lista(pagina)
+        ]
+
+    configuracao = FonteOficial.objects.filter(fonte=fonte).first()
+    if configuracao is None:
+        return []
+    url = configuracao.url_para(competencia or competencia_sugerida(fonte))
+    if not url:
+        return []
+    return [{
+        "url": url,
+        "rotulo": url.rsplit("/", 1)[-1],
+        "slug": url.rsplit("/", 1)[-1],
+        "especie": "pacote",
+        "carregavel": True,
+    }]

@@ -131,12 +131,25 @@ recursos = (st or {}).get("recursos", {})
 check("`cronograma` está de pé", recursos.get("cronograma") is True)
 check("`locais` e `calendario` também (PDCA.0)",
       recursos.get("locais") is True and recursos.get("calendario") is True)
-# A PDCA.3 ligou `medicao`; o que ainda não existe passou a ser o aditivo, e a
-# asserção seguiu o desenho em vez de sair. É ela que impede o `status/` de
-# voltar a prometer o que não há — o motivo pelo qual este check existe.
+# **Este check é um guard móvel, e ele precisa ser movido a cada fatia.** Ele
+# impede o `status/` de voltar a prometer o que não há, apontando sempre para a
+# PRÓXIMA capacidade ainda não construída — e por isso envelhece sozinho: ficou
+# apontando para `aditivo` depois de a PDCA.4 o ter ligado, depois para
+# `verificacao` depois de a PDCA.7 o ter ligado, e nas duas vezes passou a
+# acusar falha no que era sucesso. Hoje a fronteira é a **apropriação de
+# homem-hora**: sem ela as taxas de frequência e gravidade não existem, e é
+# justamente a ausência que o módulo declara em voz alta em vez de mostrar zero.
 check("`medicao` está de pé (PDCA.3)", recursos.get("medicao") is True)
-check("e `aditivo` continua declarado como ausente (PDCA.4)",
-      recursos.get("aditivo") is False)
+check("`aditivo` está de pé (PDCA.4)", recursos.get("aditivo") is True)
+check("`programacao_semanal` está de pé (PDCA.5)",
+      recursos.get("programacao_semanal") is True)
+check("`linha_de_balanco` está de pé (PDCA.6)",
+      recursos.get("linha_de_balanco") is True)
+check("`verificacao` está de pé (PDCA.7)", recursos.get("verificacao") is True)
+check("`ocorrencia` está de pé (PDCA.8)", recursos.get("ocorrencia") is True)
+check("e a taxa de frequência continua declarada como AUSENTE — ela divide por "
+      "homem-hora, que o sistema ainda não apropria",
+      recursos.get("taxa_frequencia") is not True)
 
 # ------------------------------------------------------------ 3. a obra do teste
 print("\n3. A obra do teste — e o expediente dela")

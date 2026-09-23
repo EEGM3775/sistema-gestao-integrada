@@ -52,8 +52,15 @@ export function Minimapa({
   return (
     <div
       style={{
-        position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)',
-        zIndex: 3, width: 'min(420px, calc(100% - 24px))',
+        // **Canto, e não meio** (pedido do dono, 15/09/2026: *"ele tem que ser
+        // melhor alocado, fica no meio da tela"*). Centralizado no topo, o
+        // localizador cobria exatamente a faixa onde mora o carimbo da prancha e
+        // o começo do desenho — a ajuda tapava o que ela ajudava a achar. No
+        // canto superior esquerdo ele sai da frente e continua à mão; a barra de
+        // modos e os botões de zoom vivem embaixo e à direita, então não há
+        // disputa por esse canto.
+        position: 'absolute', top: 12, left: 12,
+        zIndex: 3, width: 'min(300px, calc(100% - 24px))',
         background: 'var(--glass)', backdropFilter: 'blur(14px)',
         border: '1px solid var(--line)', borderRadius: 'var(--r-md)',
         padding: '9px 11px 11px', display: 'grid', gap: 8,
@@ -80,37 +87,75 @@ export function Minimapa({
       {/* `preserveAspectRatio` mantém a proporção do terreno: esticar o mapa para
           preencher a caixa poria dois desenhos alinhados no CAD em diagonal
           aqui — e a pessoa concluiria que o arquivo está torto. */}
+      {/**
+        * **A região clicável** (pedido do dono, 15/09/2026: *"esse minimapa
+        * deveria ter uma região clicável, que mostra onde os desenhos que seriam
+        * separados estão"*).
+        *
+        * Antes só o retângulo pintado respondia ao clique, e essa era a metade
+        * que não funcionava: uma poligonal de 40 m ao lado de um loteamento de 8
+        * km ocupa **menos de um pixel** no mapa, e um alvo de menos de um pixel
+        * não é alvo. Agora o mapa inteiro é a região clicável — clicar em
+        * qualquer lugar abre o desenho **mais próximo** dali. Não há ponto morto:
+        * mirar "perto" passa a bastar, que é o gesto que a mão faz num mapa.
+        */}
       <svg
         viewBox={`0 0 ${largura} ${altura}`}
         preserveAspectRatio="xMidYMid meet"
+        onClick={(e) => {
+          const alvo = e.currentTarget.getBoundingClientRect()
+          // O `preserveAspectRatio` centraliza o conteúdo e sobra faixa vazia num
+          // dos eixos; sem descontá-la, o clique se desloca proporcionalmente à
+          // sobra e o "mais próximo" sai errado justamente nas bordas.
+          const escala = Math.min(alvo.width / largura, alvo.height / altura)
+          const sobraX = (alvo.width - largura * escala) / 2
+          const sobraY = (alvo.height - altura * escala) / 2
+          const x = mundo.xmin + (e.clientX - alvo.left - sobraX) / escala
+          const y = mundo.ymax - (e.clientY - alvo.top - sobraY) / escala
+          const perto = maisProximo(manchas, x, y)
+          if (perto) aoAbrir(perto.folha.ordem)
+        }}
         style={{
-          width: '100%', height: 120, display: 'block',
+          width: '100%', height: 132, display: 'block', cursor: 'pointer',
           background: 'var(--inset)', borderRadius: 'var(--r-sm)',
         }}
       >
-        {manchas.map(({ folha, caixa }) => {
+        {manchas.map(({ folha, caixa }, i) => {
           const aberta = folha.ordem === ordemAberta
+          // O desenho minúsculo ganha um piso de tamanho para **existir na
+          // tela**. É o mesmo motivo do botão de 46 px do resto do módulo: o
+          // mapa mostra onde as coisas estão, e o que não se enxerga não está.
+          const l = Math.max(caixa.xmax - caixa.xmin, largura * 0.02)
+          const a = Math.max(caixa.ymax - caixa.ymin, altura * 0.02)
+          const x = caixa.xmin - mundo.xmin
+          // O eixo Y do desenho cresce para CIMA e o do SVG para baixo: sem a
+          // inversão, o mapa sai espelhado e mandaria a pessoa para o canto
+          // oposto ao que ela clicou.
+          const y = mundo.ymax - caixa.ymax
           return (
-            <g key={folha.desenho_id}>
+            <g key={folha.desenho_id} style={{ pointerEvents: 'none' }}>
               <rect
-                // O eixo Y do desenho cresce para CIMA e o do SVG para baixo:
-                // sem a inversão, o mapa sai espelhado e mandaria a pessoa para
-                // o canto oposto ao que ela clicou.
-                x={caixa.xmin - mundo.xmin}
-                y={mundo.ymax - caixa.ymax}
-                width={Math.max(caixa.xmax - caixa.xmin, largura * 0.004)}
-                height={Math.max(caixa.ymax - caixa.ymin, altura * 0.004)}
+                x={x} y={y} width={l} height={a}
                 fill={aberta ? 'var(--accent)' : 'var(--ink-3)'}
                 fillOpacity={aberta ? 0.85 : 0.35}
                 stroke={aberta ? 'var(--accent-strong)' : 'transparent'}
                 strokeWidth={largura * 0.004}
-                style={{ cursor: 'pointer' }}
-                onClick={() => aoAbrir(folha.ordem)}
               >
                 <title>
                   {`${folha.rotulo} — ${folha.tracos.toLocaleString('pt-BR')} traços`}
                 </title>
               </rect>
+              {/* O número amarra a mancha à pílula de baixo: sem ele, "o de
+                  cima à direita" é a única forma de falar de um desenho. */}
+              <text
+                x={x + l / 2} y={y + a / 2}
+                textAnchor="middle" dominantBaseline="central"
+                fontSize={Math.min(largura, altura) * 0.055}
+                fill={aberta ? 'var(--accent-ink)' : 'var(--ink-2)'}
+                style={{ fontWeight: 700 }}
+              >
+                {i + 1}
+              </text>
             </g>
           )
         })}
@@ -121,7 +166,7 @@ export function Minimapa({
           mapa, e um alvo de um pixel não é alvo — é a mesma razão do botão de
           46 px do resto do módulo. */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        {manchas.map(({ folha }) => (
+        {manchas.map(({ folha }, i) => (
           <button
             key={folha.desenho_id}
             onClick={() => aoAbrir(folha.ordem)}
@@ -134,6 +179,7 @@ export function Minimapa({
               color: folha.ordem === ordemAberta ? 'var(--accent-ink)' : 'var(--ink-2)',
             }}
           >
+            <span style={{ opacity: 0.65, marginRight: 5 }}>{i + 1}</span>
             {folha.rotulo}
           </button>
         ))}
@@ -152,6 +198,27 @@ function normalizar(caixa: Record<string, number> | undefined): Caixa | null {
   if (numeros.some((n) => typeof n !== 'number' || !Number.isFinite(n))) return null
   if (xmax <= xmin || ymax <= ymin) return null
   return { xmin, ymin, xmax, ymax }
+}
+
+/**
+ * O desenho mais perto de um ponto — o que faz o mapa inteiro ser clicável.
+ *
+ * Distância **à caixa**, não ao centro dela: com um loteamento de 8 km ao lado
+ * de uma poligonal de 40 m, o centro do grande fica longe de quase toda a área
+ * que ele mesmo ocupa, e clicar em cima dele abriria o pequeno. Dentro da caixa
+ * a distância é zero, que é a resposta certa.
+ */
+function maisProximo<T extends { caixa: Caixa }>(manchas: T[], x: number, y: number): T | null {
+  let melhor: T | null = null
+  let menor = Infinity
+  for (const mancha of manchas) {
+    const { xmin, ymin, xmax, ymax } = mancha.caixa
+    const dx = Math.max(xmin - x, 0, x - xmax)
+    const dy = Math.max(ymin - y, 0, y - ymax)
+    const d = dx * dx + dy * dy
+    if (d < menor) { menor = d; melhor = mancha }
+  }
+  return melhor
 }
 
 function envolvente(caixas: Caixa[]): Caixa {

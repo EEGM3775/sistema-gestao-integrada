@@ -16,9 +16,10 @@ não é endpoint de tenant: é operação de plataforma, gateada por
 e o que ele faz é enfileirar um job, não gravar na requisição.
 """
 from datetime import timedelta
+from urllib.parse import urlsplit
 
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Count
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django_filters.rest_framework import DjangoFilterBackend
@@ -52,6 +53,7 @@ from . import (
     exportacao,
     insumos as servico_insumos,
     nbr12721,
+    oficial,
     planilha,
     precificacao,
     quantitativos,
@@ -299,21 +301,6 @@ class BaseReferencialResumoView(views.APIView):
         tenant_id = getattr(getattr(request, "user", None), "tenant_id", None)
         bases = (
             BaseReferencial.objects.filter(ativa=True)
-            .annotate(
-                insumos=Count("itens", filter=Q(itens__tipo=InsumoReferencia.Tipo.INSUMO)),
-                composicoes=Count("itens", filter=Q(itens__tipo=InsumoReferencia.Tipo.COMPOSICAO)),
-                # D111: a coluna `Classificação` só existe a partir de 01/2025.
-                # Sem ela, a adoção cai no plano B da unidade e tudo o que não é
-                # hora nem mês vira material — leitura torta de "material × mão
-                # de obra × equipamento" no orçamento inteiro. Contar aqui é o
-                # que faz a tela poder **dizer** isso em vez de o usuário
-                # descobrir olhando a analítica e estranhando.
-                insumos_classificados=Count(
-                    "itens",
-                    filter=Q(itens__tipo=InsumoReferencia.Tipo.INSUMO)
-                    & ~Q(itens__grupo=""),
-                ),
-            )
             .order_by("-mes_referencia", "fonte")
         )
         adotados_por_fonte = dict(
@@ -322,41 +309,83 @@ class BaseReferencialResumoView(views.APIView):
             .values_list("fonte_referencia")
             .annotate(total=Count("item_id"))
         )
-        # As classes distintas que cada publicação usa em INSUMO — dezenas de
-        # valores, não milhares de linhas, então cabe numa consulta e roda em
-        # memória. Sem isto, `classifica_insumo` significava só "a coluna veio
-        # preenchida", e uma base de vocabulário próprio (ORSE, SICRO, tabela de
-        # prefeitura) acendia o indicador verde enquanto **nenhuma** das classes
-        # dela era compreendida — falso "está tudo certo", que é pior do que a
-        # publicação antiga, onde o campo vazio ao menos era evidente.
-        # O `distinct()` do banco separa "Agregados" de "Agregados " — para o
-        # SQL são textos diferentes, e a lista sairia com a mesma classe duas
-        # vezes. Quem deduplica é o `set` sobre o texto já aparado.
+        # **Por que agregado solto, e não `annotate` na lista de publicações.**
+        # O `Count("itens")` correlacionado custa uma varredura da tabela de
+        # referências *por publicação*. Com a SINAPI inteira carregada — 1.460
+        # publicações sobre 16,8 milhões de linhas — isso media ~2,4 s a cada
+        # abertura, e seis telas do módulo pedem este mesmo resumo. Duas
+        # agregações chapadas, casadas em memória por `base_id`, dão os mesmos
+        # números em ~0,9 s e continuam **derivadas do dado real**: nenhum
+        # contador gravado que possa defasar e fazer a tela mentir sobre o que
+        # há na publicação.
+        #
+        # O `.order_by()` vazio não é enfeite. `Meta.ordering` do
+        # `InsumoReferencia` é `["base", "codigo"]`, e o Django empurra os campos
+        # de ordenação para dentro do `GROUP BY` — sem zerar, o agrupamento sai
+        # por item e toda contagem vira 1.
+        totais_por_base: dict[int, dict[str, int]] = {}
+        for linha in (
+            InsumoReferencia.objects.values("base_id", "tipo")
+            .annotate(n=Count("referencia_id"))
+            .order_by()
+        ):
+            totais_por_base.setdefault(linha["base_id"], {})[linha["tipo"]] = linha["n"]
+        # As classes distintas que cada publicação usa em INSUMO — no pior caso
+        # real, oito por publicação. Sem isto, `classifica_insumo` significava só
+        # "a coluna veio preenchida", e uma base de vocabulário próprio (ORSE,
+        # SICRO, tabela de prefeitura) acendia o indicador verde enquanto
+        # **nenhuma** das classes dela era compreendida — falso "está tudo
+        # certo", que é pior do que a publicação antiga, onde o campo vazio ao
+        # menos era evidente.
+        #
+        # Um `GROUP BY (base_id, grupo)` responde as duas perguntas de uma vez:
+        # a soma das contagens é quantos insumos vieram classificados, e as
+        # chaves são o vocabulário da publicação. O agrupamento do banco separa
+        # "Agregados" de "Agregados " — para o SQL são textos diferentes, e a
+        # tela listava a mesma classe duas vezes. Quem deduplica é o `set` sobre
+        # o texto já aparado.
+        classificados_por_base: dict[int, int] = {}
         desconhecidas_por_base: dict[int, set[str]] = {}
-        for base_id, grupo in (
+        for linha in (
             InsumoReferencia.objects.filter(tipo=InsumoReferencia.Tipo.INSUMO)
             .exclude(grupo="")
-            .values_list("base_id", "grupo")
-            .distinct()
+            .values("base_id", "grupo")
+            .annotate(n=Count("referencia_id"))
+            .order_by()
         ):
+            base_id, grupo = linha["base_id"], linha["grupo"]
+            classificados_por_base[base_id] = (
+                classificados_por_base.get(base_id, 0) + linha["n"]
+            )
             if services.classificacao_desconhecida(grupo):
                 desconhecidas_por_base.setdefault(base_id, set()).add(grupo.strip())
-        return Response([
-            {
+        def resumo_de(b) -> dict:
+            contagens = totais_por_base.get(b.base_id, {})
+            insumos = contagens.get(InsumoReferencia.Tipo.INSUMO, 0)
+            classificados = classificados_por_base.get(b.base_id, 0)
+            return {
                 "base_id": b.base_id,
                 "rotulo": b.rotulo or b.rotulo_automatico(),
                 "fonte": b.fonte,
                 "uf": b.uf,
                 "mes_referencia": b.mes_referencia,
                 "regime_encargos": b.regime_encargos,
-                "insumos": b.insumos,
-                "composicoes": b.composicoes,
-                "insumos_classificados": b.insumos_classificados,
+                # ORC.8b — o quarto eixo, vazio em quase toda publicação. Ele
+                # precisa sair aqui porque o seletor encadeia praça → mês →
+                # regime: na EMBASA, duas publicações que só diferem na convenção
+                # coletiva chegariam ao último passo como duas linhas de nome
+                # igual, e escolher entre elas seria adivinhar.
+                "variante": b.variante,
+                "insumos": insumos,
+                "composicoes": contagens.get(InsumoReferencia.Tipo.COMPOSICAO, 0),
+                "insumos_classificados": classificados,
                 # As classes que a publicação usa e que o de-para de
                 # `PREFIXOS_DE_CLASSE` não conhece, com o texto literal — é o que
                 # a tela mostra para alguém decidir se aquilo vira mapeamento ou
                 # `--de-para`.
-                "classes_desconhecidas": sorted(desconhecidas_por_base.get(b.base_id, set()))[:12],
+                "classes_desconhecidas": sorted(
+                    desconhecidas_por_base.get(b.base_id, set())
+                )[:12],
                 # Publicação sem insumo nenhum não "deixa de classificar" — não
                 # há o que classificar. O `False` é reservado para a publicação
                 # que **tem** insumo e cuja classificação não chega até a
@@ -364,13 +393,13 @@ class BaseReferencialResumoView(views.APIView):
                 # num vocabulário que não sabemos ler — que dá no mesmo para
                 # quem orça, e por isso acende o mesmo aviso.
                 "classifica_insumo": (
-                    b.insumos == 0
-                    or (b.insumos_classificados > 0 and b.base_id not in desconhecidas_por_base)
+                    insumos == 0
+                    or (classificados > 0 and b.base_id not in desconhecidas_por_base)
                 ),
                 "adotados_no_catalogo": adotados_por_fonte.get(b.fonte, 0),
             }
-            for b in bases
-        ])
+
+        return Response([resumo_de(b) for b in bases])
 
 
 # ---------------------------------------------------------------------------
@@ -466,6 +495,38 @@ class CargaBaseViewSet(viewsets.ReadOnlyModelViewSet):
             "teto_mb": planos.ORCAMENTO_CARGA_TETO_MB,
         })
 
+    @action(detail=False, methods=["get"], url_path="documentos-disponiveis")
+    def documentos_disponiveis(self, request):
+        """O **menu** de artefatos da fonte — o que a tela lista antes do botão.
+
+        Existe porque "a publicação do mês" deixou de ser uma coisa só quando a
+        EMBASA entrou: ela publica por semestre, e são 65 tabelas carregáveis
+        (expansão, operação de água e de esgoto, cada uma por convenção
+        coletiva), nenhuma delas a principal. Sem esta lista a única saída seria
+        pedir que alguém colasse a URL — e colar a errada é indistinguível de
+        colar a certa até o preço sair na planilha.
+
+        Bate no site da fonte, então é `GET` que custa rede: a tela chama quando
+        o operador abre a fonte, não a cada render.
+        """
+        fonte = str(request.query_params.get("fonte") or "").strip()
+        if fonte not in dict(Fonte.choices):
+            raise exceptions.ValidationError({"fonte": "Fonte desconhecida."})
+        competencia = request.query_params.get("competencia")
+        try:
+            documentos = carga.documentos_disponiveis(
+                fonte, self._competencia(competencia, fonte) if competencia else None
+            )
+        except oficial.CargaIndisponivel as exc:
+            # A fonte fora do ar não é erro do pedido: é o estado do mundo, e a
+            # tela precisa dizê-lo com o motivo para oferecer o plano B (upload)
+            # em vez de uma lista vazia que parece "não há nada publicado".
+            return Response(
+                {"documentos": [], "erro": str(exc), "motivo": exc.motivo},
+                status=status.HTTP_200_OK,
+            )
+        return Response({"fonte": fonte, "documentos": documentos, "erro": "", "motivo": ""})
+
     # --- disparar ------------------------------------------------------------
 
     def _disparar(self, carga_nova: CargaBase) -> Response:
@@ -544,11 +605,48 @@ class CargaBaseViewSet(viewsets.ReadOnlyModelViewSet):
             fonte=fonte,
             competencia=competencia,
             origem=CargaBase.Origem.DOWNLOAD,
+            # O documento escolhido na lista, quando a fonte tem mais de um. A
+            # corrida nasce com o endereço e o motor o respeita; vazio, o
+            # template da `FonteOficial` decide, como era na ORC.8.
+            url_origem=self._documento(request.data.get("url"), fonte),
             somente_resumo=bool(request.data.get("somente_resumo")),
             aceitar_sem_classe=bool(request.data.get("aceitar_sem_classe")),
             solicitada_por_nome=_nome_de_quem_pediu(request),
         )
         return self._disparar(nova)
+
+    def _documento(self, bruta, fonte: str) -> str:
+        """Confere a URL escolhida contra o endereço cadastrado da fonte.
+
+        **A conferência não é burocracia.** Este endpoint é do dono da
+        plataforma e manda o worker buscar uma URL arbitrária de dentro da rede
+        interna — é SSRF com convite. Amarrar o endereço ao host que já está
+        cadastrado em `FonteOficial` mantém a liberdade que a EMBASA exige
+        (escolher entre 65 documentos do mesmo site) sem abrir a porta para
+        `http://169.254.169.254/` nem para o Redis do compose.
+        """
+        url = str(bruta or "").strip()
+        if not url:
+            return ""
+        configuracao = FonteOficial.objects.filter(fonte=fonte).first()
+        cadastrado = (configuracao.template_url if configuracao else "") or ""
+        esperado = urlsplit(cadastrado).netloc.lower()
+        pedido = urlsplit(url)
+        if pedido.scheme not in ("http", "https") or not esperado:
+            raise exceptions.ValidationError({
+                "url": (
+                    "Escolha o documento pela lista de `documentos-disponiveis`. "
+                    "A fonte precisa ter o endereço cadastrado antes."
+                )
+            })
+        if pedido.netloc.lower() != esperado:
+            raise exceptions.ValidationError({
+                "url": (
+                    f"O documento tem de estar em {esperado} — é o endereço "
+                    f"cadastrado para esta fonte. Veio de {pedido.netloc or '(vazio)'}."
+                )
+            })
+        return url[:500]
 
     @action(detail=False, methods=["post"], url_path="enviar")
     def enviar(self, request):
@@ -559,7 +657,9 @@ class CargaBaseViewSet(viewsets.ReadOnlyModelViewSet):
             raise exceptions.ValidationError({"fonte": "Fonte desconhecida."})
         arquivo = request.FILES.get("arquivo")
         if arquivo is None:
-            raise exceptions.ValidationError({"arquivo": "Envie o ZIP ou o .xlsx oficial."})
+            raise exceptions.ValidationError({
+                "arquivo": "Envie o artefato oficial — ZIP/.xlsx da SINAPI, .pdf da EMBASA."
+            })
         teto = planos.ORCAMENTO_CARGA_TETO_MB * 1024 * 1024
         if arquivo.size > teto:
             raise exceptions.ValidationError({
@@ -596,6 +696,10 @@ class CargaBaseViewSet(viewsets.ReadOnlyModelViewSet):
             fonte=anterior.fonte,
             competencia=anterior.competencia,
             origem=anterior.origem,
+            # Repetir é repetir **o mesmo documento**: numa fonte com 65 tabelas,
+            # perder o endereço faria a segunda tentativa carregar outra coisa
+            # com a mesma cara de sucesso.
+            url_origem=anterior.url_origem,
             arquivo=anterior.arquivo,
             arquivo_nome=anterior.arquivo_nome,
             somente_resumo=bool(request.data.get("somente_resumo")),

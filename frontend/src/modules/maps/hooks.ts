@@ -61,10 +61,27 @@ export function useCalcularPlano() {
   })
 }
 
+export function useCriarPlanoDoLocal() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: api.criarPlanoDoLocal,
+    onSuccess: () => qc.invalidateQueries({ queryKey: mapsKeys.planos }),
+  })
+}
+
 export function useOtimizarRota() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: number) => api.otimizarRota(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: mapsKeys.rotas }),
+  })
+}
+
+/** Traçar ≠ otimizar: desenha na ordem que está, sem reordenar as paradas. */
+export function useTracarRota() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => api.tracarRota(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: mapsKeys.rotas }),
   })
 }

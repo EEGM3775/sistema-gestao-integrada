@@ -61,6 +61,20 @@ export const calcularPlano = (id: number) =>
     .then((r) => r.data)
 
 /**
+ * O plano nasce de um local que a empresa já tem — perímetro do canteiro se
+ * houver, círculo de raio se não. A resposta diz qual dos dois aconteceu, e a
+ * tela repete isso: voo sobre um círculo de 150 m não é voo sobre o canteiro.
+ */
+export const criarPlanoDoLocal = (dados: {
+  local: number; nome?: string; tipo?: string; raio_m?: number; gsd_alvo_cm?: number
+}) =>
+  apiClient
+    .post<{ plano: PlanoVoo; origem_da_area: 'perimetro' | 'raio'; raio_m: number | null }>(
+      `${base}/planos-voo/do-local/`, dados,
+    )
+    .then((r) => r.data)
+
+/**
  * Baixa o plano no formato do drone. Passa pelo axios (e não por `window.open`)
  * porque o endpoint exige o header de autorização — o access token vive em
  * memória, não em cookie, então uma navegação direta chegaria sem credencial.

@@ -15,7 +15,7 @@ import type {
   DemandaGerada, DesembolsoPorInsumo, FormulaReajuste, IndiceEconomico, LinhaMedicao,
   MemoriaFator, MemoriaQuantitativo, ParcelaFormulaReajuste, PreviaReajuste,
   // ORC.8
-  CargaBase, EstadoDaCarga, FonteOficial,
+  CargaBase, DocumentosDaFonte, EstadoDaCarga, FonteOficial,
   QuadroEncargos, RegimeEncargos, RelacaoInsumos, ResultadoReajuste, RubricaEncargos,
   TipoMaoDeObra, ValorIndice,
 } from '../types'
@@ -380,8 +380,21 @@ export const getEstadoDaCarga = async () =>
 export const listarCargas = async (params: Params = {}) =>
   (await apiClient.get<Paginated<CargaBase>>('orcamento/cargas/', { params })).data
 
+/** ORC.8b — o **menu** de artefatos que a fonte publica.
+ *
+ *  Existe porque "a publicação do mês" deixou de ser uma coisa só quando a
+ *  EMBASA entrou: ela publica por semestre, e são 65 tabelas carregáveis —
+ *  expansão, operação de água e de esgoto, cada uma por convenção coletiva.
+ *  Bate no site da fonte, então a tela chama ao abrir a fonte, não a cada
+ *  render. */
+export const getDocumentosDisponiveis = async (fonte: string, competencia?: string) =>
+  (await apiClient.get<DocumentosDaFonte>('orcamento/cargas/documentos-disponiveis/', {
+    params: { fonte, ...(competencia ? { competencia } : {}) },
+  })).data
+
 export const dispararCarga = async (body: {
-  fonte: string; competencia?: string; somente_resumo?: boolean; aceitar_sem_classe?: boolean
+  fonte: string; competencia?: string; url?: string
+  somente_resumo?: boolean; aceitar_sem_classe?: boolean
 }) => (await apiClient.post<CargaBase>('orcamento/cargas/', body)).data
 
 /** Plano B: o ZIP à mão, para o mês em que a Caixa muda o layout ou o WAF aperta. */

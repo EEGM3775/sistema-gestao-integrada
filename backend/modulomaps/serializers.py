@@ -21,6 +21,48 @@ from .models import (
 )
 
 
+# ---------------------------------------------------------------------------
+# A unidade vista do mapa
+# ---------------------------------------------------------------------------
+def detalhe_da_unidade(local) -> dict | None:
+    """O que o Maps precisa saber de uma unidade imobiliária, e não sabia.
+
+    Um lote no mapa vinha com área e mais nada. **Área não descreve terreno**: o
+    que o contrato, a matrícula e o vizinho reconhecem é *quanto mede cada lado*
+    e *com quem cada lado divide* — e o lado da frente é a rua, que é de onde sai
+    o endereço. O cadastro da unidade já guarda tudo isso
+    (`empreendimentos.Unidade`, campos `medida_*`/`confrontante_*`); o que
+    faltava era o mapa mostrar.
+
+    `rua_confere` é a checagem que o pedido pede por extenso: a rua da frente
+    tem de bater com o endereço. `None` quando não há como comparar — cadastro
+    incompleto não é cadastro errado, e acusar divergência onde só falta dado
+    ensina a ignorar o aviso.
+    """
+    unidade = getattr(local, "unidade", None)
+    if unidade is None:
+        return None
+    from . import services
+
+    return {
+        "unidade_id": unidade.pk,
+        "rotulo": unidade.rotulo,
+        "empreendimento": (
+            unidade.empreendimento.empreendimento if unidade.empreendimento_id else ""
+        ),
+        "tipo": unidade.tipo,
+        "situacao": unidade.situacao,
+        "situacao_rotulo": unidade.get_situacao_display(),
+        "area_privativa": str(unidade.area_privativa) if unidade.area_privativa is not None else None,
+        "area_total": str(unidade.area_total) if unidade.area_total is not None else None,
+        "endereco": unidade.endereco,
+        "rua": unidade.confrontante_frente,
+        "confrontacoes": unidade.confrontacoes,
+        "memorial": unidade.descricao_confrontacoes,
+        "rua_confere": services.rua_confere(unidade, local),
+    }
+
+
 class LocalSerializer(TenantScopedModelSerializer):
     ponto = PontoField(required=False, allow_null=True)
     area = GeometriaField(required=False, allow_null=True, tipos=("Polygon",))
@@ -28,6 +70,7 @@ class LocalSerializer(TenantScopedModelSerializer):
     fonte_rotulo = serializers.CharField(source="get_fonte_display", read_only=True)
     vinculo_rotulo = serializers.SerializerMethodField()
     endereco_completo = serializers.CharField(source="endereco_formatado", read_only=True)
+    unidade_detalhe = serializers.SerializerMethodField()
 
     class Meta:
         model = Local
@@ -37,6 +80,10 @@ class LocalSerializer(TenantScopedModelSerializer):
     def get_vinculo_rotulo(self, obj) -> str:
         alvo = obj.obra or obj.empreendimento or obj.fornecedor or obj.local_estoque or obj.unidade
         return str(alvo) if alvo else ""
+
+    def get_unidade_detalhe(self, obj):
+        """Medidas, confrontações e a conferência da rua — `null` fora de unidade."""
+        return detalhe_da_unidade(obj)
 
     def validate(self, dados):
         """O `tipo` tem de bater com a FK preenchida.
@@ -69,16 +116,24 @@ class LocalResumoSerializer(serializers.ModelSerializer):
     vinculo_rotulo = serializers.SerializerMethodField()
     distancia_km = serializers.SerializerMethodField()
 
+    unidade_detalhe = serializers.SerializerMethodField()
+
     class Meta:
         model = Local
         fields = [
             "local_id", "nome", "tipo", "ponto", "precisao", "precisao_rotulo",
             "fonte", "cidade", "uf", "vinculo_rotulo", "distancia_km",
+            "unidade_detalhe",
         ]
 
     def get_vinculo_rotulo(self, obj) -> str:
         alvo = obj.obra or obj.empreendimento or obj.fornecedor or obj.local_estoque or obj.unidade
         return str(alvo) if alvo else ""
+
+    def get_unidade_detalhe(self, obj):
+        """`null` para os outros tipos — e é `null` na maioria das linhas, então
+        não pesa: o custo é o `select_related("unidade")` que a view já faz."""
+        return detalhe_da_unidade(obj)
 
     def get_distancia_km(self, obj):
         """Só existe quando a consulta foi "o que está perto de X" (`proximos`)."""

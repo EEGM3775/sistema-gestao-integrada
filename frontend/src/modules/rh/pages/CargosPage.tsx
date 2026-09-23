@@ -5,6 +5,8 @@ import { useCargos } from '../hooks/useCargos'
 import CargoForm from '../components/CargoForm'
 import type { Cargo, CargoFormData } from '@/types'
 
+import { contemSemAcento } from '@/utils/texto'
+
 const CargosPage: React.FC = () => {
   const navigate = useNavigate()
   const { cargos, loading, error, createCargo, updateCargo, deleteCargo } = useCargos()
@@ -14,11 +16,11 @@ const CargosPage: React.FC = () => {
   const [deleting, setDeleting]     = useState(false)
 
   const filtered = useMemo(() => {
-    const q = search.toLowerCase()
+    const q = search.trim()
     if (!q) return cargos
     return cargos.filter(c =>
-      c.nome_cargo.toLowerCase().includes(q) ||
-      (c.departamento ?? '').toLowerCase().includes(q)
+      contemSemAcento(c.nome_cargo, q) ||
+      contemSemAcento(c.departamento ?? '', q)
     )
   }, [cargos, search])
 

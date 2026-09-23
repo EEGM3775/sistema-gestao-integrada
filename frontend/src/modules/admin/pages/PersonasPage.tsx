@@ -4,6 +4,8 @@ import { usePersonas } from '../hooks/usePersonas'
 import PersonaForm from '../components/PersonaForm'
 import type { Perfil, PerfilFormData } from '../types'
 
+import { contemSemAcento } from '@/utils/texto'
+
 interface FormState {
   open: boolean
   editing: Perfil | null                 // se != null, salva com PATCH; senão POST (novo/clone)
@@ -28,9 +30,9 @@ const PersonasPage: React.FC = () => {
     initialData: { ...toFormData(p), nome: `${p.nome} (cópia)`, descricao: p.descricao ?? '' } })
 
   const filtered = useMemo(() => {
-    const q = search.toLowerCase()
+    const q = search.trim()
     if (!q) return perfis
-    return perfis.filter(p => p.nome.toLowerCase().includes(q) || (p.descricao ?? '').toLowerCase().includes(q))
+    return perfis.filter(p => contemSemAcento(p.nome, q) || contemSemAcento(p.descricao ?? '', q))
   }, [perfis, search])
 
   const handleSave = async (fd: PerfilFormData) => {

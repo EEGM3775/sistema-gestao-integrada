@@ -340,11 +340,35 @@ class CalendarEventViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
                 },
             })
 
-        # Fallback: sem nacional na tabela (sync ainda não rodou) → Nager.Date só
-        # p/ o nacional, mantendo o feed útil antes da 1ª sincronização.
-        if not any(f.escopo == 'nacional' for f in feriados):
+        # Plano B: a TABELA não tem o nacional daqueles anos (sync ainda não
+        # rodou, ou rodou sem cobrir o ano que se está olhando) → Nager.Date,
+        # para o feed ser útil antes da 1ª sincronização.
+        #
+        # **A pergunta é sobre o ANO, não sobre a janela** (D147). A condição
+        # anterior era "não vieram nacionais nesta janela", e isso confundia
+        # *ausente* com *inexistente*: fevereiro, março, junho, julho e agosto
+        # não TÊM feriado nacional, então abrir qualquer um desses meses com a
+        # tabela cheia disparava a viagem à API externa — cinco dos doze meses
+        # do ano, em toda navegação. Era esta a demora que o dono via na tela.
+        if not self._tem_nacional_na_tabela(inicio, fim):
             eventos.extend(self._feriados_nager(start_dt, end_dt))
         return eventos
+
+    @staticmethod
+    def _tem_nacional_na_tabela(inicio, fim) -> bool:
+        """A tabela cobre os **anos** tocados pela janela? Uma consulta só.
+
+        Cobre = tem ao menos um feriado nacional em cada ano tocado. Ano sem
+        nenhum é ano não sincronizado: não existe calendário brasileiro sem 1º
+        de janeiro.
+        """
+        anos = set(range(inicio.year, fim.year + 1))
+        cobertos = set(
+            Feriado.objects.filter(escopo='nacional', data__year__in=anos)
+            .values_list('data__year', flat=True)
+            .distinct()
+        )
+        return anos.issubset(cobertos)
 
     def _feriados_nager(self, start_dt, end_dt):
         eventos = []

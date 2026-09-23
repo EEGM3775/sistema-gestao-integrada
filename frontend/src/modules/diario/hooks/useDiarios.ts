@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import apiClient from '@/api/apiClient'
 import type { DiarioObra } from '@/types'
 
+import { contemSemAcento } from '@/utils/texto'
+
 interface Filters {
   obraId?: number | null
   search?: string
@@ -29,11 +31,12 @@ export function useDiarios(filters: Filters = {}) {
 
   const data = useMemo(() => {
     if (!filters.search) return raw
-    const q = filters.search.toLowerCase()
+    // Sem acento dos dois lados — ver .
+    const q = filters.search
     return raw.filter(d =>
-      (d.condicoes_climaticas ?? '').toLowerCase().includes(q) ||
-      (d.descricao ?? '').toLowerCase().includes(q) ||
-      d.entradas.some(e => e.texto.toLowerCase().includes(q))
+      contemSemAcento(d.condicoes_climaticas ?? '', q) ||
+      contemSemAcento(d.descricao ?? '', q) ||
+      d.entradas.some(e => contemSemAcento(e.texto, q))
     )
   }, [raw, filters.search])
 

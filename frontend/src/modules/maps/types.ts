@@ -4,6 +4,47 @@ export type Precisao = 'exata' | 'endereco' | 'cep' | 'municipio' | 'desconhecid
 
 export interface Ponto { lon: number; lat: number }
 
+/** Um lado do lote: quanto mede e com quem divide. */
+export interface Confrontacao {
+  lado: 'frente' | 'fundo' | 'lateral_direita' | 'lateral_esquerda'
+  rotulo: string
+  /** Metros lineares. `null` = lado não medido — não é zero. */
+  medida: string | null
+  confrontante: string
+}
+
+/**
+ * O que o mapa precisa saber de uma unidade imobiliária.
+ *
+ * Área não descreve terreno: o que o contrato, a matrícula e o vizinho
+ * reconhecem é quanto mede cada lado e com quem cada lado divide — e o lado da
+ * frente é a rua, que é de onde sai o endereço.
+ */
+export interface UnidadeDetalhe {
+  unidade_id: number
+  rotulo: string
+  empreendimento: string
+  tipo: string
+  situacao: string
+  situacao_rotulo: string
+  area_privativa: string | null
+  area_total: string | null
+  endereco: string
+  /** O confrontante da frente — na prática, a rua. */
+  rua: string
+  confrontacoes: Confrontacao[]
+  /** O memorial em uma frase, montado no backend (fonte única). */
+  memorial: string
+  /**
+   * A rua da frente bate com o endereço?
+   *
+   * `null` = **não dá para dizer** (falta o confrontante ou falta o endereço),
+   * e esse é o valor que mais importa: cadastro incompleto não é cadastro
+   * errado, e acusar divergência onde só falta dado ensina a ignorar o aviso.
+   */
+  rua_confere: boolean | null
+}
+
 export interface LocalResumo {
   local_id: number
   nome: string
@@ -16,6 +57,8 @@ export interface LocalResumo {
   uf: string
   vinculo_rotulo: string
   distancia_km: number | null
+  /** `null` fora de `tipo: 'unidade'`. */
+  unidade_detalhe: UnidadeDetalhe | null
 }
 
 export interface Local extends LocalResumo {
@@ -33,7 +76,12 @@ export interface Local extends LocalResumo {
 }
 
 export interface ItemDaFila {
-  tipo: 'sem_coordenada' | 'precisao_grosseira' | 'ortofoto_vencida' | 'voo_sem_autorizacao'
+  tipo:
+    | 'sem_coordenada'
+    | 'precisao_grosseira'
+    | 'rua_divergente'
+    | 'ortofoto_vencida'
+    | 'voo_sem_autorizacao'
   alvo: string
   quantidade: number
   titulo: string
@@ -202,3 +250,24 @@ export interface Paginado<T> {
   previous: string | null
   results: T[]
 }
+
+/* ─── Navegação entre as abas ────────────────────────────────────────────────
+ *
+ * Mora em `types.ts` e não na página porque quem a **usa** são as abas, e a
+ * página é quem as importa: declarar o tipo lá criaria um par de arquivos
+ * apontando um para o outro só para dizer o que é um destino.
+ */
+export type TabMaps = 'mapa' | 'locais' | 'vizinhanca' | 'camadas' | 'acervo' | 'voos' | 'rotas'
+
+/** Para onde um item da fila de decisão (ou uma linha da tabela) leva. */
+export interface Destino {
+  tab: TabMaps
+  /** Isola na aba de destino exatamente o que a pendência conta. */
+  filtro?: Record<string, string>
+  /** Coordenada a enquadrar ao chegar — o "me mostra onde isto está". */
+  foco?: { lon: number; lat: number }
+  /** Sobe a cada pedido, para o mesmo destino ser reabrível. */
+  selo?: number
+}
+
+export type Ir = (destino: Destino) => void

@@ -76,6 +76,18 @@ export interface RespostaGrupos {
   niveis: string[]
   podeFinanceiro: boolean
   podeDocumento: boolean
+  /**
+   * Quantas linhas a carteira tem neste recorte — **não** a soma dos grupos.
+   *
+   * As duas divergem de propósito ao agrupar pessoas por uma dimensão de
+   * muitos: quem comprou em dois empreendimentos é um cliente e aparece em dois
+   * cabeçalhos. Somar os cabeçalhos dava 5.312 numa carteira de 5.000, e o
+   * contador da barra mudava só porque alguém agrupou.
+   */
+  count: number
+  /** A soma dos cabeçalhos — só para explicar a diferença, nunca para exibir
+   *  como total. */
+  somaDosGrupos: number
   grupos: GrupoCarteira[]
 }
 

@@ -6,16 +6,33 @@ from .views import (
     AditivoContratoViewSet,
     ApontamentoAvancoViewSet,
     AtividadeViewSet,
+    BuscaView,
+    CarteiraView,
+    HojeView,
+    MinhasFrentesView,
     CalendarioTrabalhoViewSet,
+    CausaNaoCumprimentoViewSet,
     ContratoObraViewSet,
     CronogramaViewSet,
     ExcecaoCalendarioViewSet,
     ItemContratoViewSet,
+    ItemModeloVerificacaoViewSet,
+    ItemProgramacaoViewSet,
+    ItemVerificacaoViewSet,
     LiberacaoRetencaoViewSet,
     LocalObraViewSet,
     MedicaoViewSet,
+    ModeloVerificacaoViewSet,
+    NaoConformidadeViewSet,
     PdcaStatusView,
+    PlanoAcaoViewSet,
     PrecedenciaViewSet,
+    ProgramacaoSemanalViewSet,
+    RestricaoViewSet,
+    VerificacaoViewSet,
+    AnexoOcorrenciaViewSet,
+    DialogoSegurancaViewSet,
+    OcorrenciaViewSet,
 )
 
 router = DefaultRouter()
@@ -33,8 +50,51 @@ router.register(r"medicoes", MedicaoViewSet, basename="pdca-medicao")
 router.register(r"liberacoes", LiberacaoRetencaoViewSet, basename="pdca-liberacao")
 # PDCA.4 — o contrato mudando por escrito
 router.register(r"aditivos", AditivoContratoViewSet, basename="pdca-aditivo")
+# PDCA.5 — o Last Planner: o que trava, o que se assume e por que não saiu
+router.register(r"restricoes", RestricaoViewSet, basename="pdca-restricao")
+router.register(r"causas", CausaNaoCumprimentoViewSet, basename="pdca-causa")
+router.register(
+    r"programacoes", ProgramacaoSemanalViewSet, basename="pdca-programacao",
+)
+router.register(
+    r"itens-programacao", ItemProgramacaoViewSet, basename="pdca-item-programacao",
+)
+# PDCA.7 — a máquina de verificação: a ficha, o defeito e o laço que o fecha
+router.register(
+    r"modelos-verificacao", ModeloVerificacaoViewSet, basename="pdca-modelo-verificacao",
+)
+router.register(
+    r"itens-modelo-verificacao", ItemModeloVerificacaoViewSet,
+    basename="pdca-item-modelo-verificacao",
+)
+router.register(r"verificacoes", VerificacaoViewSet, basename="pdca-verificacao")
+router.register(
+    r"itens-verificacao", ItemVerificacaoViewSet, basename="pdca-item-verificacao",
+)
+router.register(r"ncs", NaoConformidadeViewSet, basename="pdca-nc")
+router.register(r"planos-acao", PlanoAcaoViewSet, basename="pdca-plano-acao")
+# PDCA.8 — SSMA: a roda antes do turno e o fato que ninguém queria
+router.register(r"dds", DialogoSegurancaViewSet, basename="pdca-dds")
+router.register(r"ocorrencias", OcorrenciaViewSet, basename="pdca-ocorrencia")
+router.register(
+    r"anexos-ocorrencia", AnexoOcorrenciaViewSet, basename="pdca-anexo-ocorrencia",
+)
 
 urlpatterns = [
     path("status/", PdcaStatusView.as_view(), name="pdca-status"),
+    # O cockpit — as leituras que ATRAVESSAM, e que por isso não são recurso
+    # de router nenhum: a carteira cruza obras, `hoje/` junta cinco assuntos de
+    # uma obra, `busca/` varre sete tabelas e `minhas-frentes/` junta quatro
+    # assuntos de uma pessoa, em qualquer obra. Registrá-las como ação de um
+    # viewset as penduraria num dono que elas não têm.
+    path("carteira/", CarteiraView.as_view(), name="pdca-carteira"),
+    path("hoje/", HojeView.as_view(), name="pdca-hoje"),
+    path("busca/", BuscaView.as_view(), name="pdca-busca"),
+    # E a quinta, que é a porta da superfície de campo: o que está atribuído a
+    # quem pede. Atravessa obras, então mora aqui pelo mesmo motivo que a
+    # carteira — não é recurso de router nenhum.
+    path(
+        "minhas-frentes/", MinhasFrentesView.as_view(), name="pdca-minhas-frentes",
+    ),
     path("", include(router.urls)),
 ]

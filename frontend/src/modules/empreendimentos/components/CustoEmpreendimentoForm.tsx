@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { X } from 'lucide-react'
 import type { CustoEmpreendimento, CustoEmpreendimentoFormData, TipoCusto } from '@/types'
 import { FieldError, FormErrorBanner, parseApiErrors, type FieldErrors } from '@/utils/formErrors'
-import { minPagamentoISO, maxPagamentoISO, validateISO_Pagamento } from '@/utils/dates'
+import { validateISO_Pagamento, minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
 
 interface Props {
   open: boolean
@@ -134,8 +134,7 @@ const CustoEmpreendimentoForm: React.FC<Props> = ({ open, empreendimentoId, onCl
             </div>
             <div>
               <label style={labelCls}>Data *</label>
-              <input required type="date" style={inputCls} value={form.data_custo}
-                min={minPagamentoISO()} max={maxPagamentoISO()}
+              <input required type="date" min={minCalendarioISO} max={maxCalendarioISO} style={inputCls} value={form.data_custo}
                 onChange={e => { set('data_custo', e.target.value); setFieldErrors(p => ({ ...p, data_custo: '' })) }}
                 onBlur={e => { const err = validateISO_Pagamento(e.target.value); if (err) setFieldErrors(p => ({ ...p, data_custo: err })) }} />
               <FieldError msg={fieldErrors.data_custo} />

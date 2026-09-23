@@ -1,0 +1,48 @@
+# Classes da EMBASA → natureza do catálogo.
+#
+# A EMBASA escreve a classe em sigla com ponto, e não por extenso como a SINAPI:
+# nenhuma delas casa com o `PREFIXOS_DE_CLASSE` embutido, então sem este arquivo
+# os 30 mil insumos da Bahia cairiam todos no plano B da unidade — e material em
+# `H` viraria mão de obra levando encargo social sobre custo que não é salário.
+#
+# A comparação é exata sobre a forma normalizada, e o `normalizar` **não** tira
+# pontuação: o ponto de `MAT.` e `EQ.AQ.` faz parte da chave e tem de estar aqui.
+#
+# classe;natureza
+
+# 28.211 insumos — tubo, conexão, cimento, brita, asfalto.
+MAT.;material
+
+# 1.121 insumos — o salário-hora **puro**, sem leis sociais (ajudante de armador
+# a R$ 7,84/h). A LS vem por cima, do quadro de encargos, e é por isso que a
+# publicação de insumos da EMBASA entra no regime `sem encargos`.
+M.O.;mao_de_obra
+
+# 451 + 283 insumos. A EMBASA separa locação (`EQ.LOC`) de aquisição (`EQ.AQ.`);
+# o catálogo não, porque a natureza dos dois é a mesma — o que muda é o
+# contrato, não o que a coisa é.
+EQ.LOC;equipamento
+EQ.AQ.;equipamento
+
+# 1.552 insumos — serviço comprado de terceiro (cadastro de rede, reprodução de
+# cartilha, locação de painel de mensagem, brita de usinagem). `servico` e não
+# `mao_de_obra` **de propósito**: o preço já é o do contratado, com encargo
+# dentro, e aplicar encargo por cima seria contar duas vezes (o D109).
+#
+# Sabidamente imperfeito numa ponta: a EMBASA guarda aqui alguns adicionais de
+# hora trabalhada (`PE - AJUDANTE DE SOLDADOR`, R$ 2,35/h), que são salário. São
+# poucos entre 1.552, e a correção certa para eles é por código no catálogo
+# (`reclassificar_itens_catalogo --de-para`), não mudar a classe inteira.
+SER.MO;servico
+
+# 6 insumos — prêmio de permanência, adicional noturno, diária de motorista,
+# rateio de jovem aprendiz. É complemento do custo do trabalhador e **não** leva
+# encargo social por cima, que é exatamente o que `encargos_complementares`
+# significa aqui.
+VERBA;encargos_complementares
+
+# A classe única do Relatório de Serviços. Na prática não decide nada — serviço
+# da EMBASA entra como `composicao`, e composição vence a classificação no
+# primeiro degrau de `_tipo_e_flags`. Está declarada para não virar alarme no dia
+# em que alguém ler a tabela de serviços por outro caminho.
+SER.CG;servico

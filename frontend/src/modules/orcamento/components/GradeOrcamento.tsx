@@ -4,6 +4,8 @@ import { CAPS, mono } from '../ui'
 import { achatar, brl, FONTE_ROTULO, mesBR, montarArvore, num, paraDecimal, paraEdicao, peso, type NoEap } from '../lib'
 import type { AnaliticaOrcamento, ItemOrcado, ItemOrcadoInsumo } from '../types'
 
+import { contemSemAcento } from '@/utils/texto'
+
 export type ColunaEditavel = 'descricao' | 'unidade' | 'quantidade' | 'custo_unitario'
 const EDITAVEIS: ColunaEditavel[] = ['descricao', 'unidade', 'quantidade', 'custo_unitario']
 const NUMERICAS = new Set<ColunaEditavel>(['quantidade', 'custo_unitario'])
@@ -106,14 +108,14 @@ export default function GradeOrcamento({
   const arvore = useMemo(() => montarArvore(itens), [itens])
 
   const visiveis = useMemo<Linha[]>(() => {
-    const busca = filtro.trim().toLowerCase()
+    const busca = filtro.trim()
     if (busca) {
       // Com filtro a hierarquia já está quebrada (a linha que casa aparece sem
       // o pai): abrir composição em cima disso viraria ruído.
       const casa = (n: NoEap) =>
-        n.item.descricao.toLowerCase().includes(busca) ||
-        n.item.codigo_referencia.toLowerCase().includes(busca) ||
-        n.item.codigo_eap.toLowerCase().includes(busca)
+        contemSemAcento(n.item.descricao, busca) ||
+        contemSemAcento(n.item.codigo_referencia, busca) ||
+        contemSemAcento(n.item.codigo_eap, busca)
       return achatar(arvore, new Set()).filter(casa).map(no => ({ tipo: 'eap', no }) as Linha)
     }
 

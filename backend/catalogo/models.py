@@ -58,6 +58,7 @@ class Item(TenantScopedModel):
         SEINFRA = "seinfra", _("SEINFRA")
         SEDOP = "sedop", _("SEDOP")
         TCPO = "tcpo", _("TCPO")
+        EMBASA = "embasa", _("EMBASA")
         PROPRIA = "propria", _("Própria")
 
     item_id = models.AutoField(primary_key=True)

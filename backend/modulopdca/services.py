@@ -17,12 +17,12 @@ por máquina.
 from __future__ import annotations
 
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import Count, Max, Sum
+from django.db.models import Count, F, Max, Q, Sum
 from django.utils import timezone
 
 from payment.planos import (
@@ -32,24 +32,49 @@ from payment.planos import (
     PDCA_PROFUNDIDADE_MAXIMA_LOCAL,
     PDCA_PROFUNDIDADE_MAXIMA_WBS,
     PDCA_TETO_ATIVIDADES_POR_CRONOGRAMA,
+    PDCA_TETO_CAUSAS_POR_TENANT,
+    PDCA_TETO_CONFLITOS_REPORTADOS,
+    PDCA_TETO_LINHAS_DE_BALANCO,
+    PDCA_TETO_LOCAIS_NA_LINHA_DE_BALANCO,
+    PDCA_TETO_LOCAIS_POR_RITMO,
     PDCA_TETO_CPM_SINCRONO,
     PDCA_TETO_ADITIVOS_ABERTOS_POR_CONTRATO,
     PDCA_TETO_DEDUCOES_POR_MEDICAO,
     PDCA_TETO_ITENS_POR_ADITIVO,
     PDCA_TETO_ITENS_POR_CONTRATO,
+    PDCA_TETO_ITENS_POR_PROGRAMACAO,
     PDCA_TETO_LINHAS_POR_LOTE,
     PDCA_TETO_LINHAS_POR_MEDICAO,
     PDCA_TETO_LOCAIS_POR_GERACAO,
     PDCA_TETO_LOCAIS_POR_OBRA,
+    PDCA_TETO_RESTRICOES_ABERTAS_POR_OBRA,
+    PDCA_TETO_SEMANAS_PPC,
     PDCA_TETO_VERSOES_POR_CRONOGRAMA,
+    PDCA_TETO_ACOES_POR_NC,
+    PDCA_TETO_ITENS_POR_MODELO_VERIFICACAO,
+    PDCA_TETO_MODELOS_POR_TENANT,
+    PDCA_TETO_NCS_ABERTAS_POR_OBRA,
+    PDCA_TETO_ANEXOS_POR_OCORRENCIA,
+    PDCA_TETO_OCORRENCIAS_NA_FILA,
+    PDCA_TETO_PARTICIPANTES_POR_DDS,
+    PDCA_TETO_LINHAS_POR_FAIXA_DA_FILA,
+    PDCA_TETO_LINHAS_POR_FRENTE,
+    PDCA_TETO_OBRAS_NA_CARTEIRA,
+    PDCA_TETO_RESULTADOS_POR_ESPECIE,
 )
 
 from .models import (
     AcaoAditivo, AditivoContrato, ApontamentoAvanco, Atividade,
-    CalendarioTrabalho, ContratoObra, Cronograma, DeducaoMedicao,
-    ExcecaoCalendario, ItemAditivo, ItemContrato, ItemMedicao,
+    CalendarioTrabalho, CausaNaoCumprimento, ContratoObra, Cronograma,
+    DeducaoMedicao, DominioVerificacao, GravidadeNC, ItemModeloVerificacao,
+    ItemVerificacao, ModeloVerificacao, NaoConformidade, PlanoAcao,
+    ResultadoItem, Verificacao, VerificacaoEficacia,
+    ExcecaoCalendario, ItemAditivo, ItemContrato, ItemMedicao, ItemProgramacao,
     LiberacaoRetencao, LocalObra, Medicao, NivelLocal, OrigemCusto,
-    Precedencia, RegimeContrato, TipoDeducao,
+    Precedencia, ProgramacaoSemanal, RegimeContrato, Restricao, TipoDeducao,
+    TipoRestricao,
+    AnexoOcorrencia, ClassificacaoOcorrencia, DialogoSeguranca, Ocorrencia,
+    ParticipanteDDS, TipoCAT, TipoOcorrencia,
 )
 
 # ---------------------------------------------------------------------------
@@ -1058,6 +1083,39 @@ def peso_de(atividade: Atividade) -> tuple[Decimal | None, str]:
         return (atividade.item_orcado.total_com_bdi, "orcado")
     if atividade.peso_informado is not None:
         return (atividade.peso_informado, "informado")
+    return (None, "")
+
+
+def peso_do_compromisso(atividade: Atividade) -> tuple[Decimal | None, str]:
+    """O peso com que um **cartão da semana** entra no PPC ponderado (§12.3).
+
+    É a escada do `peso_de` com **um degrau a mais no fim**: a duração. A razão
+    de o degrau existir aqui e não lá é que as duas contas respondem a perguntas
+    diferentes. O avanço do cronograma pergunta *quanto da obra já está feito*, e
+    ali duração seria régua errada — semana de espera de cura de concreto não é
+    obra feita. O PPC pergunta *quanto do que a equipe assumiu para esta semana
+    saiu*, e aí duração é a régua de esforço que **toda** obra tem, mesmo a que
+    nunca vinculou uma atividade ao orçamento.
+
+    A ordem é a do dono *(15/09/2026)*: o peso sai do planejamento, e o
+    planejamento o tira **do orçamento** — que é onde mora o físico-financeiro —
+    ou **do tempo que o planejador digitou**.
+
+      1. `orcado`    — o `ItemOrcado` vinculado, pelo `total_com_bdi`;
+      2. `informado` — o `peso_informado` que o planejador pôs na atividade;
+      3. `duracao`   — os dias úteis da atividade.
+
+    `(None, "")` quando nenhum degrau responde — o marco, que tem duração zero
+    por definição, é o caso comum. **Nulo, e não zero**: zero faria o cartão
+    existir no denominador valendo nada, e um serviço assumido que vale nada é
+    mentira mais cara do que um serviço sem régua. Quem não tem peso é contado à
+    parte na leitura (`sem_peso`), como as folhas sem peso do cronograma.
+    """
+    valor, origem = peso_de(atividade)
+    if valor is not None and valor > 0:
+        return (valor, origem)
+    if atividade.duracao_dias:
+        return (Decimal(atividade.duracao_dias), "duracao")
     return (None, "")
 
 
@@ -3229,6 +3287,58 @@ def _congelar_medicao(medicao: Medicao, *, aprovada: bool) -> Medicao:
     return medicao
 
 
+def titulo_da_medicao(medicao: Medicao):
+    """A `ContaPagar` que esta medição gerou, ou `None`.
+
+    **Importa tarde**, pela mesma razão do `gerar_titulo_de_medicao`: a §7 da
+    planta diz que o PDCA não paga, e o seam é frouxo para que a fronteira seja
+    atravessável nos dois sentidos — ou em nenhum, na instalação que não
+    contrate o ERP.
+
+    Título que o seam aponta e que sumiu do banco devolve `None`, e isso é caso
+    real: a `ContaPagar` herda `Excluivel` e pode ter ido para a lixeira por
+    fora. Quem chama trata como "não há título", que é a verdade.
+    """
+    if not medicao.conta_pagar_ref:
+        return None
+    try:
+        from moduloerp.models import ContaPagar
+    except ImportError:  # instalação sem o módulo financeiro
+        return None
+    return ContaPagar.objects.filter(
+        tenant_id=medicao.tenant_id, pk=medicao.conta_pagar_ref,
+    ).first()
+
+
+def estado_do_titulo(medicao: Medicao) -> dict | None:
+    """O que a tela precisa saber do título **antes** de oferecer o cancelamento.
+
+    É a metade de leitura da regra do `cancelar_medicao`: sem isto, o botão
+    "Cancelar" só descobriria que o título já foi pago **depois** de o gestor
+    clicar, e a recusa chegaria como um erro em vez de um aviso. O aviso na tela
+    e a trava no servidor têm de sair do **mesmo** lugar, senão divergem na
+    primeira mudança de regra.
+    """
+    conta = titulo_da_medicao(medicao)
+    if conta is None:
+        return None
+    return {
+        "conta_pagar": conta.pk,
+        "status": conta.status,
+        "status_rotulo": conta.get_status_display(),
+        "valor": conta.valor,
+        "valor_pago": conta.valor_pago,
+        "saldo_aberto": conta.saldo_aberto,
+        "data_vencimento": conta.data_vencimento,
+        #: A pergunta que decide o botão: cancelar a medição pode levar o título
+        #: junto, ou o dinheiro já saiu e só a retificadora conserta.
+        "pode_cancelar": (
+            conta.valor_pago <= 0
+            and conta.status not in ("QUITADO", "PARCIAL", "CANCELADO")
+        ),
+    }
+
+
 def gerar_titulo_de_medicao(medicao: Medicao) -> int | None:
     """Medição aprovada → `ContaPagar` no ERP. O líquido, não o bruto.
 
@@ -3876,6 +3986,108 @@ def _gerar_titulo_de_liberacao(liberacao: LiberacaoRetencao) -> int | None:
     return conta.pk
 
 
+# --- Cancelamento: retirar o documento E o título que ele gerou -------------
+
+
+@transaction.atomic
+def cancelar_medicao(*, medicao: Medicao, motivo: str = "", por: str = "",
+                     usuario=None) -> dict:
+    """Retira a medição — **e leva o título do ERP junto**.
+
+    **O defeito que isto conserta.** O `cancelar/` mexia só no PDCA: a medição
+    virava `CANCELADA` e a `ContaPagar` que ela gerou continuava aberta no
+    financeiro, com a descrição apontando para uma medição que não existe mais.
+    O empreiteiro recebia por um boletim retirado, e a conciliação só percebia
+    quando alguém fosse explicar o título — quer dizer, no fim do mês, quando já
+    tinha sido pago.
+
+    **As três portas, e por que elas são diferentes:**
+
+    - **rascunho / em aprovação** — não há título. Cancelar é retirar o
+      documento antes de ele produzir efeito, e sempre pôde;
+    - **aprovada com título ainda ABERTO** — cancela os dois no mesmo gesto e na
+      mesma transação. É o caso que estava quebrado, e é o comum: a medição
+      aprovada de manhã que se descobre errada à tarde;
+    - **aprovada com título pago (parcial ou quitado)** — **recusa**, e manda
+      retificar *(decisão do dono, 15/09/2026)*. O dinheiro que saiu do caixa
+      não se apaga cancelando o papel que o justificou: existe uma `Transacao`
+      lançada, e um título cancelado com baixa em cima é um buraco que a
+      conciliação não fecha nunca. A medição **retificadora** é o caminho — ela
+      corrige o valor por um documento novo, que é como o resto desta casa já
+      conserta o que virou dinheiro.
+
+    **Motivo obrigatório quando havia título.** É a mesma régua da retificação e
+    da reabertura da semana: o que produziu efeito no mundo não se desfaz em
+    silêncio. Cancelar um rascunho não pede motivo — não houve efeito.
+    """
+    if medicao.status in (Medicao.Status.CANCELADA, Medicao.Status.REPROVADA):
+        raise ValidationError(
+            f"A medição já está {medicao.get_status_display().lower()} e não "
+            f"se cancela de novo — ela já não produz efeito."
+        )
+
+    era_aprovada = medicao.status == Medicao.Status.APROVADA
+    titulo = titulo_da_medicao(medicao) if era_aprovada else None
+    motivo = (motivo or "").strip()
+
+    if era_aprovada and not motivo:
+        raise ValidationError(
+            "Cancelar uma medição aprovada exige motivo por escrito. Ela já "
+            "virou título a pagar, e o financeiro precisa da frase que explica "
+            "por que o título sumiu."
+        )
+
+    if titulo is not None:
+        #: **O título pago tranca a porta.** `valor_pago > 0` cobre a baixa
+        #: parcial, que é o caso traiçoeiro: o status ainda é `PARCIAL`, o
+        #: título parece vivo, e já saiu dinheiro.
+        if titulo.valor_pago > 0 or titulo.status in ("QUITADO", "PARCIAL"):
+            raise ValidationError(
+                f"O título {titulo.pk} desta medição já recebeu "
+                f"R$ {titulo.valor_pago} de baixa "
+                f"({titulo.get_status_display().lower()}). Medição que já foi "
+                f"paga não se cancela: o dinheiro saiu do caixa e existe uma "
+                f"transação lançada em cima dele. Para corrigir o valor, abra "
+                f"uma medição retificadora — ela aponta para esta, e a soma das "
+                f"duas dá o número certo."
+            )
+        if titulo.status != "CANCELADO":
+            titulo.status = "CANCELADO"
+            titulo.save(update_fields=["status"])
+            from nucleo.auditoria import registrar_auditoria
+
+            #: Auditoria dos dois lados: o cancelamento do título é evento
+            #: financeiro da mesma família da baixa, e a origem dele está noutro
+            #: módulo. Sem esta linha, quem lê o log do ERP vê um título sumir
+            #: sem ator nem porquê.
+            registrar_auditoria(
+                acao="cancelar", instance=titulo, usuario=usuario,
+                detalhes={
+                    "origem": "pdca.medicao.cancelar",
+                    "medicao": medicao.pk,
+                    "valor": str(titulo.valor),
+                    "motivo": motivo[:500],
+                },
+            )
+
+    medicao.status = Medicao.Status.CANCELADA
+    medicao.congelada_em = timezone.now()
+    campos = ["status", "congelada_em"]
+    if motivo:
+        medicao.observacao = (
+            f"{medicao.observacao}\n" if medicao.observacao else ""
+        ) + f"Cancelada por {por or 'usuário'}: {motivo}"
+        campos.append("observacao")
+    medicao.save(update_fields=campos)
+
+    return {
+        "medicao": medicao.pk,
+        "status": medicao.status,
+        "titulo_cancelado": titulo.pk if titulo is not None else None,
+        "era_aprovada": era_aprovada,
+    }
+
+
 # --- Retificação e leitura do contrato -------------------------------------
 
 
@@ -4049,3 +4261,5037 @@ def validar_teto_de_itens(contrato: ContratoObra, *, acrescentando: int = 1) -> 
             f"O contrato já tem {_milhar(atual)} itens e o teto do seu plano é "
             f"{_milhar(PDCA_TETO_ITENS_POR_CONTRATO)}."
         )
+
+
+# ---------------------------------------------------------------------------
+# 12. O Last Planner (PDCA.5) — make-ready, compromisso e causa
+# ---------------------------------------------------------------------------
+# As três seções abaixo implementam o ciclo semanal do LPS, e a ordem delas é a
+# ordem em que a reunião acontece: primeiro se olha o que trava (12.1), depois
+# se assume o que vai sair (12.2), e no fim da semana se julga e se aprende
+# (12.3). O PPC é derivado no ponto de leitura, nunca gravado — §4.9 da planta.
+
+# --- 12.1 O catálogo de causas ----------------------------------------------
+
+#: As causas de fábrica. Cobrem o que a literatura do LPS registra como
+#: recorrente em obra brasileira, e existem para que a primeira semana de uso já
+#: produza ranking — um catálogo vazio faria a primeira reunião inventar rótulos
+#: livres, que é exatamente o que o modelo existe para impedir.
+#:
+#: **O código é estável e o nome é editável.** O tenant renomeia "MAT-FALTA" para
+#: o vocabulário da casa dele; o que não muda é o código, porque é por ele que a
+#: comparação entre obras (e, um dia, entre empresas na Esfera de Rede) se faz.
+CAUSAS_DE_FABRICA: tuple[tuple[str, str, str], ...] = (
+    # (codigo, nome, categoria)
+    ("PLAN-MAL-DIM", "Serviço mal dimensionado no plano", "planejamento"),
+    ("PLAN-PRE-REQ", "Pré-requisito não concluído", "planejamento"),
+    ("PLAN-MUDANCA", "Mudança de prioridade na semana", "planejamento"),
+    ("MO-FALTA", "Falta de efetivo", "mao_de_obra"),
+    ("MO-PRODUT", "Produtividade abaixo da prevista", "mao_de_obra"),
+    ("MO-ABSENT", "Absenteísmo", "mao_de_obra"),
+    ("MAT-FALTA", "Material não chegou", "material"),
+    ("MAT-ERRADO", "Material errado ou fora de especificação", "material"),
+    ("EQP-INDISP", "Equipamento indisponível", "equipamento"),
+    ("EQP-QUEBRA", "Quebra de equipamento", "equipamento"),
+    ("PROJ-FALTA", "Projeto não liberado ou incompleto", "projeto"),
+    ("PROJ-ALTER", "Alteração de projeto", "projeto"),
+    ("EXT-CLIMA", "Chuva ou condição climática", "externo"),
+    ("EXT-CLIENTE", "Decisão pendente do cliente", "externo"),
+    ("EXT-ORGAO", "Liberação de órgão externo", "externo"),
+    ("QUA-RETRAB", "Retrabalho por não-conformidade", "qualidade"),
+)
+
+
+def semear_causas_de_fabrica(tenant_id) -> int:
+    """Põe o catálogo de fábrica no tenant. Idempotente.
+
+    Chamada no primeiro uso da programação (e não numa migration de dados)
+    porque tenant novo nasce depois da migration, e um catálogo que só existisse
+    para quem já estava no banco deixaria o cliente seguinte sem ranking.
+    """
+    existentes = set(
+        CausaNaoCumprimento.objects.filter(tenant_id=tenant_id)
+        .values_list("codigo", flat=True)
+    )
+    novas = [
+        CausaNaoCumprimento(
+            tenant_id=tenant_id, codigo=codigo, nome=nome,
+            categoria=categoria, de_fabrica=True,
+        )
+        for codigo, nome, categoria in CAUSAS_DE_FABRICA
+        if codigo not in existentes
+    ]
+    if novas:
+        CausaNaoCumprimento.objects.bulk_create(novas)
+    return len(novas)
+
+
+def validar_teto_de_causas(tenant_id, *, acrescentando: int = 1) -> None:
+    """O catálogo só serve enquanto for escolhível — §5.5j do `planos.py`."""
+    atual = CausaNaoCumprimento.objects.filter(tenant_id=tenant_id).count()
+    if atual + acrescentando > PDCA_TETO_CAUSAS_POR_TENANT:
+        raise ValidationError(
+            f"O catálogo de causas do seu plano vai até "
+            f"{_milhar(PDCA_TETO_CAUSAS_POR_TENANT)} itens, e você já tem "
+            f"{_milhar(atual)}. Desative as causas que não se usam mais — elas "
+            f"continuam legíveis no histórico — em vez de acrescentar novas: "
+            f"uma lista que ninguém percorre até o fim faz o ranking de causas "
+            f"deixar de ranquear."
+        )
+
+
+# --- 12.2 O make-ready: a restrição ------------------------------------------
+
+
+def restricoes_abertas_por_atividade(atividade_ids: list[int],
+                                     *, tenant_id) -> dict[int, int]:
+    """`{atividade_id: quantas travas abertas}` — **em uma consulta**.
+
+    Existe como agregado, e não como propriedade da atividade, porque quem
+    pergunta isso é o quadro inteiro de uma vez: 300 cartões perguntando cada um
+    "estou travado?" seriam 300 consultas para desenhar uma parede.
+    """
+    if not atividade_ids:
+        return {}
+    linhas = (
+        Restricao.objects.filter(
+            tenant_id=tenant_id,
+            atividade_id__in=atividade_ids,
+            status=Restricao.Status.ABERTA,
+        )
+        .values("atividade_id")
+        .annotate(n=Count("restricao_id"))
+    )
+    return {linha["atividade_id"]: linha["n"] for linha in linhas}
+
+
+def validar_teto_de_restricoes(obra_id, *, tenant_id,
+                               acrescentando: int = 1) -> None:
+    """O *constraint log* existe para ser zerado — §5.5j do `planos.py`."""
+    atual = Restricao.objects.filter(
+        tenant_id=tenant_id,
+        status=Restricao.Status.ABERTA,
+        atividade__cronograma__obra_id=obra_id,
+    ).count()
+    if atual + acrescentando > PDCA_TETO_RESTRICOES_ABERTAS_POR_OBRA:
+        raise ValidationError(
+            f"Esta obra já tem {_milhar(atual)} restrições abertas, e o teto do "
+            f"seu plano é {_milhar(PDCA_TETO_RESTRICOES_ABERTAS_POR_OBRA)}. O "
+            f"log de restrição é para zerar, não para acumular: remova ou "
+            f"cancele as que já não travam nada antes de abrir mais."
+        )
+
+
+@transaction.atomic
+def remover_restricao(*, restricao: Restricao, por: str = "",
+                      nota: str = "") -> Restricao:
+    """O ato que conclui o make-ready — **e ele exige dizer como**.
+
+    A `nota_remocao` é obrigatória de propósito. Uma restrição que some sem
+    explicação deixa a reunião seguinte sem saber se ela foi resolvida ou
+    esquecida, e é dessa nota que sai a única leitura que faz o log valer a pena:
+    *como esta obra costuma destravar a si mesma*.
+    """
+    if restricao.status != Restricao.Status.ABERTA:
+        raise ValidationError(
+            f"Esta restrição está {restricao.get_status_display().lower()} — só "
+            f"uma restrição aberta pode ser removida."
+        )
+    if not (nota or "").strip():
+        raise ValidationError(
+            "Diga como a restrição foi removida. Sem isso, a reunião da semana "
+            "que vem não sabe se ela foi resolvida ou apenas esquecida."
+        )
+    restricao.status = Restricao.Status.REMOVIDA
+    restricao.removida_em = timezone.now()
+    restricao.removida_por = por or ""
+    restricao.nota_remocao = nota.strip()
+    restricao.save(update_fields=[
+        "status", "removida_em", "removida_por", "nota_remocao",
+    ])
+    return restricao
+
+
+@transaction.atomic
+def gerar_demanda_scm(*, restricao: Restricao, quantidade=None,
+                      unidade: str = "", solicitante=None) -> int:
+    """Restrição de material → **`Demanda` no SCM**. O seam da §6, vivo.
+
+    **Importa tarde, pela mesma razão do título no ERP:** a §7 da planta diz que
+    o PDCA *não compra nem cota*. Uma importação no topo faria o planejamento
+    deixar de carregar numa instalação que não contrate o SCM — e o seam existe
+    para ser atravessável nos dois sentidos, ou em nenhum.
+
+    **Só material e equipamento.** Restrição de projeto não vira compra (vira
+    RFI, que é da Prancheta), e restrição de clima não vira nada. Oferecer o
+    botão em todas faria a demanda virar lixeira de pendência.
+
+    **Uma restrição gera uma demanda.** Chamar de novo devolve a que já existe:
+    o botão fica na tela e alguém clica duas vezes, e duas demandas para a mesma
+    falta produzem duas cotações e, no fim, duas compras do mesmo material.
+    """
+    from moduloscm.models import Demanda, ItemDemanda
+
+    if restricao.demanda_scm_id:
+        return restricao.demanda_scm_id
+    if restricao.tipo not in (TipoRestricao.MATERIAL, TipoRestricao.EQUIPAMENTO):
+        raise ValidationError(
+            f"Restrição de {restricao.get_tipo_display().lower()} não vira "
+            f"compra. Só material e equipamento geram demanda no Suprimentos — "
+            f"o resto se destrava com projeto, decisão ou licença, e forçar uma "
+            f"demanda aqui encheria a fila de compras de pendência que ninguém "
+            f"compra."
+        )
+    if restricao.status != Restricao.Status.ABERTA:
+        raise ValidationError(
+            "Só restrição aberta vira demanda — a que já foi removida não "
+            "trava mais nada."
+        )
+
+    atividade = restricao.atividade
+    obra = getattr(getattr(atividade, "cronograma", None), "obra", None)
+    demanda = Demanda.objects.create(
+        tenant_id=restricao.tenant_id,
+        tipo=Demanda.Tipo.MATERIAL,
+        status=Demanda.Status.RASCUNHO,
+        origem=Demanda.Origem.RESTRICAO,
+        solicitante=solicitante if getattr(solicitante, "pk", None) else None,
+        observacao=(
+            f"Restrição #{restricao.restricao_id} · "
+            f"{restricao.get_tipo_display()} · atividade "
+            f"{atividade.codigo or atividade.pk} — {atividade.nome}"
+            + (f" · obra {obra.nome_obra}" if obra else "")
+            + (f" · prazo {restricao.prazo:%d/%m/%Y}" if restricao.prazo else "")
+        ),
+    )
+    ItemDemanda.objects.create(
+        tenant_id=restricao.tenant_id,
+        demanda=demanda,
+        descricao_servico=restricao.descricao[:255],
+        # `1` quando ninguém digitou: a demanda nasce em rascunho e quem compra
+        # ajusta o número. Gravar zero faria a cotação sair pedindo nada.
+        quantidade=quantidade if quantidade is not None else Decimal("1"),
+        unidade=unidade or "",
+    )
+    restricao.demanda_scm = demanda
+    restricao.save(update_fields=["demanda_scm"])
+    return demanda.pk
+
+
+# --- 12.3 O compromisso da semana, o PPC e o ranking -------------------------
+
+
+def segunda_da_semana(dia: date) -> date:
+    """A segunda-feira da semana de `dia`.
+
+    A semana do LPS começa na segunda por convenção do método, e não por
+    preferência de locale: a reunião de programação é de segunda, e o ciclo que
+    ela abre é o de segunda a domingo. Ancorar na segunda é o que torna
+    `semana_inicio` uma chave natural em vez de um intervalo qualquer.
+    """
+    return dia - timedelta(days=dia.weekday())
+
+
+@transaction.atomic
+def abrir_programacao(*, obra, semana_inicio: date, por: str = "",
+                      tenant_id=None) -> ProgramacaoSemanal:
+    """Abre (ou devolve) a programação daquela semana, em rascunho.
+
+    **Idempotente por semana**, e é o `UniqueConstraint` que garante isso no
+    banco: duas programações da mesma semana seriam dois compromissos
+    concorrentes sobre o mesmo período, e o PPC não saberia qual contar.
+    """
+    inicio = segunda_da_semana(semana_inicio)
+    tid = tenant_id if tenant_id is not None else obra.tenant_id
+    existente = ProgramacaoSemanal.objects.filter(
+        tenant_id=tid, obra=obra, semana_inicio=inicio,
+    ).first()
+    if existente:
+        return existente
+    # O catálogo de causas precisa existir **antes** do primeiro encerramento, e
+    # semear aqui é o que garante que a primeira reunião já tenha de onde
+    # escolher. É idempotente, então custar uma consulta por abertura é barato.
+    semear_causas_de_fabrica(tid)
+    return ProgramacaoSemanal.objects.create(
+        tenant_id=tid, obra=obra,
+        semana_inicio=inicio, semana_fim=inicio + timedelta(days=6),
+        criada_por=por or "",
+    )
+
+
+def validar_teto_de_itens_da_programacao(programacao: ProgramacaoSemanal, *,
+                                         acrescentando: int = 1) -> None:
+    """A parede tem de caber na vista — §5.5j do `planos.py`."""
+    atual = programacao.itens.count()
+    if atual + acrescentando > PDCA_TETO_ITENS_POR_PROGRAMACAO:
+        raise ValidationError(
+            f"Uma programação semanal do seu plano comporta "
+            f"{_milhar(PDCA_TETO_ITENS_POR_PROGRAMACAO)} compromissos, e esta "
+            f"já tem {_milhar(atual)}. O quadro é uma parede de reunião: acima "
+            f"disso ninguém mais o lê inteiro, e compromisso que não se lê não "
+            f"se cobra."
+        )
+
+
+def validar_pode_comprometer(atividade: Atividade, *, tenant_id) -> None:
+    """**A regra que separa o LPS de uma lista de tarefas** (planta §4.3).
+
+    Atividade com restrição aberta não entra na programação. Sem esta trava, o
+    quadro vira lista de desejos: o time assume o que sabe estar travado, o PPC
+    despenca, e a causa registrada toda semana é a mesma restrição que ninguém
+    removeu — o LPS medindo o próprio fracasso em vez de evitá-lo.
+    """
+    abertas = list(
+        Restricao.objects.filter(
+            tenant_id=tenant_id, atividade=atividade,
+            status=Restricao.Status.ABERTA,
+        ).values_list("tipo", "descricao")[:5]
+    )
+    if not abertas:
+        return
+    lista = "; ".join(
+        f"{dict(TipoRestricao.choices).get(tipo, tipo)}: {desc[:60]}"
+        for tipo, desc in abertas
+    )
+    raise ValidationError(
+        f"«{atividade.nome}» tem {len(abertas)} restrição(ões) aberta(s) e não "
+        f"pode ser comprometida — {lista}. Remova a trava primeiro: assumir um "
+        f"serviço que se sabe travado é o que faz o PPC medir o próprio "
+        f"fracasso em vez de evitá-lo."
+    )
+
+
+@transaction.atomic
+def comprometer(*, programacao: ProgramacaoSemanal, por: str = "") -> dict:
+    """Rascunho → **comprometida**: o time assumiu, e a lista fecha.
+
+    **Depois disto não entra item novo.** É a propriedade que dá sentido ao PPC:
+    acrescentar compromisso depois de a semana andar é escrever a aposta depois
+    do resultado, e um PPC assim mede apenas quem soube editar a lista a tempo.
+
+    As restrições são conferidas **de novo aqui**, e não só na inclusão do item:
+    entre montar o quadro na segunda e assumi-lo pode ter aparecido uma trava, e
+    assumir por cima dela é o erro que o make-ready existe para evitar.
+    """
+    if programacao.status != ProgramacaoSemanal.Status.RASCUNHO:
+        raise ValidationError(
+            f"Esta programação está "
+            f"{programacao.get_status_display().lower()} — só um rascunho pode "
+            f"ser comprometido."
+        )
+    itens = list(programacao.itens.select_related("atividade"))
+    if not itens:
+        raise ValidationError(
+            "Não dá para se comprometer com uma semana vazia. Puxe pelo menos "
+            "um serviço do plano para o quadro."
+        )
+    travados = []
+    for item in itens:
+        try:
+            validar_pode_comprometer(item.atividade, tenant_id=programacao.tenant_id)
+        except ValidationError as erro:
+            travados.append(erro.messages[0] if erro.messages else str(erro))
+    if travados:
+        raise ValidationError(travados)
+
+    programacao.status = ProgramacaoSemanal.Status.COMPROMETIDA
+    programacao.comprometida_em = timezone.now()
+    programacao.comprometida_por = por or ""
+    programacao.save(update_fields=[
+        "status", "comprometida_em", "comprometida_por",
+    ])
+    return {"programacao": programacao.pk, "compromissos": len(itens)}
+
+
+@transaction.atomic
+def encerrar(*, programacao: ProgramacaoSemanal, por: str = "",
+             hoje: date | None = None, pode_antecipar: bool = False,
+             motivo_antecipado: str = "", arrastar: bool = True) -> dict:
+    """Comprometida → **encerrada**: cada item julgado, e o PPC passa a existir.
+
+    **Recusa encerrar com item por julgar.** O `cumprido` nulo é "ainda não
+    julgado" (§ modelo), e encerrar com nulos produziria um PPC cujo
+    denominador ninguém sabe: contar o nulo como falha puniria a equipe por um
+    julgamento que não se fez, e ignorá-lo inflaria o índice.
+
+    **E recusa encerrar a semana que ainda não acabou** *(decisão do dono,
+    15/09/2026)*. Antes bastava o status: na segunda-feira de manhã dava para
+    julgar os cinco compromissos como "não saiu" e fechar — com a semana inteira
+    pela frente. O índice que sai daí não mede confiabilidade de plano nenhum, e
+    entra na série indistinguível dos outros pontos.
+
+    Não é porta trancada, é **porta com chave e assinatura**: quem tem
+    `pdca.programacao.encerrar_antecipado` passa, **dando motivo por escrito**, e
+    a semana fica marcada (`encerrada_antes_do_fim`). O caso real existe — a obra
+    que para na quinta de um feriado prolongado e faz a retrospectiva antes de
+    todo mundo sumir —, e trancar de todo faria o time julgar de memória na
+    semana seguinte, que é pior do que julgar cedo.
+
+    **Encerrar arrasta o que não saiu.** É a última coisa que a função faz, e a
+    razão está em `arrastar_pendentes`: serviço que não saiu não deixou de ser
+    preciso, e obrigar o time a reencontrá-lo na WBS na segunda seguinte apaga o
+    fato de ele estar na segunda semana consecutiva — que é justamente o que a
+    reunião precisa ver.
+    """
+    if programacao.status != ProgramacaoSemanal.Status.COMPROMETIDA:
+        raise ValidationError(
+            f"Esta programação está "
+            f"{programacao.get_status_display().lower()} — só uma programação "
+            f"comprometida pode ser encerrada."
+        )
+    pendentes = programacao.itens.filter(cumprido__isnull=True).count()
+    if pendentes:
+        raise ValidationError(
+            f"Ainda há {pendentes} compromisso(s) sem julgamento. Diga de cada "
+            f"um se saiu ou não — e, quando não saiu, por quê: é dessa resposta "
+            f"que sai o ranking que muda a obra, e não do índice."
+        )
+
+    hoje = hoje or timezone.localdate()
+    antecipado = programacao.semana_fim > hoje
+    motivo = (motivo_antecipado or "").strip()
+    if antecipado:
+        faltam = (programacao.semana_fim - hoje).days
+        if not pode_antecipar:
+            raise ValidationError(
+                f"Esta semana só termina em "
+                f"{programacao.semana_fim:%d/%m/%Y} — faltam {faltam} dia(s). "
+                f"Encerrar agora julga como fracasso o que ainda tem prazo para "
+                f"acontecer, e o PPC que sair daí entra na série valendo o mesmo "
+                f"que os outros. Se a obra realmente para antes (feriado "
+                f"prolongado, paralisação), quem tem "
+                f"'pdca.programacao.encerrar_antecipado' encerra dando o motivo."
+            )
+        if not motivo:
+            raise ValidationError(
+                f"Encerrar {faltam} dia(s) antes do fim da semana exige motivo "
+                f"por escrito. É a frase que a reunião seguinte lê para saber "
+                f"por que aquele ponto da série foi apurado mais cedo."
+            )
+
+    programacao.status = ProgramacaoSemanal.Status.ENCERRADA
+    programacao.encerrada_em = timezone.now()
+    programacao.encerrada_por = por or ""
+    programacao.encerrada_antes_do_fim = antecipado
+    programacao.motivo_encerramento_antecipado = motivo if antecipado else ""
+    programacao.save(update_fields=[
+        "status", "encerrada_em", "encerrada_por",
+        "encerrada_antes_do_fim", "motivo_encerramento_antecipado",
+    ])
+
+    resultado = ppc_de(programacao)
+    resultado["arrasto"] = (
+        arrastar_pendentes(programacao=programacao, por=por)
+        if arrastar else None
+    )
+    return resultado
+
+
+@transaction.atomic
+def arrastar_pendentes(*, programacao: ProgramacaoSemanal,
+                       por: str = "") -> dict:
+    """**O que não saiu continua de pé** — os compromissos falhados seguem para
+    a semana seguinte, em rascunho *(decisão do dono, 15/09/2026)*.
+
+    Antes a semana encerrada era um fim de linha: o cartão "não saiu" ficava no
+    quadro de trás e a semana seguinte nascia vazia. Quem quisesse continuar a
+    armação de pilares tinha de reencontrá-la na WBS e puxá-la à mão — e o que
+    se perdia nesse caminho não era o clique, era **o fato de aquele compromisso
+    estar na segunda semana seguida**. É esse fato, e não o índice, que faz a
+    reunião perguntar o que está travando.
+
+    **O que o cartão arrastado leva junto:**
+
+    - o que **ficou por fazer**, e não o que foi prometido. A semana que assumiu
+      20 pontos e apontou 12 arrasta 8: é o item parcialmente concluído, que é
+      caso comum e até aqui não tinha como ser dito. Previsto nulo continua nulo
+      — compromisso binário ("concretar a laje") não ganha número inventado;
+    - `arrastado_de` e `vezes_arrastado`, que é o contador do padrão: quatro
+      semanas arrastado não é o mesmo problema que uma, e ninguém veria isso
+      cruzando quadros à mão;
+    - o responsável e o local. **Não leva a nota nem a causa**: aquelas são o
+      julgamento da semana que passou, e o cartão novo nasce por julgar.
+
+    **Não arrasta para semana já assumida.** Se a seguinte já saiu do rascunho,
+    a função devolve o que faria sem fazer: acrescentar compromisso a um quadro
+    comprometido é escrever a aposta depois do resultado, que é a regra que dá
+    sentido ao PPC.
+
+    **Arrasta mesmo o que está travado**, e é deliberado. O cartão que não saiu
+    por falta de material volta com a restrição ainda aberta — e `comprometer`
+    vai recusar a semana enquanto ela estiver lá. É o desenho certo: a trava
+    aparece no quadro da reunião, no lugar em que alguém decide removê-la, em
+    vez de o serviço sumir e a trava ficar invisível até a semana seguinte.
+
+    **Idempotente**: rodar duas vezes não duplica cartão — o serviço que já está
+    no quadro da semana seguinte é pulado, pela mesma chave
+    (atividade, local) que a `UniqueConstraint` do modelo protege.
+    """
+    if programacao.status != ProgramacaoSemanal.Status.ENCERRADA:
+        raise ValidationError(
+            f"Só uma semana encerrada arrasta pendências — esta está "
+            f"{programacao.get_status_display().lower()}. O que não saiu só se "
+            f"sabe depois do julgamento."
+        )
+
+    falhados = list(
+        programacao.itens.filter(cumprido=False).select_related("atividade")
+        .order_by("ordem", "item_programacao_id")
+    )
+    if not falhados:
+        return {"arrastados": 0, "ja_no_quadro": 0, "sem_espaco": 0,
+                "programacao_destino": None, "destino_fechado": False}
+
+    destino = abrir_programacao(
+        obra=programacao.obra,
+        semana_inicio=programacao.semana_inicio + timedelta(days=7),
+        por=por,
+        tenant_id=programacao.tenant_id,
+    )
+    if not destino.esta_aberta_para_montagem:
+        return {
+            "arrastados": 0, "ja_no_quadro": 0, "sem_espaco": len(falhados),
+            "programacao_destino": destino.pk, "destino_fechado": True,
+        }
+
+    ja_la = set(
+        destino.itens.values_list("atividade_id", "local_id")
+    )
+    apontado = avanco_apontado_dos_itens(programacao)
+    espaco = PDCA_TETO_ITENS_POR_PROGRAMACAO - destino.itens.count()
+    proxima_ordem = (
+        destino.itens.aggregate(m=Max("ordem"))["m"] or 0
+    )
+
+    arrastados = 0
+    repetidos = 0
+    sem_espaco = 0
+    for item in falhados:
+        if (item.atividade_id, item.local_id) in ja_la:
+            repetidos += 1
+            continue
+        if espaco <= 0:
+            sem_espaco += 1
+            continue
+        proxima_ordem += 1
+        ItemProgramacao.objects.create(
+            tenant_id=destino.tenant_id,
+            programacao=destino,
+            atividade=item.atividade,
+            local_id=item.local_id,
+            responsavel=item.responsavel,
+            percentual_previsto=_resto_previsto(item, apontado.get(item.pk)),
+            arrastado_de=item,
+            vezes_arrastado=item.vezes_arrastado + 1,
+            ordem=proxima_ordem,
+        )
+        ja_la.add((item.atividade_id, item.local_id))
+        espaco -= 1
+        arrastados += 1
+
+    return {
+        "arrastados": arrastados,
+        "ja_no_quadro": repetidos,
+        "sem_espaco": sem_espaco,
+        "programacao_destino": destino.pk,
+        "destino_fechado": False,
+    }
+
+
+def _resto_previsto(item: ItemProgramacao,
+                    apontado: Decimal | None) -> Decimal | None:
+    """Quanto do compromisso **ficou por fazer** — o previsto menos o apontado.
+
+    Nulo continua nulo: compromisso sem número é binário de propósito, e inventar
+    um para o arrasto seria pior do que não ter. Apontado maior que o previsto
+    devolve nulo também — a atividade andou mais do que se prometeu e mesmo assim
+    não foi dada por cumprida, então quanto falta é pergunta para a reunião, não
+    para uma subtração.
+    """
+    if item.percentual_previsto is None:
+        return None
+    if apontado is None:
+        return item.percentual_previsto
+    resto = item.percentual_previsto - apontado
+    return resto if resto > 0 else None
+
+
+def avanco_apontado_dos_itens(programacao: ProgramacaoSemanal) -> dict[int, Decimal]:
+    """`{item_programacao_id: pontos que o campo apontou na semana}` — **numa consulta**.
+
+    **O compromisso é binário; a execução não é.** O Last Planner julga "saiu" ou
+    "não saiu" de propósito — é a definição do PPC, e contar 80% como 0,8
+    destruiria o que ele mede (ver `ppc_de`). Mas a obra que assumiu 20 pontos e
+    entregou 12 **fez 12**, e jogar esse número fora tem dois custos: a equipe vê
+    o sistema dizer que ela não fez nada, e quem julga julga de memória.
+
+    Este agregado é a ponte: o número não entra no PPC, ele fica **ao lado** do
+    compromisso, como prova. É o mesmo dado que a PDCA.2 já apura — não se digita
+    nada de novo, e é por isso que ele é confiável: veio do campo, apontado no dia.
+
+    **Como o local entra na conta:** item com `local` conta só o apontamento
+    daquele local; item sem `local` é a atividade inteira e conta tudo. Somar os
+    dois casos faria o mesmo apontamento pesar em dois cartões.
+    """
+    itens = list(programacao.itens.all())
+    if not itens:
+        return {}
+
+    linhas = (
+        ApontamentoAvanco.objects
+        .filter(
+            tenant_id=programacao.tenant_id,
+            atividade_id__in={i.atividade_id for i in itens},
+            data__gte=programacao.semana_inicio,
+            data__lte=programacao.semana_fim,
+        )
+        .values("atividade_id", "local_id")
+        .annotate(total=Sum("percentual"))
+    )
+    por_atividade: dict[int, Decimal] = {}
+    por_atividade_local: dict[tuple[int, int], Decimal] = {}
+    for linha in linhas:
+        total = linha["total"] or _ZERO
+        por_atividade[linha["atividade_id"]] = (
+            por_atividade.get(linha["atividade_id"], _ZERO) + total
+        )
+        if linha["local_id"] is not None:
+            por_atividade_local[(linha["atividade_id"], linha["local_id"])] = total
+
+    resultado: dict[int, Decimal] = {}
+    for item in itens:
+        if item.local_id is not None:
+            valor = por_atividade_local.get((item.atividade_id, item.local_id))
+        else:
+            valor = por_atividade.get(item.atividade_id)
+        #: `None` e zero são coisas diferentes, e a tela precisa das duas: nulo é
+        #: "o campo não apontou nada nesta semana" (pode ser que não tenha
+        #: apontado, não que não tenha feito); zero é "apontou e estornou".
+        if valor is not None:
+            resultado[item.pk] = valor
+    return resultado
+
+
+@transaction.atomic
+def reabrir(*, programacao: ProgramacaoSemanal, por: str = "",
+            motivo: str = "") -> dict:
+    """Desce **um** degrau na semana, com motivo obrigatório.
+
+    Existe porque a semana encerrada era um beco. `julgar_itens` só aceita
+    programação comprometida, então um julgamento errado — "saiu" no que não
+    saiu, a causa trocada na pressa da reunião — ficava para sempre. E o que
+    estraga não é o índice: é o **ranking de causas**, que é o que decide o que a
+    empresa muda. Uma causa errada contada durante um ano manda a obra consertar
+    o problema que ela não tem.
+
+    **Um degrau por vez, e não um "voltar para rascunho".** De `ENCERRADA` volta
+    para `COMPROMETIDA` — que é onde se rejulga, mantendo o que já foi julgado
+    para a pessoa corrigir só o que está errado. De `COMPROMETIDA` volta para
+    `RASCUNHO`, que é onde o quadro recebe e devolve cartão. Quem quer as duas
+    coisas reabre duas vezes, e **cada uma fica registrada** — porque descer dois
+    degraus de uma vez é exatamente o gesto que merece dois registros.
+
+    **Voltar ao rascunho APAGA os julgamentos**, e isso é dito antes. Rascunho
+    quer dizer *a semana ainda não foi assumida*, e um julgamento pendurado numa
+    semana que ninguém assumiu não é um dado — é entulho que o próximo
+    encerramento contaria. Como o `ppc` é `null` até encerrar, o que se perde ao
+    sair de `COMPROMETIDA` é rascunho de julgamento; o que se perde vindo de
+    `ENCERRADA` é um julgamento que valeu, e por isso o caminho tem de passar por
+    duas reaberturas, cada uma com a sua frase.
+
+    **Sem prazo, de propósito** — ver a docstring dos campos no modelo: erro
+    achado tarde é o mais caro de não poder consertar, e a retificadora da
+    medição, que mexe em dinheiro, também não tem prazo. O que protege o
+    histórico é a correção **aparecer**, não a porta trancada.
+    """
+    if not (motivo or "").strip():
+        raise ValidationError(
+            "Diga por que a semana está sendo reaberta. O PPC dela já foi lido "
+            "por alguém — mudar o número sem deixar a razão escrita contraria "
+            "em silêncio a reunião que olhou para ele."
+        )
+    if programacao.status == ProgramacaoSemanal.Status.RASCUNHO:
+        raise ValidationError(
+            "Esta semana já é um rascunho: o quadro está aberto e recebe cartão. "
+            "Não há degrau abaixo deste."
+        )
+
+    de = programacao.status
+    if de == ProgramacaoSemanal.Status.ENCERRADA:
+        para = ProgramacaoSemanal.Status.COMPROMETIDA
+        #: O encerramento é desfeito; o julgamento **fica**, para quem reabriu
+        #: corrigir o item errado em vez de refazer a semana inteira.
+        programacao.encerrada_em = None
+        programacao.encerrada_por = ""
+        apagados = 0
+    else:
+        para = ProgramacaoSemanal.Status.RASCUNHO
+        apagados = programacao.itens.exclude(cumprido__isnull=True).count()
+        #: `causa` sai junto, senão a `CheckConstraint` do item recusaria a
+        #: linha (cumprido nulo com causa preenchida é o estado que ela proíbe).
+        programacao.itens.update(cumprido=None, causa=None)
+        programacao.comprometida_em = None
+        programacao.comprometida_por = ""
+
+    programacao.status = para
+    programacao.reaberta_em = timezone.now()
+    programacao.reaberta_por = por or ""
+    programacao.motivo_reabertura = motivo.strip()
+    programacao.vezes_reaberta = (programacao.vezes_reaberta or 0) + 1
+    programacao.save(update_fields=[
+        "status", "encerrada_em", "encerrada_por",
+        "comprometida_em", "comprometida_por",
+        "reaberta_em", "reaberta_por", "motivo_reabertura", "vezes_reaberta",
+    ])
+    return {
+        "programacao": programacao.pk,
+        "de": de, "para": para,
+        "julgamentos_apagados": apagados,
+        "vezes_reaberta": programacao.vezes_reaberta,
+    }
+
+
+#: Os rótulos das bases de peso, para a tela dizer de onde saiu o índice sem
+#: traduzir código. `igual` é a base do quadro em que nenhum cartão tem peso —
+#: e é, letra por letra, o PPC clássico de contar cartões.
+ROTULO_BASE_PESO = {
+    "orcado": "valor orçado",
+    "informado": "peso do planejador",
+    "duracao": "duração",
+    "igual": "contagem de cartões",
+}
+
+
+def pesos_da_programacao(programacao: ProgramacaoSemanal) -> dict:
+    """Os pesos congelados do quadro, prontos para a divisão do PPC.
+
+    **Uma consulta**, e devolve o que o índice e a tela precisam: quanto pesa o
+    assumido, quanto pesa o cumprido, quantos cartões ficaram sem régua e de
+    quais fontes os pesos vieram.
+
+    **Quadro em que nenhum cartão tem peso cai na base `igual`** — cada cartão
+    vale 1, que é o PPC clássico. Sem essa queda, a obra que ainda não vinculou
+    o cronograma ao orçamento e não digitou duração ficaria com "sem apuração"
+    para sempre, e o índice que ela tinha antes teria sumido sem aviso.
+    """
+    linhas = list(
+        programacao.itens.values("cumprido", "peso", "peso_origem")
+    )
+    com_peso = [
+        linha for linha in linhas
+        if linha["peso"] is not None and linha["peso"] > 0
+    ]
+    if com_peso:
+        base_total = sum((linha["peso"] for linha in com_peso), _ZERO)
+        base_cumprida = sum(
+            (linha["peso"] for linha in com_peso if linha["cumprido"] is True),
+            _ZERO,
+        )
+        bases = sorted({linha["peso_origem"] for linha in com_peso if linha["peso_origem"]})
+    else:
+        #: Ninguém tem régua: cada cartão vale 1 e o índice volta a ser a
+        #: contagem. É a mesma resposta honesta do `folhas_sem_peso` — o número
+        #: existe, e a resposta diz em cima de quê ele foi feito.
+        base_total = Decimal(len(linhas))
+        base_cumprida = Decimal(
+            sum(1 for linha in linhas if linha["cumprido"] is True)
+        )
+        bases = ["igual"] if linhas else []
+    return {
+        "peso_total": base_total,
+        "peso_cumprido": base_cumprida,
+        #: Quantos compromissos não têm como ser pesados — marco, atividade sem
+        #: duração nem vínculo. Eles contam em `comprometidos` e ficam **fora**
+        #: da divisão, e a tela mostra o número ao lado do índice: 90% apurado
+        #: sobre 2 de 11 cartões é bonito e mente (a régua do §5.4).
+        "sem_peso": len(linhas) - len(com_peso) if com_peso else 0,
+        "bases": bases,
+    }
+
+
+def ppc_de(programacao: ProgramacaoSemanal) -> dict:
+    """O **PPC** — derivado, nunca gravado (§4.9), e **ponderado**.
+
+    A pergunta do Last Planner continua a mesma — *daquilo que o time disse que
+    ia fazer, quanto saiu?* —, e o que mudou foi a unidade da resposta.
+
+    **Por que deixou de contar cartões** *(decisão do dono, 15/09/2026)*. A
+    contagem dizia que assumir a concretagem da laje e assumir a limpeza do
+    canteiro valem o mesmo: a semana que entrega a laje e perde a limpeza
+    marcava os mesmos 50% da que entrega a limpeza e perde a laje, e essas duas
+    semanas não são a mesma semana para ninguém que esteja na obra. Agora o
+    numerador e o denominador são **peso**, e o peso sai do planejamento — do
+    orçamento, do peso informado ou da duração, nessa ordem
+    (`peso_do_compromisso`).
+
+    **A série histórica anterior foi recalculada junto**, e isso é consequência
+    aceita da decisão: as semanas encerradas antes desta mudança não têm peso
+    gravado e caem na base `igual`, que reproduz exatamente o índice que elas já
+    mostravam. O que muda de verdade é a comparação entre uma semana velha
+    (`igual`) e uma nova (`orcado`) — e é por isso que a base viaja na resposta
+    em vez de ficar implícita.
+
+    **Enquanto a semana não encerra, `ppc` é `None`** — e a tela mostra "sem
+    apuração", nunca 0%. É a régua de dado honesto da §5.4 aplicada ao índice:
+    uma semana comprometida na segunda-feira tem zero cumpridos por construção,
+    e exibir "PPC 0%" seria fabricar um fracasso que ainda não aconteceu.
+    """
+    agregado = programacao.itens.aggregate(
+        total=Count("item_programacao_id"),
+        cumpridos=Count("item_programacao_id", filter=Q(cumprido=True)),
+        falhados=Count("item_programacao_id", filter=Q(cumprido=False)),
+        pendentes=Count("item_programacao_id", filter=Q(cumprido__isnull=True)),
+        #: Quanto a equipe **prometeu** avançar na semana, somando os cartões que
+        #: puseram número. Nulo quando nenhum pôs — muito compromisso de LPS é
+        #: binário ("concretar a laje"), e obrigar um número faria o time
+        #: inventar um.
+        previsto=Sum("percentual_previsto"),
+        #: Quantos cartões vieram arrastados da semana anterior. É o número que
+        #: a reunião olha antes do índice: uma semana com metade do quadro
+        #: arrastado não tem problema de execução, tem problema de make-ready.
+        arrastados=Count("item_programacao_id", filter=Q(vezes_arrastado__gt=0)),
+    )
+    total = agregado["total"] or 0
+    encerrada = programacao.status == ProgramacaoSemanal.Status.ENCERRADA
+    pesos = pesos_da_programacao(programacao)
+    ppc = None
+    if encerrada and total and pesos["peso_total"] > 0:
+        ppc = (
+            pesos["peso_cumprido"] * 100 / pesos["peso_total"]
+        ).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+    return {
+        "programacao": programacao.pk,
+        "semana_inicio": programacao.semana_inicio,
+        "semana_fim": programacao.semana_fim,
+        "status": programacao.status,
+        "comprometidos": total,
+        "cumpridos": agregado["cumpridos"] or 0,
+        "nao_cumpridos": agregado["falhados"] or 0,
+        "por_julgar": agregado["pendentes"] or 0,
+        "ppc": ppc,
+        #: O denominador, dito em voz alta — a mesma régua do
+        #: `realizado_cobertura` do Orçamento: quem lê o índice vê de quantos
+        #: compromissos ele saiu, e não precisa confiar no número sozinho.
+        "apurado": encerrada,
+        #: **E se ele já foi corrigido, isso também é dito.** Um PPC rejulgado
+        #: depois de a reunião ter olhado para ele não pode passar por número
+        #: virgem: quem lembra de 60% precisa saber que virou 45% porque a
+        #: semana foi reaberta, e não porque a memória falhou. É o que faz a
+        #: correção ser correção em vez de reescrita da história.
+        "vezes_reaberta": programacao.vezes_reaberta or 0,
+        "motivo_reabertura": programacao.motivo_reabertura or "",
+        #: **E se ela foi encerrada antes de acabar, isso também é dito.** Um
+        #: ponto apurado na terça não é comparável com um apurado no domingo, e
+        #: a série tem de desenhá-lo diferente — ver §12.3, `encerrar`.
+        "encerrada_antes_do_fim": programacao.encerrada_antes_do_fim,
+        "motivo_encerramento_antecipado": (
+            programacao.motivo_encerramento_antecipado or ""
+        ),
+        #: --- Em cima de quê o índice foi feito ------------------------------
+        #:
+        #: O PPC é ponderado, e o peso tem procedência: valor orçado, peso do
+        #: planejador, duração — ou `igual`, o quadro em que nenhum cartão tem
+        #: régua e cada um vale 1. **A base viaja junto porque muda o que o
+        #: número significa**: 70% pesado por dinheiro e 70% contando cartões
+        #: são duas frases diferentes, e uma série que mistura as duas sem dizer
+        #: é uma série que mente devagar.
+        #:
+        #: Vem como lista porque o quadro pode misturar: metade dos cartões
+        #: vinculada ao orçamento e metade valendo duração. A tela avisa quando
+        #: há mais de uma — e é aviso, não erro: a obra que está vinculando o
+        #: cronograma ao orçamento aos poucos passa semanas nesse estado.
+        "peso_bases": pesos["bases"],
+        "peso_total": pesos["peso_total"],
+        "peso_cumprido": pesos["peso_cumprido"],
+        #: Compromissos que não têm como ser pesados (marco, atividade sem
+        #: duração nem vínculo). Contam em `comprometidos` e ficam fora da
+        #: divisão — a régua do `folhas_sem_peso` do avanço.
+        "sem_peso": pesos["sem_peso"],
+        #: --- A execução, que é coisa DIFERENTE do cumprimento ---------------
+        #:
+        #: **Nunca entra no PPC, e por isso vem com nome próprio.** O índice
+        #: pergunta se o compromisso saiu — sim ou não —, e o peso decide quanto
+        #: cada "sim" vale. Contar 80% de execução como 0,8 de cumprimento é
+        #: outra coisa: faria o time aprender a prometer demais e mostrar sempre
+        #: uns 70%, e o PPC deixaria de medir a **confiabilidade do plano**, que
+        #: é a única coisa que ele mede.
+        #:
+        #: Mas a obra que assumiu 20 pontos e entregou 12 fez 12, e a equipe
+        #: precisa ver isso registrado — senão o sistema parece dizer que ela não
+        #: fez nada. Estes dois números respondem *quanto do prometido andou*, e
+        #: a tela tem de mostrá-los **separados do PPC**, nunca somados a ele.
+        #: São eles, também, que viram o previsto do cartão arrastado: o que
+        #: ficou por fazer segue para a semana seguinte (ver `arrastar_pendentes`).
+        "pontos_previstos": agregado["previsto"],
+        "pontos_apontados": (
+            sum(avanco_apontado_dos_itens(programacao).values()) or None
+        ) if total else None,
+        #: Quantos cartões desta semana vieram arrastados da anterior.
+        "arrastados": agregado["arrastados"] or 0,
+    }
+
+
+def serie_ppc(*, obra_id, tenant_id, limite: int | None = None) -> list[dict]:
+    """A série histórica de PPC da obra — **só semanas encerradas**.
+
+    É a leitura que dá sentido ao índice: um PPC isolado não diz nada, e a
+    tendência ao longo de dez semanas diz tudo. Semana aberta fica de fora pelo
+    mesmo motivo do `None` acima — ela ainda não tem índice.
+
+    O teto vem do `planos.py` (§5.5j) e é o irmão do da curva S: acima dele o
+    eixo deixa de ser legível.
+    """
+    teto = min(limite or PDCA_TETO_SEMANAS_PPC, PDCA_TETO_SEMANAS_PPC)
+    programacoes = list(
+        ProgramacaoSemanal.objects.filter(
+            tenant_id=tenant_id, obra_id=obra_id,
+            status=ProgramacaoSemanal.Status.ENCERRADA,
+        )
+        .only(
+            "programacao_id", "semana_inicio", "vezes_reaberta",
+            "encerrada_antes_do_fim",
+        )
+        .order_by("-semana_inicio")[:teto]
+    )
+    if not programacoes:
+        return []
+
+    #: **Os itens de todas as semanas numa consulta só.** A soma tem de ser a
+    #: mesma do `ppc_de` — ponto de série que discorda do ponto da tela é o
+    #: defeito que o D138 já custou caro na grade de medição —, e ela é
+    #: ponderada, o que o `Sum` anotado não resolve sozinho: o cartão sem peso
+    #: fica fora da divisão e o quadro sem peso nenhum cai na base `igual`.
+    #: Com o teto de 104 semanas × 300 cartões, é uma leitura de projeção
+    #: estreita, sem objeto de modelo.
+    por_semana: dict[int, list[dict]] = {p.pk: [] for p in programacoes}
+    for linha in ItemProgramacao.objects.filter(
+        tenant_id=tenant_id, programacao_id__in=list(por_semana),
+    ).values("programacao_id", "cumprido", "peso", "peso_origem"):
+        por_semana[linha["programacao_id"]].append(linha)
+
+    serie = []
+    for prog in programacoes:
+        linhas = por_semana.get(prog.pk, [])
+        if not linhas:
+            # Semana encerrada sem item é impossível pelo `comprometer`, mas o
+            # comando de bancada entra por outra porta — e dividir por zero na
+            # leitura seria a pior hora de descobrir isso.
+            continue
+        com_peso = [
+            linha for linha in linhas
+            if linha["peso"] is not None and linha["peso"] > 0
+        ]
+        if com_peso:
+            base = sum((linha["peso"] for linha in com_peso), _ZERO)
+            feito = sum(
+                (linha["peso"] for linha in com_peso
+                 if linha["cumprido"] is True),
+                _ZERO,
+            )
+            bases = sorted({
+                linha["peso_origem"] for linha in com_peso if linha["peso_origem"]
+            })
+        else:
+            base = Decimal(len(linhas))
+            feito = Decimal(sum(1 for l in linhas if l["cumprido"] is True))
+            bases = ["igual"]
+        if base <= 0:
+            continue
+        serie.append({
+            "programacao": prog.pk,
+            "semana_inicio": prog.semana_inicio,
+            "comprometidos": len(linhas),
+            "cumpridos": sum(1 for l in linhas if l["cumprido"] is True),
+            "ppc": (feito * 100 / base).quantize(
+                Decimal("0.1"), rounding=ROUND_HALF_UP,
+            ),
+            #: A base viaja com o ponto: a série que mistura semanas pesadas por
+            #: dinheiro com semanas contadas por cartão continua legível porque
+            #: cada ponto diz de onde veio (ver `ppc_de`).
+            "peso_bases": bases,
+            #: A barra do ponto reaberto é desenhada diferente — a série é o que
+            #: a diretoria lê, e um ponto corrigido tem de se anunciar ali.
+            "vezes_reaberta": prog.vezes_reaberta or 0,
+            #: E o ponto apurado antes de a semana acabar, pelo mesmo motivo.
+            "encerrada_antes_do_fim": prog.encerrada_antes_do_fim,
+        })
+    serie.reverse()
+    return serie
+
+
+def ranking_de_causas(*, obra_id, tenant_id, desde: date | None = None,
+                      ate: date | None = None) -> dict:
+    """**O "Act"** — por que os compromissos desta obra não saem.
+
+    O PPC diz *quanto* falhou; só isto diz *o quê* mudar, e é a razão de a causa
+    vir de catálogo fechado: com texto livre, "chuva", "choveu" e "clima" viram
+    três linhas com um terço do peso cada, e a causa que lidera não aparece.
+
+    Devolve as causas ordenadas por frequência **e** o corte por categoria — que
+    é a leitura que decide com quem é a conversa da semana. Saber que falta de
+    material lidera é meia informação; saber que a maioria das falhas aponta
+    para fora da equipe (projeto, fornecedor, cliente) é o que tira a reunião de
+    dentro do canteiro e a leva para a mesa da contratante.
+    """
+    itens = ItemProgramacao.objects.filter(
+        tenant_id=tenant_id,
+        cumprido=False,
+        programacao__obra_id=obra_id,
+        programacao__status=ProgramacaoSemanal.Status.ENCERRADA,
+    )
+    if desde:
+        itens = itens.filter(programacao__semana_inicio__gte=desde)
+    if ate:
+        itens = itens.filter(programacao__semana_inicio__lte=ate)
+
+    por_causa = list(
+        itens.values("causa_id", "causa__codigo", "causa__nome",
+                     "causa__categoria")
+        .annotate(n=Count("item_programacao_id"))
+        .order_by("-n", "causa__codigo")
+    )
+    total = sum(linha["n"] for linha in por_causa)
+
+    por_categoria: dict[str, int] = {}
+    for linha in por_causa:
+        chave = linha["causa__categoria"] or "sem_categoria"
+        por_categoria[chave] = por_categoria.get(chave, 0) + linha["n"]
+
+    rotulos = dict(CausaNaoCumprimento.Categoria.choices)
+    return {
+        "total_falhas": total,
+        "causas": [
+            {
+                "causa": linha["causa_id"],
+                "codigo": linha["causa__codigo"],
+                "nome": linha["causa__nome"],
+                "categoria": linha["causa__categoria"],
+                "ocorrencias": linha["n"],
+                "percentual": (
+                    Decimal(linha["n"]) * 100 / Decimal(total)
+                ).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+                if total else Decimal("0.0"),
+            }
+            for linha in por_causa
+        ],
+        "categorias": [
+            {
+                "categoria": chave,
+                "rotulo": str(rotulos.get(chave, chave)),
+                "ocorrencias": n,
+                "percentual": (
+                    Decimal(n) * 100 / Decimal(total)
+                ).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+                if total else Decimal("0.0"),
+            }
+            for chave, n in sorted(
+                por_categoria.items(), key=lambda par: -par[1]
+            )
+        ],
+    }
+
+
+def candidatos_da_semana(*, programacao: ProgramacaoSemanal) -> list[dict]:
+    """A **área de rascunho** do quadro (planta §5.2): o que o plano diz que
+    deveria estar acontecendo nesta semana.
+
+    É sugestão, não imposição — o Last Planner existe justamente porque o plano
+    de meses atrás não sabe da obra de hoje. O que a lista faz é poupar o time
+    de procurar na WBS; o que ela **não** faz é entrar no quadro sozinha.
+
+    Cada candidato já vem com `restricoes_abertas` e `ja_no_quadro`, porque são
+    as duas perguntas que decidem se o cartão pode ser puxado — e resolvê-las
+    cartão a cartão seriam duas consultas por linha.
+    """
+    cronograma = (
+        Cronograma.objects.filter(
+            tenant_id=programacao.tenant_id, obra_id=programacao.obra_id,
+            status=Cronograma.Status.VIGENTE,
+        ).first()
+    )
+    if cronograma is None:
+        return []
+
+    atividades = list(
+        Atividade.objects.filter(
+            tenant_id=programacao.tenant_id, cronograma=cronograma,
+            # Só folha: a sintética é o intervalo dos filhos, e comprometer-se
+            # com ela seria comprometer-se com a soma de coisas que já estão no
+            # quadro cada uma por si. É a mesma recusa que o apontamento faz.
+            filhos__isnull=True,
+            # As datas do plano são as do CPM (`inicio_cedo`/`termino_cedo`); o
+            # recorte é toda atividade que **atravessa** a semana, e não só a que
+            # começa nela — serviço de três semanas precisa aparecer nas três.
+            inicio_cedo__lte=programacao.semana_fim,
+            termino_cedo__gte=programacao.semana_inicio,
+        ).order_by("inicio_cedo", "codigo")[
+            : PDCA_TETO_ITENS_POR_PROGRAMACAO
+        ]
+    )
+    ids = [a.pk for a in atividades]
+    travas = restricoes_abertas_por_atividade(
+        ids, tenant_id=programacao.tenant_id
+    )
+    #: **A qualidade na tela do Last Planner** (PDCA.7). Não é decoração: o
+    #: cartão que a equipe está prestes a assumir pode ser um serviço com
+    #: defeito aberto, e descobrir isso ao chegar na frente é o que produz o
+    #: compromisso que já nasce quebrado. Uma consulta por quadro, não uma por
+    #: cartão — a mesma régua das travas acima.
+    defeitos = ncs_abertas_por_atividade(ids, tenant_id=programacao.tenant_id)
+    ja_no_quadro = set(
+        programacao.itens.values_list("atividade_id", flat=True)
+    )
+    return [
+        {
+            "atividade": a.pk,
+            "codigo": a.codigo,
+            "nome": a.nome,
+            "inicio_previsto": a.inicio_cedo,
+            "fim_previsto": a.termino_cedo,
+            "critica": getattr(a, "critica", False),
+            "restricoes_abertas": travas.get(a.pk, 0),
+            "ncs_abertas": defeitos.get(a.pk, 0),
+            "ja_no_quadro": a.pk in ja_no_quadro,
+        }
+        for a in atividades
+    ]
+
+
+@transaction.atomic
+def julgar_itens(*, programacao: ProgramacaoSemanal,
+                 julgamentos: list[dict]) -> dict:
+    """Julga vários compromissos numa transação — o gesto do fim da semana.
+
+    Vem em lote porque é assim que a reunião acontece: percorre-se o quadro
+    inteiro de uma vez. Item a item, uma reunião de 40 cartões seriam 40
+    requisições, e a que falhasse no meio deixaria a semana meio julgada.
+
+    A regra de causa é conferida **aqui e no banco** (a `CheckConstraint` do
+    modelo): aqui para a mensagem ser legível, lá porque o comando de bancada e
+    a importação entram por outras portas.
+    """
+    if programacao.status != ProgramacaoSemanal.Status.COMPROMETIDA:
+        raise ValidationError(
+            f"Só uma programação comprometida se julga — esta está "
+            f"{programacao.get_status_display().lower()}."
+        )
+    por_id = {
+        item.pk: item
+        for item in programacao.itens.all()
+    }
+    causas_validas = set(
+        CausaNaoCumprimento.objects.filter(
+            tenant_id=programacao.tenant_id
+        ).values_list("causa_id", flat=True)
+    )
+    erros: list[str] = []
+    a_gravar: list[ItemProgramacao] = []
+    for linha in julgamentos:
+        item = por_id.get(linha.get("item"))
+        if item is None:
+            erros.append(
+                f"O compromisso {linha.get('item')} não é desta semana."
+            )
+            continue
+        cumprido = linha.get("cumprido")
+        causa_id = linha.get("causa")
+        if cumprido is None:
+            erros.append(f"Diga se «{item.atividade.nome}» saiu ou não.")
+            continue
+        if not cumprido and not causa_id:
+            erros.append(
+                f"«{item.atividade.nome}» não saiu e não tem causa. É a "
+                f"resposta de onde sai o ranking que muda a obra — sem ela, o "
+                f"Last Planner vira marcar caixinha."
+            )
+            continue
+        if cumprido and causa_id:
+            erros.append(
+                f"«{item.atividade.nome}» está marcado como cumprido e com "
+                f"causa de falha. Uma coisa ou outra."
+            )
+            continue
+        if causa_id and causa_id not in causas_validas:
+            erros.append(f"A causa {causa_id} não existe no seu catálogo.")
+            continue
+        item.cumprido = bool(cumprido)
+        item.causa_id = causa_id or None
+        item.nota = (linha.get("nota") or item.nota or "")[:2000]
+        a_gravar.append(item)
+    if erros:
+        raise ValidationError(erros)
+
+    if a_gravar:
+        ItemProgramacao.objects.bulk_update(
+            a_gravar, ["cumprido", "causa", "nota"]
+        )
+    return {"julgados": len(a_gravar), "por_julgar": (
+        programacao.itens.filter(cumprido__isnull=True).count()
+    )}
+
+
+# ---------------------------------------------------------------------------
+# 13. A linha de balanço (PDCA.6) — ritmo, sincronia de equipes e gargalo
+# ---------------------------------------------------------------------------
+# **O gesto é inverso ao do Gantt** (planta §5.2). Lá o eixo Y é a WBS e a barra
+# diz *quanto tempo*; aqui o eixo Y é **localização** e a reta diz *a que ritmo o
+# serviço sobe a obra*. A inclinação é a informação, e é por isso que a LOB acha
+# o que o Gantt esconde: duas retas que **se cruzam** são duas equipes no mesmo
+# lugar ao mesmo tempo, e num Gantt de 800 barras isso não tem forma visível.
+#
+# **Não há tabela nova** (§4.9). A LOB é derivada de `Atividade` × `LocalObra`:
+# a atividade já carrega `local` desde a PDCA.1, e a hierarquia construtiva já
+# ordena o eixo Y desde a PDCA.0. Criar um `PacoteRitmo` guardando a inclinação
+# criaria a segunda verdade — ela envelheceria no instante em que alguém
+# arrastasse uma barra no Gantt, e a mesma obra passaria a ter dois ritmos.
+#
+# **O serviço é o pai na WBS.** "Alvenaria" é a sintética; "Alvenaria — Pav 3" é
+# a folha com `local`. Agrupar por pai não é conveniência: é a mesma convenção de
+# sintética × analítica que a §4 usa para tudo, e é o que permite a mesma
+# atividade ser barra no Gantt e ponto na reta sem um segundo cadastro.
+
+
+def _locais_em_ordem(obra_id, *, tenant_id) -> list[LocalObra]:
+    """A árvore de locais achatada em ordem de leitura — **o eixo Y da LOB**.
+
+    Profundidade primeiro, seguindo `ordem` entre irmãos: torre, seus pavimentos,
+    as unidades de cada um. É a ordem em que a obra sobe, e é o que faz o 10º
+    pavimento aparecer acima do 9º — ordenar por código poria "P10" antes de
+    "P9" e a reta do serviço desceria no meio do gráfico.
+
+    Uma consulta só; a árvore é montada em memória porque o teto do eixo (§5.5k)
+    já garante que ela cabe. A recursão é segura pelo mesmo motivo por que a do
+    gerador de locais é: `PDCA_PROFUNDIDADE_MAXIMA_LOCAL` (§5.5c) fecha a árvore
+    em 8 níveis **na escrita**, então não há caminho por onde uma hierarquia
+    profunda entre e estoure a pilha na leitura.
+    """
+    todos = list(
+        LocalObra.objects.filter(tenant_id=tenant_id, obra_id=obra_id, ativo=True)
+        .order_by("profundidade", "ordem", "codigo")
+    )
+    filhos: dict[int | None, list[LocalObra]] = {}
+    for local in todos:
+        filhos.setdefault(local.pai_id, []).append(local)
+    for lista in filhos.values():
+        lista.sort(key=lambda l: (l.ordem, l.codigo))
+
+    ordenados: list[LocalObra] = []
+
+    def descer(pai_id):
+        for local in filhos.get(pai_id, []):
+            ordenados.append(local)
+            descer(local.local_id)
+
+    descer(None)
+    return ordenados
+
+
+def _ritmo(pontos: list[dict]) -> dict:
+    """A inclinação da reta, dita de duas formas — **e nenhuma inventada**.
+
+    `locais_por_semana` é como o planejador fala ("subimos um pavimento a cada
+    quatro dias"); `dias_por_local` é o número que ele digita ao desenhar a
+    linha. As duas são a mesma conta pelos dois lados, e vêm juntas porque a tela
+    mostra uma e o formulário pede a outra.
+
+    **Um ponto só não tem ritmo.** Uma reta precisa de dois pontos, e devolver
+    zero — ou o inverso da duração, que é a tentação — diria que o serviço tem
+    ritmo quando o que existe é um serviço em um lugar. `None`, e a tela escreve
+    "sem ritmo".
+    """
+    if len(pontos) < 2:
+        return {"dias_por_local": None, "locais_por_semana": None}
+    primeiro = min(p["inicio"] for p in pontos)
+    ultimo = max(p["inicio"] for p in pontos)
+    vao = (ultimo - primeiro).days
+    if vao <= 0:
+        # Todos começam no mesmo dia: não é ritmo, é paralelismo total — e
+        # dividir por zero aqui seria a pior hora de descobrir isso.
+        return {"dias_por_local": Decimal("0.0"), "locais_por_semana": None}
+    dias = (Decimal(vao) / Decimal(len(pontos) - 1)).quantize(
+        Decimal("0.1"), rounding=ROUND_HALF_UP,
+    )
+    por_semana = (Decimal(7) / dias).quantize(
+        Decimal("0.1"), rounding=ROUND_HALF_UP,
+    ) if dias > 0 else None
+    return {"dias_por_local": dias, "locais_por_semana": por_semana}
+
+
+def _conflitos(pontos_por_local: dict[int, list[dict]],
+               rotulo_do_local: dict[int, str]) -> list[dict]:
+    """**Duas equipes no mesmo lugar ao mesmo tempo** — o que a LOB existe para achar.
+
+    O cruzamento de duas retas é o *sinal visual*; o fato é este: no mesmo local,
+    dois serviços diferentes com janelas que se sobrepõem. Conferir o fato, e não
+    a geometria, é o que faz o alerta continuar certo quando o eixo muda de
+    escala ou quando duas retas se tocam sem se cruzar.
+
+    **Serviços diferentes**, e não atividades diferentes: duas folhas do mesmo
+    serviço no mesmo local ao mesmo tempo são a mesma equipe trabalhando, que é
+    legítimo (duas frentes do mesmo empreiteiro). O choque é entre ofícios.
+    """
+    achados: list[dict] = []
+    for local_id, pontos in pontos_por_local.items():
+        if len(pontos) < 2:
+            continue
+        ordenados = sorted(pontos, key=lambda p: p["inicio"])
+        for i, a in enumerate(ordenados):
+            for b in ordenados[i + 1:]:
+                if b["inicio"] > a["fim"]:
+                    break            # ordenados por início: os seguintes também não tocam
+                if a["servico_id"] == b["servico_id"]:
+                    continue
+                inicio = max(a["inicio"], b["inicio"])
+                fim = min(a["fim"], b["fim"])
+                achados.append({
+                    "local": local_id,
+                    "local_rotulo": rotulo_do_local.get(local_id, ""),
+                    "servico_a": a["servico"],
+                    "servico_b": b["servico"],
+                    "atividade_a": a["atividade"],
+                    "atividade_b": b["atividade"],
+                    "inicio": inicio,
+                    "fim": fim,
+                    "dias": (fim - inicio).days + 1,
+                })
+                if len(achados) >= PDCA_TETO_CONFLITOS_REPORTADOS:
+                    return achados
+    achados.sort(key=lambda c: (-c["dias"], c["inicio"]))
+    return achados
+
+
+def linha_de_balanco(cronograma: Cronograma, *, tenant_id=None) -> dict:
+    """A LOB inteira, derivada — eixo, retas, ritmo, gargalo e choques.
+
+    **Diz o que NÃO está mostrando.** `atividades_sem_local` é o número de folhas
+    que ficaram de fora por não terem endereço, e ele vem no corpo de propósito:
+    um gráfico que desenha 3 de 40 serviços sem avisar é pior que gráfico
+    nenhum — quem olha conclui que a obra tem três frentes. É a mesma régua do
+    denominador declarado do PPC (§5.5j) e da cobertura do orçamento (PDCA.1).
+    """
+    tid = tenant_id if tenant_id is not None else cronograma.tenant_id
+
+    folhas = list(
+        Atividade.objects.filter(
+            tenant_id=tid, cronograma=cronograma, filhos__isnull=True,
+        )
+        .select_related("local", "pai")
+        .order_by("ordem", "codigo")
+    )
+    com_local = [
+        a for a in folhas
+        if a.local_id and a.inicio_cedo and a.termino_cedo
+    ]
+    sem_local = len(folhas) - len(com_local)
+
+    ordem_dos_locais = _locais_em_ordem(cronograma.obra_id, tenant_id=tid)
+    usados = {a.local_id for a in com_local}
+    eixo = [l for l in ordem_dos_locais if l.local_id in usados][
+        :PDCA_TETO_LOCAIS_NA_LINHA_DE_BALANCO
+    ]
+    indice = {l.local_id: i for i, l in enumerate(eixo)}
+    rotulo = {l.local_id: f"{l.codigo} · {l.nome}" for l in eixo}
+
+    por_servico: dict[int, dict] = {}
+    pontos_por_local: dict[int, list[dict]] = {}
+    for a in com_local:
+        if a.local_id not in indice:
+            continue                     # local além do teto do eixo
+        #: O serviço é o **pai**; a folha sem pai é serviço de si mesma — é o
+        #: caso do plano raso, e recusá-lo deixaria a LOB vazia justamente na
+        #: obra pequena, que é onde ela é mais fácil de ler.
+        servico_id = a.pai_id or a.atividade_id
+        servico = por_servico.setdefault(servico_id, {
+            "servico": servico_id,
+            "codigo": a.pai.codigo if a.pai_id else a.codigo,
+            "nome": a.pai.nome if a.pai_id else a.nome,
+            "pontos": [],
+        })
+        ponto = {
+            "atividade": a.atividade_id,
+            "codigo": a.codigo,
+            "nome": a.nome,
+            "local": a.local_id,
+            "local_rotulo": rotulo.get(a.local_id, ""),
+            "y": indice[a.local_id],
+            "inicio": a.inicio_cedo,
+            "fim": a.termino_cedo,
+            "critica": a.critica,
+        }
+        servico["pontos"].append(ponto)
+        pontos_por_local.setdefault(a.local_id, []).append({
+            **ponto, "servico_id": servico_id,
+            "servico": servico["nome"],
+        })
+
+    linhas = []
+    for dados in por_servico.values():
+        dados["pontos"].sort(key=lambda p: p["y"])
+        linhas.append({**dados, **_ritmo(dados["pontos"])})
+    #: Ordenado pelo primeiro local em que o serviço aparece: a leitura da LOB é
+    #: de baixo para cima, e o serviço que abre a obra tem de ser o primeiro da
+    #: legenda. Desempate pelo código, para a ordem não dançar entre chamadas.
+    linhas.sort(key=lambda s: (s["pontos"][0]["y"] if s["pontos"] else 0, s["codigo"]))
+    servicos_cortados = max(0, len(linhas) - PDCA_TETO_LINHAS_DE_BALANCO)
+    linhas = linhas[:PDCA_TETO_LINHAS_DE_BALANCO]
+
+    #: **O gargalo é o serviço mais lento, e ele dita o ritmo de todos.** É a
+    #: leitura que a LOB tem e o Gantt não: acelerar qualquer outro não adianta
+    #: nada, porque o trem anda na velocidade do vagão mais lento.
+    candidatos = [s for s in linhas if s["locais_por_semana"] is not None]
+    gargalo = min(
+        candidatos, key=lambda s: s["locais_por_semana"],
+    )["servico"] if candidatos else None
+
+    return {
+        "cronograma": cronograma.pk,
+        "obra": cronograma.obra_id,
+        "eixo": [
+            {
+                "local": l.local_id, "codigo": l.codigo, "nome": l.nome,
+                "nivel": l.nivel, "profundidade": l.profundidade, "y": i,
+            }
+            for i, l in enumerate(eixo)
+        ],
+        "linhas": linhas,
+        "gargalo": gargalo,
+        "conflitos": _conflitos(pontos_por_local, rotulo),
+        #: O que ficou de fora, dito em voz alta — ver a docstring.
+        "atividades_sem_local": sem_local,
+        "locais_alem_do_teto": max(
+            0, len({l.local_id for l in ordem_dos_locais if l.local_id in usados})
+            - len(eixo),
+        ),
+        #: E os serviços que o teto do gráfico cortou. Pela mesma razão: com
+        #: trinta retas sobrepostas ninguém enxerga qual cruza qual, então o
+        #: corte é deliberado — mas um corte silencioso faria o planejador
+        #: concluir que o plano tem 40 frentes quando tem 60. **A lista de
+        #: choques continua inteira**: o conflito é fato do plano, e escondê-lo
+        #: porque a reta dele não coube seria esconder o problema junto com o
+        #: desenho.
+        "servicos_alem_do_teto": servicos_cortados,
+    }
+
+
+def validar_teto_de_locais_do_ritmo(quantos: int) -> None:
+    """Um gesto de desenhar a linha é uma transação — §5.5k do `planos.py`."""
+    if quantos > PDCA_TETO_LOCAIS_POR_RITMO:
+        raise ValidationError(
+            f"Um traço da linha de balanço alcança até "
+            f"{_milhar(PDCA_TETO_LOCAIS_POR_RITMO)} locais, e você pediu "
+            f"{_milhar(quantos)}. Gerar mais que isso de uma vez cria um plano "
+            f"que ninguém revisa antes de publicar — desenhe a torre, confira, "
+            f"e desenhe a seguinte."
+        )
+
+
+@transaction.atomic
+def gerar_ritmo(*, cronograma: Cronograma, locais: list[int], inicio: date,
+                duracao_por_local: int, ritmo_dias: int | None = None,
+                pai_id: int | None = None, nome: str = "", codigo: str = "",
+                simular: bool = False, tenant_id=None) -> dict:
+    """**Desenhar a linha** — o gesto que a planta §5.2 põe no lugar do arrastar.
+
+    Recebe o serviço, a sequência de locais e o ritmo, e produz a fileira de
+    atividades com as precedências que fazem a equipe **andar** de um local para
+    o seguinte. O planejador digita *"quatro dias por pavimento"* em vez de
+    desenhar vinte barras.
+
+    **A precedência é `SS` com atraso, e não `FS`.** É a diferença entre uma LOB
+    e uma fila: `FS` faria o pavimento seguinte começar depois de o anterior
+    terminar, e o ritmo passaria a ser a duração — impossível representar a
+    equipe que sobe a cada dois dias um serviço que leva quatro. Com `SS` e
+    atraso igual ao ritmo, a inclinação da reta é **exatamente** o que se pediu,
+    e o caso `ritmo < duração` (duas equipes se sobrepondo) fica dizível.
+
+    **Simula por padrão de quem chama.** A mesma régua do gerador de locais da
+    PDCA.0: o número tem de ser conhecido antes de o cliente descobrir que gerou
+    200 atividades.
+    """
+    tid = tenant_id if tenant_id is not None else cronograma.tenant_id
+    if not cronograma.editavel:
+        raise ValidationError(
+            "Só um cronograma em rascunho recebe traço novo. Para mudar o plano "
+            "vigente, replaneje — a linha de balanço desenha o plano, e o plano "
+            "vigente é a régua contra a qual o atraso já está sendo medido."
+        )
+    if not locais:
+        raise ValidationError("Escolha ao menos um local para o serviço percorrer.")
+    if duracao_por_local < 1:
+        raise ValidationError(
+            "A duração em cada local tem de ser de pelo menos um dia. Serviço de "
+            "duração zero é marco, e marco não tem ritmo."
+        )
+    validar_teto_de_locais_do_ritmo(len(locais))
+
+    passo = duracao_por_local if ritmo_dias is None else ritmo_dias
+    if passo < 1:
+        raise ValidationError(
+            "O ritmo tem de ser de pelo menos um dia por local. Ritmo zero faria "
+            "todos os locais começarem no mesmo dia — isso não é ritmo, é a obra "
+            "inteira de uma vez."
+        )
+
+    #: Os locais têm de ser **desta obra**, e vêm na ordem em que foram pedidos —
+    #: é o planejador quem decide se a equipe sobe ou desce, e reordenar por
+    #: conta própria apagaria a decisão dele.
+    achados = {
+        l.local_id: l for l in LocalObra.objects.filter(
+            tenant_id=tid, obra_id=cronograma.obra_id, local_id__in=locais,
+        )
+    }
+    faltando = [i for i in locais if i not in achados]
+    if faltando:
+        raise ValidationError(
+            f"{len(faltando)} local(is) não são desta obra ou não existem: "
+            f"{faltando[:5]}."
+        )
+
+    pai = None
+    if pai_id:
+        pai = Atividade.objects.filter(
+            tenant_id=tid, cronograma=cronograma, atividade_id=pai_id,
+        ).first()
+        if pai is None:
+            raise ValidationError("O serviço escolhido não é deste cronograma.")
+    elif not (nome or "").strip():
+        raise ValidationError(
+            "Diga qual é o serviço — ou escolha um que já existe no plano."
+        )
+
+    nome_do_servico = (pai.nome if pai else nome).strip()
+    raiz = codigo.strip() or (pai.codigo if pai else "")
+    if not raiz:
+        raise ValidationError("Informe o código da EAP do serviço.")
+
+    #: Continua a numeração do serviço em vez de reiniciar — desenhar a segunda
+    #: torre não pode renumerar a primeira por cima.
+    ja_existem = Atividade.objects.filter(
+        tenant_id=tid, cronograma=cronograma, pai=pai,
+    ).count() if pai else 0
+
+    previa = [
+        {
+            "codigo": f"{raiz}.{ja_existem + i + 1}",
+            "nome": f"{nome_do_servico} — {achados[local_id].nome}",
+            "local": local_id,
+            "local_rotulo": f"{achados[local_id].codigo} · {achados[local_id].nome}",
+            "ordem": ja_existem + i + 1,
+        }
+        for i, local_id in enumerate(locais)
+    ]
+    resumo = {
+        "servico": nome_do_servico,
+        "criar": len(previa),
+        "duracao_por_local": duracao_por_local,
+        "ritmo_dias": passo,
+        #: O prazo total do traço, dito antes de gravar: o último local começa
+        #: `passo × (n-1)` dias depois do primeiro e leva a duração dele.
+        "dias_uteis_total": passo * (len(locais) - 1) + duracao_por_local,
+        "previa": previa,
+    }
+    if simular:
+        return {**resumo, "simulado": True, "pai": pai.pk if pai else None}
+
+    validar_teto_de_atividades(cronograma, acrescentando=len(locais) + (0 if pai else 1))
+
+    if pai is None:
+        pai = Atividade.objects.create(
+            tenant_id=tid, cronograma=cronograma, codigo=raiz,
+            nome=nome_do_servico, profundidade=1,
+            ordem=Atividade.objects.filter(
+                tenant_id=tid, cronograma=cronograma, pai__isnull=True,
+            ).count() + 1,
+        )
+
+    criadas: list[Atividade] = []
+    for linha, local_id in zip(previa, locais):
+        criadas.append(Atividade.objects.create(
+            tenant_id=tid, cronograma=cronograma, pai=pai,
+            codigo=linha["codigo"], nome=linha["nome"],
+            ordem=linha["ordem"], profundidade=pai.profundidade + 1,
+            duracao_dias=duracao_por_local, local_id=local_id,
+        ))
+
+    Precedencia.objects.bulk_create([
+        Precedencia(
+            tenant_id=tid, origem=criadas[i], destino=criadas[i + 1],
+            tipo=Precedencia.Tipo.SS, atraso_dias=passo,
+        )
+        for i in range(len(criadas) - 1)
+    ])
+
+    #: A primeira do traço fica ancorada na data pedida. As seguintes vêm da
+    #: rede — é o CPM que as posiciona, e não uma data gravada por este serviço:
+    #: duas fontes para a mesma data é como se descobre, tarde, que arrastar a
+    #: barra no Gantt não moveu a reta na LOB.
+    if criadas:
+        criadas[0].nao_comecar_antes_de = inicio
+        criadas[0].save(update_fields=["nao_comecar_antes_de"])
+
+    cpm = calcular_cpm(cronograma)
+    return {
+        **resumo, "simulado": False, "pai": pai.pk,
+        "atividades": [a.pk for a in criadas], "cpm": cpm,
+    }
+
+
+def str_decimais(dados):
+    """`Decimal` vira string no JSON, recursivamente.
+
+    O `float` do JSON tem 53 bits de mantissa e **não representa centavo
+    exatamente** — é a razão de o DRF serializar `DecimalField` como string por
+    padrão. Os endpoints que devolvem dicionários montados à mão, fora de um
+    serializer, precisam desta passada; sem ela R$ 1.234,57 viraria
+    1234.5699999999999 na tela do gestor.
+
+    **Mora aqui, e não no `views`, desde 15/09/2026.** A PDCA.5 devolve o PPC por
+    dois caminhos — a ação `encerrar/` (view) e o `ppc` do documento (campo de
+    serializer) — e o serializer não pode importar do `views`, que importa dele.
+    Com uma cópia em cada lado, um dos caminhos ficaria para trás; foi o que
+    aconteceu, e o `pdca5_programacao_test.py` pegou: o índice atravessava como
+    número enquanto o `types.ts` do frontend o declarava `string`.
+    """
+    if isinstance(dados, Decimal):
+        return str(dados)
+    if isinstance(dados, dict):
+        return {chave: str_decimais(valor) for chave, valor in dados.items()}
+    if isinstance(dados, (list, tuple)):
+        return [str_decimais(valor) for valor in dados]
+    return dados
+
+
+# ---------------------------------------------------------------------------
+# 14. A máquina de verificação (PDCA.7) — FVS, NC, 5W2H e eficácia
+# ---------------------------------------------------------------------------
+# As quatro seções abaixo estão na ordem em que a qualidade acontece: monta-se a
+# ficha (14.1), aplica-se no canteiro (14.2), registra-se o que reprovou (14.3) e
+# fecha-se o laço verificando se o conserto pegou (14.4).
+#
+# **Nada aqui é gravado como resultado.** Conformidade, contagem por gravidade e
+# ranking de item que mais reprova são derivados no ponto de leitura — §4.9 da
+# planta, a mesma régua do PPC e da curva S. Gravar a conformidade obrigaria a
+# reescrevê-la a cada item respondido, e a primeira gravação fora desse caminho
+# faria o número mentir.
+
+# --- 14.1 A biblioteca de modelos --------------------------------------------
+#
+# **Não existe modelo de fábrica, e a ausência é a decisão.** O catálogo de
+# causas da PDCA.5 nasce semeado porque rótulo de falha é vocabulário comum a
+# todo canteiro, e um catálogo vazio faria a primeira reunião inventar texto
+# livre. FVS não é isso: ela é o método da empresa escrito — o que ela aprendeu a
+# conferir, com o critério numérico que ela adota, e é contra ela que o organismo
+# certificador audita. Uma ficha de fábrica seria aplicada sem ser lida, e a
+# empresa se certificaria contra o nosso chute. O que a fatia oferece no lugar é
+# o `duplicar`, que é o gesto real: quem tem 40 FVS tem 40 variações de 3 linhas.
+
+
+def validar_teto_de_modelos(tenant_id, *, acrescentando: int = 1) -> None:
+    """A biblioteca só serve enquanto for escolhível — §5.5l do `planos.py`."""
+    atual = ModeloVerificacao.objects.filter(tenant_id=tenant_id).count()
+    if atual + acrescentando > PDCA_TETO_MODELOS_POR_TENANT:
+        raise ValidationError(
+            f"A biblioteca de modelos do seu plano vai até "
+            f"{_milhar(PDCA_TETO_MODELOS_POR_TENANT)} fichas, e você já tem "
+            f"{_milhar(atual)}. Desative as que não se aplicam mais — elas "
+            f"continuam legíveis em tudo que já foi verificado — em vez de "
+            f"acrescentar novas: com mil modelos cadastrados cada engenheiro "
+            f"escolhe o seu, e a conformidade de duas obras deixa de ser "
+            f"comparável."
+        )
+
+
+def validar_teto_de_itens_do_modelo(modelo: "ModeloVerificacao", *,
+                                    acrescentando: int = 1) -> None:
+    """A ficha tem de terminar numa visita — §5.5l do `planos.py`."""
+    atual = modelo.itens.count()
+    if atual + acrescentando > PDCA_TETO_ITENS_POR_MODELO_VERIFICACAO:
+        raise ValidationError(
+            f"Esta ficha já tem {_milhar(atual)} perguntas, e o teto do seu "
+            f"plano é {_milhar(PDCA_TETO_ITENS_POR_MODELO_VERIFICACAO)}. Quem "
+            f"responde está de pé no canteiro: ficha que não termina numa "
+            f"visita volta pela metade, e ficha pela metade não se distingue de "
+            f"serviço reprovado. Quebre-a em duas."
+        )
+
+
+@transaction.atomic
+def duplicar_modelo(*, modelo: "ModeloVerificacao", codigo: str, nome: str,
+                    por: str = "") -> "ModeloVerificacao":
+    """Copia a ficha inteira com os itens — **o gesto real da biblioteca**.
+
+    Quem tem FVS de alvenaria de bloco cerâmico tem a de bloco de concreto, e as
+    duas diferem em três linhas. Sem este verbo, a segunda é digitada de novo
+    inteira — e é aí que o critério de uma diverge do da outra por descuido, que
+    é exatamente o que a biblioteca existe para impedir.
+    """
+    validar_teto_de_modelos(modelo.tenant_id)
+    if not (codigo or "").strip():
+        raise ValidationError("A cópia precisa de um código próprio.")
+
+    copia = ModeloVerificacao.objects.create(
+        tenant_id=modelo.tenant_id,
+        codigo=codigo.strip(),
+        nome=(nome or f"{modelo.nome} (cópia)").strip(),
+        dominio=modelo.dominio,
+        descricao=modelo.descricao,
+        criado_por=por or "",
+    )
+    ItemModeloVerificacao.objects.bulk_create([
+        ItemModeloVerificacao(
+            tenant_id=modelo.tenant_id, modelo=copia, ordem=item.ordem,
+            texto=item.texto, criterio=item.criterio,
+            obrigatorio=item.obrigatorio, exige_foto=item.exige_foto,
+        )
+        for item in modelo.itens.all()
+    ])
+    return copia
+
+
+# --- 14.2 A ficha aplicada ---------------------------------------------------
+
+
+@transaction.atomic
+def aplicar_verificacao(*, modelo: "ModeloVerificacao", obra, data: date,
+                        local_id=None, atividade_id=None, inspetor: str = "",
+                        por: str = "", tenant_id=None) -> "Verificacao":
+    """Abre a ficha **copiando as perguntas para dentro dela**.
+
+    **Não se chama `aplicar_modelo`, e o nome custou uma volta.** Este módulo já
+    tem um `aplicar_modelo` desde a PDCA.1b — o que aplica um *plano modelo* a
+    uma obra nova. Escrever o segundo com o mesmo nome não deu erro de import
+    nenhum: o de baixo simplesmente passou a valer para os dois, e quem quebrou
+    foi o **cronograma**, numa chamada que nada tinha a ver com qualidade. Duas
+    bibliotecas de padrões no mesmo módulo é um fato do domínio (a do plano e a
+    da ficha), então o desempate fica no nome do que se aplica, não no verbo.
+
+    A cópia é a razão de este serviço existir em vez de um `POST` cru: sem ela a
+    ficha leria o texto pelo FK e toda inspeção passada mudaria de sentido no dia
+    em que a empresa apertasse um critério. Ver a docstring do `ItemVerificacao`.
+
+    **Modelo inativo não se aplica.** `ativo=False` quer dizer "pare de oferecer
+    esta ficha", e aplicá-la assim mesmo produziria inspeção contra um método que
+    a empresa já abandonou — com a assinatura de alguém embaixo.
+
+    **Modelo sem item também não.** Uma ficha de zero perguntas conclui com 100%
+    de conformidade sem ninguém ter olhado nada, que é o pior número que este
+    módulo poderia produzir.
+    """
+    if not modelo.ativo:
+        raise ValidationError(
+            f"O modelo '{modelo.codigo}' está inativo — ele saiu da lista de "
+            f"escolha porque a empresa deixou de usá-lo. Reative-o se ele "
+            f"voltou a valer, ou escolha o que o substituiu: inspecionar contra "
+            f"um método abandonado registra uma conformidade que não significa "
+            f"nada."
+        )
+    itens_modelo = list(modelo.itens.all().order_by("ordem", "item_modelo_id"))
+    if not itens_modelo:
+        raise ValidationError(
+            f"O modelo '{modelo.codigo}' não tem nenhuma pergunta. Uma ficha "
+            f"vazia conclui com 100% de conformidade sem ninguém ter olhado "
+            f"nada — monte os itens antes de aplicá-la."
+        )
+
+    tenant_id = tenant_id if tenant_id is not None else modelo.tenant_id
+    verificacao = Verificacao.objects.create(
+        tenant_id=tenant_id, modelo=modelo, obra=obra, local_id=local_id,
+        atividade_id=atividade_id, inspetor=inspetor or "", data=data,
+        criada_por=por or "",
+    )
+    ItemVerificacao.objects.bulk_create([
+        ItemVerificacao(
+            tenant_id=tenant_id, verificacao=verificacao, item_modelo=item,
+            ordem=item.ordem or (i + 1),
+            # O congelamento. Ver a docstring do `ItemVerificacao`.
+            texto=item.texto, criterio=item.criterio,
+            obrigatorio=item.obrigatorio, exige_foto=item.exige_foto,
+        )
+        for i, item in enumerate(itens_modelo)
+    ])
+    return verificacao
+
+
+def _exige_observacao(resultado: str) -> bool:
+    return resultado in (
+        ResultadoItem.NAO_CONFORME, ResultadoItem.NAO_APLICAVEL,
+    )
+
+
+@transaction.atomic
+def responder_itens(*, verificacao: "Verificacao", respostas: list[dict],
+                    por: str = "") -> dict:
+    """Grava as respostas do campo — **numa transação, o lote inteiro**.
+
+    O instrumento do campo responde uma pergunta por vez (planta §5.2), mas a
+    **gravação** é em lote pela mesma razão do julgamento da PDCA.5: item a item
+    seriam N requisições, e a que falhasse no meio deixaria a ficha meio
+    respondida sem ninguém saber onde parou. A tela acumula e grava.
+
+    **Desvio exige observação**, e a recusa nomeia o item — "o item 7 reprovou
+    sem dizer o quê" é acionável; "erro de validação" não é.
+    """
+    if not verificacao.esta_aberta:
+        raise ValidationError(
+            "Esta ficha já foi concluída: ela virou prova e não recebe mais "
+            "resposta. Corrigir uma inspeção concluída é reinspecionar — "
+            "aplique o modelo de novo, que é o que o canteiro também exige."
+        )
+
+    por_id = {
+        item.pk: item
+        for item in verificacao.itens.select_related(None).all()
+    }
+    agora = timezone.now()
+    tocados = []
+    for linha in respostas:
+        item = por_id.get(linha.get("item_verificacao"))
+        if item is None:
+            raise ValidationError(
+                f"O item {linha.get('item_verificacao')} não é desta ficha."
+            )
+        resultado = linha.get("resultado") or ResultadoItem.PENDENTE
+        observacao = (linha.get("observacao") or "").strip()
+        gravidade = linha.get("gravidade") or None
+        if _exige_observacao(resultado) and not observacao:
+            rotulo = dict(ResultadoItem.choices)[resultado].lower()
+            raise ValidationError(
+                f"O item {item.ordem} ficou como '{rotulo}' sem explicação. "
+                f"Diga o quê: não conforme sem o defeito descrito não vira ação "
+                f"nenhuma, e não aplicável sem o motivo é a porta pela qual uma "
+                f"ficha inteira passa sem ninguém verificar coisa alguma."
+            )
+        #: **A gravidade é perguntada aqui, no item**, e não uma vez na
+        #: conclusão da ficha (decisão do dono, 16/09/2026 — ver a docstring do
+        #: campo). Quem acabou de olhar o defeito sabe se ele se corrige na hora
+        #: ou se para o serviço; quem lê a lista depois, não.
+        if resultado == ResultadoItem.NAO_CONFORME and not gravidade:
+            raise ValidationError(
+                f"O item {item.ordem} reprovou sem dizer **quanto** pesa. Um "
+                f"desalinhamento que se corrige na frente e a falta de uma peça "
+                f"que impede aceitar o serviço são dois defeitos diferentes, e "
+                f"contá-los com o mesmo rótulo faz o painel de gravidade deixar "
+                f"de servir para escolher o que tratar primeiro."
+            )
+        item.resultado = resultado
+        item.observacao = observacao
+        #: Só o reprovado guarda gravidade — o `None` aqui é o que limpa a
+        #: escolha de quem marcou "não conforme", pesou, e depois corrigiu para
+        #: "conforme". Sem esta linha a gravidade órfã ficaria contada no painel.
+        item.gravidade = (
+            gravidade if resultado == ResultadoItem.NAO_CONFORME else None
+        )
+        if "nota" in linha and linha["nota"] is not None:
+            item.observacao = (linha["nota"] or "").strip() or item.observacao
+        item.respondido_em = agora if resultado != ResultadoItem.PENDENTE else None
+        item.respondido_por = por or "" if resultado != ResultadoItem.PENDENTE else ""
+        tocados.append(item)
+
+    if tocados:
+        ItemVerificacao.objects.bulk_update(
+            tocados,
+            ["resultado", "observacao", "gravidade", "respondido_em",
+             "respondido_por"],
+        )
+    return {
+        "respondidos": len(tocados),
+        "resultado": resultado_da_verificacao(verificacao),
+    }
+
+
+def resultado_da_verificacao(verificacao: "Verificacao") -> dict:
+    """As contagens e a conformidade — **derivadas, nunca gravadas** (§4.9).
+
+    **`nao_aplicavel` fica fora do denominador**, e essa é a única escolha
+    honesta: um item que não se aplica àquela frente não é um acerto nem um erro,
+    e contá-lo como conforme inflaria a conformidade de toda ficha longa aplicada
+    a um serviço pequeno.
+
+    **`conformidade` é `None` enquanto nada foi respondido**, na mesma régua do
+    PPC da semana aberta e do avanço sem apontamento: a tela mostra "sem
+    apuração", nunca 0% — fabricar uma reprovação que ainda não aconteceu é o
+    pecado que este módulo persegue desde a PDCA.2.
+    """
+    contagem = {
+        chave: 0 for chave, _rotulo in ResultadoItem.choices
+    }
+    for linha in (
+        verificacao.itens.values("resultado").annotate(n=Count("item_verificacao_id"))
+    ):
+        contagem[linha["resultado"]] = linha["n"]
+
+    conformes = contagem[ResultadoItem.CONFORME]
+    nao_conformes = contagem[ResultadoItem.NAO_CONFORME]
+    julgados = conformes + nao_conformes
+    conformidade = (
+        (Decimal(conformes) * 100 / Decimal(julgados)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP,
+        )
+        if julgados
+        else None
+    )
+    return {
+        "verificacao": verificacao.pk,
+        "status": verificacao.status,
+        "total": sum(contagem.values()),
+        "conformes": conformes,
+        "nao_conformes": nao_conformes,
+        "nao_aplicaveis": contagem[ResultadoItem.NAO_APLICAVEL],
+        "pendentes": contagem[ResultadoItem.PENDENTE],
+        "conformidade": conformidade,
+        "apurada": verificacao.status == Verificacao.Status.CONCLUIDA,
+    }
+
+
+def resultados_das_verificacoes(verificacoes: list, *, tenant_id) -> dict:
+    """O mesmo de cima, para **uma página inteira, em uma consulta**.
+
+    A leitura por ficha (`resultado_da_verificacao`) faz uma agregação cada;
+    uma lista de 50 fichas faria 50. É o D136 exatamente — a listagem de
+    medições que trazia ~200 consultas para desenhar uma tabela —, e a correção
+    é a mesma: agrupar por documento de uma vez e distribuir em memória.
+    """
+    ids = [v.pk for v in verificacoes]
+    if not ids:
+        return {}
+
+    contagens: dict[int, dict[str, int]] = {
+        vid: {chave: 0 for chave, _r in ResultadoItem.choices} for vid in ids
+    }
+    for linha in (
+        ItemVerificacao.objects.filter(
+            tenant_id=tenant_id, verificacao_id__in=ids,
+        )
+        .values("verificacao_id", "resultado")
+        .annotate(n=Count("item_verificacao_id"))
+    ):
+        contagens[linha["verificacao_id"]][linha["resultado"]] = linha["n"]
+
+    saida = {}
+    for verificacao in verificacoes:
+        contagem = contagens[verificacao.pk]
+        conformes = contagem[ResultadoItem.CONFORME]
+        nao_conformes = contagem[ResultadoItem.NAO_CONFORME]
+        julgados = conformes + nao_conformes
+        saida[verificacao.pk] = {
+            "verificacao": verificacao.pk,
+            "status": verificacao.status,
+            "total": sum(contagem.values()),
+            "conformes": conformes,
+            "nao_conformes": nao_conformes,
+            "nao_aplicaveis": contagem[ResultadoItem.NAO_APLICAVEL],
+            "pendentes": contagem[ResultadoItem.PENDENTE],
+            "conformidade": (
+                (Decimal(conformes) * 100 / Decimal(julgados)).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP,
+                )
+                if julgados
+                else None
+            ),
+            "apurada": verificacao.status == Verificacao.Status.CONCLUIDA,
+        }
+    return saida
+
+
+@transaction.atomic
+def concluir_verificacao(*, verificacao: "Verificacao", por: str = "") -> dict:
+    """Fecha a ficha — **e recusa deixar pergunta obrigatória sem resposta**.
+
+    `obrigatorio` é do item, e é o que permite a ficha longa ser concluída sem a
+    pergunta acessória sobre a qual ninguém tem o que dizer. O que ela não
+    permite é concluir com o essencial em branco: a ficha assinada com 6 dos 18
+    itens respondidos é pior que nenhuma, porque parece completa.
+
+    **Devolve os reprovados que ainda não viraram NC.** O ato de abrir a NC
+    continua explícito (tem permissão própria), mas a tela precisa saber o que
+    oferecer — sem isso, o item que reprovou fica no papel e o laço não começa.
+    """
+    if not verificacao.esta_aberta:
+        raise ValidationError("Esta ficha já está concluída.")
+
+    pendentes = list(
+        verificacao.itens.filter(
+            obrigatorio=True, resultado=ResultadoItem.PENDENTE,
+        ).values_list("ordem", flat=True)
+    )
+    if pendentes:
+        quais = ", ".join(str(o) for o in pendentes[:10])
+        resto = f" (e mais {len(pendentes) - 10})" if len(pendentes) > 10 else ""
+        raise ValidationError(
+            f"Faltam responder os itens obrigatórios {quais}{resto}. Uma ficha "
+            f"assinada com o essencial em branco é pior do que nenhuma: ela "
+            f"parece completa. Responda, ou marque como não aplicável dizendo o "
+            f"porquê."
+        )
+
+    verificacao.status = Verificacao.Status.CONCLUIDA
+    verificacao.concluida_em = timezone.now()
+    verificacao.concluida_por = por or ""
+    verificacao.save(update_fields=["status", "concluida_em", "concluida_por"])
+
+    #: A gravidade vem junto: a tela de conclusão **mostra** o que vai abrir e
+    #: com que peso, em vez de perguntar um peso só para todos. Cada item já foi
+    #: pesado por quem o reprovou (§11.15).
+    reprovados = list(
+        verificacao.itens.filter(resultado=ResultadoItem.NAO_CONFORME)
+        .exclude(nao_conformidades__isnull=False)
+        .values("item_verificacao_id", "ordem", "texto", "observacao",
+                "gravidade")
+    )
+    rotulos = dict(GravidadeNC.choices)
+    for linha in reprovados:
+        linha["gravidade_rotulo"] = rotulos.get(linha["gravidade"], "")
+    return {
+        "resultado": resultado_da_verificacao(verificacao),
+        "reprovados_sem_nc": reprovados,
+    }
+
+
+# --- 14.3 A não-conformidade e o tratamento ----------------------------------
+
+
+def validar_teto_de_ncs(obra_id, *, tenant_id, acrescentando: int = 1) -> None:
+    """A NC existe para ser encerrada — §5.5l do `planos.py`."""
+    atual = NaoConformidade.objects.filter(
+        tenant_id=tenant_id, obra_id=obra_id,
+        status__in=[
+            NaoConformidade.Status.ABERTA,
+            NaoConformidade.Status.EM_TRATAMENTO,
+        ],
+    ).count()
+    if atual + acrescentando > PDCA_TETO_NCS_ABERTAS_POR_OBRA:
+        raise ValidationError(
+            f"Esta obra já tem {_milhar(atual)} não-conformidades em aberto, e "
+            f"o teto do seu plano é "
+            f"{_milhar(PDCA_TETO_NCS_ABERTAS_POR_OBRA)}. Um log com milhares de "
+            f"linhas abertas não é controle de qualidade: é um aterro onde a NC "
+            f"que vai virar retrabalho caro fica invisível. Trate ou cancele o "
+            f"que já não vale antes de abrir mais."
+        )
+
+
+def validar_teto_de_acoes(nc: "NaoConformidade", *,
+                          acrescentando: int = 1) -> None:
+    """§5.5l — NC que pede vinte ações não é uma NC."""
+    atual = nc.acoes.count()
+    if atual + acrescentando > PDCA_TETO_ACOES_POR_NC:
+        raise ValidationError(
+            f"Esta não-conformidade já tem {_milhar(atual)} planos de ação, e o "
+            f"teto do seu plano é {_milhar(PDCA_TETO_ACOES_POR_NC)}. Uma NC que "
+            f"pede tantas ações não é uma NC: é um problema que precisa ser "
+            f"quebrado em vários — e quebrado, cada um encerra o seu."
+        )
+
+
+def ncs_abertas_por_atividade(atividade_ids: list[int],
+                              *, tenant_id) -> dict[int, int]:
+    """`{atividade_id: quantas NCs abertas}` — **em uma consulta**.
+
+    Irmão do `restricoes_abertas_por_atividade`, e existe pelo mesmo motivo: é o
+    quadro inteiro que pergunta de uma vez. É o que põe a qualidade na tela do
+    Last Planner — o cartão da semana diz que aquele serviço tem defeito aberto,
+    em vez de a equipe descobrir isso ao chegar na frente.
+    """
+    if not atividade_ids:
+        return {}
+    linhas = (
+        NaoConformidade.objects.filter(
+            tenant_id=tenant_id,
+            atividade_id__in=atividade_ids,
+            status__in=[
+                NaoConformidade.Status.ABERTA,
+                NaoConformidade.Status.EM_TRATAMENTO,
+            ],
+        )
+        .values("atividade_id")
+        .annotate(n=Count("nc_id"))
+    )
+    return {linha["atividade_id"]: linha["n"] for linha in linhas}
+
+
+@transaction.atomic
+def abrir_ncs_dos_reprovados(*, verificacao: "Verificacao",
+                             por: str = "") -> dict:
+    """Abre uma NC por item reprovado que ainda não tem uma — **idempotente**.
+
+    É o gesto que sai da conclusão da ficha: o técnico acabou de percorrer 18
+    perguntas e 2 reprovaram, e obrigá-lo a redigitar endereço, obra e descrição
+    duas vezes é o que faz a NC não ser aberta. A descrição nasce da **pergunta
+    congelada mais a observação dele**, que juntas já dizem o que está errado.
+
+    **Cada NC nasce com a gravidade do SEU item**, e este serviço não recebe
+    gravidade nenhuma por parâmetro. A primeira escrita desta fatia recebia uma
+    e a carimbava em todas — *(decisão do dono, 16/09/2026: "aí fica parecendo
+    que um desalinhamento na porta é grave igual a falta de uma maçaneta")*. A
+    gravidade é propriedade do defeito e foi respondida no item, por quem estava
+    olhando para ele.
+
+    Chamar de novo não duplica: o item que já gerou NC fica de fora.
+    """
+    reprovados = list(
+        verificacao.itens.filter(resultado=ResultadoItem.NAO_CONFORME)
+        .exclude(nao_conformidades__isnull=False)
+        .order_by("ordem")
+    )
+    if not reprovados:
+        return {"abertas": 0, "ncs": []}
+
+    validar_teto_de_ncs(
+        verificacao.obra_id, tenant_id=verificacao.tenant_id,
+        acrescentando=len(reprovados),
+    )
+
+    criadas = []
+    for item in reprovados:
+        nc = NaoConformidade.objects.create(
+            tenant_id=verificacao.tenant_id,
+            obra_id=verificacao.obra_id,
+            local_id=verificacao.local_id,
+            atividade_id=verificacao.atividade_id,
+            item_verificacao=item,
+            #: A do item. O `or MENOR` é rede, não regra: a `CheckConstraint`
+            #: garante que todo reprovado tem uma, e o fallback só alcança linha
+            #: anterior à trava.
+            gravidade=item.gravidade or GravidadeNC.MENOR,
+            descricao=(
+                f"{item.texto.strip()}"
+                + (f" — {item.observacao.strip()}" if item.observacao else "")
+            ),
+            # A foto da evidência viaja junto: ela é a prova do defeito, e
+            # obrigar a fotografar de novo a mesma parede é o que faz a NC
+            # chegar ao projetista sem imagem.
+            foto=item.foto or None,
+            aberta_por=por or "",
+        )
+        criadas.append(nc)
+    return {"abertas": len(criadas), "ncs": [nc.pk for nc in criadas]}
+
+
+@transaction.atomic
+def gerar_restricao_da_nc(*, nc: "NaoConformidade", prazo: date | None = None,
+                          responsavel: str = "", por: str = "") -> int:
+    """NC → **`Restricao` no Last Planner**. O seam vivo com a PDCA.5.
+
+    **É o que dá dente à gravidade.** Sem este elo, "crítica — para o serviço"
+    seria adjetivo: o sistema diria que o serviço está parado e a equipe se
+    comprometeria com ele na segunda-feira seguinte, porque o quadro da PDCA.5 só
+    olha `Restricao`. Com ele, a atividade deixa de poder entrar na programação
+    até que alguém declare a trava removida — que é exatamente o que "parar o
+    serviço" significa no vocabulário que o módulo já tem.
+
+    **Exige a atividade.** A restrição pende de uma atividade por decisão da
+    PDCA.5 (restrição sem alvo não bloqueia nada), e a NC do canteiro nem sempre
+    tem uma — a trinca vista a caminho do almoxarifado não sabe de que serviço
+    veio. A recusa diz isso em vez de criar uma trava que não trava.
+
+    **Uma NC gera uma restrição.** Chamar de novo devolve a que já existe, na
+    régua do `gerar_demanda_scm`: o botão fica na tela e alguém clica duas vezes.
+    """
+    if nc.restricao_id:
+        return nc.restricao_id
+    if not nc.atividade_id:
+        raise ValidationError(
+            "Esta não-conformidade não aponta para uma atividade, e restrição "
+            "sem alvo não trava nada (é a regra da PDCA.5). Vincule a NC ao "
+            "serviço em que o defeito está antes de parar a frente."
+        )
+    if not nc.esta_aberta:
+        raise ValidationError(
+            "Só não-conformidade aberta trava serviço — a que já foi encerrada "
+            "não impede mais ninguém de trabalhar."
+        )
+
+    validar_teto_de_restricoes(
+        nc.obra_id, tenant_id=nc.tenant_id,
+    )
+    restricao = Restricao.objects.create(
+        tenant_id=nc.tenant_id,
+        atividade_id=nc.atividade_id,
+        local_id=nc.local_id,
+        # **`AREA`, e não um tipo novo.** A oitava família da PDCA.5 é "a frente
+        # anterior não liberou o local", e é literalmente o que uma NC aberta
+        # faz: o serviço está lá, executado errado, e a frente seguinte não
+        # entra. Criar um nono tipo `qualidade` partiria o ranking de restrição
+        # em dois vocabulários para o mesmo impedimento físico.
+        tipo=TipoRestricao.AREA,
+        descricao=(
+            f"NC #{nc.nc_id} ({nc.get_gravidade_display()}) — "
+            f"{nc.descricao.strip()[:400]}"
+        ),
+        responsavel=responsavel or "",
+        prazo=prazo,
+        criada_por=por or "",
+    )
+    nc.restricao = restricao
+    nc.save(update_fields=["restricao"])
+    return restricao.pk
+
+
+@transaction.atomic
+def concluir_acao(*, plano: "PlanoAcao", por: str = "") -> "PlanoAcao":
+    """Marca o 5W2H como executado — **e isso não encerra a NC**.
+
+    A distinção é a razão de a PDCA.7 existir como laço e não como lista: "ação
+    concluída" é quem consertou dizendo que consertou. O que fecha a NC é alguém
+    **voltar à frente e olhar** (§4.5), e é por isso que o encerramento pede
+    `VerificacaoEficacia` e não este carimbo.
+    """
+    if plano.status == PlanoAcao.Status.CONCLUIDA:
+        return plano
+    if plano.status == PlanoAcao.Status.CANCELADA:
+        raise ValidationError(
+            "Este plano de ação foi cancelado — um plano cancelado não se "
+            "conclui. Abra outro se a ação voltou a valer."
+        )
+    plano.status = PlanoAcao.Status.CONCLUIDA
+    plano.concluida_em = timezone.now()
+    plano.concluida_por = por or ""
+    plano.save(update_fields=["status", "concluida_em", "concluida_por"])
+    return plano
+
+
+# --- 14.4 O laço: eficácia e encerramento ------------------------------------
+
+
+def eficacia_vigente(nc: "NaoConformidade") -> "VerificacaoEficacia | None":
+    """A **última** verificação de eficácia — a que vale.
+
+    A sequência inteira fica registrada (o modelo é append-only na prática), mas
+    quem decide se a NC pode encerrar é sempre a mais recente: uma NC verificada
+    como eficaz em março e reaberta em maio por ter voltado a falhar não pode
+    encerrar pela leitura de março.
+    """
+    return nc.eficacias.order_by("-data", "-eficacia_id").first()
+
+
+@transaction.atomic
+def registrar_eficacia(*, nc: "NaoConformidade", data: date, eficaz: bool,
+                       evidencia: str, por: str = "") -> dict:
+    """Registra se o conserto pegou — **e o "não" é o resultado mais útil**.
+
+    Eficaz devolve a NC pronta para encerrar; não eficaz a **devolve para
+    tratamento**, porque o plano anterior comprovadamente não resolveu e o que
+    vem a seguir é um plano novo. Nenhum dos dois apaga a verificação anterior: a
+    sequência delas é a história honesta de quantas tentativas o conserto levou.
+
+    A `evidencia` é obrigatória pela mesma razão que a `nota_remocao` da
+    restrição é: um `True` sem história não é verificação de eficácia, é um
+    carimbo — e é contra isso que a auditoria do PBQP-H olha.
+    """
+    if nc.status == NaoConformidade.Status.CANCELADA:
+        raise ValidationError(
+            "Esta NC foi cancelada — não há o que verificar. Cancelada quer "
+            "dizer que ela não era uma não-conformidade; se era, reabra-a em "
+            "vez de verificar a eficácia de um tratamento que não houve."
+        )
+    if not (evidencia or "").strip():
+        raise ValidationError(
+            "Diga o que você olhou para concluir isso. Verificação de eficácia "
+            "sem evidência é um carimbo — e é exatamente o que a auditoria "
+            "procura quando quer saber se o sistema de qualidade funciona."
+        )
+
+    registro = VerificacaoEficacia.objects.create(
+        tenant_id=nc.tenant_id, nao_conformidade=nc, data=data,
+        eficaz=eficaz, evidencia=evidencia.strip(), verificada_por=por or "",
+    )
+    if not eficaz and nc.status != NaoConformidade.Status.EM_TRATAMENTO:
+        nc.status = NaoConformidade.Status.EM_TRATAMENTO
+        nc.save(update_fields=["status"])
+    return {
+        "eficacia": registro.pk,
+        "eficaz": eficaz,
+        "nc_status": nc.status,
+        "pode_encerrar": bool(eficaz),
+    }
+
+
+@transaction.atomic
+def encerrar_nc(*, nc: "NaoConformidade", por: str = "",
+                nota: str = "") -> "NaoConformidade":
+    """Fecha a NC — **e recusa fechar sem eficácia verificada** (§4.5).
+
+    É a trava que separa tratar de arquivar, e é o padrão do SAP QM. Sem ela,
+    "plano de ação concluído" viraria o carimbo que fecha a NC e ninguém
+    voltaria à frente para ver se o conserto pegou — que é como a maior parte
+    dos sistemas de qualidade perde o valor inteiro do ciclo.
+
+    A regra mora aqui, e não numa `CheckConstraint`, por uma razão física: ela
+    olha **outra tabela** (`VerificacaoEficacia`), e check de banco não atravessa
+    tabela. O que o banco protege é o que cabe numa linha.
+    """
+    if nc.status == NaoConformidade.Status.ENCERRADA:
+        return nc
+    if nc.status == NaoConformidade.Status.CANCELADA:
+        raise ValidationError(
+            "Esta NC está cancelada. Cancelar e encerrar são coisas "
+            "diferentes de propósito: encerrada é defeito tratado, cancelada é "
+            "registro que não era defeito — contar as duas juntas inflaria a "
+            "leitura de quanto esta obra conserta de fato."
+        )
+
+    vigente = eficacia_vigente(nc)
+    if vigente is None:
+        raise ValidationError(
+            "Esta não-conformidade ainda não teve a eficácia verificada. O que "
+            "fecha uma NC não é o plano de ação estar concluído — é alguém "
+            "voltar à frente e registrar que o conserto pegou. Sem isso, o "
+            "sistema arquiva em vez de tratar."
+        )
+    if not vigente.eficaz:
+        raise ValidationError(
+            f"A última verificação de eficácia, de {vigente.data:%d/%m/%Y}, "
+            f"disse que o tratamento **não** funcionou. Monte um plano de ação "
+            f"novo e verifique de novo — encerrar agora registraria como "
+            f"resolvido um defeito que a própria empresa constatou que continua "
+            f"lá."
+        )
+
+    nc.status = NaoConformidade.Status.ENCERRADA
+    nc.encerrada_em = timezone.now()
+    nc.encerrada_por = por or ""
+    nc.nota_encerramento = (nota or "").strip()
+    nc.save(update_fields=[
+        "status", "encerrada_em", "encerrada_por", "nota_encerramento",
+    ])
+    return nc
+
+
+def estado_da_nc(nc: "NaoConformidade") -> dict:
+    """O que falta nesta NC — **derivado**, para a fila de decisão e o cartão.
+
+    Existe para a tela não precisar reimplementar a regra do encerramento em
+    JavaScript. Foi o que o D138 ensinou do outro lado: a mesma conta feita nos
+    dois lugares vira dois números para a mesma pergunta.
+    """
+    acoes = list(nc.acoes.all())
+    vigente = eficacia_vigente(nc)
+    hoje = timezone.localdate()
+    vencidas = [
+        a for a in acoes
+        if a.quando and a.quando < hoje
+        and a.status in (PlanoAcao.Status.PLANEJADA, PlanoAcao.Status.EM_EXECUCAO)
+    ]
+    return {
+        "acoes": len(acoes),
+        "acoes_concluidas": sum(
+            1 for a in acoes if a.status == PlanoAcao.Status.CONCLUIDA
+        ),
+        "acoes_vencidas": len(vencidas),
+        "tem_preventiva": any(a.tipo == PlanoAcao.Tipo.PREVENTIVA for a in acoes),
+        "eficacia_verificada": vigente is not None,
+        "eficaz": None if vigente is None else vigente.eficaz,
+        "pode_encerrar": bool(vigente and vigente.eficaz),
+        # O que a tela escreve no cartão, numa frase. É a mesma ideia do
+        # "prometeu 20 pts · campo apontou 12 pts" da PDCA.5: a fila de decisão
+        # só serve se disser o que fazer a seguir.
+        "falta": _o_que_falta(nc, acoes, vigente),
+    }
+
+
+def _o_que_falta(nc, acoes, vigente) -> str:
+    if nc.status == NaoConformidade.Status.ENCERRADA:
+        return ""
+    if nc.status == NaoConformidade.Status.CANCELADA:
+        return ""
+    if not acoes:
+        return "montar o plano de ação"
+    if any(
+        a.status in (PlanoAcao.Status.PLANEJADA, PlanoAcao.Status.EM_EXECUCAO)
+        for a in acoes
+    ):
+        return "executar o plano de ação"
+    if vigente is None:
+        return "verificar a eficácia"
+    if not vigente.eficaz:
+        return "o tratamento não funcionou — montar plano novo"
+    return "encerrar"
+
+
+def fila_da_qualidade(*, obra_id, tenant_id) -> dict:
+    """**A fila de decisão do cockpit** — o que espera alguém, agora.
+
+    Quatro filas, e a ordem é a do laço: NC sem plano (ninguém pegou), plano
+    vencido (alguém pegou e não fez), NC esperando eficácia (foi feito e ninguém
+    conferiu) e ficha parada em andamento (a inspeção que começou e não terminou).
+
+    É a régua de módulo do projeto — cockpit com fila de decisão real, não um
+    hub que soma o que não se soma.
+    """
+    hoje = timezone.localdate()
+    abertas = list(
+        NaoConformidade.objects.filter(
+            tenant_id=tenant_id, obra_id=obra_id,
+            status__in=[
+                NaoConformidade.Status.ABERTA,
+                NaoConformidade.Status.EM_TRATAMENTO,
+            ],
+        )
+        .select_related("local", "atividade")
+        .prefetch_related("acoes", "eficacias")
+    )
+
+    sem_plano, esperando_eficacia = [], []
+    for nc in abertas:
+        estado = estado_da_nc(nc)
+        linha = {
+            "nc": nc.pk,
+            "gravidade": nc.gravidade,
+            "gravidade_rotulo": nc.get_gravidade_display(),
+            "descricao": nc.descricao[:160],
+            "local_rotulo": nc.local.nome if nc.local_id else None,
+            "atividade_nome": nc.atividade.nome if nc.atividade_id else None,
+            "falta": estado["falta"],
+            #: **Há quanto tempo isto espera.** Faltava, e a ausência só
+            #: apareceu quando a fila do dia passou a pôr as onze faixas lado a
+            #: lado: uma linha de NC sem data fica em branco na única coluna
+            #: que ordena a fila inteira, e um defeito de ontem se lê igual a
+            #: um de março.
+            "aberta_em": nc.aberta_em,
+        }
+        if estado["acoes"] == 0:
+            sem_plano.append(linha)
+        elif estado["acoes_concluidas"] == estado["acoes"] and not estado["eficacia_verificada"]:
+            esperando_eficacia.append(linha)
+
+    vencidos = [
+        {
+            "plano": a.pk,
+            "nc": a.nao_conformidade_id,
+            "o_que": a.o_que[:160],
+            "quem": a.quem,
+            "quando": a.quando,
+            "dias_vencido": (hoje - a.quando).days,
+        }
+        for a in PlanoAcao.objects.filter(
+            tenant_id=tenant_id,
+            nao_conformidade__obra_id=obra_id,
+            quando__lt=hoje,
+            status__in=[PlanoAcao.Status.PLANEJADA, PlanoAcao.Status.EM_EXECUCAO],
+        ).order_by("quando")[:PDCA_TETO_NCS_ABERTAS_POR_OBRA]
+    ]
+
+    paradas = [
+        {
+            "verificacao": v.pk,
+            "modelo_nome": v.modelo.nome,
+            "data": v.data,
+            "inspetor": v.inspetor,
+            "dias_parada": (hoje - v.data).days,
+        }
+        for v in Verificacao.objects.filter(
+            tenant_id=tenant_id, obra_id=obra_id,
+            status=Verificacao.Status.EM_ANDAMENTO,
+        ).select_related("modelo").order_by("data")
+    ]
+
+    return {
+        "obra": obra_id,
+        "ncs_sem_plano": sem_plano,
+        "acoes_vencidas": vencidos,
+        "ncs_esperando_eficacia": esperando_eficacia,
+        "fichas_em_andamento": paradas,
+        "total": (
+            len(sem_plano) + len(vencidos) + len(esperando_eficacia) + len(paradas)
+        ),
+    }
+
+
+def painel_de_conformidade(*, obra_id, tenant_id, desde: date | None = None,
+                           ate: date | None = None) -> dict:
+    """**O "Act" da qualidade** — conformidade por domínio e o que mais reprova.
+
+    Irmão declarado do `ranking_de_causas` da PDCA.5, e existe pela mesma razão:
+    o índice diz *quanto* falhou, e só o ranking diz *o quê* mudar. A leitura que
+    decide alguma coisa aqui é a terceira — **qual pergunta reprova mais** —,
+    porque é ela que aponta o processo a corrigir em vez do serviço a refazer.
+
+    O agrupamento do ranking é pelo **item do modelo**, e não pelo texto
+    congelado da ficha: o texto é cópia por item respondido (é o que torna a
+    ficha uma prova), e agrupar por ele contaria a mesma pergunta N vezes. A
+    resposta órfã — item de modelo apagado, ou item acrescentado em campo — fica
+    de fora e é **declarada**, em vez de sumir na conta.
+    """
+    fichas = Verificacao.objects.filter(
+        tenant_id=tenant_id, obra_id=obra_id,
+        status=Verificacao.Status.CONCLUIDA,
+    )
+    if desde:
+        fichas = fichas.filter(data__gte=desde)
+    if ate:
+        fichas = fichas.filter(data__lte=ate)
+
+    itens = ItemVerificacao.objects.filter(
+        tenant_id=tenant_id, verificacao__in=fichas,
+    )
+
+    por_dominio = []
+    for dominio, rotulo in DominioVerificacao.choices:
+        recorte = itens.filter(verificacao__modelo__dominio=dominio)
+        conformes = recorte.filter(resultado=ResultadoItem.CONFORME).count()
+        nao_conformes = recorte.filter(
+            resultado=ResultadoItem.NAO_CONFORME,
+        ).count()
+        julgados = conformes + nao_conformes
+        if not julgados:
+            continue
+        por_dominio.append({
+            "dominio": dominio,
+            "rotulo": rotulo,
+            "conformes": conformes,
+            "nao_conformes": nao_conformes,
+            "conformidade": (
+                Decimal(conformes) * 100 / Decimal(julgados)
+            ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+        })
+
+    #: **O ranking conta história, e por isso precisa dizer a situação de hoje.**
+    #:
+    #: *(Achado do dono, 16/09/2026, olhando o painel: "aqui fica parecendo que
+    #: ainda tá em não conformidade, ao invés de dizer a real situação".)*
+    #:
+    #: A leitura é **cumulativa** de propósito — o que aponta o processo a
+    #: corrigir é quantas vezes aquela pergunta reprovou ao longo das fichas,
+    #: inclusive nas vezes em que o defeito já foi consertado. Um ranking que
+    #: descartasse o que foi tratado zeraria sozinho toda vez que a obra
+    #: funcionasse, e deixaria de apontar exatamente o processo que mais dá
+    #: trabalho.
+    #:
+    #: O que faltava era a outra metade: **daquelas reprovas, quantas ainda
+    #: estão abertas.** Sem isso a linha "Prumo da parede — 1" se lê como um
+    #: problema de agora, mesmo quando ele foi tratado e encerrado na semana
+    #: passada.
+    #:
+    #: Vem numa consulta: o `values` desce até o status da NC (LEFT JOIN, então
+    #: a reprova que nunca virou NC aparece com status nulo) e a dobra acontece
+    #: em memória. Contar por item com uma consulta cada repetiria o D136.
+    bruto = (
+        itens.filter(
+            resultado=ResultadoItem.NAO_CONFORME, item_modelo__isnull=False,
+        )
+        .values("item_modelo_id", "item_modelo__texto",
+                "verificacao__modelo__codigo", "nao_conformidades__status")
+        .annotate(n=Count("item_verificacao_id", distinct=True))
+    )
+    ABERTAS = (
+        NaoConformidade.Status.ABERTA, NaoConformidade.Status.EM_TRATAMENTO,
+    )
+    por_item: dict = {}
+    for linha in bruto:
+        chave = linha["item_modelo_id"]
+        alvo = por_item.setdefault(chave, {
+            "item_modelo": chave,
+            "texto": linha["item_modelo__texto"],
+            "modelo_codigo": linha["verificacao__modelo__codigo"],
+            "reprovas": 0,
+            "em_aberto": 0,
+            "encerradas": 0,
+            #: A reprova que **nunca virou NC**. Não é detalhe: é um defeito que
+            #: ninguém está tratando, e some das duas outras contagens.
+            "sem_nc": 0,
+        })
+        quantas = linha["n"]
+        status = linha["nao_conformidades__status"]
+        alvo["reprovas"] += quantas
+        if status in ABERTAS:
+            alvo["em_aberto"] += quantas
+        elif status == NaoConformidade.Status.ENCERRADA:
+            alvo["encerradas"] += quantas
+        else:
+            # Sem NC, ou com uma cancelada — em nenhum dos dois casos alguém
+            # está tratando o defeito, e a tela precisa dizer isso.
+            alvo["sem_nc"] += quantas
+
+    total_reprovas = itens.filter(resultado=ResultadoItem.NAO_CONFORME).count()
+    orfas = itens.filter(
+        resultado=ResultadoItem.NAO_CONFORME, item_modelo__isnull=True,
+    ).count()
+
+    ranking = sorted(
+        por_item.values(), key=lambda l: l["reprovas"], reverse=True,
+    )[:20] if total_reprovas else []
+    for linha in ranking:
+        linha["percentual"] = (
+            Decimal(linha["reprovas"]) * 100 / Decimal(total_reprovas)
+        ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    ncs = NaoConformidade.objects.filter(tenant_id=tenant_id, obra_id=obra_id)
+    por_gravidade = [
+        {
+            "gravidade": gravidade,
+            "rotulo": rotulo,
+            "abertas": ncs.filter(
+                gravidade=gravidade,
+                status__in=[
+                    NaoConformidade.Status.ABERTA,
+                    NaoConformidade.Status.EM_TRATAMENTO,
+                ],
+            ).count(),
+            "encerradas": ncs.filter(
+                gravidade=gravidade, status=NaoConformidade.Status.ENCERRADA,
+            ).count(),
+        }
+        for gravidade, rotulo in GravidadeNC.choices
+    ]
+
+    return {
+        "obra": obra_id,
+        "fichas_concluidas": fichas.count(),
+        "por_dominio": por_dominio,
+        "itens_que_mais_reprovam": ranking,
+        "reprovas_sem_modelo": orfas,
+        "ncs_por_gravidade": por_gravidade,
+        # A leitura do laço fechado: de tudo que já foi aberto nesta obra,
+        # quanto chegou até a verificação de eficácia. É o número que diz se o
+        # sistema de qualidade está funcionando ou só registrando.
+        "ncs_encerradas": ncs.filter(
+            status=NaoConformidade.Status.ENCERRADA,
+        ).count(),
+        "ncs_abertas": ncs.filter(
+            status__in=[
+                NaoConformidade.Status.ABERTA,
+                NaoConformidade.Status.EM_TRATAMENTO,
+            ],
+        ).count(),
+    }
+
+
+# ===========================================================================
+# PDCA.8 — SSMA: o diálogo de segurança e a ocorrência
+# ===========================================================================
+
+
+# --- Tetos -----------------------------------------------------------------
+
+def validar_teto_de_participantes(dds: "DialogoSeguranca", *,
+                                  acrescentando: int = 1) -> None:
+    """A roda tem tamanho físico (§5.5m do `planos.py`)."""
+    atual = dds.participantes.count()
+    if atual + acrescentando > PDCA_TETO_PARTICIPANTES_POR_DDS:
+        raise ValidationError(
+            f"Um diálogo de segurança comporta até "
+            f"{PDCA_TETO_PARTICIPANTES_POR_DDS} participantes, e este já tem "
+            f"{atual}. Acima disso a roda deixa de ser uma roda: ninguém ouve, "
+            f"ninguém pergunta, e a lista vira assinatura colhida por fora do "
+            f"diálogo. Registre uma roda por frente."
+        )
+
+
+def validar_teto_de_anexos(ocorrencia: "Ocorrencia", *,
+                           acrescentando: int = 1) -> None:
+    """Quantos arquivos pendem de uma ocorrência (§5.5m do `planos.py`)."""
+    atual = ocorrencia.anexos.count()
+    if atual + acrescentando > PDCA_TETO_ANEXOS_POR_OCORRENCIA:
+        raise ValidationError(
+            f"Uma ocorrência comporta até {PDCA_TETO_ANEXOS_POR_OCORRENCIA} "
+            f"anexos, e esta já tem {atual}. Ocorrência com dezenas de arquivos "
+            f"não é ocorrência documentada: é o acervo da obra despejado no "
+            f"registro que a perícia precisa conseguir ler."
+        )
+
+
+# --- O diálogo de segurança ------------------------------------------------
+
+@transaction.atomic
+def abrir_dds(*, obra, data: date, tema: str, tenant_id,
+              local=None, atividade=None, assunto: str = "",
+              duracao_min: int | None = None, responsavel=None,
+              responsavel_nome: str = "", por: str = "") -> "DialogoSeguranca":
+    """Abre a roda. Nasce em rascunho — a lista de presença se colhe depois."""
+    if not (tema or "").strip():
+        raise ValidationError(
+            "O diálogo precisa de um tema. 'DDS realizado' não é tema: o que "
+            "faz o registro servir de prova é dizer sobre o que se falou."
+        )
+    return DialogoSeguranca.objects.create(
+        tenant_id=tenant_id, obra=obra, local=local, atividade=atividade,
+        data=data, tema=tema.strip(), assunto=assunto or "",
+        duracao_min=duracao_min, responsavel=responsavel,
+        responsavel_nome=responsavel_nome or "", registrado_por=por or "",
+    )
+
+
+@transaction.atomic
+def registrar_presenca(*, dds: "DialogoSeguranca",
+                       participantes: list[dict]) -> dict:
+    """Grava a lista de presença — **em lote, e só enquanto a roda está aberta**.
+
+    O lote é pela mesma razão do `responder_itens`: a tela acumula os nomes e
+    grava de uma vez, e a que falhasse no meio deixaria metade da lista sem
+    ninguém saber onde parou.
+
+    **Encerrado não recebe nome novo**, e é a trava que faz a lista ser prova.
+    Sem ela, alguém acrescentaria um participante três dias depois do acidente.
+    """
+    if not dds.esta_aberto:
+        raise ValidationError(
+            "Este diálogo já foi encerrado, e a lista de presença fechou com "
+            "ele. Acrescentar um nome depois do encerramento é exatamente o que "
+            "faz a lista deixar de provar quem estava lá."
+        )
+
+    novos = []
+    for linha in participantes:
+        funcionario_id = linha.get("funcionario") or None
+        nome = (linha.get("nome") or "").strip()
+        if not funcionario_id and not nome:
+            raise ValidationError(
+                "Participante sem funcionário e sem nome é linha em branco na "
+                "lista de presença — e lista com linha em branco não prova nada."
+            )
+        novos.append(ParticipanteDDS(
+            tenant_id=dds.tenant_id, dds=dds,
+            funcionario_id=funcionario_id, nome=nome,
+            presente=bool(linha.get("presente", True)),
+            assinou=bool(linha.get("assinou", False)),
+        ))
+
+    validar_teto_de_participantes(dds, acrescentando=len(novos))
+    ParticipanteDDS.objects.bulk_create(novos)
+    return {"registrados": len(novos), "total": dds.participantes.count()}
+
+
+@transaction.atomic
+def encerrar_dds(*, dds: "DialogoSeguranca", por: str = "",
+                 publicar_no_diario: bool = True) -> dict:
+    """Fecha a roda — **e recusa fechar sem ninguém dentro**.
+
+    Um DDS sem participante é um campo de texto afirmando que houve diálogo. O
+    que a fiscalização olha é a lista, e é ela que a trava protege.
+
+    **E é aqui que o PDCA escreve no Diário pela primeira vez** (planta §7 — "não
+    substitui o Diário: escreve e lê nele"). O diálogo faz parte do que aconteceu
+    na obra naquele dia, e o diário é o registro contratual do dia. A escrita é
+    **no encerramento** e não na abertura: rascunho no diário seria registro
+    contratual de algo que ainda pode mudar.
+
+    O import é tardio pela razão de sempre nesta casa — o PDCA tem de carregar
+    numa instalação que não tenha o diário migrado.
+    """
+    if not dds.esta_aberto:
+        raise ValidationError("Este diálogo já está encerrado.")
+
+    presentes = dds.participantes.filter(presente=True).count()
+    if not presentes:
+        raise ValidationError(
+            "Não dá para encerrar um diálogo sem nenhum presente. A lista de "
+            "presença é a única parte do DDS que prova alguma coisa — sem ela o "
+            "registro afirma que houve conversa e não mostra com quem."
+        )
+
+    dds.status = DialogoSeguranca.Status.ENCERRADO
+    dds.encerrado_em = timezone.now()
+    dds.encerrado_por = por or ""
+    campos = ["status", "encerrado_em", "encerrado_por"]
+
+    if publicar_no_diario:
+        diario = _publicar_dds_no_diario(dds, presentes=presentes, por=por)
+        if diario is not None:
+            dds.diario = diario
+            campos.append("diario")
+
+    dds.save(update_fields=campos)
+    return {
+        "dds": dds.pk,
+        "presentes": presentes,
+        "diario": dds.diario_id,
+        # Honestidade: a tela precisa saber se a escrita no diário aconteceu ou
+        # se o módulo não estava lá. Nunca `True` otimista.
+        "publicado_no_diario": dds.diario_id is not None,
+    }
+
+
+def _publicar_dds_no_diario(dds: "DialogoSeguranca", *, presentes: int,
+                            por: str = ""):
+    """Escreve o diálogo no diário do dia. Devolve o `DiarioObra` ou `None`."""
+    try:
+        from modulodiario.services import registrar_contribuicao
+    except ImportError:
+        return None
+
+    linhas = [f"DDS — {dds.tema}"]
+    if dds.assunto:
+        linhas.append(dds.assunto)
+    responsavel = dds.responsavel_nome or (
+        getattr(dds.responsavel, "nome_completo", "") if dds.responsavel_id else ""
+    )
+    if responsavel:
+        linhas.append(f"Conduzido por: {responsavel}")
+    linhas.append(f"Participantes presentes: {presentes}")
+
+    # **`origem` fica no default `web`**, e é limite declarado, não descuido:
+    # `modulodiario.ORIGEM_CHOICES` só conhece `web` e `whatsapp`, e acrescentar
+    # `pdca` ali é migration no modelo de outro módulo — mexer nele de dentro
+    # desta fatia seria atravessar a fronteira da §7 pelo lado errado. A entrada
+    # se identifica pelo texto ("DDS — ...") e pelo `DialogoSeguranca.diario`,
+    # que aponta de volta.
+    #
+    # `criado_por` também não vai: no diário ele é FK para `Usuario`, e o `por`
+    # desta casa é o nome de quem agiu, em texto. Passar a string levantaria
+    # `ValueError` — quem assina o diálogo é o `funcionario`, que vai.
+    return registrar_contribuicao(
+        obra=dds.obra, funcionario=dds.responsavel, texto="\n".join(linhas),
+        data=dds.data, tenant_id=dds.tenant_id,
+    )
+
+
+# --- A ocorrência ----------------------------------------------------------
+
+@transaction.atomic
+def registrar_ocorrencia(*, obra, ocorrido_em, tipo: str, descricao: str,
+                         tenant_id, local=None, atividade=None,
+                         por: str = "", **extra) -> "Ocorrencia":
+    """Registra o fato — **e é de propósito a função mais permissiva do módulo**.
+
+    Não há teto de ocorrências abertas por obra, não há campo obrigatório além
+    do tipo, da hora e do que aconteceu, e a classificação nasce pendente. Cada
+    uma dessas ausências é uma decisão, e todas apontam para o mesmo lugar: o
+    quase-acidente é o registro mais valioso da segurança e o mais fácil de não
+    fazer, porque ninguém se machucou e o turno continua. Todo atrito que se
+    põe aqui é subnotificação depois.
+
+    **Data no futuro é recusada**, e essa é a única trava. Acidente que ainda
+    não aconteceu não é registro, é erro de digitação — e ele contaminaria a
+    série do indicador sem ninguém perceber.
+    """
+    if not (descricao or "").strip():
+        raise ValidationError(
+            "Diga o que aconteceu. Uma ocorrência sem descrição não vira "
+            "investigação nenhuma, e é ela que a perícia lê primeiro."
+        )
+    if ocorrido_em and ocorrido_em > timezone.now():
+        raise ValidationError(
+            "A data da ocorrência está no futuro. Confira o dia e a hora: o "
+            "registro adiantado entra na série do indicador e ninguém o vê lá."
+        )
+
+    campos = {
+        k: v for k, v in extra.items()
+        if k in {
+            "agente_causador", "situacao_geradora", "houve_registro_policial",
+            "horas_trabalhadas_antes", "ultimo_dia_trabalhado", "acidentado",
+            "acidentado_nome", "parte_do_corpo", "lateralidade",
+            "natureza_lesao", "cid10", "houve_internacao", "atestado_dias",
+        }
+    }
+    return Ocorrencia.objects.create(
+        tenant_id=tenant_id, obra=obra, local=local, atividade=atividade,
+        ocorrido_em=ocorrido_em, tipo=tipo, descricao=descricao.strip(),
+        registrada_por=por or "", **campos,
+    )
+
+
+@transaction.atomic
+def classificar_ocorrencia(*, ocorrencia: "Ocorrencia", classificacao: str,
+                           dias_perdidos: int | None = None,
+                           dias_debitados: int | None = None,
+                           por: str = "") -> "Ocorrencia":
+    """O verbo separado — **quem é medido não classifica a própria medida**.
+
+    Esta é a segregação da fatia, e ela é nova nesta casa. As anteriores
+    separavam quem faz de quem aprova (`apurar` × `atestar`, `tratar` ×
+    `verificar_eficacia`); esta separa quem é **medido** de quem classifica. O
+    tipo, o afastamento e os dias são os três campos de que a taxa de frequência
+    e a de gravidade nascem, e a frente onde o acidente aconteceu é cobrada por
+    elas.
+    """
+    if not ocorrencia.esta_aberta:
+        raise ValidationError(
+            "Esta ocorrência está encerrada. Reclassificar um fato encerrado "
+            "muda o indicador de um período que já foi lido e discutido — "
+            "reabra-a, se for o caso, para a mudança ficar visível."
+        )
+    if ocorrencia.tipo in (
+        TipoOcorrencia.QUASE_ACIDENTE, TipoOcorrencia.INCIDENTE,
+    ) and classificacao in (
+        ClassificacaoOcorrencia.COM_AFASTAMENTO, ClassificacaoOcorrencia.OBITO,
+    ):
+        raise ValidationError(
+            "Quase-acidente e incidente não têm vítima, e por isso não têm "
+            "afastamento nem óbito. Se houve alguém ferido, o tipo é que está "
+            "errado — corrija-o antes, porque é dele que a CAT depende."
+        )
+    if classificacao == ClassificacaoOcorrencia.COM_AFASTAMENTO and not dias_perdidos:
+        raise ValidationError(
+            "Afastamento sem dias perdidos é classificação pela metade: é "
+            "exatamente desse número que a taxa de gravidade nasce."
+        )
+    if classificacao == ClassificacaoOcorrencia.OBITO and not dias_debitados:
+        raise ValidationError(
+            "O óbito entra na taxa de gravidade por dias **debitados**, não por "
+            "dias perdidos — a NBR 14280 fixa 6.000. Informe o débito."
+        )
+
+    ocorrencia.classificacao = classificacao
+    ocorrencia.dias_perdidos = dias_perdidos
+    ocorrencia.dias_debitados = dias_debitados
+    ocorrencia.classificada_em = timezone.now()
+    ocorrencia.classificada_por = por or ""
+    ocorrencia.save(update_fields=[
+        "classificacao", "dias_perdidos", "dias_debitados",
+        "classificada_em", "classificada_por",
+    ])
+    return ocorrencia
+
+
+def prazo_da_cat(ocorrencia: "Ocorrencia") -> dict:
+    """Quando a CAT vence — **e a resposta diz o que ela não sabe**.
+
+    Lei 8.213/91 art. 22: até o **1º dia útil seguinte** ao acidente; em caso de
+    morte, **de imediato**. O dia útil sai do mesmo `AjusteDeVencimento` que o
+    carnê usa desde 16/09/2026, e ele herda a ressalva do **D179**: a tabela de
+    feriados é global e nasce vazia. Sem ela o cálculo desvia de sábado e
+    domingo e **não** de feriado — e a resposta declara isso em
+    `feriados_carregados`, em vez de afirmar um prazo que pode estar um dia à
+    frente do real.
+
+    Feriado **nacional** apenas, de propósito: a CAT se comunica ao INSS, que é
+    federal. O feriado municipal da praça do imóvel é do carnê, não daqui.
+    """
+    if not ocorrencia.exige_cat:
+        return {
+            "exige": False,
+            "motivo": (
+                "Quase-acidente e incidente não têm vítima e não geram CAT."
+            ),
+        }
+
+    from modulocalendar.dias_uteis import AjusteDeVencimento, base_sincronizada
+
+    dia_do_fato = timezone.localtime(ocorrencia.ocorrido_em).date()
+    imediata = ocorrencia.classificacao == ClassificacaoOcorrencia.OBITO
+    ajuste = AjusteDeVencimento()
+    vence_em = dia_do_fato if imediata else ajuste(dia_do_fato + timedelta(days=1))
+
+    hoje = timezone.localdate()
+    return {
+        "exige": True,
+        "imediata": imediata,
+        "vence_em": vence_em,
+        "emitida": ocorrencia.cat_emitida_em is not None,
+        "vencido": (
+            ocorrencia.cat_emitida_em is None and hoje > vence_em
+        ),
+        "feriados_carregados": base_sincronizada(),
+        "base_legal": "Lei 8.213/91, art. 22",
+    }
+
+
+@transaction.atomic
+def registrar_cat(*, ocorrencia: "Ocorrencia", tipo: str, emitida_em: date,
+                  protocolo: str = "", por: str = "") -> dict:
+    """Guarda que a CAT foi comunicada — **o registro do ato, não o ato**.
+
+    O sistema **não transmite** o evento eSocial S-2210: isso é obrigação da
+    folha, e uma segunda porta para um ato com prazo legal e multa criaria duas
+    verdades sobre se a CAT foi comunicada. O que mora aqui é o protocolo, que é
+    o que prova a comunicação, e o aviso do prazo.
+    """
+    if not ocorrencia.exige_cat:
+        raise ValidationError(
+            "Este tipo de ocorrência não gera CAT — quase-acidente e incidente "
+            "não têm vítima. Se houve alguém ferido, corrija o tipo primeiro."
+        )
+    if emitida_em and emitida_em > timezone.localdate():
+        raise ValidationError("A data de emissão da CAT está no futuro.")
+
+    ocorrencia.cat_tipo = tipo
+    ocorrencia.cat_emitida_em = emitida_em
+    ocorrencia.cat_protocolo = (protocolo or "").strip()
+    ocorrencia.cat_registrada_por = por or ""
+    ocorrencia.save(update_fields=[
+        "cat_tipo", "cat_emitida_em", "cat_protocolo", "cat_registrada_por",
+    ])
+    prazo = prazo_da_cat(ocorrencia)
+    return {
+        "ocorrencia": ocorrencia.pk,
+        "cat": {
+            "tipo": ocorrencia.cat_tipo,
+            "emitida_em": ocorrencia.cat_emitida_em,
+            "protocolo": ocorrencia.cat_protocolo,
+        },
+        # **No prazo ou fora dele, e a resposta diz.** O sistema não recusa a
+        # CAT atrasada — recusá-la apagaria o registro de que ela foi feita, que
+        # é pior que registrá-la tarde. Ele conta a verdade.
+        "dentro_do_prazo": bool(
+            emitida_em and prazo.get("vence_em") and emitida_em <= prazo["vence_em"]
+        ),
+        "prazo": prazo,
+    }
+
+
+@transaction.atomic
+def gerar_restricao_da_ocorrencia(*, ocorrencia: "Ocorrencia",
+                                  prazo: date | None = None,
+                                  por: str = "") -> "Restricao":
+    """Interdita a frente — **o dente da fatia**, na corrente que a NC já usa.
+
+    Idempotente, exige atividade (restrição sem alvo não trava nada) e abre uma
+    `Restricao` de tipo `AREA`: a atividade deixa de poder entrar no quadro da
+    semana da PDCA.5. **Não há tipo `SEGURANCA` novo** — interditar frente por
+    risco *é* "a área não está liberada", e um nono tipo partiria o ranking de
+    restrição em dois vocabulários para o mesmo fato. É o argumento que a PDCA.7
+    já escreveu ao recusar um tipo próprio para a qualidade.
+    """
+    if ocorrencia.restricao_id:
+        return ocorrencia.restricao
+    if not ocorrencia.atividade_id:
+        raise ValidationError(
+            "Esta ocorrência não aponta para nenhuma atividade, e restrição sem "
+            "alvo não trava nada. Diga qual serviço fica interditado."
+        )
+    if not ocorrencia.esta_aberta:
+        raise ValidationError(
+            "Ocorrência encerrada não interdita frente: se o risco voltou, o "
+            "registro é de um fato novo."
+        )
+
+    validar_teto_de_restricoes(ocorrencia.obra_id, tenant_id=ocorrencia.tenant_id)
+    restricao = Restricao.objects.create(
+        tenant_id=ocorrencia.tenant_id,
+        atividade_id=ocorrencia.atividade_id,
+        local_id=ocorrencia.local_id,
+        tipo=TipoRestricao.AREA,
+        descricao=(
+            f"Ocorrência #{ocorrencia.pk} ({ocorrencia.get_tipo_display()}) — "
+            f"{ocorrencia.descricao.strip()[:400]}"
+        ),
+        prazo=prazo,
+        criada_por=por or "",
+    )
+    ocorrencia.restricao = restricao
+    ocorrencia.save(update_fields=["restricao"])
+    return restricao
+
+
+@transaction.atomic
+def abrir_nc_da_ocorrencia(*, ocorrencia: "Ocorrencia",
+                           por: str = "") -> "NaoConformidade":
+    """Põe a ocorrência na máquina de tratamento — **o laço, sem duplicá-la**.
+
+    Investigar acidente com causa e 5W2H é exatamente o que `NaoConformidade` +
+    `PlanoAcao` + `VerificacaoEficacia` já fazem desde a PDCA.7. Refazer a
+    máquina aqui produziria uma segunda que divergiria da primeira na primeira
+    mudança de requisito. A ocorrência é o **fato**; a NC é o **tratamento**.
+
+    Idempotente, e a gravidade não é perguntada: ela sai do tipo. Acidente é
+    `CRITICA` por definição — quem se machucou já disse o quanto pesa.
+    """
+    if ocorrencia.nao_conformidade_id:
+        return ocorrencia.nao_conformidade
+
+    validar_teto_de_ncs(ocorrencia.obra_id, tenant_id=ocorrencia.tenant_id)
+    grave = ocorrencia.tipo in (
+        TipoOcorrencia.ACIDENTE_TIPICO, TipoOcorrencia.ACIDENTE_TRAJETO,
+        TipoOcorrencia.DOENCA_OCUPACIONAL,
+    )
+    nc = NaoConformidade.objects.create(
+        tenant_id=ocorrencia.tenant_id, obra=ocorrencia.obra,
+        local=ocorrencia.local, atividade=ocorrencia.atividade,
+        gravidade=GravidadeNC.CRITICA if grave else GravidadeNC.MAIOR,
+        descricao=(
+            f"Ocorrência #{ocorrencia.pk} ({ocorrencia.get_tipo_display()}) — "
+            f"{ocorrencia.descricao}"
+        ),
+        aberta_por=por or "",
+    )
+    ocorrencia.nao_conformidade = nc
+    ocorrencia.status = Ocorrencia.Status.EM_INVESTIGACAO
+    ocorrencia.save(update_fields=["nao_conformidade", "status"])
+    return nc
+
+
+@transaction.atomic
+def encerrar_ocorrencia(*, ocorrencia: "Ocorrencia", por: str = "",
+                        nota: str = "") -> "Ocorrencia":
+    """Fecha o fato — **e recusa fechar por cima de uma frente interditada**.
+
+    Esta trava existe por um defeito medido no irmão: `encerrar_nc` **não**
+    remove a `Restricao` que a NC abriu, e ninguém o faz em cascata. Copiar esse
+    comportamento aqui produziria restrição de segurança fantasma — a frente
+    seguiria travada depois de a ocorrência ter sido dada por resolvida, e o
+    teto de restrições abertas passaria a estourar por entulho.
+
+    A saída **não** é remover a restrição automaticamente: declarar que o risco
+    cessou libera o serviço, e esse é ato de quem responde pela obra
+    (`pdca.restricao.remover`), não efeito colateral de um encerramento. Então o
+    encerramento recusa e diz o que falta.
+
+    A classificação pendente também barra: ocorrência encerrada sem classificar
+    sai da fila de decisão e **não entra em indicador nenhum** — some das duas
+    leituras ao mesmo tempo, que é a pior forma de um registro desaparecer.
+    """
+    if not ocorrencia.esta_aberta:
+        raise ValidationError("Esta ocorrência já está encerrada.")
+
+    if ocorrencia.classificacao == ClassificacaoOcorrencia.PENDENTE:
+        raise ValidationError(
+            "Classifique a ocorrência antes de encerrá-la. Sem classificação "
+            "ela sai da fila de decisão e não entra em indicador nenhum — some "
+            "das duas leituras de uma vez."
+        )
+
+    restricao = ocorrencia.restricao
+    if restricao is not None and restricao.status == Restricao.Status.ABERTA:
+        raise ValidationError(
+            f"A frente continua interditada pela restrição #{restricao.pk}, "
+            f"aberta por esta ocorrência. Encerrar aqui deixaria o serviço "
+            f"travado sem nada explicando por quê. Declare que o risco cessou "
+            f"removendo a restrição — é ato de quem responde pela obra."
+        )
+
+    ocorrencia.status = Ocorrencia.Status.ENCERRADA
+    ocorrencia.encerrada_em = timezone.now()
+    ocorrencia.encerrada_por = por or ""
+    ocorrencia.nota_encerramento = nota or ""
+    ocorrencia.save(update_fields=[
+        "status", "encerrada_em", "encerrada_por", "nota_encerramento",
+    ])
+    return ocorrencia
+
+
+def ocorrencias_abertas_por_atividade(atividade_ids: list[int], *,
+                                      tenant_id) -> dict[int, int]:
+    """Quantas ocorrências abertas cada atividade tem — **numa consulta só**.
+
+    Irmã do `ncs_abertas_por_atividade`, e existe pelo mesmo motivo escrito lá:
+    o quadro da semana pergunta isso de 300 cartões de uma vez, e uma property
+    no modelo faria 300 consultas.
+    """
+    if not atividade_ids:
+        return {}
+    linhas = (
+        Ocorrencia.objects.filter(
+            tenant_id=tenant_id, atividade_id__in=atividade_ids,
+            status__in=[
+                Ocorrencia.Status.ABERTA, Ocorrencia.Status.EM_INVESTIGACAO,
+            ],
+        )
+        .values("atividade_id")
+        .annotate(n=Count("ocorrencia_id"))
+    )
+    return {linha["atividade_id"]: linha["n"] for linha in linhas}
+
+
+# --- As duas leituras ------------------------------------------------------
+
+#: **A frase da ausência, uma vez só.** O painel da SSMA e o pulso da obra
+#: respondem a mesma pergunta — *por que a taxa está vazia?* — e dois textos
+#: para ela viram duas explicações que um dia divergem: a pessoa passa a achar
+#: que a taxa nula do cockpit é coisa diferente da taxa nula do painel.
+#:
+#: Ela perdeu o "é a PDCA.9" que tinha. Número de fatia é vocabulário de quem
+#: escreveu o sistema, não de quem opera (convenções §9); a NBR fica, porque
+#: essa o técnico de segurança conhece e usa.
+TAXAS_DE_SSMA_INDISPONIVEIS_PORQUE = (
+    "A taxa de frequência e a de gravidade dividem por homem-hora de exposição "
+    "ao risco (NBR 14280), e o sistema ainda não apropria homem-hora. Mostrar "
+    "zero no lugar diria que a obra é segura quando o que houve foi ninguém "
+    "medir."
+)
+
+
+def fila_da_ssma(*, obra_id, tenant_id) -> dict:
+    """A fila de decisão da segurança — **quatro paradas, e nenhuma é estatística**.
+
+    No molde da `fila_da_qualidade`: o que o cockpit mostra é o que pede ação
+    hoje, não o que resume o mês.
+    """
+    abertas = Ocorrencia.objects.filter(
+        tenant_id=tenant_id, obra_id=obra_id,
+        status__in=[Ocorrencia.Status.ABERTA, Ocorrencia.Status.EM_INVESTIGACAO],
+    ).select_related("local", "atividade")[:PDCA_TETO_OCORRENCIAS_NA_FILA]
+
+    cat_vencendo, sem_classificacao, sem_tratamento, interditadas = [], [], [], []
+    for ocorrencia in abertas:
+        linha = {
+            "ocorrencia": ocorrencia.pk,
+            "tipo": ocorrencia.tipo,
+            "ocorrido_em": ocorrencia.ocorrido_em,
+            "descricao": ocorrencia.descricao[:160],
+            "local": ocorrencia.local_id,
+            "atividade": ocorrencia.atividade_id,
+        }
+        prazo = prazo_da_cat(ocorrencia)
+        if prazo["exige"] and not prazo["emitida"]:
+            cat_vencendo.append({**linha, "prazo": prazo})
+        if ocorrencia.classificacao == ClassificacaoOcorrencia.PENDENTE:
+            sem_classificacao.append(linha)
+        if not ocorrencia.nao_conformidade_id:
+            sem_tratamento.append(linha)
+        if ocorrencia.restricao_id:
+            interditadas.append(linha)
+
+    return {
+        # A CAT primeiro porque é a única com prazo em lei e multa.
+        "cat_por_comunicar": cat_vencendo,
+        "sem_classificacao": sem_classificacao,
+        "sem_tratamento": sem_tratamento,
+        "frentes_interditadas": interditadas,
+        "truncada": len(abertas) >= PDCA_TETO_OCORRENCIAS_NA_FILA,
+    }
+
+
+def indicadores_de_ssma(*, obra_id, tenant_id, desde: date | None = None,
+                        ate: date | None = None) -> dict:
+    """Os números da segurança — **e os dois que o sistema ainda não sabe**.
+
+    **Taxa de frequência e taxa de gravidade voltam `None`, com motivo.** As
+    duas dividem por homem-hora de exposição ao risco (HHT), e HHT não existe no
+    sistema: `Efetivo` e `ApropriacaoHH` são da PDCA.9, e `Obra.equipe` é um M2M
+    sem datas — a foto do efetivo de hoje, com o qual reconstruir o efetivo de
+    julho seria fabricar.
+
+    É a régua que o módulo já aplica duas vezes (`conformidade = None` enquanto
+    nada foi respondido, `ppc = None` para semana aberta), e aqui ela é mais
+    dura: numa tela de segurança, **"taxa de frequência 0,00" é a mentira mais
+    cara que o sistema pode contar** — ela diz que a obra é segura quando o que
+    houve foi ninguém medir. Quando a PDCA.9 entrar, as duas acendem sem
+    migration, lendo `Efetivo × CalendarioTrabalho.horas_por_dia`.
+
+    O que a fatia entrega inteiro é o **numerador** e a **pirâmide**, que é o
+    que aponta ação: a razão entre quase-acidente e acidente diz se a obra está
+    registrando o que avisa antes ou só o que sangra.
+    """
+    ocorrencias = Ocorrencia.objects.filter(tenant_id=tenant_id, obra_id=obra_id)
+    dds = DialogoSeguranca.objects.filter(tenant_id=tenant_id, obra_id=obra_id)
+    if desde:
+        ocorrencias = ocorrencias.filter(ocorrido_em__date__gte=desde)
+        dds = dds.filter(data__gte=desde)
+    if ate:
+        ocorrencias = ocorrencias.filter(ocorrido_em__date__lte=ate)
+        dds = dds.filter(data__lte=ate)
+
+    ocorrencias = ocorrencias.exclude(status=Ocorrencia.Status.CANCELADA)
+    por_tipo = {
+        linha["tipo"]: linha["n"]
+        for linha in ocorrencias.values("tipo").annotate(n=Count("ocorrencia_id"))
+    }
+    com_afastamento = ocorrencias.filter(
+        classificacao=ClassificacaoOcorrencia.COM_AFASTAMENTO,
+    ).count()
+    obitos = ocorrencias.filter(
+        classificacao=ClassificacaoOcorrencia.OBITO,
+    ).count()
+    agregado = ocorrencias.aggregate(
+        perdidos=Sum("dias_perdidos"), debitados=Sum("dias_debitados"),
+    )
+
+    acidentes = sum(
+        por_tipo.get(t, 0) for t in (
+            TipoOcorrencia.ACIDENTE_TIPICO, TipoOcorrencia.ACIDENTE_TRAJETO,
+            TipoOcorrencia.DOENCA_OCUPACIONAL,
+        )
+    )
+    quase = por_tipo.get(TipoOcorrencia.QUASE_ACIDENTE, 0)
+
+    dds_encerrados = dds.filter(
+        status=DialogoSeguranca.Status.ENCERRADO,
+    ).count()
+
+    return {
+        "por_tipo": por_tipo,
+        "acidentes": acidentes,
+        "quase_acidentes": quase,
+        "com_afastamento": com_afastamento,
+        "sem_afastamento": ocorrencias.filter(
+            classificacao=ClassificacaoOcorrencia.SEM_AFASTAMENTO,
+        ).count(),
+        "obitos": obitos,
+        "nao_classificadas": ocorrencias.filter(
+            classificacao=ClassificacaoOcorrencia.PENDENTE,
+        ).count(),
+        "dias_perdidos": agregado["perdidos"] or 0,
+        "dias_debitados": agregado["debitados"] or 0,
+        # **O indicador proativo**, e é o único que a fatia entrega fechado:
+        # mede o que a obra faz antes, não o que ela contabiliza depois.
+        "dds_encerrados": dds_encerrados,
+        # A razão da pirâmide (Bird): quantos avisos para cada acidente. `None`
+        # quando não houve acidente — dividir por zero aqui daria "infinitamente
+        # seguro", que é o oposto do que um denominador zero significa.
+        "avisos_por_acidente": (
+            round(quase / acidentes, 2) if acidentes else None
+        ),
+        "taxa_frequencia": None,
+        "taxa_gravidade": None,
+        #: **Uma frase só, e por isso ela é constante.** O pulso da obra
+        #: responde a mesma ausência, e dois textos para ela viram duas
+        #: explicações que um dia divergem — a pessoa passa a achar que a
+        #: taxa nula do cockpit é coisa diferente da taxa nula do painel.
+        "taxas_indisponiveis_porque": TAXAS_DE_SSMA_INDISPONIVEIS_PORQUE,
+    }
+
+
+def epi_vencido_da_obra(*, obra_id, tenant_id) -> dict:
+    """Quem está com EPI vencido nesta obra — **lendo o SIL, que é o dono**.
+
+    A PDCA.8 não tem tabela de EPI *(decisão do dono, 20/09/2026)*: a entrega
+    vive em `modulosil.EntregaEPI` desde 25/07/2026, completa, e duplicá-la
+    criaria duas verdades sobre o mesmo capacete. O que a SSMA faz é ler.
+
+    **Import tardio**, pela razão escrita no `gerar_demanda_scm`: uma importação
+    no topo faria o PDCA deixar de carregar numa instalação que não contrate o
+    SIL. E a degradação é **declarada** — `disponivel: False` com motivo, nunca
+    uma lista vazia que se lê como "está tudo em dia".
+
+    **O grão é a obra, e não a frente**, e isso também é declarado. Travar a
+    entrada de alguém numa frente exigiria saber quem está em qual frente hoje,
+    e `Efetivo` é da PDCA.9. Prometer o bloqueio agora seria prometer o que não
+    há como apurar.
+    """
+    try:
+        from modulosil.models import EntregaEPI
+    except ImportError:
+        return {
+            "disponivel": False,
+            "motivo": "O módulo de estoque (SIL) não está instalado.",
+            "vencidos": [],
+        }
+
+    hoje = timezone.localdate()
+    entregas = (
+        EntregaEPI.objects.filter(tenant_id=tenant_id, obra_id=obra_id,
+                                  status=EntregaEPI.Status.ENTREGUE)
+        .filter(
+            Q(ca_validade__lt=hoje) | Q(data_prevista_troca__lt=hoje),
+        )
+        .select_related("item", "colaborador")
+    )
+    vencidos = [
+        {
+            "entrega": e.pk,
+            "colaborador": (
+                e.colaborador.nome_completo if e.colaborador_id
+                else e.colaborador_nome
+            ),
+            "item": getattr(e.item, "descricao", "") or str(e.item_id),
+            "ca_numero": e.ca_numero,
+            "ca_validade": e.ca_validade,
+            "troca_prevista": e.data_prevista_troca,
+        }
+        for e in entregas[:PDCA_TETO_OCORRENCIAS_NA_FILA]
+    ]
+    return {
+        "disponivel": True,
+        "vencidos": vencidos,
+        "total": len(vencidos),
+        "grao": "obra",
+        "observacao": (
+            "A leitura é por obra. Dizer quem está com EPI vencido *numa frente* "
+            "exige saber quem está em qual frente, e isso é a PDCA.9."
+        ),
+    }
+
+
+# ===========================================================================
+# As leituras que ATRAVESSAM — carteira, fila do dia, pulso e busca única
+# ===========================================================================
+#
+# Tudo o que veio antes responde sobre **um** agregado: um cronograma, um
+# contrato, uma ficha, uma obra. Estas quatro respondem sobre o que a pessoa
+# tem pela frente quando abre o sistema de manhã, e por isso cruzam
+# exatamente o que as outras separam — onze faixas numa fila só, sete tabelas
+# numa busca só, N obras numa carteira só.
+#
+# **Nenhuma delas calcula nada de novo, e isso é o ponto.** Cada número que
+# sai daqui vem da função que já o produzia (`avanco_do_cronograma`,
+# `serie_ppc`, `fila_da_qualidade`, `fila_da_ssma`). Uma segunda implementação
+# da mesma média ponderada é o D138 se repetindo em escala de carteira: o
+# cockpit diria 62%, o posto diria 64%, e ninguém saberia qual acreditar.
+#
+# **A permissão é por BLOCO, e a leitura NUNCA devolve 403 inteira.** Quem tem
+# `pdca.nc.view` e não tem `pdca.ocorrencia.view` recebe a fila da qualidade e,
+# no lugar da SSMA, uma entrada em `sem_permissao` dizendo qual permissão falta
+# e a quem pedir. É a régua omitir × trancar aplicada a um agregado: recusar a
+# página inteira esconderia o trabalho que a pessoa pode fazer, e omitir em
+# silêncio faria a fila parecer vazia — que é a pior das três saídas, porque
+# não parece falha.
+#
+# Quem decide se pode é o chamador, por uma função `pode(codigo) -> bool`. O
+# serviço não conhece `request`, e é o que permite exercer estas leituras do
+# comando de bancada e do teste sem forjar um token.
+
+
+def _pode_tudo(_permissao: str) -> bool:
+    """A leitura sem recorte — bancada, seed e teste que não simula a IAM."""
+    return True
+
+
+def _sem_permissao(bloco: str, oque: str, permissao: str) -> dict:
+    return {
+        "bloco": bloco,
+        "o_que": oque,
+        "permissao": permissao,
+        "motivo": (
+            f"Você não tem permissão para ver {oque}. "
+            f"Quem libera é o administrador, pela permissão '{permissao}'."
+        ),
+    }
+
+
+def _dia_de(quando) -> date | None:
+    """A data de um `date` ou de um `datetime` com fuso, sem repetir o `if`."""
+    if quando is None:
+        return None
+    if isinstance(quando, datetime):
+        return timezone.localtime(quando).date()
+    return quando
+
+
+def _dias_desde(quando) -> int | None:
+    dia = _dia_de(quando)
+    return None if dia is None else (timezone.localdate() - dia).days
+
+
+def _faixa(codigo: str, rotulo: str, consequencia: str, o_que_decidir: str,
+           origem: str, linhas: list[dict], total: int | None = None) -> dict:
+    """Uma faixa da fila do dia, já cortada pelo teto de leitura.
+
+    O corte é **por faixa** e não do total (§5.5n do `planos.py`): um canteiro
+    com 300 restrições vencidas não pode empurrar a CAT para fora da resposta.
+    """
+    cortadas = linhas[:PDCA_TETO_LINHAS_POR_FAIXA_DA_FILA]
+    quantas = len(linhas) if total is None else total
+    return {
+        "codigo": codigo,
+        "rotulo": rotulo,
+        #: `prazo_legal` · `seguranca` · `dinheiro` · `compromisso` ·
+        #: `retrabalho`, nesta ordem. É o que impede o hub que soma o que não se
+        #: soma: a tela agrupa por degrau em vez de exibir "12 pendências".
+        "consequencia": consequencia,
+        #: A frase que vira o botão. Fila que diz o que espera e não diz o que
+        #: decidir é contagem com outro nome.
+        "o_que_decidir": o_que_decidir,
+        #: O assunto de origem — a tela escolhe por ele para que posto navegar.
+        #: O mapa posto←origem é navegação, e navegação é da tela.
+        "origem": origem,
+        "linhas": cortadas,
+        "total": quantas,
+        "truncada": quantas > len(cortadas),
+    }
+
+
+def _linha(*, tipo: str, id_, titulo: str, detalhe: str = "", onde: str = "",
+           desde=None, prazo: dict | None = None,
+           extra: dict | None = None) -> dict:
+    """A linha única da fila — **a mesma forma para os onze assuntos**.
+
+    É o que faz onze filas virarem uma: o que é, há quanto tempo espera, e
+    (quando existe) o prazo correndo contra ela.
+    """
+    return {
+        "chave": f"{tipo}:{id_}",
+        "tipo": tipo,
+        "id": id_,
+        "titulo": titulo,
+        "detalhe": detalhe,
+        "onde": onde,
+        "desde": _dia_de(desde),
+        "dias": _dias_desde(desde),
+        "prazo": prazo,
+        **(extra or {}),
+    }
+
+
+def _prazo(vence_em: date | None, *, imediata: bool = False,
+           base_legal: str = "") -> dict | None:
+    if vence_em is None:
+        return None
+    hoje = timezone.localdate()
+    return {
+        "vence_em": vence_em,
+        "vencido": vence_em < hoje,
+        "imediata": imediata,
+        "dias_restantes": (vence_em - hoje).days,
+        "base_legal": base_legal,
+    }
+
+
+# --- B2: a fila única da obra ----------------------------------------------
+
+def fila_do_dia(*, obra_id, tenant_id, pode=_pode_tudo) -> dict:
+    """**Tudo o que espera alguém nesta obra, numa ordenação só** (B2).
+
+    O backend já tinha o padrão certo em dois lugares — `ncs/fila` e
+    `ocorrencias/fila` devolvem *o que espera alguém, agora*, e não uma
+    contagem. O que faltava era o que as une: sem isto a tela de abertura faria
+    cinco chamadas e ordenaria no navegador, o que dá a ordem errada (o
+    navegador não sabe que CAT tem prazo em lei) e dá devagar.
+
+    **A ordem é por consequência, e ela não é negociável:** prazo legal
+    primeiro, porque a CAT tem multa e não se recupera depois; segurança em
+    seguida, porque a classificação pendente pode estar escondendo uma CAT;
+    dinheiro depois; compromisso assumido; e retrabalho por último. Uma NC sem
+    plano e uma medição sem atesto **não viram "12 pendências"** — ficam em
+    faixas nomeadas, cada uma com o verbo que a fecha.
+    """
+    hoje = timezone.localdate()
+    fim_da_semana = segunda_da_semana(hoje) + timedelta(days=6)
+    faixas: list[dict] = []
+    negados: list[dict] = []
+
+    # --- prazo legal e segurança --------------------------------------------
+    if pode("pdca.ocorrencia.view"):
+        ssma = fila_da_ssma(obra_id=obra_id, tenant_id=tenant_id)
+
+        def _rotulo_do_tipo(valor: str) -> str:
+            try:
+                return TipoOcorrencia(valor).label
+            except ValueError:
+                return valor
+
+        def _linha_da_ocorrencia(bruta: dict, prazo: dict | None = None) -> dict:
+            return _linha(
+                tipo="ocorrencia", id_=bruta["ocorrencia"],
+                titulo=_rotulo_do_tipo(bruta["tipo"]),
+                detalhe=bruta["descricao"],
+                desde=bruta["ocorrido_em"],
+                prazo=prazo,
+                extra={"local": bruta["local"], "atividade": bruta["atividade"]},
+            )
+
+        faixas.append(_faixa(
+            "cat_por_comunicar", "CAT por comunicar", "prazo_legal",
+            "Emitir a CAT e guardar o protocolo.", "seguranca",
+            [
+                _linha_da_ocorrencia(bruta, _prazo(
+                    bruta["prazo"].get("vence_em"),
+                    imediata=bruta["prazo"].get("imediata", False),
+                    base_legal=bruta["prazo"].get("base_legal", ""),
+                ))
+                for bruta in ssma["cat_por_comunicar"]
+            ],
+        ))
+        faixas.append(_faixa(
+            "ocorrencias_sem_classificacao", "Ocorrência por classificar",
+            "seguranca",
+            "Classificar a ocorrência — tipo, afastamento e dias perdidos.",
+            "seguranca",
+            [_linha_da_ocorrencia(b) for b in ssma["sem_classificacao"]],
+        ))
+        faixas.append(_faixa(
+            "ocorrencias_sem_tratamento", "Ocorrência sem tratamento aberto",
+            "seguranca",
+            "Abrir a não-conformidade que investiga a causa.", "seguranca",
+            [_linha_da_ocorrencia(b) for b in ssma["sem_tratamento"]],
+        ))
+    else:
+        negados.append(_sem_permissao(
+            "seguranca", "as ocorrências de segurança desta obra",
+            "pdca.ocorrencia.view",
+        ))
+
+    # --- dinheiro -------------------------------------------------------------
+    if pode("pdca.medicao.view"):
+        em_atesto = Medicao.objects.filter(
+            tenant_id=tenant_id, contrato__obra_id=obra_id,
+            status=Medicao.Status.EM_APROVACAO,
+        )
+        esperando = list(
+            em_atesto.select_related("contrato")
+            .order_by("periodo_fim")[:PDCA_TETO_LINHAS_POR_FAIXA_DA_FILA]
+        )
+        #: Quando a medição **começou a esperar** não é quando ela foi apurada:
+        #: é quando alguém a submeteu, e quem guarda isso é a escada do
+        #: `nucleo`. Vem numa consulta para todas — uma por medição repetiria o
+        #: N+1 que o `_apontado_por_codigo` existe para não ter.
+        desde_de: dict[int, object] = {}
+        degrau_de: dict[int, str] = {}
+        if esperando:
+            from django.contrib.contenttypes.models import ContentType
+
+            from nucleo.models import PedidoAprovacao
+
+            ct = ContentType.objects.get_for_model(Medicao)
+            for pedido in (
+                PedidoAprovacao.objects.filter(
+                    tenant_id=tenant_id, alvo_tipo=ct,
+                    alvo_id__in=[m.pk for m in esperando],
+                    estado=PedidoAprovacao.Estado.EM_APROVACAO,
+                ).select_related("nivel_atual")
+            ):
+                desde_de[pedido.alvo_id] = pedido.solicitado_em
+                degrau_de[pedido.alvo_id] = getattr(
+                    pedido.nivel_atual, "nome", "",
+                )
+        faixas.append(_faixa(
+            "medicoes_a_atestar", "Medição esperando atesto", "dinheiro",
+            "Atestar ou devolver a medição — o pagamento sai daqui.", "medicao",
+            [
+                _linha(
+                    tipo="medicao", id_=m.pk,
+                    titulo=f"Medição {m.numero} · contrato {m.contrato.numero}",
+                    detalhe=(
+                        f"Período de {m.periodo_inicio:%d/%m/%Y} a "
+                        f"{m.periodo_fim:%d/%m/%Y}"
+                    ),
+                    desde=desde_de.get(m.pk) or m.apurada_em,
+                    extra={
+                        "contrato": m.contrato_id,
+                        "degrau": degrau_de.get(m.pk, ""),
+                        "liquido": totais_da_medicao(m)["liquido"],
+                    },
+                )
+                for m in esperando
+            ],
+            total=em_atesto.count(),
+        ))
+    else:
+        negados.append(_sem_permissao(
+            "medicao", "as medições desta obra", "pdca.medicao.view",
+        ))
+
+    # --- compromisso assumido -------------------------------------------------
+    if pode("pdca.programacao.view"):
+        vencidas = ProgramacaoSemanal.objects.filter(
+            tenant_id=tenant_id, obra_id=obra_id,
+            status=ProgramacaoSemanal.Status.COMPROMETIDA,
+            semana_fim__lt=hoje,
+        )
+        faixas.append(_faixa(
+            "semanas_a_encerrar", "Semana por encerrar", "compromisso",
+            "Julgar item a item e registrar a causa do que não saiu.",
+            "programacao",
+            [
+                _linha(
+                    tipo="programacao", id_=p.pk,
+                    titulo=f"Semana de {p.semana_inicio:%d/%m/%Y}",
+                    detalhe=(
+                        f"Acabou em {p.semana_fim:%d/%m/%Y} e os compromissos "
+                        f"ainda não foram julgados"
+                    ),
+                    desde=p.semana_fim,
+                )
+                for p in vencidas.order_by(
+                    "semana_inicio",
+                )[:PDCA_TETO_LINHAS_POR_FAIXA_DA_FILA]
+            ],
+            total=vencidas.count(),
+        ))
+    else:
+        negados.append(_sem_permissao(
+            "programacao", "a programação semanal desta obra",
+            "pdca.programacao.view",
+        ))
+
+    if pode("pdca.restricao.view"):
+        abertas = Restricao.objects.filter(
+            tenant_id=tenant_id, atividade__cronograma__obra_id=obra_id,
+            status=Restricao.Status.ABERTA, prazo__isnull=False,
+        ).select_related("atividade", "local")
+
+        def _linha_da_restricao(r) -> dict:
+            return _linha(
+                tipo="restricao", id_=r.pk,
+                titulo=r.get_tipo_display(),
+                detalhe=r.descricao[:160],
+                onde=(r.local.nome if r.local_id else ""),
+                desde=r.criada_em,
+                prazo=_prazo(r.prazo),
+                extra={
+                    "responsavel": r.responsavel,
+                    "atividade": r.atividade_id,
+                    "atividade_nome": r.atividade.nome if r.atividade_id else "",
+                    "demanda_scm": r.demanda_scm_id,
+                },
+            )
+
+        ja_venceu = abertas.filter(prazo__lt=hoje)
+        faixas.append(_faixa(
+            "restricoes_vencidas", "Restrição com prazo vencido", "compromisso",
+            "Remover a restrição ou repactuar o prazo com quem a resolve.",
+            "restricao",
+            [
+                _linha_da_restricao(r) for r in
+                ja_venceu.order_by("prazo")[:PDCA_TETO_LINHAS_POR_FAIXA_DA_FILA]
+            ],
+            total=ja_venceu.count(),
+        ))
+
+        vencendo = abertas.filter(prazo__gte=hoje, prazo__lte=fim_da_semana)
+        faixas.append(_faixa(
+            "restricoes_vencendo", "Restrição vencendo nesta semana",
+            "compromisso",
+            "Resolver antes de virar impedimento do quadro da semana.",
+            "restricao",
+            [
+                _linha_da_restricao(r) for r in
+                vencendo.order_by("prazo")[:PDCA_TETO_LINHAS_POR_FAIXA_DA_FILA]
+            ],
+            total=vencendo.count(),
+        ))
+    else:
+        negados.append(_sem_permissao(
+            "restricao", "as restrições desta obra", "pdca.restricao.view",
+        ))
+
+    # --- retrabalho -----------------------------------------------------------
+    pode_nc = pode("pdca.nc.view")
+    pode_ficha = pode("pdca.verificacao.view")
+    qualidade = (
+        fila_da_qualidade(obra_id=obra_id, tenant_id=tenant_id)
+        if (pode_nc or pode_ficha) else None
+    )
+
+    if pode_nc:
+        def _linha_da_nc(bruta: dict) -> dict:
+            return _linha(
+                tipo="nc", id_=bruta["nc"],
+                titulo=f"{bruta['gravidade_rotulo']} · {bruta['descricao']}",
+                detalhe=bruta["falta"],
+                onde=(bruta["local_rotulo"] or ""),
+                desde=bruta["aberta_em"],
+                extra={
+                    "gravidade": bruta["gravidade"],
+                    "atividade_nome": bruta["atividade_nome"],
+                },
+            )
+
+        faixas.append(_faixa(
+            "ncs_sem_plano", "Defeito sem plano de ação", "retrabalho",
+            "Montar o plano de ação — quem faz o quê, até quando.",
+            "qualidade",
+            [_linha_da_nc(b) for b in qualidade["ncs_sem_plano"]],
+        ))
+        faixas.append(_faixa(
+            "acoes_vencidas", "Ação com prazo vencido", "retrabalho",
+            "Executar a ação ou repactuar o prazo por escrito.", "qualidade",
+            [
+                _linha(
+                    tipo="plano_acao", id_=bruta["plano"],
+                    titulo=bruta["o_que"],
+                    detalhe=f"Responsável: {bruta['quem'] or 'não informado'}",
+                    desde=bruta["quando"],
+                    prazo=_prazo(bruta["quando"]),
+                    extra={"nc": bruta["nc"]},
+                )
+                for bruta in qualidade["acoes_vencidas"]
+            ],
+        ))
+        faixas.append(_faixa(
+            "ncs_esperando_eficacia", "Conserto por conferir", "retrabalho",
+            "Verificar em campo se o tratamento funcionou — só a eficácia "
+            "encerra o defeito.",
+            "qualidade",
+            [_linha_da_nc(b) for b in qualidade["ncs_esperando_eficacia"]],
+        ))
+    else:
+        negados.append(_sem_permissao(
+            "qualidade", "as não-conformidades desta obra", "pdca.nc.view",
+        ))
+
+    if pode_ficha:
+        faixas.append(_faixa(
+            "fichas_em_andamento", "Ficha parada no meio", "retrabalho",
+            "Terminar de responder a ficha e concluí-la.", "qualidade",
+            [
+                _linha(
+                    tipo="verificacao", id_=bruta["verificacao"],
+                    titulo=bruta["modelo_nome"],
+                    detalhe=f"Aberta por {bruta['inspetor'] or 'não informado'}",
+                    desde=bruta["data"],
+                )
+                for bruta in qualidade["fichas_em_andamento"]
+            ],
+        ))
+    else:
+        negados.append(_sem_permissao(
+            "verificacao", "as fichas de verificação desta obra",
+            "pdca.verificacao.view",
+        ))
+
+    com_gente_esperando = [f for f in faixas if f["total"]]
+    return {
+        "obra": obra_id,
+        "hoje": hoje,
+        #: **Só as faixas que têm alguém esperando.** Faixa vazia no cockpit é
+        #: ruído que ensina a ignorar a tela (convenções §9); a tela mostra o
+        #: estado vazio uma vez, no lugar da fila inteira, quando não há nada.
+        "faixas": com_gente_esperando,
+        #: Quantas a leitura varreu — a tela diz "nenhuma das 11 filas tem
+        #: alguém esperando" em vez de abrir uma página em branco.
+        "faixas_varridas": len(faixas),
+        "total": sum(f["total"] for f in com_gente_esperando),
+        "sem_permissao": negados,
+    }
+
+
+# --- B6: o pulso da obra ----------------------------------------------------
+
+def _plano_vigente(obra_id, *, tenant_id):
+    return (
+        Cronograma.objects
+        .filter(tenant_id=tenant_id, obra_id=obra_id,
+                status=Cronograma.Status.VIGENTE)
+        .first()
+    )
+
+
+def _leitura_de_prazo(plano) -> dict:
+    """Término previsto × término da linha de base, no grão da **obra**.
+
+    A comparação atividade a atividade é do posto `PLANO`
+    (`comparar_com_base`); o cockpit precisa de um número só, e é o término
+    deste cronograma contra o da versão de que ele descende. Sem base — obra
+    que nunca publicou duas versões — o desvio é `None`, e `None` aqui é
+    resposta: não há atraso contra um combinado que nunca foi combinado.
+    """
+    if plano is None:
+        return {
+            "tem_plano": False, "cronograma": None, "versao": None,
+            "termino": None, "base_versao": None, "base_termino": None,
+            "desvio_dias": None,
+            "sem_apuracao_porque": (
+                "Esta obra ainda não tem um cronograma publicado."
+            ),
+        }
+    base = linha_de_base(plano)
+    desvio = None
+    if base is not None and plano.termino_calculado and base.termino_calculado:
+        desvio = (plano.termino_calculado - base.termino_calculado).days
+    return {
+        "tem_plano": True,
+        "cronograma": plano.pk,
+        "versao": plano.versao,
+        "termino": plano.termino_calculado,
+        "base_versao": None if base is None else base.versao,
+        "base_termino": None if base is None else base.termino_calculado,
+        "desvio_dias": desvio,
+        "sem_apuracao_porque": (
+            "" if base is not None else
+            "Este é o primeiro plano publicado — ainda não há versão anterior "
+            "com que comparar o prazo."
+        ),
+    }
+
+
+def _leitura_de_avanco(plano) -> dict:
+    """O avanço físico da obra — **`None` quando ninguém apontou, nunca 0%**.
+
+    Chama o `avanco_do_cronograma`, que é a única implementação da média
+    ponderada, e traduz o `folhas_apontadas == 0` na frase que a tela mostra.
+    Zero diria que a obra não andou; o que houve foi ninguém apontar.
+    """
+    if plano is None:
+        return {
+            "fisico": None, "financeiro": None, "folhas": 0,
+            "folhas_apontadas": 0, "folhas_sem_peso": 0,
+            "ultimo_apontamento": None,
+            "sem_apuracao_porque": (
+                "Esta obra ainda não tem um cronograma publicado."
+            ),
+        }
+    bruto = avanco_do_cronograma(plano)
+    fisico = bruto["fisico"]
+    porque = ""
+    if bruto["folhas_apontadas"] == 0:
+        #: **O zero vira nulo aqui, e não lá.** O `avanco_do_cronograma`
+        #: devolve `0.0` para o plano em que ninguém apontou, e está certo do
+        #: ponto de vista dele: a média ponderada de atividades com peso e sem
+        #: apontamento é zero mesmo, e é isso que a barra de cada linha do
+        #: Gantt precisa desenhar.
+        #:
+        #: No cockpit a mesma resposta mente. "Avanço 0%" ao lado de "PPC 68%"
+        #: se lê como *a obra não andou*, quando o que houve foi ninguém
+        #: apontar — e é a régua da §5.1, que exige "sem apuração" e proíbe o
+        #: zero justamente neste caso. Converter no consumidor, e não na conta,
+        #: é o que evita mexer no número de que o posto `PLANO` depende.
+        fisico = None
+        porque = (
+            "Ninguém apontou avanço neste plano ainda. O primeiro apontamento "
+            "acende o número."
+        )
+    elif fisico is None:
+        porque = (
+            "As atividades apontadas ainda não têm peso. Vincule ao orçamento "
+            "ou informe a duração para o avanço poder ser somado."
+        )
+    return {
+        "fisico": fisico,
+        "financeiro": bruto["financeiro"],
+        "folhas": bruto["folhas"],
+        "folhas_apontadas": bruto["folhas_apontadas"],
+        "folhas_sem_peso": bruto["folhas_sem_peso"],
+        "ultimo_apontamento": bruto["ultimo_apontamento"],
+        "sem_apuracao_porque": porque,
+    }
+
+
+def _ultimo_ppc(obra_id, *, tenant_id) -> dict:
+    serie = serie_ppc(obra_id=obra_id, tenant_id=tenant_id, limite=8)
+    if not serie:
+        return {
+            "ppc": None, "semana_inicio": None, "comprometidos": 0,
+            "cumpridos": 0, "peso_bases": [], "vezes_reaberta": 0,
+            "encerrada_antes_do_fim": False, "serie": [],
+            "sem_apuracao_porque": (
+                "Nenhuma semana foi encerrada ainda. O índice aparece quando a "
+                "primeira reunião de encerramento julgar os compromissos."
+            ),
+        }
+    ultimo = serie[-1]
+    return {
+        "ppc": ultimo["ppc"],
+        "semana_inicio": ultimo["semana_inicio"],
+        "comprometidos": ultimo["comprometidos"],
+        "cumpridos": ultimo["cumpridos"],
+        "peso_bases": ultimo["peso_bases"],
+        "vezes_reaberta": ultimo["vezes_reaberta"],
+        "encerrada_antes_do_fim": ultimo["encerrada_antes_do_fim"],
+        #: A tendência viaja junto porque **um PPC isolado não diz nada**: 68%
+        #: subindo de 40% e 68% caindo de 90% são duas obras diferentes.
+        "serie": serie,
+        "sem_apuracao_porque": "",
+    }
+
+
+def _leitura_de_conformidade(obra_ids, *, tenant_id, desde=None,
+                             ate=None) -> dict:
+    """Conformidade por obra, **numa consulta para todas**.
+
+    Mesma conta do `painel_de_conformidade` (conformes ÷ julgados, sobre ficha
+    concluída), agregada em SQL em vez de por domínio: a carteira precisa de um
+    número por obra, e chamar o painel quarenta vezes seria quarenta varreduras
+    de item para produzir quarenta divisões.
+    """
+    itens = ItemVerificacao.objects.filter(
+        tenant_id=tenant_id,
+        verificacao__obra_id__in=obra_ids,
+        verificacao__status=Verificacao.Status.CONCLUIDA,
+        resultado__in=[ResultadoItem.CONFORME, ResultadoItem.NAO_CONFORME],
+    )
+    if desde:
+        itens = itens.filter(verificacao__data__gte=desde)
+    if ate:
+        itens = itens.filter(verificacao__data__lte=ate)
+
+    bruto: dict = {}
+    for linha in (
+        itens.values("verificacao__obra_id", "resultado")
+        .annotate(n=Count("item_verificacao_id"))
+    ):
+        alvo = bruto.setdefault(linha["verificacao__obra_id"], {
+            "conformes": 0, "nao_conformes": 0,
+        })
+        if linha["resultado"] == ResultadoItem.CONFORME:
+            alvo["conformes"] += linha["n"]
+        else:
+            alvo["nao_conformes"] += linha["n"]
+
+    pronto = {}
+    for obra_id in obra_ids:
+        contagem = bruto.get(obra_id)
+        if not contagem:
+            pronto[obra_id] = {
+                "conformidade": None, "conformes": 0, "nao_conformes": 0,
+                "julgados": 0,
+                "sem_apuracao_porque": (
+                    "Nenhuma ficha de verificação foi concluída nesta obra "
+                    "ainda."
+                ),
+            }
+            continue
+        julgados = contagem["conformes"] + contagem["nao_conformes"]
+        pronto[obra_id] = {
+            "conformidade": (
+                Decimal(contagem["conformes"]) * 100 / Decimal(julgados)
+            ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+            "conformes": contagem["conformes"],
+            "nao_conformes": contagem["nao_conformes"],
+            "julgados": julgados,
+            "sem_apuracao_porque": "",
+        }
+    return pronto
+
+
+def _leitura_de_seguranca(obra_ids, *, tenant_id) -> dict:
+    """Dias sem acidente com afastamento — e o `None` que **não** é zero.
+
+    Obra que nunca registrou um acidente com afastamento não tem "0 dias": ela
+    não tem a série. Contar desde o início da obra seria fabricar — e num
+    painel de segurança o número fabricado é o mais caro de todos, porque é o
+    que faz alguém concluir que a obra é segura.
+    """
+    hoje = timezone.localdate()
+    ultima: dict = {
+        linha["obra_id"]: linha["ultima"]
+        for linha in Ocorrencia.objects.filter(
+            tenant_id=tenant_id, obra_id__in=obra_ids,
+            classificacao__in=[
+                ClassificacaoOcorrencia.COM_AFASTAMENTO,
+                ClassificacaoOcorrencia.OBITO,
+            ],
+        ).exclude(status=Ocorrencia.Status.CANCELADA)
+        .values("obra_id").annotate(ultima=Max("ocorrido_em"))
+    }
+    abertas: dict = {
+        linha["obra_id"]: linha["n"]
+        for linha in Ocorrencia.objects.filter(
+            tenant_id=tenant_id, obra_id__in=obra_ids,
+            status__in=[
+                Ocorrencia.Status.ABERTA, Ocorrencia.Status.EM_INVESTIGACAO,
+            ],
+        ).values("obra_id").annotate(n=Count("ocorrencia_id"))
+    }
+    registradas: dict = {
+        linha["obra_id"]: linha["n"]
+        for linha in Ocorrencia.objects.filter(
+            tenant_id=tenant_id, obra_id__in=obra_ids,
+        ).exclude(status=Ocorrencia.Status.CANCELADA)
+        .values("obra_id").annotate(n=Count("ocorrencia_id"))
+    }
+
+    pronto = {}
+    for obra_id in obra_ids:
+        dia = _dia_de(ultima.get(obra_id))
+        pronto[obra_id] = {
+            "dias_sem_afastamento": None if dia is None else (hoje - dia).days,
+            "ultimo_afastamento": dia,
+            "ocorrencias_abertas": abertas.get(obra_id, 0),
+            "ocorrencias_registradas": registradas.get(obra_id, 0),
+            "sem_apuracao_porque": (
+                "" if dia is not None else
+                "Nenhum acidente com afastamento foi registrado nesta obra."
+            ),
+            "taxa_frequencia": None,
+            "taxa_gravidade": None,
+            "taxas_indisponiveis_porque": TAXAS_DE_SSMA_INDISPONIVEIS_PORQUE,
+        }
+    return pronto
+
+
+def pulso_da_obra(*, obra_id, tenant_id, pode=_pode_tudo,
+                  desde: date | None = None, ate: date | None = None) -> dict:
+    """**As quatro leituras honestas da obra, num retorno só** (B6).
+
+    Avanço contra a linha de base, PPC da última semana encerrada,
+    conformidade do período e segurança. Quatro chamadas para quatro números
+    faziam a tela de abertura esperar quatro vezes e — pior — deixavam cada
+    número chegar com um recorte de período diferente do vizinho.
+
+    **Cada bloco traz `sem_apuracao_porque`, e a tela escreve a frase.** Não é
+    enfeite: é o que impede o zero. Avanço sem apontamento, PPC sem semana
+    encerrada e conformidade sem ficha concluída são todos *ausência de
+    medida*, e desenhar 0% em qualquer um deles afirma um fracasso que não
+    aconteceu.
+    """
+    negados: list[dict] = []
+    ve_plano = pode("pdca.cronograma.view")
+    plano = _plano_vigente(obra_id, tenant_id=tenant_id) if ve_plano else None
+
+    prazo = _leitura_de_prazo(plano) if ve_plano else None
+    if not ve_plano:
+        negados.append(_sem_permissao(
+            "prazo", "o cronograma desta obra", "pdca.cronograma.view",
+        ))
+
+    if ve_plano and pode("pdca.avanco.view"):
+        avanco = _leitura_de_avanco(plano)
+    else:
+        avanco = None
+        negados.append(_sem_permissao(
+            "avanco", "o avanço apontado desta obra", "pdca.avanco.view",
+        ))
+
+    if pode("pdca.programacao.view"):
+        ppc = _ultimo_ppc(obra_id, tenant_id=tenant_id)
+    else:
+        ppc = None
+        negados.append(_sem_permissao(
+            "ppc", "o cumprimento da programação semanal",
+            "pdca.programacao.view",
+        ))
+
+    if pode("pdca.verificacao.view"):
+        conformidade = _leitura_de_conformidade(
+            [obra_id], tenant_id=tenant_id, desde=desde, ate=ate,
+        )[obra_id]
+    else:
+        conformidade = None
+        negados.append(_sem_permissao(
+            "conformidade", "as fichas de verificação desta obra",
+            "pdca.verificacao.view",
+        ))
+
+    if pode("pdca.ocorrencia.view"):
+        seguranca = _leitura_de_seguranca(
+            [obra_id], tenant_id=tenant_id,
+        )[obra_id]
+    else:
+        seguranca = None
+        negados.append(_sem_permissao(
+            "seguranca", "as ocorrências de segurança desta obra",
+            "pdca.ocorrencia.view",
+        ))
+
+    return {
+        "obra": obra_id,
+        "prazo": prazo,
+        "avanco": avanco,
+        "ppc": ppc,
+        "conformidade": conformidade,
+        "seguranca": seguranca,
+        "sem_permissao": negados,
+    }
+
+
+# --- B1: a carteira ---------------------------------------------------------
+
+#: A ordem em que uma pendência dói — prazo legal primeiro, retrabalho por
+#: último. A carteira usa para dizer **qual** é a pior de cada obra, em vez de
+#: somar coisas que não se somam.
+ORDEM_DA_CONSEQUENCIA = (
+    "prazo_legal", "seguranca", "dinheiro", "compromisso", "retrabalho",
+)
+
+#: `(código, rótulo, consequência)` — a mesma taxonomia da fila do dia, para a
+#: carteira e o cockpit não discordarem sobre o que é urgente.
+CONTAGENS_DA_CARTEIRA = (
+    ("cat_por_comunicar", "CAT por comunicar", "prazo_legal"),
+    ("ocorrencias_sem_classificacao", "Ocorrência por classificar",
+     "seguranca"),
+    ("medicoes_a_atestar", "Medição esperando atesto", "dinheiro"),
+    ("semanas_a_encerrar", "Semana por encerrar", "compromisso"),
+    ("restricoes_vencidas", "Restrição com prazo vencido", "compromisso"),
+    ("acoes_vencidas", "Ação com prazo vencido", "retrabalho"),
+    ("ncs_abertas", "Defeito em aberto", "retrabalho"),
+)
+
+
+def _pendencias_da_carteira(obra_ids, *, tenant_id, pode) -> dict:
+    """As contagens da carteira — **em sete consultas para todas as obras**.
+
+    A fila do dia (`fila_do_dia`) lista; esta conta. Listar quarenta obras
+    custaria quarenta varreduras de NC com prefetch e quarenta cálculos de
+    prazo de CAT, e a carteira não mostra linha nenhuma — ela mostra qual obra
+    precisa de você. **Os fatos contados são os mesmos**, e é por isso que
+    entrar na obra não muda o número.
+    """
+    hoje = timezone.localdate()
+    vazio = {codigo: 0 for codigo, _, _ in CONTAGENS_DA_CARTEIRA}
+    saida = {obra_id: dict(vazio) for obra_id in obra_ids}
+    negados: list[dict] = []
+
+    def _somar(codigo, linhas, campo="obra_id"):
+        for linha in linhas:
+            alvo = saida.get(linha[campo])
+            if alvo is not None:
+                alvo[codigo] = linha["n"]
+
+    if pode("pdca.ocorrencia.view"):
+        _somar("cat_por_comunicar", Ocorrencia.objects.filter(
+            tenant_id=tenant_id, obra_id__in=obra_ids,
+            tipo__in=Ocorrencia.TIPOS_QUE_EXIGEM_CAT,
+            cat_emitida_em__isnull=True,
+        ).exclude(status=Ocorrencia.Status.CANCELADA)
+        .values("obra_id").annotate(n=Count("ocorrencia_id")))
+        _somar("ocorrencias_sem_classificacao", Ocorrencia.objects.filter(
+            tenant_id=tenant_id, obra_id__in=obra_ids,
+            classificacao=ClassificacaoOcorrencia.PENDENTE,
+            status__in=[
+                Ocorrencia.Status.ABERTA, Ocorrencia.Status.EM_INVESTIGACAO,
+            ],
+        ).values("obra_id").annotate(n=Count("ocorrencia_id")))
+    else:
+        negados.append(_sem_permissao(
+            "seguranca", "as ocorrências de segurança", "pdca.ocorrencia.view",
+        ))
+
+    if pode("pdca.medicao.view"):
+        _somar("medicoes_a_atestar", Medicao.objects.filter(
+            tenant_id=tenant_id, contrato__obra_id__in=obra_ids,
+            status=Medicao.Status.EM_APROVACAO,
+        ).values("contrato__obra_id").annotate(n=Count("medicao_id")),
+            campo="contrato__obra_id")
+    else:
+        negados.append(_sem_permissao(
+            "medicao", "as medições", "pdca.medicao.view",
+        ))
+
+    if pode("pdca.programacao.view"):
+        _somar("semanas_a_encerrar", ProgramacaoSemanal.objects.filter(
+            tenant_id=tenant_id, obra_id__in=obra_ids,
+            status=ProgramacaoSemanal.Status.COMPROMETIDA,
+            semana_fim__lt=hoje,
+        ).values("obra_id").annotate(n=Count("programacao_id")))
+    else:
+        negados.append(_sem_permissao(
+            "programacao", "a programação semanal", "pdca.programacao.view",
+        ))
+
+    if pode("pdca.restricao.view"):
+        _somar("restricoes_vencidas", Restricao.objects.filter(
+            tenant_id=tenant_id,
+            atividade__cronograma__obra_id__in=obra_ids,
+            status=Restricao.Status.ABERTA, prazo__lt=hoje,
+        ).values("atividade__cronograma__obra_id")
+        .annotate(n=Count("restricao_id")),
+            campo="atividade__cronograma__obra_id")
+    else:
+        negados.append(_sem_permissao(
+            "restricao", "as restrições", "pdca.restricao.view",
+        ))
+
+    if pode("pdca.nc.view"):
+        _somar("ncs_abertas", NaoConformidade.objects.filter(
+            tenant_id=tenant_id, obra_id__in=obra_ids,
+            status__in=[
+                NaoConformidade.Status.ABERTA,
+                NaoConformidade.Status.EM_TRATAMENTO,
+            ],
+        ).values("obra_id").annotate(n=Count("nc_id")))
+        _somar("acoes_vencidas", PlanoAcao.objects.filter(
+            tenant_id=tenant_id,
+            nao_conformidade__obra_id__in=obra_ids,
+            quando__lt=hoje,
+            status__in=[
+                PlanoAcao.Status.PLANEJADA, PlanoAcao.Status.EM_EXECUCAO,
+            ],
+        ).values("nao_conformidade__obra_id").annotate(n=Count("plano_id")),
+            campo="nao_conformidade__obra_id")
+    else:
+        negados.append(_sem_permissao(
+            "qualidade", "as não-conformidades", "pdca.nc.view",
+        ))
+
+    return {"por_obra": saida, "sem_permissao": negados}
+
+
+def carteira(*, tenant_id, pode=_pode_tudo, obras=None) -> dict:
+    """**As obras lado a lado** — a porta de fora e a casa da diretoria (B1).
+
+    Até aqui todo agregado do módulo exigia `obra_id`: não havia uma leitura
+    sequer que cruzasse obras, e sem ela a pergunta da diretoria — *qual obra
+    precisa de mim esta semana?* — só tinha resposta abrindo uma por uma.
+
+    **Não é painel de vaidade, e não soma o que não se soma.** Cada linha traz
+    as pendências **discriminadas** e diz qual é a pior pela ordem de
+    consequência; não existe um "12 pendências" que misture uma CAT vencendo
+    com um defeito de pintura.
+
+    **O teto de 40 obras é de leitura, e o caro é o avanço.** Cada linha custa
+    o rollup do cronograma vigente daquela obra — a mesma média ponderada do
+    posto, reusada em vez de reescrita. Acima do teto a resposta vem cortada
+    dizendo quantas ficaram de fora.
+    """
+    from obras.models import Obra
+
+    consulta = Obra.objects.filter(tenant_id=tenant_id)
+    if obras:
+        consulta = consulta.filter(obra_id__in=obras)
+    quantas = consulta.count()
+    lista = list(consulta.order_by("nome_obra")[:PDCA_TETO_OBRAS_NA_CARTEIRA])
+    obra_ids = [o.pk for o in lista]
+    if not obra_ids:
+        return {
+            "obras": [], "total": 0, "truncada": False,
+            "teto": PDCA_TETO_OBRAS_NA_CARTEIRA, "sem_permissao": [],
+        }
+
+    pendencias = _pendencias_da_carteira(
+        obra_ids, tenant_id=tenant_id, pode=pode,
+    )
+    negados: list[dict] = list(pendencias["sem_permissao"])
+
+    ve_plano = pode("pdca.cronograma.view")
+    ve_avanco = ve_plano and pode("pdca.avanco.view")
+    ve_ppc = pode("pdca.programacao.view")
+    ve_conformidade = pode("pdca.verificacao.view")
+    ve_seguranca = pode("pdca.ocorrencia.view")
+
+    if not ve_plano:
+        negados.append(_sem_permissao(
+            "prazo", "os cronogramas das obras", "pdca.cronograma.view",
+        ))
+    elif not ve_avanco:
+        negados.append(_sem_permissao(
+            "avanco", "o avanço apontado das obras", "pdca.avanco.view",
+        ))
+    if not ve_ppc:
+        negados.append(_sem_permissao(
+            "ppc", "o cumprimento da programação semanal",
+            "pdca.programacao.view",
+        ))
+    if not ve_conformidade:
+        negados.append(_sem_permissao(
+            "conformidade", "as fichas de verificação",
+            "pdca.verificacao.view",
+        ))
+
+    planos = {}
+    if ve_plano:
+        planos = {
+            plano.obra_id: plano
+            for plano in Cronograma.objects.filter(
+                tenant_id=tenant_id, obra_id__in=obra_ids,
+                status=Cronograma.Status.VIGENTE,
+            )
+        }
+
+    conformidade = (
+        _leitura_de_conformidade(obra_ids, tenant_id=tenant_id)
+        if ve_conformidade else {}
+    )
+    seguranca = (
+        _leitura_de_seguranca(obra_ids, tenant_id=tenant_id)
+        if ve_seguranca else {}
+    )
+
+    linhas = []
+    for obra in lista:
+        plano = planos.get(obra.pk)
+        contagens = pendencias["por_obra"][obra.pk]
+        abertas = [
+            {
+                "codigo": codigo, "rotulo": rotulo,
+                "consequencia": consequencia, "quantas": contagens[codigo],
+            }
+            for codigo, rotulo, consequencia in CONTAGENS_DA_CARTEIRA
+            if contagens.get(codigo)
+        ]
+        pior = min(
+            abertas,
+            key=lambda p: ORDEM_DA_CONSEQUENCIA.index(p["consequencia"]),
+            default=None,
+        )
+        linhas.append({
+            "obra": obra.pk,
+            "nome": obra.nome_obra,
+            "status_obra": obra.status_obra,
+            "status_rotulo": obra.get_status_obra_display(),
+            "data_fim_prevista": obra.data_fim_prevista,
+            "prazo": _leitura_de_prazo(plano) if ve_plano else None,
+            "avanco": _leitura_de_avanco(plano) if ve_avanco else None,
+            "ppc": _ultimo_ppc(obra.pk, tenant_id=tenant_id) if ve_ppc else None,
+            "conformidade": conformidade.get(obra.pk),
+            "seguranca": seguranca.get(obra.pk),
+            #: Discriminadas, **nunca somadas**: a linha diz "CAT por comunicar
+            #: · 1", e não "8 pendências". Ver a docstring.
+            "pendencias": abertas,
+            "pior_pendencia": pior,
+        })
+
+    return {
+        "obras": linhas,
+        "total": quantas,
+        "truncada": quantas > len(linhas),
+        "teto": PDCA_TETO_OBRAS_NA_CARTEIRA,
+        "sem_permissao": negados,
+    }
+
+
+# --- B4: a busca única ------------------------------------------------------
+
+#: Abaixo disto o `LIKE '%a%'` casa com quase tudo, e os oito resultados que
+#: voltam são as oito primeiras linhas do banco. É parâmetro de **acerto**, e
+#: por isso mora aqui e não no `planos.py` — a fronteira está escrita na §5.6
+#: de lá. Quem limita o **alcance** é o `PDCA_TETO_RESULTADOS_POR_ESPECIE`.
+MINIMO_DE_LETRAS = 2
+
+
+def busca_unica(*, tenant_id, termo: str, pode=_pode_tudo,
+                obra_id=None) -> dict:
+    """**Uma busca sobre as sete espécies do módulo** (B4).
+
+    É a válvula que permite manter o menu em seis postos: quem usa o módulo
+    todo dia para de navegar por menu na primeira semana e passa a escrever o
+    nome do que quer. Sem ela, cada assunto novo do backend pressiona por um
+    item de menu — que foi exatamente como o depósito nasceu da primeira vez.
+
+    **Sem acento nas duas pontas**, pela régua de acessibilidade da casa: o
+    `__unaccent__icontains` é o mesmo que o `BuscaSemAcento` interpõe nas
+    listas. Quem digita `fundacao` acha `Fundação`, no celular e de luva.
+
+    **Cada espécie cobra a permissão dela** e é cortada pelo próprio teto — por
+    espécie, e não no total, para quarenta atividades chamadas "alvenaria" não
+    esconderem o contrato que também se chama assim.
+    """
+    termo = (termo or "").strip()
+    if len(termo) < MINIMO_DE_LETRAS:
+        return {
+            "termo": termo,
+            "curta": True,
+            "minimo_de_letras": MINIMO_DE_LETRAS,
+            "teto_por_especie": PDCA_TETO_RESULTADOS_POR_ESPECIE,
+            "especies": [],
+            "especies_varridas": 0,
+            "total": 0,
+            "sem_permissao": [],
+            "aviso": f"Escreva pelo menos {MINIMO_DE_LETRAS} letras.",
+        }
+
+    teto = PDCA_TETO_RESULTADOS_POR_ESPECIE
+    especies: list[dict] = []
+    negados: list[dict] = []
+
+    def _especie(codigo, rotulo, permissao, consulta, monta):
+        if not pode(permissao):
+            negados.append(_sem_permissao(codigo, rotulo.lower(), permissao))
+            return
+        achados = list(consulta[:teto + 1])
+        especies.append({
+            "codigo": codigo,
+            "rotulo": rotulo,
+            "resultados": [monta(objeto) for objeto in achados[:teto]],
+            "truncada": len(achados) > teto,
+        })
+
+    def _da_obra(consulta, campo="obra_id"):
+        if obra_id is None:
+            return consulta
+        return consulta.filter(**{campo: obra_id})
+
+    _especie(
+        "atividade", "Atividades", "pdca.cronograma.view",
+        _da_obra(
+            Atividade.objects.filter(tenant_id=tenant_id).filter(
+                Q(codigo__unaccent__icontains=termo)
+                | Q(nome__unaccent__icontains=termo),
+            ).select_related("cronograma", "cronograma__obra", "local")
+            .order_by("cronograma__obra_id", "codigo"),
+            campo="cronograma__obra_id",
+        ),
+        lambda a: {
+            "chave": f"atividade:{a.pk}", "id": a.pk,
+            "titulo": f"{a.codigo} · {a.nome}",
+            "subtitulo": (a.local.nome if a.local_id else ""),
+            "obra": a.cronograma.obra_id,
+            "obra_nome": (
+                a.cronograma.obra.nome_obra if a.cronograma.obra_id else ""
+            ),
+            "extra": {"cronograma": a.cronograma_id, "critica": a.critica},
+        },
+    )
+
+    _especie(
+        "local", "Locais da obra", "pdca.local.view",
+        _da_obra(
+            LocalObra.objects.filter(tenant_id=tenant_id, ativo=True).filter(
+                Q(codigo__unaccent__icontains=termo)
+                | Q(nome__unaccent__icontains=termo),
+            ).select_related("obra")
+            .order_by("obra_id", "profundidade", "codigo"),
+        ),
+        lambda lugar: {
+            "chave": f"local:{lugar.pk}", "id": lugar.pk,
+            "titulo": f"{lugar.codigo} · {lugar.nome}",
+            "subtitulo": lugar.get_nivel_display(),
+            "obra": lugar.obra_id,
+            "obra_nome": lugar.obra.nome_obra if lugar.obra_id else "",
+            "extra": {},
+        },
+    )
+
+    _especie(
+        "contrato", "Contratos", "pdca.contrato.view",
+        _da_obra(
+            ContratoObra.objects.filter(tenant_id=tenant_id).filter(
+                Q(numero__unaccent__icontains=termo)
+                | Q(objeto__unaccent__icontains=termo)
+                | Q(fornecedor__razao_social__unaccent__icontains=termo),
+            ).select_related("obra", "fornecedor").order_by("-criado_em"),
+        ),
+        lambda c: {
+            "chave": f"contrato:{c.pk}", "id": c.pk,
+            "titulo": f"Contrato {c.numero}",
+            "subtitulo": (c.objeto or "")[:120],
+            "obra": c.obra_id,
+            "obra_nome": c.obra.nome_obra if c.obra_id else "",
+            "extra": {"status": c.status},
+        },
+    )
+
+    _especie(
+        "medicao", "Medições", "pdca.medicao.view",
+        _da_obra(
+            Medicao.objects.filter(tenant_id=tenant_id).filter(
+                Q(contrato__numero__unaccent__icontains=termo)
+                | Q(observacao__unaccent__icontains=termo),
+            ).select_related("contrato", "contrato__obra")
+            .order_by("-periodo_fim"),
+            campo="contrato__obra_id",
+        ),
+        lambda m: {
+            "chave": f"medicao:{m.pk}", "id": m.pk,
+            "titulo": f"Medição {m.numero} · contrato {m.contrato.numero}",
+            "subtitulo": (
+                f"{m.periodo_inicio:%d/%m/%Y} a {m.periodo_fim:%d/%m/%Y} · "
+                f"{m.get_status_display()}"
+            ),
+            "obra": m.contrato.obra_id,
+            "obra_nome": (
+                m.contrato.obra.nome_obra if m.contrato.obra_id else ""
+            ),
+            "extra": {"status": m.status, "contrato": m.contrato_id},
+        },
+    )
+
+    _especie(
+        "verificacao", "Fichas de verificação", "pdca.verificacao.view",
+        _da_obra(
+            Verificacao.objects.filter(tenant_id=tenant_id).filter(
+                Q(modelo__codigo__unaccent__icontains=termo)
+                | Q(modelo__nome__unaccent__icontains=termo)
+                | Q(inspetor__unaccent__icontains=termo),
+            ).select_related("modelo", "obra", "local").order_by("-data"),
+        ),
+        lambda v: {
+            "chave": f"verificacao:{v.pk}", "id": v.pk,
+            "titulo": f"{v.modelo.codigo} · {v.modelo.nome}",
+            "subtitulo": (
+                f"{v.data:%d/%m/%Y} · {v.get_status_display()}"
+                + (f" · {v.local.nome}" if v.local_id else "")
+            ),
+            "obra": v.obra_id,
+            "obra_nome": v.obra.nome_obra if v.obra_id else "",
+            "extra": {"status": v.status},
+        },
+    )
+
+    _especie(
+        "nc", "Não-conformidades", "pdca.nc.view",
+        _da_obra(
+            NaoConformidade.objects.filter(tenant_id=tenant_id).filter(
+                Q(descricao__unaccent__icontains=termo)
+                | Q(aberta_por__unaccent__icontains=termo),
+            ).select_related("obra", "local").order_by("-aberta_em"),
+        ),
+        lambda n: {
+            "chave": f"nc:{n.pk}", "id": n.pk,
+            "titulo": n.descricao[:120],
+            "subtitulo": (
+                f"{n.get_gravidade_display()} · {n.get_status_display()}"
+                + (f" · {n.local.nome}" if n.local_id else "")
+            ),
+            "obra": n.obra_id,
+            "obra_nome": n.obra.nome_obra if n.obra_id else "",
+            "extra": {"status": n.status, "gravidade": n.gravidade},
+        },
+    )
+
+    _especie(
+        "ocorrencia", "Ocorrências de segurança", "pdca.ocorrencia.view",
+        _da_obra(
+            Ocorrencia.objects.filter(tenant_id=tenant_id).filter(
+                Q(descricao__unaccent__icontains=termo)
+                | Q(agente_causador__unaccent__icontains=termo),
+            ).select_related("obra", "local").order_by("-ocorrido_em"),
+        ),
+        lambda o: {
+            "chave": f"ocorrencia:{o.pk}", "id": o.pk,
+            "titulo": o.get_tipo_display(),
+            #: **Sem nada do bloco clínico.** Lesão, CID e atestado saem só
+            #: pelo `pdca.ocorrencia.dado_medico`, e uma busca que os vazasse
+            #: no subtítulo seria a porta lateral que o serializer fecha na
+            #: porta da frente.
+            "subtitulo": o.descricao[:120],
+            "obra": o.obra_id,
+            "obra_nome": o.obra.nome_obra if o.obra_id else "",
+            "extra": {"status": o.status, "ocorrido_em": o.ocorrido_em},
+        },
+    )
+
+    return {
+        "termo": termo,
+        "curta": False,
+        "minimo_de_letras": MINIMO_DE_LETRAS,
+        "teto_por_especie": teto,
+        #: Só as espécies que acharam alguma coisa. Sete cabeçalhos vazios numa
+        #: paleta de comando afogam o único resultado que veio.
+        "especies": [e for e in especies if e["resultados"]],
+        "especies_varridas": len(especies),
+        "total": sum(len(e["resultados"]) for e in especies),
+        "sem_permissao": negados,
+    }
+
+
+# --- O terceiro bloco do cockpit: o que mudou -------------------------------
+
+#: Quantos dias para trás o cockpit olha por padrão. **Não é teto**: o
+#: chamador passa outro, e o que corta a resposta é o teto de linhas da fila
+#: (§5.5n). É o tamanho da pergunta *"o que aconteceu desde que eu saí"*, e
+#: uma semana é o que cobre quem tirou sexta e volta na segunda.
+DIAS_DE_MUDANCAS = 7
+
+
+def mudancas_recentes(*, obra_id, tenant_id, pode=_pode_tudo,
+                      dias: int = DIAS_DE_MUDANCAS) -> dict:
+    """**Fatos, não posts** — o que mudou nesta obra nos últimos dias.
+
+    A terceira faixa do cockpit, e a única que olha para trás. A fila diz o
+    que espera e o pulso diz como a obra está; esta responde à pergunta de
+    quem tirou sexta-feira: *o que aconteceu enquanto eu não estava?*
+
+    **Cada linha é um ato com carimbo de quem o praticou**, tirado do próprio
+    campo que o registrou — `congelada_em` da medição, `encerrada_em` da
+    semana, `publicado_em` do cronograma. Não existe tabela de evento e não
+    deveria existir: um log paralelo divergiria do fato na primeira vez que
+    alguém gravasse por outro caminho, e o que a obra quer saber é o que
+    aconteceu com os documentos, não o que um registrador achou que aconteceu.
+    """
+    desde = timezone.now() - timedelta(days=max(1, dias))
+    teto = PDCA_TETO_LINHAS_POR_FAIXA_DA_FILA
+    fatos: list[dict] = []
+    negados: list[dict] = []
+
+    def _fato(quando, *, tipo, id_, verbo, titulo, quem):
+        fatos.append({
+            "chave": f"{tipo}:{id_}",
+            "tipo": tipo,
+            "id": id_,
+            "verbo": verbo,
+            "titulo": titulo,
+            "quem": quem or "",
+            "quando": quando,
+        })
+
+    if pode("pdca.medicao.view"):
+        for m in Medicao.objects.filter(
+            tenant_id=tenant_id, contrato__obra_id=obra_id,
+            congelada_em__gte=desde, status=Medicao.Status.APROVADA,
+        ).select_related("contrato").order_by("-congelada_em")[:teto]:
+            _fato(
+                m.congelada_em, tipo="medicao", id_=m.pk, verbo="atestada",
+                titulo=f"Medição {m.numero} · contrato {m.contrato.numero}",
+                quem=m.apurada_por,
+            )
+    else:
+        negados.append(_sem_permissao(
+            "medicao", "as medições desta obra", "pdca.medicao.view",
+        ))
+
+    if pode("pdca.programacao.view"):
+        for p in ProgramacaoSemanal.objects.filter(
+            tenant_id=tenant_id, obra_id=obra_id, encerrada_em__gte=desde,
+        ).order_by("-encerrada_em")[:teto]:
+            _fato(
+                p.encerrada_em, tipo="programacao", id_=p.pk,
+                verbo="semana encerrada",
+                titulo=f"Semana de {p.semana_inicio:%d/%m/%Y}",
+                quem=p.encerrada_por,
+            )
+    else:
+        negados.append(_sem_permissao(
+            "programacao", "a programação semanal desta obra",
+            "pdca.programacao.view",
+        ))
+
+    if pode("pdca.cronograma.view"):
+        for c in Cronograma.objects.filter(
+            tenant_id=tenant_id, obra_id=obra_id, publicado_em__gte=desde,
+        ).order_by("-publicado_em")[:teto]:
+            _fato(
+                c.publicado_em, tipo="cronograma", id_=c.pk,
+                verbo="plano publicado",
+                titulo=f"Versão {c.versao} · {c.descricao}",
+                quem="",
+            )
+    else:
+        negados.append(_sem_permissao(
+            "prazo", "o cronograma desta obra", "pdca.cronograma.view",
+        ))
+
+    if pode("pdca.restricao.view"):
+        for r in Restricao.objects.filter(
+            tenant_id=tenant_id, atividade__cronograma__obra_id=obra_id,
+            removida_em__gte=desde, status=Restricao.Status.REMOVIDA,
+        ).select_related("atividade").order_by("-removida_em")[:teto]:
+            _fato(
+                r.removida_em, tipo="restricao", id_=r.pk,
+                verbo="destravada", titulo=r.descricao[:120],
+                quem=r.removida_por,
+            )
+    else:
+        negados.append(_sem_permissao(
+            "restricao", "as restrições desta obra", "pdca.restricao.view",
+        ))
+
+    if pode("pdca.nc.view"):
+        for n in NaoConformidade.objects.filter(
+            tenant_id=tenant_id, obra_id=obra_id, aberta_em__gte=desde,
+        ).order_by("-aberta_em")[:teto]:
+            _fato(
+                n.aberta_em, tipo="nc", id_=n.pk, verbo="defeito registrado",
+                titulo=f"{n.get_gravidade_display()} · {n.descricao[:110]}",
+                quem=n.aberta_por,
+            )
+        for n in NaoConformidade.objects.filter(
+            tenant_id=tenant_id, obra_id=obra_id, encerrada_em__gte=desde,
+        ).order_by("-encerrada_em")[:teto]:
+            _fato(
+                n.encerrada_em, tipo="nc", id_=n.pk, verbo="defeito encerrado",
+                titulo=f"{n.get_gravidade_display()} · {n.descricao[:110]}",
+                quem=n.encerrada_por,
+            )
+    else:
+        negados.append(_sem_permissao(
+            "qualidade", "as não-conformidades desta obra", "pdca.nc.view",
+        ))
+
+    if pode("pdca.verificacao.view"):
+        for v in Verificacao.objects.filter(
+            tenant_id=tenant_id, obra_id=obra_id, concluida_em__gte=desde,
+        ).select_related("modelo").order_by("-concluida_em")[:teto]:
+            _fato(
+                v.concluida_em, tipo="verificacao", id_=v.pk,
+                verbo="ficha concluída", titulo=v.modelo.nome,
+                quem=v.concluida_por,
+            )
+    else:
+        negados.append(_sem_permissao(
+            "verificacao", "as fichas de verificação desta obra",
+            "pdca.verificacao.view",
+        ))
+
+    if pode("pdca.ocorrencia.view"):
+        for o in Ocorrencia.objects.filter(
+            tenant_id=tenant_id, obra_id=obra_id, registrada_em__gte=desde,
+        ).order_by("-registrada_em")[:teto]:
+            _fato(
+                o.registrada_em, tipo="ocorrencia", id_=o.pk,
+                verbo="ocorrência registrada", titulo=o.get_tipo_display(),
+                quem=o.registrada_por,
+            )
+        for o in Ocorrencia.objects.filter(
+            tenant_id=tenant_id, obra_id=obra_id, classificada_em__gte=desde,
+        ).order_by("-classificada_em")[:teto]:
+            _fato(
+                o.classificada_em, tipo="ocorrencia", id_=o.pk,
+                verbo="ocorrência classificada",
+                titulo=(
+                    f"{o.get_tipo_display()} · {o.get_classificacao_display()}"
+                ),
+                quem=o.classificada_por,
+            )
+    else:
+        negados.append(_sem_permissao(
+            "seguranca", "as ocorrências de segurança desta obra",
+            "pdca.ocorrencia.view",
+        ))
+
+    fatos.sort(key=lambda f: f["quando"], reverse=True)
+    return {
+        "obra": obra_id,
+        "dias": dias,
+        "desde": desde,
+        "fatos": fatos[:teto],
+        "total": len(fatos),
+        "truncada": len(fatos) > teto,
+        "sem_permissao": negados,
+    }
+
+
+# --- B5: a frente de quem está no canteiro ---------------------------------
+#
+# **A leitura da segunda superfície.** As quatro anteriores respondem a quem
+# olha a obra de fora — a carteira cruza obras, a fila junta assuntos, o pulso
+# resume e a busca acha. Esta responde a quem está **dentro** dela, com a luva
+# na mão, e a pergunta é outra: *o que é meu, agora?*
+#
+# É a leitura que produz o dado de todas as outras. O avanço que o pulso mostra,
+# o compromisso que o PPC divide e a ficha de que sai a conformidade nascem
+# aqui, no canteiro — e frontend de campo ruim é indicador inventado.
+
+
+def _bloco_da_frente(codigo: str, rotulo: str, o_que_fazer: str,
+                     linhas: list[dict], *, vazio_porque: str = "") -> dict:
+    """Um bloco da frente, já cortado pelo teto **do bloco**.
+
+    Por bloco e não no total, pela mesma razão da faixa da fila (§5.5n do
+    `planos.py`): cinquenta restrições vencidas não podem esconder a ficha que
+    está parada esperando uma resposta.
+    """
+    cortadas = linhas[:PDCA_TETO_LINHAS_POR_FRENTE]
+    return {
+        "codigo": codigo,
+        "rotulo": rotulo,
+        #: O verbo que fecha o bloco. É a mesma régua do `o_que_decidir` da
+        #: fila: lista que diz o que existe e não diz o que fazer é inventário.
+        "o_que_fazer": o_que_fazer,
+        "linhas": cortadas,
+        "total": len(linhas),
+        "truncada": len(linhas) > len(cortadas),
+        #: Bloco vazio **com razão**. No celular, uma lista em branco é
+        #: indistinguível de uma lista que não carregou — e a pessoa conclui
+        #: que o sistema está fora do ar em vez de que não há nada para ela.
+        "vazio_porque": vazio_porque if not cortadas else "",
+    }
+
+
+def minhas_frentes(*, tenant_id, quem: str, pode=_pode_tudo, obra_id=None,
+                   hoje: date | None = None) -> dict:
+    """**O que está atribuído a quem pede, na semana corrente** (B5).
+
+    Quatro blocos, e os quatro saem de um campo de texto: o compromisso que a
+    pessoa assumiu no quadro, a trava que é dela remover, a ação de conserto
+    que é dela fazer e a ficha que está esperando ela responder.
+
+    **Por que casa por nome, e não por FK.** `responsavel`, `quem` e `inspetor`
+    são **rótulo durável** em todo o módulo, e a decisão é anterior a esta
+    leitura: quem assume a frente é com frequência o encarregado da empreiteira,
+    quem destrava é o projetista ou o fiscal da prefeitura, e exigir FK de
+    usuário obrigaria a cadastrar a prefeitura para poder escrever "aguardando
+    alvará". A consequência é que "meu" se resolve comparando **nome sem
+    acento**, e a resposta diz contra qual nome casou — quem não se reconhece
+    na lista descobre por quê em vez de concluir que o sistema esqueceu dela.
+
+    **E por isso `quem` pode vir de fora.** O escritório digita o rótulo que
+    usa ("Mestre Antônio"), que nem sempre é o nome do login. Sem poder
+    escolher o nome, a pessoa cujo cadastro diverge veria a frente vazia para
+    sempre. Não é vazamento: é a mesma lista que o quadro da semana já mostra
+    inteira a quem tem `pdca.programacao.view`.
+
+    **Atravessa obras de propósito** — sem `obra_id` vêm todas as do tenant. O
+    encarregado costuma estar numa; o mestre que cobre duas veria metade do
+    trabalho dele se a leitura exigisse escolher.
+
+    **A permissão é por bloco, e nunca 403 na página.** Quem vê a programação e
+    não vê a qualidade recebe os compromissos e, no lugar das fichas, a frase
+    de qual permissão falta. Recusar a página inteira tiraria do encarregado o
+    trabalho que ele pode fazer.
+    """
+    hoje = hoje or timezone.localdate()
+    inicio = segunda_da_semana(hoje)
+    fim = inicio + timedelta(days=6)
+    alvo = (quem or "").strip()
+
+    corpo = {
+        "quem": alvo,
+        "obra": obra_id,
+        "hoje": hoje,
+        "semana_inicio": inicio,
+        "semana_fim": fim,
+        "compromissos": None,
+        "restricoes": None,
+        "acoes": None,
+        "fichas": None,
+        "total": 0,
+        "blocos_varridos": 4,
+        "teto": PDCA_TETO_LINHAS_POR_FRENTE,
+        "sem_permissao": [],
+        #: Sem nome não há frente, e a frase diz o que fazer a respeito.
+        "sem_nome_porque": "" if alvo else (
+            "Não sabemos em que nome procurar. O escritório escreve o nome de "
+            "quem assume cada frente no quadro da semana — peça para "
+            "conferirem como o seu está escrito lá."
+        ),
+    }
+    if not alvo:
+        return corpo
+
+    negados: list[dict] = []
+
+    # --- o que eu assumi nesta semana --------------------------------------
+    if pode("pdca.programacao.view"):
+        semanas = ProgramacaoSemanal.objects.filter(
+            tenant_id=tenant_id, semana_inicio=inicio,
+        ).select_related("obra")
+        if obra_id:
+            semanas = semanas.filter(obra_id=obra_id)
+        semanas = list(semanas)
+        por_semana = {s.pk: s for s in semanas}
+
+        meus = list(
+            ItemProgramacao.objects.filter(
+                tenant_id=tenant_id,
+                programacao_id__in=list(por_semana),
+                responsavel__unaccent__iexact=alvo,
+            )
+            .select_related("atividade", "local")
+            .order_by("ordem", "item_programacao_id")
+        )
+        #: O apontado vem **uma consulta por semana**, e não uma por cartão —
+        #: a mesma régua do quadro no escritório.
+        com_cartao = {item.programacao_id for item in meus}
+        apontado: dict[int, Decimal] = {}
+        for semana in semanas:
+            if semana.pk in com_cartao:
+                apontado.update(avanco_apontado_dos_itens(semana))
+        alvos = [item.atividade_id for item in meus]
+        travas = restricoes_abertas_por_atividade(alvos, tenant_id=tenant_id)
+        defeitos = ncs_abertas_por_atividade(alvos, tenant_id=tenant_id)
+
+        linhas = []
+        for item in meus:
+            semana = por_semana[item.programacao_id]
+            ponto = apontado.get(item.pk)
+            linhas.append({
+                "item": item.pk,
+                "programacao": semana.pk,
+                "obra": semana.obra_id,
+                "obra_nome": semana.obra.nome_obra,
+                "atividade": item.atividade_id,
+                "codigo": item.atividade.codigo,
+                "nome": item.atividade.nome,
+                "local": item.local_id,
+                "local_rotulo": item.local.nome if item.local_id else "",
+                #: Prometido e feito lado a lado, **nunca somados**: um é o que
+                #: a equipe assumiu, o outro é o que o campo apontou.
+                "previsto": item.percentual_previsto,
+                "apontado": ponto,
+                #: Nulo é "ninguém apontou", que é diferente de zero — ver
+                #: `avanco_apontado_dos_itens`.
+                "apontou": ponto is not None,
+                "restricoes_abertas": travas.get(item.atividade_id, 0),
+                "ncs_abertas": defeitos.get(item.atividade_id, 0),
+                "vezes_arrastado": item.vezes_arrastado or 0,
+                "cumprido": item.cumprido,
+                "status_da_semana": semana.status,
+                "semana_aberta": semana.esta_aberta_para_montagem,
+            })
+        corpo["compromissos"] = _bloco_da_frente(
+            "compromissos", "O que eu assumi nesta semana",
+            "Aponte o quanto andou",
+            linhas,
+            vazio_porque=(
+                "Nenhum serviço desta semana está no seu nome. Quem monta o "
+                "quadro é a reunião de segunda — se você assumiu uma frente "
+                "lá, peça para escreverem o seu nome nela."
+            ),
+        )
+    else:
+        negados.append(_sem_permissao(
+            "compromissos", "os compromissos da semana",
+            "pdca.programacao.view",
+        ))
+
+    # --- o que eu tenho de destravar ---------------------------------------
+    if pode("pdca.restricao.view"):
+        travadas = Restricao.objects.filter(
+            tenant_id=tenant_id, status=Restricao.Status.ABERTA,
+            responsavel__unaccent__iexact=alvo,
+        ).select_related("atividade", "atividade__cronograma", "local")
+        if obra_id:
+            travadas = travadas.filter(atividade__cronograma__obra_id=obra_id)
+        linhas = [
+            {
+                "restricao": r.pk,
+                "obra": r.atividade.cronograma.obra_id,
+                "atividade": r.atividade_id,
+                "codigo": r.atividade.codigo,
+                "nome": r.atividade.nome,
+                "local_rotulo": r.local.nome if r.local_id else "",
+                "tipo": r.tipo,
+                "tipo_rotulo": r.get_tipo_display(),
+                "descricao": r.descricao[:200],
+                "desde": _dia_de(r.criada_em),
+                "dias": _dias_desde(r.criada_em),
+                "prazo": _prazo(r.prazo),
+                "demanda_scm": r.demanda_scm_id,
+            }
+            for r in travadas.order_by(
+                F("prazo").asc(nulls_last=True), "-restricao_id",
+            )
+        ]
+        corpo["restricoes"] = _bloco_da_frente(
+            "restricoes", "O que está no seu nome para destravar",
+            "Diga como foi removida",
+            linhas,
+            vazio_porque="Nenhuma trava da obra está esperando você.",
+        )
+    else:
+        negados.append(_sem_permissao(
+            "restricoes", "as restrições da obra", "pdca.restricao.view",
+        ))
+
+    # --- o conserto que é meu ----------------------------------------------
+    if pode("pdca.nc.view"):
+        acoes = PlanoAcao.objects.filter(
+            tenant_id=tenant_id,
+            quem__unaccent__iexact=alvo,
+            status__in=[
+                PlanoAcao.Status.PLANEJADA, PlanoAcao.Status.EM_EXECUCAO,
+            ],
+        ).select_related("nao_conformidade", "nao_conformidade__local")
+        if obra_id:
+            acoes = acoes.filter(nao_conformidade__obra_id=obra_id)
+        linhas = [
+            {
+                "acao": a.pk,
+                "nc": a.nao_conformidade_id,
+                "obra": a.nao_conformidade.obra_id,
+                "o_que": a.o_que[:200],
+                "onde": a.onde or (
+                    a.nao_conformidade.local.nome
+                    if a.nao_conformidade.local_id else ""
+                ),
+                "como": a.como[:200],
+                "status": a.status,
+                "status_rotulo": a.get_status_display(),
+                "gravidade": a.nao_conformidade.gravidade,
+                "gravidade_rotulo": a.nao_conformidade.get_gravidade_display(),
+                "defeito": a.nao_conformidade.descricao[:160],
+                "prazo": _prazo(a.quando),
+            }
+            for a in acoes.order_by(
+                F("quando").asc(nulls_last=True), "-plano_id",
+            )
+        ]
+        corpo["acoes"] = _bloco_da_frente(
+            "acoes", "O conserto que é seu",
+            "Conclua e registre o que foi feito",
+            linhas,
+            vazio_porque="Nenhum conserto está no seu nome.",
+        )
+    else:
+        negados.append(_sem_permissao(
+            "acoes", "os planos de ação dos defeitos", "pdca.nc.view",
+        ))
+
+    # --- a ficha que está esperando você -----------------------------------
+    if pode("pdca.verificacao.view"):
+        fichas = Verificacao.objects.filter(
+            tenant_id=tenant_id, status=Verificacao.Status.EM_ANDAMENTO,
+            inspetor__unaccent__iexact=alvo,
+        ).select_related("modelo", "local", "atividade")
+        if obra_id:
+            fichas = fichas.filter(obra_id=obra_id)
+        fichas = list(fichas.order_by("data", "-verificacao_id"))
+        pendentes = {
+            linha["verificacao_id"]: linha["n"]
+            for linha in ItemVerificacao.objects.filter(
+                tenant_id=tenant_id,
+                verificacao_id__in=[f.pk for f in fichas],
+                resultado=ResultadoItem.PENDENTE,
+            ).values("verificacao_id").annotate(n=Count("item_verificacao_id"))
+        }
+        linhas = [
+            {
+                "verificacao": f.pk,
+                "obra": f.obra_id,
+                "modelo_codigo": f.modelo.codigo,
+                "modelo_nome": f.modelo.nome,
+                "onde": (
+                    f.local.nome if f.local_id
+                    else (f.atividade.nome if f.atividade_id else "")
+                ),
+                "desde": f.data,
+                "dias": (hoje - f.data).days,
+                #: Quantas perguntas ainda estão sem resposta. É o que diz se a
+                #: ficha é de cinco minutos ou de uma manhã, e sem isso a
+                #: pessoa abre para descobrir.
+                "por_responder": pendentes.get(f.pk, 0),
+            }
+            for f in fichas
+        ]
+        corpo["fichas"] = _bloco_da_frente(
+            "fichas", "A ficha que está esperando você",
+            "Responda item a item",
+            linhas,
+            vazio_porque="Nenhuma ficha está aberta no seu nome.",
+        )
+    else:
+        negados.append(_sem_permissao(
+            "fichas", "as fichas de verificação", "pdca.verificacao.view",
+        ))
+
+    corpo["sem_permissao"] = negados
+    corpo["total"] = sum(
+        bloco["total"]
+        for bloco in (
+            corpo["compromissos"], corpo["restricoes"],
+            corpo["acoes"], corpo["fichas"],
+        )
+        if bloco is not None
+    )
+    return corpo

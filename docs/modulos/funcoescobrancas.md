@@ -129,6 +129,43 @@ salvo aponta para outro cadastro). Dois consumidores:
    estado atual do gateway ao abrir o documento — online = verdade do Asaas (status/URL atualizados);
    offline = última versão local + `gateway_online=False` (a UI abre o guardado e avisa).
 
+### O que o SGI escreve no boleto — e o que é da conta Asaas
+
+Fronteira que vale a pena estar escrita, porque a pergunta volta sempre ("de onde saiu essa frase no
+boleto?"). O `POST /payments` leva **exatamente seis campos** (`client.criar_payment`):
+
+| Campo | De onde vem |
+|---|---|
+| `customer` | `garantir_customer_asaas` (trava de identidade nome + CPF/CNPJ) |
+| `billingType` | `UNDEFINED` — o pagador escolhe no checkout |
+| `value` | `ContaReceber.saldo_aberto` |
+| `dueDate` | `services.vencimento_bancario()` — ver abaixo |
+| `description` | `clientes.plano_pagamento.descricao_do_titulo()` |
+| `externalReference` | `conta_receber_id` |
+
+**Tudo o mais que aparece impresso é configuração da conta Asaas**, escolhida no painel do gateway e
+válida para toda cobrança emitida por aquela conta: o campo *Instruções* (as frases do tipo "Não
+receber com cheque"), o comportamento após o vencimento, juros e multa de boleto, logotipo e dados do
+beneficiário. Nenhuma linha deste módulo os altera, e nenhuma pode — o endpoint de `payments` não os
+aceita. Mudá-los é no Asaas. Fingir o contrário seria vender controle que não existe.
+
+### `vencimento_bancario` — o boleto vence em dia útil; o título, não
+
+`services.vencimento_bancario(conta)` devolve `(data, motivo)`: o vencimento do contrato, ou o
+próximo dia útil quando ele cai em sábado, domingo ou feriado (nacional, estadual e municipal da
+praça do **imóvel** — ver [modulocalendar.md §6.1](modulocalendar.md) e [clientes.md](clientes.md)).
+
+**São dois números com donos diferentes, e não podem ser o mesmo campo.**
+`ContaReceber.data_vencimento` é o que foi combinado no contrato, e é por ele que se conta atraso,
+juros e multa — ajustá-lo reescreveria a dívida. O que se ajusta é o `dueDate` enviado ao gateway e
+`Boleto.data_vencimento`, porque um boleto com vencimento no sábado não é pagável no sábado: ele
+nasce, na prática, vencido. Quando há desvio, ele fica registrado em
+`Boleto.dados_retorno_api["ajuste_de_vencimento"]` (contratual, bancário e motivo) — quem abrir o
+boleto e estranhar a data encontra o porquê ao lado dela.
+
+Título sem empreendimento (lançamento avulso do financeiro) cai em fim de semana + feriado nacional,
+que continua melhor que um boleto vencendo no domingo.
+
 ### Fora do escopo do MVP (slice 2 futura)
 `tasks.estornar` (`refund` → lança `Devolucao`), QR PIX e parcelamento (`installments`) — adiados por
 decisão do usuário (07/06/2026) para manter o MVP no golden path emitir+baixa. Cancelamento de boleto:

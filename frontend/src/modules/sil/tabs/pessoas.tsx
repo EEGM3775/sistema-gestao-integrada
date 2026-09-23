@@ -13,6 +13,8 @@ import {
 } from '../ui'
 import type { Item, LocalEstoque, EntregaEPI, Ferramenta, EmprestimoFerramenta, FuncionarioOpt } from '../types'
 
+import { minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
+
 /** Estados de ferramenta que se escolhem à mão — `emprestada` é do fluxo de empréstimo. */
 type EstadoAlteravel = 'disponivel' | 'manutencao' | 'baixada'
 
@@ -108,11 +110,11 @@ function NovaEntregaEPIModal({ onClose, onDone }: { onClose: () => void; onDone:
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
       <Field label="Quantidade"><input style={{ ...inp, ...mono }} type="number" min={1} step="1" value={quantidade} onChange={e => setQuantidade(e.target.value)} /></Field>
       <Field label="CA (certificado)"><input style={inp} value={ca} onChange={e => setCa(e.target.value)} placeholder="nº do CA" /></Field>
-      <Field label="Validade do CA"><input style={inp} type="date" value={caVal} onChange={e => setCaVal(e.target.value)} /></Field>
+      <Field label="Validade do CA"><input style={inp} type="date" min={minCalendarioISO} max={maxCalendarioISO} value={caVal} onChange={e => setCaVal(e.target.value)} /></Field>
     </div>
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
       <Field label="Local (baixa)"><select style={inp} value={local} onChange={e => setLocal(e.target.value)}><option value="">— nenhum —</option>{opLocais.map(l => <option key={l.local_id} value={l.local_id}>{l.nome}</option>)}</select></Field>
-      <Field label="Troca prevista"><input style={inp} type="date" value={troca} onChange={e => setTroca(e.target.value)} /></Field>
+      <Field label="Troca prevista"><input style={inp} type="date" min={minCalendarioISO} max={maxCalendarioISO} value={troca} onChange={e => setTroca(e.target.value)} /></Field>
     </div>
     <Field label="Obra (apropriação)"><select style={inp} value={obra} onChange={e => setObra(e.target.value)}><option value="">— nenhuma —</option>{(obras ?? []).map(o => <option key={o.obra_id} value={o.obra_id}>{o.nome_obra}</option>)}</select></Field>
     <div style={{ display: 'flex', gap: 18, fontSize: 13, color: 'var(--ink-2)' }}>
@@ -214,8 +216,8 @@ function NovaFerramentaModal({ onClose, onDone }: { onClose: () => void; onDone:
     </div>
     <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 13, color: 'var(--ink-2)', marginBottom: 12, cursor: 'pointer' }}><input type="checkbox" checked={calibravel} onChange={e => setCalibravel(e.target.checked)} /> requer calibração</label>
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-      <Field label="Próxima calibração"><input style={inp} type="date" value={proxCal} onChange={e => setProxCal(e.target.value)} /></Field>
-      <Field label="Próxima manutenção"><input style={inp} type="date" value={proxMan} onChange={e => setProxMan(e.target.value)} /></Field>
+      <Field label="Próxima calibração"><input style={inp} type="date" min={minCalendarioISO} max={maxCalendarioISO} value={proxCal} onChange={e => setProxCal(e.target.value)} /></Field>
+      <Field label="Próxima manutenção"><input style={inp} type="date" min={minCalendarioISO} max={maxCalendarioISO} value={proxMan} onChange={e => setProxMan(e.target.value)} /></Field>
     </div>
   </Modal>
 }
@@ -237,7 +239,7 @@ function EmprestarModal({ ferramenta, onClose, onDone }: { ferramenta: Ferrament
     <ColaboradorField funcionarios={(funcs ?? []) as FuncionarioOpt[]} colaborador={colaborador} setColaborador={setColaborador} nome={nome} setNome={setNome} />
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
       <Field label="Obra"><select style={inp} value={obra} onChange={e => setObra(e.target.value)}><option value="">— nenhuma —</option>{(obras ?? []).map(o => <option key={o.obra_id} value={o.obra_id}>{o.nome_obra}</option>)}</select></Field>
-      <Field label="Devolução prevista"><input style={inp} type="date" value={prev} onChange={e => setPrev(e.target.value)} /></Field>
+      <Field label="Devolução prevista"><input style={inp} type="date" min={minCalendarioISO} max={maxCalendarioISO} value={prev} onChange={e => setPrev(e.target.value)} /></Field>
     </div>
   </Modal>
 }
@@ -251,8 +253,8 @@ function EstadoFerramentaModal({ ferramenta, onClose, onDone }: { ferramenta: Fe
   return <Modal title={`Estado — ${ferramenta.nome}`} onClose={onClose} footer={<><Btn onClick={onClose}>Cancelar</Btn><Btn variant="primary" onClick={salvar} disabled={alterar.isPending}>Salvar</Btn></>}>
     <Field label="Estado"><select style={inp} value={estado} onChange={e => setEstado(e.target.value as EstadoAlteravel)}><option value="disponivel">Disponível</option><option value="manutencao">Em manutenção</option><option value="baixada">Baixada</option></select></Field>
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-      <Field label="Próxima calibração"><input style={inp} type="date" value={proxCal} onChange={e => setProxCal(e.target.value)} /></Field>
-      <Field label="Próxima manutenção"><input style={inp} type="date" value={proxMan} onChange={e => setProxMan(e.target.value)} /></Field>
+      <Field label="Próxima calibração"><input style={inp} type="date" min={minCalendarioISO} max={maxCalendarioISO} value={proxCal} onChange={e => setProxCal(e.target.value)} /></Field>
+      <Field label="Próxima manutenção"><input style={inp} type="date" min={minCalendarioISO} max={maxCalendarioISO} value={proxMan} onChange={e => setProxMan(e.target.value)} /></Field>
     </div>
   </Modal>
 }

@@ -3,6 +3,7 @@ import { Layers, Lock, MapPin, Map as MapIcon, Plane, Radar, Route as RouteIcon,
 import { useAuth } from '@/hooks/useAuth'
 import { Locais, MapaDaEmpresa, Vizinhanca, type Say } from '../tabs/operacao'
 import { Acervo, Camadas, Rotas, TerritorioBloqueado, Voos } from '../tabs/territorio'
+import type { Destino, Ir, TabMaps } from '../types'
 
 /**
  * Maps — **Operação × Território**, dois públicos numa página só (a régua do SIL).
@@ -17,7 +18,18 @@ import { Acervo, Camadas, Rotas, TerritorioBloqueado, Voos } from '../tabs/terri
  */
 
 type Modo = 'operacao' | 'territorio'
-type TabId = 'mapa' | 'locais' | 'vizinhanca' | 'camadas' | 'acervo' | 'voos' | 'rotas'
+type TabId = TabMaps
+
+/**
+ * A fila de decisão listava pendências e não ia a lugar nenhum — cada linha era
+ * um `<div>` sem `onClick`. Fila que não abre a decisão é cartaz. `ir()` é a
+ * porta: o item diz a aba e, quando cabe, o filtro que isola exatamente os
+ * locais de que ele fala, para a pessoa não ter de reconstruí-lo à mão.
+ */
+const MODO_DA_TAB: Record<TabId, Modo> = {
+  mapa: 'operacao', locais: 'operacao', vizinhanca: 'operacao',
+  camadas: 'territorio', acervo: 'territorio', voos: 'territorio', rotas: 'territorio',
+}
 
 interface TabDef { id: TabId; label: string; icon: ReactNode }
 const TABS: Record<Modo, TabDef[]> = {
@@ -41,13 +53,28 @@ export default function TerritorioPage() {
   const [modo, setModo] = useState<Modo>('operacao')
   const [tab, setTab] = useState<TabId>('mapa')
   const [toast, setToast] = useState('')
+  /** O filtro que a fila de decisão pediu, consumido pela aba de destino. */
+  const [destino, setDestino] = useState<Destino | null>(null)
 
   const say: Say = (m) => {
     setToast(m)
     window.clearTimeout(toastTimer)
     toastTimer = window.setTimeout(() => setToast(''), 2800)
   }
-  const trocarModo = (m: Modo) => { setModo(m); setTab(TABS[m][0].id) }
+  const trocarModo = (m: Modo) => { setModo(m); setTab(TABS[m][0].id); setDestino(null) }
+
+  const ir: Ir = (d) => {
+    const alvo = MODO_DA_TAB[d.tab]
+    // Território sem entitlement mostra o cadeado; mandar para lá seria trocar
+    // uma pendência acionável por uma parede. O item fica onde está e avisa.
+    if (alvo === 'territorio' && !temMaps) {
+      say('Essa pendência é do módulo Maps, que não está contratado.')
+      return
+    }
+    setModo(alvo)
+    setTab(d.tab)
+    setDestino({ ...d, selo: Date.now() })
+  }
 
   return (
     <div style={{ padding: '24px 26px 64px', maxWidth: 1240, margin: '0 auto' }}>
@@ -87,7 +114,7 @@ export default function TerritorioPage() {
           {TABS[modo].map((t) => {
             const on = t.id === tab
             return (
-              <button key={t.id} onClick={() => setTab(t.id)}
+              <button key={t.id} onClick={() => { setTab(t.id); setDestino(null) }}
                 style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '7px 13px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', border: 'none', color: on ? 'var(--ink)' : 'var(--ink-2)', background: on ? 'var(--surface)' : 'transparent', boxShadow: on ? 'var(--shadow-sm)' : 'none' }}>
                 <span style={{ color: on ? 'var(--accent-strong)' : 'inherit', display: 'grid', placeItems: 'center' }}>{t.icon}</span>
                 {t.label}
@@ -97,13 +124,13 @@ export default function TerritorioPage() {
         </div>
       )}
 
-      <div key={modo + tab}>
+      <div key={`${modo}${tab}${destino?.selo ?? ''}`}>
         {modo === 'territorio' && !temMaps ? (
           <TerritorioBloqueado />
         ) : (
           <>
-            {tab === 'mapa' && <MapaDaEmpresa say={say} />}
-            {tab === 'locais' && <Locais say={say} />}
+            {tab === 'mapa' && <MapaDaEmpresa say={say} ir={ir} foco={destino?.foco ?? null} />}
+            {tab === 'locais' && <Locais say={say} ir={ir} filtroInicial={destino?.filtro} />}
             {tab === 'vizinhanca' && <Vizinhanca say={say} />}
             {tab === 'camadas' && <Camadas />}
             {tab === 'acervo' && <Acervo say={say} />}

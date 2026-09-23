@@ -271,15 +271,37 @@ export interface ResumoPlano {
   baloes: string
   saldoFinanciado: string
   totalJuros: string
+  /** O total do **carnê**: entrada + parcelas + balões. */
   total: string
   primeiraParcela: string
   ultimaParcela: string
+  /**
+   * O que o comprador paga, mas não à construtora e não por boleto: o saldo que
+   * o banco quita no financiamento bancário, o bem dado em permuta, a parte que
+   * passou na maquininha.
+   *
+   * Não é desconto e não é dívida esquecida — `total + foraDoCarne` cobre o
+   * valor negociado. Sem este campo essas vendas não podiam ser registradas: o
+   * motor as recusava por "sobrou saldo sem parcela".
+   */
+  foraDoCarne?: string
+  /** A condição que o backend efetivamente aplicou ao montar o plano. */
+  condicao?: string
+  quantidadeParcelas?: number
+  /** Quantas caíram em fim de semana ou feriado e foram ao próximo dia útil. */
+  parcelasAjustadas?: number
 }
 
 export interface ParcelaPlano {
   numero: number
   tipo: 'entrada' | 'parcela' | 'balao'
+  /** A data **pagável** — já no dia útil bancário. */
   vencimento: string
+  /** A data do contrato, antes do ajuste de dia útil. Iguais quando não houve
+   *  ajuste; guardadas as duas para a tela poder explicar a diferença. */
+  vencimentoContratual?: string
+  /** "sábado", "domingo" ou o nome do feriado. Vazio = não houve ajuste. */
+  ajusteMotivo?: string
   valor: string
   juros: string
   amortizacao: string
@@ -288,6 +310,12 @@ export interface ParcelaPlano {
 
 export interface SimulacaoPlano extends ResumoPlano {
   parcelas: ParcelaPlano[]
+  /** O calendário usado no ajuste — e se a base de feriados foi sincronizada. */
+  calendario?: {
+    uf: string
+    municipio: boolean
+    feriadosCarregados: boolean
+  }
 }
 
 export interface ClienteEmpreendimento {

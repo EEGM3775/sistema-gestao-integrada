@@ -319,3 +319,80 @@ class TaskCriarCobrancaSemContextoTests(APITestCase):
     def test_task_conta_inexistente_e_noop(self):
         from funcoescobrancas.tasks import criar_cobranca
         self.assertIsNone(criar_cobranca(99999999))
+
+
+class VencimentoBancarioDoBoletoTests(APITestCase):
+    """O boleto vence em dia útil; o título continua com a data do contrato.
+
+    Os dois números têm donos diferentes e não podem ser o mesmo campo: o
+    contrato diz "vence dia 1º" e é por essa data que se conta atraso, juros e
+    multa; a rede bancária diz que um boleto com vencimento no sábado não é
+    pagável no sábado. Fazer o ajuste no título reescreveria a dívida; não fazer
+    ajuste nenhum emite uma parcela que nasce em atraso.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        from empreendimentos.models import Empreendimento
+        from modulocalendar.models import Feriado
+
+        cls.tenant = Tenant.objects.create(slug="venc-bancario", nome="Empresa Venc")
+        cls.cliente = Cliente.objects.create(
+            nome_completo="Cliente Venc", cpf_cnpj="11111111111", email="v@t.com",
+            data_nascimento=date(1990, 1, 1), tenant=cls.tenant,
+        )
+        cls.emp = Empreendimento.objects.create(
+            tenant=cls.tenant, empreendimento="Loteamento Venc", razao_social="Venc SA",
+            cnpj="11222333000181", telefone="48999990000", endereco="Rua X, 1",
+            cidade="Palhoça", estado="SC",
+        )
+        # 12/10/2026 cai numa segunda-feira: sem a tabela de feriados, passaria
+        # como dia útil e o boleto sairia com vencimento em feriado nacional.
+        Feriado.objects.create(
+            data=date(2026, 10, 12), nome="Nossa Senhora Aparecida", escopo="nacional")
+
+    def _emitir(self, vencimento):
+        with rls_bypass():
+            conta = ContaReceber.objects.create(
+                cliente=self.cliente, empreendimento=self.emp, descricao="Parcela 1/1",
+                valor=1000, data_vencimento=vencimento, tenant=self.tenant,
+            )
+        pagamento = {"id": f"pay_{vencimento}", "bankSlipUrl": "https://x/b.pdf"}
+        enviados = {}
+
+        def _criar_payment(**kwargs):
+            enviados.update(kwargs)
+            return pagamento
+
+        from nucleo.tenancy import tenant_context
+        with patch.object(AsaasClient, "buscar_customer_por_cpf_cnpj", return_value=None), \
+             patch.object(AsaasClient, "criar_customer", return_value={"id": "cus_v"}), \
+             patch.object(AsaasClient, "criar_payment", side_effect=_criar_payment):
+            with tenant_context(self.tenant.pk):
+                boleto = services.gerar_cobranca_asaas(conta)
+        return conta, boleto, enviados
+
+    def test_sabado_vai_para_segunda_no_boleto_e_nao_no_titulo(self):
+        conta, boleto, enviados = self._emitir(date(2026, 8, 1))  # sábado
+        self.assertEqual(boleto.data_vencimento, date(2026, 8, 3))
+        self.assertEqual(enviados["vencimento"], date(2026, 8, 3))
+        conta.refresh_from_db()
+        self.assertEqual(conta.data_vencimento, date(2026, 8, 1))
+
+    def test_feriado_nacional_tambem_empurra(self):
+        _, boleto, enviados = self._emitir(date(2026, 10, 12))
+        self.assertEqual(boleto.data_vencimento, date(2026, 10, 13))
+        self.assertEqual(enviados["vencimento"], date(2026, 10, 13))
+
+    def test_dia_util_sai_intacto(self):
+        conta, boleto, _ = self._emitir(date(2026, 8, 4))  # terça
+        self.assertEqual(boleto.data_vencimento, conta.data_vencimento)
+
+    def test_o_desvio_fica_registrado_no_boleto(self):
+        """Quem abrir o boleto e estranhar a data encontra o porquê ao lado
+        dela, em vez de descobrir na conversa com o cliente."""
+        _, boleto, _ = self._emitir(date(2026, 10, 12))
+        ajuste = boleto.dados_retorno_api["ajuste_de_vencimento"]
+        self.assertEqual(ajuste["contratual"], "2026-10-12")
+        self.assertEqual(ajuste["bancario"], "2026-10-13")
+        self.assertEqual(ajuste["motivo"], "Nossa Senhora Aparecida")

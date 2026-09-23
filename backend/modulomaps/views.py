@@ -97,12 +97,19 @@ class BaseCamadaViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
 # MAP.0 — Local
 # ---------------------------------------------------------------------------
 class LocalViewSet(BaseFundacaoViewSet):
+    # `unidade__empreendimento` entra porque o detalhe da unidade (medidas,
+    # confrontações, conferência da rua) nomeia o empreendimento: sem ele seriam
+    # N consultas numa tabela que carrega 100 linhas por página.
     queryset = Local.objects.select_related(
-        "obra", "empreendimento", "fornecedor", "local_estoque", "unidade"
+        "obra", "empreendimento", "fornecedor", "local_estoque",
+        "unidade", "unidade__empreendimento",
     ).all()
     serializer_class = LocalSerializer
     filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
-    filterset_fields = ["tipo", "precisao", "uf", "cidade", "ativo", "obra", "empreendimento", "fornecedor"]
+    filterset_fields = [
+        "tipo", "precisao", "uf", "cidade", "ativo", "obra", "empreendimento",
+        "fornecedor", "unidade",
+    ]
     search_fields = ["nome", "logradouro", "bairro", "cidade"]
     ordering_fields = ["nome", "cidade"]
     required_resource = "mapa.local"
@@ -292,6 +299,67 @@ class PlanoVooViewSet(BaseCamadaViewSet):
     filterset_fields = ["obra", "tipo"]
     search_fields = ["nome"]
     required_resource = "mapa.plano_voo"
+
+    @action(detail=False, methods=["post"], url_path="do-local")
+    def do_local(self, request):
+        """Cria o plano a partir de um `Local` — a área vem do perímetro ou do raio.
+
+        **Por que existe.** O `PlanoVoo.area` é um polígono, e até aqui a única
+        forma de o desenhar era pelo admin ou por um POST à mão com GeoJSON. Na
+        tela, a aba Planos de voo só sabia **listar** — então ela nunca saía do
+        vazio, e o módulo parecia quebrado a quem abria ("não consigo ver plano
+        de voo"). É o mesmo buraco que o `geofences/gerar/` já tinha fechado para
+        a cerca, e a saída é a mesma porta: o polígono nasce de um local que a
+        empresa já cadastrou.
+
+        **A ordem é a do `gerar_geofence`, e pelo mesmo motivo:** perímetro real
+        do canteiro primeiro, raio depois. Quem desenhou a área da obra tem o
+        polígono certo, e cobri-lo com um círculo seria perder precisão de graça.
+        A resposta diz de onde a área veio — `perimetro` ou `raio` —, porque um
+        voo planejado sobre um círculo de 150 m em volta do pin **não** é um voo
+        planejado sobre o canteiro, e quem vai autorizar precisa saber a diferença.
+        """
+        local = Local.objects.filter(
+            pk=request.data.get("local") or 0,
+            tenant_id=getattr(request.user, "tenant_id", None),
+        ).first()
+        if local is None:
+            return Response({"detail": "Informe um local da sua empresa."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        raio_pedido = request.data.get("raio_m")
+        raio_m = int(raio_pedido) if raio_pedido else None
+        if local.area is not None and raio_m is None:
+            area, origem_da_area, raio = local.area, "perimetro", None
+        else:
+            if local.ponto is None:
+                return Response(
+                    {"detail": "O local não tem coordenada: geocodifique-o antes de planejar o voo."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            raio = raio_m or 150
+            area, origem_da_area = services.poligono_do_raio(local.ponto, raio), "raio"
+
+        dados = {
+            "nome": request.data.get("nome") or f"Voo — {local.nome}",
+            "tipo": request.data.get("tipo") or PlanoVoo.Tipo.GRID,
+            "obra_id": local.obra_id,
+            "area": area,
+            "tenant_id": getattr(request.user, "tenant_id", None),
+        }
+        for campo in ("gsd_alvo_cm", "sobreposicao_frontal_pct", "sobreposicao_lateral_pct"):
+            if request.data.get(campo) not in (None, ""):
+                dados[campo] = request.data[campo]
+
+        plano = PlanoVoo.objects.create(**dados)
+        return Response(
+            {
+                "plano": PlanoVooSerializer(plano).data,
+                "origem_da_area": origem_da_area,
+                "raio_m": raio,
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
     @action(detail=True, methods=["post"])
     def calcular(self, request, pk=None):
@@ -518,7 +586,8 @@ class MapaDaEmpresaView(TenantScopedAPIViewMixin, views.APIView):
         tenant_id = getattr(request.user, "tenant_id", None)
         locais = self.scope_qs(
             Local.objects.filter(ativo=True).select_related(
-                "obra", "empreendimento", "fornecedor", "local_estoque", "unidade"
+                "obra", "empreendimento", "fornecedor", "local_estoque",
+                "unidade", "unidade__empreendimento",
             )
         )
         com_ponto = locais.filter(ponto__isnull=False)
@@ -540,6 +609,33 @@ class MapaDaEmpresaView(TenantScopedAPIViewMixin, views.APIView):
         }
         return Response(payload)
 
+    #: Teto da varredura de coerência de rua. **Não é limite de produto**
+    #: (§5.6 do `payment/planos.py`): é guarda-corpo de uma comparação que roda
+    #: em Python, linha a linha, dentro do payload do cockpit. Um loteamento
+    #: grande tem centenas de lotes georreferenciados; mil é folga e mantém o
+    #: cartaz honesto — acima disso ele diz "mais de mil", que é o que importa.
+    _TETO_VARREDURA_RUA = 1000
+
+    def _unidades_com_rua_divergente(self, locais) -> int:
+        """Quantas unidades têm a frente apontando para rua diferente do endereço.
+
+        Roda em Python porque a comparação é textual e tolerante (acento,
+        abreviatura, número da casa) — SQL faria igualdade literal e acusaria
+        divergência em todo cadastro certo. Em compensação é varredura, daí o
+        teto: o cockpit não pode custar uma leitura da tabela inteira.
+        """
+        from . import services
+
+        unidades = (
+            locais.filter(tipo=Local.Tipo.UNIDADE)
+            .exclude(unidade__confrontante_frente="")
+            .select_related("unidade")[: self._TETO_VARREDURA_RUA]
+        )
+        return sum(
+            1 for local in unidades
+            if services.rua_confere(local.unidade, local) is False
+        )
+
     def _fila(self, request, locais, tenant_id) -> list[dict]:
         """A fila de decisão real da tela — cada item é uma pendência acionável."""
         fila = []
@@ -556,6 +652,20 @@ class MapaDaEmpresaView(TenantScopedAPIViewMixin, views.APIView):
                     "titulo": f"{quantos} {rotulo} sem coordenada",
                     "acao": "geocodificar",
                 })
+
+        # A rua da frente contra o endereço da unidade. É pendência de cadastro,
+        # não de geocodificação: o pin pode estar certíssimo e o memorial dizer
+        # que o lote faz frente para outra rua — e é o memorial que vai ao
+        # contrato e à matrícula. Quem descobre isso na escritura descobre tarde.
+        divergentes = self._unidades_com_rua_divergente(locais)
+        if divergentes:
+            fila.append({
+                "tipo": "rua_divergente",
+                "alvo": "unidade",
+                "quantidade": divergentes,
+                "titulo": f"{divergentes} unidades com a rua da frente diferente do endereço",
+                "acao": "conferir",
+            })
 
         # Só município: o pin existe, mas está no centro da cidade. Vale um item
         # próprio porque é o caso que MAIS engana — no mapa parece resolvido.

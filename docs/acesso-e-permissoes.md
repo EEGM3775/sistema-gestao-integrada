@@ -320,6 +320,34 @@ Três regras que valem para todo módulo que usar a máquina:
 Mora no `nucleo` porque alçada é da plataforma: o PDCA (medição de empreiteiro) é o primeiro cliente,
 e pagamento acima de alçada no ERP entra pela mesma porta, com outro alvo.
 
+**O terceiro cliente estreou uma variação** *(PDCA.4, 15/09/2026)*: o **aditivo de contrato**. Os
+dois primeiros — medição e liberação de retenção — congelam um documento e geram um título; o
+aditivo aprovado **muda a régua de outro documento**: reescreve o preço vigente de uma linha do
+contrato, cria item novo na planilha e move a vigência. Duas consequências para quem for o próximo:
+
+- o receptor de `aprovacao_concluida` precisa ser **idempotente de verdade**, porque aplicar duas
+  vezes não é somar duas vezes um valor — é criar o item novo em duplicata;
+- o serviço **revalida antes de aplicar**, e não só antes de submeter: entre a submissão e o último
+  atesto podem passar dias, e nesse intervalo uma medição pode ter consumido o saldo que a supressão
+  ia tirar.
+
+E a escada do aditivo é **própria**, não a da medição: quem confere serviço executado não é quem
+autoriza a empresa a gastar acima do contratado (`pdca.aditivo.aprovar` × `pdca.medicao.atestar`).
+
+**Cancelar a medição aprovada também é `atestar`, não `apurar`** *(16/09/2026)*. Ela já gerou título
+no ERP, e cancelá-la derruba o título junto: é ato da mesma alçada que autorizou o dinheiro a sair, e
+não de quem monta o boletim. Enquanto a medição é rascunho ou está em aprovação, nada saiu, e `apurar`
+basta — a régua é o **efeito no mundo**, não o nome do verbo.
+
+**`pdca.programacao.encerrar_antecipado` — o sexto verbo do Last Planner** *(16/09/2026)*. Ele nasceu
+de um defeito: dava para fechar na segunda-feira a semana que ia até domingo, julgando como fracasso o
+que ainda tinha cinco dias de prazo, e o ponto entrava na série histórica indistinguível dos outros.
+A resposta não foi proibir — existe a obra que para na quinta de um feriado prolongado, e trancar faria
+o time julgar de memória na segunda seguinte. Quem tem o verbo encerra antes **dando motivo por
+escrito**, e a semana fica marcada. Vai junto no curinga `pdca.programacao.*` da persona `engenharia`:
+quem sabe que a obra vai parar na quinta é quem está nela, e a trava que importa é a frase, não a
+lista de quem pode.
+
 ## O supervisor da plataforma
 
 *(Decisões do dono, 22/08/2026 — a seção foi reescrita duas vezes no mesmo dia,

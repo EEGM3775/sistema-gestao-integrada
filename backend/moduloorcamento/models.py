@@ -48,6 +48,10 @@ class Fonte(models.TextChoices):
     SEINFRA = "seinfra", _("SEINFRA (CE)")
     SEDOP = "sedop", _("SEDOP (PA)")
     TCPO = "tcpo", _("TCPO (PINI)")
+    # ORC.8b — a companhia estadual de saneamento da Bahia. É a primeira fonte
+    # setorial da lista (as outras são de obra em geral) e a única que publica
+    # **só em PDF**; as duas coisas estão documentadas em `embasa.py`.
+    EMBASA = "embasa", _("EMBASA (BA)")
     PROPRIA = "propria", _("Própria")
 
 
@@ -87,6 +91,25 @@ class BaseReferencial(models.Model):
         max_length=10, choices=Regime.choices, default=Regime.ONERADO,
         verbose_name=_("Regime de encargos"),
     )
+    # ORC.8b — o eixo que uma fonte pode ter **além** de UF, mês e regime, e que
+    # nasceu de um fato da EMBASA: para o mesmo semestre e o mesmo regime ela
+    # publica seis tabelas com os **mesmos 6.992 códigos e preços diferentes**,
+    # uma por convenção coletiva (`expansao-sintracom`, `expansao-sintepav`…),
+    # porque a leis sociais muda com o sindicato da região. Sem este campo na
+    # chave, as seis colidiriam e a última carga sobrescreveria as cinco
+    # anteriores em silêncio — o `update_or_create` faria exatamente o que lhe
+    # pedissem, e o orçamento ficaria com o preço de outra região.
+    #
+    # Vazio em SINAPI, ORSE e nas demais: lá a publicação já é única na chave, e
+    # forçá-las a inventar uma variante seria pedir que respondessem uma pergunta
+    # que ninguém lhes fez.
+    variante = models.CharField(
+        max_length=60, blank=True, verbose_name=_("Variante"),
+        help_text=_(
+            "Eixo extra de identidade da fonte (EMBASA: escopo + convenção "
+            "coletiva). Vazio quando a fonte publica uma tabela por UF/mês/regime."
+        ),
+    )
     rotulo = models.CharField(max_length=120, blank=True, verbose_name=_("Rótulo"))
     total_insumos = models.PositiveIntegerField(default=0, verbose_name=_("Total de insumos"))
     total_composicoes = models.PositiveIntegerField(default=0, verbose_name=_("Total de composições"))
@@ -112,7 +135,7 @@ class BaseReferencial(models.Model):
         ordering = ["-mes_referencia", "fonte", "uf"]
         constraints = [
             models.UniqueConstraint(
-                fields=["fonte", "uf", "mes_referencia", "regime_encargos"],
+                fields=["fonte", "uf", "mes_referencia", "regime_encargos", "variante"],
                 name="orcamento_base_publicacao_unica",
             ),
         ]
@@ -127,6 +150,12 @@ class BaseReferencial(models.Model):
         partes.append(self.mes_referencia.strftime("%m/%Y"))
         if self.regime_encargos != self.Regime.NAO_SE_APLICA:
             partes.append(self.get_regime_encargos_display().lower())
+        # A variante entra no rótulo automático porque sem ela duas publicações
+        # que **são** diferentes ficariam com o mesmo nome na tela — e escolher
+        # a tabela errada de preço de saneamento numa lista de seis rótulos
+        # idênticos é o erro que o campo existe para evitar.
+        if self.variante:
+            partes.append(f"· {self.variante}")
         return " ".join(partes)
 
 
@@ -168,6 +197,18 @@ class InsumoReferencia(models.Model):
         indexes = [
             models.Index(fields=["base", "tipo"], name="orcamento_ref_base_tipo_idx"),
             models.Index(fields=["codigo"], name="orcamento_ref_codigo_idx"),
+            # O `bases-resumo/` precisa, por publicação, de quantos insumos
+            # vieram classificados e de quais classes a fonte usou. Sem índice,
+            # a resposta custava uma varredura dos 5 milhões de insumos (~0,7 s);
+            # com ele, a mesma agregação sai em ~0,37 s e cabe num índice de
+            # 35 MB. **Parcial de propósito:** as duas perguntas só existem para
+            # `tipo="insumo"` — incluir as composições dobraria o índice para
+            # 131 MB sem responder nada a mais.
+            models.Index(
+                fields=["base", "grupo"],
+                condition=models.Q(tipo="insumo"),
+                name="orcamento_ref_classe_idx",
+            ),
         ]
 
     def __str__(self):

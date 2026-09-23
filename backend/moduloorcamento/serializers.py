@@ -78,6 +78,11 @@ class FonteOficialSerializer(serializers.ModelSerializer):
     # arquivo da Caixa: oferecer o botão nas outras seria vender um caminho que
     # sempre falha.
     carga_automatica = serializers.SerializerMethodField()
+    # ORC.8b — se esta fonte publica **um menu** em vez de um arquivo do mês. A
+    # tela precisa saber antes de desenhar: na SINAPI o certo é um botão
+    # "carregar 07/2026"; na EMBASA, que põe 65 tabelas por semestre no ar, um
+    # botão só esconderia a pergunta que importa — qual delas.
+    exige_documento = serializers.SerializerMethodField()
 
     class Meta:
         model = FonteOficial
@@ -88,6 +93,9 @@ class FonteOficialSerializer(serializers.ModelSerializer):
 
     def get_carga_automatica(self, obj) -> bool:
         return obj.fonte in carga.fontes_conhecidas()
+
+    def get_exige_documento(self, obj) -> bool:
+        return carga.exige_escolha_de_documento(obj.fonte)
 
 
 class CargaBaseSerializer(serializers.ModelSerializer):
@@ -269,6 +277,40 @@ class OrcamentoSerializer(TenantScopedModelSerializer):
             except IntegrityError:
                 if tentativa == 2:
                     raise
+
+    def update(self, instance, validated_data):
+        """Trocar a publicação arrasta data-base e regime junto.
+
+        O `create` acima já cola a data-base na publicação escolhida; a
+        atualização **não fazia isso**, e era uma incoerência que nascia calada:
+        um PATCH que só trocasse `base_referencial` deixava `data_base`
+        apontando para o mês da publicação anterior — ou nulo, quando o
+        orçamento tinha nascido "sem base". Data-base é o que o edital cobra e o
+        que separa orçado de realizado; errada, ela não avisa, só mente.
+
+        **Só arrasta o que o cliente não mandou** e **só quando a publicação
+        mudou**: quem informa `data_base` na mesma requisição está dizendo que
+        sabe o que quer, e data de edital diferente do mês da publicação é caso
+        real, não engano.
+
+        Tirar a base (`None`) **não** apaga a data-base, de propósito: ela
+        sobrevive à publicação (ver `models.Orcamento`), porque o preço já
+        congelado continua sendo de algum mês.
+
+        O que este método **não** faz é reprecificar. As linhas são fotografias;
+        mexer nelas é o trabalho da `Reprecificacao`, que tem prévia, histórico
+        e desfazer. Trocar a base aqui muda de onde os **próximos** itens vão
+        buscar preço — os que já estão na planilha ficam como estão.
+        """
+        base = validated_data.get("base_referencial", instance.base_referencial)
+        trocou = (
+            "base_referencial" in validated_data
+            and base != instance.base_referencial
+        )
+        if trocou and base is not None:
+            validated_data.setdefault("data_base", base.mes_referencia)
+            validated_data.setdefault("regime_encargos", base.regime_encargos)
+        return super().update(instance, validated_data)
 
 
 class RevisaoOrcamentoSerializer(TenantScopedModelSerializer):

@@ -10,6 +10,7 @@ import PaginaShell from '../components/PaginaShell'
 import MedicaoDrawer from '../components/MedicaoDrawer'
 import GradeOrcamento, { type ColunaEditavel, type EdicaoCelula } from '../components/GradeOrcamento'
 import InserirItemModal, { type Escolha } from '../components/InserirItemModal'
+import SeletorDeBase from '../components/SeletorDeBase'
 import { Aviso, Btn, Card, CAPS, Empty, Field, inp, Loading, Modal, mono, Pill, Select, Seletor, Spinner, Drawer, Info } from '../ui'
 import { brl, mesBR, num, paraDecimal, pct, STATUS_ESTADO } from '../lib'
 import { baixarExportacao } from '../api/orcamentoApi'
@@ -20,7 +21,9 @@ import {
   useAplicarReprecificacao, useDesfazerReprecificacao, useDuplicarOrcamento,
   useGerarPreviaReprecificacao, useHistoricoReprecificacao,
 } from '../hooks'
-import type { ItemOrcado, ObraOpt, PreviaReprecificacao } from '../types'
+import type { BaseResumo, ItemOrcado, ObraOpt, PreviaReprecificacao } from '../types'
+
+import { minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
 
 type Modo = 'sintetico' | 'analitico'
 
@@ -183,7 +186,9 @@ export default function OrcarPage() {
       </div>
       {podeEditar && <Btn tam="sm" variant="primary" onClick={() => setInserindo(true)}><Plus size={13} />Item</Btn>}
       {podeEditar && <Btn tam="sm" onClick={adicionarGrupo}><FolderPlus size={13} />Etapa</Btn>}
-      {podeEditar && <Btn tam="sm" onClick={() => setAjustandoTaxas(true)}><Percent size={13} />BDI e encargos</Btn>}
+      {/* O botão diz "Base" primeiro porque é o que alguém vem procurar quando
+          a planilha entrou zerada — e era justamente o que não existia. */}
+      {podeEditar && <Btn tam="sm" onClick={() => setAjustandoTaxas(true)}><Percent size={13} />Base, BDI e encargos</Btn>}
       {podeEditar && (
         <Btn tam="sm" onClick={() => recalcular.mutate(orcamento.orcamento_id)} disabled={recalcular.isPending}>
           <Calculator size={13} />Recalcular
@@ -367,6 +372,7 @@ export default function OrcarPage() {
           onFechar={() => setInserindo(false)}
           onInserir={inserirEscolhas}
           inserindo={itemDoCatalogo.isPending}
+          baseDoOrcamento={orcamento?.base_referencial ?? null}
         />
       )}
 
@@ -391,7 +397,7 @@ export default function OrcarPage() {
 
       {ajustandoTaxas && orcamento && (
         <Modal
-          titulo="BDI e encargos sociais"
+          titulo="Base de preço, BDI e encargos"
           onClose={() => setAjustandoTaxas(false)}
           rodape={<Btn onClick={() => setAjustandoTaxas(false)}>Fechar</Btn>}
         >
@@ -399,12 +405,19 @@ export default function OrcarPage() {
             bdi={orcamento.bdi_percentual}
             encargos={orcamento.encargos_sociais_percentual}
             regime={orcamento.regime_encargos}
+            base={orcamento.base_referencial}
+            bases={bases ?? []}
+            temLinhas={(arvore?.itens.length ?? 0) > 0}
             salvando={atualizarOrcamento.isPending}
             onSalvar={async dados => {
               await atualizarOrcamento.mutateAsync({ id: orcamento.orcamento_id, payload: dados as Partial<typeof orcamento> })
               await recalcular.mutateAsync(orcamento.orcamento_id)
               setAjustandoTaxas(false)
-              setRecado('Taxas atualizadas e planilha recalculada.')
+              setRecado(
+                dados.base_referencial !== orcamento.base_referencial
+                  ? 'Base de preço trocada — os próximos itens virão dela. Use Reprecificar para atualizar as linhas que já estão na planilha.'
+                  : 'Taxas atualizadas e planilha recalculada.',
+              )
             }}
           />
         </Modal>
@@ -519,7 +532,9 @@ function ModalDuplicar({ orcamento, obras, onFechar, onDuplicado }: {
 
 function ModalReprecificar({ orcamentoId, bases, onFechar, onRecado }: {
   orcamentoId: number
-  bases: { base_id: number; rotulo: string }[]
+  // Resumo inteiro, e não `{base_id, rotulo}`: o seletor encadeado escolhe por
+  // fonte, UF, mês e regime — eixos que o rótulo pronto não devolve.
+  bases: BaseResumo[]
   onFechar: () => void
   onRecado: (m: string) => void
 }) {
@@ -588,13 +603,16 @@ function ModalReprecificar({ orcamentoId, bases, onFechar, onRecado }: {
           </Aviso>
           <div style={{ height: 14 }} />
           <Field label="Publicação de destino">
-            <Select value={baseDestino} onChange={e => setBaseDestino(e.target.value)} style={{ width: '100%', maxWidth: 'none' }}>
-              <option value="">Selecione</option>
-              {bases.map(b => <option key={b.base_id} value={b.base_id}>{b.rotulo}</option>)}
-            </Select>
+            <SeletorDeBase
+              bases={bases}
+              valor={baseDestino === '' ? '' : Number(baseDestino)}
+              onChange={v => setBaseDestino(v === '' ? '' : String(v))}
+              rotuloVazio="Selecione"
+              style={{ width: '100%' }}
+            />
           </Field>
           <Field label="Só linhas com preço até (data de corte)" dica="Opcional. Linha com preço mais novo que isto não é tocada — preserva o que já foi renegociado à mão.">
-            <input type="date" value={somenteAte} onChange={e => setSomenteAte(e.target.value)} style={{ ...inp, ...mono }} />
+            <input type="date" min={minCalendarioISO} max={maxCalendarioISO} value={somenteAte} onChange={e => setSomenteAte(e.target.value)} style={{ ...inp, ...mono }} />
           </Field>
           <Btn variant="primary" disabled={!baseDestino || gerar.isPending} onClick={() => comErro(async () => {
             const p = await gerar.mutateAsync({
@@ -922,13 +940,59 @@ function DrawerPrecoReal({ item, podeAplicar, onFechar, onAplicado }: {
   )
 }
 
-function FormTaxas({ bdi, encargos, regime, salvando, onSalvar }: {
+function FormTaxas({ bdi, encargos, regime, base, bases, temLinhas, salvando, onSalvar }: {
   bdi: string; encargos: string; regime: string; salvando: boolean
-  onSalvar: (dados: { bdi_percentual: string; encargos_sociais_percentual: string; regime_encargos: string }) => void
+  base: number | null
+  bases: BaseResumo[]
+  /** Muda o texto do aviso: planilha vazia não tem preço velho para conviver
+   *  com o novo, e prometer "use Reprecificar" ali seria recado sem serventia. */
+  temLinhas: boolean
+  onSalvar: (dados: {
+    bdi_percentual: string; encargos_sociais_percentual: string; regime_encargos: string
+    base_referencial: number | null
+  }) => void
 }) {
-  const [form, setForm] = useState({ bdi, encargos, regime })
+  const [form, setForm] = useState({ bdi, encargos, regime, base })
+  const trocouBase = form.base !== base
   return (
     <>
+      {/* **A base é editável depois, e é aqui que ela mora.** Antes só dava
+          para escolher publicação na criação do orçamento — e quem deixasse o
+          padrão "Sem base — preço digitado à mão" ficava sem saída: todo item
+          entrava a zero e o único jeito de consertar era descobrir, por acaso,
+          que Reprecificar grava uma base. */}
+      <Field
+        label="Base de preço"
+        dica="De onde o preço dos PRÓXIMOS itens será copiado. A data-base do orçamento acompanha a publicação escolhida."
+      >
+        <SeletorDeBase
+          bases={bases}
+          valor={form.base ?? ''}
+          onChange={v => setForm(f => {
+            // O regime acompanha a publicação escolhida — senão o orçamento
+            // ficaria dizendo "onerado" apoiado numa base desonerada, que é o
+            // mesmo custo contado de dois jeitos. Continua editável logo
+            // abaixo: quem tem motivo para divergir, diverge à vista.
+            const escolhida = bases.find(b => b.base_id === v)
+            return { ...f, base: v === '' ? null : v, regime: escolhida?.regime_encargos ?? f.regime }
+          })}
+          rotuloVazio="Sem base — preço digitado à mão"
+          style={{ width: '100%' }}
+        />
+      </Field>
+      {trocouBase && (
+        <Aviso tom="amber">
+          <AlertTriangle size={15} style={{ flex: 'none', marginTop: 1 }} />
+          <span>
+            {temLinhas
+              ? <>As linhas que já estão na planilha <b>mantêm o preço atual</b> — trocar a base muda de
+                  onde vêm os <b>próximos</b> itens. Para atualizar as existentes use <b>Reprecificar</b>,
+                  que mostra prévia e permite desfazer.</>
+              : <>A planilha está vazia, então é só escolher: os itens que você inserir já virão com
+                  preço desta publicação.</>}
+          </span>
+        </Aviso>
+      )}
       <Field label="BDI (%)" dica="Percentual resultante que multiplica cada linha analítica. A composição analítica do Acórdão 2622/2013-TCU fica na aba de BDI.">
         <input value={form.bdi} onChange={e => setForm(f => ({ ...f, bdi: e.target.value }))} style={{ ...inp, ...mono }} />
       </Field>
@@ -937,8 +1001,13 @@ function FormTaxas({ bdi, encargos, regime, salvando, onSalvar }: {
       </Field>
       <Field label="Regime">
         <Select value={form.regime} onChange={e => setForm(f => ({ ...f, regime: e.target.value }))} style={{ width: '100%', maxWidth: 'none' }}>
-          <option value="onerado">Onerado</option>
+          <option value="onerado">Onerado (não desonerado)</option>
           <option value="desonerado">Desonerado</option>
+          {/* Faltava, e a SINAPI publica: é o preço **sem encargos sociais**,
+              sobre o qual se aplica o quadro analítico do ORC.7. Sem esta
+              opção, um orçamento apoiado numa publicação "sem" não conseguia
+              declarar o próprio regime. */}
+          <option value="sem">Sem encargos</option>
           <option value="na">Não se aplica</option>
         </Select>
       </Field>
@@ -946,6 +1015,7 @@ function FormTaxas({ bdi, encargos, regime, salvando, onSalvar }: {
         bdi_percentual: paraDecimal(form.bdi),
         encargos_sociais_percentual: paraDecimal(form.encargos),
         regime_encargos: form.regime,
+        base_referencial: form.base,
       })}>Salvar e recalcular</Btn>
     </>
   )

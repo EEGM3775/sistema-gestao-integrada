@@ -94,7 +94,7 @@ caminhos gravando o mesmo número é garantia de divergência.
 
 | Modelo | Papel |
 |---|---|
-| `BaseReferencial` | Uma **publicação**: fonte × UF × mês × regime de encargos (ex.: "SINAPI SP 07/2026 desonerado"). A granularidade é a publicação, não a base, porque orçamento tem data-base e onerado/desonerado muda o custo de toda composição com mão de obra |
+| `BaseReferencial` | Uma **publicação**: fonte × UF × mês × regime de encargos × **variante** (ex.: "SINAPI SP 07/2026 desonerado"). A granularidade é a publicação, não a base, porque orçamento tem data-base e onerado/desonerado muda o custo de toda composição com mão de obra. A `variante` é o quinto eixo e fica **vazia em quase toda fonte** — existe porque a EMBASA publica, para o mesmo semestre e o mesmo regime, uma tabela por escopo × convenção coletiva, com os mesmos códigos e preços diferentes (§12.8) |
 | `InsumoReferencia` | Linha da publicação — **insumo** (material/mão de obra/equipamento) ou **composição**, discriminados por `tipo`, como a própria SINAPI publica |
 | `ComposicaoReferenciaItem` | Linha **analítica**: composição → filho + `coeficiente`. O filho pode ser outra composição (auxiliares aninhadas) |
 
@@ -115,6 +115,40 @@ cada insumo = memória de cálculo), `bases-resumo/` e o verbo `referencias/{id}
 (+ `adotar-lote/`). Paginada **não** quer dizer inalcançável: quem consome precisa oferecer o
 percurso (rolagem infinita ou passa-página), porque orçamentista que não sabe o código de cor
 navega pelo catálogo, não pela busca.
+
+**Ordem é escolha de quem procura, não do arquivo.** `referencias/` aceita `ordering` por `codigo`,
+`descricao` e `custo_unitario`; o padrão do model é `["base", "codigo"]`, e código de fonte oficial
+não tem relação com assunto — procurar "aterro" pela numeração devolve os aterros espalhados no meio
+da lista. A tela oferece as duas ordens, e a alfabética vai como `descricao,codigo`: descrição não é
+única (a SINAPI publica dezenas de "CONSTRUÇÃO DE BASE E SUB-BASE…" que só diferem no fim do texto)
+e, sem desempate, duas páginas do mesmo resultado podem repetir uma linha e engolir outra.
+
+**Escolher publicação é em passos encadeados, não numa lista.** A identidade é
+`fonte × UF × mês × regime`, e uma lista plana multiplica os quatro eixos: com a SINAPI de 01/2025 a
+08/2026 são 27 UFs × 20 meses × 3 regimes = **1.460 opções** num `<select>`. O `SeletorDeBase`
+encadeia — praça (fonte + UF) → mês → regime —, e cada caixa volta ao seu tamanho natural. Trocar de
+praça preserva mês e regime quando existem na praça nova, para comparar o mesmo mês entre dois
+estados sem reescolher a data. O regime é caixa própria e **não** pode ser deduzido: onerado ×
+desonerado muda o custo de toda composição com mão de obra. Eixo que a fonte não publica fica
+**cinza e travado**, não some — fonte de concessionária costuma ter preço único, e caixa que
+desaparece muda o tamanho da linha e esconde que o eixo existe.
+
+**A quarta caixa (`variante`) segue a mesma régua.** A EMBASA publica, para o mesmo semestre e o
+mesmo regime, uma tabela por escopo (expansão · operação de água · de esgoto) × convenção coletiva,
+todas com os mesmos 6.992 códigos e preços diferentes: sem ela, as seis chegariam ao fim do
+encadeamento como seis linhas de nome igual. Ela mostra o rótulo que a **fonte** deu — escopo,
+sindicato e a leis sociais do cabeçalho do arquivo — e fica cinza nas fontes que publicam uma
+tabela só, que são todas as outras.
+
+**`bases-resumo/` agrega por fora da lista, não com `annotate`.** Os números por publicação
+(insumos, composições, quantos vieram classificados, quais classes a fonte usou) saem de duas
+agregações chapadas casadas em memória por `base_id` — `Count` correlacionado na lista custaria uma
+varredura da tabela de referências *por publicação*, e a base referencial cresce por mês × UF ×
+regime. Servindo essas contas há o índice **parcial** `orcamento_ref_classe_idx` em
+`(base, grupo) WHERE tipo='insumo'`: as perguntas de classificação só existem para insumo, e incluir
+composição quadruplicaria o índice sem responder nada a mais. Tudo **derivado**, sem contador
+gravado — a publicação pode ser reimportada e a tela não tem como falar de um estado que não existe
+mais.
 
 #### O arquivo oficial da SINAPI tem dois formatos, e eles não se parecem
 
@@ -159,6 +193,21 @@ um alias global faria o campo certo ficar sem mapa num dos dois.
 | `Reprecificacao` · `LinhaReprecificacao` | O **lote de troca de data-base**, com o preço anterior linha a linha — é o que torna o desfazer possível sem inventar versão. `descontinuado` marca a linha cujo código **sumiu da publicação de destino**: ela entra no lote para *aparecer*, com `custo_depois == custo_antes`, `selecionada=False` e nunca aplicável, nem que venha marcada no pedido. `linhas_afetadas` conta preço trocado; `linhas_descontinuadas` conta à parte, porque não são a mesma coisa |
 | `ParametroObra` | Orçamento **paramétrico**: `projeto_padrao` (R-1…GI), CUB da data-base, áreas real e equivalente, adicionais que o CUB não cobre |
 | `PavimentoObra` · `UnidadeAutonoma` · `MemorialNBR` | Base dos quadros da **NBR 12721** — áreas por pavimento, unidades autônomas (coeficiente de proporcionalidade **e** fração ideal, que não são a mesma coisa) e os memoriais descritivos dos quadros V–VIII |
+
+**A base de preço é escolhível depois, e trocar a publicação arrasta a data-base junto.**
+`base_referencial` é editável no cabeçalho (`PATCH` no orçamento, e o campo fica na tela "Base, BDI e
+encargos") — a escolha não morre na criação, onde o padrão é *"Sem base — preço digitado à mão"*.
+Quando a publicação **muda**, `OrcamentoSerializer.update` copia `data_base` e `regime_encargos`
+dela, como o `create` já fazia: sem isso o cabeçalho ficaria dizendo um mês e apoiado no preço de
+outro, e data-base errada não avisa, só mente. Duas exceções deliberadas: `data_base` informada na
+mesma requisição **vence** (data de edital ≠ mês da publicação é caso real), e **tirar** a base não
+apaga a data-base — ela sobrevive à publicação, porque o preço já congelado continua sendo de algum
+mês.
+
+Trocar a base **não reprecifica** o que já está na planilha. As linhas são fotografias, e mexer nelas
+é o trabalho da `Reprecificacao`, que tem prévia, histórico e desfazer; repreçar calado num campo de
+formulário passaria por cima dessa trilha. A troca muda de onde vêm os **próximos** itens, e a tela
+diz isso no momento em que a escolha é feita.
 
 **A versão é numerada pelo servidor, nunca pelo cliente.** `versao` é read-only na API e a unicidade
 é `(obra, versao)`; os três caminhos que criam orçamento — POST, `revisar_orcamento` e
@@ -534,6 +583,8 @@ Registrado em [D124](../pendencias.md).
 | **ORC.5b** | Bancos próprios do tenant, importação com conferência, duplicar/copiar, reprecificação e exportação |
 | **ORC.6** | E2E vivo pelo gateway + sincronização de docs — [orc6_orcamento_test.py](../../testes/e2e/orc6_orcamento_test.py), 17 blocos / 55 checks |
 | **ORC.7** | **Paridade de licitação:** encargos analíticos (A/B/C/D), memória do quantitativo (`LinhaMedicao`), relação consolidada + curva ABC **de insumos**, desembolso por insumo, reajuste por fórmula paramétrica, quatro peças de documento novas, `importar_indices`, tasks de varredura. Seam novo no SCM (compra nasce da planilha) e 6ª página no frontend |
+| **ORC.8** | **A carga da base oficial num clique:** `FonteOficial` (template de URL editável), `CargaBase` (histórico, inclusive das falhas), `AnaliticaNacional`, leitor do formato largo da Caixa, botão + upload + agendamento — tudo do `is_platform_admin`, na tela **Sistema → Bases oficiais** |
+| **ORC.8b** | **A EMBASA, a fonte que publica em PDF:** leitor do *Relatório de Serviços* e do *Relatório de Insumos Genéricos*, `BaseReferencial.variante` (o quinto eixo da chave), menu de documentos da fonte (`documentos-disponiveis`), de-para de classes da EMBASA e a quarta caixa do seletor de base |
 
 ### 12.5 ORC.7 — as três assimetrias que sobravam
 
@@ -603,7 +654,7 @@ enquanto a publicação carregada for do formato antigo, filtro por ela devolve 
 | A analítica guardada uma vez por fonte + mês | `AnaliticaNacional` em [models.py](../../backend/moduloorcamento/models.py) |
 | A leitura única das duas analíticas | `services.componentes_da_composicao` |
 | O botão, o plano B e o histórico | `FonteOficialViewSet` / `CargaBaseViewSet` em [views.py](../../backend/moduloorcamento/views.py) |
-| A varredura que busca (e as três recusas dela) | `agendar_cargas_do_mes` em [tasks.py](../../backend/moduloorcamento/tasks.py) |
+| A varredura que busca (e as quatro recusas dela) | `agendar_cargas_do_mes` em [tasks.py](../../backend/moduloorcamento/tasks.py) |
 | A mesma porta pela bancada | [carregar_base_oficial](../../backend/moduloorcamento/management/commands/carregar_base_oficial.py) |
 | O painel, só para `is_platform_admin` | [PainelCargaOficial.tsx](../../frontend/src/modules/orcamento/components/PainelCargaOficial.tsx) |
 | A tela onde ele mora — **fora deste módulo** | [sistema/pages/BasesOficiaisPage.tsx](../../frontend/src/modules/sistema/pages/BasesOficiaisPage.tsx) (`/app/sistema/bases`) |
@@ -642,9 +693,73 @@ operação as usa: o botão (baixa e grava), *só conferir* (lê e conta, não g
 (`dia_do_mes`) é a quarta, e existe para que "alguém esqueceu" não vire orçamento nascendo com preço
 vencido.
 
-**O que o motor ainda não lê:** só o formato largo da Caixa. `carga.fontes_conhecidas()` declara
-isso, a tela diz na cara e o agendamento se recusa a tentar uma fonte sem leitor — nada finge
-funcionar. É o que sobrou do [A14](../pendencias.md), com outro conteúdo.
+**O que o motor ainda não lê:** o formato largo da Caixa e o PDF da EMBASA (§12.8), e mais nada.
+`carga.fontes_conhecidas()` declara isso, a tela diz na cara e o agendamento se recusa a tentar uma
+fonte sem leitor — nada finge funcionar. É o que sobrou do [A14](../pendencias.md), com outro
+conteúdo.
+
+### 12.8 ORC.8b — a EMBASA, a fonte que publica em PDF
+
+A EMBASA (Empresa Baiana de Águas e Saneamento) é a tabela de preços de saneamento da Bahia, e é a
+primeira fonte do sistema que **não entrega planilha nenhuma**. Não é descuido de quem publica: o
+artefato é gerado do Excel deles com moldura de relatório e serve para licitação impressa. Quem
+precisa do dado é quem o lê.
+
+Três fatos desta fonte, e a decisão que cada um forçou:
+
+| O que a fonte faz | O que isso exigiu |
+|---|---|
+| **Publica por semestre, numa página com nome próprio** (`/2026.11`), não um arquivo por mês | O `template_url` da `FonteOficial` guarda a **página**, e a carga lista os documentos dela. `cargas/documentos-disponiveis/` é esse menu; `carga.exige_escolha_de_documento` tira a fonte da varredura mensal, porque um agendamento que escolhe por alguém escolhe o preço de uma região para quem orça em outra |
+| **65 tabelas carregáveis por semestre**, e nenhuma é "a do mês" — escopo (expansão · operação de água · de esgoto, produção × unidade fixa) × regime × convenção coletiva | `BaseReferencial.variante` entrou na chave da publicação. Sem ela, as seis tabelas de um mesmo escopo+regime colidiriam e a última carga sobrescreveria as cinco anteriores **em silêncio** — são os mesmos 6.992 códigos com preços diferentes (6.093 dos 6.992 divergem entre a 1.1 e a 1.2) |
+| **O documento declara a própria identidade** na quinta linha: `DESONERADO - EXPANSÃO - SINTRACOM`, com `LS H:` e `LS M:` no cabeçalho | A identidade é lida do **PDF**, não do nome do arquivo: o nome traz `h-158-56`, não traz o sindicato, e é o sindicato que separa duas publicações que de outro modo colidiriam. O rótulo da publicação sai daí |
+| **E nem toda tabela tem convenção.** As quatro de manutenção industrial da operação de água terminam em `- MANUT IND`, que é fim de escopo e não sindicato — elas são uma só por regime | A convenção é o **último pedaço, quando vem sozinho**: sigla de sindicato é uma palavra, `MANUT IND` são duas. Sem ela o escopo vai inteiro e `sindicato` fica vazio, em vez de guardar o que não é sindicato. Lista fixa de siglas quebraria no primeiro acordo novo |
+
+Quatro regras do dado da EMBASA, e por que cada uma é o **inverso** de uma regra da SINAPI:
+
+1. **`TRADICIONAL` é o `onerado` do sistema.** A dobra de nomenclatura é da fonte, e "tradicional"
+   soa como "o normal" — trocar os dois inverte o custo de toda a tabela, calado.
+2. **`0,00` é valor publicado, não ausência.** Na SINAPI, célula em branco significa "não houve
+   pesquisa" e a linha fica fora (§4.1). Aqui a célula vem **preenchida** com `0,00` para o que a
+   fonte não precifica (mobilização, fiscalização — verba do contrato). A linha entra, e o resumo
+   conta quantas são.
+3. **Insumo é custo puro, serviço não é.** O *Relatório de Insumos Genéricos* traz o salário-hora
+   sem leis sociais (ajudante de armador a R$ 7,84/h) e entra no regime **`sem encargos`**; o
+   *Relatório de Serviços* traz o preço **já com** a LS do cabeçalho dentro e entra como
+   `desonerado`/`onerado`. Trocar os dois aplicaria encargo sobre preço que já o tem — o D109
+   renascido nesta fonte.
+4. **A data-base é a do artefato, não a que foi pedida.** A corrida nasce com uma competência
+   calculada por defasagem em meses; a EMBASA publica por semestre, então pedir agosto e receber
+   junho é o normal. Vale a do PDF, e o aviso registra a diferença.
+
+**Não há analítica.** A EMBASA publica o preço sintético do serviço, não a composição dele — as
+composições entram com custo e sem memória de cálculo, pelo mesmo aviso que a SINAPI dá quando a
+aba analítica falta.
+
+**Os PDFs de Encargos Sociais ficam de fora, de propósito.** `1.7`, `2.7`, `1.8`… são a memória de
+cálculo da LS (grupos A, B, C e D em quatro colunas), e o lugar deles é o quadro de encargos do
+ORC.7, não a base de preço. Eles aparecem na lista de documentos — é o que a página publica — mas
+não são carregáveis, e a leitura recusa um deles dizendo por quê. Os dois números que a base precisa
+(LS horista e mensalista) já vêm no cabeçalho de **toda** tabela de serviços, e ficam no rótulo da
+publicação e no resumo da corrida. Eles não viram campo porque o preço de serviço da EMBASA já os
+embute: ninguém os aplica de novo, e o que se precisa deles é saber qual tabela se está usando.
+
+**A URL do documento é amarrada ao host cadastrado.** O endpoint manda o worker buscar um endereço —
+sem a amarra, é SSRF com convite. A liberdade que a fonte exige (escolher entre 65 documentos do
+mesmo site) cabe inteira dentro do host que já está em `FonteOficial`.
+
+#### Onde a ORC.8b mora no código
+
+| Peça | Arquivo |
+|---|---|
+| O leitor: identidade do cabeçalho, PDF → publicação, lista de documentos | [embasa.py](../../backend/moduloorcamento/embasa.py) |
+| O despacho por fonte e o menu de artefatos | `ler_pacote` / `documentos_disponiveis` em [carga.py](../../backend/moduloorcamento/carga.py) |
+| O quinto eixo da chave | `BaseReferencial.variante` em [models.py](../../backend/moduloorcamento/models.py) |
+| O de-para das seis classes da fonte | [dados/classes/embasa.csv](../../backend/moduloorcamento/dados/classes/embasa.csv) |
+| O endereço já cadastrado | `cadastrar_embasa` em [0014_orc8b_embasa_pdf.py](../../backend/moduloorcamento/migrations/0014_orc8b_embasa_pdf.py) |
+| A escolha do documento, sem abrir SSRF | `CargaBaseViewSet._documento` em [views.py](../../backend/moduloorcamento/views.py) |
+| `--listar`, `--documento` e `--todas` | [carregar_base_oficial](../../backend/moduloorcamento/management/commands/carregar_base_oficial.py) |
+| A quarta caixa do seletor | [SeletorDeBase.tsx](../../frontend/src/modules/orcamento/components/SeletorDeBase.tsx) |
+| A caixa "Tabela" no painel de carga | [PainelCargaOficial.tsx](../../frontend/src/modules/orcamento/components/PainelCargaOficial.tsx) |
 
 ### 12.6 Onde o ORC.7 mora no código
 

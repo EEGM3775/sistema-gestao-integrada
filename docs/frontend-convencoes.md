@@ -33,6 +33,33 @@ setFieldErrors(parseApiErrors(err))   // erros por campo do DRF → FieldErrors
 `FieldErrors = Record<string, string>`. O campo especial `_form` é reservado para erros não
 vinculados a um campo específico.
 
+### Erro sem escrita não é erro (D187)
+
+*(Decisão do dono, 20/09/2026, depois de ver a página de 502 do nginx inteira dentro de um diálogo:
+"ninguém sabe o que é isso".)*
+
+**Toda saída do `parseApiErrors` é uma frase em português.** Não existe caminho que devolva o corpo
+cru da resposta, e a razão é que os corpos que chegam ali nem sempre são da API: um 502 traz HTML do
+nginx, uma rede caída não traz nada, e um 500 em modo de depuração traz a página do Django. Nenhum
+dos três é mensagem; os três são a encanação do sistema aparecendo na tela de quem está trabalhando.
+
+Quem separa os casos é o **`status`**, nunca o corpo. E cada frase responde às duas perguntas que a
+pessoa tem naquele instante:
+
+1. **de quem é o problema** — dela, da rede, ou nosso. Sem isso ela não tenta de novo, porque conclui
+   que digitou algo errado;
+2. **se o que ela escreveu se perdeu.** É a parte acionável. Num 502 a requisição não chegou a ser
+   processada, então nada foi gravado e o certo é repetir — e sem essa frase ninguém sabe se o que
+   acabou de registrar existe.
+
+Os três buracos que a regra fecha, e que valem como lista de conferência para qualquer tradutor de
+erro novo: corpo em **HTML**, resposta **ausente**, e corpo **JSON vazio** (`{}` sai do laço sem uma
+única frase e a tela mostra espaço em branco onde deveria estar a explicação).
+
+> **Como se prova isso sem derrubar nada:** o teste de navegador forja o 502 com `page.route()` e
+> confere que a página do nginx **não** aparece. Derrubar o backend no meio de uma suíte que divide
+> máquina atingiria outra sessão — e o que se está provando é a tela, não o gateway.
+
 ## 2. CPF, CNPJ e CPF/CNPJ
 
 Toda interação com esses campos usa **exclusivamente** `@/utils/masks.ts`. Nunca declarar funções
@@ -75,23 +102,43 @@ Toda lógica de data usa **exclusivamente** `@/utils/dates.ts`. Nunca declarar `
 | Parse DD/MM/AAAA → Date | `parseDateBR(br)` → `Date \| null` |
 | Converter DD/MM/AAAA → YYYY-MM-DD (payload) | `dateFromBR(br)` |
 | Converter YYYY-MM-DD → DD/MM/AAAA (display) | `dateToBR(iso)` |
-| Atributo `min=` / `max=` em `type="date"` | funções `min*/max*ISO()` (dinâmicas — recalculam "hoje") |
-| Validar `type="date"` onBlur | `validateISO_Nasc` · `validateISO_Vigencia` · `validateISO_Pagamento` · `validateISO_ExameASO` · `validateISO_ValidadeASO` |
+| Atributo `min=` / `max=` em `type="date"` | **`minCalendarioISO` / `maxCalendarioISO`** — sempre os dois, sempre esses |
+| Validar `type="date"` onBlur | `validateISO_Calendario` · `validateISO_Nasc` · `validateISO_Vigencia` · `validateISO_Pagamento` · `validateISO_ExameASO` · `validateISO_ValidadeASO` |
 | Validar DD/MM/AAAA onBlur | `validateDataNasc` · `validateDataAdmissao` · `validateDataDemissao` |
 
-**Limites por categoria:**
+### A faixa do calendário é uma só: **1900–2100**
 
-| Categoria | Min | Max | Uso |
-|---|---|---|---|
-| Nascimento | 01/01/1900 | hoje | `data_nascimento` (clientes, funcionários) |
-| Admissão/Demissão | 01/01/1940 | hoje + 2 anos | `data_admissao`, `data_demissao` |
-| Vigência/Contrato | hoje − 10 anos | hoje + 20 anos | datas de obra, etapa, empreendimento, contrato, ASO |
-| Pagamento | hoje − 1 ano | hoje + 5 anos | `data_pagamento`, `data_compra`, `data_custo`, `mes_referencia` |
+**Decisão do dono (15/09/2026):** *"Data mínima e máxima de todo o calendário é 1900 e 2100"* — em
+todo campo de data, **sem exceção**.
+
+Antes, cada família tinha a sua janela e **todas andavam com o relógio**: vigência era `hoje−10 …
+hoje+20`, pagamento era `hoje−1 … hoje+5`. O sintoma foi achado no Expediente do PDCA, que usa a
+família da vigência para a data de exceção do calendário: em 15/09/2026 o seletor abria em
+**2016–2046**, e não havia como cadastrar o feriado de 2047. Janela que anda com o relógio é pior do
+que janela estreita — a mesma tela aceita hoje o que vai recusar no ano que vem, e ninguém consegue
+explicar o porquê para quem está do outro lado.
+
+**O `min`/`max` do input não é o lugar da regra de negócio.** Ele apaga o dia do calendário do
+navegador **sem dizer nada**: a pessoa clica, não acontece nada, e a conclusão dela é que o sistema
+travou. O que é absurdo continua recusado, mas pelos **validadores**, que têm frase:
+
+| Regra | Onde ela vive | O que a pessoa vê |
+|---|---|---|
+| 1900–2100 | `min`/`max` do input | o calendário do navegador, com 200 anos |
+| Nascimento não pode ser futuro | `validateISO_Nasc` / `validateDataNasc` | *"Data de nascimento não pode ser futura."* |
+| Exame de ASO não pode ser futuro | `validateISO_ExameASO` | *"A data do exame não pode ser futura."* |
+| Demissão ≥ admissão | `validateDataDemissao` | *"Data de demissão deve ser posterior à admissão."* |
+
+`minNascISO`, `minVigenciaISO()`, `maxPagamentoISO()` e companhia continuam exportadas como
+**apelidos** da faixa única: o nome diz em que campo o valor está sendo usado e continua legível no
+JSX, e mudar a faixa de todos é mudar duas constantes. Nenhuma delas anda mais com o relógio.
+`maxTodayISO()` sobreviveu, mas **deixou de ser `max` de input** — é o que os validadores de "não pode
+ser futura" comparam, e o que a tela usa como valor padrão.
 
 **Padrão onBlur:**
 ```tsx
 <input type="date"
-  min={minVigenciaISO()} max={maxVigenciaISO()}
+  min={minCalendarioISO} max={maxCalendarioISO}
   onChange={e => { set('data_inicio_prevista', e.target.value); setFieldErrors(p => ({ ...p, data_inicio_prevista: '' })) }}
   onBlur={e => { const err = validateISO_Vigencia(e.target.value); if (err) setFieldErrors(p => ({ ...p, data_inicio_prevista: err })) }} />
 ```
@@ -144,6 +191,11 @@ const visiveis = itens.filter(i => contemSemAcento(i.nome, termo))
 
 Nunca `.toLowerCase().includes(...)` em texto que a pessoa digitou. `normalizar()` está exposto para
 quem precisa da chave normalizada (ordenação, agrupamento).
+
+> **Esta regra já foi descumprida em silêncio por nove filtros** ([D163](historico-correcoes.md),
+> 16/09/2026). O helper existia, o backend cumpria a régua, e nove listas client-side continuavam em
+> `.toLowerCase().includes()` — o dono achou pelo filtro de obras do Orçar. Ao escrever filtro novo,
+> a pergunta é *"o termo veio de um teclado?"*: se veio, `contemSemAcento`.
 
 **As duas pontas precisam da mesma régua.** No servidor, quem faz o mesmo é
 [`nucleo/busca.py`](../backend/nucleo/busca.py) — o `BuscaSemAcento` já é o `filter_backend` de toda
@@ -214,6 +266,76 @@ lixeira, de propósito.
 **E não vale para o que sai da nossa máquina.** Cancelar boleto no Asaas e cancelar NFS-e na NFE.io
 são irreversíveis de verdade: aquelas mensagens estão certas e ficam como estão. Ter lixeira aqui não
 desfaz ato em sistema de terceiro.
+
+## 9. O texto da tela é para quem opera, não para quem escreveu o sistema
+
+Regra de 15/09/2026, nascida de uma frase que o dono leu na medição por administração:
+
+> *"O número é declarado — a apropriação automática de HH ainda não existe, e o boletim diz isso em
+> vez de fingir que o sistema apurou."* — **"que mensagem bosta pro usuário final"**
+
+Ela estava **correta** e era inútil: respondia à pergunta de quem escreveu o software (*por que este
+campo é digitado?*) e não à de quem está na frente do campo (*o que eu escrevo aqui?*). O trecho
+final é pior que jargão — é o software se defendendo de uma acusação que ninguém fez.
+
+**A divisão, e ela é simples:**
+
+| Onde | O que responde | Vocabulário |
+|---|---|---|
+| Comentário de código / docstring | *por que é assim*, para quem mantém | fatia, planta, §, seam, achado, RLS |
+| String da tela | *o que a pessoa está tentando fazer agora* | o da obra: custo, medição, folha, nota |
+
+Na prática, três coisas que **não** entram em texto visível: número de fatia (`PDCA.9`), referência
+de documento interno (`§4.9`, "a planta diz") e defesa do próprio comportamento ("em vez de fingir",
+"não é um bug"). Se a razão de engenharia parece necessária na tela, quase sempre o que falta é a
+**instrução**: *"Confira com a folha, as notas e o material aplicado no período."*
+
+**Aviso que aparece sempre e não pede ação não é aviso, é ruído** — e ensina a ignorar a faixa onde
+um dia aparece algo que importa. O registro do fato (quem informou o número, quando) vai para o
+**documento**, que é onde alguém o lê ao decidir.
+
+## 10. Campo que não aceita digitação não é campo
+
+`<input readOnly>` tem borda, cursor e fundo de campo: convida a clicar e não aceita nada. Em
+leitura, **número é texto**.
+
+Achado em 15/09/2026, com o elemento colado pelo dono: *"a parte mais importante da medição não
+consigo editar"* — era a grade da **prévia**, somente leitura por desenho, e a tela não dizia isso em
+lugar nenhum. Vale para toda grade: `somenteLeitura` troca o `input` por um `<span>` alinhado, e a
+tela diz onde se digita.
+
+## 11. Regra que mora só na interface não é regra — é aviso
+
+Também de 15/09/2026, e o achado foi caro: a tela do contrato afirmava *"a planilha não se edita mais
+aqui"* enquanto a API aceitava o `PATCH` — o dono mudou uma quantidade contratada de 53.150 para
+631.500 em segundos. Uma prop `editavel` não protege o comando de bancada, a importação, nem a aba
+antiga aberta no navegador.
+
+**O padrão, nesta ordem:**
+
+1. a regra vira **uma função** no serviço, que devolve *se* e *por quê*
+   (`services.planilha_editavel → (bool, motivo)`);
+2. a **view** a aplica — é ela que protege todos os caminhos de escrita;
+3. o **serializer** a publica (`planilha_editavel`, `planilha_fechada_porque`), e a tela **lê a
+   resposta** em vez de reimplementar a condição.
+
+O terceiro passo é o que impede a tela e a API de divergirem — e é o que permite a mensagem na tela
+ser exatamente a mesma que a API devolveria.
+
+**Corolário:** antes de fechar um caminho, procure o beco. A primeira versão dessa trava fechou a
+planilha por *status do contrato*, e criou um pior que o defeito — contrato vigente **sem itens**
+ficava impossível de preencher, com a tela pedindo "cadastre os itens" e nenhuma porta. Toda trava
+nova merece a pergunta: *qual estado legítimo eu acabei de tornar impossível?*
+
+## 12. Mensagem que manda fazer algo mostra o caminho
+
+*"Este contrato ainda não tem planilha contratual. Cadastre os itens para poder medir."* — e o dono
+procurou o botão e não achou, porque ele estava em outra tela.
+
+Estado vazio que pede uma ação ou **traz o botão** que leva até ela, ou não deveria estar pedindo.
+Na grade de medição isso virou uma prop (`acaoVazia`) que a página preenche com o caminho certo;
+noutros lugares é um link. A régua: ninguém deveria precisar adivinhar onde fica o que a tela
+acabou de mandar fazer.
 
 ## Visibilidade: omitir × trancar
 

@@ -85,12 +85,68 @@ chamada responde 409 em vez de duplicar o carnê.
 | `GET /clientes/divergencias-asaas/` | Relatório (só leitura) de divergências de identidade banco × Asaas — `sem_documento`/`nome_divergente`/`vinculo_divergente`. Consumido ao abrir "Novo Cliente". Ver [funcoescobrancas.md](funcoescobrancas.md#auditoria-de-divergências-banco--asaas). |
 | `GET/POST /clientes-empreendimentos/` | `?cliente=`, `?empreendimento=`, `?condicoes_pagamento=` |
 | `GET/PUT/PATCH/DELETE /clientes-empreendimentos/:id/` | — |
+| `GET /clientes-empreendimentos/condicoes/` | O catálogo de formas de pagamento e o que cada uma comporta. A tela **lê** a regra daqui em vez de reescrevê-la. `cadastro.venda.view` |
+| `POST /clientes-empreendimentos/simular/` | A proposta sem gravar, recalculada a cada tecla. `cadastro.venda.view` |
+| `GET /clientes-empreendimentos/:id/previa-parcelas/` | O carnê que **seria** gerado — quantidade, total, cliente, unidade, faixa de vencimentos. Alimenta a confirmação do botão "Gerar parcelas". `cadastro.venda.view` |
+| `POST /clientes-empreendimentos/:id/gerar-parcelas/` | Materializa o carnê como `ContaReceber`. Idempotente (409 na segunda). `cadastro.venda.gerar_carne` |
+| `GET\|POST /clientes-empreendimentos/:id/corrigir/` | Correção monetária: `GET` é prévia, `POST` aplica. `cadastro.venda.gerar_carne` |
 | `GET/POST /contratos-clientes/` | `?cliente=`, `?empreendimento=`, `?status_contrato=`, `?responsavel=`, `?vendedor=` |
 | `GET/PUT/PATCH/DELETE /contratos-clientes/:id/` | — |
 | `GET/POST /documentos-clientes/` | `?cliente=`, `?tipo_documento=` · aceita `multipart/form-data` para upload |
 | `GET/DELETE /documentos-clientes/:id/` | — |
 | `GET/POST /dados-bancarios-clientes/` | `?cliente=` |
 | `GET/PUT/PATCH/DELETE /dados-bancarios-clientes/:id/` | — |
+
+### A condição de pagamento rege o plano
+
+O catálogo é [`plano_pagamento.CONDICOES`](../../backend/clientes/plano_pagamento.py) — **um lugar
+só**, lido pelo motor de cálculo, pelo serializer e pela tela. Cada condição declara se há entrada,
+parcelas e balões (intercaladas/anuais), e se ela **quita por fora**:
+
+| Condição | Entrada | Parcelas | Balões | Quita fora |
+|---|:--:|:--:|:--:|:--:|
+| `financiamento_direto` | ✔ | ✔ | ✔ | — |
+| `a_vista` | — | — | — | — |
+| `financiamento_bancario` | ✔ | — | — | ✔ |
+| `permuta` | — | — | — | ✔ |
+| `cartao` | ✔ | — | — | ✔ |
+| `outro` | ✔ | ✔ | ✔ | ✔ |
+
+**`quita_fora` existe porque nem toda venda passa inteira pelo carnê.** Na permuta a construtora não
+recebe parcela; no financiamento bancário recebe só o sinal e o banco quita o resto; no cartão o
+parcelamento é da operadora. O que sobra do valor negociado depois de entrada e balões vira
+`Plano.fora_do_carne` — um número declarado, exibido na proposta, que fecha a conta
+(`total + fora_do_carne == valor_negociado`). Não é desconto nem dívida esquecida: é valor liquidado
+por outro caminho.
+
+O `financiamento_direto` **não** quita por fora: ali, saldo sem parcela é falta real e vira erro.
+Condição desconhecida cai nessa mesma severidade — no permissivo, um plano incompleto viraria um
+"pago por fora" silencioso.
+
+`normalizar_por_condicao()` apaga do registro o que a condição não comporta, e roda no serializer
+além da tela: a tela não é a única porta (API, importação, admin).
+
+### O vencimento que vai ao boleto
+
+O carnê nasce em **dia útil bancário**. `montar()` recebe o calendário **injetado**
+(`ajustar_vencimento`) e continua puro; quem sabe onde fica o imóvel é
+[`clientes/vencimento.py`](../../backend/clientes/vencimento.py), e quem sabe o que é dia útil é
+[`modulocalendar/dias_uteis.py`](../../backend/modulocalendar/dias_uteis.py).
+
+- **A praça é a do imóvel, não a do comprador.** UF de `Empreendimento.estado`; o código IBGE — sem o
+  qual não se afirma feriado municipal — do `Local` do empreendimento no Maps. Sem ele, o ajuste vale
+  só para nacional + estadual, e **diz** isso (`calendario.municipio == false`).
+- **A parcela guarda as duas datas.** `vencimento` é a pagável; `vencimento_contratual` é a do
+  contrato; `ajuste_motivo` diz por que diferem ("domingo", nome do feriado).
+- **O ajuste é só da data, nunca do valor.** Juros correm por parcela, não por dia corrido.
+- **A base de feriados nasce vazia** (`manage.py sincronizar_feriados`). Sem ela o vencimento desvia
+  de fim de semana e não de feriado; as respostas trazem `calendario.feriadosCarregados` para a tela
+  não prometer o que não aconteceu.
+
+A descrição do título sai de `descricao_do_titulo()` — `Parcela 32/36 — Residencial Aurora · QD 4 ·
+LT 06`. O empreendimento vem antes da unidade porque o boleto chega sem a tela em volta, e a quadra 4
+existe em mais de um loteamento. Títulos antigos são reescritos pelo comando
+`renomear_titulos_do_carne` (prévia por padrão; grava com `--aplicar`).
 
 ### Serializers
 

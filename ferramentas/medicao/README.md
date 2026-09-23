@@ -14,6 +14,8 @@ pasta guarda o **como** e o **sobre o quê**, porque as duas coisas já se perde
 | [d43-alvos-19.txt](d43-alvos-19.txt) | Os 19 alvos do [D43](../../docs/historico-correcoes.md), nomeados |
 | `resultado-*.log` | O relatório consolidado de cada passada |
 | [resultado-2026-08-12-custo-por-arquivo-pela-tela.log](resultado-2026-08-12-custo-por-arquivo-pela-tela.log) | A primeira passada medida **no caminho de produção**, e não na bancada: os mesmos 159 arquivos subidos pela tela e convertidos pelo `worker-conversao`. Saída do `custo_do_acervo`, não deste diretório |
+| [aferir_deslocamento.py](aferir_deslocamento.py) | **O deslocamento dos símbolos do `dwg2SVG`, posto à prova** ([D159](../../docs/pendencias.md)). Por arquivo: o `viewBox` é legível? quantos símbolos a correção move? em quantos a escolha entre as duas leituras é **empate grave** (razão < 10× com a vencedora ainda longe da origem)? e que fração da geometria cai dentro do `viewBox` antes e depois? Roda num container com `dwg2SVG` sobre uma pasta de DWGs |
+| [resultado-2026-09-16-deslocamento-159.json](resultado-2026-09-16-deslocamento-159.json) | A passada de 16/09/2026 sobre os 159: `viewBox` legível em **159/159**, correção piorou **2/148**, e **118/148 com empate grave** — o número que reprovou a premissa do docstring |
 | [relatorio_custo_por_caminho.py](relatorio_custo_por_caminho.py) | O custo de cada arquivo **ao lado do caminho dele na pasta** — pareado por SHA-256, porque a `RevisaoDocumento` não guarda o caminho e o acervo tem nomes repetidos entre subpastas. Gera [docs/medicoes/custo-acervo-160.md](../../docs/medicoes/custo-acervo-160.md) |
 
 **O custo já é por arquivo, e `LOTE=1` deixou de ser obrigatório para isso** *(desde 12/08/2026,

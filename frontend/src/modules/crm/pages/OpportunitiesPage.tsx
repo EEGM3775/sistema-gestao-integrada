@@ -6,6 +6,8 @@ import { useOpportunities, useCreateOpportunity, useUpdateOpportunity, useDelete
 import { formatBRL } from '@/utils/money'
 import type { Opportunity, OpportunityPayload } from '../types'
 
+import { minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
+
 /**
  * Lista de Oportunidades - /app/crm/opportunities
  */
@@ -223,7 +225,7 @@ function OpportunityForm({ opportunity, onClose, onSave }: {
           <div>
             <label className="text-xs block mb-1" style={{ color: 'var(--color-text-muted)' }}>Data de Fechamento</label>
             <input
-              type="date"
+              type="date" min={minCalendarioISO} max={maxCalendarioISO}
               value={closeDate}
               onChange={e => setCloseDate(e.target.value)}
               required

@@ -35,6 +35,22 @@ PORTAS = {
     # PDCA.2 — a foto de campo do apontamento de avanço. Chegou sem porta e foi
     # este teste que a pegou (D120), que é o que ele existe para fazer.
     "pdca_apontamento": "pdca.avanco_foto",
+    # PDCA.7 — as três fotos da qualidade, que nasceram **com** porta. A do
+    # item de verificação é parte da ficha e segue `pdca.verificacao.view`; a do
+    # defeito e a da prova do conserto são as duas metades da mesma conversa e
+    # dividem `pdca.nc.view`.
+    "pdca_verificacao": "pdca.verificacao_foto",
+    "pdca_nc": "pdca.nc_foto",
+    "pdca_eficacia": "pdca.nc_foto",
+    # PDCA.8 — os anexos da ocorrência de segurança, e é o **primeiro prefixo
+    # com dois recursos por razão de permissão, não de app**. A mesma tabela
+    # guarda a foto da cena e o atestado médico: a foto sai por
+    # `pdca.ocorrencia.view` e o atestado, que é dado de saúde (LGPD art. 11),
+    # por `pdca.ocorrencia.dado_medico`. O gate da saída é do recurso e não da
+    # linha (`permissoes_da_entrega` é property sem argumento), então a
+    # separação só é real com dois recursos — e cada um recusa a linha que não
+    # é dele, senão bastaria pedir o atestado pela porta barata.
+    "pdca_ssma": ("pdca.ocorrencia_anexo", "pdca.ocorrencia_atestado"),
     # Fiscal — dois apps escrevem em `nfe_xmls/`, e por isso prefixo não é dono:
     # o `CustoEmpreendimento` tem gate próprio (`obra.custo_nfe`)
     "nfe_xmls": ("erp.nota_fiscal", "obra.custo_nfe"),

@@ -112,9 +112,21 @@ export default function ClientesListPage() {
     return saida
   }, [agrupado, lista.linhas, arvore, abertos, linhasDeGrupo])
 
-  const totalLinhas = agrupado
-    ? arvore.reduce((soma, no) => soma + no.contagem, 0)
-    : lista.total
+  /**
+   * O contador da barra: **o mesmo número, agrupado ou não**.
+   *
+   * Antes ele somava os cabeçalhos quando havia agrupamento — e a soma dos
+   * cabeçalhos não é o total de clientes. Agrupar pessoas por empreendimento
+   * coloca quem comprou em dois lugares nos dois grupos (cada grupo conta
+   * distinto, e está certo dentro dele), então a soma passava de 5.000 para
+   * 5.312 e o usuário via o número de clientes mudar por ter clicado em
+   * "agrupar por". Agora o total vem do servidor, contado distinto sobre o
+   * mesmo recorte, e a diferença — quando existe — é explicada ao lado.
+   */
+  const totalLinhas = agrupado ? grupos.total : lista.total
+  const repetidosEmGrupos = agrupado
+    ? Math.max(0, grupos.somaDosGrupos - grupos.total)
+    : 0
 
   const alternarGrupo = useCallback((no: NoGrupo) => {
     const chave = no.chaves.join('␟')
@@ -202,6 +214,7 @@ export default function ClientesListPage() {
         onFiltros={setFiltros}
         opcoes={opcoes}
         total={totalLinhas}
+        repetidosEmGrupos={repetidosEmGrupos}
         podeFinanceiro={podeFinanceiro}
       />
 

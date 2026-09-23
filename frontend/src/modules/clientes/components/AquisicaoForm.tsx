@@ -7,7 +7,7 @@ import type {
 } from '@/types'
 import { buscarUnidadesDisponiveis } from '@/modules/empreendimentos/hooks/useUnidades'
 import { FieldError, FormErrorBanner, parseApiErrors, type FieldErrors } from '@/utils/formErrors'
-import { minPagamentoISO, maxPagamentoISO, validateISO_Pagamento } from '@/utils/dates'
+import { validateISO_Pagamento, minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
 
 /**
  * A venda de uma unidade — escolher **qual** e montar a proposta.
@@ -32,54 +32,38 @@ interface Props {
   initial?: ClienteEmpreendimento | null
 }
 
-const CONDICOES: { value: CondicoesPagamento | ''; label: string }[] = [
-  { value: '',                      label: 'Selecione…' },
-  { value: 'financiamento_direto',  label: 'Financiamento Direto' },
-  { value: 'a_vista',               label: 'À Vista' },
-  { value: 'financiamento_bancario',label: 'Financiamento Bancário' },
-  { value: 'permuta',               label: 'Permuta' },
-  { value: 'cartao',                label: 'Cartão de Crédito/Débito' },
-  { value: 'outro',                 label: 'Outro' },
-]
-
 /**
- * O que cada condição de pagamento realmente tem.
+ * A regra de o que cada condição de pagamento comporta **vem do backend**
+ * (`GET /api/clientes-empreendimentos/condicoes/`), e não daqui.
  *
- * A condição é a **primeira** pergunta da venda porque é ela que diz quais
- * campos existem. Perguntar juros e sistema de amortização numa venda à vista
- * não é só ruído: é convidar o vendedor a preencher um prazo que o contrato não
- * tem, e depois ninguém sabe se o que está gravado é o combinado.
+ * A condição é a primeira pergunta da venda porque é ela que diz quais campos
+ * existem: perguntar juros e sistema de amortização numa venda à vista não é só
+ * ruído — é convidar o vendedor a preencher um prazo que o contrato não tem, e
+ * depois ninguém sabe se o que está gravado é o combinado.
  *
- * `nota` explica em uma linha o que aquela condição assume, para o campo ausente
- * não parecer campo esquecido.
+ * Esta tabela morava aqui, em paralelo à do motor de cálculo. Duas cópias da
+ * mesma regra é uma que um dia discorda da outra, e a que discorda em silêncio é
+ * a da tela — porque ela some do rastro. Agora existe uma só, no mesmo lugar que
+ * grava o carnê (`clientes/plano_pagamento.py::CONDICOES`).
  */
-const PLANO_DA_CONDICAO: Record<CondicoesPagamento, {
-  entrada: boolean; parcelas: boolean; anuais: boolean; nota: string
-}> = {
-  financiamento_direto: {
-    entrada: true, parcelas: true, anuais: true,
-    nota: 'A construtora financia: entrada, saldo em parcelas e as anuais.',
-  },
-  a_vista: {
-    entrada: false, parcelas: false, anuais: false,
-    nota: 'Pagamento único na data da compra — o valor negociado, sem prazo nem juros.',
-  },
-  financiamento_bancario: {
-    entrada: true, parcelas: false, anuais: false,
-    nota: 'O banco quita o saldo. Aqui entra só o sinal pago diretamente à construtora.',
-  },
-  permuta: {
-    entrada: false, parcelas: false, anuais: false,
-    nota: 'Troca por bem ou serviço — descreva o que foi permutado nas observações.',
-  },
-  cartao: {
-    entrada: true, parcelas: false, anuais: false,
-    nota: 'O parcelamento é da operadora, não do contrato: lance o valor cobrado.',
-  },
-  outro: {
-    entrada: true, parcelas: true, anuais: true,
-    nota: 'Condição fora do padrão — todos os campos ficam disponíveis.',
-  },
+interface RegraDaCondicao {
+  codigo: CondicoesPagamento
+  rotulo: string
+  entrada: boolean
+  parcelas: boolean
+  baloes: boolean
+  /** O que sobra do valor negociado é quitado por fora (banco, permuta, cartão). */
+  quitaFora: boolean
+  nota: string
+}
+
+/** Enquanto o catálogo não chega, o formulário não some — mostra tudo e não
+ *  apaga nada. Permissivo de propósito: o backend valida de qualquer forma, e
+ *  esconder campo por causa de uma requisição lenta seria pior. */
+const REGRA_PROVISORIA: RegraDaCondicao = {
+  codigo: 'outro', rotulo: 'Outro',
+  entrada: true, parcelas: true, baloes: true, quitaFora: false,
+  nota: 'Carregando as regras desta condição…',
 }
 
 function maskCurrency(v: string) {
@@ -188,6 +172,7 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
   const [saving, setSaving] = useState(false)
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [indices, setIndices] = useState<IndiceEconomico[]>([])
+  const [condicoes, setCondicoes] = useState<RegraDaCondicao[]>([])
 
   useEffect(() => {
     apiClient.get('/empreendimentos/')
@@ -196,6 +181,9 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
     apiClient.get('/indices-economicos/')
       .then(r => setIndices(r.data))
       .catch(() => setIndices([]))
+    apiClient.get('/clientes-empreendimentos/condicoes/')
+      .then(r => setCondicoes(r.data.condicoes ?? []))
+      .catch(() => setCondicoes([]))
   }, [])
 
   useEffect(() => {
@@ -285,24 +273,24 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
   const set = (campo: keyof ClienteEmpreendimentoFormData, valor: string | number) =>
     setForm(anterior => ({ ...anterior, [campo]: valor }))
 
-  const plano = PLANO_DA_CONDICAO[form.condicoes_pagamento as CondicoesPagamento]
-    ?? PLANO_DA_CONDICAO.outro
+  const plano = condicoes.find(c => c.codigo === form.condicoes_pagamento) ?? REGRA_PROVISORIA
 
   /** Trocar a condição apaga o que ela não comporta. Sem isso, mudar de
    *  "financiamento direto" para "à vista" deixaria 60 parcelas gravadas num
    *  contrato que a tela mostra como pagamento único — e o carnê sairia com
-   *  elas. */
+   *  elas. O backend repete a limpeza (`normalizar_por_condicao`), porque a tela
+   *  não é a única porta; aqui ela é imediata, para o vendedor ver o efeito. */
   const trocarCondicao = (valor: string) => {
-    const novo = PLANO_DA_CONDICAO[valor as CondicoesPagamento] ?? PLANO_DA_CONDICAO.outro
+    const novo = condicoes.find(c => c.codigo === valor) ?? REGRA_PROVISORIA
     setForm(anterior => ({
       ...anterior,
       condicoes_pagamento: valor as CondicoesPagamento,
       ...(novo.entrada ? {} : { entrada_valor: '0', entrada_parcelas: 1 }),
       ...(novo.parcelas ? {} : { num_parcelas: 0, juros_mensal: '0' }),
-      ...(novo.anuais ? {} : { balao_valor: '0', balao_quantidade: 0, balao_primeiro_vencimento: '' }),
+      ...(novo.baloes ? {} : { balao_valor: '0', balao_quantidade: 0, balao_primeiro_vencimento: '' }),
     }))
     if (!novo.entrada) setDisplayEntrada('')
-    if (!novo.anuais) setDisplayBalao('')
+    if (!novo.baloes) setDisplayBalao('')
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -383,8 +371,7 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
             </div>
             <div>
               <label style={labelCls}>Data da compra *</label>
-              <input required type="date" style={inputCls} value={form.data_compra}
-                min={minPagamentoISO()} max={maxPagamentoISO()}
+              <input required type="date" min={minCalendarioISO} max={maxCalendarioISO} style={inputCls} value={form.data_compra}
                 onChange={e => { set('data_compra', e.target.value); setFieldErrors(p => ({ ...p, data_compra: '' })) }}
                 onBlur={e => { const err = validateISO_Pagamento(e.target.value); if (err) setFieldErrors(p => ({ ...p, data_compra: err })) }} />
               <FieldError msg={fieldErrors.data_compra} />
@@ -404,8 +391,10 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
           <div>
             <label style={labelCls}>Como o cliente paga *</label>
             <select required style={inputCls} value={form.condicoes_pagamento}
+              disabled={condicoes.length === 0}
               onChange={e => trocarCondicao(e.target.value)}>
-              {CONDICOES.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              {condicoes.length === 0 && <option value="">Carregando condições…</option>}
+              {condicoes.map(o => <option key={o.codigo} value={o.codigo}>{o.rotulo}</option>)}
             </select>
             <FieldError msg={fieldErrors.condicoes_pagamento} />
             <p style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
@@ -444,7 +433,7 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
               </div>
               <div>
                 <label style={labelCls}>1º venc. da entrada</label>
-                <input type="date" style={inputCls} value={form.entrada_primeiro_vencimento}
+                <input type="date" min={minCalendarioISO} max={maxCalendarioISO} style={inputCls} value={form.entrada_primeiro_vencimento}
                   onChange={e => set('entrada_primeiro_vencimento', e.target.value)} />
               </div>
             </div>
@@ -474,13 +463,13 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
               </div>
               <div>
                 <label style={labelCls}>1º venc. das parcelas</label>
-                <input type="date" style={inputCls} value={form.primeiro_vencimento}
+                <input type="date" min={minCalendarioISO} max={maxCalendarioISO} style={inputCls} value={form.primeiro_vencimento}
                   onChange={e => set('primeiro_vencimento', e.target.value)} />
               </div>
             </>
           )}
 
-          {plano.anuais && (
+          {plano.baloes && (
             <>
               {/* O nome de mercado é "anual/intercalada" — quase todo loteamento
                   tem uma por ano, casada com o 13º. */}
@@ -516,7 +505,7 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
               {form.balao_quantidade > 0 && (
                 <div>
                   <label style={labelCls}>1º vencimento da anual</label>
-                  <input type="date" style={inputCls} value={form.balao_primeiro_vencimento}
+                  <input type="date" min={minCalendarioISO} max={maxCalendarioISO} style={inputCls} value={form.balao_primeiro_vencimento}
                     onChange={e => set('balao_primeiro_vencimento', e.target.value)} />
                 </div>
               )}
@@ -543,12 +532,24 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
                     "Juros do plano — R$ 0,00" numa venda à vista faz o leitor
                     procurar o juro que não existe. */}
                 {plano.entrada && <Linha rotulo="Entrada" valor={brl(simulacao.entrada)} />}
-                {plano.anuais && Number(simulacao.baloes) > 0 && (
+                {plano.baloes && Number(simulacao.baloes) > 0 && (
                   <Linha rotulo="Anuais" valor={brl(simulacao.baloes)} />
                 )}
                 {plano.parcelas && <Linha rotulo="Saldo financiado" valor={brl(simulacao.saldoFinanciado)} />}
                 {plano.parcelas && <Linha rotulo="Juros do plano" valor={brl(simulacao.totalJuros)} />}
-                <Linha rotulo="Total a pagar" valor={brl(simulacao.total)} destaque />
+                {/* O que o comprador paga, mas não à construtora e não por
+                    boleto: o saldo que o banco quita, o bem da permuta, a parte
+                    que passou na maquininha. Não é desconto nem dívida
+                    esquecida — e sem esta linha a venda não fechava, porque o
+                    motor a recusava por "sobrou saldo sem parcela". */}
+                {Number(simulacao.foraDoCarne ?? 0) > 0 && (
+                  <Linha rotulo="Quitado fora do carnê" valor={brl(simulacao.foraDoCarne)} />
+                )}
+                <Linha
+                  rotulo={Number(simulacao.foraDoCarne ?? 0) > 0 ? 'Total no carnê' : 'Total a pagar'}
+                  valor={brl(simulacao.total)}
+                  destaque
+                />
                 {Number(simulacao.primeiraParcela) > 0 && (
                   <Linha
                     rotulo={form.sistema_amortizacao === 'sac' ? 'Parcela (1ª → última)' : 'Parcela mensal'}
@@ -585,8 +586,18 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
                           <td style={{ padding: '3px 4px' }}>
                             {p.tipo === 'entrada' ? 'Entrada' : p.tipo === 'balao' ? 'Balão' : 'Parcela'}
                           </td>
-                          <td style={{ padding: '3px 4px' }}>
+                          {/* A data pagável, com a do contrato ao lado quando
+                              as duas diferem. Mostrar só a ajustada faria o
+                              vendedor procurar, no contrato, um dia 7 que a tela
+                              insiste em chamar de 9. */}
+                          <td style={{ padding: '3px 4px' }} title={p.ajusteMotivo || undefined}>
                             {p.vencimento.split('-').reverse().join('/')}
+                            {p.vencimentoContratual && p.vencimentoContratual !== p.vencimento && (
+                              <span style={{ color: 'var(--color-text-muted)' }}>
+                                {' '}(era {p.vencimentoContratual.slice(8, 10)}/{p.vencimentoContratual.slice(5, 7)}
+                                {p.ajusteMotivo ? `, ${p.ajusteMotivo}` : ''})
+                              </span>
+                            )}
                           </td>
                           <td style={{ padding: '3px 4px', textAlign: 'right' }}>{brl(p.valor)}</td>
                           <td style={{ padding: '3px 4px', textAlign: 'right', color: 'var(--color-text-muted)' }}>
@@ -598,6 +609,25 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
                   </table>
                 </div>
               )}
+              {/* O ajuste de dia útil dito na tela, com a ressalva de quando a
+                  base de feriados nunca foi sincronizada: "ajustado para o
+                  próximo dia útil" sem feriados carregados é meia verdade, e
+                  meia verdade sobre vencimento vira boleto pago em atraso. */}
+              {Number(simulacao.parcelasAjustadas ?? 0) > 0 && (
+                <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: 8 }}>
+                  {simulacao.parcelasAjustadas} parcela{simulacao.parcelasAjustadas !== 1 ? 's' : ''} caí
+                  {simulacao.parcelasAjustadas !== 1 ? 'am' : 'a'} em fim de semana ou feriado e
+                  {simulacao.parcelasAjustadas !== 1 ? ' foram' : ' foi'} para o próximo dia útil
+                  {simulacao.calendario?.uf ? ` (feriados de ${simulacao.calendario.uf}` : ' (feriados nacionais'}
+                  {simulacao.calendario?.municipio ? ' e do município' : ''}).
+                </p>
+              )}
+              {simulacao.calendario && !simulacao.calendario.feriadosCarregados && (
+                <p style={{ fontSize: '0.7rem', color: '#b45309', marginTop: 6 }}>
+                  A base de feriados ainda não foi sincronizada: os vencimentos desviam de
+                  sábado e domingo, mas <strong>não</strong> de feriado.
+                </p>
+              )}
               <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: 8 }}>
                 Salvar registra a proposta. As parcelas só entram no financeiro pelo botão
                 <strong> Gerar parcelas</strong>, depois de você conferir.
@@ -607,7 +637,7 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
 
           {/* Só faz sentido em contrato com prazo: pagamento único não atravessa
               o tempo, então não há o que corrigir. */}
-          {(plano.parcelas || plano.anuais) && (
+          {(plano.parcelas || plano.baloes) && (
             <>
               <SectionTitle>Correção monetária</SectionTitle>
               <p style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: -6 }}>
@@ -645,7 +675,7 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
               {form.indice_correcao !== '' && (
                 <div>
                   <label style={labelCls}>Data-base</label>
-                  <input type="date" style={inputCls} value={form.data_base_correcao}
+                  <input type="date" min={minCalendarioISO} max={maxCalendarioISO} style={inputCls} value={form.data_base_correcao}
                     onChange={e => set('data_base_correcao', e.target.value)} />
                   <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
                     Em branco, vale a data da compra — que é o usual.

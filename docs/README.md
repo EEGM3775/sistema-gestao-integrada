@@ -27,6 +27,7 @@ A documentação tem **quatro naturezas** — saber qual você procura já resol
 | **A identidade visual** (Sistema Malha: marca, cor, tipografia, voz — todas as superfícies) | [identidade-visual.md](identidade-visual.md) |
 | **As convenções de código do frontend** (obrigatórias para desenvolver) | [frontend-convencoes.md](frontend-convencoes.md) |
 | **Rodar / desenvolver** a plataforma | [desenvolvimento.md](desenvolvimento.md) |
+| **Abrir o SGI de fora de casa** (ponte temporária, com prazo) | [ponte.md](ponte.md) |
 
 ### 📊 Status — o que está pronto, o que falta
 

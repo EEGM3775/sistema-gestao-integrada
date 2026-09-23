@@ -2,8 +2,8 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 import {
-  AlertTriangle, Clock3, Download, ExternalLink, Globe2, Hash, Layers, Lock, Map as MapIcon,
-  MessageSquare, ServerCrash, Timer, X,
+  AlertTriangle, Clock3, Download, ExternalLink, Globe2, Grid2x2, Hash, Layers, Lock,
+  Map as MapIcon, MessageSquare, ServerCrash, Timer, X,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Btn, Pill, Spinner } from '@/components/malha'
@@ -25,6 +25,7 @@ import type { Conversao, Desenho, Documento, Ponto, RevisaoResumo } from '../typ
 import { usePapel } from '../visao'
 import { Camada } from './Camada'
 import { Minimapa } from './Minimapa'
+import { Panorama } from './Panorama'
 import { BarraDeModos, DialogoCalibrar, DialogoNovaMarcacao, PainelMarcacoes } from './Marcacoes'
 import { GavetaDeRevisoes } from './Revisoes'
 import { capturarRecorte, MINIMO_DE_PONTOS } from './marcar'
@@ -318,6 +319,20 @@ export function Visualizador({
   const [mapaAberto, setMapaAberto] = useState(true)
   useEffect(() => { setMapaAberto(true) }, [revisao.revisao_id])
 
+  /**
+   * **Conjunto × folha — e o arquivo de várias folhas abre no conjunto.**
+   *
+   * Pedido do dono (15/09/2026): *"quero desfazer essa separação"*. A separação
+   * continua no backend, onde ela é necessária; o que muda é por onde se entra.
+   * Abrir na folha 1 era mostrar um pedaço e deixar a pessoa descobrir sozinha
+   * que havia mais — a mesma queixa que abriu o D97. Abrir no conjunto mostra o
+   * arquivo inteiro, e entrar numa folha passa a ser uma escolha.
+   *
+   * Com uma folha só não há conjunto a mostrar: a vista nem é oferecida.
+   */
+  const [conjunto, setConjunto] = useState(false)
+  useEffect(() => { setConjunto(folhas.length > 1) }, [revisao.revisao_id, folhas.length])
+
   const irParaFolha = (ordem: number) => {
     setOrdemAberta(ordem)
     // O mesmo zelo da gaveta de folhas: os vértices em curso são normalizados
@@ -374,6 +389,24 @@ export function Visualizador({
               ligado a nada). Fica ao lado da gaveta porque as duas respondem à
               mesma pergunta por caminhos diferentes: a lista diz *quais* são, o
               mapa diz *onde* estão. */}
+          {/* Conjunto × folha. Fica antes do mapa e da gaveta porque é a
+              pergunta mais grossa das três: *estou vendo o arquivo todo ou um
+              desenho?* — as outras duas só fazem sentido depois dela. */}
+          {folhas.length > 1 && (
+            <Btn
+              onClick={() => setConjunto((c) => !c)}
+              title={conjunto
+                ? 'Entrar numa folha para marcar e medir'
+                : 'Ver o arquivo inteiro, com os desenhos no lugar em que estão'}
+              variant={conjunto ? 'primary' : 'ghost'}
+              style={{ minHeight: 46 }}
+              aria-pressed={conjunto}
+            >
+              <Grid2x2 size={16} />
+              <span className="hidden sm:inline">{conjunto ? 'Conjunto' : 'Folha'}</span>
+            </Btn>
+          )}
+
           {folhas.length > 1 && (
             <Btn
               onClick={() => setMapaAberto((a) => !a)}
@@ -475,6 +508,16 @@ export function Visualizador({
             <Suspense fallback={<Aviso icone={<Spinner />} titulo="Carregando o visualizador 3D…" />}>
               <Vista3D src={objeto} />
             </Suspense>
+          ) : conjunto ? (
+            // **A separação desfeita.** Vista de navegação: as folhas voltam a
+            // ficar lado a lado, cada uma no lugar em que está no terreno.
+            // Marcar, medir e o leitor de coordenadas continuam na folha — é o
+            // clique num desenho que leva para lá.
+            <Panorama
+              folhas={folhas}
+              ordemAberta={desenhoAberto?.ordem ?? 1}
+              aoAbrir={(ordem) => { irParaFolha(ordem); setConjunto(false) }}
+            />
           ) : (
             <Vista2D
               src={objeto}
@@ -545,7 +588,10 @@ export function Visualizador({
           <Minimapa
             folhas={folhas}
             ordemAberta={desenhoAberto?.ordem ?? 1}
-            aoAbrir={irParaFolha}
+            // Sai do conjunto junto: no conjunto, escolher um desenho no mapa e
+            // continuar vendo o arquivo inteiro seria o clique que não faz nada
+            // de novo — em outro lugar.
+            aoAbrir={(ordem) => { irParaFolha(ordem); setConjunto(false) }}
             aoFechar={() => setMapaAberto(false)}
           />
         )}

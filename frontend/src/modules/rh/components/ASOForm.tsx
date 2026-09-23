@@ -3,7 +3,7 @@ import { Paperclip, ExternalLink } from 'lucide-react'
 import { abrirEmNovaAba } from '@/lib/arquivo'
 import type { ASOFuncionario, ASOFuncionarioFormData, TipoExameASO, StatusASO } from '@/types'
 import { FieldError, FormErrorBanner, parseApiErrors, type FieldErrors } from '@/utils/formErrors'
-import { minVigenciaISO, maxTodayISO, maxVigenciaISO, validateISO_ExameASO, validateISO_ValidadeASO } from '@/utils/dates'
+import { validateISO_ExameASO, validateISO_ValidadeASO, minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
 
 interface Props {
   open: boolean
@@ -101,15 +101,13 @@ const ASOForm: React.FC<Props> = ({ open, onClose, onSave, initial, funcionarioI
 
           <Row2>
             <Field label="Data do Exame *" error={fieldErrors.data_exame}>
-              <input required type="date" value={form.data_exame}
-                min={minVigenciaISO()} max={maxTodayISO()}
+              <input required type="date" min={minCalendarioISO} max={maxCalendarioISO} value={form.data_exame}
                 onChange={e => { set('data_exame', e.target.value); setFieldErrors(p => ({ ...p, data_exame: '' })) }}
                 onBlur={e => { const err = validateISO_ExameASO(e.target.value); if (err) setFieldErrors(p => ({ ...p, data_exame: err })) }}
                 style={inp} />
             </Field>
             <Field label="Validade" error={fieldErrors.data_validade}>
-              <input type="date" value={form.data_validade}
-                min={minVigenciaISO()} max={maxVigenciaISO()}
+              <input type="date" min={minCalendarioISO} max={maxCalendarioISO} value={form.data_validade}
                 onChange={e => { set('data_validade', e.target.value); setFieldErrors(p => ({ ...p, data_validade: '' })) }}
                 onBlur={e => { const err = validateISO_ValidadeASO(e.target.value); if (err) setFieldErrors(p => ({ ...p, data_validade: err })) }}
                 style={inp} />

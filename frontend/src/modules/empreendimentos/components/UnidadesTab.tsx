@@ -1,9 +1,10 @@
-import React, { useMemo, useState } from 'react'
+import React, { useState } from 'react'
 import { ArrowDown, ArrowUp, Pencil, Plus, Search, Trash2 } from 'lucide-react'
 import type { SituacaoUnidade, Unidade, UnidadeFormData } from '@/types'
 import UnidadeForm from './UnidadeForm'
 import {
-  createUnidade, deleteUnidade, updateUnidade, useUnidades, type FiltrosUnidades,
+  createUnidade, deleteUnidade, updateUnidade, useResumoUnidades, useUnidades,
+  type FiltrosUnidades,
 } from '../hooks/useUnidades'
 
 /**
@@ -13,6 +14,14 @@ import {
  * sobre o estoque inteiro, não sobre a página carregada), filtros e carregamento
  * por página. A ordem padrão é a do endereço, quadra › lote › bloco › andar ›
  * apto, e **numérica**: em ordem de texto o lote 10 viria antes do 2.
+ *
+ * **A tabela rola dentro dela mesma, com a primeira coluna presa.** Antes ela
+ * crescia sem limite dentro da página: com onze colunas e mil lotes, ver o
+ * comprador (a última coluna) exigia rolar a página inteira até o rodapé para
+ * alcançar a barra horizontal, e ao rolar para o lado a identificação da unidade
+ * saía da tela — restava uma linha de números sem saber de qual lote eram. Aqui
+ * o corpo tem altura própria, o cabeçalho é fixo e a coluna **Unidade** e as
+ * ações ficam congeladas nas bordas, que é a mecânica da grade de clientes.
  *
  * Visual: mantém a linguagem atual da página de empreendimento (a migração para
  * a identidade Malha é passo à parte, ainda não feito aqui).
@@ -88,6 +97,21 @@ const celula: React.CSSProperties = {
   textOverflow: 'ellipsis',
 }
 
+/* Colunas congeladas. `position: sticky` numa célula de tabela precisa de fundo
+   opaco — sem ele o conteúdo que passa por baixo aparece através. A sombra
+   lateral é o que diz ao olho que ali há um corte, e não o fim da tabela. */
+const ANCORA_LARGURA = 190
+const ACOES_LARGURA = 84
+
+const ancora: React.CSSProperties = {
+  position: 'sticky', left: 0, zIndex: 2, background: '#FFFFFF',
+  boxShadow: '1px 0 0 #e2e8f0',
+}
+const acoes: React.CSSProperties = {
+  position: 'sticky', right: 0, zIndex: 2, background: '#FFFFFF',
+  boxShadow: '-1px 0 0 #e2e8f0',
+}
+
 const campo: React.CSSProperties = {
   padding: '7px 10px', fontSize: '0.8rem', borderRadius: '8px',
   border: '1.5px solid #e2e8f0', background: '#FFFFFF', color: 'var(--color-text)',
@@ -103,15 +127,13 @@ const UnidadesTab: React.FC<Props> = ({ empreendimentoId, onMudou }) => {
 
   const { unidades, total, loading, error, temMais, carregarMais, recarregar } =
     useUnidades(empreendimentoId, filtros)
-
-  // As quadras já carregadas viram o filtro rápido — evita um endpoint só para
-  // listar quadras enquanto a aba não precisa dele.
-  const quadras = useMemo(
-    () => [...new Set(unidades.map(u => u.quadra).filter(Boolean))].sort(
-      (a, b) => Number(a) - Number(b) || a.localeCompare(b),
-    ),
-    [unidades],
-  )
+  // Quadras e contadores saem do banco, sobre o estoque inteiro. Montá-los das
+  // linhas já baixadas dava dois números errados com cara de certos: um seletor
+  // de quadras que só oferecia as quadras carregadas (para ver o resto era
+  // preciso clicar "Carregar mais" até o fim) e um "40 à venda · 160 vendidas"
+  // que era, na verdade, o resumo das primeiras cem linhas.
+  const resumo = useResumoUnidades(empreendimentoId, filtros)
+  const quadras = resumo?.quadras ?? []
 
   const ordenarPor = (chave: string) => {
     const atual = filtros.ordering
@@ -137,8 +159,10 @@ const UnidadesTab: React.FC<Props> = ({ empreendimentoId, onMudou }) => {
     }
   }
 
-  const disponiveis = unidades.filter(u => u.situacao === 'disponivel').length
-  const vendidas = unidades.filter(u => u.situacao === 'vendida').length
+  // Só as situações que existem neste recorte: "0 indisponíveis" é ruído, e
+  // esconder as que existem foi o que fez a linha antiga contar só duas das
+  // quatro. A ordem é a do modelo, para a leitura ser sempre a mesma.
+  const situacoes = (resumo?.situacoes ?? []).filter(s => s.total > 0)
 
   return (
     <div>
@@ -148,9 +172,11 @@ const UnidadesTab: React.FC<Props> = ({ empreendimentoId, onMudou }) => {
             {total} unidade{total !== 1 ? 's' : ''} cadastrada{total !== 1 ? 's' : ''}
             {unidades.length < total && ` · ${unidades.length} carregada${unidades.length !== 1 ? 's' : ''}`}
           </p>
-          {unidades.length > 0 && (
+          {situacoes.length > 0 && (
+            /* "no total", e não mais "nesta lista": os números agora são do
+               estoque inteiro deste recorte, contados no banco. */
             <p style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
-              nesta lista: {disponiveis} à venda · {vendidas} vendida{vendidas !== 1 ? 's' : ''}
+              no total: {situacoes.map(s => `${s.total} ${s.rotulo.toLowerCase()}`).join(' · ')}
             </p>
           )}
         </div>
@@ -184,8 +210,11 @@ const UnidadesTab: React.FC<Props> = ({ empreendimentoId, onMudou }) => {
           <option value="indisponivel">Indisponíveis</option>
         </select>
         <select style={campo} value={filtros.quadra ?? ''}
+          disabled={!resumo}
           onChange={e => setFiltros(f => ({ ...f, quadra: e.target.value || undefined }))}>
-          <option value="">Todas as quadras</option>
+          <option value="">
+            {resumo ? `Todas as quadras (${quadras.length})` : 'Carregando quadras…'}
+          </option>
           {quadras.map(q => <option key={q} value={q}>Quadra {q}</option>)}
         </select>
         {filtros.ordering && (
@@ -213,11 +242,20 @@ const UnidadesTab: React.FC<Props> = ({ empreendimentoId, onMudou }) => {
             : 'Nenhuma unidade cadastrada. O cadastro das unidades é o que permite vender pela ficha do cliente.'}
         </div>
       ) : (
-        <div style={{ overflowX: 'auto', border: '1px solid #e2e8f0', borderRadius: '10px' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1100 }}>
+        /* A altura é do CORPO da tabela, não da página: é o que mantém a
+           barra de rolagem horizontal sempre à vista, em vez de no rodapé de
+           mil linhas. `min()` para não criar um painel de 60vh quando há oito
+           lotes — aí a tabela ainda cresce com o conteúdo. */
+        <div style={{
+          overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: '10px',
+          maxHeight: 'min(62vh, 760px)',
+        }}>
+          <table style={{
+            width: '100%', borderCollapse: 'separate', borderSpacing: 0, minWidth: 1100,
+          }}>
             <thead>
               <tr style={{ background: '#f8fafc' }}>
-                {COLUNAS.map(coluna => {
+                {COLUNAS.map((coluna, i) => {
                   const ativa = coluna.ordenar && filtros.ordering?.replace('-', '') === coluna.ordenar
                   const descendente = ativa && filtros.ordering?.startsWith('-')
                   return (
@@ -228,9 +266,15 @@ const UnidadesTab: React.FC<Props> = ({ empreendimentoId, onMudou }) => {
                         padding: '9px 12px', fontSize: '0.68rem', fontWeight: 700,
                         letterSpacing: '0.06em', textTransform: 'uppercase',
                         color: 'var(--color-text-muted)', textAlign: coluna.alinhamento ?? 'left',
-                        width: coluna.largura, whiteSpace: 'nowrap',
+                        width: i === 0 ? ANCORA_LARGURA : coluna.largura, whiteSpace: 'nowrap',
                         cursor: coluna.ordenar ? 'pointer' : 'default',
                         borderBottom: '1px solid #e2e8f0',
+                        // O cabeçalho fica; o corpo passa por baixo dele. O
+                        // canto superior esquerdo é preso nos dois eixos, e por
+                        // isso precisa de camada maior que a de cada um.
+                        ...(i === 0 ? ancora : {}),
+                        position: 'sticky', top: 0,
+                        zIndex: i === 0 ? 4 : 3, background: '#f8fafc',
                       }}>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                         {coluna.titulo}
@@ -239,7 +283,11 @@ const UnidadesTab: React.FC<Props> = ({ empreendimentoId, onMudou }) => {
                     </th>
                   )
                 })}
-                <th style={{ width: 80, borderBottom: '1px solid #e2e8f0' }} />
+                <th style={{
+                  ...acoes,
+                  width: ACOES_LARGURA, borderBottom: '1px solid #e2e8f0',
+                  position: 'sticky', top: 0, zIndex: 4, background: '#f8fafc',
+                }} />
               </tr>
             </thead>
             <tbody>
@@ -252,11 +300,16 @@ const UnidadesTab: React.FC<Props> = ({ empreendimentoId, onMudou }) => {
                       fontWeight: i === 0 ? 600 : 400,
                       fontFamily: ['quadra', 'lote', 'andar', 'apto', 'valor_base', 'area', 'rotulo'].includes(coluna.chave)
                         ? 'var(--font-mono, monospace)' : 'var(--font-body)',
-                    }}>
+                      // A identificação da unidade acompanha a rolagem lateral:
+                      // sem ela, as colunas da direita viram números órfãos.
+                      ...(i === 0 ? { ...ancora, width: ANCORA_LARGURA } : {}),
+                    }}
+                      title={i === 0 ? unidade.rotulo : undefined}
+                    >
                       {coluna.valor(unidade)}
                     </td>
                   ))}
-                  <td style={{ ...celula, textAlign: 'right' }}>
+                  <td style={{ ...celula, ...acoes, textAlign: 'right', width: ACOES_LARGURA }}>
                     <button onClick={() => { setEditando(unidade); setFormAberto(true) }}
                       title="Editar" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)', marginRight: 6 }}>
                       <Pencil size={14} />

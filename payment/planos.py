@@ -1410,6 +1410,298 @@ PDCA_TETO_ADITIVOS_ABERTOS_POR_CONTRATO: int = 5
 PDCA_TETO_DEDUCOES_POR_MEDICAO: int = 40
 
 # ---------------------------------------------------------------------------
+# 5.5j O Last Planner — restrição, programação da semana e causa (PDCA.5)
+# ---------------------------------------------------------------------------
+# A fatia que fecha o **Check** e o **Act** do módulo que se chama PDCA. Até aqui
+# ele planejava (cronograma), executava (apontamento) e pagava (medição); o que
+# faltava era a pergunta que o Last Planner faz toda semana — *daquilo de que a
+# equipe se comprometeu, quanto saiu?* — e o ranking de por que o resto não saiu.
+#
+# Quatro números, todos **tamanho de documento**, nenhum deles valor. A família é
+# a mesma das §5.5c–i: protegem uma tela que se digita e um gráfico que se lê,
+# nunca o negócio do cliente.
+#
+#   - `PDCA_TETO_ITENS_POR_PROGRAMACAO` — quantos cartões cabem numa semana. O
+#     quadro é uma **parede de reunião** (planta §5.2): existe para o time olhar
+#     junto e decidir, e parede que não se abarca com a vista deixou de ser
+#     parede. A programação semanal de uma frente grande tem algumas dezenas de
+#     compromissos; **300** cobre a obra que programa várias frentes no mesmo
+#     quadro e ainda cabe numa tela de reunião.
+#   - `PDCA_TETO_RESTRICOES_ABERTAS_POR_OBRA` — o tamanho do *constraint log*. A
+#     restrição existe para ser **removida**, não para ser acumulada: um log com
+#     milhares de linhas abertas não é make-ready, é um aterro onde a restrição
+#     que trava a semana que vem fica invisível. **500** é largo para a obra de
+#     porte real e ainda assim diz que o log é para zerar.
+#   - `PDCA_TETO_CAUSAS_POR_TENANT` — o catálogo de causas de não-cumprimento é de
+#     fábrica e **extensível pelo tenant**, e é isso que pede o teto: a causa só
+#     serve se for escolhida da mesma lista toda semana. Com 500 causas
+#     cadastradas ninguém escolhe a mesma duas vezes, o ranking deixa de ranquear
+#     e o "Act" perde a base. **100** deixa muito espaço sobre as de fábrica sem
+#     permitir que o catálogo vire texto livre disfarçado.
+#   - `PDCA_TETO_SEMANAS_PPC` — quantas semanas a série histórica de PPC devolve
+#     de uma vez. É o irmão do `PDCA_TETO_PONTOS_CURVA_S` da §5.5f, e existe pela
+#     mesma razão: o eixo precisa continuar legível. **104** são dois anos de obra
+#     semana a semana — mais do que qualquer obra que caiba num cronograma.
+#
+# **O PPC não tem teto, e não tem meta.** A literatura registra ~54% em obra
+# convencional e 80–85% com LPS maduro (planta §2.1), e seria fácil cravar 85 aqui
+# como "meta do plano". Seria errado por duas razões: o número é **resultado
+# medido**, não limite de uso — a fronteira da §5.6 —, e meta de desempenho é
+# acordo entre o cliente e a equipe dele, da mesma classe do percentual de
+# retenção que a §5.5h recusou. O sistema mede e mostra; quem cobra é gente.
+PDCA_TETO_ITENS_POR_PROGRAMACAO: int = 300
+PDCA_TETO_RESTRICOES_ABERTAS_POR_OBRA: int = 500
+PDCA_TETO_CAUSAS_POR_TENANT: int = 100
+PDCA_TETO_SEMANAS_PPC: int = 104
+
+# ---------------------------------------------------------------------------
+# 5.5k A linha de balanço — ritmo, sincronia e gargalo (PDCA.6)
+# ---------------------------------------------------------------------------
+# A LOB é o **gesto inverso ao do Gantt** (planta §5.2): o eixo Y é localização,
+# o X é tempo, e cada serviço é uma reta cuja **inclinação é o ritmo**. No Gantt
+# se arrasta uma barra pronta; aqui se desenha a linha, e o planejador passa a
+# pensar em ritmo em vez de em duração.
+#
+# Ela **não tem tabela** (§4.9): é derivada de `Atividade` × `LocalObra`. Por
+# isso os quatro números abaixo são todos de **legibilidade de gráfico e de
+# tamanho de gesto** — nenhum deles restringe o negócio do cliente, e nenhum
+# deles é ritmo: o ritmo é resultado da obra, e a §5.6 o manteria fora daqui
+# ainda que alguém quisesse cravá-lo.
+#
+#   - `PDCA_TETO_LOCAIS_NA_LINHA_DE_BALANCO` — quantas linhas o eixo Y desenha.
+#     O eixo é a árvore de locais achatada, e **uma torre de 20 pavimentos com
+#     4 unidades já dá 100**. Acima de algumas centenas o rótulo do eixo deixa de
+#     caber e o gráfico vira uma mancha — que é o contrário do instrumento, cuja
+#     única razão de existir é que **o cruzamento de duas retas se vê**. **200**
+#     cobre a torre inteira e a obra linear de porte real.
+#   - `PDCA_TETO_LINHAS_DE_BALANCO` — quantos serviços são desenhados de uma vez.
+#     Com trinta retas sobrepostas ninguém enxerga qual cruza qual; a LOB de
+#     verdade se lê com os serviços do pacote que se está sincronizando.
+#     **40** é largo para o pacote e estreito o bastante para continuar legível.
+#   - `PDCA_TETO_LOCAIS_POR_RITMO` — quantos locais um **gesto** de desenhar a
+#     linha alcança. É tamanho de transação e de desfazer: gerar 2.000 atividades
+#     num clique cria um plano que ninguém revisa antes de publicar. **200** é a
+#     torre inteira de uma vez, que é o caso que justifica o gerador existir.
+#   - `PDCA_TETO_CONFLITOS_REPORTADOS` — quantos choques de equipe a leitura
+#     devolve. É tamanho de página: uma lista de mil conflitos não é uma lista de
+#     problemas, é o aviso de que o plano inteiro precisa ser refeito — e para
+#     isso bastam os **200** primeiros, que já mostram o padrão.
+#
+# **O ritmo não tem teto, e não tem meta** — a mesma fronteira que a §5.5j traçou
+# para o PPC. Quantos pavimentos por semana uma equipe faz é resultado medido da
+# obra, não limite de uso do software; e "ritmo ideal" é acordo entre a empresa e
+# a equipe dela. O sistema calcula a inclinação e grita onde duas retas se
+# cruzam; quem decide o ritmo é gente.
+PDCA_TETO_LOCAIS_NA_LINHA_DE_BALANCO: int = 200
+PDCA_TETO_LINHAS_DE_BALANCO: int = 40
+PDCA_TETO_LOCAIS_POR_RITMO: int = 200
+PDCA_TETO_CONFLITOS_REPORTADOS: int = 200
+
+# ---------------------------------------------------------------------------
+# 5.5l A máquina de verificação — FVS, não-conformidade e plano de ação (PDCA.7)
+# ---------------------------------------------------------------------------
+# A fatia que põe o **Check** em cima do serviço, e não só em cima do prazo. Até
+# aqui o módulo conferia se a semana saiu (PPC) e se o avanço bate com o que se
+# paga (medição); o que faltava era a pergunta da qualidade — *saiu, mas saiu
+# certo?* — e o laço que separa **tratar** de **arquivar**.
+#
+# Quatro números, todos **tamanho de documento e de lista**, nenhum deles
+# resultado. A família é a mesma das §5.5c–k.
+#
+#   - `PDCA_TETO_ITENS_POR_MODELO_VERIFICACAO` — quantas perguntas cabem numa
+#     ficha. O instrumento do campo é **uma pergunta por vez** (planta §5.2):
+#     quem responde está de pé, com luva e sol na tela, e ficha que não se
+#     termina numa visita volta pela metade — que é o mesmo que não voltar,
+#     porque ficha incompleta não se distingue de serviço reprovado. **150**
+#     cobre o caso mais longo que o mercado usa de verdade, a vistoria de
+#     entrega de uma unidade, e ainda cabe numa visita.
+#   - `PDCA_TETO_MODELOS_POR_TENANT` — o tamanho da biblioteca de modelos da
+#     empresa. É irmão do `PDCA_TETO_CAUSAS_POR_TENANT` e existe pela mesma
+#     razão: o modelo só serve se for **o mesmo** aplicado em toda obra — é isso
+#     que faz a conformidade de duas obras ser comparável. Com mil modelos
+#     cadastrados cada engenheiro escolhe o seu, e a comparação acaba. **200**
+#     deixa espaço para os quatro domínios da §4.5 vezes as dezenas de serviços
+#     de uma construtora, sem virar texto livre disfarçado.
+#   - `PDCA_TETO_NCS_ABERTAS_POR_OBRA` — o tamanho do log de não-conformidade
+#     em aberto. Gêmeo declarado do `PDCA_TETO_RESTRICOES_ABERTAS_POR_OBRA`, e
+#     pelo mesmo motivo: a NC existe para ser **encerrada**, não acumulada. Um
+#     log com milhares de linhas abertas não é controle de qualidade, é um
+#     aterro onde a NC que vai virar retrabalho caro fica invisível. **500**.
+#   - `PDCA_TETO_ACOES_POR_NC` — quantos planos 5W2H pendem de uma mesma
+#     não-conformidade. Não é limite de rigor: é o aviso de que uma NC que pede
+#     vinte ações **não é uma NC**, é um problema que precisa ser quebrado em
+#     vários — e quebrado, cada um encerra o seu. **10**.
+#
+# **A conformidade não tem teto, e não tem meta** — a terceira vez que esta
+# fronteira é traçada no módulo, depois do PPC (§5.5j) e do ritmo (§5.5k), e
+# aqui ela é a mais tentadora das três: o PBQP-H e a ISO 9001 falam em índice de
+# conformidade, e seria fácil cravar 95 como "meta do plano". Continua errado
+# pelas duas razões de sempre — o número é **resultado medido**, não limite de
+# uso (§5.6), e meta de qualidade é acordo entre a empresa, o cliente e o
+# organismo certificador dela. O sistema conta conforme, não conforme e não
+# aplicável, e mostra; quem cobra é gente.
+#
+# **O prazo de verificação de eficácia também não está aqui**, e é a mesma
+# família da retenção da §5.5h: "verificar 30 dias depois de executada a ação" é
+# cláusula do sistema de qualidade do cliente, não teto comercial nosso. Ele é o
+# `quando` do 5W2H, digitado por quem monta o plano.
+#
+# **E não há corte síncrono × job nesta fatia**: aplicar um modelo escreve no
+# máximo `PDCA_TETO_ITENS_POR_MODELO_VERIFICACAO` linhas numa transação, e 150
+# não pede fila. O número que protege o gesto já é o de cima — declarar um
+# segundo criaria dois limites para a mesma pergunta, que é o que a §5.5f
+# recusou para bytes por apontamento.
+PDCA_TETO_ITENS_POR_MODELO_VERIFICACAO: int = 150
+PDCA_TETO_MODELOS_POR_TENANT: int = 200
+PDCA_TETO_NCS_ABERTAS_POR_OBRA: int = 500
+PDCA_TETO_ACOES_POR_NC: int = 10
+
+# ---------------------------------------------------------------------------
+# 5.5m SSMA — o diálogo de segurança e a ocorrência (PDCA.8)
+# ---------------------------------------------------------------------------
+# A fatia que registra o que a obra faz para ninguém se machucar, e o que ela
+# faz quando alguém se machuca. As anteriores mediam prazo (PPC), dinheiro
+# (medição) e serviço (verificação); esta mede **gente**, e é a primeira do
+# módulo em que o registro é prova perante o Estado — a CAT tem prazo em lei
+# (1º dia útil; imediato na morte, Lei 8.213/91 art. 22) e multa por acidente
+# não comunicado.
+#
+# **Três números, e os três são tamanho de lista.** A família é a mesma das
+# §5.5c–l. O que muda é um detalhe que nenhuma fatia anterior teve: o anexo da
+# ocorrência é a **primeira coleção de arquivos** do PDCA — toda foto do módulo
+# até aqui é um `FileField` único —, e a porta única da plataforma controla
+# bytes por arquivo, nunca *quantidade* de arquivos. Sem um número aqui, o teto
+# de bytes seria multiplicado por um fator que ninguém declarou.
+#
+#   - `PDCA_TETO_PARTICIPANTES_POR_DDS` — quantas pessoas cabem numa lista de
+#     presença de diálogo de segurança. O DDS é a frente parada em roda antes de
+#     começar o turno, e a roda tem tamanho físico: acima de umas dezenas
+#     ninguém ouve, ninguém pergunta, e a lista vira o que ela não pode ser —
+#     assinatura coletada por fora do diálogo, que é exatamente a fraude que uma
+#     fiscalização procura. **60** cobre a frente grande de uma obra vertical no
+#     pico e ainda descreve uma roda; a obra que reúne 300 pessoas está fazendo
+#     campanha, e campanha se registra como várias rodas, uma por frente.
+#   - `PDCA_TETO_ANEXOS_POR_OCORRENCIA` — quantos arquivos pendem de uma
+#     ocorrência. A cena do acidente se fotografa de vários ângulos porque a
+#     perícia vai olhar de vários ângulos, e junto vêm o atestado e o boletim de
+#     ocorrência. **12** é generoso para o caso real e aperta o caso que não é
+#     real: ocorrência com cinquenta arquivos não é uma ocorrência documentada,
+#     é o acervo da obra sendo despejado no registro que deveria ser legível.
+#   - `PDCA_TETO_OCORRENCIAS_NA_FILA` — quantas linhas a fila de SSMA do cockpit
+#     devolve numa leitura. Irmão do `PDCA_TETO_CONFLITOS_REPORTADOS` da §5.5k e
+#     existe pela mesma razão: é teto de **leitura**, para a tela não pedir uma
+#     lista sem fim, e não teto de uso. **200**.
+#
+# **NÃO existe teto de ocorrências abertas por obra, e a ausência é a decisão
+# mais importante desta seção.** Seria o gêmeo óbvio do
+# `PDCA_TETO_NCS_ABERTAS_POR_OBRA` (500) e do
+# `PDCA_TETO_RESTRICOES_ABERTAS_POR_OBRA`, e copiá-lo produziria um sistema que
+# **recusa o registro de um acidente** porque a obra já tem registros demais.
+# É a versão SSMA do erro que a §5.5g recusou para a lixeira, agravada: lá o
+# limite atrasava uma exclusão, aqui ele apagaria o fato de alguém ter se
+# machucado — e o incentivo que ele criaria (não registrar para não estourar) é
+# o oposto exato do que a fatia existe para produzir. Log de NC e log de
+# restrição se zeram porque a empresa **decide** tratá-los; acidente não se
+# decide. O que protege o banco aqui é o teto de leitura acima, não um teto de
+# escrita.
+#
+# **E os sete números que a SSMA exibe e que NÃO moram aqui**, cada um pela
+# fronteira da §5.6:
+#
+#   - **taxa de frequência** e **taxa de gravidade** (NBR 14280) são
+#     **resultado medido**, a quarta vez que o módulo traça esta linha depois do
+#     PPC (§5.5j), do ritmo (§5.5k) e da conformidade (§5.5l). E há um agravante
+#     próprio: as duas dividem por homem-hora de exposição, que o sistema só
+#     saberá na PDCA.9 — até lá elas voltam nulas dizendo por quê, nunca zero;
+#   - **dias perdidos** e **dias debitados** são contagem do fato, e a tabela de
+#     débito por incapacidade permanente é da **norma**, não nossa;
+#   - **o prazo da CAT** (1º dia útil seguinte) é **lei**, na mesma família do
+#     limite legal de acréscimo que a §5.5h recusou. O sistema avisa o prazo; ele
+#     não o escolhe;
+#   - **a periodicidade do DDS** é acordo da empresa com o próprio programa de
+#     segurança — nenhuma NR a fixa por nome (a palavra "diálogo" aparece uma vez
+#     nas NRs, na NR-1 item 1.4.4.1), e cravá-la aqui seria vender como limite de
+#     plano uma decisão que é do cliente;
+#   - **a validade do ASO e a do CA do EPI** são de terceiro: a do ASO sai do
+#     PCMSO (NR-7) e a do CA é do certificado que o MTE emite ao fabricante.
+#     Mesma classe da janela de reentrega da Meta;
+#   - **meta de zero acidentes** não entra, e esta recusa é mais dura que as
+#     três anteriores. Meta de desempenho já era acordo entre cliente e equipe;
+#     esta, especificamente, **corrompe o dado que a fatia coleta** — a empresa
+#     que persegue o número para de registrar o quase-acidente, que é o registro
+#     mais valioso e o mais fácil de não fazer. O sistema conta; quem cobra é
+#     gente.
+PDCA_TETO_PARTICIPANTES_POR_DDS: int = 60
+PDCA_TETO_ANEXOS_POR_OCORRENCIA: int = 12
+PDCA_TETO_OCORRENCIAS_NA_FILA: int = 200
+
+# ---------------------------------------------------------------------------
+# 5.5n As leituras que atravessam — carteira, fila, busca e a frente do campo
+# ---------------------------------------------------------------------------
+# As fatias de §5.5c a §5.5m protegem **uma obra de cada vez**: o cronograma de
+# uma obra, a planilha de um contrato, a fila de SSMA de um canteiro. Esta
+# protege as quatro leituras que **cruzam** — a carteira que põe as obras lado
+# a lado, a fila única do dia que junta os cinco assuntos de uma obra numa
+# ordenação só, a busca que procura em sete tabelas ao mesmo tempo e a frente
+# do canteiro, que junta quatro assuntos de uma pessoa só.
+#
+# **Os quatro são teto de leitura, não teto de uso.** Nenhum recusa escrita: a
+# empresa continua podendo ter mais obras do que a carteira desenha de uma vez,
+# e o que acontece é a leitura vir cortada **dizendo que veio**. É a família do
+# `PDCA_TETO_OCORRENCIAS_NA_FILA` (§5.5m) e do `PDCA_TETO_CONFLITOS_REPORTADOS`
+# (§5.5k), e não a do `PDCA_TETO_NCS_ABERTAS_POR_OBRA`, que morde na escrita.
+#
+#   - `PDCA_TETO_OBRAS_NA_CARTEIRA` — quantas obras a carteira resolve numa
+#     leitura. **É o mais caro dos três, e o número é pequeno de propósito.**
+#     Cada linha custa um rollup do cronograma vigente daquela obra — a mesma
+#     média ponderada do `avanco_do_cronograma`, **reusada** em vez de
+#     reescrita, porque duas implementações da mesma conta é o defeito que o
+#     D138 já cobrou caro na grade de medição. **40** cobre a construtora que
+#     toca quarenta obras ao mesmo tempo, que já é uma construtora grande;
+#     acima disso a leitura vem cortada e a tela diz quantas ficaram de fora, o
+#     que é melhor do que uma página que leva oito segundos para abrir.
+#   - `PDCA_TETO_LINHAS_POR_FAIXA_DA_FILA` — quantas linhas **cada faixa** da
+#     fila do dia devolve. A fila tem onze faixas em cinco degraus de
+#     consequência (prazo legal, segurança, dinheiro, compromisso assumido e
+#     retrabalho), e o teto é **por faixa**, não do total: um canteiro com 300
+#     restrições vencidas não pode empurrar a CAT para fora da resposta — e a
+#     CAT é a única linha da fila com prazo em lei. **50** é o que uma pessoa lê
+#     numa faixa antes de parar de ler; acima disso a fila deixou de ser fila e
+#     virou relatório, e o caminho é o posto que explica aquela faixa.
+#   - `PDCA_TETO_RESULTADOS_POR_ESPECIE` — quantos resultados **por espécie** a
+#     busca única devolve. Sete espécies (atividade, local, contrato, medição,
+#     ficha, NC e ocorrência) × **8** = 56 linhas no pior caso, que é o que cabe
+#     numa paleta de comando sem rolagem. Por espécie, e não no total, pela
+#     mesma razão da faixa: quarenta atividades chamadas "alvenaria" não podem
+#     esconder o contrato que também se chama assim.
+#
+#   - `PDCA_TETO_LINHAS_POR_FRENTE` — quantas linhas **cada bloco** da leitura
+#     da frente do canteiro devolve. É a leitura da segunda superfície, a de
+#     quem está com a luva na mão: o que a pessoa assumiu nesta semana, a trava
+#     que é dela, a ação de conserto que é dela e a ficha parada esperando ela
+#     responder. **40** por bloco é largo para uma pessoa e estreito para uma
+#     tela de celular — quem tem quarenta compromissos numa semana não tem uma
+#     frente, tem uma obra, e essa pergunta se responde no posto da semana, no
+#     escritório, não no telefone debaixo do sol. Por bloco, e não no total,
+#     pela mesma razão da faixa da fila: cinquenta restrições vencidas não
+#     podem esconder a ficha que está parada esperando uma resposta.
+#
+# **NÃO existe teto de faixas na fila nem de espécies na busca**, e as duas
+# ausências são da família da §5.5m: quantas faixas a fila tem e quantas
+# espécies a busca varre é **o desenho do produto**, não o quanto o cliente
+# pode. Quem os muda escreve código; não edita um plano.
+#
+# **E o que a carteira exibe e NÃO mora aqui**, pela fronteira da §5.6: avanço
+# físico, PPC, conformidade e dias sem afastamento são **resultado medido** — a
+# quinta vez que o módulo traça esta linha, depois do PPC (§5.5j), do ritmo
+# (§5.5k), da conformidade (§5.5l) e das taxas de SSMA (§5.5m). A carteira
+# ordena por eles; ela não escolhe qual é bom.
+PDCA_TETO_OBRAS_NA_CARTEIRA: int = 40
+PDCA_TETO_LINHAS_POR_FAIXA_DA_FILA: int = 50
+PDCA_TETO_RESULTADOS_POR_ESPECIE: int = 8
+PDCA_TETO_LINHAS_POR_FRENTE: int = 40
+
+# ---------------------------------------------------------------------------
 # 5.6 O que NÃO é limite — e por isso continua no código de engenharia
 # ---------------------------------------------------------------------------
 # A régua é "todo teto ou limite vive aqui", e ela tem uma fronteira: número que
@@ -1434,4 +1726,11 @@ PDCA_TETO_DEDUCOES_POR_MEDICAO: int = 40
 #     identidade.py`, D110): a partir de qual semelhança duas descrições são
 #     tidas como o mesmo insumo. Mesma família do `JANELA` do extrator de CEP —
 #     mexer nele muda o *acerto* da conferência (quantos falsos positivos e
-#     falsos negativos), não o quanto o cliente pode adotar ou classificar.
+#     falsos negativos), não o quanto o cliente pode adotar ou classificar;
+#   - **piso de letras da busca** — `MINIMO_DE_LETRAS` (`modulopdca/services.py`,
+#     a busca única da §5.5n): abaixo de duas letras o `LIKE '%a%'` casa com
+#     quase tudo e os oito resultados por espécie que voltam são as oito
+#     primeiras linhas do banco, que não respondem a pergunta nenhuma. É a
+#     mesma família do `JANELA` e do `LIMIAR_SEMELHANCA` — muda o *acerto* da
+#     procura, não até onde o cliente vai. **Quem limita o alcance é o
+#     `PDCA_TETO_RESULTADOS_POR_ESPECIE`, e esse está na §5.5n.**

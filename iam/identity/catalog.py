@@ -295,6 +295,117 @@ CATALOGO: tuple[Perm, ...] = (
     #     achado clássico de auditoria de obra.
     Perm("pdca.aditivo.edit", "Montar aditivo de contrato (quantidade, preço, item, prazo)", "pdca"),
     Perm("pdca.aditivo.aprovar", "Aprovar aditivo — autoriza gastar acima do contratado", "pdca"),
+    # PDCA.5 — o Last Planner. São **cinco** verbos em dois recursos, e a
+    #     divisão segue a mesma lição da medição: cada um é um ato diferente de
+    #     uma pessoa diferente, não um `edit` mais forte.
+    #       · `restricao.view|edit` — registrar o que trava a obra é gesto de
+    #         quem planeja e de quem executa, e os dois fazem isso o tempo todo;
+    #       · `restricao.remover` é separado porque **é o ato que conclui** (a
+    #         §5.4 da planta o põe ao lado de atestar e comprometer): declarar
+    #         que a trava saiu libera a atividade para ser assumida, e quem
+    #         abre a pendência não é necessariamente quem pode declarar que ela
+    #         acabou. Ele carrega a nota que a reunião seguinte lê;
+    #       · `programacao.view` lê o quadro e o PPC — diretoria, planejador,
+    #         e o mestre que precisa saber o que a equipe assumiu;
+    #       · `programacao.comprometer` monta a parede **e** assume: puxar
+    #         cartão e assinar embaixo são o mesmo gesto, e separá-los criaria
+    #         um papel que arruma o quadro sem responder por ele;
+    #       · `programacao.encerrar` julga o que saiu e o que não saiu, e é o
+    #         que produz o índice. É separado de `comprometer` pela razão de
+    #         sempre nesta casa — quem se compromete não deveria ser o único a
+    #         dizer se cumpriu.
+    Perm("pdca.restricao.view", "Ver as restrições que travam a obra", "pdca"),
+    Perm("pdca.restricao.edit", "Registrar restrição e gerar demanda de compra a partir dela", "pdca"),
+    Perm("pdca.restricao.remover", "Remover restrição — declara que a trava saiu e libera o serviço", "pdca"),
+    Perm("pdca.programacao.view", "Ver a programação da semana, o PPC e o ranking de causas", "pdca"),
+    Perm("pdca.programacao.comprometer", "Montar o quadro da semana e assumir os compromissos", "pdca"),
+    Perm("pdca.programacao.encerrar", "Encerrar a semana — julgar o que saiu e registrar a causa do que não saiu", "pdca"),
+    #       · `programacao.encerrar_antecipado` é o **sexto** verbo, e nasceu de
+    #         um defeito: dava para fechar na segunda-feira a semana que ia até
+    #         domingo, julgando como fracasso o que ainda tinha cinco dias de
+    #         prazo. O índice que sai daí entra na série valendo o mesmo que os
+    #         outros, e ninguém que a lê depois consegue distinguir.
+    #         **Não é proibição, é alçada** *(dono, 15/09/2026)*: a obra que para
+    #         na quinta de um feriado prolongado precisa da retrospectiva antes
+    #         de todo mundo sumir, e trancar de todo faria o time julgar de
+    #         memória na segunda seguinte — que é pior do que julgar cedo. Quem
+    #         tem este verbo encerra antes **dando motivo por escrito**, e a
+    #         semana fica marcada na série.
+    Perm("pdca.programacao.encerrar_antecipado", "Encerrar a semana antes de ela acabar — exige motivo, e marca o ponto na série", "pdca"),
+    #     PDCA.7 — a máquina de verificação. Sete verbos, e a régua é a de
+    #     sempre nesta casa: quem executa não aprova o próprio trabalho.
+    #       · `verificacao.view` lê a biblioteca de fichas e as inspeções feitas;
+    #       · `verificacao.modelo_edit` **escreve o método da empresa** — o que
+    #         toda obra passa a conferir e com que critério numérico. É de quem
+    #         responde pela qualidade no escritório, não de quem está na frente:
+    #         um `edit` único daria ao campo o poder de afrouxar o critério da
+    #         FVS no momento exato em que ela reprovasse, que é quando alguém
+    #         quer;
+    #       · `verificacao.aplicar` abre a ficha e a responde item a item. É o
+    #         gesto do canteiro, e é a razão de a fatia existir;
+    #       · `nc.view` lê o defeito, o plano de ação e a eficácia;
+    #       · `nc.abrir` registra que algo saiu errado — quem descobre é quem
+    #         está lá, a mesma lição do `restricao.edit` da PDCA.5;
+    #       · `nc.tratar` monta o 5W2H e declara a ação executada;
+    #       · `nc.verificar_eficacia` é **o verbo que dá sentido aos outros
+    #         seis**. Ele registra que alguém voltou à frente e olhou, e é o
+    #         único que encerra a NC. Separado de `tratar` pela mesma razão que
+    #         separa `apurar` de `atestar` na medição: quem consertou não assina
+    #         que o conserto funcionou — sem isso o laço do §4.5 vira carimbo.
+    #     A planta §8 lista os cinco verbos de escrita; os dois `view` entram
+    #     junto porque todo recurso desta casa tem um, e sem eles as telas de
+    #     leitura (fila de decisão, painel de conformidade) não teriam porta.
+    Perm("pdca.verificacao.view", "Ver as fichas de verificação e a biblioteca de modelos", "pdca"),
+    Perm("pdca.verificacao.modelo_edit", "Montar os modelos de verificação — o que a empresa confere e com que critério", "pdca"),
+    Perm("pdca.verificacao.aplicar", "Aplicar a ficha numa frente e responder item a item", "pdca"),
+    Perm("pdca.nc.view", "Ver as não-conformidades, os planos de ação e a eficácia", "pdca"),
+    Perm("pdca.nc.abrir", "Registrar uma não-conformidade", "pdca"),
+    Perm("pdca.nc.tratar", "Montar o plano de ação 5W2H e declarar a ação executada", "pdca"),
+    Perm("pdca.nc.verificar_eficacia", "Verificar a eficácia e encerrar a NC — o único verbo que a fecha", "pdca"),
+    # --- PDCA.8 — SSMA: o diálogo de segurança e a ocorrência ---
+    #     **A planta §8 reservou `pdca.ssma.*`, e o reservado não era realizável.**
+    #     O catálogo cobra código com exatamente dois pontos (`modulo.recurso.acao`,
+    #     conferido em `tests.py`), então `pdca.ssma.dds.registrar` quebraria a
+    #     suíte, e um recurso `ssma` único empilharia num só nome coisas que
+    #     precisam de donos diferentes. A fatia faz o que a PDCA.7 fez com
+    #     `verificacao` e `nc`: **dois recursos**, porque são dois objetos com
+    #     ciclos de vida distintos — a roda de conversa antes do turno e o fato
+    #     que ninguém queria que acontecesse.
+    #
+    #     A segregação desta fatia é **registrar × classificar**, e ela é nova
+    #     nesta casa. As anteriores separavam quem faz de quem aprova (`apurar` ×
+    #     `atestar`, `tratar` × `verificar_eficacia`); esta separa **quem é
+    #     medido de quem classifica a própria medida**. Registrar tem de ser
+    #     fácil e de baixo atrito — o quase-acidente é o dado mais valioso da
+    #     segurança e o mais fácil de não anotar —, mas dizer *"foi acidente com
+    #     afastamento, e foram nove dias perdidos"* muda o indicador pelo qual a
+    #     própria obra é cobrada. Fossem o mesmo verbo, o encarregado cujo bônus
+    #     depende da taxa de frequência classificaria o próprio acidente.
+    #       · `dds.view` lê os diálogos e a lista de presença;
+    #       · `dds.registrar` abre a roda e colhe a presença. É gesto de canteiro,
+    #         no molde do `avanco.apontar` e do `nc.abrir`;
+    #       · `ocorrencia.view` lê o que aconteceu — **sem o bloco clínico**, que
+    #         tem verbo próprio abaixo;
+    #       · `ocorrencia.registrar` é a porta larga, de propósito. Quem viu o
+    #         andaime ceder é quem está lá;
+    #       · `ocorrencia.classificar` decide tipo, afastamento e dias perdidos —
+    #         os três campos de que a taxa de frequência e a de gravidade nascem;
+    #       · `ocorrencia.emitir_cat` registra que a CAT foi emitida e guarda o
+    #         protocolo. É da família do `erp.nf.emitir`: ato para **terceiro**,
+    #         com prazo em lei (1º dia útil; imediato na morte) e multa por
+    #         omissão. Quem o exerce no mundo real é o RH, que é quem fala com o
+    #         INSS — por isso ele **não** vai para a persona de segurança;
+    #       · `ocorrencia.dado_medico` abre natureza da lesão, CID e atestado.
+    #         É a **primeira PII do grupo `pdca`** (LGPD art. 11, dado de saúde),
+    #         e nasce separada do `view` pela mesma régua do `rh.dado_medico`:
+    #         para classificar o acidente ninguém precisa do diagnóstico.
+    Perm("pdca.dds.view", "Ver os diálogos de segurança e quem esteve presente", "pdca"),
+    Perm("pdca.dds.registrar", "Registrar o diálogo de segurança e colher a lista de presença", "pdca"),
+    Perm("pdca.ocorrencia.view", "Ver as ocorrências de segurança — quase-acidente, incidente e acidente", "pdca"),
+    Perm("pdca.ocorrencia.registrar", "Registrar uma ocorrência de segurança", "pdca"),
+    Perm("pdca.ocorrencia.classificar", "Classificar a ocorrência — tipo, afastamento e dias perdidos", "pdca"),
+    Perm("pdca.ocorrencia.emitir_cat", "Registrar a emissão da CAT e o protocolo — prazo legal de 1 dia útil", "pdca"),
+    Perm("pdca.ocorrencia.dado_medico", "Abrir o bloco clínico da ocorrência — lesão, CID e atestado (dado de saúde)", "pdca"),
     # --- Obras/empreendimentos e cadastros base (sem entitlement de módulo) ---
     #     O percentual da etapa é digitado à mão desde sempre. Com atividades do
     #     PDCA vinculadas a ela, ele passa a ser **apurado** — e esta permissão é
@@ -431,14 +542,46 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
         "pdca.contrato.view", "pdca.medicao.view", "pdca.medicao.atestar",
         # PDCA.4: aprova aditivo pelo mesmo motivo — é alçada, não edição.
         "pdca.aditivo.aprovar",
+        # PDCA.5 — o **PPC é indicador de diretoria** (§5.3 da planta põe o
+        # diretor na carteira multi-obra com SPI/CPI, PPC e desvio). Leitura
+        # apenas: o ciclo semanal é da obra, e um diretor que julgasse o
+        # compromisso de uma equipe que ele não acompanha produziria um índice
+        # sem relação com o que aconteceu no canteiro.
+        "pdca.programacao.view", "pdca.restricao.view",
+        # PDCA.7 — **lê a qualidade e verifica a eficácia**, que é o segundo
+        # verbo de escrita desta persona em todo o catálogo e, como o primeiro,
+        # é uma assinatura e não uma edição. Ela não trata (montar o 5W2H é de
+        # quem está na obra) e não aplica ficha; o que ela faz é o ato que
+        # encerra — voltar e conferir se o conserto pegou. É a mesma forma do
+        # `medicao.atestar`: quem responde pela empresa não executa, decide.
+        "pdca.verificacao.view", "pdca.nc.view", "pdca.nc.verificar_eficacia",
+        # PDCA.8 — **lê a segurança, e só isso**. Taxa de frequência e ranking de
+        # causa são leitura de direção, da mesma família do PPC. Não registra,
+        # não classifica e não abre o bloco clínico: a diretoria da construtora
+        # não tem por que ver o CID de um pedreiro.
+        "pdca.dds.view", "pdca.ocorrencia.view",
     ],
     # RH completo, MENOS o prontuário médico (segregação médico × gestor).
     "rh_gestor": [
         "rh.funcionario.*", "rh.cpf.view", "rh.cargo.*",
         "rh.documento.*", "rh.folha.*", "rh.dado_bancario.*",
+        # PDCA.8 — **é ele quem comunica a CAT**, e o verbo mora aqui e em
+        # nenhum outro lugar. A CAT é ato para terceiro (o INSS) com prazo em
+        # lei e multa por omissão, na família do `erp.nf.emitir`; quem fala com
+        # o INSS é o RH, não o canteiro. Ele lê a ocorrência para montá-la e
+        # **não** a classifica — o tipo e os dias de afastamento são de quem
+        # esteve na obra.
+        "pdca.ocorrencia.view", "pdca.ocorrencia.emitir_cat",
     ],
     # Médico do trabalho: só PII médica.
-    "rh_medico": ["rh.funcionario.view", "rh.dado_medico.*"],
+    #
+    # PDCA.8 — o bloco clínico da ocorrência (natureza da lesão, CID, atestado)
+    # é dado de saúde do art. 11 da LGPD, vizinho de porta do ASO, e por isso
+    # tem o mesmo dono. É a primeira PII do grupo `pdca`.
+    "rh_medico": [
+        "rh.funcionario.view", "rh.dado_medico.*",
+        "pdca.ocorrencia.view", "pdca.ocorrencia.dado_medico",
+    ],
     # Folha de pagamento: salário + dados bancários.
     "rh_financeiro": [
         "rh.funcionario.view", "rh.folha.*", "rh.dado_bancario.*",
@@ -508,6 +651,46 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
         # passa a ser apurado, e destravar a caneta na exceção (a etapa que o
         # plano ainda não cobre) é decisão de quem gere a obra, não de TI.
         "pdca.avanco.*", "obra.etapa.percentual_manual",
+        #
+        # PDCA.5: **o Last Planner é desta persona, inteiro.** A §5.3 da planta
+        # põe "engenheiro de obra" no quadro de programação, no apontamento e
+        # nas restrições — e a `engenharia` é quem esta casa já tem nesse papel
+        # (a PDCA.2 recusou criar uma gêmea dela, e a decisão vale aqui igual).
+        # Leva os verbos todos porque o ciclo é dela de ponta a ponta: registra
+        # a trava, declara que ela saiu, monta o quadro, assume e julga.
+        #
+        # **Inclusive o `encerrar_antecipado`**, e é deliberado: quem sabe que a
+        # obra vai parar na quinta é quem está nela. O curinga o alcança, e a
+        # trava que importa não é a de quem pode — é a do **motivo por escrito**,
+        # que fica na série para a reunião seguinte ler.
+        "pdca.restricao.*", "pdca.programacao.*",
+        #
+        # PDCA.7: **aplica, abre e trata — e não verifica a própria eficácia.**
+        # Quem responde pela obra é quem inspeciona a frente, registra o defeito
+        # e monta o 5W2H que o conserta; é o mesmo par de mãos que já aponta o
+        # avanço e assina o diário. O que ela não tem é o verbo que **encerra**:
+        # declarar que o próprio conserto funcionou é conferir o próprio dever
+        # de casa, e é exatamente a separação que a medição já faz entre apurar
+        # e atestar. Quem encerra é a `diretoria` ou o `fiscal_de_obra`.
+        #
+        # E não leva `verificacao.modelo_edit`: escrever o método da empresa
+        # muda o que **toda** obra passa a conferir, e isso é de quem responde
+        # pela qualidade, não de quem responde por uma obra.
+        "pdca.verificacao.view", "pdca.verificacao.aplicar",
+        "pdca.nc.view", "pdca.nc.abrir", "pdca.nc.tratar",
+        #
+        # PDCA.8: conduz o diálogo, registra a ocorrência **e a classifica**.
+        # Aqui ela vai um verbo além do `campo`, e a razão é a mesma que lhe deu
+        # o `restricao.remover`: classificar é ato de quem responde pela obra, e
+        # o encarregado da frente onde o acidente aconteceu não é essa pessoa.
+        # Onde o tenant tiver SESMT de verdade, o `tecnico_seguranca` divide o
+        # verbo com ela — mas a construtora de uma obra só não tem TST, e sem
+        # isto a ocorrência dela nasceria sem classificação nenhuma.
+        #
+        # **Não emite CAT** (é do RH, que fala com o INSS) nem abre o bloco
+        # clínico.
+        "pdca.dds.*", "pdca.ocorrencia.view", "pdca.ocorrencia.registrar",
+        "pdca.ocorrencia.classificar",
     ],
     # Campo: apontamentos do diário + upload de drone (sem gestão).
     # Lê a prancha vigente no celular — é o caso de uso central da Prancheta, e
@@ -526,6 +709,31 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
         # razão de a fatia existir. Lê o cronograma para saber **em que**
         # apontar; não o edita, que é ato de quem assume o prazo.
         "pdca.cronograma.view", "pdca.avanco.view", "pdca.avanco.apontar",
+        # PDCA.5 — **quem descobre a trava é quem está no canteiro.** O mestre
+        # vê que o material não chegou e que a frente anterior não liberou a
+        # área; obrigá-lo a telefonar para alguém registrar isso é o que faz o
+        # log de restrição nascer desatualizado. Ele **não** remove: declarar
+        # que a trava saiu libera o serviço para ser assumido, e esse é o ato de
+        # quem responde pela obra. E lê a programação porque precisa saber com o
+        # que a equipe dele se comprometeu na semana.
+        "pdca.restricao.view", "pdca.restricao.edit", "pdca.programacao.view",
+        # PDCA.7 — **é a persona do 5º instrumento** (planta §5.2: uma mão,
+        # luva, sol, uma pergunta por vez). Responder a ficha e fotografar o
+        # defeito são o gesto do canteiro, e a fatia existe para que eles
+        # aconteçam onde o defeito está, não numa planilha à noite. Não trata:
+        # montar o plano de ação é decidir o que a obra vai fazer a respeito, e
+        # isso é de quem responde por ela.
+        "pdca.verificacao.view", "pdca.verificacao.aplicar",
+        "pdca.nc.view", "pdca.nc.abrir",
+        # **A porta da SSMA é larga de propósito** (PDCA.8). Quem conduz a roda
+        # antes do turno é o encarregado, e quem viu o andaime ceder é quem
+        # estava lá — exigir que ele telefone para alguém registrar é o que faz
+        # o quase-acidente não ser registrado, e o quase-acidente é o dado mais
+        # valioso da segurança. O que ele **não** faz é `classificar`: dizer
+        # "foi com afastamento, nove dias" mexe no indicador pelo qual a própria
+        # frente dele é cobrada.
+        "pdca.dds.view", "pdca.dds.registrar",
+        "pdca.ocorrencia.view", "pdca.ocorrencia.registrar",
     ],
     # Analista de drone: processamento e medições. Ganhou o acervo e a missão —
     # é a mesma pessoa que hoje já opera o voo, agora com o plano na plataforma.
@@ -562,6 +770,11 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
     # critério de compra tanto quanto preço e reputação.
     "suprimentos": [
         "scm.*", "cadastro.fornecedor.view", "cadastro.item.*", "cadastro.tipo_item.view",
+        # PDCA.5 — o outro lado do seam: a restrição de material vira demanda
+        # nesta fila, e quem compra precisa ver **o que ela está segurando** na
+        # obra. Sem isso, a demanda gerada por uma restrição chega aqui como
+        # mais uma linha, sem a informação que decide a urgência dela.
+        "pdca.restricao.view",
         "mapa.local.view", "mapa.rota.view",
     ],
     # Almoxarife: estoque & logística interna. `sil.*` + leitura do item-mestre
@@ -646,6 +859,18 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
         # PDCA.3: lê o contrato e a medição — o plano dele é o denominador do
         # que se mede. Não apura nem ateste: são atos do contrato, não do prazo.
         "pdca.contrato.view", "pdca.medicao.view",
+        # PDCA.5: **lê** a restrição e o quadro, e não assume nem julga. O
+        # make-ready e o compromisso são atos de quem está com a equipe na
+        # semana; o que interessa ao planejamento é a leitura — quais travas
+        # ameaçam o caminho crítico, e o que o PPC diz sobre a confiabilidade do
+        # plano que ele desenhou. Um planejador que julgasse o próprio plano
+        # cumprido estaria de novo conferindo o próprio dever de casa.
+        "pdca.restricao.view", "pdca.programacao.view",
+        # PDCA.7: **lê** a qualidade, e só. O retrabalho é o que estoura o
+        # prazo que ele desenhou — a NC aberta numa frente do caminho crítico é
+        # informação de planejamento —, mas inspecionar, tratar e encerrar são
+        # atos de quem está na obra.
+        "pdca.verificacao.view", "pdca.nc.view",
         "obra.obra.view", "obra.empreendimento.view", "obra.diario.view",
         "orcamento.orcamento.view", "orcamento.item.view", "orcamento.relatorio.view",
         "calendario.evento.view", "mapa.local.view",
@@ -679,6 +904,103 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
         "erp.conta_pagar.view",
         "plataforma.fluxo_aprovacao.view",
     ],
+    # PDCA.7 — as duas últimas personas que a planta §8 previu, entrando com a
+    # fatia que lhes dá verbo. E elas passam no teste que a §8 impõe: nenhuma é
+    # gêmea de alguém que já existe.
+    #
+    # O `tecnico_qualidade` é o único cargo desta casa cujo trabalho **é** a
+    # máquina de verificação. A `engenharia` responde pela obra e inspeciona de
+    # passagem; este escreve o método (`modelo_edit`, que nenhuma outra persona
+    # tem), aplica a ficha e monta o plano de ação — e não toca em cronograma,
+    # contrato nem medição, que é o que o separa de todas as outras.
+    #
+    # **Ele não verifica a própria eficácia**, e essa é a linha inteira da
+    # fatia: quem escreveu a ficha, reprovou o item e montou o conserto não
+    # assina que o conserto funcionou. É a forma que a medição já tem entre
+    # `apurar` e `atestar`, aplicada à qualidade.
+    "tecnico_qualidade": [
+        "pdca.verificacao.*", "pdca.nc.view", "pdca.nc.abrir", "pdca.nc.tratar",
+        # Lê o plano para saber **em que** aplicar a ficha, e a árvore de locais
+        # porque é ela o endereço da não-conformidade (planta §4.1).
+        "pdca.cronograma.view", "pdca.local.view",
+        # Trava a frente quando o defeito é grave: é o seam vivo com o Last
+        # Planner, e sem `restricao.edit` o `gerar-restricao` da NC seria um
+        # botão que recusa. Não remove — declarar que a trava saiu libera o
+        # serviço, e esse é ato de quem responde pela obra.
+        "pdca.restricao.view", "pdca.restricao.edit", "pdca.programacao.view",
+        # Ancora a NC no desenho e a exporta em BCF (planta §6).
+        "prancheta.documento.view", "prancheta.marcacao.view",
+        "prancheta.marcacao.edit",
+        "obra.obra.view", "obra.diario.view", "calendario.evento.view",
+    ],
+    # O `fiscal_de_obra` é o outro lado: ele **não executa nada** e assina os
+    # dois atos que encerram — a medição e a não-conformidade. É o cargo que a
+    # obra pública brasileira chama assim (o representante que fiscaliza e
+    # atesta) e que a obra privada chama de gerente de contrato do cliente.
+    #
+    # **O nome tem `_de_obra` porque `fiscal` já é a persona de nota fiscal**
+    # neste catálogo, e são pessoas diferentes em empresas diferentes — a §8 da
+    # planta registra a colisão.
+    #
+    # Ele repete o `medicao.atestar` da `diretoria` de propósito: a diretoria o
+    # tem para que a escada seja montável no primeiro dia, e esta persona existe
+    # para o tenant que tem o cargo de verdade e não quer pôr o diretor em toda
+    # fila de atesto.
+    "fiscal_de_obra": [
+        "pdca.verificacao.view", "pdca.nc.view", "pdca.nc.verificar_eficacia",
+        "pdca.medicao.view", "pdca.medicao.atestar",
+        "pdca.contrato.view", "pdca.aditivo.aprovar",
+        "pdca.cronograma.view", "pdca.avanco.view", "pdca.local.view",
+        "pdca.programacao.view", "pdca.restricao.view",
+        # PDCA.8 — lê o que a obra registrou de segurança, na mesma régua do
+        # resto desta persona: ela confere e assina, não executa. Sem verbo de
+        # escrita aqui, e sem o bloco clínico.
+        "pdca.dds.view", "pdca.ocorrencia.view",
+        "obra.obra.view", "obra.empreendimento.view", "obra.diario.view",
+        "prancheta.documento.view", "prancheta.marcacao.view",
+        "plataforma.fluxo_aprovacao.view",
+    ],
+    # O `tecnico_seguranca` é o **TST do SESMT** (NR-4), e é o cargo que a obra
+    # brasileira acima de certo porte é obrigada a ter. Ele estreia com a PDCA.8
+    # pela régua de sempre: a persona chega com a fatia que lhe dá verbo.
+    #
+    # **Ele passa no teste da gêmea, e por pouco — então vale dizer onde.** Com o
+    # `tecnico_qualidade` ele divide o miolo da verificação (aplicar ficha, abrir
+    # e tratar NC, travar a frente), porque inspeção de segurança **é** a mesma
+    # máquina da §4.5 com outro domínio. O que os separa são os dois extremos:
+    #   · ele tem `dds.*` e `ocorrencia.*`, que nenhuma outra persona de obra
+    #     tem — e é por isso que esses verbos **não** foram dados ao técnico de
+    #     qualidade, senão as duas personas viravam a mesma lista;
+    #   · ele **não** tem `verificacao.modelo_edit`, que é o verbo exclusivo do
+    #     técnico de qualidade: escrever o método da empresa é um cargo só.
+    #
+    # **E ele não emite CAT.** Parece contraintuitivo — é o profissional de
+    # segurança —, mas quem protocola CAT no INSS é o RH, e dar-lhe o verbo
+    # criaria duas portas para um ato com prazo legal e multa. Ele classifica; o
+    # RH comunica. Também **não** vê o bloco clínico: para dizer "acidente com
+    # afastamento, nove dias" ninguém precisa do CID.
+    #
+    # `sil.epi.view` é o que faz o seam do EPI funcionar sem a PDCA.8 duplicar a
+    # entrega (planta §4.6): ele lê a ficha de EPI de quem está na obra, e só
+    # ela — não o estoque, não o inventário, não a devolução ao fornecedor.
+    "tecnico_seguranca": [
+        "pdca.dds.*", "pdca.ocorrencia.view", "pdca.ocorrencia.registrar",
+        "pdca.ocorrencia.classificar",
+        # A inspeção de segurança é a máquina da PDCA.7 no domínio `seguranca` —
+        # ele aplica a ficha e trata o desvio, sem escrever o modelo.
+        "pdca.verificacao.view", "pdca.verificacao.aplicar",
+        "pdca.nc.view", "pdca.nc.abrir", "pdca.nc.tratar",
+        # Interditar a frente é o dente da fatia: risco grave vira `Restricao` e
+        # a atividade sai do quadro da semana. Não remove — declarar que o risco
+        # cessou é ato de quem responde pela obra, a mesma linha do D.
+        "pdca.restricao.view", "pdca.restricao.edit", "pdca.programacao.view",
+        "pdca.cronograma.view", "pdca.local.view",
+        # Lê a ficha de EPI de quem está na obra (planta §4.6) — a entrega
+        # continua sendo do SIL, que é o dono do estoque.
+        "sil.epi.view",
+        "rh.funcionario.view",
+        "obra.obra.view", "obra.diario.view",
+    ],
     # Gestor da lixeira (exclusão reversível — ver arquitetura/lixo.md).
     "gestor_lixo": ["plataforma.lixo.*"],
     # Papel default de leitura básica (antes era morto).
@@ -708,6 +1030,9 @@ DESCRICOES_TEMPLATE: dict[str, str] = {
     "orcamentista": "Planilha orçamentária da obra: bases referenciais (SINAPI/ORSE), composições, curva ABC e orçado × realizado. Aprova e revisa o orçamento.",
     "planejador": "Planejamento da obra: cronograma (WBS, CPM, linha de base), hierarquia de locais, calendário de trabalho e leitura do avanço apontado.",
     "gestor_contratos": "Contratos de empreitada: planilha contratual, medição do período apurada a partir do avanço e acompanhamento do saldo. Apura a medição; quem ateste é a escada de aprovação.",
+    "tecnico_qualidade": "Qualidade da obra: monta os modelos de verificação (FVS, segurança, ambiental, entrega), aplica a ficha no canteiro, registra a não-conformidade e monta o plano de ação. Não verifica a própria eficácia — quem encerra a NC é o fiscal ou a diretoria.",
+    "fiscal_de_obra": "Fiscalização: atesta a medição, aprova aditivo e verifica a eficácia do tratamento das não-conformidades. Só assina — não apura, não trata e não executa.",
+    "tecnico_seguranca": "Segurança do trabalho (TST/SESMT): conduz o diálogo de segurança, registra e classifica a ocorrência, aplica a inspeção de segurança, trata o desvio e interdita a frente quando o risco é grave. Lê a ficha de EPI de quem está na obra. Não comunica CAT (é do RH) nem abre o bloco clínico.",
     "topografo": "Território: georreferenciamento, camadas e feições do mapa, acervo de ortofotos e planos de voo.",
     "projetista": "Acervo de projeto: cadastra documentos, envia revisões e PUBLICA a revisão vigente — a que o canteiro executa.",
     "gestor_lixo": "Restauração e expurgo de itens da lixeira (exclusão reversível).",

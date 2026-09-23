@@ -75,6 +75,16 @@ e a aquisição apenas aponta para ela.
 | `/contas-bancarias-empreendimentos/:id/` | `GET` · `PUT`/`PATCH` · `DELETE` | — |
 | `/custos-empreendimentos/` | `GET` lista · `POST` cria | `?empreendimento=<id>`, `?search=` (descrição/nota fiscal) |
 | `/custos-empreendimentos/:id/` | `GET` · `PUT`/`PATCH` · `DELETE` | — |
+| `/unidades/` | `GET` lista · `POST` cria | `?empreendimento=`, `?situacao=`, `?tipo=`, `?quadra=`, `?bloco_torre=`, `?search=`, `?ordering=`. Paginado; ordem padrão é a do endereço (quadra › lote › bloco › andar › apto), **numérica** |
+| `/unidades/:id/` | `GET` · `PUT`/`PATCH` · `DELETE` | `DELETE` fecha em 409 se a unidade tem aquisição |
+| `/unidades/resumo/` | `GET` | Mesmos filtros da lista. Devolve `total`, `por_situacao`/`situacoes` (as **quatro**, com rótulo) e `quadras` |
+
+**Por que `resumo/` existe.** A aba Unidades é paginada, e contar as linhas já baixadas respondia duas
+perguntas com números errados: "quantas à venda?" virava o resumo das primeiras 100 (amostra com cara
+de total num loteamento de 800 lotes) e a lista de quadras do filtro só oferecia as quadras que já
+tinham descido — para filtrar por quadra era preciso carregar tudo. As contagens respeitam o recorte
+de filtros; a **lista de quadras ignora de propósito o filtro de quadra**, senão o seletor se reduziria
+à escolha já feita e não deixaria trocar.
 
 Rotas registradas no roteador central em [config/urls.py](../../backend/config/urls.py).
 O `empreendimentos/urls.py` do app está vazio — não é necessário.

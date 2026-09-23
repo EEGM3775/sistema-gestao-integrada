@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useId } from 'react'
 import type { ReactNode } from 'react'
 
 interface ModalProps {
@@ -35,6 +35,14 @@ interface ModalProps {
 export function Modal({
   titulo, onClose, children, rodape, largura = 520, alto = false,
 }: ModalProps) {
+  //: **O diálogo se anuncia como diálogo.** Sem `role`/`aria-modal`, um leitor
+  //: de tela lê o cartão como mais um trecho da página: quem não enxerga não
+  //: sabe que o resto ficou inerte, e o `Esc` não tem significado anunciado.
+  //: O `aria-labelledby` aponta para o próprio cabeçalho, que é o título que a
+  //: pessoa vidente lê — um `aria-label` paralelo seria um segundo nome, que
+  //: envelhece separado do primeiro.
+  const idDoTitulo = useId()
+
   useEffect(() => {
     const aoTeclar = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', aoTeclar)
@@ -54,10 +62,21 @@ export function Modal({
           : { alignItems: 'flex-start', padding: '7vh 16px', overflowY: 'auto' }),
       }}
     >
-      <div style={{
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={idDoTitulo}
+        style={{
         width: '100%', maxWidth: largura, background: 'var(--surface)',
         border: '1px solid var(--line)', borderRadius: 'var(--r-lg)',
         boxShadow: 'var(--shadow-lg)',
+        // **`minWidth: 0` é o que faz o `maxWidth` acima valer.** O cartão é
+        // filho de um flex container, e filho de flex tem `min-width: auto` —
+        // ou seja, ele não encolhe abaixo do conteúdo. Um `<select>` com uma
+        // opção longa (o cabeçalho de uma planilha, no de-para da importação)
+        // empurrava o cartão para além dos 620px declarados e o diálogo saía
+        // pela lateral da tela, sem barra de rolagem para voltar.
+        minWidth: 0,
         // `minHeight: 0` na coluna flex é o que permite ao miolo encolher abaixo
         // do tamanho natural do conteúdo — sem ele o `flex: 1` do filho não
         // limita nada e a lista volta a empurrar o rodapé para fora.
@@ -65,13 +84,17 @@ export function Modal({
           ? { height: '94vh', display: 'flex', flexDirection: 'column', minHeight: 0 }
           : null),
       }}>
-        <div style={{
+        <div id={idDoTitulo} style={{
           padding: '14px 19px', borderBottom: '1px solid var(--line)',
           fontFamily: 'var(--display)', fontSize: 15.5, fontWeight: 700, color: 'var(--ink)',
+          // Nome de arquivo não tem espaço para quebrar em: sem `anywhere`, um
+          // `Relatorio_de_precos_consolidado_2026_revisao_final.xlsx` estica o
+          // cabeçalho e leva o diálogo junto.
+          overflowWrap: 'anywhere',
           ...(alto ? { flex: 'none' } : null),
         }}>{titulo}</div>
         <div style={{
-          padding: 19,
+          padding: 19, minWidth: 0,
           ...(alto ? { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } : null),
         }}>{children}</div>
         {rodape && (

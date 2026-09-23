@@ -65,7 +65,7 @@ export function dataBR(iso: string | null | undefined): string {
 
 export const FONTE_ROTULO: Record<Fonte, string> = {
   sinapi: 'SINAPI', orse: 'ORSE', sicro: 'SICRO', seinfra: 'SEINFRA',
-  sedop: 'SEDOP', tcpo: 'TCPO', propria: 'PRÓPRIA',
+  sedop: 'SEDOP', tcpo: 'TCPO', embasa: 'EMBASA', propria: 'PRÓPRIA',
 }
 
 export const STATUS_ESTADO: Record<StatusOrcamento, Estado> = {

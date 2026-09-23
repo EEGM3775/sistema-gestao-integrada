@@ -47,7 +47,8 @@ function Painel({ children, onFechar, largura = 260 }: { children: React.ReactNo
  */
 export function BarraCarteira({
   visao, onVisao, busca, onBusca, agrupamento, onAgrupamento, colunas, colunasVisiveis,
-  ancora, onColunas, filtros, onFiltros, opcoes, total, podeFinanceiro,
+  ancora, onColunas, filtros, onFiltros, opcoes, total, repetidosEmGrupos = 0,
+  podeFinanceiro,
 }: {
   visao: Visao
   onVisao: (v: Visao) => void
@@ -63,7 +64,18 @@ export function BarraCarteira({
   filtros: FiltrosCarteira
   onFiltros: (f: FiltrosCarteira) => void
   opcoes?: OpcoesCarteira
+  /** O total de linhas do recorte — o mesmo número agrupado ou não. */
   total: number
+  /**
+   * Quantas linhas aparecem em mais de um cabeçalho, quando se agrupa por uma
+   * dimensão de muitos (o cliente que comprou em dois empreendimentos está nos
+   * dois grupos). Zero na maioria das combinações.
+   *
+   * Existe para **explicar** a diferença, não para escondê-la: sem esta frase,
+   * quem soma os cabeçalhos à mão encontra um número maior que o total e passa
+   * a desconfiar dos dois.
+   */
+  repetidosEmGrupos?: number
   podeFinanceiro: boolean
 }) {
   const [painel, setPainel] = useState<'grupo' | 'colunas' | 'filtros' | null>(null)
@@ -281,8 +293,22 @@ export function BarraCarteira({
         )}
       </div>
 
-      <span className="num" style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--ink-3)' }}>
+      <span
+        className="num"
+        style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--ink-3)', textAlign: 'right' }}
+        title={repetidosEmGrupos > 0
+          ? `Somando os grupos dá ${(total + repetidosEmGrupos).toLocaleString('pt-BR')}: `
+            + `${repetidosEmGrupos.toLocaleString('pt-BR')} aparecem em mais de um grupo `
+            + '(quem comprou em mais de um empreendimento, por exemplo). '
+            + 'O total ao lado conta cada um uma vez.'
+          : undefined}
+      >
         {total.toLocaleString('pt-BR')} {visao === 'unidades' ? 'unidades' : 'clientes'}
+        {repetidosEmGrupos > 0 && (
+          <span style={{ display: 'block', fontSize: 10.5, color: 'var(--ink-3)' }}>
+            {repetidosEmGrupos.toLocaleString('pt-BR')} em mais de um grupo
+          </span>
+        )}
       </span>
     </div>
   )

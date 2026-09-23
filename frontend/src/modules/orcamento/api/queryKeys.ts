@@ -76,4 +76,6 @@ export const orcKeys = {
   fontesOficiais: familia('fontes-oficiais'),
   cargas: familia('cargas'),
   estadoDaCarga: () => [...raiz, 'estado-da-carga'] as const,
+  documentosDaFonte: (fonte: string, competencia?: string) =>
+    [...raiz, 'documentos-da-fonte', fonte, competencia ?? ''] as const,
 }

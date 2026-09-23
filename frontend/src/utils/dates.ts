@@ -71,31 +71,48 @@ function formatISO(iso: string): string {
   return `${d}/${m}/${y}`
 }
 
+// ─── A faixa do calendário — uma só, para toda a plataforma ──────────────────
+//
+// **1900–2100 em todo campo de data, sem exceção** *(decisão do dono,
+// 15/09/2026)*. Antes cada família de campo tinha a sua janela — vigência era
+// `hoje−10 … hoje+20`, pagamento era `hoje−1 … hoje+5` — e o sintoma apareceu no
+// Expediente do PDCA: o campo de exceção do calendário abria em **2016–2046** e
+// não havia como cadastrar o feriado de 2047.
+//
+// Janela que anda com o relógio é pior do que janela estreita: a mesma tela
+// aceita hoje o que vai recusar no ano que vem, e ninguém consegue explicar o
+// porquê para quem está do outro lado.
+//
+// **O `min`/`max` do input não é o lugar da regra de negócio.** O que é absurdo
+// — nascimento no futuro, exame que ainda não aconteceu — continua recusado,
+// mas pelos **validadores** abaixo, que têm frase. `min`/`max` de um
+// `type="date"` apagam o dia do calendário do navegador sem dizer nada: a
+// pessoa clica, não acontece nada, e a conclusão dela é que o sistema travou.
+
+/** O primeiro dia que qualquer campo de data da plataforma aceita. */
+export const minCalendarioISO = '1900-01-01'
+/** E o último. Duzentos anos é mais do que qualquer documento de obra alcança, e
+ *  o bastante para esta faixa nunca mais ser o motivo de uma recusa. */
+export const maxCalendarioISO = '2100-12-31'
+
 // ─── Constantes e funções ISO para atributos min/max de type="date" ──────────
-// Constantes fixas (nunca mudam):
+//
+// Mantidas como **apelidos** da faixa única: o nome diz em que campo o valor
+// está sendo usado e continua legível no JSX, e mudar a faixa de todos é mudar
+// as duas constantes acima. Nenhum deles anda com o relógio.
 
-export const minNascISO = '1900-01-01'
-export const minAdmiISO = '1940-01-01'
+export const minNascISO = minCalendarioISO
+export const minAdmiISO = minCalendarioISO
 
-// Funções dinâmicas (recalculadas a cada chamada — dependem de "hoje"):
-
+/** Hoje, em ISO. **Não é mais `max` de input nenhum** — é o que os validadores
+ *  de "não pode ser futura" comparam, e o que a tela usa como valor padrão. */
 export function maxTodayISO(): string { return toISO(new Date()) }
 
-export function maxAdmiISO(): string {
-  const d = new Date(); d.setFullYear(d.getFullYear() + 2); return toISO(d)
-}
-export function minVigenciaISO(): string {
-  const d = new Date(); d.setFullYear(d.getFullYear() - 10); return toISO(d)
-}
-export function maxVigenciaISO(): string {
-  const d = new Date(); d.setFullYear(d.getFullYear() + 20); return toISO(d)
-}
-export function minPagamentoISO(): string {
-  const d = new Date(); d.setFullYear(d.getFullYear() - 1); return toISO(d)
-}
-export function maxPagamentoISO(): string {
-  const d = new Date(); d.setFullYear(d.getFullYear() + 5); return toISO(d)
-}
+export function maxAdmiISO(): string { return maxCalendarioISO }
+export function minVigenciaISO(): string { return minCalendarioISO }
+export function maxVigenciaISO(): string { return maxCalendarioISO }
+export function minPagamentoISO(): string { return minCalendarioISO }
+export function maxPagamentoISO(): string { return maxCalendarioISO }
 
 // ─── Validadores para type="date" (YYYY-MM-DD) ────────────────────────────────
 
@@ -107,26 +124,41 @@ export function validateISO(value: string, min: string, max: string): string | n
   return null
 }
 
+/** A faixa do calendário e nada mais — para o campo cuja única regra é ser uma
+ *  data: vigência de contrato, início de plano, exceção de calendário, prazo. */
+export function validateISO_Calendario(v: string): string | null {
+  return validateISO(v, minCalendarioISO, maxCalendarioISO)
+}
+
+/** Nascimento: a faixa, **mais** a regra de que ninguém nasceu amanhã. */
 export function validateISO_Nasc(v: string): string | null {
-  return validateISO(v, minNascISO, maxTodayISO())
+  return (
+    validateISO_Calendario(v)
+    ?? (v > maxTodayISO() ? 'Data de nascimento não pode ser futura.' : null)
+  )
 }
 export function validateISO_Vigencia(v: string): string | null {
-  return validateISO(v, minVigenciaISO(), maxVigenciaISO())
+  return validateISO_Calendario(v)
 }
 export function validateISO_Pagamento(v: string): string | null {
-  return validateISO(v, minPagamentoISO(), maxPagamentoISO())
+  return validateISO_Calendario(v)
 }
+/** O exame já foi feito. Data de exame no futuro é erro de digitação — e o ASO
+ *  que sai dela vence numa data que nunca começou a valer. */
 export function validateISO_ExameASO(v: string): string | null {
-  return validateISO(v, minVigenciaISO(), maxTodayISO())
+  return (
+    validateISO_Calendario(v)
+    ?? (v > maxTodayISO() ? 'A data do exame não pode ser futura.' : null)
+  )
 }
 export function validateISO_ValidadeASO(v: string): string | null {
-  return validateISO(v, minVigenciaISO(), maxVigenciaISO())
+  return validateISO_Calendario(v)
 }
 
 // ─── Validadores para DD/MM/AAAA (text inputs com máscara) ───────────────────
 
-const MIN_NASC_DATE = new Date(1900, 0, 1)
-const MIN_ADMI_DATE = new Date(1940, 0, 1)
+const MIN_DATE = new Date(1900, 0, 1)
+const MAX_DATE = new Date(2100, 11, 31)
 
 export function validateDataNasc(br: string): string | null {
   if (!br) return null
@@ -134,7 +166,7 @@ export function validateDataNasc(br: string): string | null {
   if (!d) return 'Data inválida — use DD/MM/AAAA.'
   const today = new Date(); today.setHours(23, 59, 59, 999)
   if (d > today) return 'Data de nascimento não pode ser futura.'
-  if (d < MIN_NASC_DATE) return 'Data inválida (mínimo: 01/01/1900).'
+  if (d < MIN_DATE) return 'Data inválida (mínimo: 01/01/1900).'
   return null
 }
 
@@ -142,9 +174,8 @@ export function validateDataAdmissao(br: string): string | null {
   if (!br) return null
   const d = parseDateBR(br)
   if (!d) return 'Data inválida — use DD/MM/AAAA.'
-  const maxFuture = new Date(); maxFuture.setFullYear(maxFuture.getFullYear() + 2)
-  if (d > maxFuture) return 'Data muito distante (máximo: 2 anos no futuro).'
-  if (d < MIN_ADMI_DATE) return 'Data inválida (mínimo: 01/01/1940).'
+  if (d > MAX_DATE) return 'Data inválida (máximo: 31/12/2100).'
+  if (d < MIN_DATE) return 'Data inválida (mínimo: 01/01/1900).'
   return null
 }
 

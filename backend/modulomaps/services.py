@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 import math
+import re
+import unicodedata
 
 from django.utils import timezone
 
@@ -257,7 +259,79 @@ VINCULOS = {
         "nome": lambda l: l.nome,
         "endereco": lambda l: l.endereco or "",
     },
+    # A unidade imobiliária — o lote, o apartamento. É o **único** vínculo cujo
+    # endereço pode ser deduzido de outro campo: quando `Unidade.endereco` está
+    # vazio, a frente do lote (`confrontante_frente`) é a rua, e é ela que o
+    # comprador usa para chegar lá. Deduzir daí é o que tira do mapa um pin
+    # "QD 4 · LT 06" sem nenhuma pista de onde isso fica.
+    Local.Tipo.UNIDADE: {
+        "modelo": "empreendimentos.Unidade",
+        "nome": lambda u: (
+            f"{u.empreendimento.empreendimento} — {u.rotulo}"
+            if u.empreendimento_id else u.rotulo
+        ),
+        "endereco": lambda u: u.endereco or u.confrontante_frente or "",
+        "cidade": lambda u: (u.empreendimento.cidade or "") if u.empreendimento_id else "",
+        "uf": lambda u: (u.empreendimento.estado or "") if u.empreendimento_id else "",
+    },
 }
+
+
+# ---------------------------------------------------------------------------
+# Coerência entre o endereço e a divisa da frente
+# ---------------------------------------------------------------------------
+#: O que só diz **que tipo** de logradouro é, e nunca **qual**. Some dos dois
+#: lados da comparação: "R. das Acácias" e "Rua das Acácias" são a mesma rua, e
+#: a diferença entre elas é ruído de quem digitou, não divergência de cadastro.
+_TIPOS_DE_LOGRADOURO = {
+    "r", "rua", "av", "avenida", "al", "alameda", "tv", "travessa", "rod",
+    "rodovia", "pc", "pca", "praca", "est", "estrada", "lgo", "largo",
+}
+#: Palavras de ligação — "das Acácias" e "de Acácias" não podem virar ruas
+#: diferentes por causa do artigo.
+_LIGACOES = {"de", "da", "do", "das", "dos", "e"}
+
+
+def _sem_ruido(texto: str) -> str:
+    """O nome da rua reduzido às palavras que a identificam.
+
+    Tira acento, caixa, pontuação, o tipo do logradouro e os artigos — o que
+    sobra de "R. das Acácias, 120 — Centro" é "acacias 120 centro", e o que
+    sobra de "Rua das Acácias" é "acacias". É o suficiente para reconhecer que
+    as duas falam da mesma rua sem exigir que alguém tenha digitado igual nos
+    dois cadastros, que é coisa que nunca acontece.
+    """
+    sem_acento = unicodedata.normalize("NFKD", texto or "").encode("ascii", "ignore").decode()
+    palavras = re.split(r"[^a-z0-9]+", sem_acento.lower())
+    return " ".join(
+        p for p in palavras if p and p not in _TIPOS_DE_LOGRADOURO and p not in _LIGACOES
+    )
+
+
+def rua_confere(unidade, local=None) -> bool | None:
+    """A frente do lote bate com o endereço cadastrado?
+
+    `True` bate, `False` diverge, **`None` não dá para dizer** — e o `None` é o
+    valor que mais importa. Sem confrontante de frente, ou sem endereço, não há
+    comparação a fazer: responder `False` acusaria de errado um cadastro que
+    apenas está incompleto, e responder `True` daria por conferido o que ninguém
+    conferiu.
+
+    A comparação é por **conteúdo**: basta que um texto contenha o outro depois
+    de tirar acento, pontuação e a abreviatura do logradouro ("R.", "Av."). O
+    endereço costuma trazer número e complemento que o memorial não tem, e exigir
+    igualdade literal acusaria divergência em todo cadastro correto.
+    """
+    frente = _sem_ruido(getattr(unidade, "confrontante_frente", ""))
+    if not frente:
+        return None
+    candidatos = [getattr(unidade, "endereco", "") or ""]
+    if local is not None:
+        candidatos += [local.logradouro or "", local.endereco_formatado() or ""]
+    candidatos = [_sem_ruido(c) for c in candidatos if _sem_ruido(c)]
+    if not candidatos:
+        return None
+    return any(frente in c or c in frente for c in candidatos)
 
 
 def sincronizar_local(entidade, tipo: str, tenant_id=None) -> Local:

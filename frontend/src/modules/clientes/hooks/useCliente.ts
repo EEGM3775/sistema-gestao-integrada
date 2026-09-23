@@ -7,6 +7,50 @@ import type {
   DocumentoCliente, DadoBancarioCliente, DadoBancarioClienteFormData,
 } from '@/types'
 
+/**
+ * O estado do calendário bancário por trás de um vencimento.
+ *
+ * `feriadosCarregados: false` é a informação que impede a promessa vazia: a
+ * tabela de feriados é global e nasce vazia (quem a enche é
+ * `manage.py sincronizar_feriados`). Sem ela o vencimento ainda desvia de
+ * sábado e domingo — mas não de feriado, e a tela tem de dizer isso.
+ */
+export interface CalendarioDoVencimento {
+  uf: string
+  municipio: boolean
+  feriadosCarregados: boolean
+}
+
+/** O carnê que sairia — mostrado na confirmação, antes de existir. */
+export interface PreviaParcelas {
+  jaGeradas: boolean
+  aquisicaoId: number
+  clienteId: number
+  cliente: string
+  empreendimento: string
+  unidade: string
+  quantidade: number
+  total: string
+  primeiroVencimento: string | null
+  ultimoVencimento: string | null
+  /** Quantas caíam em fim de semana ou feriado e foram para o próximo dia útil. */
+  ajustadas: number
+  calendario: CalendarioDoVencimento
+}
+
+export interface ResultadoGeracao {
+  geradas: number
+  total: string
+  geradasEm: string
+  aquisicaoId: number
+  clienteId: number
+  cliente: string
+  empreendimento: string
+  unidade: string
+  ajustadas: number
+  calendario: CalendarioDoVencimento
+}
+
 export function useCliente(clienteId: number) {
   const [data, setData]                       = useState<Cliente | null>(null)
   const [aquisicoes, setAquisicoes]           = useState<ClienteEmpreendimento[]>([])
@@ -71,6 +115,18 @@ export function useCliente(clienteId: number) {
     setAquisicoes(prev => prev.filter(a => a.cliente_empreendimento_id !== id))
   }
 
+  /** O carnê que **seria** gerado, sem gerar nada — o que a confirmação mostra.
+   *
+   *  Gerar carnê é irreversível pela tela (o botão some e o backend recusa a
+   *  segunda chamada com 409), e ato irreversível não pode ser um clique sem
+   *  prévia. É também o que responde à dúvida de quem gera três parcelas e
+   *  depois vê dezenas de milhares de títulos no ERP: o número aqui é o **desta
+   *  aquisição**, e vem com o nome do cliente e da unidade ao lado. */
+  const previaParcelas = async (id: number) => {
+    const r = await apiClient.get(`/clientes-empreendimentos/${id}/previa-parcelas/`)
+    return r.data as PreviaParcelas
+  }
+
   /** Materializa o carnê como contas a receber. **Não emite boleto** — cobrar é
    *  passo separado, no ERP, unitário ou por lote. O backend recusa a segunda
    *  chamada (409), então o botão some assim que o carnê existe. */
@@ -81,7 +137,7 @@ export function useCliente(clienteId: number) {
         ? { ...a, parcelas_geradas_em: r.data.geradasEm }
         : a
     )))
-    return r.data as { geradas: number; total: string; geradasEm: string }
+    return r.data as ResultadoGeracao
   }
 
   /** Correção monetária do carnê. `aplicar: false` é prévia — nada grava. Prévia
@@ -147,7 +203,8 @@ export function useCliente(clienteId: number) {
     data, aquisicoes, contratos, documentos, dadosBancarios,
     loading, error, refetch: fetch,
     updateCliente, deleteCliente,
-    createAquisicao, updateAquisicao, deleteAquisicao, gerarParcelas, corrigirParcelas,
+    createAquisicao, updateAquisicao, deleteAquisicao,
+    previaParcelas, gerarParcelas, corrigirParcelas,
     createContrato, updateContrato, deleteContrato,
     uploadDocumento, deleteDocumento,
     createDadoBancario, updateDadoBancario, deleteDadoBancario,

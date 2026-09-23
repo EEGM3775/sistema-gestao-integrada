@@ -7,6 +7,7 @@ import {
 import { AbaFinanceiro } from '../carteira/AbaFinanceiro'
 import { AbaObra } from '../carteira/AbaObra'
 import { useCliente } from '../hooks/useCliente'
+import type { PreviaParcelas } from '../hooks/useCliente'
 import ClienteForm from '../components/ClienteForm'
 import AquisicaoForm from '../components/AquisicaoForm'
 import ContratoForm from '../components/ContratoForm'
@@ -87,7 +88,8 @@ const ClienteDetailPage: React.FC = () => {
     data, aquisicoes, contratos, documentos, dadosBancarios,
     loading, error,
     updateCliente, deleteCliente,
-    createAquisicao, updateAquisicao, deleteAquisicao, gerarParcelas, corrigirParcelas,
+    createAquisicao, updateAquisicao, deleteAquisicao,
+    previaParcelas, gerarParcelas, corrigirParcelas,
     createContrato, updateContrato, deleteContrato,
     uploadDocumento, deleteDocumento,
     createDadoBancario, updateDadoBancario, deleteDadoBancario,
@@ -106,6 +108,9 @@ const ClienteDetailPage: React.FC = () => {
   const [aquisicaoForm, setAquisicaoForm]   = useState<{ open: boolean; editing: ClienteEmpreendimento | null }>({ open: false, editing: null })
   const [avisoParcelas, setAvisoParcelas]   = useState<string | null>(null)
   const [erroParcelas, setErroParcelas]     = useState<string | null>(null)
+  /** A confirmação de "gerar parcelas": o carnê que sairia, antes de sair. */
+  const [previaCarne, setPreviaCarne]       = useState<PreviaParcelas | null>(null)
+  const [gerando, setGerando]               = useState(false)
   const [previaCorrecao, setPreviaCorrecao] = useState<
     { aquisicaoId: number; dados: import('@/types').RespostaCorrecao } | null
   >(null)
@@ -336,15 +341,14 @@ const ClienteDetailPage: React.FC = () => {
                       ) : podeGerarCarne && (
                         <button
                           onClick={async () => {
+                            // Prévia antes de gerar: o carnê é irreversível pela
+                            // tela, e quem clica precisa ver de quantos títulos
+                            // e de qual unidade se trata **antes** de criá-los.
                             setErroParcelas(null)
                             try {
-                              const r = await gerarParcelas(a.cliente_empreendimento_id)
-                              setAvisoParcelas(
-                                `${r.geradas} parcelas geradas para ${a.rotulo_unidade} — ${formatCurrency(r.total)}.`
-                                + ' Elas estão na aba Financeiro deste cliente. Boletos são emitidos à parte, no ERP.',
-                              )
+                              setPreviaCarne(await previaParcelas(a.cliente_empreendimento_id))
                             } catch {
-                              setErroParcelas('Não foi possível gerar as parcelas desta aquisição.')
+                              setErroParcelas('Não foi possível calcular o carnê desta aquisição.')
                             }
                           }}
                           className="text-xs font-semibold text-left"
@@ -668,6 +672,106 @@ const ClienteDetailPage: React.FC = () => {
                   cursor: deleting ? 'not-allowed' : 'pointer', opacity: deleting ? 0.7 : 1,
                   fontFamily: 'var(--font-body)' }}>
                 {deleting ? 'Excluindo…' : 'Sim, excluir'}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ── Confirmação do carnê ───────────────────────────────────────────
+          Gerar parcelas cria títulos a receber e não tem desfazer na tela. A
+          confirmação existe para dizer, antes do clique que conta, **quantos
+          títulos, de quem e de qual unidade** — a pergunta que ficava sem
+          resposta quando alguém gerava três parcelas, abria o ERP e encontrava
+          dezenas de milhares (que são a carteira inteira da empresa, não o que
+          o clique criou). */}
+      {previaCarne && (
+        <>
+          <div className="fixed inset-0 z-40" style={{ background: 'rgba(0,0,0,0.4)' }}
+            onClick={() => !gerando && setPreviaCarne(null)} />
+          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 rounded-2xl p-6 flex flex-col"
+            style={{ background: '#FFFFFF', boxShadow: '0 20px 60px rgba(0,0,0,0.2)', width: 'min(520px, 92vw)' }}>
+            <h3 className="text-base font-bold mb-1" style={{ fontFamily: 'var(--font-heading)', color: 'var(--color-brand)' }}>
+              Gerar o carnê desta aquisição
+            </h3>
+            <p className="text-xs mb-4" style={{ color: 'var(--color-text-muted)' }}>
+              Só esta venda. Nenhum outro cliente, nenhuma outra unidade.
+            </p>
+
+            <div style={{ background: '#f8fafc', borderRadius: 10, padding: '12px 14px', fontSize: '0.8rem' }}>
+              <Field label="Cliente" value={previaCarne.cliente} />
+              <div style={{ height: 8 }} />
+              <Field label="Unidade" value={`${previaCarne.empreendimento} — ${previaCarne.unidade}`} />
+              <div style={{ height: 8 }} />
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Títulos a criar" value={String(previaCarne.quantidade)} />
+                <Field label="Total do carnê" value={formatCurrency(previaCarne.total)} />
+              </div>
+              {previaCarne.primeiroVencimento && (
+                <>
+                  <div style={{ height: 8 }} />
+                  <Field
+                    label="Vencimentos"
+                    value={`${formatDate(previaCarne.primeiroVencimento)} até ${formatDate(previaCarne.ultimoVencimento)}`}
+                  />
+                </>
+              )}
+            </div>
+
+            {/* O ajuste de dia útil dito por extenso, e com a ressalva de quando
+                a base de feriados nunca foi sincronizada — prometer feriado que
+                não se conhece é pior do que não prometer nada. */}
+            {previaCarne.ajustadas > 0 && (
+              <p className="text-xs mt-3" style={{ color: 'var(--color-text-muted)' }}>
+                {previaCarne.ajustadas} parcela{previaCarne.ajustadas !== 1 ? 's' : ''} caí
+                {previaCarne.ajustadas !== 1 ? 'am' : 'a'} em fim de semana ou feriado e
+                {previaCarne.ajustadas !== 1 ? ' foram' : ' foi'} para o próximo dia útil
+                {previaCarne.calendario.uf ? ` (feriados de ${previaCarne.calendario.uf}` : ' (feriados nacionais'}
+                {previaCarne.calendario.municipio ? ' e do município' : ''}).
+              </p>
+            )}
+            {!previaCarne.calendario.feriadosCarregados && (
+              <p className="text-xs mt-2" style={{ color: '#b45309' }}>
+                A base de feriados ainda não foi sincronizada: os vencimentos desviam de
+                sábado e domingo, mas <strong>não</strong> de feriado.
+              </p>
+            )}
+
+            <p className="text-xs mt-3" style={{ color: 'var(--color-text-muted)' }}>
+              Os títulos aparecem na aba <strong>Financeiro</strong> deste cliente. Boletos
+              são emitidos à parte, no ERP — gerar o carnê não cobra ninguém.
+            </p>
+
+            <div className="flex justify-end gap-3 mt-5">
+              <button type="button" onClick={() => setPreviaCarne(null)} disabled={gerando}
+                className="px-4 py-2 rounded-lg text-sm font-semibold"
+                style={{ background: 'none', border: '1.5px solid #e2e8f0', cursor: gerando ? 'not-allowed' : 'pointer',
+                  color: 'var(--color-text-muted)', fontFamily: 'var(--font-body)' }}>
+                Cancelar
+              </button>
+              <button type="button" disabled={gerando}
+                onClick={async () => {
+                  setGerando(true)
+                  setErroParcelas(null)
+                  try {
+                    const r = await gerarParcelas(previaCarne.aquisicaoId)
+                    setAvisoParcelas(
+                      `${r.geradas} parcelas geradas para ${r.cliente} — ${r.empreendimento} · ${r.unidade}`
+                      + ` (${formatCurrency(r.total)}). Elas estão na aba Financeiro deste cliente;`
+                      + ' nenhum outro cliente foi tocado. Boletos são emitidos à parte, no ERP.',
+                    )
+                    setPreviaCarne(null)
+                  } catch {
+                    setErroParcelas('Não foi possível gerar as parcelas desta aquisição.')
+                  } finally {
+                    setGerando(false)
+                  }
+                }}
+                className="px-5 py-2 rounded-lg text-sm font-semibold"
+                style={{ background: 'var(--color-brand)', color: '#FFFFFF', border: 'none',
+                  cursor: gerando ? 'not-allowed' : 'pointer', opacity: gerando ? 0.6 : 1,
+                  fontFamily: 'var(--font-body)' }}>
+                {gerando ? 'Gerando…' : `Gerar ${previaCarne.quantidade} título${previaCarne.quantidade !== 1 ? 's' : ''}`}
               </button>
             </div>
           </div>

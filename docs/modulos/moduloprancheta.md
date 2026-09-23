@@ -1932,7 +1932,20 @@ ser o gravado é a conferência mentindo sobre o que vai acontecer. Quem resolve
 
 ### Achar o desenho na prancha difícil
 
-Três instrumentos, e nenhum deles inventa dado.
+Quatro instrumentos, e nenhum deles inventa dado.
+
+**A vista de conjunto** ([Panorama.tsx](../../frontend/src/modules/prancheta/visualizador/Panorama.tsx)) é
+por onde o arquivo de **várias folhas abre**: elas aparecem lado a lado, cada uma no lugar em que
+está no terreno, e entrar numa folha vira escolha em vez de condição de entrada. A posição não é
+enfileiramento decorativo nem reconversão — sai do `mundo` medido na emissão (`origem_x`,
+`origem_y`, `por_folha`) mais o aspecto real da imagem, aritmética sobre dado já publicado. As
+envolventes são pintadas antes de as imagens chegarem, porque até 64 folhas somam dezenas de MB e
+esperar por todas daria tela vazia justamente no arquivo em que a pessoa mais precisa se orientar.
+
+**É vista de navegação, não de trabalho.** Marcar, medir e o leitor de coordenadas continuam na
+`Vista2D`, por folha. Trazer a marcação para cá exigiria uma segunda régua de normalização
+convivendo com a primeira, e duas réguas divergem no primeiro ajuste: o sintoma seria o pino a dois
+dedos de onde alguém o pôs — a família do D54.
 
 **O minimapa** ([Minimapa.tsx](../../frontend/src/modules/prancheta/visualizador/Minimapa.tsx)) é a
 **vista de cima do arquivo**: cada folha desenhada como uma mancha no lugar em que ela está *no
@@ -1940,8 +1953,15 @@ terreno*, a partir da `DesenhoProjeto.caixa` — a mesma envolvente, em unidades
 agrupador usa para cortar as folhas e que a herança de nome usa para reconhecer o mesmo desenho na
 revisão seguinte. Duas plantas lado a lado no CAD aparecem lado a lado aqui; o eixo Y é invertido
 porque o do desenho cresce para cima e o do SVG para baixo, e sem isso o mapa mandaria a pessoa para
-o canto oposto. Ao lado das manchas há chips com o rótulo de cada folha, porque uma poligonal de 40 m
-ao lado de um loteamento de 8 km vira um pixel no mapa — e um alvo de um pixel não é alvo.
+o canto oposto. Ele mora no **canto superior esquerdo**: centralizado no topo, como nasceu, cobria a
+faixa do carimbo e o começo do desenho — a ajuda tapava o que ela ajudava a achar.
+
+**O mapa inteiro é a região clicável**, e não só as manchas. Uma poligonal de 40 m ao lado de um
+loteamento de 8 km ocupa menos de um pixel, e alvo de menos de um pixel não é alvo: o clique abre o
+desenho **mais próximo** do ponto, medido por distância à caixa e não ao centro dela (com escalas tão
+desiguais, o centro do grande fica longe de quase toda a área que ele ocupa). Cada mancha é numerada,
+e os chips com o rótulo de cada folha repetem o número — é o que permite falar de um desenho sem
+dizer "o de cima à direita".
 
 **O zoom tem dois gestos, e a separação é o conserto.** A roda solta acelera com o giro (é o que
 torna praticável atravessar os ~7.865× que ler uma poligonal exige); **`Ctrl` + roda** é passo fixo de

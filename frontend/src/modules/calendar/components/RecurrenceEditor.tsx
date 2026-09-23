@@ -5,6 +5,8 @@ import {
 } from '../recurrence'
 import { inputStyle, selectStyle, labelStyle } from '../formStyles'
 
+import { minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
+
 interface Props {
   /** Regra RRULE atual (string vazia = não repete). */
   value: string
@@ -123,7 +125,7 @@ export function RecurrenceEditor({ value, onChange, anchorDate }: Props) {
                 <option value="count">Após N vezes</option>
               </select>
               {state.end === 'until' && (
-                <input type="date" style={inputStyle} value={state.until}
+                <input type="date" min={minCalendarioISO} max={maxCalendarioISO} style={inputStyle} value={state.until}
                   onChange={e => patch({ until: e.target.value })} />
               )}
               {state.end === 'count' && (

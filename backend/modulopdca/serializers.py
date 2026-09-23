@@ -14,17 +14,28 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
 from funcoesimpexp.entrega import url_do_arquivo
+from nucleo.field_masking import FieldMaskingSerializerMixin
 from nucleo.tenant_validators import TenantScopedModelSerializer
 from nucleo.upload_validation import UploadValidationMixin
 
 from . import services
-from .impexp import ESPECIE_FOTO, RECURSO_FOTO
+from .impexp import (
+    ESPECIE_EFICACIA, ESPECIE_FOTO, ESPECIE_ITEM, ESPECIE_NC, RECURSO_FOTO,
+    RECURSO_NC, RECURSO_VERIFICACAO,
+    ESPECIE_ANEXO, ESPECIE_ATESTADO, RECURSO_SSMA, RECURSO_SSMA_CLINICO,
+)
 from .models import (
     AcaoAditivo, AditivoContrato, ApontamentoAvanco, Atividade,
     CalendarioTrabalho, ContratoObra, Cronograma, DeducaoMedicao,
     ExcecaoCalendario, ItemAditivo, ItemContrato, ItemMedicao,
-    LiberacaoRetencao, LocalObra, Medicao, OrigemApontamento, Precedencia,
+    CausaNaoCumprimento, ItemProgramacao, LiberacaoRetencao, LocalObra,
+    Medicao, OrigemApontamento, Precedencia, ProgramacaoSemanal, Restricao,
     RegimeContrato, TipoDeducao,
+    GravidadeNC, ItemModeloVerificacao, ItemVerificacao, ModeloVerificacao,
+    NaoConformidade, PlanoAcao, ResultadoItem, Verificacao,
+    VerificacaoEficacia,
+    AnexoOcorrencia, ClassificacaoOcorrencia, DialogoSeguranca, Ocorrencia,
+    ParticipanteDDS, TipoCAT, TipoOcorrencia,
 )
 
 
@@ -874,6 +885,16 @@ class MedicaoSerializer(TenantScopedModelSerializer):
     deducoes = DeducaoMedicaoSerializer(many=True, read_only=True)
     totais = serializers.SerializerMethodField()
     escada = serializers.SerializerMethodField()
+    #: **O título do ERP, visto de dentro do PDCA.** Existe para o botão
+    #: "Cancelar" saber o que vai acontecer *antes* de alguém clicar: com o
+    #: título ainda aberto ele cancela os dois; com baixa em cima, a medição só
+    #: se conserta por retificadora. O aviso da tela e a trava do servidor saem
+    #: do mesmo `services.estado_do_titulo` — dois lugares divergiriam na
+    #: primeira mudança de regra.
+    #:
+    #: `null` quando não há título: medição que ainda não foi aprovada, ou
+    #: aprovada com líquido zero (a retificadora que zera outra não gera papel).
+    titulo_erp = serializers.SerializerMethodField()
 
     class Meta:
         model = Medicao
@@ -888,6 +909,10 @@ class MedicaoSerializer(TenantScopedModelSerializer):
 
     def get_escada(self, obj):
         return _escada_de(obj)
+
+    def get_titulo_erp(self, obj):
+        estado = services.estado_do_titulo(obj)
+        return _decimais_em_string(estado) if estado is not None else None
 
 
 class MedicaoResumoSerializer(MedicaoSerializer):
@@ -904,6 +929,11 @@ class MedicaoResumoSerializer(MedicaoSerializer):
         super().__init__(*args, **kwargs)
         for campo in ("itens", "deducoes"):
             self.fields.pop(campo, None)
+        #: **E sem o título, que é uma consulta por linha.** A lista desenha o
+        #: status da medição, não o do título — é a mesma lição do D136: o que
+        #: custa uma consulta por item não entra na listagem, entra no
+        #: documento aberto.
+        self.fields.pop("titulo_erp", None)
 
 
 class PropostaDeMedicaoSerializer(serializers.Serializer):
@@ -1138,3 +1168,1002 @@ class SolicitarLiberacaoSerializer(serializers.Serializer):
     #: a cláusula, não o nome do campo. A obrigatoriedade continua existindo;
     #: ela só passou a ser cobrada por quem tem o contexto para explicá-la.
     condicao_atendida = serializers.CharField(allow_blank=True)
+
+
+# ---------------------------------------------------------------------------
+# PDCA.5 — Last Planner
+# ---------------------------------------------------------------------------
+
+
+class CausaNaoCumprimentoSerializer(TenantScopedModelSerializer):
+    categoria_rotulo = serializers.CharField(
+        source="get_categoria_display", read_only=True,
+    )
+
+    class Meta:
+        model = CausaNaoCumprimento
+        fields = [
+            "causa_id", "codigo", "nome", "categoria", "categoria_rotulo",
+            "de_fabrica", "ativo",
+        ]
+        read_only_fields = ["causa_id", "de_fabrica"]
+
+    def validate_codigo(self, valor):
+        #: O código de fábrica é a âncora da comparação entre obras — e um dia
+        #: entre empresas na Esfera de Rede. O nome é do tenant; o código, não.
+        if self.instance and self.instance.de_fabrica and valor != self.instance.codigo:
+            raise serializers.ValidationError(
+                "O código de uma causa de fábrica não muda — é por ele que o "
+                "histórico de duas obras se compara. Renomeie o nome dela para "
+                "o vocabulário da sua casa; o código fica."
+            )
+        return valor
+
+
+class GerarRitmoSerializer(serializers.Serializer):
+    """O traço da linha de balanço — **um serviço, uma sequência de locais, um ritmo**.
+
+    É um `Serializer` puro, e não de modelo, pela mesma razão do
+    `GeracaoEmLoteSerializer` da PDCA.0: o que entra aqui não é um objeto, é uma
+    **instrução** que vira dezenas deles.
+    """
+
+    #: O serviço que já existe no plano. Sem ele, `nome` + `codigo` criam a
+    #: sintética — desenhar a primeira linha de uma obra nova não pode exigir
+    #: cadastrar a EAP antes.
+    pai = serializers.IntegerField(required=False, allow_null=True)
+    nome = serializers.CharField(required=False, allow_blank=True)
+    codigo = serializers.CharField(required=False, allow_blank=True)
+
+    #: **A ordem importa e é do planejador**: ele decide se a equipe sobe do
+    #: térreo ou desce da cobertura, e reordenar por conta própria apagaria a
+    #: decisão. Por isso lista, e não filtro por nível.
+    locais = serializers.ListField(
+        child=serializers.IntegerField(), allow_empty=False,
+    )
+    inicio = serializers.DateField()
+    #: **A mensagem é a da casa, não a do DRF** — a lição do D152, aplicada na
+    #: hora. O `services.gerar_ritmo` explica que serviço de duração zero é
+    #: marco, e marco não tem ritmo; sem isto o `min_value` recusaria antes, com
+    #: "Certifique-se de que este valor seja maior ou igual a 1", e a razão
+    #: ficaria no código, para ninguém.
+    duracao_por_local = serializers.IntegerField(min_value=1, error_messages={
+        "min_value": (
+            "A duração em cada local tem de ser de pelo menos um dia. Serviço "
+            "de duração zero é marco, e marco não tem ritmo."
+        ),
+    })
+    #: Dias entre o início de um local e o do seguinte — a **inclinação**. Nulo
+    #: herda a duração, que é o fluxo contínuo: a equipe termina um pavimento e
+    #: sobe. Menor que a duração são equipes se sobrepondo; maior é folga
+    #: deliberada entre elas.
+    ritmo_dias = serializers.IntegerField(
+        required=False, allow_null=True, min_value=1, error_messages={
+            "min_value": (
+                "O ritmo tem de ser de pelo menos um dia por local. Ritmo zero "
+                "faria todos os locais começarem no mesmo dia — isso não é "
+                "ritmo, é a obra inteira de uma vez."
+            ),
+        },
+    )
+    #: A régua do gerador de locais da PDCA.0: a mesma conta, sem escrever.
+    simular = serializers.BooleanField(default=False)
+
+
+class RestricaoSerializer(TenantScopedModelSerializer):
+    tipo_rotulo = serializers.CharField(source="get_tipo_display", read_only=True)
+    status_rotulo = serializers.CharField(source="get_status_display", read_only=True)
+    atividade_codigo = serializers.CharField(source="atividade.codigo", read_only=True)
+    atividade_nome = serializers.CharField(source="atividade.nome", read_only=True)
+    local_rotulo = serializers.CharField(source="local.nome", read_only=True)
+    obra = serializers.IntegerField(
+        source="atividade.cronograma.obra_id", read_only=True,
+    )
+    #: O seam do SCM **visível na tela** (régua de módulo): quando a restrição
+    #: já virou compra, o cartão diz qual demanda está segurando a obra em vez
+    #: de mandar a pessoa procurar no Suprimentos.
+    demanda_scm_status = serializers.CharField(
+        source="demanda_scm.status", read_only=True,
+    )
+    #: Quantos dias faltam (negativo = vencida). `None` quando não há prazo — e
+    #: a tela mostra "sem prazo", nunca "vencida há 0 dias".
+    dias_para_o_prazo = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Restricao
+        fields = [
+            "restricao_id", "atividade", "atividade_codigo", "atividade_nome",
+            "obra", "local", "local_rotulo", "tipo", "tipo_rotulo",
+            "descricao", "responsavel", "prazo", "dias_para_o_prazo",
+            "status", "status_rotulo", "demanda_scm", "demanda_scm_status",
+            "criada_por", "criada_em", "removida_em", "removida_por",
+            "nota_remocao",
+        ]
+        read_only_fields = [
+            "restricao_id", "criada_em", "removida_em", "removida_por",
+            "nota_remocao", "demanda_scm",
+        ]
+
+    def get_dias_para_o_prazo(self, obj):
+        if not obj.prazo or obj.status != Restricao.Status.ABERTA:
+            return None
+        from django.utils import timezone as _tz
+        return (obj.prazo - _tz.localdate()).days
+
+
+class ItemProgramacaoSerializer(TenantScopedModelSerializer):
+    atividade_codigo = serializers.CharField(source="atividade.codigo", read_only=True)
+    atividade_nome = serializers.CharField(source="atividade.nome", read_only=True)
+    local_rotulo = serializers.CharField(source="local.nome", read_only=True)
+    causa_codigo = serializers.CharField(source="causa.codigo", read_only=True)
+    causa_nome = serializers.CharField(source="causa.nome", read_only=True)
+    #: Quantas travas abertas pesam sobre a atividade deste cartão. A tela o usa
+    #: para pintar o cartão como bloqueado **antes** de a pessoa tentar
+    #: comprometer — recusar só no envio faria o time descobrir a trava depois
+    #: de a reunião ter acabado.
+    restricoes_abertas = serializers.SerializerMethodField()
+    #: Quantos defeitos abertos pesam sobre a atividade deste cartão (PDCA.7).
+    ncs_abertas = serializers.SerializerMethodField()
+    #: **Quanto o campo apontou nesta semana para este serviço.** Não é o
+    #: julgamento e não entra no PPC — é a **prova** ao lado dele. Quem julga
+    #: deixa de julgar de memória, e a equipe que fez 12 dos 20 pontos
+    #: prometidos vê os 12 registrados em vez de um "não saiu" seco.
+    #:
+    #: `null` quando o campo não apontou nada na semana, que é diferente de
+    #: zero: pode ser que ninguém tenha apontado, não que nada tenha andado.
+    percentual_apontado = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ItemProgramacao
+        fields = [
+            "item_programacao_id", "programacao", "atividade",
+            "atividade_codigo", "atividade_nome", "local", "local_rotulo",
+            "responsavel", "percentual_previsto", "percentual_apontado",
+            "cumprido", "causa", "causa_codigo", "causa_nome", "nota", "ordem",
+            "restricoes_abertas", "ncs_abertas",
+            #: O peso congelado e de onde ele saiu — é o que o PPC ponderado
+            #: divide, e a tela mostra ao lado do cartão para o índice não ser
+            #: um número sem procedência (ver `services.peso_do_compromisso`).
+            "peso", "peso_origem",
+            #: E o arrasto: de qual cartão da semana passada este veio, e há
+            #: quantas semanas ele está de pé. Um serviço na quarta semana
+            #: seguida é o que a reunião precisa ver antes do índice.
+            "arrastado_de", "vezes_arrastado",
+        ]
+        read_only_fields = [
+            "item_programacao_id",
+            #: **Congelados pelo servidor, não digitados.** O peso sai do
+            #: planejamento (orçamento → peso informado → duração) no momento em
+            #: que o cartão entra no quadro; aceitar o valor pelo corpo do POST
+            #: deixaria a tela escolher quanto cada compromisso vale, que é o
+            #: contrário de o número ter procedência.
+            "peso", "peso_origem", "arrastado_de", "vezes_arrastado",
+        ]
+
+    def get_restricoes_abertas(self, obj):
+        #: Vem de `context` quando o pai já resolveu o agregado da página
+        #: inteira; só cai na consulta por linha quando o serializer é usado
+        #: sozinho. Sem isso, um quadro de 300 cartões faria 300 consultas.
+        mapa = self.context.get("restricoes_por_atividade")
+        if mapa is not None:
+            return mapa.get(obj.atividade_id, 0)
+        return obj.atividade.restricoes.filter(
+            status=Restricao.Status.ABERTA
+        ).count()
+
+    def get_ncs_abertas(self, obj):
+        #: **A PDCA.7 aparecendo no quadro da PDCA.5** — o que conversa no
+        #: backend conversa na tela (régua de módulo §1.6). Um defeito aberto no
+        #: serviço não impede o compromisso por si (só a restrição faz isso),
+        #: mas quem assume a semana precisa saber que vai pegar a frente com
+        #: retrabalho pendente. Mesmo agregado por página das travas acima.
+        mapa = self.context.get("ncs_por_atividade")
+        if mapa is not None:
+            return mapa.get(obj.atividade_id, 0)
+        return obj.atividade.nao_conformidades.filter(
+            status__in=[
+                NaoConformidade.Status.ABERTA,
+                NaoConformidade.Status.EM_TRATAMENTO,
+            ]
+        ).count()
+
+    def get_percentual_apontado(self, obj):
+        #: Mesma régua do agregado acima: resolvido **uma vez por página** pelo
+        #: viewset, e só cai na consulta por linha quando o serializer é usado
+        #: sozinho. O quadro de 300 cartões não pode virar 300 consultas.
+        mapa = self.context.get("apontado_por_item")
+        if mapa is not None:
+            valor = mapa.get(obj.pk)
+        else:
+            valor = services.avanco_apontado_dos_itens(obj.programacao).get(obj.pk)
+        return str(valor) if valor is not None else None
+
+    def validate(self, dados):
+        #: A regra do LPS, dita na entrada: atividade travada não entra no
+        #: quadro. O `services` a repete no `comprometer` porque a trava pode
+        #: nascer entre montar e assumir.
+        atividade = dados.get("atividade") or getattr(self.instance, "atividade", None)
+        programacao = (
+            dados.get("programacao")
+            or getattr(self.instance, "programacao", None)
+        )
+        if programacao is not None and not programacao.esta_aberta_para_montagem:
+            raise serializers.ValidationError(
+                f"Esta programação está "
+                f"{programacao.get_status_display().lower()}: compromisso novo "
+                f"só entra enquanto o quadro é rascunho. Assumir depois que a "
+                f"semana andou é escrever a aposta depois do resultado."
+            )
+        if atividade is not None and programacao is not None:
+            try:
+                services.validar_pode_comprometer(
+                    atividade, tenant_id=programacao.tenant_id,
+                )
+                services.validar_teto_de_itens_da_programacao(
+                    programacao,
+                    acrescentando=0 if self.instance else 1,
+                )
+            except DjangoValidationError as erro:
+                raise serializers.ValidationError(erro.messages)
+
+            #: **O mesmo serviço não entra duas vezes no mesmo quadro.** A
+            #: `UniqueConstraint` do modelo é a rede de baixo e devolve 409 com
+            #: o nome da regra; aqui a recusa fala a língua de quem está na
+            #: reunião. O `local` participa da chave porque a mesma atividade
+            #: pode ser assumida na torre A e na torre B na mesma semana —
+            #: `local=None` é um endereço como outro qualquer, e é o caso comum.
+            #:
+            #: Achado pelo `pdca5_programacao_test.py`: sem isto o cartão
+            #: repetido chegava como "Já existe um registro com este valor", que
+            #: não diz que o serviço já está no quadro.
+            local = dados.get("local", getattr(self.instance, "local", None))
+            irmaos = ItemProgramacao.objects.filter(
+                programacao=programacao, atividade=atividade, local=local,
+            )
+            if self.instance is not None:
+                irmaos = irmaos.exclude(pk=self.instance.pk)
+            if irmaos.exists():
+                onde = f" em «{local.nome}»" if local is not None else ""
+                raise serializers.ValidationError(
+                    f"«{atividade.nome}»{onde} já está no quadro desta semana. "
+                    f"Dois cartões do mesmo serviço fariam o PPC contar a mesma "
+                    f"falha duas vezes — para dividir a frente, puxe-a em locais "
+                    f"diferentes."
+                )
+        return dados
+
+
+class ProgramacaoSemanalSerializer(TenantScopedModelSerializer):
+    status_rotulo = serializers.CharField(source="get_status_display", read_only=True)
+    obra_nome = serializers.CharField(source="obra.nome_obra", read_only=True)
+    #: O PPC vem **resolvido pelo servidor**, e é a mesma decisão que a grade de
+    #: medição tomou depois do D138: montar a conta no navegador fez a mesma
+    #: medição mostrar números diferentes conforme a porta de entrada.
+    ppc = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProgramacaoSemanal
+        fields = [
+            "programacao_id", "obra", "obra_nome", "semana_inicio",
+            "semana_fim", "status", "status_rotulo", "nota",
+            "criada_por", "criada_em", "comprometida_em", "comprometida_por",
+            "encerrada_em", "encerrada_por", "ppc",
+            "reaberta_em", "reaberta_por", "motivo_reabertura", "vezes_reaberta",
+            #: A semana fechada antes de acabar se anuncia — na tela e na série.
+            #: Um ponto apurado na terça não é comparável com um apurado no
+            #: domingo, e a diferença tem de estar visível (ver `services.encerrar`).
+            "encerrada_antes_do_fim", "motivo_encerramento_antecipado",
+        ]
+        read_only_fields = [
+            "programacao_id", "semana_fim", "criada_em",
+            "comprometida_em", "comprometida_por",
+            "encerrada_em", "encerrada_por",
+            "reaberta_em", "reaberta_por", "motivo_reabertura", "vezes_reaberta",
+            "encerrada_antes_do_fim", "motivo_encerramento_antecipado",
+        ]
+
+    def get_ppc(self, obj):
+        #: String, e não número: é o mesmo contrato da ação `encerrar/`, e o
+        #: `types.ts` declara `ppc: string | null`. Os dois caminhos devolvem o
+        #: mesmo PPC, então têm de devolvê-lo do mesmo jeito.
+        return services.str_decimais(services.ppc_de(obj))
+
+
+class JulgamentoSerializer(serializers.Serializer):
+    """Uma linha do julgamento do fim da semana."""
+
+    item = serializers.IntegerField()
+    cumprido = serializers.BooleanField(allow_null=True, required=False)
+    causa = serializers.IntegerField(required=False, allow_null=True)
+    nota = serializers.CharField(required=False, allow_blank=True)
+
+
+class JulgarSerializer(serializers.Serializer):
+    """O lote — é assim que a reunião percorre o quadro (ver `julgar_itens`)."""
+
+    julgamentos = JulgamentoSerializer(many=True)
+
+
+class EncerrarSerializer(serializers.Serializer):
+    """O fim da semana.
+
+    **O motivo é opcional aqui e obrigatório lá.** Encerrar a semana que já
+    acabou não pede explicação nenhuma — é o gesto normal. Quem precisa de
+    motivo é o encerramento **antecipado**, e quem cobra isso é o
+    `services.encerrar`, que é quem sabe a data: repetir a regra aqui faria a
+    tela pedir justificativa numa sexta-feira à noite sem razão.
+    """
+
+    motivo = serializers.CharField(required=False, allow_blank=True, default="")
+    #: Arrastar o que não saiu é o padrão (ver `services.arrastar_pendentes`).
+    #: O `false` existe para a semana que encerra uma frente concluída, em que
+    #: repetir os cartões falhados só sujaria o quadro seguinte.
+    arrastar = serializers.BooleanField(required=False, default=True)
+
+
+class RemoverRestricaoSerializer(serializers.Serializer):
+    #: Obrigatória. Restrição que some sem explicação deixa a reunião seguinte
+    #: sem saber se ela foi resolvida ou esquecida.
+    #:
+    #: **A mensagem é a da casa, não a do DRF.** O `services.remover_restricao`
+    #: já explica o porquê — mas ele nunca chega a rodar por esta porta: o
+    #: `trim_whitespace` do `CharField` transforma "   " em vazio e o campo
+    #: recusa antes, com "Este campo não pode ser em branco". Quem digitou um
+    #: espaço recebia o erro do framework em vez da razão. Achado pelo
+    #: `pdca5_programacao_test.py`.
+    nota = serializers.CharField(error_messages={
+        "blank": (
+            "Diga como a restrição foi removida. Sem isso, a reunião da semana "
+            "que vem não sabe se ela foi resolvida ou apenas esquecida."
+        ),
+        "required": (
+            "Diga como a restrição foi removida. Sem isso, a reunião da semana "
+            "que vem não sabe se ela foi resolvida ou apenas esquecida."
+        ),
+    })
+
+
+class GerarDemandaSerializer(serializers.Serializer):
+    quantidade = serializers.DecimalField(
+        max_digits=14, decimal_places=3, required=False, allow_null=True,
+    )
+    unidade = serializers.CharField(required=False, allow_blank=True)
+
+
+class ReabrirSerializer(serializers.Serializer):
+    #: Obrigatório, com a mensagem da casa (a lição do D152): o `CharField` do
+    #: DRF recusaria vazio com o texto dele, e a razão ficaria no `services`,
+    #: para ninguém.
+    motivo = serializers.CharField(error_messages={
+        "blank": (
+            "Diga por que a semana está sendo reaberta. O PPC dela já foi lido "
+            "por alguém — mudar o número sem deixar a razão escrita contraria "
+            "em silêncio a reunião que olhou para ele."
+        ),
+        "required": (
+            "Diga por que a semana está sendo reaberta. O PPC dela já foi lido "
+            "por alguém — mudar o número sem deixar a razão escrita contraria "
+            "em silêncio a reunião que olhou para ele."
+        ),
+    })
+
+
+class AbrirProgramacaoSerializer(serializers.Serializer):
+    obra = serializers.IntegerField()
+    #: Qualquer dia da semana serve — o servidor ancora na segunda-feira, que é
+    #: a convenção do método. Deixar o cliente calcular a segunda produziria uma
+    #: semana diferente por fuso horário de navegador.
+    semana = serializers.DateField()
+
+
+# ---------------------------------------------------------------------------
+# PDCA.7 — a máquina de verificação
+# ---------------------------------------------------------------------------
+
+
+class ItemModeloVerificacaoSerializer(TenantScopedModelSerializer):
+    class Meta:
+        model = ItemModeloVerificacao
+        fields = [
+            "item_modelo_id", "modelo", "ordem", "texto", "criterio",
+            "obrigatorio", "exige_foto",
+        ]
+        read_only_fields = ["item_modelo_id"]
+
+
+class ModeloVerificacaoSerializer(TenantScopedModelSerializer):
+    """A ficha em branco, com os dois números que decidem se ela se apaga."""
+
+    dominio_rotulo = serializers.CharField(
+        source="get_dominio_display", read_only=True,
+    )
+    itens_count = serializers.IntegerField(source="itens.count", read_only=True)
+    #: Quantas fichas já foram aplicadas a partir dele. É o que a tela usa para
+    #: mostrar "já usado 43 vezes" ao lado do botão de apagar — e o que o
+    #: `perform_destroy` cobra.
+    aplicacoes = serializers.IntegerField(
+        source="verificacoes.count", read_only=True,
+    )
+    #: Os itens viajam **junto** na leitura de detalhe. A ficha de 150 perguntas
+    #: é montada numa tela só, e uma segunda chamada por item faria o editor
+    #: piscar a cada linha.
+    itens = ItemModeloVerificacaoSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = ModeloVerificacao
+        fields = [
+            "modelo_id", "codigo", "nome", "dominio", "dominio_rotulo",
+            "descricao", "ativo", "criado_por", "criado_em",
+            "itens_count", "aplicacoes", "itens",
+        ]
+        read_only_fields = ["modelo_id", "criado_por", "criado_em"]
+
+
+class ModeloResumoSerializer(ModeloVerificacaoSerializer):
+    """O mesmo modelo **sem os itens** — a lista da biblioteca.
+
+    Existe pela lição do D136: a listagem que traz as linhas filhas de todos os
+    documentos faz ~200 consultas para desenhar uma tabela que não as mostra.
+    """
+
+    class Meta(ModeloVerificacaoSerializer.Meta):
+        fields = [
+            c for c in ModeloVerificacaoSerializer.Meta.fields if c != "itens"
+        ]
+
+
+class ItemVerificacaoSerializer(UploadValidationMixin, TenantScopedModelSerializer):
+    """Uma resposta da ficha. `texto` e `criterio` são **congelados** e por isso
+    somente leitura: editá-los aqui mudaria a pergunta depois de respondida."""
+
+    resultado_rotulo = serializers.CharField(
+        source="get_resultado_display", read_only=True,
+    )
+    #: **A gravidade deste defeito** — respondida no item, por quem o viu, e não
+    #: uma vez para a ficha inteira (§11.15).
+    gravidade_rotulo = serializers.CharField(
+        source="get_gravidade_display", read_only=True,
+    )
+    #: A NC que este item gerou, quando gerou. É o que fecha o laço na tela: o
+    #: item reprovado mostra para onde o defeito foi, em vez de o técnico ter de
+    #: procurar na lista de NCs.
+    nc = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ItemVerificacao
+        fields = [
+            "item_verificacao_id", "verificacao", "item_modelo", "ordem",
+            "texto", "criterio", "obrigatorio", "exige_foto",
+            "resultado", "resultado_rotulo", "observacao",
+            "gravidade", "gravidade_rotulo", "foto",
+            "respondido_em", "respondido_por", "nc",
+        ]
+        read_only_fields = [
+            "item_verificacao_id", "verificacao", "item_modelo", "texto",
+            "criterio", "obrigatorio", "exige_foto", "respondido_em",
+            "respondido_por",
+        ]
+
+    def get_nc(self, obj):
+        nc = obj.nao_conformidades.first()
+        return nc.pk if nc else None
+
+    def to_representation(self, instance):
+        """`foto` sai pela porta única, nunca por `/media/` — a régua do D120."""
+        dados = super().to_representation(instance)
+        dados["foto"] = (
+            url_do_arquivo(
+                RECURSO_VERIFICACAO, ESPECIE_ITEM, instance.item_verificacao_id,
+            )
+            if instance.foto else None
+        )
+        return dados
+
+
+class VerificacaoSerializer(TenantScopedModelSerializer):
+    """A ficha aplicada, com o resultado **derivado** ao lado (§4.9)."""
+
+    modelo_codigo = serializers.CharField(source="modelo.codigo", read_only=True)
+    modelo_nome = serializers.CharField(source="modelo.nome", read_only=True)
+    dominio = serializers.CharField(source="modelo.dominio", read_only=True)
+    dominio_rotulo = serializers.CharField(
+        source="modelo.get_dominio_display", read_only=True,
+    )
+    obra_nome = serializers.CharField(source="obra.nome_obra", read_only=True)
+    local_rotulo = serializers.CharField(source="local.nome", read_only=True)
+    atividade_codigo = serializers.CharField(
+        source="atividade.codigo", read_only=True,
+    )
+    atividade_nome = serializers.CharField(
+        source="atividade.nome", read_only=True,
+    )
+    status_rotulo = serializers.CharField(
+        source="get_status_display", read_only=True,
+    )
+    resultado = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Verificacao
+        fields = [
+            "verificacao_id", "modelo", "modelo_codigo", "modelo_nome",
+            "dominio", "dominio_rotulo", "obra", "obra_nome",
+            "local", "local_rotulo", "atividade", "atividade_codigo",
+            "atividade_nome", "inspetor", "data", "status", "status_rotulo",
+            "nota", "criada_por", "criada_em", "concluida_em", "concluida_por",
+            "resultado",
+        ]
+        read_only_fields = [
+            "verificacao_id", "modelo", "obra", "criada_por", "criada_em",
+            "concluida_em", "concluida_por",
+        ]
+
+    def get_resultado(self, obj):
+        #: Vem de `context` quando o pai já resolveu a página inteira; só cai na
+        #: consulta por linha quando o serializer é usado sozinho. Sem isso, uma
+        #: lista de 50 fichas faria 50 agregações — o D136 do outro lado.
+        mapa = self.context.get("resultado_por_verificacao")
+        if mapa is not None:
+            return mapa.get(obj.pk)
+        return services.str_decimais(services.resultado_da_verificacao(obj))
+
+
+class PlanoAcaoSerializer(TenantScopedModelSerializer):
+    """O 5W2H. `o_que` é o único obrigatório — ver a docstring do model."""
+
+    tipo_rotulo = serializers.CharField(source="get_tipo_display", read_only=True)
+    status_rotulo = serializers.CharField(
+        source="get_status_display", read_only=True,
+    )
+    #: Negativo = vencido. `None` quando não há prazo — e a tela diz "sem
+    #: prazo", nunca "vencido há 0 dias". Mesma régua da restrição da PDCA.5.
+    dias_para_o_prazo = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PlanoAcao
+        fields = [
+            "plano_id", "nao_conformidade", "tipo", "tipo_rotulo",
+            "o_que", "por_que", "onde", "quando", "quem", "como", "quanto",
+            "status", "status_rotulo", "dias_para_o_prazo",
+            "concluida_em", "concluida_por", "criada_por", "criada_em",
+        ]
+        read_only_fields = [
+            "plano_id", "concluida_em", "concluida_por", "criada_por",
+            "criada_em",
+        ]
+
+    def get_dias_para_o_prazo(self, obj):
+        if not obj.quando or obj.status in (
+            PlanoAcao.Status.CONCLUIDA, PlanoAcao.Status.CANCELADA,
+        ):
+            return None
+        from django.utils import timezone as _tz
+        return (obj.quando - _tz.localdate()).days
+
+
+class VerificacaoEficaciaSerializer(UploadValidationMixin,
+                                    TenantScopedModelSerializer):
+    class Meta:
+        model = VerificacaoEficacia
+        fields = [
+            "eficacia_id", "nao_conformidade", "data", "eficaz", "evidencia",
+            "foto", "verificada_por", "verificada_em",
+        ]
+        read_only_fields = [
+            "eficacia_id", "verificada_por", "verificada_em",
+        ]
+
+    def to_representation(self, instance):
+        dados = super().to_representation(instance)
+        dados["foto"] = (
+            url_do_arquivo(RECURSO_NC, ESPECIE_EFICACIA, instance.eficacia_id)
+            if instance.foto else None
+        )
+        return dados
+
+
+class NaoConformidadeSerializer(UploadValidationMixin,
+                                TenantScopedModelSerializer):
+    """O defeito, com **o que falta nele** resolvido pelo servidor.
+
+    `estado` traz a regra do encerramento já decidida aqui, e não no navegador:
+    a mesma conta feita nos dois lugares produz dois números para a mesma
+    pergunta, que foi o que o D138 ensinou na grade de medição.
+    """
+
+    gravidade_rotulo = serializers.CharField(
+        source="get_gravidade_display", read_only=True,
+    )
+    status_rotulo = serializers.CharField(
+        source="get_status_display", read_only=True,
+    )
+    obra_nome = serializers.CharField(source="obra.nome_obra", read_only=True)
+    local_rotulo = serializers.CharField(source="local.nome", read_only=True)
+    atividade_codigo = serializers.CharField(
+        source="atividade.codigo", read_only=True,
+    )
+    atividade_nome = serializers.CharField(
+        source="atividade.nome", read_only=True,
+    )
+    #: Os dois seams, **visíveis** (régua de módulo): de qual ficha o defeito
+    #: veio, e se ele já parou o serviço no quadro da semana.
+    verificacao = serializers.IntegerField(
+        source="item_verificacao.verificacao_id", read_only=True,
+    )
+    restricao_status = serializers.CharField(
+        source="restricao.status", read_only=True,
+    )
+    marcacao_guid = serializers.CharField(
+        source="marcacao_prancheta.guid", read_only=True,
+    )
+    estado = serializers.SerializerMethodField()
+    acoes = PlanoAcaoSerializer(many=True, read_only=True)
+    eficacias = VerificacaoEficaciaSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = NaoConformidade
+        fields = [
+            "nc_id", "obra", "obra_nome", "local", "local_rotulo",
+            "atividade", "atividade_codigo", "atividade_nome",
+            "item_verificacao", "verificacao",
+            "gravidade", "gravidade_rotulo", "descricao", "foto",
+            "marcacao_prancheta", "marcacao_guid",
+            "restricao", "restricao_status",
+            "status", "status_rotulo",
+            "aberta_por", "aberta_em", "encerrada_em", "encerrada_por",
+            "nota_encerramento", "estado", "acoes", "eficacias",
+        ]
+        read_only_fields = [
+            "nc_id", "item_verificacao", "restricao", "status", "aberta_por",
+            "aberta_em", "encerrada_em", "encerrada_por", "nota_encerramento",
+        ]
+
+    def get_estado(self, obj):
+        return services.str_decimais(services.estado_da_nc(obj))
+
+    def to_representation(self, instance):
+        dados = super().to_representation(instance)
+        dados["foto"] = (
+            url_do_arquivo(RECURSO_NC, ESPECIE_NC, instance.nc_id)
+            if instance.foto else None
+        )
+        return dados
+
+
+class NcResumoSerializer(NaoConformidadeSerializer):
+    """A NC **sem as linhas filhas** — a listagem do painel (D136)."""
+
+    class Meta(NaoConformidadeSerializer.Meta):
+        fields = [
+            c for c in NaoConformidadeSerializer.Meta.fields
+            if c not in ("acoes", "eficacias")
+        ]
+
+
+# --- As entradas dos verbos --------------------------------------------------
+
+
+class AplicarModeloVerificacaoSerializer(serializers.Serializer):
+    """Abrir a ficha. `modelo`, `obra` e `data` decidem; o resto endereça."""
+
+    modelo = serializers.IntegerField()
+    obra = serializers.IntegerField()
+    data = serializers.DateField()
+    local = serializers.IntegerField(required=False, allow_null=True)
+    atividade = serializers.IntegerField(required=False, allow_null=True)
+    inspetor = serializers.CharField(
+        required=False, allow_blank=True, max_length=150,
+    )
+
+
+class DuplicarModeloSerializer(serializers.Serializer):
+    codigo = serializers.CharField(max_length=30)
+    nome = serializers.CharField(max_length=150, required=False, allow_blank=True)
+
+
+class RespostaDeItemSerializer(serializers.Serializer):
+    item_verificacao = serializers.IntegerField()
+    resultado = serializers.ChoiceField(choices=ResultadoItem.choices)
+    observacao = serializers.CharField(
+        required=False, allow_blank=True, default="",
+    )
+    #: Obrigatória quando o item reprova, e recusada nos outros resultados. A
+    #: exigência mora no `services` (para a mensagem nomear o item) e no banco.
+    gravidade = serializers.ChoiceField(
+        choices=GravidadeNC.choices, required=False, allow_null=True,
+    )
+
+
+class ResponderSerializer(serializers.Serializer):
+    """O lote de respostas. Ver `services.responder_itens`."""
+
+    respostas = RespostaDeItemSerializer(many=True, allow_empty=False)
+
+
+#: **Sem corpo, e a ausência é a correção.** Este serializer recebia uma
+#: `gravidade` e ela era carimbada em todas as NCs abertas de uma vez. A
+#: gravidade é do defeito, foi respondida no item por quem o viu, e este verbo
+#: só a lê (§11.15). Fica declarado em vez de sumir para que a próxima pessoa
+#: que abrir este arquivo não reintroduza o parâmetro achando que faltou.
+
+
+class GerarRestricaoSerializer(serializers.Serializer):
+    prazo = serializers.DateField(required=False, allow_null=True)
+    responsavel = serializers.CharField(
+        required=False, allow_blank=True, max_length=150, default="",
+    )
+
+
+class RegistrarEficaciaSerializer(serializers.Serializer):
+    """A evidência é obrigatória — um `True` sem história não é verificação."""
+
+    data = serializers.DateField()
+    eficaz = serializers.BooleanField()
+    evidencia = serializers.CharField(allow_blank=False)
+
+    def validate_evidencia(self, valor):
+        if not (valor or "").strip():
+            raise serializers.ValidationError(
+                "Diga o que você olhou para concluir isso. Verificação de "
+                "eficácia sem evidência é um carimbo."
+            )
+        return valor
+
+
+class EncerrarNcSerializer(serializers.Serializer):
+    nota = serializers.CharField(
+        required=False, allow_blank=True, default="",
+    )
+
+
+class CancelarNcSerializer(serializers.Serializer):
+    """Cancelar exige motivo, e a razão é a mesma da `nota_remocao` da
+    restrição: uma NC que some sem explicação deixa a auditoria sem saber se ela
+    não era defeito ou se alguém a varreu para debaixo do tapete."""
+
+    motivo = serializers.CharField(allow_blank=False)
+
+    def validate_motivo(self, valor):
+        if not (valor or "").strip():
+            raise serializers.ValidationError(
+                "Diga por que esta NC não era uma não-conformidade."
+            )
+        return valor
+
+
+# ---------------------------------------------------------------------------
+# PDCA.8 — SSMA
+# ---------------------------------------------------------------------------
+
+
+class ParticipanteDDSSerializer(TenantScopedModelSerializer):
+    """Uma linha da lista de presença."""
+
+    funcionario_nome = serializers.CharField(
+        source="funcionario.nome_completo", read_only=True,
+    )
+
+    class Meta:
+        model = ParticipanteDDS
+        fields = [
+            "participante_id", "dds", "funcionario", "funcionario_nome",
+            "nome", "presente", "assinou",
+        ]
+        read_only_fields = ["participante_id", "dds"]
+
+
+class DialogoSegurancaSerializer(TenantScopedModelSerializer):
+    """O DDS, com a lista embutida e o seam do diário **visível**."""
+
+    status_rotulo = serializers.CharField(
+        source="get_status_display", read_only=True,
+    )
+    obra_nome = serializers.CharField(source="obra.nome_obra", read_only=True)
+    local_rotulo = serializers.CharField(source="local.nome", read_only=True)
+    responsavel_label = serializers.SerializerMethodField()
+    participantes = ParticipanteDDSSerializer(many=True, read_only=True)
+    presentes = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DialogoSeguranca
+        fields = [
+            "dds_id", "obra", "obra_nome", "local", "local_rotulo", "atividade",
+            "data", "tema", "assunto", "duracao_min",
+            "responsavel", "responsavel_nome", "responsavel_label",
+            "status", "status_rotulo", "encerrado_em", "encerrado_por",
+            "diario", "registrado_por", "criado_em",
+            "participantes", "presentes",
+        ]
+        read_only_fields = [
+            "dds_id", "status", "encerrado_em", "encerrado_por", "diario",
+            "registrado_por", "criado_em",
+        ]
+
+    def get_responsavel_label(self, obj) -> str:
+        if obj.responsavel_id:
+            return getattr(obj.responsavel, "nome_completo", "") or ""
+        return obj.responsavel_nome
+
+    def get_presentes(self, obj) -> int:
+        return obj.participantes.filter(presente=True).count()
+
+
+class AnexoOcorrenciaSerializer(UploadValidationMixin,
+                                TenantScopedModelSerializer):
+    """O arquivo — **e a URL sai pela porta da espécie certa**.
+
+    O atestado é servido por `pdca.ocorrencia_atestado`, que exige o verbo
+    clínico; o resto, por `pdca.ocorrencia_anexo`. Montar as duas com a mesma
+    URL entregaria o atestado a quem tem só a leitura.
+    """
+
+    especie_rotulo = serializers.CharField(
+        source="get_especie_display", read_only=True,
+    )
+
+    class Meta:
+        model = AnexoOcorrencia
+        fields = [
+            "anexo_id", "ocorrencia", "arquivo", "especie", "especie_rotulo",
+            "descricao", "enviado_por", "enviado_em",
+        ]
+        read_only_fields = ["anexo_id", "enviado_por", "enviado_em"]
+
+    def to_representation(self, instance):
+        dados = super().to_representation(instance)
+        if not instance.arquivo:
+            dados["arquivo"] = None
+            return dados
+        clinico = instance.especie == AnexoOcorrencia.Especie.ATESTADO
+        dados["arquivo"] = url_do_arquivo(
+            RECURSO_SSMA_CLINICO if clinico else RECURSO_SSMA,
+            ESPECIE_ATESTADO if clinico else ESPECIE_ANEXO,
+            instance.anexo_id,
+        )
+        return dados
+
+
+class OcorrenciaSerializer(FieldMaskingSerializerMixin,
+                           TenantScopedModelSerializer):
+    """A ocorrência — **e o bloco clínico atrás de um verbo próprio**.
+
+    Esta é a primeira PII do grupo `pdca`. Natureza da lesão, CID-10, internação
+    e dias de atestado só saem para quem tem `pdca.ocorrencia.dado_medico`; para
+    todo o resto eles vêm mascarados. A régua é a do `rh.dado_medico`, e a razão
+    é a mesma: para classificar o acidente ninguém precisa do diagnóstico.
+
+    `prazo_cat` vem **decidido pelo servidor**, e não pela tela — a mesma conta
+    feita nos dois lugares produz dois números para a mesma pergunta, que foi o
+    que o D138 ensinou na grade de medição. Aqui o número tem prazo em lei.
+    """
+
+    tipo_rotulo = serializers.CharField(source="get_tipo_display", read_only=True)
+    classificacao_rotulo = serializers.CharField(
+        source="get_classificacao_display", read_only=True,
+    )
+    status_rotulo = serializers.CharField(
+        source="get_status_display", read_only=True,
+    )
+    obra_nome = serializers.CharField(source="obra.nome_obra", read_only=True)
+    local_rotulo = serializers.CharField(source="local.nome", read_only=True)
+    atividade_codigo = serializers.CharField(
+        source="atividade.codigo", read_only=True,
+    )
+    acidentado_label = serializers.SerializerMethodField()
+    anexos = AnexoOcorrenciaSerializer(many=True, read_only=True)
+    #: Os dois seams, **visíveis** (régua de módulo): se o fato já parou o
+    #: serviço, e se ele já entrou na máquina de tratamento.
+    restricao_status = serializers.CharField(
+        source="restricao.status", read_only=True,
+    )
+    nc_status = serializers.CharField(
+        source="nao_conformidade.status", read_only=True,
+    )
+    exige_cat = serializers.BooleanField(read_only=True)
+    prazo_cat = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Ocorrencia
+        fields = [
+            "ocorrencia_id", "obra", "obra_nome", "local", "local_rotulo",
+            "atividade", "atividade_codigo",
+            "ocorrido_em", "tipo", "tipo_rotulo", "descricao",
+            "agente_causador", "situacao_geradora", "houve_registro_policial",
+            "horas_trabalhadas_antes", "ultimo_dia_trabalhado",
+            "acidentado", "acidentado_nome", "acidentado_label",
+            "parte_do_corpo", "lateralidade",
+            "natureza_lesao", "cid10", "houve_internacao", "atestado_dias",
+            "classificacao", "classificacao_rotulo", "dias_perdidos",
+            "dias_debitados", "classificada_em", "classificada_por",
+            "cat_tipo", "cat_emitida_em", "cat_protocolo", "cat_registrada_por",
+            "restricao", "restricao_status", "nao_conformidade", "nc_status",
+            "status", "status_rotulo", "registrada_por", "registrada_em",
+            "encerrada_em", "encerrada_por", "nota_encerramento",
+            "anexos", "exige_cat", "prazo_cat",
+        ]
+        read_only_fields = [
+            "ocorrencia_id", "classificacao", "dias_perdidos", "dias_debitados",
+            "classificada_em", "classificada_por",
+            "cat_tipo", "cat_emitida_em", "cat_protocolo", "cat_registrada_por",
+            "restricao", "nao_conformidade", "status", "registrada_por",
+            "registrada_em", "encerrada_em", "encerrada_por",
+            "nota_encerramento",
+        ]
+
+    #: O bloco do atestado médico, na régua do `DadoMedicoFuncionarioSerializer`.
+    sensitive_fields = {
+        "natureza_lesao": "pdca.ocorrencia.dado_medico",
+        "cid10": "pdca.ocorrencia.dado_medico",
+        "atestado_dias": "pdca.ocorrencia.dado_medico",
+    }
+
+    def get_acidentado_label(self, obj) -> str:
+        if obj.acidentado_id:
+            return getattr(obj.acidentado, "nome_completo", "") or ""
+        return obj.acidentado_nome
+
+    def get_prazo_cat(self, obj) -> dict:
+        return services.prazo_da_cat(obj)
+
+
+class OcorrenciaResumoSerializer(serializers.ModelSerializer):
+    """A linha da lista — **sem nada do bloco clínico**.
+
+    A listagem não passa pelo mascaramento campo a campo porque ela
+    simplesmente não traz os campos: a fila de SSMA e a grade da obra não têm
+    por que carregar CID de ninguém, e o jeito mais seguro de não vazar um campo
+    é não o serializar.
+    """
+
+    tipo_rotulo = serializers.CharField(source="get_tipo_display", read_only=True)
+    classificacao_rotulo = serializers.CharField(
+        source="get_classificacao_display", read_only=True,
+    )
+    local_rotulo = serializers.CharField(source="local.nome", read_only=True)
+    exige_cat = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = Ocorrencia
+        fields = [
+            "ocorrencia_id", "obra", "local", "local_rotulo", "atividade",
+            "ocorrido_em", "tipo", "tipo_rotulo", "descricao",
+            "classificacao", "classificacao_rotulo", "status",
+            "cat_emitida_em", "restricao", "nao_conformidade", "exige_cat",
+        ]
+
+
+class RegistrarPresencaSerializer(serializers.Serializer):
+    """A lista chega em lote — a tela acumula os nomes e grava de uma vez."""
+
+    participantes = serializers.ListField(
+        child=serializers.DictField(), allow_empty=False,
+    )
+
+
+class EncerrarDdsSerializer(serializers.Serializer):
+    publicar_no_diario = serializers.BooleanField(default=True)
+
+
+class ClassificarOcorrenciaSerializer(serializers.Serializer):
+    classificacao = serializers.ChoiceField(
+        choices=ClassificacaoOcorrencia.choices,
+    )
+    dias_perdidos = serializers.IntegerField(
+        required=False, allow_null=True, min_value=0,
+    )
+    dias_debitados = serializers.IntegerField(
+        required=False, allow_null=True, min_value=0,
+    )
+
+
+class RegistrarCatSerializer(serializers.Serializer):
+    tipo = serializers.ChoiceField(choices=TipoCAT.choices)
+    emitida_em = serializers.DateField()
+    protocolo = serializers.CharField(required=False, allow_blank=True)
+
+
+class InterditarFrenteSerializer(serializers.Serializer):
+    prazo = serializers.DateField(required=False, allow_null=True)
+
+
+class EncerrarOcorrenciaSerializer(serializers.Serializer):
+    nota = serializers.CharField(required=False, allow_blank=True)

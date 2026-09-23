@@ -97,8 +97,25 @@ export function useEtapas(obra: number | undefined) {
   })
 }
 
+/** O resumo das publicações — **seis telas do módulo** pedem este mesmo dado.
+ *
+ *  `staleTime` porque a resposta é cara e quase imóvel: ela agrega a base
+ *  referencial inteira (com a SINAPI toda carregada, 1.460 publicações sobre
+ *  16,8 milhões de linhas) e só muda quando o dono da plataforma carrega uma
+ *  publicação nova — o que acontece uma vez por mês. Sem ele, o padrão do React
+ *  Query refaz a consulta a cada montagem **e a cada foco da janela**: alternar
+ *  para o navegador e voltar disparava a agregação de novo, que foi exatamente
+ *  o travamento relatado ao abrir orçamento.
+ *
+ *  Não atrasa a carga nova: quem importa uma publicação invalida `orcKeys.all`,
+ *  e invalidação vence `staleTime`. A única janela de defasagem é uma base
+ *  carregada em OUTRA sessão — e essa a tela já mostrava com atraso. */
 export function useBasesResumo() {
-  return useQuery({ queryKey: orcKeys.basesResumo(), queryFn: api.getBasesResumo })
+  return useQuery({
+    queryKey: orcKeys.basesResumo(),
+    queryFn: api.getBasesResumo,
+    staleTime: 15 * 60 * 1000,
+  })
 }
 
 export function useReferencias(params: Params, habilitado = true) {
@@ -577,9 +594,23 @@ export const useSalvarFonteOficial = () =>
   useVerboDaCarga((v: { id?: number; payload: Partial<FonteOficialTipo> }) =>
     v.id ? api.fontesOficiais.atualizar(v.id, v.payload) : api.fontesOficiais.criar(v.payload))
 
+/** ORC.8b — o menu de artefatos da fonte. Bate no site dela, então não é
+ *  refeito sozinho: `staleTime` alto porque a página de um semestre da EMBASA
+ *  não muda entre dois cliques, e uma lista de 76 links custa um download. */
+export function useDocumentosDisponiveis(fonte: string, ativo = true) {
+  return useQuery({
+    queryKey: orcKeys.documentosDaFonte(fonte),
+    queryFn: () => api.getDocumentosDisponiveis(fonte),
+    enabled: ativo && !!fonte,
+    retry: false,
+    staleTime: 10 * 60 * 1000,
+  })
+}
+
 export const useDispararCarga = () =>
   useVerboDaCarga((v: {
-    fonte: string; competencia?: string; somente_resumo?: boolean; aceitar_sem_classe?: boolean
+    fonte: string; competencia?: string; url?: string
+    somente_resumo?: boolean; aceitar_sem_classe?: boolean
   }) => api.dispararCarga(v))
 
 export const useEnviarArquivoDaCarga = () =>

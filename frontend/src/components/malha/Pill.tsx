@@ -20,15 +20,24 @@ const KIND: Record<PillKind, { bg: string; fg: string }> = {
 export function Pill({
   kind = 'slate',
   pulse,
+  title,
   children,
 }: {
   kind?: PillKind
   pulse?: boolean
+  /**
+   * O detalhe que não cabe no rótulo — o endereço contra o qual a rua foi
+   * conferida, a data de um travamento. A pílula continua legível sem ele: é
+   * complemento, nunca o significado (§8 — cor sozinha não comunica, e nem
+   * tooltip sozinho).
+   */
+  title?: string
   children: ReactNode
 }) {
   const c = KIND[kind]
   return (
     <span
+      title={title}
       style={{
         display: 'inline-flex',
         alignItems: 'center',

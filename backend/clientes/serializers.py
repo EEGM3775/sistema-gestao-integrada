@@ -74,9 +74,17 @@ class ClienteEmpreendimentoSerializer(serializers.ModelSerializer):
 
     def get_plano(self, obj):
         """O resumo da proposta, recalculado do que está gravado — sem o carnê
-        inteiro, que é grande e a ficha pede à parte quando precisa."""
+        inteiro, que é grande e a ficha pede à parte quando precisa.
+
+        **Sem calendário bancário de propósito** (`ajustar_vencimento=None`).
+        O ajuste de dia útil só mexe em *datas*, e aqui nenhuma data é exibida —
+        o resumo é dinheiro e contagem. Ligá-lo custaria uma consulta de feriados
+        e uma de `Local` **por linha** da lista de aquisições, para um resultado
+        idêntico. O carnê datado sai pelo `/simular/`, que é onde as datas
+        importam.
+        """
         try:
-            plano = plano_pagamento.montar_da_aquisicao(obj)
+            plano = plano_pagamento.montar_da_aquisicao(obj, ajustar_vencimento=None)
         except ValueError:
             return None
         resumo = plano.como_dict()
@@ -127,23 +135,28 @@ class ClienteEmpreendimentoSerializer(serializers.ModelSerializer):
                 balao_periodicidade=dados.get('balao_periodicidade') or 'anual',
                 balao_primeiro_vencimento=dados.get('balao_primeiro_vencimento'),
                 data_compra=dados.get('data_compra'),
-                a_vista=dados.get('condicoes_pagamento') == 'a_vista',
+                condicoes_pagamento=dados.get('condicoes_pagamento'),
             )
         except ValueError as erro:
             raise serializers.ValidationError({'plano': str(erro)})
         # Derivados gravados: o que a carteira soma e a ficha mostra sem recalcular.
         attrs['valor_compra'] = plano.valor_negociado
         attrs['valor_total_plano'] = plano.total
-        # À vista não tem prazo: zerar o que a condição anterior deixou para trás
-        # impede que uma venda convertida de "financiamento" para "à vista" fique
-        # com 60 parcelas gravadas que o plano não reconhece mais.
-        if dados.get('condicoes_pagamento') == 'a_vista':
+        # O que a condição não comporta sai do registro, e a regra de o que ela
+        # comporta é do motor (`plano_pagamento.CONDICOES`), não deste arquivo:
+        # uma venda convertida de "financiamento" para "à vista" não pode ficar
+        # com 60 parcelas gravadas que o plano não reconhece mais, e uma permuta
+        # não pode guardar juros de um parcelamento que ela não tem.
+        condicao = dados.get('condicoes_pagamento')
+        if condicao == 'a_vista':
             attrs.update(
                 entrada_valor=plano.valor_negociado, entrada_parcelas=1,
                 num_parcelas=0, juros_mensal=Decimal('0'),
                 balao_valor=Decimal('0'), balao_quantidade=0,
                 primeiro_vencimento=None, balao_primeiro_vencimento=None,
             )
+        else:
+            attrs.update(plano_pagamento.normalizar_por_condicao(condicao, dados))
         return attrs
 
     def create(self, validated_data):

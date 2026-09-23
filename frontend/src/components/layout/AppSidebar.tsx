@@ -62,13 +62,19 @@ const NAV_SECTIONS: NavSection[] = [
       { label: 'Obras',           icon: <HardHat />,         to: '/app/obras',           implemented: true },
       { label: 'Clientes',        icon: <Users />,           to: '/app/clientes',        implemented: true },
       { label: 'Fornecedores',    icon: <Truck />,           to: '/app/fornecedores',    implemented: true },
+      // **RH é Operação, não Gestão** *(decisão do dono, 15/09/2026)*. Ele
+      // estava na seção de cima por parecer "área meio" junto com ERP e CRM, e
+      // a régua da seção é outra: Operação é o **cadastro do que a obra tem** —
+      // empreendimento, obra, cliente, fornecedor —, e a equipe é a primeira
+      // coisa dessa lista. Quem procura um funcionário procura junto de onde
+      // procurou a obra em que ele está.
+      { label: 'RH',              icon: <UserCog />,         to: '/app/rh',    module: 'rh', implemented: true },
     ],
   },
   {
     label: 'Gestão',
     items: [
       { label: 'ERP / Financeiro', icon: <BarChart3 />,   to: '/app/erp',        module: 'erp_financeiro', implemented: true },
-      { label: 'RH',               icon: <UserCog />,     to: '/app/rh',         module: 'rh',             implemented: true },
       { label: 'CRM',              icon: <TrendingUp />,  to: '/app/crm',        module: 'crm',            implemented: true },
       { label: 'Diário + IA',      icon: <Brain />,       to: '/app/diario',                               implemented: true },
       { label: 'Suprimentos',      icon: <Package />,     to: '/app/scm',        module: 'scm',            implemented: true },

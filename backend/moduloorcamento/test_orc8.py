@@ -729,8 +729,12 @@ class ApiDaCargaTests(APITestCase):
         )
         resposta = self.client.get("/api/orcamento/cargas/estado/")
         self.assertEqual(resposta.status_code, 200)
-        self.assertEqual(len(resposta.data["fontes"]), 1)
-        self.assertEqual(resposta.data["fontes_com_motor"], [Fonte.SINAPI])
+        # A EMBASA já vem cadastrada pela migration da ORC.8b (é a única fonte
+        # cujo endereço é do código), então a contagem aqui não é 1 — o que a
+        # tela precisa é achar a SINAPI na lista.
+        fontes = {f["fonte"] for f in resposta.data["fontes"]}
+        self.assertIn(Fonte.SINAPI, fontes)
+        self.assertEqual(resposta.data["fontes_com_motor"], [Fonte.SINAPI, Fonte.EMBASA])
         self.assertIsNone(resposta.data["em_andamento"])
         self.assertIn("sinapi", resposta.data["ultima_por_fonte"])
         self.assertEqual(resposta.data["teto_mb"], planos.ORCAMENTO_CARGA_TETO_MB)
@@ -861,3 +865,96 @@ class CausaDaLinhaSemPrecoNovoTests(APITestCase):
 
         faltantes = reprecificacao._onde_mais_existe({"1379"}, self.acre)
         self.assertNotIn("AC", faltantes.get("1379", []))
+
+
+def _planilha_com_codigo_em_hyperlink(linhas_repetidas: int = 0) -> bytes:
+    """A aba de composição **como a Caixa publica de verdade**: a coluna de
+    código é um `=HYPERLINK(...)` que salta para a aba Analítico, não um número.
+
+    `linhas_repetidas > 0` troca a fórmula por um literal `0` em todas as linhas
+    — que é exatamente o que a leitura por valor enxergava antes da correção.
+    """
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    wb.remove(wb.active)
+    aba = wb.create_sheet("CSD")
+    aba.append(["SISTEMA NACIONAL DE PESQUISA DE CUSTOS E ÍNDICES"])
+    aba.append(["RELATÓRIO DE CUSTOS DE COMPOSIÇÕES SINTÉTICAS"])
+    aba.append([])
+    aba.append([None, None, None, None] + UFS_DO_TESTE)
+    aba.append(["GRUPO", "CÓDIGO DA COMPOSIÇÃO", "DESCRIÇÃO", "UNIDADE"]
+               + ["CUSTO (R$)"] * len(UFS_DO_TESTE))
+
+    if linhas_repetidas:
+        for i in range(linhas_repetidas):
+            aba.append(["ESTRUTURAS", 0, f"COMPOSICAO {i}", "M3",
+                        "512,00", "412,80", "430,00", "455,10", "470,90"])
+    else:
+        for codigo in ("104658", "92873", "88316"):
+            formula = (
+                '=HYPERLINK("#"&CELL("address",OFFSET(Analítico!$B$1,'
+                f'MATCH({codigo},Analítico!$B:$B,0)-1,3)),{codigo})'
+            )
+            aba.append(["ESTRUTURAS", formula, f"COMPOSICAO {codigo}", "M3",
+                        "512,00", "412,80", "430,00", "455,10", "470,90"])
+
+    buffer = BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
+class CodigoDaComposicaoEmHyperlinkTests(SimpleTestCase):
+    """O código da composição vem de dentro da fórmula, não do valor em cache.
+
+    Regressão de um defeito que **gravou dado errado com "OK" na tela**: nas abas
+    CSD/CCD/CSE o código é um `=HYPERLINK(...)` cujo valor em cache é `0`. Lendo
+    por valor, todas as linhas ficavam com o código `0`, o dicionário por código
+    colapsava e cada publicação recebia **uma** composição no lugar de ~8.400.
+    """
+
+    def test_extrai_o_codigo_do_rotulo_da_formula(self):
+        formula = (
+            '=HYPERLINK("#"&CELL("address",OFFSET(Analítico!$B$1,'
+            'MATCH(104658,Analítico!$B:$B,0)-1,3)),104658)'
+        )
+        self.assertEqual(carga.codigo_de_formula(formula), "104658")
+
+    def test_numero_puro_nao_e_formula_e_passa_batido(self):
+        self.assertEqual(carga.codigo_de_formula(92873), "")
+        self.assertEqual(carga.codigo_de_formula("92873"), "")
+        self.assertEqual(carga.codigo_de_formula(None), "")
+
+    def test_a_aba_rende_um_codigo_distinto_por_linha(self):
+        wb_valores = carga._abrir_workbook(_planilha_com_codigo_em_hyperlink())
+        wb_formulas = carga._abrir_workbook(
+            _planilha_com_codigo_em_hyperlink(), formulas=True
+        )
+        try:
+            tabela = carga.ler_aba_larga(
+                wb_valores, "CSD", InsumoReferencia.Tipo.COMPOSICAO, "onerado",
+                wb_formulas,
+            )
+        finally:
+            wb_valores.close()
+            wb_formulas.close()
+        self.assertEqual(
+            sorted(linha[0] for linha in tabela.linhas),
+            ["104658", "88316", "92873"],
+        )
+        # e cada uma chega na publicação, em vez de colapsar numa só
+        self.assertEqual(len(tabela.itens_da_uf("BA")), 3)
+
+    def test_recusa_a_aba_em_que_o_codigo_colapsa(self):
+        """A guarda: muita linha e pouco código distinto para de gravar."""
+        wb_valores = carga._abrir_workbook(
+            _planilha_com_codigo_em_hyperlink(linhas_repetidas=150)
+        )
+        try:
+            with self.assertRaises(carga.CargaInvalida) as erro:
+                carga.ler_aba_larga(
+                    wb_valores, "CSD", InsumoReferencia.Tipo.COMPOSICAO, "onerado",
+                )
+        finally:
+            wb_valores.close()
+        self.assertIn("código(s) distinto(s)", str(erro.exception))

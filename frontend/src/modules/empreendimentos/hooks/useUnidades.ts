@@ -70,6 +70,55 @@ export function useUnidades(empreendimentoId: number | null, filtros: FiltrosUni
   }
 }
 
+/**
+ * O que o estoque inteiro diz — e que a página carregada não sabe dizer.
+ *
+ * Duas perguntas que a aba fazia às linhas já baixadas e respondia errado:
+ *
+ * - **"quantas à venda?"** — contar `unidades.filter(...)` conta as primeiras
+ *   100, que num loteamento de 800 lotes é uma amostra apresentada como total;
+ * - **"quais quadras existem?"** — o seletor montado das linhas carregadas só
+ *   oferecia as quadras que já tinham descido, então filtrar por quadra exigia
+ *   rolar até o fim e clicar em "Carregar mais" até trazer tudo. Pedir que se
+ *   carregue tudo para poder não carregar tudo.
+ *
+ * Vem do servidor, sobre o mesmo recorte de filtros da lista (a lista de
+ * quadras ignora o filtro de quadra, senão o seletor se reduziria à escolha
+ * já feita e não deixaria trocar).
+ */
+export interface ResumoUnidades {
+  total: number
+  por_situacao: Record<string, number>
+  situacoes: { valor: string; rotulo: string; total: number }[]
+  quadras: string[]
+}
+
+export function useResumoUnidades(empreendimentoId: number | null, filtros: FiltrosUnidades) {
+  const [resumo, setResumo] = useState<ResumoUnidades | null>(null)
+  const { situacao, quadra, busca } = filtros
+
+  useEffect(() => {
+    if (!empreendimentoId) return
+    let vivo = true
+    apiClient
+      .get('/unidades/resumo/', {
+        params: {
+          empreendimento: empreendimentoId,
+          ...(situacao ? { situacao } : {}),
+          ...(quadra ? { quadra } : {}),
+          ...(busca ? { search: busca } : {}),
+        },
+      })
+      .then(({ data }) => { if (vivo) setResumo(data as ResumoUnidades) })
+      // Silencioso de propósito: o resumo é um enfeite informativo, e a tabela
+      // — que é o trabalho — não pode ficar sem render por causa dele.
+      .catch(() => { if (vivo) setResumo(null) })
+    return () => { vivo = false }
+  }, [empreendimentoId, situacao, quadra, busca])
+
+  return resumo
+}
+
 export async function createUnidade(payload: UnidadeFormData) {
   const r = await apiClient.post('/unidades/', payload)
   return r.data as Unidade

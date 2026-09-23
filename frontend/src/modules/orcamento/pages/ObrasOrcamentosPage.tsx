@@ -11,6 +11,8 @@ import { brl, dataBR, mesBR, STATUS_ESTADO } from '../lib'
 import { useBasesResumo, useCriarOrcamento, useObras, useOrcamentos, useRemoverOrcamento } from '../hooks'
 import type { Orcamento } from '../types'
 
+import { contemSemAcento } from '@/utils/texto'
+
 /** A entrada do Orçar: **obra primeiro**, planilha depois.
  *
  *  Antes a página abria direto na grade e a obra era um `<select>` no
@@ -99,7 +101,7 @@ export default function ObrasOrcamentosPage() {
         <Loading texto="Carregando as obras…" />
       ) : obraId == null ? (
         <ListaDeObras
-          obras={(obras ?? []).filter(o => o.nome_obra.toLowerCase().includes(busca.trim().toLowerCase()))}
+          obras={(obras ?? []).filter(o => contemSemAcento(o.nome_obra, busca.trim()))}
           porObra={porObra}
           vazio={(obras ?? []).length === 0}
           podeCriar={podeCriar}
@@ -109,7 +111,7 @@ export default function ObrasOrcamentosPage() {
       ) : (
         <ListaDeOrcamentos
           orcamentos={(porObra.get(obraId) ?? []).filter(o =>
-            o.descricao.toLowerCase().includes(busca.trim().toLowerCase()))}
+            contemSemAcento(o.descricao, busca.trim()))}
           semNenhum={(porObra.get(obraId) ?? []).length === 0}
           podeCriar={podeCriar}
           onCriar={() => setCriando(true)}

@@ -25,6 +25,8 @@ um número no módulo quebra aqui, que é onde a regressão importa.
 
 A fronteira do que não é limite está escrita na §5.6 do `planos.py`.
 """
+import inspect
+
 from django.test import SimpleTestCase
 
 from payment import planos
@@ -661,3 +663,521 @@ class TetosDoPdcaTests(SimpleTestCase):
                 f"o degrau '{slug}' não contrata o `pdca` e não pode ter modelo",
             )
         self.assertGreater(planos.PLANOS["empresarial"]["planos_modelo"], 0)
+
+
+class TetosDoLastPlannerTests(SimpleTestCase):
+    """PDCA.5 — os quatro números da fatia que fecha o Check e o Act.
+
+    A mesma regra das anteriores: constante sem consumidor não é régua, é
+    intenção — e o teste é o que prende uma à outra.
+    """
+
+    def test_o_last_planner_le_os_tetos_do_payment(self):
+        from modulopdca import services
+
+        self.assertIs(
+            services.PDCA_TETO_ITENS_POR_PROGRAMACAO,
+            planos.PDCA_TETO_ITENS_POR_PROGRAMACAO,
+        )
+        self.assertIs(
+            services.PDCA_TETO_RESTRICOES_ABERTAS_POR_OBRA,
+            planos.PDCA_TETO_RESTRICOES_ABERTAS_POR_OBRA,
+        )
+        self.assertIs(
+            services.PDCA_TETO_CAUSAS_POR_TENANT,
+            planos.PDCA_TETO_CAUSAS_POR_TENANT,
+        )
+        self.assertIs(
+            services.PDCA_TETO_SEMANAS_PPC, planos.PDCA_TETO_SEMANAS_PPC,
+        )
+
+    def test_o_quadro_cabe_numa_parede(self):
+        """O quadro de programação é uma parede de reunião: existe para o time
+        olhar junto e decidir. Um teto grande demais deixaria de proteger o que
+        foi criado para proteger."""
+        self.assertLessEqual(planos.PDCA_TETO_ITENS_POR_PROGRAMACAO, 1_000)
+
+    def test_a_semana_nao_comporta_o_cronograma_inteiro(self):
+        """**O compromisso é um recorte, não uma cópia do plano.** Se coubesse
+        tanto quanto o cronograma, o quadro viraria a WBS de novo — e o Last
+        Planner existe justamente porque a lista da semana é curta o bastante
+        para alguém assumi-la em voz alta."""
+        self.assertLess(
+            planos.PDCA_TETO_ITENS_POR_PROGRAMACAO,
+            planos.PDCA_TETO_ATIVIDADES_POR_CRONOGRAMA,
+        )
+
+    def test_o_catalogo_de_causas_continua_escolhivel(self):
+        """A causa só serve se for escolhida da mesma lista toda semana. Com
+        centenas de causas ninguém escolhe a mesma duas vezes e o ranking deixa
+        de ranquear."""
+        self.assertLessEqual(planos.PDCA_TETO_CAUSAS_POR_TENANT, 200)
+        self.assertGreater(
+            planos.PDCA_TETO_CAUSAS_POR_TENANT,
+            len(__import__("modulopdca.services", fromlist=["x"]).CAUSAS_DE_FABRICA),
+            "o teto tem de deixar espaço sobre o catálogo de fábrica",
+        )
+
+    def test_a_serie_de_ppc_cabe_num_eixo(self):
+        """Irmão do teto de pontos da curva S, e pela mesma razão."""
+        self.assertLessEqual(planos.PDCA_TETO_SEMANAS_PPC, 520)
+
+    def test_o_PPC_nao_tem_meta_no_payment(self):
+        """A fronteira da §5.6, exercida — e esta é a tentação óbvia da fatia.
+
+        A literatura registra ~54% em obra convencional e 80–85% com LPS maduro,
+        e seria fácil cravar 85 aqui como "meta do plano". O número é **resultado
+        medido**, não limite de uso; e meta de desempenho é acordo entre o
+        cliente e a equipe dele, da mesma classe do percentual de retenção que a
+        §5.5h recusou.
+        """
+        suspeitos = [
+            nome for nome in dir(planos)
+            if "PPC" in nome and "SEMANAS" not in nome
+        ]
+        self.assertEqual(suspeitos, [])
+
+
+class TetosDaLinhaDeBalancoTests(SimpleTestCase):
+    """PDCA.6 — os quatro números da §5.5k.
+
+    A mesma regra das anteriores: constante sem consumidor não é régua, é
+    intenção — e o teste é o que prende uma à outra.
+    """
+
+    def test_a_linha_de_balanco_le_os_tetos_do_payment(self):
+        from modulopdca import services
+
+        self.assertIs(
+            services.PDCA_TETO_LOCAIS_NA_LINHA_DE_BALANCO,
+            planos.PDCA_TETO_LOCAIS_NA_LINHA_DE_BALANCO,
+        )
+        self.assertIs(
+            services.PDCA_TETO_LINHAS_DE_BALANCO,
+            planos.PDCA_TETO_LINHAS_DE_BALANCO,
+        )
+        self.assertIs(
+            services.PDCA_TETO_LOCAIS_POR_RITMO,
+            planos.PDCA_TETO_LOCAIS_POR_RITMO,
+        )
+        self.assertIs(
+            services.PDCA_TETO_CONFLITOS_REPORTADOS,
+            planos.PDCA_TETO_CONFLITOS_REPORTADOS,
+        )
+
+    def test_o_eixo_cabe_numa_tela(self):
+        """A única razão de a LOB existir é que **o cruzamento de duas retas se
+        vê**. Com mil linhas no eixo Y o rótulo não cabe e o gráfico vira uma
+        mancha — que é o contrário do instrumento."""
+        self.assertLessEqual(planos.PDCA_TETO_LOCAIS_NA_LINHA_DE_BALANCO, 500)
+        #: E ele tem de comportar a torre inteira, que é o caso que justifica o
+        #: instrumento: 20 pavimentos × 4 unidades já são 80.
+        self.assertGreaterEqual(planos.PDCA_TETO_LOCAIS_NA_LINHA_DE_BALANCO, 100)
+
+    def test_o_grafico_nao_vira_espaguete(self):
+        """Com trinta retas sobrepostas ninguém enxerga qual cruza qual."""
+        self.assertLessEqual(planos.PDCA_TETO_LINHAS_DE_BALANCO, 60)
+
+    def test_um_traco_nao_gera_um_cronograma_inteiro(self):
+        """**É tamanho de gesto e de desfazer.** Gerar milhares de atividades
+        num clique cria um plano que ninguém revisa antes de publicar."""
+        self.assertLess(
+            planos.PDCA_TETO_LOCAIS_POR_RITMO,
+            planos.PDCA_TETO_ATIVIDADES_POR_CRONOGRAMA,
+        )
+
+    def test_o_traco_cabe_no_eixo_que_a_tela_desenha(self):
+        """Gerar mais locais do que o gráfico mostra produziria um plano que a
+        própria ferramenta que o desenhou não consegue ler."""
+        self.assertLessEqual(
+            planos.PDCA_TETO_LOCAIS_POR_RITMO,
+            planos.PDCA_TETO_LOCAIS_NA_LINHA_DE_BALANCO,
+        )
+
+    def test_o_RITMO_nao_tem_meta_no_payment(self):
+        """A fronteira da §5.6, exercida — e é a tentação óbvia desta fatia.
+
+        Quantos pavimentos por semana uma equipe faz é **resultado medido** da
+        obra, não limite de uso do software; e "ritmo ideal" é acordo entre a
+        empresa e a equipe dela. É a mesma recusa que a §5.5j fez com a meta de
+        PPC e a §5.5h com o percentual de retenção.
+        """
+        suspeitos = [
+            nome for nome in dir(planos)
+            if ("RITMO" in nome or "GARGALO" in nome)
+            and "LOCAIS_POR_RITMO" not in nome
+        ]
+        self.assertEqual(
+            suspeitos, [],
+            f"o ritmo é resultado da obra, não teto de plano: {suspeitos}",
+        )
+
+
+class TetosDaVerificacaoTests(SimpleTestCase):
+    """PDCA.7 — os quatro números da máquina de verificação.
+
+    A mesma regra das anteriores: constante sem consumidor não é régua, é
+    intenção — e o teste é o que prende uma à outra.
+    """
+
+    def test_a_verificacao_le_os_tetos_do_payment(self):
+        from modulopdca import services
+
+        self.assertIs(
+            services.PDCA_TETO_ITENS_POR_MODELO_VERIFICACAO,
+            planos.PDCA_TETO_ITENS_POR_MODELO_VERIFICACAO,
+        )
+        self.assertIs(
+            services.PDCA_TETO_MODELOS_POR_TENANT,
+            planos.PDCA_TETO_MODELOS_POR_TENANT,
+        )
+        self.assertIs(
+            services.PDCA_TETO_NCS_ABERTAS_POR_OBRA,
+            planos.PDCA_TETO_NCS_ABERTAS_POR_OBRA,
+        )
+        self.assertIs(
+            services.PDCA_TETO_ACOES_POR_NC, planos.PDCA_TETO_ACOES_POR_NC,
+        )
+
+    def test_a_ficha_termina_numa_visita(self):
+        """**O instrumento do campo é uma pergunta por vez** (planta §5.2).
+
+        Quem responde está de pé, com luva e sol na tela; ficha que não termina
+        numa visita volta pela metade, e ficha pela metade não se distingue de
+        serviço reprovado. O teto tem de caber no caso mais longo que o mercado
+        usa de verdade — a vistoria de entrega de uma unidade, que passa de 100
+        itens — sem virar documento de duzentas perguntas.
+        """
+        self.assertGreaterEqual(planos.PDCA_TETO_ITENS_POR_MODELO_VERIFICACAO, 100)
+        self.assertLessEqual(planos.PDCA_TETO_ITENS_POR_MODELO_VERIFICACAO, 300)
+
+    def test_a_biblioteca_continua_escolhivel(self):
+        """Irmão do catálogo de causas, e pela mesma razão: o modelo só serve se
+        for **o mesmo** aplicado em toda obra. Com mil cadastrados, cada
+        engenheiro escolhe o seu e a comparação entre obras acaba."""
+        self.assertGreaterEqual(
+            planos.PDCA_TETO_MODELOS_POR_TENANT,
+            planos.PDCA_TETO_CAUSAS_POR_TENANT,
+        )
+        self.assertLessEqual(planos.PDCA_TETO_MODELOS_POR_TENANT, 500)
+
+    def test_o_log_de_nc_e_gemeo_do_log_de_restricao(self):
+        """Os dois existem para **zerar**, não para acumular — e um log de
+        defeito maior que o de travas diria que a obra tolera mais defeito
+        aberto do que impedimento aberto, que não é a mensagem."""
+        self.assertEqual(
+            planos.PDCA_TETO_NCS_ABERTAS_POR_OBRA,
+            planos.PDCA_TETO_RESTRICOES_ABERTAS_POR_OBRA,
+        )
+
+    def test_uma_nc_que_pede_vinte_acoes_nao_e_uma_nc(self):
+        """O teto não é limite de rigor: é o aviso de que o problema precisa ser
+        quebrado em vários — e quebrado, cada um encerra o seu."""
+        self.assertLessEqual(planos.PDCA_TETO_ACOES_POR_NC, 20)
+
+    def test_a_CONFORMIDADE_nao_tem_meta_no_payment(self):
+        """**A fronteira da §5.6, pela terceira vez no módulo** — e aqui é a
+        mais tentadora das três.
+
+        O PBQP-H e a ISO 9001 falam em índice de conformidade, e seria fácil
+        cravar 95 como "meta do plano". Continua errado pelas duas razões de
+        sempre: o número é **resultado medido**, não limite de uso, e meta de
+        qualidade é acordo entre a empresa, o cliente e o organismo certificador
+        dela. Mesma recusa que a §5.5j fez com o PPC e a §5.5k com o ritmo.
+
+        **O prazo de verificação de eficácia entra na mesma varredura**: "30 dias
+        depois de executada a ação" é cláusula do sistema de qualidade do
+        cliente, da família da retenção da §5.5h — e é o `quando` do 5W2H,
+        digitado por quem monta o plano.
+        """
+        suspeitos = [
+            nome for nome in dir(planos)
+            if nome.startswith("PDCA_")
+            and any(p in nome for p in (
+                "CONFORMIDADE", "META", "EFICACIA", "PRAZO_TRATAMENTO",
+            ))
+        ]
+        self.assertEqual(
+            suspeitos, [],
+            f"resultado de qualidade virou teto de plano: {suspeitos}",
+        )
+
+    def test_a_ficha_cabe_dentro_do_gesto_que_a_aplica(self):
+        """**Não há corte síncrono × job nesta fatia, e é uma decisão.**
+
+        Aplicar um modelo escreve no máximo um item por pergunta, numa
+        transação — o número que protege o gesto já é o teto de itens do modelo.
+        Declarar um segundo criaria dois limites para a mesma pergunta, que é o
+        que a §5.5f recusou para bytes por apontamento.
+        """
+        suspeitos = [
+            nome for nome in dir(planos)
+            if nome.startswith("PDCA_")
+            and "VERIFICACAO" in nome
+            and "SINCRONO" in nome
+        ]
+        self.assertEqual(suspeitos, [], f"teto duplicado para o mesmo gesto: {suspeitos}")
+
+
+class TetosDaSsmaTests(SimpleTestCase):
+    """PDCA.8 — os três da SSMA, **e o que a ausência de um quarto protege**."""
+
+    #: **`assertIs` não serve para estes números, e vale escrever por quê.**
+    #:
+    #: A régua da casa prende constante a consumidor com
+    #: `assertIs(services.X, planos.X)`, e ela funciona porque um `from ...
+    #: import` faz os dois nomes apontarem para o mesmo objeto. Só que o CPython
+    #: interna todo inteiro de −5 a 256: para um teto de 60, `assertIs` passa
+    #: **mesmo que o `services` tenha redeclarado o literal** em vez de importar
+    #: — que é exatamente a regressão que a regra existe para impedir. Conferido
+    #: no interpretador: dois módulos com `X = 150` dão `is` verdadeiro; com
+    #: `X = 500`, falso.
+    #:
+    #: Os três números desta fatia são todos ≤ 256, então o teste aqui olha a
+    #: **procedência**: o nome tem de chegar ao `services` por `ImportFrom` de
+    #: `payment.planos`, e não pode existir como atribuição no módulo. É a mesma
+    #: pergunta que o `assertIs` queria fazer, feita de um jeito que os valores
+    #: pequenos não escondem.
+    TETOS = (
+        "PDCA_TETO_PARTICIPANTES_POR_DDS",
+        "PDCA_TETO_ANEXOS_POR_OCORRENCIA",
+        "PDCA_TETO_OCORRENCIAS_NA_FILA",
+    )
+
+    def test_a_ssma_le_os_tetos_do_payment(self):
+        from modulopdca import services
+
+        for nome in self.TETOS:
+            self.assertEqual(
+                getattr(services, nome), getattr(planos, nome), nome,
+            )
+
+    def test_os_tetos_da_ssma_vem_por_IMPORT_e_nao_por_literal_repetido(self):
+        """A prova de procedência que o `assertIs` não dá nesta faixa."""
+        import ast
+        import inspect
+
+        from modulopdca import services
+
+        arvore = ast.parse(inspect.getsource(services))
+
+        importados, atribuidos = set(), set()
+        for no in ast.walk(arvore):
+            if isinstance(no, ast.ImportFrom) and no.module == "payment.planos":
+                importados.update(a.asname or a.name for a in no.names)
+            if isinstance(no, ast.Assign):
+                for alvo in no.targets:
+                    if isinstance(alvo, ast.Name):
+                        atribuidos.add(alvo.id)
+
+        for nome in self.TETOS:
+            self.assertIn(
+                nome, importados,
+                f"{nome} não é importado de payment.planos — o número do dono "
+                f"precisa chegar ao módulo por importação, não por cópia.",
+            )
+            self.assertNotIn(
+                nome, atribuidos,
+                f"{nome} foi reatribuído dentro do services: o valor do dono "
+                f"deixou de valer e nenhum `assertIs` pegaria isso, porque o "
+                f"CPython interna inteiros até 256.",
+            )
+
+    def test_a_roda_do_DDS_tem_tamanho_de_roda(self):
+        """O DDS é a frente parada em círculo antes do turno.
+
+        Acima de umas dezenas ninguém ouve e ninguém pergunta, e a lista vira o
+        que ela não pode ser: assinatura colhida por fora do diálogo, que é a
+        fraude que uma fiscalização procura. O número tem de caber na frente
+        grande de uma obra vertical no pico e ainda descrever uma roda.
+        """
+        self.assertGreaterEqual(planos.PDCA_TETO_PARTICIPANTES_POR_DDS, 30)
+        self.assertLessEqual(planos.PDCA_TETO_PARTICIPANTES_POR_DDS, 120)
+
+    def test_NAO_existe_teto_de_ocorrencias_abertas_por_obra(self):
+        """**A ausência é a decisão mais importante da §5.5m.**
+
+        Seria o gêmeo óbvio do `PDCA_TETO_NCS_ABERTAS_POR_OBRA` e do
+        `PDCA_TETO_RESTRICOES_ABERTAS_POR_OBRA`, e copiá-lo produziria um
+        sistema que **recusa o registro de um acidente** porque a obra já tem
+        registros demais. Log de NC e de restrição se zeram porque a empresa
+        decide tratá-los; acidente não se decide.
+        """
+        suspeitos = [
+            nome for nome in dir(planos)
+            if nome.startswith("PDCA_TETO_")
+            and ("OCORRENCIAS_ABERTAS" in nome or "ACIDENTES" in nome)
+        ]
+        self.assertEqual(
+            suspeitos, [],
+            f"teto de escrita sobre ocorrência é subnotificação: {suspeitos}",
+        )
+
+    def test_nenhum_indicador_de_seguranca_virou_teto(self):
+        """Taxa, dias e meta são **resultado medido** — a fronteira da §5.6.
+
+        A quarta vez que o módulo traça esta linha, depois do PPC, do ritmo e da
+        conformidade. E a mais perigosa: meta de zero acidentes não só é acordo
+        do cliente como **corrompe o dado que a fatia coleta** — quem persegue o
+        número para de registrar o quase-acidente.
+        """
+        proibidos = [
+            nome for nome in dir(planos)
+            if nome.startswith(("PDCA_", "SSMA_"))
+            and any(
+                marca in nome for marca in (
+                    "FREQUENCIA", "GRAVIDADE_SSMA", "DIAS_PERDIDOS",
+                    "DIAS_DEBITADOS", "META_", "ZERO_ACIDENTE",
+                )
+            )
+        ]
+        self.assertEqual(
+            proibidos, [], f"resultado medido não é teto de plano: {proibidos}",
+        )
+
+    def test_prazo_legal_e_periodicidade_nao_moram_no_payment(self):
+        """O prazo da CAT é lei; a periodicidade do DDS é do cliente.
+
+        Nenhum dos dois é teto comercial nosso — mesma família do limite legal
+        de acréscimo que a §5.5h recusou e da janela de reentrega da Meta.
+        """
+        proibidos = [
+            nome for nome in dir(planos)
+            if any(m in nome for m in ("CAT_", "_CAT", "DDS_PERIODICIDADE",
+                                       "PERIODICIDADE_DDS", "VALIDADE_ASO"))
+        ]
+        self.assertEqual(
+            proibidos, [], f"cláusula legal ou de terceiro no payment: {proibidos}",
+        )
+
+
+class TetosDoCockpitDoPdcaTests(SimpleTestCase):
+    """§5.5n — os três das leituras que atravessam obras e assuntos.
+
+    Família nova de novo: as anteriores protegiam **uma** obra de cada vez.
+    Estas protegem leituras que cruzam — e por isso o caro delas não é o que o
+    cliente escreve, é o que o servidor tem de somar para responder.
+    """
+
+    #: A mesma ressalva da `TetosDaSsmaTests`: os três são ≤ 256, e o CPython
+    #: interna esses inteiros — `assertIs` passaria mesmo com o `services`
+    #: redeclarando o literal. O teste de procedência abaixo é quem pega.
+    TETOS = (
+        "PDCA_TETO_OBRAS_NA_CARTEIRA",
+        "PDCA_TETO_LINHAS_POR_FAIXA_DA_FILA",
+        "PDCA_TETO_RESULTADOS_POR_ESPECIE",
+    )
+
+    def test_o_cockpit_le_os_tetos_do_payment(self):
+        from modulopdca import services
+
+        for nome in self.TETOS:
+            self.assertEqual(
+                getattr(services, nome), getattr(planos, nome), nome,
+            )
+
+    def test_os_tetos_do_cockpit_vem_por_IMPORT_e_nao_por_literal(self):
+        import ast
+        import inspect
+
+        from modulopdca import services
+
+        arvore = ast.parse(inspect.getsource(services))
+        importados, atribuidos = set(), set()
+        for no in ast.walk(arvore):
+            if isinstance(no, ast.ImportFrom) and no.module == "payment.planos":
+                importados.update(a.asname or a.name for a in no.names)
+            if isinstance(no, ast.Assign):
+                for alvo in no.targets:
+                    if isinstance(alvo, ast.Name):
+                        atribuidos.add(alvo.id)
+
+        for nome in self.TETOS:
+            self.assertIn(
+                nome, importados,
+                f"{nome} não é importado de payment.planos — o número do dono "
+                f"precisa chegar ao módulo por importação, não por cópia.",
+            )
+            self.assertNotIn(nome, atribuidos, nome)
+
+    def test_a_tela_recebe_os_tres_para_poder_declarar_o_corte(self):
+        """Lista cortada em silêncio é pior que lista curta.
+
+        A carteira truncada sem aviso é a diretoria decidindo sobre quarenta
+        obras achando que viu todas — por isso os três viajam no `status/`.
+        """
+        from modulopdca import views
+
+        fonte = inspect.getsource(views.PdcaStatusView)
+        for nome in self.TETOS:
+            self.assertIn(nome, fonte, nome)
+
+    def test_a_carteira_cabe_numa_leitura_sincrona(self):
+        """O teto existe porque **cada linha custa um rollup de cronograma**.
+
+        Não há caminho assíncrono para a carteira, e um número grande aqui
+        produziria uma página que demora sem ninguém saber por quê. Acima de
+        umas poucas dezenas a leitura tem de mudar de desenho, não de número.
+        """
+        self.assertLessEqual(planos.PDCA_TETO_OBRAS_NA_CARTEIRA, 100)
+        self.assertGreaterEqual(planos.PDCA_TETO_OBRAS_NA_CARTEIRA, 20)
+
+    def test_a_busca_cabe_numa_paleta_sem_rolagem(self):
+        """Sete espécies × o teto tem de caber numa lista que se lê de relance.
+
+        O teto é **por espécie** justamente para nenhuma esconder outra; se ele
+        crescesse, a paleta voltaria a ser uma tela de resultados — e aí a
+        pessoa navega por menu de novo, que é o que a busca existe para evitar.
+        """
+        ESPECIES = 7
+        self.assertLessEqual(
+            planos.PDCA_TETO_RESULTADOS_POR_ESPECIE * ESPECIES, 100,
+        )
+
+    def test_a_faixa_da_fila_cabe_dentro_do_log_que_a_alimenta(self):
+        """Teto de leitura maior que o de escrita nunca morderia.
+
+        A faixa de NC sem plano não pode declarar que mostra mais linhas do que
+        o log de NC em aberto (§5.5l) comporta — seria número que o dono acha
+        que protege alguma coisa.
+        """
+        self.assertLessEqual(
+            planos.PDCA_TETO_LINHAS_POR_FAIXA_DA_FILA,
+            planos.PDCA_TETO_NCS_ABERTAS_POR_OBRA,
+        )
+
+    def test_nenhum_indicador_da_carteira_virou_teto(self):
+        """**A quinta vez que o módulo traça esta linha.**
+
+        Depois do PPC (§5.5j), do ritmo (§5.5k), da conformidade (§5.5l) e das
+        taxas de SSMA (§5.5m). A carteira **ordena** por avanço, PPC,
+        conformidade e dias sem afastamento; ela não escolhe qual é bom, e um
+        `PDCA_MINIMO_DE_AVANCO` aqui venderia como limite de plano uma meta que
+        é acordo entre o cliente e a equipe dele.
+        """
+        proibidos = [
+            nome for nome in dir(planos)
+            if nome.startswith("PDCA_")
+            and any(marca in nome for marca in (
+                "AVANCO_MINIMO", "MINIMO_DE_AVANCO", "SPI", "CPI",
+                "DESVIO_ACEITAVEL", "CARTEIRA_META",
+            ))
+        ]
+        self.assertEqual(
+            proibidos, [], f"resultado medido virou teto de plano: {proibidos}",
+        )
+
+    def test_o_piso_de_letras_da_busca_NAO_mora_no_payment(self):
+        """E a ausência é declarada na §5.6, junto com o `JANELA` do CEP.
+
+        Duas letras não dizem *até onde o cliente vai* — dizem a partir de
+        quando a procura acerta. Quem limita o alcance é o
+        `PDCA_TETO_RESULTADOS_POR_ESPECIE`, e esse está na §5.5n.
+        """
+        from modulopdca import services
+
+        self.assertFalse(
+            [n for n in dir(planos) if "MINIMO_DE_LETRAS" in n],
+            "piso de acerto não é teto de plano",
+        )
+        self.assertGreaterEqual(services.MINIMO_DE_LETRAS, 2)

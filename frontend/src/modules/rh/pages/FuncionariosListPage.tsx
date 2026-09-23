@@ -7,6 +7,8 @@ import FuncionarioForm from '../components/FuncionarioForm'
 import type { FuncionarioFormData, StatusContratoFuncionario } from '@/types'
 import { formatCPF } from '@/utils/masks'
 
+import { contemSemAcento } from '@/utils/texto'
+
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 function formatDate(v: string | null) {
@@ -49,10 +51,10 @@ const FuncionariosListPage: React.FC = () => {
   )
 
   const filtered = useMemo(() => {
-    const q = search.toLowerCase()
+    const q = search.trim()
     return funcionarios.filter(f => {
       const matchStatus = !filterStatus || f.status_contrato === filterStatus
-      const matchSearch = !q || f.nome_completo.toLowerCase().includes(q) || f.cpf.includes(q)
+      const matchSearch = !q || contemSemAcento(f.nome_completo, q) || f.cpf.includes(q)
       return matchStatus && matchSearch
     })
   }, [funcionarios, search, filterStatus])

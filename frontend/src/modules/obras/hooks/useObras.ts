@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import apiClient from '@/api/apiClient'
 import type { Obra, StatusObra } from '@/types'
+import { contemSemAcento } from '@/utils/texto'
 
 interface Filters {
   search?: string
@@ -34,10 +35,13 @@ export function useObras(filters: Filters = {}) {
       list = list.filter(o => o.status_obra === filters.status)
     }
     if (filters.search) {
-      const q = filters.search.toLowerCase()
+      // Sem acento dos dois lados (`utils/texto.ts`): quem digita "fundacao" ou
+      // "Edificio Acai" tem de achar "Fundação" e "Edifício Açaí". Comparar com
+      // acento faz a obra existir e a busca dizer que não.
+      const q = filters.search
       list = list.filter(o =>
-        o.nome_obra.toLowerCase().includes(q) ||
-        o.endereco.toLowerCase().includes(q)
+        contemSemAcento(o.nome_obra, q) ||
+        contemSemAcento(o.endereco, q)
       )
     }
     return list

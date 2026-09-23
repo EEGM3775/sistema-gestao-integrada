@@ -229,6 +229,32 @@ fora e não são foco):
 
 ---
 
+## 6.1 Dia útil **bancário** (`dias_uteis.py`)
+
+A tabela `Feriado` tem um segundo consumidor, e ele não é de agenda: é o **vencimento** que vai ao
+carnê e ao boleto. `AjusteDeVencimento(uf, ibge)` empurra para o próximo dia útil a data que cai em
+sábado, domingo ou feriado, e `explicar(dia)` devolve `(data_ajustada, motivo)` — "domingo", "Nossa
+Senhora Aparecida" — para a tela dizer **por que** a data mudou.
+
+**Por que não reusa o `CalendarioTrabalho` do PDCA.** As duas perguntas só parecem a mesma. O PDCA
+pergunta *"a equipe trabalha neste dia?"*, e a resposta pode ser "sim" num sábado de mutirão; o
+financeiro pergunta *"o banco compensa neste dia?"*, e aí não há calendário de obra nenhum. Misturar
+os dois faria a obra que trabalha aos sábados receber boleto aos sábados.
+
+**Escopo por localidade, com a mesma régua de dado honesto da §6:** nacional sempre; estadual só com
+a UF; municipal só com o código IBGE. Sem o código, não se afirma feriado municipal.
+
+**Desempenho:** os feriados são carregados **uma vez por ano tocado** e ficam no objeto — ajustar um
+carnê de 360 parcelas é uma consulta, não 360. Por isso o ajuste é injetado como objeto em
+`clientes.plano_pagamento.montar()`, e não resolvido dentro do laço.
+
+**A base nasce vazia.** `base_sincronizada()` existe para as telas dizerem isso: sem
+`manage.py sincronizar_feriados`, o vencimento ainda desvia de fim de semana, mas não de feriado — e
+prometer o contrário é meia verdade que vira boleto pago em atraso. Quem consome:
+[clientes.md](clientes.md) (carnê) e [funcoescobrancas.md](funcoescobrancas.md) (`dueDate` do Asaas).
+
+---
+
 ## 7. Convenções e decisões
 
 - **Datas:** o backend fala ISO 8601 com offset; a UI converte para `datetime-local`/`date` em

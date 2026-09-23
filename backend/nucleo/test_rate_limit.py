@@ -125,6 +125,16 @@ class TaskReagendaTests(SimpleTestCase):
     atender toda a fila, inclusive tarefas de outros tenants.
     """
 
+    #: **O banco é declarado ainda que o teste não o use** (D148). O
+    #: `log_task_end` de `nucleo/signals.py` grava um `LogAtividadeUsuario` por
+    #: task encerrada; num `SimpleTestCase` o Django recusa a escrita, o
+    #: dispatcher do Celery engole a exceção e **loga o traceback como ERROR** —
+    #: a cada `manage.py test`, com a suíte verde. O teste passava e a produção
+    #: estava certa; o custo era de leitura, e um traceback com a palavra
+    #: CRÍTICO impresso em toda execução treina o olho a ignorar exatamente a
+    #: linha que um dia vai importar.
+    databases = {"default"}
+
     def test_limite_de_fornecedor_vira_retry_e_nao_falha(self):
         from celery import shared_task
         from celery.exceptions import Retry

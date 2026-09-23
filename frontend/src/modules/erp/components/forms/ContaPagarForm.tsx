@@ -12,6 +12,8 @@ import { apiDecimalToCents, centsToApiDecimal } from '@/utils/money'
 import { FormErrorBanner, parseApiErrors } from '@/utils/formErrors'
 import type { ContaPagar, ContaPagarPayload } from '../../types'
 
+import { minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
+
 /** Lançamento de conta a pagar — criação e edição (D.1.1 §13). */
 
 const EMPTY_VALUES: ContaPagarFormValues = {
@@ -114,13 +116,13 @@ export function ContaPagarForm({ initial, onSubmit, onCancel }: ContaPagarFormPr
 
         <div className="grid grid-cols-3 gap-3">
           <Field label="Emissão" error={errors.data_emissao?.message}>
-            <input type="date" style={inputStyle} {...register('data_emissao')} />
+            <input type="date" min={minCalendarioISO} max={maxCalendarioISO} style={inputStyle} {...register('data_emissao')} />
           </Field>
           <Field label="Vencimento" error={errors.data_vencimento?.message}>
-            <input type="date" style={inputStyle} {...register('data_vencimento')} />
+            <input type="date" min={minCalendarioISO} max={maxCalendarioISO} style={inputStyle} {...register('data_vencimento')} />
           </Field>
           <Field label="Agendamento" error={errors.data_agendamento?.message}>
-            <input type="date" style={inputStyle} {...register('data_agendamento')} />
+            <input type="date" min={minCalendarioISO} max={maxCalendarioISO} style={inputStyle} {...register('data_agendamento')} />
           </Field>
         </div>
 

@@ -144,11 +144,35 @@ decidir é a contagem de `precisao_grosseira` na fila de decisão dos primeiros 
 | `locais/` | CRUD; `{id}/geocodificar/[?forcar=1]` (cascata); `proximos/?de=&raio_km=&tipo=` |
 | `camadas/` · `feicoes/` | CRUD; `feicoes/?bbox=&desde=&ate=` (recorte espacial **e temporal**) |
 | `ortofotos/` | Índice do acervo; `?bbox=&obra=`; `{id}/tiles/{z}/{x}/{y}/` |
-| `planos-voo/` | CRUD; `{id}/calcular/` (traçado + altura + memória de cálculo); `{id}/exportar/?formato=kml\|plan\|litchi\|wpml` |
+| `planos-voo/` | CRUD; **`do-local/`** (cria o plano a partir de um `Local` — perímetro desenhado se houver, círculo de `raio_m` se não, e a resposta declara qual dos dois em `origem_da_area`); `{id}/calcular/` (traçado + altura + memória de cálculo); `{id}/exportar/?formato=kml|plan|litchi|wpml` ||plan\|litchi\|wpml` |
 | `rotas/` · `paradas/` | CRUD; `{id}/tracar/` (ordem atual); `{id}/otimizar/` (reordena + devolve violações de janela) |
 | `geofences/` | CRUD; `gerar/` (do perímetro do `Local` ou de um raio); `conter/?lon=&lat=` |
 | `detectar-endereco/` | Texto livre **ou XML de NF-e** → endereços candidatos (§7, item 5) |
 | `camadas-externas/` | Catálogo de WMS/WFS do tenant — **MAP.7** |
+
+### 6.1 A unidade imobiliária no mapa
+
+`Local.Tipo.UNIDADE` tem entrada em `services.VINCULOS`, como os outros quatro vínculos, com **uma
+dedução que nenhum deles tem**: quando `Unidade.endereco` está vazio, a **frente do lote**
+(`confrontante_frente`) é a rua, e é dela que sai o endereço do `Local`. Sem isso o mapa mostrava um
+pin "QD 4 · LT 06" sem nenhuma pista de onde aquilo fica.
+
+Os dois serializers (`LocalSerializer` e `LocalResumoSerializer`) trazem `unidade_detalhe` — `null`
+fora de `tipo: unidade` —, com áreas, **medidas e confrontações dos quatro lados**, o memorial em uma
+frase e a rua da frente. Área não descreve terreno: o que o contrato, a matrícula e o vizinho
+reconhecem é quanto mede cada lado e com quem cada lado divide.
+
+**`rua_confere` tem três estados, e o terceiro é o que evita o alarme falso:** `true` (bate), `false`
+(diverge) e **`null`** — não há como dizer, porque falta o confrontante ou falta o endereço. Cadastro
+incompleto não é cadastro errado, e acusar divergência onde só falta dado ensina a ignorar o aviso. A
+comparação é por conteúdo, não literal: tira acento, caixa, pontuação, o tipo do logradouro ("R.",
+"Av.") e os artigos — o memorial e o endereço nunca são digitados iguais, e exigir igualdade acusaria
+divergência em todo cadastro correto.
+
+A divergência vira item da **fila de decisão** do cockpit (`tipo: "rua_divergente"`), que abre a
+tabela de locais já filtrada em `tipo=unidade`. A varredura roda em Python — a comparação é tolerante
+e SQL faria igualdade literal — e por isso tem teto declarado (`_TETO_VARREDURA_RUA`): guarda-corpo de
+laço, **não** limite de produto (§5.6 do `planos.py`).
 
 ## 7. Integrações — o "tudo se conecta"
 
@@ -160,7 +184,7 @@ decidir é a contagem de `precisao_grosseira` na fila de decisão dos primeiros 
 | [moduloscm](moduloscm.md) | Distância entrega→canteiro como critério de adjudicação; prazo de entrega confrontado com a rota |
 | **drone** (`funcoesODM`) | `Ortofoto` indexa o acervo por `bbox` e data → a ortofoto vira **camada do mapa da empresa**; `PlanoVoo` nasce do polígono da obra e volta como missão executável; `Feicao` com `data_referencia` permite o **antes/depois** do mesmo pin em voos de datas diferentes |
 | [modulodiario](modulodiario.md) | Foto georreferenciada (EXIF) vira `Feicao` na data do diário |
-| [modulocalendar](modulocalendar.md) | Precedente direto: módulo de plataforma que serve a todos sem ser função de ERP. O `Local` também resolve a localidade de feriado, hoje resolvida só por município |
+| [modulocalendar](modulocalendar.md) | Precedente direto: módulo de plataforma que serve a todos sem ser função de ERP. O `Local` também resolve a localidade de feriado — e é dele que sai o **código IBGE** que o [dia útil bancário](modulocalendar.md) usa para empurrar o vencimento do boleto pelo feriado **municipal** do empreendimento ([clientes.md](clientes.md)) |
 | [funcoesimpexp](funcoesimpexp.md) | **Item 5**: endereço detectado em texto entra pela **conferência linha a linha** do motor (nova/duplicada/inválida, nada grava antes da decisão) em vez de virar pin direto. O `IE.n` do Maps |
 
 ### Detecção de endereço em texto (item 5) — a distinção que importa

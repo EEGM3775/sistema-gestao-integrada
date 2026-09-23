@@ -124,6 +124,30 @@ Rode os DOIS, nesta ordem. Pode repetir sem medo — não duplica.
     --tenant, --empreendimentos e --semente.
 
 
+ 4) OPCIONAL — o PDCA com obra planejada e em execução, para ver os postos
+    com dado real em vez de tela vazia. Dois comandos, nesta ordem:
+
+    docker compose exec erp python manage.py semear_pdca_demo --tenant demo --obra 9
+    docker compose exec erp python manage.py semear_pdca_execucao --tenant demo
+
+    O primeiro planeja UMA obra (locais, expediente, WBS, avanço apontado) e
+    exige que ela tenha etapas e orcamento aprovado. O segundo semeia o resto
+    do ciclo em TODAS as obras reais que ja tem plano: contrato e medicoes,
+    restricoes, tres semanas de Last Planner com PPC, fichas de verificacao e
+    nao-conformidades nas quatro faixas da fila, DDS e ocorrencias com CAT.
+
+    Ele pula as obras de teste automatizado (E2E, REPRO, PROBE, VIS) e as que
+    ja tem contrato — para nao passar por cima de dado seu. --limpar refaz.
+
+    A semana corrente sai com DOIS donos: metade dos cartoes no rotulo que o
+    escritorio usa ("Encarregado da frente") e metade no nome do usuario
+    `campo`. E o que faz a tela do canteiro (/campo) abrir com frente de
+    verdade em vez de vazia — ela procura o que esta no nome de quem entrou.
+
+    So dev/staging. Nao aprova medicao (aprovar gera titulo no ERP) e nao
+    inventa homem-hora: as taxas de SSMA seguem nulas, com motivo.
+
+
 ============================================================
  STAGING — o ambiente igual ao de produção
 ============================================================
@@ -293,6 +317,45 @@ que decide qual usar e o MES da publicacao:
      --fonte sinapi --mes 2026-07
    (acrescente --resumo para so conferir, sem gravar; ou
     --arquivo /tmp/pacote.zip para o plano B)
+
+------------------------------------------------------------
+ CARREGAR A TABELA DA EMBASA (saneamento -- BA)
+------------------------------------------------------------
+A EMBASA publica em PDF e por SEMESTRE, nao por mes -- e nao publica
+UM arquivo: sao 65 tabelas por semestre (expansao, operacao de agua e
+de esgoto, cada uma pela convencao coletiva da regiao) mais a lista de
+insumos. Nenhuma delas e "a do mes", entao a carga e POR ESCOLHA.
+
+Pela tela: SISTEMA -> Bases oficiais -> fonte EMBASA. Aparece uma caixa
+"Tabela" com a lista que o site publica; escolha e clique em Carregar.
+O endereco ja vem cadastrado (e a pagina do semestre -- quando a EMBASA
+abrir o proximo, e essa URL que muda, em "Endereco da fonte").
+
+Pela bancada:
+  # ver o que o semestre publicou
+  docker exec sgi-erp python manage.py carregar_base_oficial \
+    --fonte embasa --listar
+
+  # carregar uma tabela (o slug vem do --listar)
+  docker exec sgi-erp python manage.py carregar_base_oficial \
+    --fonte embasa \
+    --documento 1-1serv-exp-deson-jun-2026-h-158-56-m-119-40-r2
+
+  # carregar TODAS, uma corrida por documento
+  docker exec sgi-erp python manage.py carregar_base_oficial \
+    --fonte embasa --todas
+
+--todas e de bancada, e so de bancada: sao ~65 documentos de 6 MB, cerca
+de uma hora entre download e leitura de PDF. Pela tela, cada documento e
+uma corrida sua -- uma tabela que falhe nao derruba as outras.
+
+A competencia NAO precisa ser informada: a data-base vale a do proprio
+PDF ("Relatorio de Servicos Junho/2026"), porque publicacao de semestre
+faz da competencia pedida um palpite.
+
+Os PDFs de "Encargos Sociais" aparecem na lista e NAO sao carregaveis:
+eles sao a memoria de calculo das leis sociais (quadro de encargos do
+ORC.7), nao base de preco.
 
  * ATE 12/2024 -- pelo comando abaixo. Aquelas publicacoes sao um ZIP
    por UF x regime, em formato "longo" (uma linha por item, uma coluna

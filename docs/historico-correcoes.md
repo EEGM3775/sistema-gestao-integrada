@@ -10,6 +10,1302 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D197 — a tela de bases escolhia por mural de cartõezinhos, e os preços nasciam meia tela abaixo · ✅ corrigido 22/09/2026
+
+Achado pelo dono: *"os bancos de orçamentos são pequenos blocos na tela, isso atrapalha procurar; e
+quando clica e tem muitos, os valores importados ficam lá embaixo da tela"*.
+
+Os dois sintomas eram o mesmo desenho. **Bases & bancos** escolhia a publicação num mural de cartões
+de 250px em `auto-fill`, sem filtro nenhum — e a identidade de uma publicação é
+`fonte × UF × mês × regime`, de modo que a SINAPI carregada inteira dá **1.460 cartões** quase iguais.
+Pior: o mural continuava inteiro na tela depois do clique, porque a lista de itens era irmã dele no
+fluxo. Abrir uma publicação empurrava os preços para baixo de tudo o que fora preciso rolar para
+chegar até ela. O `SeletorDeBase` encadeado — quatro caixas, feito na ORC.8b exatamente contra esse
+problema na tela de orçar — nunca tinha sido levado à tela que é a **casa** das bases.
+
+A correção é de fluxo, não de estilo:
+
+- **escolher** virou o seletor encadeado no topo (`fonte+UF → mês → regime → tabela`), com o mural
+  atrás de um botão e **filtro de texto** por rótulo, fonte, estado e data-base;
+- **escolhido**, o mural se recolhe numa faixa de uma linha (`FaixaEscolhida`) que carrega o que o
+  cartão dizia — contagens, data-base, adotados, o aviso de classificação — e as ações do item
+  (travar, destravar, excluir, trocar). A lista de preços passa a nascer a uma faixa do topo;
+- **enquanto se rola**, a busca, o recorte por tipo, a contagem `X de Y` e o botão *Adotar N* ficam
+  numa barra `sticky` logo abaixo do cabeçalho do módulo — antes ficavam no começo da página e sumiam
+  na primeira dúzia de linhas, num catálogo de 12,5 mil.
+
+Mesmo tratamento em **Meus bancos**, que tinha o mesmo mural e o mesmo empurrão. A página perdeu um
+`overflowY: auto` inerte que teria tornado o `sticky` inócuo: quem rola é o `<main>` do `AppShell`, e
+um contêiner de altura automática com rolagem própria é um scrollport que nunca rola. A caixa de busca
+virou `CampoBusca` no kit do módulo, com o botão de limpar que nenhuma das cópias tinha.
+
+Arquivos: [BasesPage.tsx](../frontend/src/modules/orcamento/pages/BasesPage.tsx) ·
+[ui.tsx](../frontend/src/modules/orcamento/ui.tsx).
+
+---
+### D195 — a EMBASA entrou como fonte e nenhum banco dela entrou · ✅ corrigido 22/09/2026
+
+Achado pelo dono, e o enunciado dele é o resumo: *"os bancos da EMBASA não entraram"*. A ORC.8b
+fechou no mesmo dia e fechou de verdade — leitor de PDF, `Fonte.EMBASA`, `BaseReferencial.variante`,
+de-para de classes, a `FonteOficial` cadastrada por migration, 37 testes, a quarta caixa do seletor.
+O banco, porém, dizia outra coisa: `BaseReferencial` tinha **1.460 publicações da SINAPI e zero da
+EMBASA**.
+
+**Não havia defeito no que foi entregue; havia defeito no que se chamou de entregue.** A carga da
+EMBASA é por escolha de documento — é a decisão certa e está na planta (§12.8: um agendamento que
+escolhe por alguém escolhe o preço de uma região para quem orça em outra) —, e por isso ela **não
+acontece sozinha**: alguém tem de rodar. Ninguém rodou. O `roadmap.md` anunciou *"a EMBASA entrou
+como fonte de referência"*, frase verdadeira sobre a máquina e enganosa sobre o dado, porque em toda
+fonte anterior as duas coisas chegaram juntas. Fonte no ar e prateleira vazia são estados diferentes,
+e o roadmap não tinha como dizer a diferença.
+
+**A carga das 65 revelou o defeito real.** 61 entraram; **4 recusaram**, todas as tabelas de
+manutenção industrial da operação de água (1.7, 2.7, 5.7 e 6.7), com a mensagem de identidade não
+declarada. O cabeçalho delas é `DESONERADO - OPERAÇÃO ÁGUA - PRODUÇÃO - MANUT IND`, e o `MANUT IND`
+do fim **não é convenção coletiva** — é o escopo dizendo qual manutenção, e essas tabelas são uma só
+por regime, sem a divisão por sindicato que as outras seis têm. O `RE_IDENTIDADE` exigia que o último
+pedaço fosse **uma palavra** (`[A-ZÇÃÕÁÉÍÓÚ0-9]{3,}`), o que é a regra certa para separar
+`SINTRACOM` de um escopo com hífen dentro, e é justamente o que `MANUT IND` viola.
+
+A correção deixa a convenção **opcional** e usa como discriminador a gramática do próprio documento:
+sigla de sindicato é uma palavra, `MANUT IND` são duas — o último pedaço só vira convenção quando vem
+sozinho, e do contrário é o fim do escopo, com `sindicato` vazio. Lista fixa de siglas resolveria hoje
+e quebraria no dia de um sindicato novo. Dois detalhes vieram junto, e o primeiro não é cosmético: a
+`variante` é **chave de unicidade**, então colar um sindicato vazio daria `…-manut-ind-` e a mesma
+publicação lida antes e depois da correção seria duas linhas para o mesmo preço — agora os pedaços
+vazios não entram na junção; e o rótulo deixou de ganhar espaço dobrado sem a sigla.
+
+Estado final: **65 publicações da EMBASA** (32 desoneradas, 32 oneradas, 1 de insumos sem encargos),
+**477.642 itens** no catálogo, nenhuma chave duplicada. `test_embasa.py` foi de 37 para 40 testes
+(o cabeçalho sem convenção, a variante que não termina em hífen, o rótulo sem espaço dobrado);
+`moduloorcamento` **441 verdes**.
+
+A lição é a do enunciado: *fatia de carga só está pronta quando o dado está no banco.* Entregar o
+leitor e declarar a fonte pronta deixa um estado que nenhum teste pega — a suíte cobre o leitor, e a
+prateleira vazia não é falha de teste, é falha de quem leu o roadmap.
+
+---
+### D194 — dois E2E do PDCA reprovavam pelo calendário, não pelo código · ✅ corrigido 21/09/2026
+
+Achado ao verificar a fatia do frontend da semana, rodando o roteiro que valida o backend em que ela
+se apoia. `pdca5_programacao_test.py` falhava com `TypeError: float() argument must be a string or a
+real number, not 'NoneType'` — o `encerrar/` não devolvia PPC porque **não devolvia 200**.
+
+O roteiro abre a programação da **semana corrente** e a encerra com `POST .../encerrar/` **sem
+corpo**. Isso funcionou até 15/09/2026, quando a PDCA.5d passou a recusar o encerramento da semana
+que ainda não acabou sem `pdca.programacao.encerrar_antecipado` **e motivo por escrito** — a regra
+está certa e é justamente uma das mais importantes da fatia (um ponto apurado na terça não é
+comparável com um apurado no domingo). O que ninguém notou é que a condição é `semana_fim > hoje`:
+num roteiro que sempre abre a semana de hoje, ela é falsa **um dia por semana**. O teste passou no
+domingo em que foi escrito e reprovava nos outros seis, com um `TypeError` que não menciona nem
+prazo nem permissão.
+
+**É a pior forma de teste quebrado**: não acusa a regra que o derrubou, e quem encontra o erro num
+sábado conclui que o defeito está no cálculo do PPC. Três chamadas do mesmo arquivo tinham o mesmo
+problema (o encerramento, o refechamento depois da correção e o da remontagem do quadro).
+
+**A correção não contorna a regra — cobra-a.** O roteiro calcula se a semana ainda não acabou e,
+quando esse é o caso, **primeiro exige a recusa** (`encerrar` sem motivo tem de dar 400 com a frase
+que pede a justificativa) e só então fecha com o motivo escrito. Ganhou também a verificação de que
+a semana fechada antes do fim **se anuncia** (`encerrada_antes_do_fim`), que é o que permite à série
+desenhar aquele ponto diferente. O roteiro voltou a 116/116, e agora em qualquer dia da semana.
+
+A lição vale para todo E2E com data: *toda condição que depende de "hoje" precisa ser exercida nos
+dois lados, ou o teste vira um sorteio semanal.*
+
+**Dois irmãos do mesmo dia, achados na mesma varredura.** `pdca6_linha_de_balanco_test.py` prendia
+`status["fatia"] == "PDCA.6"` e `pdca7_verificacao_test.py` prendia `"PDCA.7"` — os dois reprovando
+desde que a fatia seguinte entrou, cada um acusando falha num roteiro que nada tem a ver com o que
+mudou. O `pdca1_cronograma_test.py` já tinha aprendido a lição e carrega o comentário do "guard
+móvel"; o `pdca5` também (`bool(fatia)`).
+
+O curioso é que o `pdca7` **documentava a regra errada**: *"este É o E2E da fatia mais nova, então
+aqui o número da fatia se afirma"*. A regra tem um defeito de fabricação — a fatia mais nova deixa de
+ser a mais nova, e o teste que a afirma passa a mentir sozinho a partir do dia seguinte. Os dois
+viraram `bool(fatia)`, porque o que cada roteiro precisa provar é que o módulo **continua declarando
+as capacidades daquela fatia** — e isso a linha seguinte de cada um já fazia. Prender o número da
+fatia é pendurar um alarme no relógio.
+
+---
+### D189 — a tela de segurança citava o número da fatia, e dois testes cobravam isso · ✅ corrigido 20/09/2026
+
+Achado ao montar o pulso da obra, que precisa da mesma frase que o painel de SSMA já mostrava:
+
+> *"A taxa de frequência e a de gravidade dividem por homem-hora de exposição ao risco (NBR 14280),
+> e o sistema ainda não apropria homem-hora — **é a PDCA.9**. Mostrar zero no lugar diria que a obra
+> é segura quando o que houve foi ninguém medir."*
+
+A frase está certa em tudo, menos em três palavras. `PDCA.9` é o número de uma fatia deste
+repositório: não existe para o técnico de segurança que abre o painel, não o ajuda a decidir nada, e
+é **literalmente o exemplo** que a [§9 das convenções de frontend](frontend-convencoes.md) usa para
+dizer o que não entra em texto visível. O trecho responde à pergunta de quem escreveu o software
+(*por que este número está vazio no código?*) em vez da de quem está olhando (*o que falta para ele
+aparecer?*) — a mesma família do "em vez de fingir que o sistema apurou" que originou a regra.
+
+**O agravante é que dois testes cobravam a violação.** `IndicadoresDeSsmaTests` e `ApiDaPdca8Tests`
+afirmavam `assertIn("PDCA.9", motivo)`: a régua estava escrita nas convenções e **prendida ao
+contrário** na suíte, então qualquer tentativa de limpar o texto quebraria o verde e pareceria
+regressão. Foi o que aconteceu — os dois reprovaram ao unificar a frase, e foi assim que o achado
+apareceu.
+
+**A correção tem duas metades.** A frase virou a constante
+`TAXAS_DE_SSMA_INDISPONIVEIS_PORQUE` em [`services.py`](../backend/modulopdca/services.py), sem o
+número de fatia e **com a NBR preservada** — essa o técnico de segurança conhece e usa. Os dois
+testes passaram a cobrar o oposto (`assertIn("homem-hora")`, `assertIn("NBR 14280")`,
+`assertNotIn("PDCA.")`), que é a régua da §9 virada para o lado certo.
+
+A constante é compartilhada de propósito: o painel da SSMA e o pulso da obra respondem à **mesma**
+pergunta, e dois textos para a mesma ausência viram duas explicações que um dia divergem — e aí a
+pessoa conclui que a taxa vazia do cockpit é outra coisa que a taxa vazia do painel.
+
+---
+### D187 — a página de 502 do nginx aparecia dentro do diálogo, e ninguém sabia o que era · ✅ corrigido 20/09/2026
+
+Relato do dono, colando o que a tela mostrou no popup de tratar não-conformidade:
+
+> `<html> <head><title>502 Bad Gateway</title></head> <body> <center><h1>502 Bad Gateway</h1></center> <hr><center>nginx/1.31.2</center> </body> </html>`
+>
+> *"Erro sem escrita não é válido. Ninguém sabe o que é isso."*
+
+**O 502 em si era o stack reiniciando** — os containers subiram às 10:41 e o clique caiu na janela.
+Exercitando as portas do popup com dedo torto (valor com vírgula, texto onde vai número, data
+`0202-13-45`, campo vazio, número de 30 dígitos), **nenhuma delas dá 500**: todas devolvem 400, e a
+eficácia devolve 403 para `demo`, que é a segregação funcionando. Não havia defeito de backend.
+
+**O defeito era a tela, e ele valia para a plataforma inteira.** Em
+[`utils/formErrors.ts`](../frontend/src/utils/formErrors.ts), o `parseApiErrors` fazia:
+
+```js
+if (typeof data !== 'object' || Array.isArray(data)) return { _form: String(data) }
+```
+
+Um 502 do nginx traz o corpo em **HTML**, que é uma string — então o `String(data)` despejava a
+página inteira no lugar onde deveria estar a explicação. Não era uma mensagem ruim: era a encanação
+vazando na cara de quem estava trabalhando. E como `parseApiErrors` é o tradutor de erro de **todos**
+os módulos, o mesmo aconteceria em qualquer formulário do sistema sempre que o gateway hesitasse.
+
+**A correção separa erro de infraestrutura de erro de negócio, pelo `status` e não pelo corpo** —
+corpo de erro de infra é HTML de servidor, texto de balanceador ou nada. Cada caso termina numa
+frase, e cada frase responde às duas perguntas que a pessoa tem:
+
+- **de quem é o problema** — dela, da rede, ou nosso. Sem isso ela não clica de novo, porque acha
+  que digitou algo errado;
+- **se o que ela escreveu se perdeu.** É a parte acionável: num 502 a requisição não chegou a ser
+  processada, nada foi gravado, e o certo é tentar de novo. Sem essa frase ninguém sabe se o
+  conserto que acabou de registrar existe.
+
+Três buracos fechados na mesma passada, todos da família "erro sem escrita": o corpo **HTML**
+(acima), a resposta **ausente** (rede caída, que já tinha frase mas não dizia se gravou) e o corpo
+**JSON vazio** — um `{}` saía do laço sem uma única frase e a tela mostrava espaço em branco onde
+deveria estar a explicação.
+
+**Provado no navegador**, com o 502 forjado por `page.route()` em vez de derrubar o backend — o
+teste prova a **tela**, e derrubar o stack no meio de uma suíte que divide máquina atingiria outra
+sessão: [pdca7_ficha_browser_test.py](../testes/e2e/pdca7_ficha_browser_test.py) §11 confere que a
+página do nginx **não** aparece, que a frase em português aparece, e que ela diz que nada foi
+gravado.
+
+### D188 — o "o que mais reprova" parecia a fila de agora, e metade já estava consertada · ✅ corrigido 20/09/2026
+
+Relato do dono, olhando o painel de conformidade da primeira obra verificada:
+
+> *"O que estou falando é que aqui fica parecendo que ainda tá em não conformidade, ao invés de
+> dizer a real situação."*
+
+O painel listava `Prumo da parede — 1 (50,00%)` e `Espessura da junta — 1 (50,00%)`, com barra cheia
+nas duas. Quem olha lê **dois problemas em aberto** — e uma delas tinha sido tratada, verificada e
+encerrada.
+
+**O número estava certo; a leitura é que estava faltando metade.** O ranking é **cumulativo de
+propósito**: o que aponta o processo a corrigir é quantas vezes aquela pergunta reprovou ao longo
+das fichas, inclusive nas vezes em que o defeito já foi consertado. Um ranking que descartasse o
+tratado zeraria sozinho toda vez que a obra funcionasse, e deixaria de apontar exatamente o processo
+que mais dá trabalho — passaria a medir o que está atrasado, não o que é difícil. Isso fica, e agora
+está dito na tela: *"conta todas as reprovas das fichas concluídas, inclusive as já consertadas — é
+a história do processo, não a fila de agora"*.
+
+**O que faltava era a situação de hoje daquelas reprovas**, e ela agora vem em três partes que
+somam o total:
+
+- **em tratamento** — a reprova virou NC e ela continua aberta;
+- **sem NC aberta** — reprovou e **ninguém registrou**, ou a NC foi cancelada. Não é detalhe: é um
+  defeito que ninguém está tratando, e antes ele sumia entre as outras duas contagens;
+- **já resolvida** — a NC foi encerrada com eficácia verificada.
+
+Na tela a barra deixou de ser um bloco cheio e passou a ser a **reprova inteira, partida na situação
+de hoje** — a mesma forma que o [D154](historico-correcoes.md) deu ao PPC, e pelo mesmo motivo: o
+todo dividido entre o que ainda pesa (acento), o que ninguém pegou (vermelho) e o que já foi
+resolvido (cinza de de-ênfase, que **não acusa**). Com a tabela-gêmea embaixo, porque cor sozinha
+nunca comunica (§8 da identidade). Nenhuma faixa de cor por desempenho: isso seria meta, e a §5.5l
+do [planos.py](../payment/planos.py) a recusou.
+
+Resolvido em **uma consulta** — o `values` desce até o status da NC (LEFT JOIN, então a reprova sem
+NC aparece com status nulo) e a dobra acontece em memória. Uma consulta por item repetiria o D136.
+
+### D186 — o item escolhido da base entrava na planilha com custo zero, e nada na tela dizia por quê · ✅ corrigido 16/09/2026
+
+Relato do dono: *"Quando eu seleciono os itens o preço não vai junto, o valor unitário fica zerado.
+Por curiosidade quando cliquei em reprecificar ficou certo."* A segunda frase é que resolveu o caso.
+
+**Há duas "bases" no fluxo, e só uma estava à vista.** A caixa do `InserirItemModal` escolhe em qual
+publicação **procurar** o item; o preço da linha vem de `orcamento.base_referencial` — outro campo,
+definido lá atrás no `ModalNovoOrcamento`, onde a **primeira opção da lista** é "Sem base — preço
+digitado à mão". Quem não reparou cria o orçamento sem base, insere e recebe tudo a zero. O caminho
+é `do-catalogo/` → `services.linha_a_partir_do_item` → `custo_de_referencia(item, orcamento.base_referencial)`,
+que devolve `None` — e `None` vira `Decimal(0)`.
+
+O reprecificar "consertava" porque ele **exige** escolher uma publicação de destino e, ao aplicar,
+grava essa base no orçamento ([`reprecificacao.py:365`](../backend/moduloorcamento/reprecificacao.py)).
+
+**A prova, no orçamento 44 do banco de dev:** reprecificação #16, base destino 79, `total_antes`
+R$ 404,25 → `total_depois` R$ 5.373,30, 9 linhas afetadas. Rodando `custo_de_referencia` hoje contra
+a base 79 para exatamente esses itens, o preço **é encontrado** — logo, no momento da inserção o
+orçamento não tinha aquela base. Não foi a busca que falhou; foi o orçamento que não sabia de onde
+comprar preço.
+
+**Duas correções, nenhuma na regra de preço:**
+
+1. O modal **abre na publicação do orçamento**, e não na mais recente do banco. O padrão anterior
+   (`bases[0]`) oferecia o catálogo certo com o preço errado.
+2. Aviso âmbar nos dois casos em que o zero viria: orçamento **sem base** ("as linhas vão entrar com
+   custo zero") e publicação navegada **diferente** da do orçamento ("o preço vem sempre da
+   publicação do orçamento").
+
+A regra continua como estava, e de propósito: o orçamento tem **data-base**, e puxar preço de
+publicações misturadas quebraria a comparação entre orçado e realizado. O defeito era esconder a
+consequência, não a regra. Nunca foi caso de "inventar preço" — a linha nascer zerada e visível é o
+comportamento desenhado; o que faltava era dizer **por quê**.
+
+**Complemento no mesmo dia, a pedido do dono** (*"poderia ter como adicionar mesmo depois de ter
+escolhido sem base, e até mudar também"*): avisar não bastava, porque **não havia saída**. A base só
+podia ser escolhida na criação, e quem tivesse deixado o padrão ficava dependendo de descobrir por
+acaso que Reprecificar grava uma publicação. Agora `base_referencial` é editável no cabeçalho, na
+tela **"Base, BDI e encargos"** (antes "BDI e encargos"), com o mesmo seletor encadeado.
+
+O backend **já aceitava** a troca — `base_referencial` nunca esteve em `read_only_fields`. Faltava a
+tela, e faltava uma regra: o `create` copiava `data_base` da publicação e **não existia `update`**,
+então um PATCH de base deixaria a data-base no mês da publicação anterior, ou nula. Escrito agora em
+`OrcamentoSerializer.update`, com as duas exceções que o desenho exige (data-base informada na mesma
+requisição vence; tirar a base não apaga a data-base). No caminho apareceu um terceiro: o seletor de
+regime da tela oferecia **três** das quatro opções — faltava "Sem encargos", justamente o regime do
+orçamento que originou o relato. Cinco testes novos em
+[`test_planilha.py`](../backend/moduloorcamento/test_planilha.py), suíte do módulo em 401.
+
+---
+### D181 — o seletor de base abria numa publicação de mentira, e duas publicações reais diziam "DEMONSTRAÇÃO" · ✅ corrigido 16/09/2026
+
+Achado ao conferir o que a carga da SINAPI tinha deixado no banco. Três publicações carregavam o
+rótulo `— DEMONSTRAÇÃO`, e elas não eram a mesma coisa:
+
+| | Rótulo | Conteúdo | Diagnóstico |
+|---|---|---|---|
+| `base_id=1` | SINAPI SP 07/2026 — DEMONSTRAÇÃO | 4.886 insumos / 8.401 composições | **dado real**, rótulo mentindo |
+| `base_id=2` | SINAPI SP 08/2026 — DEMONSTRAÇÃO | 4.886 insumos / 8.404 composições | **dado real**, rótulo mentindo |
+| `base_id=4` | SINAPI SP 09/2026 — DEMONSTRAÇÃO | 10 insumos / 5 composições | **falsa**, e ativa |
+
+A quarta era a pior: 09/2026 é a competência **mais recente** do banco, então a publicação de dez
+itens inventados aparecia **em primeiro lugar** na escolha de data-base — a tela oferecia dado
+fabricado na posição de maior destaque, contra a régua de dados honestos do módulo.
+
+**A causa das duas primeiras está em `carga.py:730` (e no gêmeo em `importar_base_referencial.py`):**
+
+```python
+if not base.rotulo:
+    base.rotulo = base.rotulo_automatico()
+```
+
+A publicação é encontrada por `get_or_create` na chave `fonte+uf+mês+regime`. Quando a carga real de
+07 e 08/2026 chegou, ela **encontrou** as publicações de demonstração já existentes nessa chave,
+substituiu o conteúdo por SINAPI de verdade — e a guarda `if not base.rotulo` era falsa, porque
+rótulo havia. O texto de demonstração sobreviveu à troca completa do dado que ele descrevia.
+
+**Correção do dado:** `rotulo` de 1 e 2 foi **esvaziado**, não reescrito. A tela resolve com
+`b.rotulo or b.rotulo_automatico()`, então o nome passa a ser calculado da própria identidade da
+publicação e não tem como envelhecer de novo. A `base_id=4` foi **desativada** (`ativa=false`), e não
+apagada: `bases-resumo/` só lista ativas, então ela saiu do seletor na hora, e a decisão de destruir
+dado fica para o dono. Ativas caíram de 1.460 para 1.459, com **zero** rótulos de demonstração no
+seletor.
+
+**A causa em código continua aberta** — ver `D183` em [pendencias.md](pendencias.md): a guarda não
+distingue "o usuário escolheu este nome com `--rotulo`" de "uma semente escreveu", e não dá para
+consertar uma sem quebrar a outra sem decidir qual vence.
+
+---
+### D178 — a importação que parou esperando alguém não tinha onde ser respondida · ✅ corrigido 16/09/2026
+
+Relato do dono: *"Em Base e Bancos (Orçamentos), quando importa uma planilha e ele dá algum erro (que
+precisa da atenção ou manipulação do usuário) só permanece (lendo arquivo ou Conferência ou erro na
+leitura), era pra poder clicar e aparecer o popup e poder manipular."*
+
+**Causa.** O `<WizardImportacao>` só existia enquanto a janela estava aberta. Fechada a aba — ou
+terminada a leitura em segundo plano —, a pessoa voltava e encontrava no histórico uma linha dizendo
+"Conferência" ou "Erro na leitura", **sem nada clicável**. O lote existia, o arquivo estava guardado
+no servidor, as linhas estavam classificadas e a decisão continuava de pé; o único caminho oferecido
+era subir a planilha de novo. Pior justamente no caso que mais depende de gente: o de-para da R4 é uma
+**pergunta**, e ela ficava sem lugar para ser respondida.
+
+**Correção.** `RetomarImportacao` — o mesmo diálogo, entrando pelo meio. Entra sempre pelo passo
+`lendo`, que consulta o lote e se redireciona sozinho (conferência, de-para ou erro): um caminho só
+para decidir onde a importação parou, e é o mesmo do wizard. `podeRetomar(status)` declara os três
+estados que ainda dependem de decisão humana (`lendo`, `conferindo`, `erro`); `aplicada`,
+`descartada` e `desfeita` acabaram e não reabrem. Na aba Importações a **linha inteira** virou porta,
+com botão explícito ao lado, e um cartaz acima da tabela conta quantos lotes esperam — descobrir isso
+lendo a coluna "Status" de um histórico é sorte, não tela.
+
+**Defeito encontrado no caminho, e corrigido nos dois lugares.** Depois de `remapear/`, o wizard
+voltava para `lendo` **sem invalidar a cache** do react-query: o passo reabria com a resposta
+anterior — aquela que pedia o de-para — e mandava a tela de volta para a pergunta que acabara de ser
+respondida, até a releitura chegar. Um `invalidateQueries` em cada um dos dois caminhos.
+
+---
+### D177 — o popup que pede as colunas saía pela lateral da tela · ✅ corrigido 16/09/2026
+
+Relato do dono: *"Em Base e Bancos (Orçamentos), quando importa uma planilha com nome muito grande o
+popup que informa que não reconheceu as colunas do arquivo e pede para escolher as colunas, sai da
+tela."*
+
+**Causa — e ela não é do popup, é do `Modal` do kit.** O cartão do diálogo é **filho de um flex
+container**, e filho de flex tem `min-width: auto`: ele não encolhe abaixo do tamanho natural do
+conteúdo, e por isso o `maxWidth: 620` declarado não valia nada. O conteúdo que estourava era o
+`<select>` do de-para, que se mede pela **opção mais longa** — e a opção mais longa ali é um cabeçalho
+de planilha alheia ("Descrição completa do insumo conforme tabela referencial…"). Essa largura virava
+a largura mínima da linha, da coluna e do diálogo; o cartão passava dos 620 px, saía pela lateral da
+janela e não havia barra de rolagem para trazê-lo de volta.
+
+**Correção.** `minWidth: 0` no cartão (que é o que faz o `maxWidth` valer) e no miolo; no de-para, o
+`<select>` ganhou `minWidth: 0` + `maxWidth: 100%` e o rótulo ao lado trunca com reticências — o
+título inteiro continua legível no `title` e ao abrir a lista. Nome de arquivo ganhou
+`overflowWrap: anywhere` no cabeçalho do diálogo e truncagem no cabeçalho da conferência: nome de
+arquivo não tem espaço onde quebrar, e um `Relatorio_de_precos_consolidado_2026_revisao_final.xlsx`
+esticava o cabeçalho e levava o diálogo junto.
+
+---
+### D176 — a unidade chegava ao mapa com área e mais nada · ✅ corrigido 16/09/2026
+
+Relato do dono: *"A rua tem que bater com o endereço. Unidade não tem medidas, tem áreas, mas não tem
+confrontantes (principalmente rua) em maps."*
+
+**Causa, em três camadas.** (1) `services.VINCULOS` não tinha entrada para `Local.Tipo.UNIDADE`: a
+unidade podia ter um `Local`, mas nada o alimentava a partir do cadastro dela. (2) Os serializers do
+Maps devolviam do vínculo só o `vinculo_rotulo` — medidas e confrontações existiam em
+`empreendimentos.Unidade` desde o cadastro e simplesmente não atravessavam para a tela. (3) O seletor
+de tipo da aba Locais **não oferecia `unidade`**, então nem filtrando dava para chegar nos lotes.
+
+**Por que isso importa mais do que parece.** Área não descreve terreno. O que o contrato, a matrícula
+e o vizinho reconhecem é *quanto mede cada lado* e *com quem cada lado divide* — e o lado da frente é
+a rua, de onde sai o endereço. Um mapa que mostra "QD 4 · LT 06 · 360 m²" não diz onde o lote fica
+nem o que ele encosta.
+
+**Correção.** `VINCULOS` ganhou a unidade, com uma dedução que nenhum outro vínculo tem: quando
+`Unidade.endereco` está vazio, a **frente** (`confrontante_frente`) é a rua, e é dela que sai o
+endereço do `Local`. `detalhe_da_unidade()` publica medidas, confrontações, áreas, memorial e a rua
+nos dois serializers (`LocalSerializer` e `LocalResumoSerializer`), com
+`select_related("unidade__empreendimento")` nas duas views para não virar N+1 numa tabela de 100
+linhas.
+
+**A conferência da rua tem três estados, e o terceiro é o que evita o alarme falso.**
+`services.rua_confere()` devolve `True`, `False` ou **`None`** — este último quando falta o
+confrontante ou falta o endereço. Cadastro incompleto não é cadastro errado, e acusar divergência
+onde só falta dado ensina a ignorar o aviso. A comparação é por conteúdo, não literal: tira acento,
+caixa, pontuação, o tipo do logradouro ("R.", "Av.") e os artigos, porque o memorial e o endereço
+nunca são digitados iguais — exigir igualdade literal acusaria divergência em todo cadastro correto.
+
+Fecha o laço na fila de decisão do cockpit: *"N unidades com a rua da frente diferente do endereço"*,
+que abre a aba Locais já filtrada em `tipo=unidade`. A varredura roda em Python (a comparação é
+tolerante, e SQL faria igualdade literal), então tem teto declarado — guarda-corpo, não limite de
+produto.
+
+---
+### D175 — o filtro de quadras só mostrava as quadras que já tinham descido · ✅ corrigido 16/09/2026
+
+Relato do dono: *"Em empreendimentos unidades, quando clico em todas as quadras para filtrar por
+quadra só aparece as quadras carregadas, tenho que clicar em Carregar mais no fim da página para ver
+mais quadras. E isso tem que representar o total. nesta lista: 40 à venda · 160 vendidas (além das
+outras situações também)."*
+
+**Causa.** Dois números da aba eram calculados sobre a **página carregada** e apresentados como se
+fossem do empreendimento. O seletor de quadras saía de `new Set(unidades.map(u => u.quadra))` — as
+quadras das primeiras 100 linhas —, então filtrar por quadra exigia rolar até o fim e clicar em
+"Carregar mais" até trazer tudo: pedir que se carregue tudo para poder não carregar tudo. E a linha
+"nesta lista: 40 à venda · 160 vendidas" contava `unidades.filter(...)` sobre as mesmas 100 linhas,
+num loteamento de 800 lotes — amostra com cara de total —, além de mostrar só duas das quatro
+situações.
+
+**Correção.** `GET /api/unidades/resumo/` conta no banco, sobre o recorte de filtros da lista, e
+devolve as **quatro** situações com rótulo pronto (a tela não traduz) e a lista completa de quadras
+em ordem natural ("10" depois de "2", como na grade). A lista de quadras **ignora de propósito o
+filtro de quadra**: um seletor que se reduz à escolha já feita não deixa trocar de escolha. A linha
+deixou de dizer "nesta lista" e passou a dizer "no total", e situação com zero não aparece — "0
+indisponíveis" é ruído.
+
+---
+### D174 — a tabela de unidades cortava, e a barra de rolagem estava no fim de mil linhas · ✅ corrigido 16/09/2026
+
+Relato do dono: *"Em empreendimentos a tabela de unidades fica cortada, para ver mais do lado
+(cliente) tem que ir no final da tabela para mover a barra de scroll (visualização ruim), tem que ser
+mais parecido com a tabela de clientes."*
+
+**Causa.** A tabela tinha `overflowX: auto` e `minWidth: 1100` num container **sem altura própria**:
+ela crescia com a página. Com onze colunas e mil lotes, alcançar a barra horizontal exigia rolar a
+página inteira até o rodapé, e ao rolar para o lado a identificação da unidade saía da tela —
+restava uma fileira de números sem saber de qual lote eram.
+
+**Correção.** A mecânica da grade de clientes: o corpo ganhou altura própria
+(`maxHeight: min(62vh, 760px)` — `min()` para não criar um painel de 60vh quando há oito lotes), o
+cabeçalho virou `sticky` e a coluna **Unidade** e a de ações ficaram congeladas nas bordas.
+`borderCollapse: separate` porque `collapse` quebra borda em célula sticky, e camadas explícitas para
+o canto superior esquerdo — que é preso nos dois eixos — ficar acima de ambos.
+
+---
+### D173 — o número de clientes mudava por causa de um clique em "agrupar por" · ✅ corrigido 16/09/2026
+
+Relato do dono: *"Em cliente quando clico em (agrupar por) o número de clientes na lateral direita
+muda. Porque?"*
+
+**Causa.** O contador da barra somava os cabeçalhos quando havia agrupamento
+(`arvore.reduce((s, no) => s + no.contagem, 0)`), e **a soma dos cabeçalhos não é o total de
+clientes**. Agrupar pessoas por uma dimensão de muitos — empreendimento, quadra — põe quem comprou em
+dois lugares nos **dois** grupos. Cada grupo conta distinto (`Count(distinct=True)`) e está certo
+dentro de si; o que não fecha é a soma entre grupos. Numa carteira de 5.000, o contador pulava para
+5.312 ao agrupar.
+
+**Correção.** `carteira/grupos/` passou a devolver `count` — contagem distinta sobre o mesmo recorte,
+calculada no banco — e a tela usa esse número, agrupada ou não. A divergência **não é escondida**:
+`somaDosGrupos` vem junto e, quando difere, a barra escreve "N em mais de um grupo" embaixo do total,
+com a explicação no `title`. Sem essa frase, quem somasse os cabeçalhos à mão encontraria um número
+maior e passaria a desconfiar dos dois.
+
+---
+### D172 — gerar o carnê era um clique sem prévia, e o ERP não dizia o que era de quem · ✅ corrigido 16/09/2026
+
+Relato do dono: *"Eu cliquei em gerar parcelas de clientes Em Aquisições e parece que gerou as
+parcelas de todos os mais de 5000 clientes quando eu queria ter gerado só de 1; quando fui em ERP
+estava lá os 86010 a receber quando era pra ter de uns 3 clientes."*
+
+**O que apurou.** `gerar-parcelas/` é `detail=True` e sempre foi: não existe caminho nele que toque
+outra venda, outro cliente ou outro lote, e a segunda chamada na mesma aquisição fecha em 409. Os
+86.010 títulos são a carteira **inteira** do tenant — o `semear_carteira_demo` cria o carnê de cada
+venda semeada, e ~5.000 compradores × ~17 parcelas dá essa ordem de grandeza. O que **não** existia
+era como saber disso: a tela do ERP lista todos os títulos da empresa, o clique não mostrava nada
+antes de acontecer e a confirmação depois não nomeava o que tinha sido criado. Ato irreversível pela
+tela (o botão some) sem prévia e sem recibo é indistinguível de ato descontrolado — e é o usuário que
+fica com a dúvida.
+
+**Correção.** `GET .../previa-parcelas/` devolve o carnê que **seria** gerado sem gerar nada:
+quantidade de títulos, total, cliente, empreendimento, unidade e a faixa de vencimentos. O botão
+"Gerar parcelas" passou a abrir uma confirmação com esses números e a frase que faltava — *"Só esta
+venda. Nenhum outro cliente, nenhuma outra unidade."* A resposta do `gerar-parcelas/` ganhou os mesmos
+campos, e o recado de sucesso agora nomeia cliente, empreendimento e unidade. Ver é leitura, então a
+prévia pede `cadastro.venda.view` (a mesma de simular): quem cota pode conferir antes de pedir a
+emissão a quem a emite.
+
+---
+### D171 — permuta e financiamento bancário eram recusados por "sobrou saldo sem parcela" · ✅ corrigido 16/09/2026
+
+Relato do dono: *"Validar todas as formas de pagamento. Em clientes Nova aquisição, primeiro escolhe
+as Condições de Pagamento depois ativa Parcelas, Entrada, ou o que for; se pagar à vista isso são
+informações desnecessárias. Também se faz necessário ver como colocar as parcelas anuais, que todo
+empreendimento tem."*
+
+**Causa — e ela custava vendas.** O motor conhecia **uma** condição: `a_vista`, passada como booleano.
+Todo o resto caía na regra do financiamento direto, que exige que o valor negociado inteiro esteja
+coberto por entrada + parcelas + balões. Numa **permuta** a construtora não recebe parcela nenhuma; num
+**financiamento bancário** ela recebe só o sinal e o banco quita o resto; no **cartão** o parcelamento é
+da operadora. Nos três, sobrava saldo sem prazo, e a venda era recusada com *"Sobrou saldo a financiar
+e nenhuma parcela foi informada"* — uma frase verdadeira sobre um problema que não existia.
+
+Em paralelo, a regra de **quais campos cada condição tem** morava escrita duas vezes: um
+`PLANO_DA_CONDICAO` no React decidia o que mostrar, e o motor decidia por conta própria o que aceitar.
+Duas cópias da mesma regra é uma que um dia discorda da outra — e a que discorda em silêncio é a da
+tela, porque ela some do rastro.
+
+**Correção.** `plano_pagamento.CONDICOES` é agora o catálogo único: por condição, se há entrada,
+parcelas e balões, o texto que explica o que ela assume, e o campo que faltava — `quita_fora`. Quando a
+condição quita por fora, o que sobra do valor negociado depois de entrada e balões vira
+`fora_do_carne`: **um número declarado**, que a tela mostra ("Quitado fora do carnê") e que fecha a
+conta (`total + fora_do_carne == valor_negociado`). Não é desconto e não é dívida esquecida — é valor
+liquidado por outro caminho.
+
+O financiamento direto **continua** recusando saldo sem parcela: é a condição que promete financiar
+tudo, e ali a falta é real. Condição desconhecida — código fora do catálogo, dado antigo, chamada
+crua do motor — cai na mais severa pela mesma razão: no permissivo, um plano incompleto viraria um
+"pago por fora" silencioso de R$ 40 mil.
+
+`normalizar_por_condicao()` apaga do registro o que a condição não comporta, e roda no **serializer**
+além da tela: a tela não é a única porta (existem API, importação e admin). O formulário passou a ler
+o catálogo em `GET /api/clientes-empreendimentos/condicoes/` em vez de reescrevê-lo. As **parcelas
+anuais** (balões/intercaladas) já existiam no motor e no formulário desde a venda por unidade — o que
+mudou é que agora a condição diz quando elas aparecem, e a régua é a mesma nos dois lados.
+
+---
+### D170 — o boleto dizia "Parcela 32/36 — QD 4 · LT 06", e o comprador tem lote em dois loteamentos · ✅ corrigido 16/09/2026
+
+Relato do dono: *"Boleto aparece assim sem o nome do empreendimento: Parcela 32/36 — QD 4 · LT 06."*
+
+**Causa.** A descrição do título era montada no laço de quem gerava o carnê,
+`f"{descricao_da_parcela(...)} — {aquisicao.unidade.rotulo}"`, em **dois** lugares (a view e o
+semeador). Ela identifica o lote para quem já sabe de que loteamento se fala — e o boleto chega sem a
+tela em volta, na mão de alguém que pode ter comprado em dois, onde a quadra 4 existe nos dois.
+
+**Correção.** `plano_pagamento.descricao_do_titulo()` — um lugar só, porque são três chamadores e o
+texto tem de ser o mesmo nos três: é o que o cliente confere no banco. O empreendimento vem **antes**
+da unidade: `Parcela 32/36 — Residencial Aurora · QD 4 · LT 06`.
+
+Os títulos já gravados continuavam com o texto curto, então veio junto o comando
+`renomear_titulos_do_carne` — **prévia por padrão** (só conta e mostra exemplos; grava com
+`--aplicar`), idempotente, e que não toca no boleto já emitido no gateway: a descrição viaja no
+momento da emissão, e o que muda é o título e, portanto, todo boleto emitido daqui para a frente.
+
+---
+### D169 — o carnê vencia no domingo, e o boleto nascia em atraso · ✅ corrigido 16/09/2026
+
+Relato do dono: *"Fazer verificação de boleto para quando for cair no final de semana ou no feriado
+nacional, estadual, municipal do empreendimento jogar para o próximo dia útil. (Principalmente em
+gerar boletos de clientes) (também fazer em gerar parcelas)."*
+
+**Causa.** Nada no caminho do dinheiro conhecia calendário. `somar_meses()` punha a parcela no mesmo
+dia do mês seguinte, fosse ele sábado, e `gerar_cobranca_asaas` mandava ao gateway
+`conta.data_vencimento` cru. Boleto com vencimento no sábado não é pagável no sábado: ele nasce, na
+prática, vencido — e a inadimplência que aparece no relatório é da régua, não do comprador.
+
+**A régua é bancária, e não é a do PDCA.** As duas perguntas só parecem a mesma: o
+`CalendarioTrabalho` responde *"a equipe trabalha neste dia?"*, e a resposta dele pode ser "sim" num
+sábado de mutirão; o banco não compensa nesse sábado. Por isso o dia útil bancário nasceu em
+`modulocalendar/dias_uteis.py`, ao lado da tabela `Feriado` que já existia, e não pendurado no
+calendário de obra.
+
+**A praça é a do imóvel, não a do comprador.** O boleto de um lote em Palhoça compensa pelo feriado de
+Palhoça ainda que quem paga more em São Paulo. A UF sai de `Empreendimento.estado`; o **código IBGE**
+— sem o qual não se afirma feriado municipal, porque nome de cidade não é chave — sai do `Local` do
+empreendimento no Maps, que a cascata de geocodificação já preenche. Sem ele, o ajuste segue com
+nacional + estadual e **diz** que não conhece o municipal.
+
+**Correção, em duas pontas.** No carnê, `montar()` recebe o calendário **injetado**
+(`ajustar_vencimento`) e o motor continua puro: quem sabe onde fica o imóvel é `clientes/vencimento.py`.
+A parcela guarda as duas datas — `vencimento` (pagável) e `vencimento_contratual` — mais o motivo
+("domingo", "Nossa Senhora Aparecida"), para a tela explicar o desvio em vez de exibir uma data que
+ninguém digitou. **O ajuste é só da data, nunca do valor**: juros correm por parcela, não por dia
+corrido, e um teste trava isso.
+
+No boleto, `vencimento_bancario()` ajusta o `dueDate` que vai ao Asaas e a `Boleto.data_vencimento` —
+e **não toca** em `ContaReceber.data_vencimento`. Os dois números têm donos diferentes: o contrato diz
+"vence dia 1º" e é por ele que se conta atraso, juros e multa; a rede bancária diz quando o papel é
+pagável. Fazer o ajuste no título reescreveria a dívida. O desvio fica registrado dentro de
+`dados_retorno_api` do boleto, com data contratual, data bancária e motivo.
+
+**A honestidade que veio junto.** A tabela de feriados é global e **nasce vazia** (quem a enche é
+`manage.py sincronizar_feriados`). Sem ela o vencimento ainda desvia de sábado e domingo, mas não de
+feriado — e a simulação, a confirmação do carnê e o `calendario.feriadosCarregados` das respostas
+dizem isso. "Ajustado para o próximo dia útil" com a base vazia é meia verdade, e meia verdade sobre
+vencimento vira boleto pago em atraso.
+
+---
+### D168 — o PPC contava cartões, e dizia que a laje e a limpeza do canteiro valem o mesmo · ✅ corrigido 16/09/2026
+
+Relato do dono (15/09/2026): *"No PPC na programação da semana de PDCA, deve existir os pesos das
+tarefas sendo eles determinados por tempo ou por recursos financeiros. 1 atividade pode representar
+30% e outra 70%."*
+
+**Causa.** `ppc_de` dividia `cumpridos / comprometidos` — contagem pura. A semana que entrega a laje e
+perde a limpeza marcava os mesmos 50% da que entrega a limpeza e perde a laje, e essas duas semanas
+não são a mesma semana para ninguém que esteja na obra. O índice existia para medir confiabilidade de
+plano e media **quantos itens**, que é uma proxy ruim quando os itens são de tamanhos diferentes.
+
+**Decisão do dono (15/09/2026), em duas partes.** O peso **sai do planejamento** — *"o planejamento
+pega o peso pelo orçamento (orçamento tem o físico-financeiro) ou pelo tempo que o usuário colocou"*
+—, e o índice ponderado **substitui** o clássico em vez de conviver com ele.
+
+**Correção.** `services.peso_do_compromisso` é a escada do `peso_de` que o avanço do cronograma já
+usava, com um degrau a mais no fim: `orcado` (o `ItemOrcado` vinculado, pelo `total_com_bdi`) →
+`informado` (o `peso_informado` da atividade) → `duracao` (os dias úteis). O degrau da duração existe
+só aqui, e é deliberado: o avanço pergunta *quanto da obra está feito*, e ali duração seria régua
+errada (semana de cura de concreto não é obra feita); o PPC pergunta *quanto do que se assumiu saiu*,
+e duração é a régua de esforço que toda obra tem mesmo sem orçamento vinculado.
+
+**O peso é congelado quando o cartão entra no quadro** (`ItemProgramacao.save`), na mesma régua do
+`retencao_percentual_aplicado` da medição: reprecificar o orçamento em dezembro não pode reescrever o
+PPC que a reunião de agosto leu. Está no `save()` do modelo, e não no serializer, porque a importação
+e o comando de bancada entram por outras portas — a mesma lição da `CheckConstraint` da causa.
+
+**Duas honestidades que vêm junto.** Cartão sem como pesar (marco, atividade sem duração nem vínculo)
+recebe `peso = NULL` — **nulo e não zero**, porque um serviço assumido que vale nada é mentira mais
+cara do que um serviço sem régua — e fica **fora** da divisão, contado em `sem_peso` ao lado do índice
+(a régua do `folhas_sem_peso` do avanço). E o quadro em que **nenhum** cartão tem peso cai na base
+`igual`, que é letra por letra o PPC clássico: a obra que ainda não vinculou nada não podia ficar sem
+índice, e a resposta **diz** em cima de quê o número foi feito (`peso_bases`).
+
+**A base viaja em tudo** — na leitura da semana, em cada ponto da série, no tooltip, na tabela
+acessível e na legenda do gráfico. 70% pesado por dinheiro e 70% contando cartões são duas frases
+diferentes, e uma série que mistura as duas sem dizer mente devagar. A série histórica anterior
+recalcula pela base `igual` e reproduz exatamente o índice que aquelas reuniões já viram — a migration
+**não** preenche peso para trás, de propósito.
+
+7 regressões novas (`PpcPonderadoTests`), incluindo a que prova que o peso mudou alguma coisa: trocar
+*qual* dos dois cartões saiu dava o mesmo índice antes (50% e 50%) e agora dá 62,5% e 37,5%.
+
+Arquivos: [models.py](../backend/modulopdca/models.py) · [services.py](../backend/modulopdca/services.py) ·
+[0020](../backend/modulopdca/migrations/0020_pdca5_peso_arrasto_encerramento.py) ·
+[PainelPpc.tsx](../frontend/src/modules/pdca/components/PainelPpc.tsx) ·
+[ProgramacaoPage.tsx](../frontend/src/modules/pdca/pages/ProgramacaoPage.tsx).
+
+---
+### D167 — dava para encerrar a semana que ainda não tinha acontecido · ✅ corrigido 16/09/2026
+
+Relato do dono (15/09/2026): *"Como pode fechar uma semana que nem ocorreu ainda? Isso tem que ter no
+mínimo um aviso com trava para usuários específicos."*
+
+**Causa.** `services.encerrar` conferia duas coisas — o status e os julgamentos pendentes — e **nunca o
+calendário**. Na segunda-feira de manhã dava para julgar os cinco compromissos como "não saiu" e
+fechar, com a semana inteira pela frente. O índice que sai daí não mede confiabilidade de plano
+nenhum, e entra na série valendo o mesmo que os outros pontos: quem lê depois não consegue
+distinguir um ponto apurado na terça de um apurado no domingo.
+
+**Correção — porta com chave e assinatura, não porta trancada.** Trancar de todo seria errado: existe
+o caso real da obra que para na quinta de um feriado prolongado e precisa da retrospectiva antes de
+todo mundo sumir, e recusar faria o time julgar de memória na segunda seguinte, que é pior. Então:
+
+- `semana_fim > hoje` recusa com a data e quantos dias faltam, **a menos que** quem pede tenha
+  `pdca.programacao.encerrar_antecipado` (verbo novo no catálogo da IAM, incluído no curinga
+  `pdca.programacao.*` da persona `engenharia`);
+- com a permissão, ainda **exige motivo por escrito** — a trava que importa não é a de quem pode, é a
+  frase que a reunião seguinte lê;
+- a semana fica **marcada**: `encerrada_antes_do_fim` + `motivo_encerramento_antecipado`, e a marca
+  aparece no cockpit, no tooltip do gráfico, na tabela e como losango no eixo da série (marca própria,
+  diferente da bolinha da semana reaberta — a semana pode ser as duas coisas).
+
+A regra mora no `services`, que é quem sabe a data; a view só **pergunta** se a permissão existe
+(`_tem_permissao`) e passa adiante. Conferir a data nos dois lugares criaria duas regras que discordam
+no dia em que uma delas mudar. Na tela, o diálogo abre **antes** do envio, para a exigência de
+justificativa não chegar como erro de servidor depois do clique.
+
+4 regressões novas (`SemanaQueAindaNaoAcabouTests`), inclusive a que prende o caso normal: encerrar a
+semana que já acabou não pede permissão extra nem justificativa.
+
+Arquivos: [services.py](../backend/modulopdca/services.py) · [views.py](../backend/modulopdca/views.py) ·
+[catalog.py](../iam/identity/catalog.py) · [ProgramacaoPage.tsx](../frontend/src/modules/pdca/pages/ProgramacaoPage.tsx).
+
+---
+### D166 — o compromisso que não saiu sumia junto com a semana · ✅ corrigido 16/09/2026
+
+Relato do dono (15/09/2026): *"Item não concluído em PDCA da semana deveria continuar para a próxima
+semana. Logo pode ter item que foi concluído parcialmente."*
+
+**Causa.** A semana encerrada era um fim de linha. O cartão "não saiu" ficava no quadro de trás e a
+semana seguinte nascia vazia: quem quisesse continuar a armação de pilares tinha de reencontrá-la na
+WBS e puxá-la à mão. O que se perdia nesse caminho não era o clique — era **o fato de aquele
+compromisso estar na segunda semana seguida**, que é exatamente o que faz a reunião perguntar o que
+está travando, em vez de perguntar por que o PPC caiu.
+
+**Correção.** `services.arrastar_pendentes` roda no fim de `encerrar` (e tem porta própria,
+`arrastar/`, para a semana reaberta e rejulgada). Os compromissos julgados como não cumpridos nascem
+de novo no quadro da semana seguinte, **em rascunho**, levando:
+
+- o que **ficou por fazer**, não o que foi prometido: a semana que assumiu 20 pontos e apontou 12
+  arrasta 8. É o item parcialmente concluído, que o dono pediu junto e que até aqui não tinha como ser
+  dito. Previsto nulo continua nulo — compromisso binário ("concretar a laje") não ganha número
+  inventado;
+- `arrastado_de` e `vezes_arrastado`, o contador do padrão: quatro semanas arrastado não é o mesmo
+  problema que uma, e o cartão se anuncia no quadro (`3ª semana seguida`, em vermelho a partir da
+  terceira);
+- o responsável e o local. **Não leva a nota nem a causa** — aquelas são o julgamento da semana que
+  passou, e levar a causa junto faria o ranking contar a mesma falha antes de ela acontecer de novo.
+
+**Três recusas deliberadas.** Não arrasta para semana já comprometida (acrescentar compromisso a um
+quadro assumido é escrever a aposta depois do resultado) e a tela diz por quê; respeita o
+`PDCA_TETO_ITENS_POR_PROGRAMACAO` e informa quantos não couberam; e **arrasta mesmo o que está
+travado** — o cartão que não saiu por falta de material volta com a restrição aberta, e é
+`comprometer` quem recusa a semana enquanto ela estiver lá. É o desenho certo: a trava aparece no
+quadro da reunião, no lugar em que alguém decide removê-la, em vez de o serviço sumir e a trava ficar
+invisível.
+
+Idempotente pela mesma chave `(atividade, local)` da `UniqueConstraint`: rodar duas vezes não duplica
+cartão. 10 regressões novas (`ArrastoDoQueNaoSaiuTests`).
+
+Arquivos: [models.py](../backend/modulopdca/models.py) · [services.py](../backend/modulopdca/services.py) ·
+[views.py](../backend/modulopdca/views.py) · [ProgramacaoPage.tsx](../frontend/src/modules/pdca/pages/ProgramacaoPage.tsx).
+
+---
+### D165 — cancelar a medição no PDCA deixava o título vivo no ERP · ✅ corrigido 16/09/2026
+
+Relato do dono (15/09/2026): *"Quando cancelo medição em PDCA não cancela o pagamento em ERP. Tem que
+ser bem alinhado e ter avisos. Também tem a questão de já estar quitado."*
+
+**Causa, e ela tinha duas metades.** A primeira: `cancelar/` mexia **só no PDCA** — a medição virava
+`CANCELADA` e a `ContaPagar` gerada na aprovação continuava aberta no financeiro, com a descrição
+apontando para um boletim que não existe mais. O empreiteiro recebia por uma medição retirada, e a
+conciliação só percebia quando alguém fosse explicar o título, quer dizer, no fim do mês.
+
+A segunda metade é mais silenciosa: a porta **nem abria** para a medição aprovada (`esta_congelada`
+recusava), então o único cancelamento que existia era o da medição em aprovação — que nunca gerou
+título nenhum. O caso que produz o estrago não tinha gesto que o alcançasse.
+
+**Correção, e a régua do quitado é decisão do dono (15/09/2026): título pago só se conserta por
+retificadora.** `services.cancelar_medicao` passou a ser o caminho único, com três portas:
+
+| estado | o que acontece |
+| --- | --- |
+| rascunho · em aprovação | retira o documento. Não há título, e não pede motivo — não houve efeito |
+| aprovada, título `ABERTO` | cancela os dois **na mesma transação**; motivo obrigatório; auditoria nos dois lados |
+| aprovada, título com baixa | **recusa**, dizendo quanto já foi pago, e manda retificar |
+
+A recusa olha `valor_pago > 0` **antes** do status, porque o caso traiçoeiro é a baixa parcial: o
+título ainda é `PARCIAL`, parece vivo, e já saiu dinheiro. O motivo por escrito fica na observação da
+medição e no `AuditLog` do título — cancelamento de título é evento da mesma família da baixa, e sem a
+linha de auditoria quem lê o log do ERP vê um título sumir sem ator nem porquê.
+
+**O aviso e a trava saem do mesmo lugar.** `services.estado_do_titulo` serve o
+`MedicaoSerializer.titulo_erp`, e o diálogo da tela mostra o título, o valor e o vencimento *antes* do
+clique — com baixa em cima, o botão de confirmar nem arma e a tela explica o caminho da retificadora.
+Dois lugares para a mesma regra divergiriam na primeira mudança. O campo fica **fora** do
+`MedicaoResumoSerializer`: é uma consulta por linha, e a lista desenha o status do boletim, não o do
+título (a lição do D136).
+
+**A permissão subiu de degrau**: cancelar a aprovada exige `pdca.medicao.atestar`, não `apurar` —
+derrubar um título a pagar é alçada de quem autorizou o dinheiro a sair, não de quem monta o boletim.
+
+10 regressões novas (`CancelarMedicaoELevarOTituloTests`).
+
+Arquivos: [services.py](../backend/modulopdca/services.py) · [views.py](../backend/modulopdca/views.py) ·
+[serializers.py](../backend/modulopdca/serializers.py) · [MedicaoPage.tsx](../frontend/src/modules/pdca/pages/MedicaoPage.tsx).
+
+---
+### D164 — o RH estava em "Gestão", e ele é Operação · ✅ corrigido 16/09/2026
+
+Relato do dono (15/09/2026): *"Na aba lateral do frontend, RH está em Gestão mas na verdade é Operação,
+junto com empreendimentos, obras, clientes e fornecedores."*
+
+**Causa.** O item estava na seção de cima por parecer "área meio", junto de ERP e CRM. A régua da
+seção é outra: **Operação é o cadastro do que a obra tem** — empreendimento, obra, cliente,
+fornecedor —, e a equipe é a primeira coisa dessa lista. Quem procura um funcionário procura junto de
+onde procurou a obra em que ele está.
+
+**Correção.** Uma linha movida em [AppSidebar.tsx](../frontend/src/components/layout/AppSidebar.tsx),
+com o porquê registrado ao lado dela.
+
+---
+### D163 — a busca da tela exigia acento, contra a régua que o backend já cumpria · ✅ corrigido 16/09/2026
+
+Relato do dono (15/09/2026), sobre o filtro de obras do Orçar: *"a pesquisa não considera que a pessoa
+pode errar em ç ou acentuação e não pesquisa as obras certas"*.
+
+**Causa — e é uma regressão de uma decisão que já existia.** A régua de acessibilidade do dono
+(16/08/2026) é explícita: *"quero que todo o software seja acessível, ninguém tem que ficar digitando
+exatamente a palavra para conseguir achar o que quer"*. O backend a cumpre desde então
+([`nucleo/busca.py`](../backend/nucleo/busca.py), com `unaccent` do Postgres), e a metade de tela
+existe e está escrita ([`utils/texto.ts`](../frontend/src/utils/texto.ts)) — mas **nove filtros
+client-side nunca a usaram**, e continuavam em `.toLowerCase().includes()` puro.
+
+O próprio arquivo `texto.ts` já avisava do sintoma: *"uma busca que o servidor resolve sem acento e a
+tela refiltra com acento devolve menos do que veio — e a lista pisca com o resultado certo e some"*.
+
+**Correção.** Os nove passaram a usar `contemSemAcento`, e o `.toLowerCase()` do termo saiu junto
+(a função normaliza os dois lados): obras (nome e endereço), empreendimentos (nome e razão social),
+diários, personas, usuários, cargos, funcionários, a grade do orçamento (descrição, código de
+referência e EAP) e o filtro de obras/orçamentos do Orçar, que foi o achado.
+
+Arquivos: [useObras.ts](../frontend/src/modules/obras/hooks/useObras.ts) ·
+[useEmpreendimentos.ts](../frontend/src/modules/empreendimentos/hooks/useEmpreendimentos.ts) ·
+[useDiarios.ts](../frontend/src/modules/diario/hooks/useDiarios.ts) ·
+[PersonasPage.tsx](../frontend/src/modules/admin/pages/PersonasPage.tsx) ·
+[UsuariosPage.tsx](../frontend/src/modules/admin/pages/UsuariosPage.tsx) ·
+[CargosPage.tsx](../frontend/src/modules/rh/pages/CargosPage.tsx) ·
+[FuncionariosListPage.tsx](../frontend/src/modules/rh/pages/FuncionariosListPage.tsx) ·
+[GradeOrcamento.tsx](../frontend/src/modules/orcamento/components/GradeOrcamento.tsx) ·
+[ObrasOrcamentosPage.tsx](../frontend/src/modules/orcamento/pages/ObrasOrcamentosPage.tsx).
+
+---
+### D162 — a faixa de datas andava com o relógio, e o Expediente parava em 2046 · ✅ corrigido 16/09/2026
+
+Relato do dono (15/09/2026): *"Data mínima e máxima de todo o calendário é 1900 e 2100. Módulo
+calendário e outros módulos eu não testei, mas no expediente em modulopdca está 2016 a 2046."*
+
+**Causa.** Cada família de campo tinha a sua janela, e **todas eram relativas a hoje**:
+`minVigenciaISO()` era `hoje−10` e `maxVigenciaISO()` era `hoje+20`, o que em 15/09/2026 dá exatamente
+os 2016–2046 que o dono viu. O Expediente usa essa família para a data de exceção do calendário, então
+não havia como cadastrar o feriado de 2047. Pagamento era pior ainda: `hoje−1` a `hoje+5`.
+
+Janela que anda com o relógio é pior do que janela estreita: **a mesma tela aceita hoje o que vai
+recusar no ano que vem**, e ninguém consegue explicar o porquê para quem está do outro lado.
+
+**Decisão do dono (15/09/2026): 1900–2100 em todo campo de data, sem exceção.** As regras que são de
+significado — nascimento não pode ser futuro, exame não pode ser futuro, demissão ≥ admissão —
+continuam recusando, mas **pelos validadores, com frase**. `min`/`max` de um `type="date"` apagam o
+dia do calendário do navegador sem dizer nada: a pessoa clica, não acontece nada, e a conclusão dela é
+que o sistema travou.
+
+**Correção.** `minCalendarioISO`/`maxCalendarioISO` em [`utils/dates.ts`](../frontend/src/utils/dates.ts)
+são a faixa única; as constantes antigas viraram apelidos dela (o nome continua dizendo em que campo o
+valor está sendo usado, e mudar a faixa de todos é mudar duas linhas). **54 `<input type="date">` em
+31 arquivos** passaram a declarar a mesma faixa — o Expediente, o calendário, o ERP, o RH, clientes,
+obras, empreendimentos, orçamento, SCM, SIL, CRM, Maps e as sete telas do PDCA. Nenhuma delas anda
+mais com o relógio.
+
+`maxTodayISO()` sobreviveu, mas **deixou de ser `max` de input**: é o que os validadores de "não pode
+ser futura" comparam.
+
+---
+### D156 — o calendário ia à internet buscar feriado em 5 dos 12 meses do ano · ✅ corrigido 16/09/2026
+
+Relato do dono (15/09/2026): *"Calendário demora para carregar feriados"*.
+
+**Causa, medida no banco vivo.** O feed tem um plano B: sem feriado nacional na tabela, ele busca na
+API pública `date.nager.at` para não nascer vazio antes da primeira sincronização. A condição que o
+disparava era `if not any(f.escopo == 'nacional' for f in feriados)` — e `feriados` é a lista **da
+janela pedida**. Isso confunde *ausente* com *inexistente*: fevereiro, março, junho, julho e agosto
+**não têm feriado nacional**, e é assim o calendário brasileiro. Com a tabela cheia (40 nacionais de
+2025 a 2028, conferidos no banco), abrir qualquer um desses meses disparava a viagem à API externa —
+**cinco dos doze meses, em toda navegação**.
+
+E a viagem era do pior tipo: `requests.get(url)` **sem timeout**. Com a rede lenta ou a Nager fora do
+ar, o feed inteiro do mês ficava pendurado no tempo de conexão padrão do sistema operacional, que é
+contado em minutos. O cache da view dura 30 s e é por janela, então voltar ao mesmo mês repetia tudo.
+
+**Correção, em duas camadas.** A pergunta passou a ser sobre o **ano**, não sobre a janela: o plano B
+só entra quando a tabela não tem nenhum nacional em algum dos anos tocados — ano sem nenhum é ano não
+sincronizado, porque não existe calendário brasileiro sem 1º de janeiro. É uma consulta só. E a
+chamada externa ganhou **timeout** (o mesmo `GEO_TIMEOUT` das outras chamadas de terceiro) e **cache**
+de um dia no positivo, dez minutos no negativo — o feriado nacional de um ano que já existe não muda.
+
+Duas regressões amarram os dois lados: março de 2026 com a tabela cheia **não** chama a API, e 2031
+(não sincronizado) continua chamando. Suíte `modulocalendar` **27/27**.
+
+Arquivos: [services.py](../backend/modulocalendar/services.py) · [views.py](../backend/modulocalendar/views.py).
+
+---
+### D157 — Maps: a fila de decisão não abria nada, o "Localizar" não fazia nada, e não havia como criar plano de voo nem traçar rota · ✅ corrigido 16/09/2026
+
+Relato do dono (15/09/2026): *"Mapa incompleto (falta rota por ruas, não consigo ver plano de voo, o
+requer decisão não clica, o localizar em 'locais' não faz nada)"*. São quatro queixas e **quatro
+buracos diferentes**, todos no frontend — o backend respondia a três deles desde a MAP.2.
+
+**1. "O requer decisão não clica."** Cada item da fila era um `<div>` sem `onClick`. Fila de decisão
+que não abre a decisão é cartaz. Agora cada item é botão e leva ao lugar onde a pendência se resolve,
+**já filtrado**: "12 obras sem coordenada" abre a tabela de locais mostrando as 12, e não a lista
+inteira para a pessoa refazer o filtro na mão. Pendência de Território com o módulo não contratado
+avisa, em vez de levar ao cadeado.
+
+**2. "O localizar em Locais não faz nada."** Duas causas somadas. A mutação não tinha `onError`,
+então 403/500 era silêncio absoluto — falha que não fala é indistinguível de botão quebrado. E o
+botão era **um só** para dois gestos: num local que já tem coordenada, o backend responde (com razão)
+*"já tem coordenada, use ?forcar=1"*, e a tela mostrava um aviso que não mudava nada — para quem
+clicou querendo **ver onde o local está**, isso é um botão morto. Agora são dois: **Ver** enquadra o
+pin no mapa (sempre funciona, e é o que a palavra sugeria) e **Localizar/Refazer** roda a cascata, só
+onde ela tem o que fazer. Pin `exata` não ganha o segundo — é verdade de campo. O `<Mapa>` da Malha
+ganhou a prop `foco`, que voa até um ponto: `centro` só valia na criação, de propósito, e sem esta
+porta a tabela não tinha como mexer no mapa.
+
+**3. "Não consigo ver plano de voo."** A aba sabia listar, calcular e exportar — **não sabia criar**.
+O único caminho para um `PlanoVoo` era o admin ou um POST à mão com o polígono em GeoJSON, então ela
+nunca saía do vazio (conferido: o único plano no banco é de um tenant de E2E). Endpoint novo
+`POST /api/maps/planos-voo/do-local/`, irmão do `geofences/gerar/` que já existia: a área nasce de um
+local que a empresa tem, **perímetro desenhado se houver, círculo de raio se não** — e a resposta
+declara qual dos dois valeu, porque voar sobre um círculo de 150 m em volta do pin não é voar sobre o
+canteiro, e quem vai pedir autorização precisa da diferença.
+
+**4. "Falta rota por ruas."** Aqui a tela estava certa e **calada**, que é metade do defeito. Rota de
+rua vem de um OSRM self-host; sem `OSRM_URL` (o caso desta instalação, conferido no ambiente do
+container) o backend traça a reta e carimba `procedencia=estimada`. O carimbo aparecia como uma
+pílula cinza ao lado do nome, enquanto o mapa mostrava uma linha ligando os pontos — que é exatamente
+a aparência de uma rota. Agora a ausência do motor é dita em cartão próprio, e o `tracar/` — que
+existia na API e **não tinha botão nenhum** — ganhou o seu: traçar não é otimizar, e quem já acertou
+a ordem na mão queria a linha, não um novo sequenciamento.
+
+**O que isto NÃO fez:** não instalou motor de rota. A rota por ruas continua dependendo de subir um
+OSRM com um extrato OSM — decisão de infraestrutura, no [roadmap.md](roadmap.md).
+
+Suíte `modulomaps` **48/48** (4 testes novos no `do-local/`: raio, perímetro, sem coordenada e
+isolamento de tenant), `tsc -b` e `vite build` limpos.
+
+Arquivos: [views.py](../backend/modulomaps/views.py) · [Mapa.tsx](../frontend/src/components/malha/Mapa.tsx) ·
+[operacao.tsx](../frontend/src/modules/maps/tabs/operacao.tsx) ·
+[territorio.tsx](../frontend/src/modules/maps/tabs/territorio.tsx) ·
+[TerritorioPage.tsx](../frontend/src/modules/maps/pages/TerritorioPage.tsx).
+
+---
+### D158 — Prancheta: o arquivo de vários desenhos abria num pedaço, e o localizador cobria o desenho · ✅ corrigido 16/09/2026
+
+Relato do dono (15/09/2026): *"Quero desfazer essa separação. O minimapa já está feito, mas ele tem
+que ser melhor alocado, fica no meio da tela; esse minimapa deveria ter uma região clicável, que
+mostra onde os desenhos que seriam separados estão."*
+
+**A vista de conjunto.** A separação por folha (PRA.1c) continua no backend, onde é necessária — é
+ela que impede a página de 469 m × 8,5 km que nenhum navegador rasteriza, e dela dependem a marcação
+(âncora normalizada pela largura *daquela* folha), a medição e o snap. O que faltava era a vista em
+que ela não aparece. O [`Panorama.tsx`](../frontend/src/modules/prancheta/visualizador/Panorama.tsx)
+põe as folhas lado a lado, **cada uma no lugar em que está no terreno**, e o arquivo de várias folhas
+passa a **abrir por ele**. Entrar numa folha vira escolha, não condição de entrada.
+
+Nada é reconvertido e nada é inventado: cada folha já publica o `mundo` medido na emissão
+(`origem_x`, `origem_y`, `por_folha`), e com ele mais o aspecto real da imagem a posição de cada uma
+é aritmética sobre dado que já existia. As envolventes são desenhadas **antes** de as imagens
+chegarem — as até 64 folhas podem pesar dezenas de MB somadas, e esperar por todas daria tela vazia
+justamente no arquivo em que a pessoa mais precisa se orientar.
+
+É vista de **navegação**, não de trabalho: marcar e medir continuam na folha. Trazer a marcação para
+cá exigiria uma segunda régua de normalização convivendo com a primeira, e duas réguas divergem no
+primeiro ajuste — o sintoma seria o pino a dois dedos de onde alguém o pôs (a família do D54).
+
+**O minimapa.** Saiu do topo centralizado para o canto superior esquerdo: centralizado, ele cobria a
+faixa do carimbo e o começo do desenho — a ajuda tapava o que ela ajudava a achar. E ganhou a região
+clicável que faltava: antes **só o retângulo pintado** respondia ao clique, e essa era a metade que
+não funcionava, porque uma poligonal de 40 m ao lado de um loteamento de 8 km ocupa menos de um pixel
+— e alvo de menos de um pixel não é alvo. Agora o mapa inteiro é clicável e abre o desenho **mais
+próximo** do ponto, por distância à caixa (não ao centro dela: com escalas tão diferentes, o centro
+do grande fica longe de quase toda a área que ele ocupa). Cada mancha ganhou número, amarrando-a à
+pílula de baixo.
+
+**O que este achado destapou, e está aberto:** a razão de existirem "desenhos separados por
+distâncias enormes" é, neste acervo, resíduo do conversor — ver o **D160** no
+[pendencias.md](pendencias.md).
+
+Arquivos: [Panorama.tsx](../frontend/src/modules/prancheta/visualizador/Panorama.tsx) ·
+[Minimapa.tsx](../frontend/src/modules/prancheta/visualizador/Minimapa.tsx) ·
+[Visualizador.tsx](../frontend/src/modules/prancheta/visualizador/Visualizador.tsx).
+
+
+---
+### D182 — o resumo de bases recontava a SINAPI inteira a cada abertura de orçamento · ✅ corrigido 16/09/2026
+
+Achado a partir do relato do dono: *"meu computador começa a usar quando abro orçamento, o que não
+fazia"*. Começou depois da carga das 1.460 publicações (01/2025–08/2026, 27 UFs × 3 regimes).
+
+A suspeita natural — "a base inteira está sendo carregada na tela" — estava errada, e a distinção
+importa para o conserto. A busca de itens já era server-side e paginada; nada dos 16,8 milhões de
+registros ia para o navegador. Quem pesava era **um endpoint só**, o `bases-resumo/`, que a lista de
+publicações usa em **seis telas** do módulo:
+
+- três `Count("itens")` **correlacionados** na lista de publicações — uma varredura da tabela de
+  referências *por publicação*, medido em **2.380 ms**;
+- um `values_list(...).distinct()` sobre os 5 milhões de insumos para descobrir o vocabulário de
+  classes de cada publicação — **698 ms**;
+- e, no cliente, `useBasesResumo` sem `staleTime`, então o React Query refazia tudo a cada montagem
+  **e a cada foco da janela**. Alternar para outro programa e voltar disparava os 3 s de novo.
+
+Com três publicações isso era imperceptível; com 1.460, virou o travamento relatado.
+
+**A correção recusou o caminho mais rápido.** A tabela já guarda `total_insumos` e
+`total_composicoes` preenchidos na carga, e eu conferi que batem com a contagem real nas 1.460
+publicações — zero divergências. Ler a coluna levaria o endpoint a ~370 ms. Não foi feito: os testes
+`tests.py::test_resumo_conta_itens_e_adotados` e `test_orc8.py` montam insumos sem passar por
+`carga.recontar()`, o que prova que o contador **pode** defasar. Trocar 550 ms por um número que a
+tela pode informar errado é o oposto da régua de dado honesto do módulo.
+
+O que foi feito, tudo **derivado do dado real**:
+
+1. Duas agregações chapadas (`values(...).annotate(Count(...))`) no lugar dos três `Count`
+   correlacionados, casadas em memória por `base_id`. O `.order_by()` vazio é obrigatório: o
+   `Meta.ordering = ["base", "codigo"]` do `InsumoReferencia` vaza para o `GROUP BY` e faria toda
+   contagem virar 1.
+2. Um `GROUP BY (base_id, grupo)` responde de uma vez **as duas** perguntas que antes eram duas
+   consultas — a soma das contagens é quantos insumos vieram classificados, as chaves são o
+   vocabulário da publicação.
+3. Índice parcial `orcamento_ref_classe_idx` em `(base, grupo) WHERE tipo='insumo'`
+   (migration `0013`). Parcial de propósito: as duas perguntas só existem para insumo, e incluir as
+   composições levaria o índice de **35 MB para 131 MB** sem responder nada a mais. Confirmado em
+   uso por `EXPLAIN` (`Index Only Scan`).
+4. `staleTime` de 15 min em `useBasesResumo`. A carga nova não fica atrasada: quem importa uma
+   publicação invalida `orcKeys.all`, e invalidação vence `staleTime`.
+
+**3.078 ms → 933 ms** no banco (3,3×), e de "toda montagem e todo foco" para uma vez por sessão. Os
+396 testes do módulo passam sem alteração — inclusive os cinco que cobrem a semântica de
+`classifica_insumo` e `classes_desconhecidas`, que é o que garante que a tela continua dizendo a
+mesma coisa.
+
+---
+### D154 — o painel do PPC pintava uma meta que ele mesmo dizia não ter · ✅ corrigido 15/09/2026
+
+Achado ao revisar a apresentação do índice a pedido do dono. O `PainelPpc.tsx` abria com esta
+docstring:
+
+> *"**Sem meta desenhada na tela, de propósito.** A literatura registra ~54% em obra convencional e
+> 80–85% com LPS maduro, e seria fácil pintar uma linha em 85%. Meta de desempenho é acordo entre a
+> empresa e a equipe dela — a mesma classe do percentual de retenção que o `planos.py` recusou
+> guardar. O sistema mede e mostra; quem cobra é gente."*
+
+E, trinta linhas abaixo, pintava a barra assim:
+
+```js
+background: valor >= 80 ? 'var(--good)' : valor >= 60 ? 'var(--accent)' : 'var(--danger)'
+```
+
+**Faixa de cor por desempenho é uma meta** — 80 e 60 cravados em código de engenharia, invisíveis e
+sem legenda. Um PPC de 50% saía **vermelho** porque alguém decidiu que abaixo de 60 é ruim, e essa
+decisão é do cliente: a §5.5j do [planos.py](../payment/planos.py) recusou explicitamente guardar
+meta de PPC, pela mesma razão por que a §5.5h recusou o percentual de retenção.
+
+Pior que a contradição: ela era **invisível**. Quem lê 50% em vermelho conclui que o sistema
+considera o desempenho ruim, sem saber contra o quê.
+
+**Correção, em duas passadas.** A primeira tirou a faixa e deixou a barra numa cor só. O dono
+olhou e disse o que faltava — *"o gráfico não aparece as duas cores"* —, e ele estava certo: uma barra
+que desenha **só a altura do índice** não diz contra o quê. 50% vira um bloco solto, sem referência.
+
+A segunda passada refez o gráfico contra a régua de dataviz do projeto:
+
+- **a coluna passou a ser a semana inteira**, partida no que saiu (acento) e no que não saiu (cinza de
+  de-ênfase). O topo é sempre 100%, então a referência vem de graça e o olho lê a **proporção**;
+- **o par foi validado pelo script, não pelo olho** — e duas tentativas foram reprovadas antes de a
+  terceira passar: trilha em `--accent-soft` ficou em **1,07:1** contra a superfície clara (invisível),
+  e o par `--accent`/`--accent-ink` no escuro deu **ΔE 7,2** para visão normal, abaixo do piso de 15
+  (a Malha não tem um segundo degrau de acento utilizável no tema escuro). O que passou foi
+  acento + cinza de de-ênfase — o padrão *emphasis* —, com ΔE 24,6 no claro e 18,6 no escuro;
+- **e o cinza foi escolhido justamente por não acusar.** Pintar o não cumprido de vermelho seria
+  reintroduzir a meta pela porta dos fundos;
+- entraram ainda o **eixo 0/50/100** (hairline sólida: tracejado sobre dado lê como limite), rótulo
+  direto **só na última coluna**, tooltip de hover de verdade e a **tabela-gêmea** — obrigatória,
+  porque o acento fica em 2,16:1 contra a superfície clara e a régua diz que esse aviso se resolve com
+  rótulo visível ou tabela, e não é dispensável;
+- a marca da semana reaberta saiu da borda tracejada sobre a coluna e virou um ponto no eixo.
+
+Três consertos de leitura vieram junto, achados na mesma revisão:
+
+- **um ponto não é uma tendência.** Com uma semana encerrada, a `flex: 1` fazia a barra única ocupar a
+  largura inteira — um bloco colorido que *parece* gráfico e não carrega informação nenhuma. É o mesmo
+  pecado que o arquivo já evitava na série vazia ("nunca desenha um eixo com zero"). Abaixo de duas
+  semanas a tela mostra o número e **diz quando a tendência começa**;
+- **"média de 1 semana(s)"** era o próprio número repetido com outro rótulo, ao lado dele;
+- o índice passou a vir com o denominador embaixo (`1 de 2 compromissos`), que é a régua do
+  `realizado_cobertura` do Orçamento aplicada aqui.
+
+---
+### D152 — remover restrição sem explicar recebia o erro do framework, não a razão · ✅ corrigido 15/09/2026
+
+Achado pelo `pdca5_programacao_test.py`, e ele é pequeno de consertar e grande de entender.
+
+O `services.remover_restricao` recusa a remoção sem nota com a frase que importa — *"Diga como a
+restrição foi removida. Sem isso, a reunião da semana que vem não sabe se ela foi resolvida ou
+apenas esquecida."* — e essa frase **nunca chegava a rodar por esta porta**: o `RemoverRestricaoSerializer`
+declara `nota = CharField()`, o `trim_whitespace` do DRF (ligado por padrão) transforma `"   "` em
+vazio, e o campo recusa antes, com *"Este campo não pode ser em branco."*
+
+**O serviço estava certo e inalcançável** — que é a forma mais cara de uma mensagem boa existir.
+Quem digitou um espaço e apertou recebia o erro do framework; a razão ficava no código, para
+ninguém.
+
+**Correção:** `error_messages` no próprio campo, com a frase da casa em `blank` e em `required`. A
+trava do serviço fica onde está — ela continua sendo a que vale para o comando de bancada e para a
+importação, que entram por outra porta.
+
+---
+### D151 — o PPC atravessava como número, e o frontend o declarava string · ✅ corrigido 15/09/2026
+
+Achado pelo `pdca5_programacao_test.py` (§12). O `types.ts` do módulo declara `ppc: string | null`,
+`PontoPpc.ppc: string` e `LinhaDeRanking.percentual: string` — e o backend mandava **número**.
+
+**A tela não quebrava**, porque ela faz `Number(p.ppc)` e interpola o percentual na largura da
+barra. É por isso que passou pela suíte, pelo `tsc` e pelo olho. O que existia era um **tipo que
+mentia**: a declaração dizia uma coisa e o dado era outra, e é exatamente essa classe de divergência
+que produziu o D141 — o `get_totais` que achatava a lista de deduções em `"[]"` e apagava a tela
+inteira quando alguém chamou `.map` nela.
+
+**A causa era estrutural, não um esquecimento.** O `_str_decimais` — a passada que converte `Decimal`
+em string nos dicionários montados à mão — morava **dentro do `views.py`**. A PDCA.5 devolve o PPC
+por dois caminhos: a ação `encerrar/` (view) e o campo `ppc` do documento (serializer). O serializer
+não pode importar do `views`, que importa dele — então o segundo caminho ficou sem a passada, e o
+primeiro também, porque o endpoint novo não a chamou.
+
+**Correção:** o helper virou `services.str_decimais`, uma definição só, e o `views._str_decimais`
+passou a ser um alias dele (os doze pontos de chamada existentes não mudaram). As quatro saídas da
+PDCA.5 — `encerrar/`, `ppc/`, `causas/` e o campo `ppc` do serializer — passam por ele.
+
+**A régua que fica:** helper de travessia não mora no `views`. Quando os dois lados precisam dele,
+um dos dois fica para trás — e o que fica para trás é sempre o que ninguém está olhando.
+
+---
+### D150 — o mesmo serviço entrava duas vezes no quadro da semana · ✅ corrigido 15/09/2026
+
+Achado pelo `pdca5_programacao_test.py` (§8), e é o mais sério dos três que ele encontrou.
+
+O `ItemProgramacao` tinha a trava certa no modelo:
+
+```python
+models.UniqueConstraint(fields=["programacao", "atividade", "local"], ...)
+```
+
+**E ela não valia no caso comum.** No Postgres `NULL ≠ NULL`, então dois cartões da mesma atividade
+**sem local** passavam. E "sem local" não é a exceção aqui: muito compromisso de Last Planner é da
+frente inteira — *"concretar a laje do 4º"* —, sem endereço fino. O efeito é o que a própria trava
+existe para impedir: **o PPC contando a mesma falha duas vezes**, com denominador inflado e a causa
+pesando o dobro no ranking que decide o que a obra muda na semana seguinte.
+
+**Por que 313 testes não pegaram:** todos montam `ItemProgramacao` pelo ORM, um por atividade. A
+duplicata só aparece quando alguém puxa o mesmo cartão duas vezes, que é o que um E2E que anda o
+caminho de dedo faz sem querer.
+
+**Correção em duas camadas, como manda a casa.** No banco, uma constraint **parcial** —
+`pdca_item_prog_unico_sem_local`, migration [0016](../backend/modulopdca/migrations/0016_pdca5_item_prog_unico_sem_local.py)
+— seguindo o precedente que o Orçamento já tinha aberto para o mesmo problema
+(`orcamento_parcela_unica_sem_etapa`): constraint parcial em vez de `nulls_distinct=False`, para não
+depender de PG 15+. E no `ItemProgramacaoSerializer`, a recusa na língua de quem está na reunião —
+*"«Alvenaria do 4º» já está no quadro desta semana"* — porque o tratador de integridade do `nucleo`
+devolvia 409 com *"Já existe um registro com este valor"*, que não diz que o serviço já está no
+quadro. O próprio `nucleo/excecoes.py` escreve a regra: *"Isto NÃO substitui a validação do
+serializer… serializer que deixa passar o que o banco recusa é defeito nosso."*
+
+---
+### D149 — restrição e causa criadas pela API nasciam **sem tenant**, e a RLS as recusava · ✅ corrigido 15/09/2026
+
+Achado pelo `pdca5_programacao_test.py` na **primeira requisição real** da fatia — 500 em
+`POST /api/pdca/restricoes/`, com `new row violates row-level security policy for table
+"modulopdca_restricao"` no log.
+
+O `TenantScopedViewSetMixin` injeta o tenant no `perform_create`. O `RestricaoViewSet` e o
+`CausaNaoCumprimentoViewSet` **sobrescreveram** esse método — um para gravar `criada_por`, o outro
+para conferir o teto do catálogo — e nenhum dos dois repetiu o `tenant_id` nem chamou o `super()`.
+A linha nascia com `tenant_id` nulo, o `WITH CHECK` da política recusava o INSERT, e a fatia inteira
+era **inutilizável em produção**: não dava para registrar uma restrição.
+
+**Por que 309 testes verdes não pegaram:** a suíte da PDCA.5 monta `Restricao` e
+`CausaNaoCumprimento` pelo ORM, com `tenant=cls.tenant` na mão, e testa o serviço. Nenhum teste
+atravessava o `perform_create` do viewset. O `ItemProgramacaoViewSet`, que **não** sobrescreve o
+método, sempre esteve certo — e virou a contraprova.
+
+**Correção:** o `tenant_id` vai explícito nos dois `perform_create`. E entrou a classe
+`ApiDaPdca5Tests` na suíte, que exerce as quatro portas de escrita da fatia **pelo HTTP** e confere
+o tenant da linha gravada — para o próximo a esquecer custar um teste vermelho, e não uma tarde.
+
+**A régua que fica:** porta nova se exerce **pela porta**, e não só pelo serviço que está atrás dela.
+É a irmã backend da régua que a PDCA.4 escreveu para o navegador em
+[testes/e2e/README.md](../testes/e2e/README.md).
+
+---
+### D148 — um teste do `nucleo` logava traceback `CRÍTICO` a cada execução da suíte · ✅ corrigido 15/09/2026
+
+`nucleo.test_rate_limit.TaskReagendaTests` era `SimpleTestCase`, e o `log_task_end` de
+[`nucleo/signals.py`](../backend/nucleo/signals.py) grava um `LogAtividadeUsuario` por task
+encerrada. O Django recusava a escrita (`DatabaseOperationForbidden`), o dispatcher do Celery
+capturava e **logava o traceback como ERROR** — a cada `manage.py test`, mesmo com a suíte verde.
+
+**O teste passava e a produção estava certa**; o custo era de leitura. Um traceback com a palavra
+`CRÍTICO` impresso em toda execução treina o olho a ignorar exatamente a linha que um dia vai
+importar.
+
+**Correção:** `databases = {"default"}` na classe. Depois disso, `manage.py test nucleo.test_rate_limit`
+roda 11 testes com **zero** ocorrências de traceback na saída.
+
+---
+### D147 — três telas da PDCA.3/4 não passavam no próprio `eslint` · ✅ corrigido 15/09/2026
+
+Seis erros, todos anteriores à PDCA.5 e nenhum nos arquivos dela:
+
+- `GradeDeMedicao.tsx` (82, 90, 686) e `PainelDeDeducoes.tsx` (46, 57) —
+  `react-refresh/only-export-components`: o arquivo exportava constante e hook ao lado do
+  componente, e isso **desliga o fast refresh do arquivo inteiro**. Quem edita a grade de medição
+  perdia o estado da tela a cada salvamento — justamente a tela em que se passa o dia digitando;
+- `PainelAditivos.tsx:308` — `_c` declarado e nunca usado, do idioma
+  `linhas.map(({ chave: _c, ...l }) => …)` que tira a chave do payload.
+
+**Correção.** Os não-componentes saíram para módulos próprios, no padrão que o módulo já usava
+(`lib.ts`, `celulas.ts`, `medidas.ts`, `autosave.ts`):
+
+- **`pdca/grade.ts`** — `EdicaoDaLinha`, `paraDecimal`, `paraApi` e `useGradeEditavel`;
+- **`pdca/deducoes.ts`** — `Rascunho`, `paraApi` das deduções e `useDeducoes`.
+
+`MedicaoPage.tsx` e `PreviaDeMedicaoPage.tsx` passaram a importar os hooks de lá; os dois arquivos de
+componente voltaram a exportar **só** componentes (e tipos, que a regra permite).
+
+No `PainelAditivos`, o payload passou a nomear os campos um a um em vez de espalhar o rascunho menos
+a chave. Não foi só para calar o lint: assim **o que sobe fica legível no lugar em que sobe**, e um
+campo novo no rascunho não viaja para a API sem alguém decidir.
+
+Depois: `tsc -b` e `eslint src/modules/pdca/` **limpos**, `vite build` limpo, e os dois testes de
+navegador da região verdes — `pdca3_grade_browser_test.py` 36/36 (a rede que prova que a grade de
+medição não regrediu) e `pdca5_quadro_browser_test.py` 55/55.
+
+---
+### D146 — a ponte do celular não expirava sozinha · ✅ corrigido 15/09/2026
+
+**Achado pelo dono, à noite de 14/09/2026, perguntando se a ponte estava ativa:** estava — no ar
+havia **7 horas**, sem ninguém do outro lado. Os dois containers (`sgi-ponte-tunel`, cloudflared;
+`sgi-ponte-porta`, o porteiro de [infra/ponte/nginx.conf](../infra/ponte/nginx.conf)) foram
+derrubados na hora, e a URL `trycloudflare` morreu junto.
+
+**O porteiro fez o trabalho dele.** O log de acesso do período inteiro tinha três coisas, e nenhuma
+entrou sem credencial: o teste do próprio dono ao subir a ponte (200 como `sgi`, com `/drone/` em
+403, como projetado), duas batidas do **scanner do próprio Cloudflare** (401) e a conferência da
+noite (401). Zero força bruta, zero varredura de terceiro. Não houve incidente — o que este achado
+registrou foi **tempo de exposição**, não falha de defesa.
+
+**O defeito era que nada a desligava.** Os containers nascem sem política de restart, de propósito,
+para não voltarem sozinhos depois de uma queda do Docker — mas enquanto o Docker estivesse de pé eles
+ficavam indefinidamente. A regra escrita no `terminal.txt` §14 — *"levantou, usou, DERRUBOU. Não
+durma com a ponte no ar"* — era a única coisa que os encerrava, e ela morava na memória de uma
+pessoa. Atrás dela está o stack de desenvolvimento com `DEBUG=True`, `SECRET_KEY` versionada e o
+superusuário `dono` com senha documentada no repositório: a senha básica da ponte é a **única**
+camada entre isso e a internet, e camada única não deveria ficar de plantão a noite inteira sem
+ninguém saber.
+
+**O que fechou — e o gatilho foi o próprio defeito se repetindo.** Em 15/09/2026 o dono pediu a
+ponte estando **fora de casa**, isto é, sem poder derrubá-la. Levantar uma exposição que a única
+pessoa interessada não consegue fechar era piorar exatamente o que este achado registrava, e foi o
+que tornou o conserto pré-requisito em vez de melhoria.
+
+**A ponte passou a morrer de velhice**, em [infra/ponte/ponte.sh](../infra/ponte/ponte.sh):
+`subir [horas]` (padrão 4h, teto 12h), `status`, `prorrogar` e `derrubar`. Esquecer a ponte passou a
+**fechá-la**, em vez de a manter. São **duas travas independentes**, e a segunda existe por causa de
+um modo de falha da primeira:
+
+1. **o vigia** — processo no hospedeiro que dorme até o prazo e faz o `docker rm -f` dos dois
+   containers. É ele que limpa de verdade;
+2. **o porteiro morre sozinho** — o nginx roda sob `timeout` **dentro** do container. O vigia é um
+   processo do WSL do usuário e o Docker Desktop roda em outra distro: derrubar o WSL mata o vigia
+   **sem** matar os containers. Nesse caso o porteiro ainda expira no mesmo instante, a URL passa a
+   responder **502**, e o app deixa de ser alcançável mesmo com o túnel de pé. Uma trava só seria
+   confiar em quem pode morrer primeiro.
+
+Três decisões menores que vieram junto:
+
+- **`status` é fail-loud.** Container de pé sem prazo registrado, prazo vencido ou vigia morto saem
+  em vermelho, com o que fazer. O contrário — responder "no ar" e deixar a pessoa achar que está tudo
+  certo — é o que produziu as 7 horas;
+- **a senha é gerada, não escolhida**, e nova a cada `subir`. A receita antiga pedia
+  `TROQUE-ESTA-SENHA` no meio de um comando, que é o convite a reaproveitar uma senha de outra coisa
+  — e é assim que uma exposição de quatro horas vira um problema permanente;
+- **`prorrogar` não troca a URL nem a senha.** Recria só o porteiro com o `timeout` novo; quem define
+  a URL é o túnel, que fica de pé. Sem isso, esticar o prazo obrigaria a redigitar tudo no celular, e
+  na prática ninguém esticaria — deixaria vencer e subiria outra.
+
+**O agravante de documentação fechou junto:** a receita ganhou casa em [ponte.md](ponte.md), com o
+que fica exposto, as duas travas, a tabela de sintomas e o registro de que ela morava na §14 do
+`terminal.txt` — arquivo que o **A10** marca para sair do repositório. Se ele saísse antes, sumiria
+junto o comando que **fecha** a ponte.
+
+### D145 — a tela falava a língua do roadmap, não a de quem mede a obra · ✅ corrigido 15/09/2026
+
+Achado pelo dono lendo o texto do regime de administração:
+
+> *"Contrato por administração não mede quantidade: o que se paga é o custo reembolsável mais a
+> taxa. O número é declarado — a apropriação automática de HH ainda não existe, e o boletim diz isso
+> em vez de fingir que o sistema apurou."*
+>
+> — *"Que mensagem bosta pro usuário final."*
+
+Está certa e é inútil. Ela responde a uma pergunta que **quem escreveu o sistema** faz ("por que
+este campo é digitado?") e não a que o gestor faz na frente do campo: *o que eu escrevo aqui?*.
+"Apropriação automática de HH", "PDCA.9" e "em vez de fingir que o sistema apurou" são vocabulário
+de dentro de casa — o último é pior que jargão: é o software se defendendo de uma acusação que
+ninguém fez.
+
+**O que a tela passou a dizer**, nos quatro lugares onde o regime aparece:
+
+| Onde | Agora |
+|---|---|
+| Campo da medição | *"Quanto a obra custou de 16/08 a 15/09 — mão de obra, material e equipamento que este contrato manda reembolsar. Confira com a folha, as notas e o material aplicado no período. Sobre esse valor entra a taxa de 3%."* |
+| Prévia | *"Neste contrato paga-se o custo da obra no período mais a taxa de 3% — e não quantidade executada. Não há o que conferir antes: o custo é informado ao abrir a medição."* |
+| Cockpit do contrato | *"A cada período você informa quanto a obra custou… Se o combinado é pagar por quantidade executada, o regime deste contrato é preço unitário — troque em Editar."* |
+| Boletim | *"Custo informado pelo gestor · Fulano"* — um campo, não um parágrafo |
+
+**E o aviso de submissão saiu.** Ele repetia a mesma frase a cada envio, não pedia ação nenhuma e
+falava de roadmap. A régua de dado honesto continua cumprida pelo lugar certo: `custo_origem` grava
+de onde veio o número e o **boletim o imprime** — quem ateste lê isso no documento que está
+assinando. Aviso que aparece sempre e não pede nada ensina a ignorar a faixa de avisos, onde um dia
+aparece algo que importa.
+
+**A regra que fica:** o comentário de código conta o porquê para quem mantém o sistema — e é onde a
+razão de engenharia deve morar. A **string da tela** responde ao que a pessoa está tentando fazer
+naquele instante. Trocar os dois de lugar é o que produziu esta frase.
+
+---
 ### D144 — a dica do avanço mandava digitar um número que o servidor recusava · ✅ corrigido 15/09/2026
 
 Achado pelo dono na grade da semana, tentando fechar a frente `2.2 Armação da fundação`:
@@ -1155,7 +2451,7 @@ nunca chega perto do prazo; há teste para os dois lados.
 **Provado:** 53 testes novos ([test_orc8.py](../backend/moduloorcamento/test_orc8.py)), suíte do
 módulo em **380/380**, suíte do backend em **1.467** com só os 4 erros pré-existentes do
 [D50](pendencias.md), `tsc` limpo, e o **E2E pelo gateway em 28/28**
-([orc8_carga_base_test.py](../../testes/e2e/orc8_carga_base_test.py)), com as imagens reconstruídas e
+([orc8_carga_base_test.py](../testes/e2e/orc8_carga_base_test.py)), com as imagens reconstruídas e
 o stack re-seedado.
 
 **O E2E só existiu porque a IAM ganhou o primeiro `is_superuser` do seed** (`dono`/`dono123`). Até
@@ -3150,19 +4446,19 @@ aberto, foi uma lista que crescia sozinha.
 imagem, não código montado) e o gateway recriado — `restart` falha depois de o arquivo montado ser
 reescrito, porque o bind-mount aponta para o inode antigo:
 
-- **[d70_media_fechada_test.py](../../testes/e2e/d70_media_fechada_test.py) 26/26** — os 9
+- **[d70_media_fechada_test.py](../testes/e2e/d70_media_fechada_test.py) 26/26** — os 9
   prefixos respondem 404 pelo gateway (com e sem token: o corte é antes do Django), o documento de
   RH sobe, o JSON não traz `/media/`, a porta entrega os bytes com `attachment`+`nosniff`+`no-store`,
   e o gate corta sem token (401), sem o módulo `rh` (403) e no tenant vizinho;
 - **suíte `funcoesimpexp` + `rh` + `modulodiario` 166/166**;
-- **[ie_impexp_test.py](../../testes/e2e/ie_impexp_test.py) 16/16** e
-  **[pra8_prancheta_test.py](../../testes/e2e/pra8_prancheta_test.py) 155/155** — a Prancheta
+- **[ie_impexp_test.py](../testes/e2e/ie_impexp_test.py) 16/16** e
+  **[pra8_prancheta_test.py](../testes/e2e/pra8_prancheta_test.py) 155/155** — a Prancheta
   seguiu intacta depois de `buscar_do_tenant` e o mapa de MIME subirem para o motor;
 - **`tsc -b` limpo** no build do frontend (é ele que pega o contrato das telas: `arquivo_nome`, os
   tipos e a `mediaUrl` removida).
 
 **O que NÃO foi medido:** o gesto no browser (clicar em "Abrir" e receber o blob). O
-[d70_browser_test.py](../../testes/e2e/d70_browser_test.py) está escrito e **não roda** — faltam
+[d70_browser_test.py](../testes/e2e/d70_browser_test.py) está escrito e **não roda** — faltam
 as libs de sistema do Chromium no WSL. Até lá, o caminho de download no navegador está provado por
 analogia com o visualizador da Prancheta, que usa o mesmo `useArquivoBlob`, e não por medição.
 
@@ -3235,7 +4531,7 @@ PRANCHETA_CONVERSAO_SEGUNDOS: ${PRANCHETA_CONVERSAO_SEGUNDOS:-300}
 ```
 
 Dois defeitos numa linha. O primeiro é a régua de 08/08 violada pelo próprio commit que a instituiu: o
-número é do dono e vive em [payment/planos.py](../../payment/planos.py), e voltou a existir em arquivo
+número é do dono e vive em [payment/planos.py](../payment/planos.py), e voltou a existir em arquivo
 de deploy — o mesmo motivo pelo qual os tetos saíram do `config/settings.py` (quem opera a máquina lê
 esse arquivo; o dono não). As duas linhas eram, ainda por cima, **redundantes**: o `settings.py` já
 resolvia o default a partir do `payment`.

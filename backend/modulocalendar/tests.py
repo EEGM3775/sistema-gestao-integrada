@@ -9,12 +9,13 @@ from io import StringIO
 from unittest.mock import patch
 
 from django.core.management import call_command
-from django.test import override_settings
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from modulocrm.models import Interaction, Lead
 from nucleo.models import Notificacao, Tenant, Usuario
+from . import dias_uteis
 from .models import CalendarEvent, EventReminder, Feriado, FeriadoSync
 from .tasks import despachar_lembretes
 
@@ -315,6 +316,36 @@ class FeriadosFeedTests(APITestCase):
         self.assertEqual(len(municipais), 1)
         self.assertIn("São Paulo", municipais[0]["title"])
 
+    @patch("modulocalendar.views.get_holidays", return_value=[])
+    def test_mes_sem_feriado_nacional_nao_chama_api_externa(self, mock_holidays):
+        """D147 — o plano B pergunta pelo ANO, não pela janela.
+
+        Março de 2026 não tem feriado nacional nenhum, e isso é o calendário
+        brasileiro, não tabela vazia. A condição anterior ("não vieram nacionais
+        nesta janela") disparava a viagem à Nager.Date em cinco dos doze meses,
+        a cada navegação — que era a demora que o dono via na tela.
+        """
+        self.user.iam_permissions = ["calendario.evento.view"]
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get("/api/calendar/events/", {
+            "start": "2026-03-01T00:00:00-03:00", "end": "2026-03-31T23:59:59-03:00",
+        })
+
+        self.assertEqual(resp.status_code, 200)
+        mock_holidays.assert_not_called()
+
+    @patch("modulocalendar.views.get_holidays", return_value=[])
+    def test_ano_fora_da_tabela_ainda_cai_no_plano_b(self, mock_holidays):
+        """E o plano B continua existindo: 2031 não foi sincronizado."""
+        self.user.iam_permissions = ["calendario.evento.view"]
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get("/api/calendar/events/", {
+            "start": "2031-03-01T00:00:00-03:00", "end": "2031-03-31T23:59:59-03:00",
+        })
+
+        self.assertEqual(resp.status_code, 200)
+        mock_holidays.assert_called_once_with(2031, "BR")
+
 
 @override_settings(CACHES=DUMMY_CACHE)
 class FeriadosStatusTests(APITestCase):
@@ -443,3 +474,95 @@ class LembreteDispatchTests(APITestCase):
         self._evento_com_lembrete(timezone.now() + timedelta(hours=2), offset=10)
         self.assertEqual(despachar_lembretes(), 0)
         self.assertEqual(Notificacao.objects.filter(user=self.user).count(), 0)
+
+
+class DiaUtilBancarioTests(TestCase):
+    """O vencimento que vai ao boleto — sábado, domingo e feriado empurram.
+
+    A régua é bancária, não de obra: o `CalendarioTrabalho` do PDCA responde
+    "a equipe trabalha neste dia?", e a resposta dele pode ser "sim" num sábado
+    de mutirão. O banco não compensa nesse sábado, e é o banco que decide quando
+    um boleto é pagável.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        Feriado.objects.create(
+            data=date(2026, 10, 12), nome="Nossa Senhora Aparecida", escopo="nacional")
+        Feriado.objects.create(
+            data=date(2026, 8, 11), nome="São Vicente de Paulo", escopo="estadual", uf="SC")
+        Feriado.objects.create(
+            data=date(2026, 6, 18), nome="Aniversário do município", escopo="municipal",
+            uf="SC", ibge="4211900", cidade="Palhoça")
+
+    def test_dia_util_fica_onde_esta(self):
+        ajuste = dias_uteis.AjusteDeVencimento()
+        self.assertEqual(ajuste(date(2026, 3, 10)), date(2026, 3, 10))  # terça
+
+    def test_sabado_e_domingo_vao_para_segunda(self):
+        ajuste = dias_uteis.AjusteDeVencimento()
+        self.assertEqual(ajuste(date(2026, 3, 7)), date(2026, 3, 9))   # sábado
+        self.assertEqual(ajuste(date(2026, 3, 8)), date(2026, 3, 9))   # domingo
+
+    def test_feriado_nacional_vale_para_todo_mundo(self):
+        """12/10/2026 é segunda-feira: sem a tabela de feriados, passaria."""
+        self.assertEqual(
+            dias_uteis.AjusteDeVencimento()(date(2026, 10, 12)), date(2026, 10, 13))
+
+    def test_feriado_estadual_so_vale_com_a_uf(self):
+        """Feriado de SC não pode adiar o boleto de um lote no Paraná."""
+        self.assertEqual(
+            dias_uteis.AjusteDeVencimento(uf="SC")(date(2026, 8, 11)), date(2026, 8, 12))
+        self.assertEqual(
+            dias_uteis.AjusteDeVencimento(uf="PR")(date(2026, 8, 11)), date(2026, 8, 11))
+
+    def test_feriado_municipal_so_vale_com_o_codigo_ibge(self):
+        """Nome de cidade não é chave — afirmar feriado municipal sem o código
+        seria inventar dia parado."""
+        com = dias_uteis.AjusteDeVencimento(uf="SC", ibge="4211900")
+        sem = dias_uteis.AjusteDeVencimento(uf="SC")
+        self.assertEqual(com(date(2026, 6, 18)), date(2026, 6, 19))
+        self.assertEqual(sem(date(2026, 6, 18)), date(2026, 6, 18))
+
+    def test_feriado_colado_no_fim_de_semana_atravessa_os_dois(self):
+        """Sexta feriado + sábado + domingo: o vencimento cai na segunda."""
+        Feriado.objects.create(data=date(2026, 3, 6), nome="Ponte", escopo="nacional")
+        self.assertEqual(
+            dias_uteis.AjusteDeVencimento()(date(2026, 3, 6)), date(2026, 3, 9))
+
+    def test_explicar_diz_por_que_a_data_mudou(self):
+        data, motivo = dias_uteis.AjusteDeVencimento().explicar(date(2026, 10, 12))
+        self.assertEqual(data, date(2026, 10, 13))
+        self.assertEqual(motivo, "Nossa Senhora Aparecida")
+        self.assertEqual(
+            dias_uteis.AjusteDeVencimento().explicar(date(2026, 3, 10)),
+            (date(2026, 3, 10), ""),
+        )
+
+    def test_nunca_antecipa(self):
+        """Antecipar cobraria o comprador antes do combinado — o ajuste só adia."""
+        for dia in (date(2026, 3, 7), date(2026, 3, 8), date(2026, 10, 12)):
+            self.assertGreaterEqual(dias_uteis.AjusteDeVencimento()(dia), dia)
+
+    def test_sem_ajuste_devolve_a_data_intacta(self):
+        self.assertEqual(dias_uteis.SEM_AJUSTE(date(2026, 3, 7)), date(2026, 3, 7))
+        self.assertEqual(dias_uteis.SEM_AJUSTE.explicar(date(2026, 3, 7)), (date(2026, 3, 7), ""))
+
+    def test_none_atravessa(self):
+        """Título sem vencimento não é motivo para estourar no meio de uma emissão."""
+        self.assertIsNone(dias_uteis.AjusteDeVencimento()(None))
+
+    def test_base_vazia_e_um_estado_que_a_tela_precisa_saber(self):
+        Feriado.objects.all().delete()
+        self.assertFalse(dias_uteis.base_sincronizada())
+        # Sem feriados o ajuste ainda existe — só não conhece feriado.
+        self.assertEqual(dias_uteis.AjusteDeVencimento()(date(2026, 10, 12)), date(2026, 10, 12))
+        self.assertEqual(dias_uteis.AjusteDeVencimento()(date(2026, 3, 7)), date(2026, 3, 9))
+
+    def test_uma_consulta_por_ano_e_nao_por_parcela(self):
+        """O carnê pede o ajuste centenas de vezes; a tabela é lida uma vez por
+        ano tocado. Sem o cache, gerar 360 parcelas seriam 360 consultas."""
+        ajuste = dias_uteis.AjusteDeVencimento(uf="SC", ibge="4211900")
+        with self.assertNumQueries(2):  # 2026 e 2027, carregados na primeira chamada
+            for mes in range(1, 13):
+                ajuste(date(2026, mes, 10))

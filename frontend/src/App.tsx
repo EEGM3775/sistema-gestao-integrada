@@ -1,4 +1,4 @@
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import LandingPage from './pages/LandingPage'
 import LoginPage from './pages/LoginPage'
 import EsqueciSenhaPage from './pages/EsqueciSenhaPage'
@@ -35,7 +35,7 @@ import { silRoutes } from './modules/sil/routes'
 import { orcamentoRoutes } from './modules/orcamento/routes'
 import { mapsRoutes } from './modules/maps/routes'
 import { pranchetaRoutes } from './modules/prancheta/routes'
-import { pdcaRoutes } from './modules/pdca/routes'
+import { campoRoutes, pdcaRoutes } from './modules/pdca/routes'
 
 function App() {
   return (
@@ -147,6 +147,25 @@ function App() {
 
           {/* Fallback interno — caminho absoluto evita loop de append no splat (/app/x → /app/x/dashboard → …) */}
           <Route path="*" element={<Navigate to="/app/dashboard" replace />} />
+        </Route>
+
+        {/* ── Campo (segunda superfície do PDCA) ──
+             Fora do `/app` **de propósito**: o canteiro não é o escritório
+             encolhido. Sem sidebar e sem topbar, porque quem está de capacete
+             tem uma frente, não um menu — a casca é a do módulo.
+
+             A rota de layout é **sem `path`**: ela só exige a sessão. O
+             endereço vem de dentro do `campoRoutes`, e dar um `path="/campo"`
+             aqui empilharia com o `path="campo"` de lá e a tela viveria em
+             `/campo/campo` — que foi o que aconteceu na primeira escrita. */}
+        <Route
+          element={
+            <PrivateRoute>
+              <Outlet />
+            </PrivateRoute>
+          }
+        >
+          {campoRoutes}
         </Route>
 
         {/* ── Fallback global ── */}

@@ -15,6 +15,7 @@ import {
 import { scmKeys } from '../api/queryKeys'
 import { recebimentos as recebimentosApi, avaliacoes as avaliacoesApi } from '../api/scmApi'
 import { brl, qty, dataBR, num, cotacaoEstado, pedidoEstado, propostaEstado, origemPedido, type Kind, type Estado } from '../lib'
+import { minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
 import type {
   OfertaFornecedor, Cotacao, Proposta, ItemDemanda, ItemProposta,
   ItemPedido, Recebimento, AvaliacaoFornecedor, CentroCusto, TipoRecebimento,
@@ -539,7 +540,7 @@ function RecebimentoModal({ pedidoId, onClose, onDone }: { pedidoId: number; onC
     {err && <div style={{ background: 'var(--danger-soft)', color: 'var(--danger-ink)', padding: '9px 12px', borderRadius: 'var(--r-sm)', fontSize: 12.5, marginBottom: 12 }}>{err}</div>}
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
       <Field label="Tipo"><select style={inp} value={tipo} onChange={e => setTipo(e.target.value as TipoRecebimento)}><option value="total">Total</option><option value="parcial">Parcial</option></select></Field>
-      <Field label="Data"><input style={inp} type="date" value={data} onChange={e => setData(e.target.value)} /></Field>
+      <Field label="Data"><input style={inp} type="date" min={minCalendarioISO} max={maxCalendarioISO} value={data} onChange={e => setData(e.target.value)} /></Field>
     </div>
     <Field label="NF-e (chave/número)"><input style={inp} value={nf} onChange={e => setNf(e.target.value)} placeholder="Opcional — concilia com o ERP" /></Field>
   </Modal>

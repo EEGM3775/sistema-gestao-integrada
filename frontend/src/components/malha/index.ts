@@ -44,10 +44,19 @@ export type { PontoMapa, CamadaGeoJSON, CamadaRaster } from './Mapa'
 export { BotaoExportar } from './impexp/BotaoExportar'
 export { WizardImportacao } from './impexp/WizardImportacao'
 /**
+ * Reabrir um lote que parou esperando gente — a conferência que ficou
+ * pendente, o de-para que ninguém respondeu, o erro cuja mensagem só existe
+ * dentro do diálogo. Sem isto, fechar a aba no meio de uma importação
+ * obrigava a subir a planilha de novo, mesmo com o arquivo já no servidor.
+ */
+export { RetomarImportacao, podeRetomar } from './impexp/WizardImportacao'
+/**
  * IE.3c — o irmão de natureza `arquivo` do wizard: pasta → conferência →
  * decisão. Aparece só onde o recurso declara `natureza: 'arquivo'`, então a
  * tela que o monta não precisa saber qual dos dois é o certo.
  */
 export { WizardArquivos } from './impexp/WizardArquivos'
 export { useRecursos, useRecurso, useCatalogoImpExp } from './impexp/hooks'
-export type { LimitesDoPlano, RecursoImpExp, ResumoImportacao } from './impexp/api'
+export type {
+  LimitesDoPlano, RecursoImpExp, ResumoImportacao, StatusImportacao,
+} from './impexp/api'

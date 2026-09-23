@@ -23,6 +23,7 @@ from moduloerp.models import ContaReceber, StatusConta
 from . import carteira as carteira_svc
 from . import correcao
 from . import plano_pagamento
+from . import vencimento as vencimento_svc
 from .models import (
     Cliente,
     ClienteEmpreendimento,
@@ -244,12 +245,33 @@ class ClienteEmpreendimentoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewS
     action_permission_map = {
         # Simular é leitura: a proposta é anterior à venda e não grava nada — o
         # corretor precisa cotar antes de ter permissão para fechar.
+        "condicoes": "cadastro.venda.view",
         "simular": "cadastro.venda.view",
+        # Ver o carnê que sairia é leitura, como simular: quem pode cotar pode
+        # conferir o que seria criado antes de pedir a emissão a quem a emite.
+        "previa_parcelas": "cadastro.venda.view",
         "gerar_parcelas": "cadastro.venda.gerar_carne",
         # Reajustar mexe no valor de títulos já emitidos — é a mesma classe de
         # ato que emitir o carnê, não edição de venda.
         "corrigir": "cadastro.venda.gerar_carne",
     }
+
+    @action(detail=False, methods=['get'], url_path='condicoes')
+    def condicoes(self, request):
+        """`GET /api/clientes-empreendimentos/condicoes/` — o que cada forma de
+        pagamento comporta.
+
+        Existe para o formulário **ler** a regra em vez de reescrevê-la. Ela
+        morava duplicada: um `PLANO_DA_CONDICAO` no React decidia quais campos
+        mostrar, e o motor de cálculo decidia, por conta própria, o que aceitar.
+        Duas cópias da mesma regra é uma que um dia discorda da outra — e a que
+        discorda em silêncio é a da tela, porque ela some do rastro.
+
+        Leitura pura, sem tenant: é o catálogo do produto, igual para todo mundo.
+        """
+        return Response({
+            'condicoes': [c.como_dict() for c in plano_pagamento.CONDICOES.values()],
+        })
 
     @action(detail=False, methods=['post'], url_path='simular')
     def simular(self, request):
@@ -263,11 +285,23 @@ class ClienteEmpreendimentoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewS
         dados = request.data or {}
         unidade_id = dados.get('unidade')
         valor_tabela = dados.get('valor_tabela')
-        if unidade_id and valor_tabela in (None, ''):
-            unidade = self._scope(Unidade.objects.all()).filter(pk=unidade_id).first()
+        unidade = None
+        if unidade_id:
+            unidade = (
+                self._scope(Unidade.objects.select_related('empreendimento'))
+                .filter(pk=unidade_id).first()
+            )
             if unidade is None:
                 return Response({'unidade': 'Unidade não encontrada.'}, status=400)
-            valor_tabela = unidade.valor_base
+            if valor_tabela in (None, ''):
+                valor_tabela = unidade.valor_base
+
+        # O carnê simulado é o carnê que vai ser emitido — e nele não existe
+        # vencimento no domingo. Simular sem o calendário mostraria ao comprador
+        # datas que o boleto não vai ter.
+        ajuste = vencimento_svc.ajuste_do_empreendimento(
+            unidade.empreendimento if unidade else None
+        )
 
         try:
             plano = plano_pagamento.montar(
@@ -286,11 +320,19 @@ class ClienteEmpreendimentoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewS
                 balao_periodicidade=dados.get('balao_periodicidade') or 'anual',
                 balao_primeiro_vencimento=_data(dados.get('balao_primeiro_vencimento')),
                 data_compra=_data(dados.get('data_compra')),
-                a_vista=dados.get('condicoes_pagamento') == 'a_vista',
+                condicoes_pagamento=dados.get('condicoes_pagamento'),
+                ajustar_vencimento=ajuste,
             )
         except (ValueError, InvalidOperation) as erro:
             return Response({'detail': str(erro)}, status=400)
-        return Response(plano.como_dict())
+        return Response({
+            **plano.como_dict(),
+            # A tela precisa poder dizer "ajustado para o próximo dia útil" e,
+            # quando a base de feriados nunca foi sincronizada, precisa dizer que
+            # só desviou de sábado e domingo. Prometer feriado que não se conhece
+            # é o oposto de dado honesto.
+            'calendario': _estado_do_calendario(ajuste),
+        })
 
     @action(detail=True, methods=['post'], url_path='gerar-parcelas')
     def gerar_parcelas(self, request, pk=None):
@@ -304,6 +346,19 @@ class ClienteEmpreendimentoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewS
         Idempotente por decisão explícita: se já houve geração, recusa com 409 em
         vez de duplicar o carnê. Regerar exige apagar as parcelas em aberto —
         e nunca apaga as pagas.
+
+        **O escopo é UMA aquisição, e a resposta o diz por extenso.** O endpoint
+        é `detail=True`: não há caminho aqui que toque outra venda, outro cliente
+        ou outro lote. A resposta devolve cliente, empreendimento e unidade
+        porque a tela precisa confirmar *o que* foi criado — quem gera um carnê e
+        depois olha o total do ERP (que soma a carteira inteira, de todos os
+        compradores) não tem como saber, só pelo número, que os títulos novos são
+        os três dele.
+
+        O vencimento sai já no **dia útil bancário** da praça do imóvel: sábado,
+        domingo e feriado — nacional, estadual e municipal — empurram a data para
+        a frente. Boleto que vence no domingo é parcela que só pode ser paga em
+        atraso.
         """
         aquisicao = self.get_object()
         if aquisicao.parcelas_geradas_em:
@@ -312,8 +367,9 @@ class ClienteEmpreendimentoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewS
                  'geradasEm': aquisicao.parcelas_geradas_em.isoformat()},
                 status=409,
             )
+        ajuste = vencimento_svc.ajuste_da_aquisicao(aquisicao)
         try:
-            plano = plano_pagamento.montar_da_aquisicao(aquisicao)
+            plano = plano_pagamento.montar_da_aquisicao(aquisicao, ajustar_vencimento=ajuste)
         except ValueError as erro:
             return Response({'detail': str(erro)}, status=400)
         if not plano.parcelas:
@@ -330,9 +386,8 @@ class ClienteEmpreendimentoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewS
                     cliente=aquisicao.cliente,
                     empreendimento=aquisicao.empreendimento,
                     cliente_empreendimento=aquisicao,
-                    descricao=(
-                        f"{plano_pagamento.descricao_da_parcela(parcela, totais[parcela.tipo])}"
-                        f" — {aquisicao.unidade.rotulo}"
+                    descricao=plano_pagamento.descricao_do_titulo(
+                        parcela, totais[parcela.tipo], aquisicao,
                     ),
                     valor=parcela.valor,
                     data_emissao=aquisicao.data_compra,
@@ -348,7 +403,52 @@ class ClienteEmpreendimentoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewS
             'geradas': len(titulos),
             'total': str(plano.total),
             'geradasEm': aquisicao.parcelas_geradas_em.isoformat(),
+            'aquisicaoId': aquisicao.pk,
+            'clienteId': aquisicao.cliente_id,
+            'cliente': aquisicao.cliente.nome_completo,
+            'empreendimento': aquisicao.empreendimento.empreendimento,
+            'unidade': aquisicao.unidade.rotulo,
+            'ajustadas': plano.parcelas_ajustadas,
+            'calendario': _estado_do_calendario(ajuste),
         }, status=201)
+
+    @action(detail=True, methods=['get'], url_path='previa-parcelas')
+    def previa_parcelas(self, request, pk=None):
+        """`GET /api/clientes-empreendimentos/<id>/previa-parcelas/`
+
+        O carnê que **seria** gerado, sem gerar nada: quantos títulos, de que
+        valor, de quem, de qual unidade e entre que datas.
+
+        Existe porque gerar carnê é irreversível pela tela — o botão some e o 409
+        barra a segunda tentativa — e ato irreversível não pode ser um clique sem
+        prévia. É também o que responde à dúvida legítima de quem clica e depois
+        vê dezenas de milhares de títulos no ERP: o número aqui é o desta venda,
+        e é ele que a confirmação mostra.
+        """
+        aquisicao = self.get_object()
+        ajuste = vencimento_svc.ajuste_da_aquisicao(aquisicao)
+        try:
+            plano = plano_pagamento.montar_da_aquisicao(aquisicao, ajustar_vencimento=ajuste)
+        except ValueError as erro:
+            return Response({'detail': str(erro)}, status=400)
+        return Response({
+            'jaGeradas': bool(aquisicao.parcelas_geradas_em),
+            'aquisicaoId': aquisicao.pk,
+            'clienteId': aquisicao.cliente_id,
+            'cliente': aquisicao.cliente.nome_completo,
+            'empreendimento': aquisicao.empreendimento.empreendimento,
+            'unidade': aquisicao.unidade.rotulo,
+            'quantidade': plano.quantidade_parcelas,
+            'total': str(plano.total),
+            'primeiroVencimento': (
+                plano.parcelas[0].vencimento.isoformat() if plano.parcelas else None
+            ),
+            'ultimoVencimento': (
+                plano.parcelas[-1].vencimento.isoformat() if plano.parcelas else None
+            ),
+            'ajustadas': plano.parcelas_ajustadas,
+            'calendario': _estado_do_calendario(ajuste),
+        })
 
     @action(detail=True, methods=['get', 'post'], url_path='corrigir')
     def corrigir(self, request, pk=None):
@@ -419,6 +519,25 @@ class ClienteEmpreendimentoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewS
             )
         resposta.update(aplicado=True, alteradas=len(alterados))
         return Response(resposta)
+
+
+def _estado_do_calendario(ajuste) -> dict:
+    """O que a tela precisa saber sobre o ajuste de dia útil.
+
+    `feriadosCarregados=False` é o que impede a promessa vazia: a tabela de
+    feriados é global e nasce **vazia** (quem a enche é
+    `manage.py sincronizar_feriados`). Sem ela o vencimento ainda desvia de
+    sábado e domingo, mas não de feriado — e a tela tem de dizer isso, senão o
+    usuário lê "ajustado para o próximo dia útil" e acredita em algo que
+    aconteceu pela metade.
+    """
+    from modulocalendar.dias_uteis import base_sincronizada
+
+    return {
+        'uf': ajuste.uf,
+        'municipio': bool(ajuste.ibge),
+        'feriadosCarregados': base_sincronizada(),
+    }
 
 
 def _decimal(valor) -> Decimal:
@@ -570,18 +689,34 @@ class CarteiraGruposView(CarteiraBaseView):
 
     Os cabeçalhos recolhíveis da grade. Contagem e subtotais vêm de `GROUP BY`
     sobre a carteira inteira — não sobre a página que a tela tem em mãos.
+
+    **`count` é o total de linhas, e não a soma dos grupos.** As duas coisas
+    divergem de propósito quando se agrupa pessoas por uma dimensão de muitos:
+    quem comprou em dois empreendimentos é *um* cliente e aparece em *dois*
+    grupos, então somar os cabeçalhos dá 5.312 numa carteira de 5.000. Cada
+    grupo continua contando distinto (`Count(distinct=True)`), o que o mantém
+    certo dentro dele; o que não fecha é a soma entre grupos, e é por isso que o
+    total vem daqui, calculado sobre o mesmo recorte, em vez de a tela somar os
+    cabeçalhos e ver o número de clientes mudar só porque alguém agrupou.
     """
 
     def get(self, request):
         visao, qs, _ = self.montar(request)
         pode = _pode_financeiro(request)
         niveis = [n for n in request.query_params.get('por', '').split(',') if n]
+        grupos = carteira_svc.agrupar(qs, visao, niveis, pode)
+        total = qs.order_by().values('pk').distinct().count()
         return Response({
             'visao': visao,
             'niveis': niveis[:3],
             'podeFinanceiro': pode,
             'podeDocumento': _pode_documento(request),
-            'grupos': carteira_svc.agrupar(qs, visao, niveis, pode),
+            'count': total,
+            # Quantas linhas estão em mais de um grupo. Zero na maioria das
+            # combinações; quando não é zero, a tela explica a diferença em vez
+            # de deixar o usuário descobrir sozinho que a soma não fecha.
+            'somaDosGrupos': sum(g['contagem'] for g in grupos),
+            'grupos': grupos,
         })
 
 

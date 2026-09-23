@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { Search, X } from 'lucide-react'
 import { useEmpreendimentoOptions, useClienteOptions, useFornecedorOptions } from '../../hooks/useEntityOptions'
 
+import { minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
+
 /**
  * Barra de filtro unificada do ERP (docs/modulos/moduloerp.md §5.1).
  *
@@ -85,7 +87,7 @@ export function FilterBar({ value, onChange, fields, statusOptions, searchPlaceh
       {has('periodo') && (
         <>
           <input
-            type="date"
+            type="date" min={minCalendarioISO} max={maxCalendarioISO}
             value={value.data_de ?? ''}
             onChange={e => set('data_de', e.target.value)}
             title="Vencimento de"
@@ -93,7 +95,7 @@ export function FilterBar({ value, onChange, fields, statusOptions, searchPlaceh
           />
           <span style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>até</span>
           <input
-            type="date"
+            type="date" min={minCalendarioISO} max={maxCalendarioISO}
             value={value.data_ate ?? ''}
             onChange={e => set('data_ate', e.target.value)}
             title="Vencimento até"

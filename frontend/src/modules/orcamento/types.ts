@@ -8,7 +8,7 @@ export interface Paginated<T> {
   results: T[]
 }
 
-export type Fonte = 'sinapi' | 'orse' | 'sicro' | 'seinfra' | 'sedop' | 'tcpo' | 'propria'
+export type Fonte = 'sinapi' | 'orse' | 'sicro' | 'seinfra' | 'sedop' | 'tcpo' | 'embasa' | 'propria'
 /** ORC.8 — `sem` são as abas ISE/CSE do arquivo nacional: preço sem encargos
  *  sociais, que é a base legítima para aplicar o quadro analítico do ORC.7 (usar
  *  preço que já embute encargo da Caixa contaria duas vezes). */
@@ -46,6 +46,12 @@ export interface BaseResumo {
   uf: string
   mes_referencia: string
   regime_encargos: Regime
+  /** Quarto eixo de identidade, e vazio em quase toda publicação. A EMBASA
+   *  publica, para o mesmo semestre e o mesmo regime, uma tabela por escopo ×
+   *  convenção coletiva (`expansao-sintracom`, `operacao-agua-un-fixa-…`) — os
+   *  mesmos códigos com preços diferentes. Sem ele, o seletor chegaria ao
+   *  último passo com duas linhas de nome igual. */
+  variante: string
   insumos: number
   composicoes: number
   /** Quantos insumos da publicação trazem a coluna `Classificação` preenchida.
@@ -1015,8 +1021,37 @@ export interface FonteOficial {
   defasagem_meses: number
   observacao: string
   competencia_sugerida: string
-  /** O motor sabe ler o arquivo desta fonte sozinho? Hoje só a SINAPI. */
+  /** O motor sabe ler o arquivo desta fonte sozinho? Hoje SINAPI e EMBASA. */
   carga_automatica: boolean
+  /** A fonte publica um **menu** em vez de um arquivo do mês? Na SINAPI o certo
+   *  é um botão "carregar 07/2026"; na EMBASA, que põe 65 tabelas por semestre
+   *  no ar, um botão só esconderia a pergunta que importa — qual delas. */
+  exige_documento: boolean
+}
+
+/** Um artefato anunciado pela fonte — o que a tela lista antes do botão.
+ *
+ *  É **menu**, não verdade: espécie e rótulo vêm do nome do arquivo. Quem
+ *  decide onde o preço entra é o cabeçalho do PDF, na leitura. */
+export interface DocumentoDaFonte {
+  url: string
+  rotulo: string
+  slug: string
+  /** `insumos` · `servicos` · `encargos` · `outro` · `pacote`. */
+  especie: string
+  /** Estar na lista é honesto (é o que a página publica); oferecer o botão não
+   *  é. O quadro de Encargos Sociais da EMBASA é da ORC.7, não base de preço. */
+  carregavel: boolean
+}
+
+export interface DocumentosDaFonte {
+  fonte?: Fonte
+  documentos: DocumentoDaFonte[]
+  /** A fonte fora do ar não é erro do pedido, é o estado do mundo — e a tela
+   *  precisa do motivo para oferecer o plano B em vez de uma lista vazia que
+   *  parece "não há nada publicado". */
+  erro: string
+  motivo: string
 }
 
 export interface PublicacaoDoResumo {
@@ -1027,8 +1062,17 @@ export interface PublicacaoDoResumo {
 }
 
 export interface ResumoDaCarga {
+  /** O nome do artefato lido — planilha na SINAPI, PDF na EMBASA. */
   planilha?: string
   aba_analitica?: string
+  /** ORC.8b — o nome que a **fonte** deu à tabela, quando ela publica várias.
+   *  É a conferência de que veio o documento certo: traz escopo, convenção
+   *  coletiva e a leis sociais do cabeçalho do arquivo. */
+  rotulo?: string
+  variante?: string
+  /** A data-base que o artefato declara, quando ele a declara — a EMBASA
+   *  publica por semestre, e a competência pedida é palpite. */
+  competencia_lida?: string
   publicacoes?: PublicacaoDoResumo[]
   total_publicacoes?: number
   linhas_analiticas?: number

@@ -4,6 +4,8 @@ import { useUsuarios } from '../hooks/useUsuarios'
 import { PasswordField } from '@/components/PasswordField'
 import type { UsuarioAdmin, Perfil } from '../types'
 
+import { contemSemAcento } from '@/utils/texto'
+
 const PersonasEditor: React.FC<{
   usuario: UsuarioAdmin
   perfis: Perfil[]
@@ -158,9 +160,9 @@ const UsuariosPage: React.FC = () => {
 
   const nomePorId = useMemo(() => new Map(perfis.map(p => [p.id, p.nome])), [perfis])
   const filtered = useMemo(() => {
-    const q = search.toLowerCase()
+    const q = search.trim()
     if (!q) return usuarios
-    return usuarios.filter(u => u.username.toLowerCase().includes(q) || u.email.toLowerCase().includes(q))
+    return usuarios.filter(u => contemSemAcento(u.username, q) || contemSemAcento(u.email, q))
   }, [usuarios, search])
 
   return (

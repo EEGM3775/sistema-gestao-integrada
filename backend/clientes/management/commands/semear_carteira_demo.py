@@ -28,6 +28,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from clientes import plano_pagamento
+from clientes import vencimento as vencimento_svc
 from clientes.models import Cliente, ClienteEmpreendimento, ContratoCliente
 from empreendimentos.models import Empreendimento, Unidade
 from moduloerp.models import ContaReceber, StatusConta
@@ -258,10 +259,24 @@ class Command(BaseCommand):
         if not pendentes:
             return 0
 
+        # Um ajustador de vencimento por EMPREENDIMENTO, não por aquisição: o
+        # calendário bancário depende da praça do imóvel, que é a mesma para
+        # todos os lotes do loteamento. Sem este cache, semear 2000 vendas seria
+        # 2000 consultas de `Local` e 2000 de feriados para sempre a mesma
+        # resposta — e o comando existe justamente para provar volume.
+        ajustes = {}
+        for aquisicao in pendentes:
+            if aquisicao.empreendimento_id not in ajustes:
+                ajustes[aquisicao.empreendimento_id] = vencimento_svc.ajuste_do_empreendimento(
+                    aquisicao.empreendimento
+                )
+
         titulos, geradas = [], []
         for aquisicao in pendentes:
             try:
-                plano = plano_pagamento.montar_da_aquisicao(aquisicao)
+                plano = plano_pagamento.montar_da_aquisicao(
+                    aquisicao, ajustar_vencimento=ajustes[aquisicao.empreendimento_id],
+                )
             except ValueError:
                 continue
             totais = {}
@@ -275,9 +290,8 @@ class Command(BaseCommand):
                 titulos.append(ContaReceber(
                     tenant=tenant, cliente=aquisicao.cliente,
                     empreendimento=aquisicao.empreendimento, cliente_empreendimento=aquisicao,
-                    descricao=(
-                        f"{plano_pagamento.descricao_da_parcela(parcela, totais[parcela.tipo])}"
-                        f" — {aquisicao.unidade.rotulo}"
+                    descricao=plano_pagamento.descricao_do_titulo(
+                        parcela, totais[parcela.tipo], aquisicao,
                     ),
                     valor=parcela.valor,
                     valor_pago=parcela.valor if quitada else Decimal("0"),

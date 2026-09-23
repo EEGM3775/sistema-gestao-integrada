@@ -170,6 +170,12 @@ class Demanda(TenantScopedModel):
     class Origem(models.TextChoices):
         MANUAL = "manual", _("Manual")
         ESTOQUE = "estoque", _("Falta no estoque")
+        # PDCA.5 — o seam do Last Planner. Restrição de material é a origem
+        # natural de uma compra: o que trava a semana que vem tem de virar
+        # demanda antes, e não depois. Marcar a origem é o que permite ao SCM
+        # dizer "esta cotação está segurando a obra" em vez de tratá-la como
+        # mais uma linha da fila.
+        RESTRICAO = "restricao", _("Restrição de obra (PDCA)")
 
     demanda_id = models.AutoField(primary_key=True)
     # Id estável do documento na rede (o gêmeo espelhado referencia por cópia, não

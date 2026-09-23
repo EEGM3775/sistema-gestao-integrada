@@ -6,7 +6,7 @@ import type {
   Empreendimento, ClienteEmpreendimento,
 } from '@/types'
 import { FieldError, FormErrorBanner, parseApiErrors, type FieldErrors } from '@/utils/formErrors'
-import { minVigenciaISO, maxVigenciaISO, validateISO_Vigencia } from '@/utils/dates'
+import { validateISO_Vigencia, minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
 
 interface Props {
   open: boolean
@@ -156,8 +156,7 @@ const ContratoForm: React.FC<Props> = ({ open, clienteId, aquisicoes, onClose, o
 
           <div>
             <label style={labelCls}>Data de assinatura</label>
-            <input type="date" style={inputCls} value={form.data_assinatura}
-              min={minVigenciaISO()} max={maxVigenciaISO()}
+            <input type="date" min={minCalendarioISO} max={maxCalendarioISO} style={inputCls} value={form.data_assinatura}
               onChange={e => { set('data_assinatura', e.target.value); setFieldErrors(p => ({ ...p, data_assinatura: '' })) }}
               onBlur={e => { const err = validateISO_Vigencia(e.target.value); if (err) setFieldErrors(p => ({ ...p, data_assinatura: err })) }} />
             <FieldError msg={fieldErrors.data_assinatura} />

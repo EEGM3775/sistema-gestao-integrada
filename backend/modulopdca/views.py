@@ -23,7 +23,7 @@ from rest_framework.response import Response
 from nucleo.busca import BuscaSemAcento
 from nucleo.permissions import RequireModule, RequirePermission
 from nucleo.quotas import checar_quota
-from nucleo.tenancy import TenantScopedViewSetMixin
+from nucleo.tenancy import TenantScopedAPIViewMixin, TenantScopedViewSetMixin
 from payment.planos import (
     PDCA_PROFUNDIDADE_MAXIMA_WBS,
     PDCA_TETO_ADITIVOS_ABERTOS_POR_CONTRATO,
@@ -34,20 +34,52 @@ from payment.planos import (
     PDCA_TETO_ITENS_POR_CONTRATO,
     PDCA_TETO_LINHAS_POR_LOTE,
     PDCA_TETO_LINHAS_POR_MEDICAO,
+    PDCA_TETO_ITENS_POR_PROGRAMACAO,
+    PDCA_TETO_RESTRICOES_ABERTAS_POR_OBRA,
+    PDCA_TETO_CAUSAS_POR_TENANT,
+    PDCA_TETO_LINHAS_DE_BALANCO,
+    PDCA_TETO_LOCAIS_NA_LINHA_DE_BALANCO,
+    PDCA_TETO_LOCAIS_POR_RITMO,
+    PDCA_TETO_ACOES_POR_NC,
+    PDCA_TETO_ITENS_POR_MODELO_VERIFICACAO,
+    PDCA_TETO_MODELOS_POR_TENANT,
+    PDCA_TETO_NCS_ABERTAS_POR_OBRA,
+    PDCA_TETO_ANEXOS_POR_OCORRENCIA,
+    PDCA_TETO_OCORRENCIAS_NA_FILA,
+    PDCA_TETO_PARTICIPANTES_POR_DDS,
+    PDCA_TETO_LINHAS_POR_FAIXA_DA_FILA,
+    PDCA_TETO_LINHAS_POR_FRENTE,
+    PDCA_TETO_OBRAS_NA_CARTEIRA,
+    PDCA_TETO_RESULTADOS_POR_ESPECIE,
 )
 
 from . import services
 from .models import (
     AditivoContrato, ApontamentoAvanco, Atividade, CalendarioTrabalho,
+    CausaNaoCumprimento, ItemProgramacao, ProgramacaoSemanal, Restricao,
     ContratoObra, Cronograma, ExcecaoCalendario, ItemContrato,
     LiberacaoRetencao, LocalObra, Medicao, Precedencia,
+    ItemModeloVerificacao, ItemVerificacao, ModeloVerificacao,
+    NaoConformidade, PlanoAcao, Verificacao,
+    AnexoOcorrencia, DialogoSeguranca, Ocorrencia,
 )
 from .pagination import PdcaPageNumberPagination
 from .serializers import (
     AbrirAditivoSerializer,
     AbrirMedicaoSerializer,
+    AbrirProgramacaoSerializer,
+    GerarRitmoSerializer,
     AditivoContratoSerializer,
     AtestarSerializer,
+    CausaNaoCumprimentoSerializer,
+    EncerrarSerializer,
+    GerarDemandaSerializer,
+    ItemProgramacaoSerializer,
+    JulgarSerializer,
+    ProgramacaoSemanalSerializer,
+    ReabrirSerializer,
+    RemoverRestricaoSerializer,
+    RestricaoSerializer,
     CabecalhoDeMedicaoSerializer,
     LinhaDeAditivoSerializer,
     LinhaDeDeducaoSerializer,
@@ -75,6 +107,30 @@ from .serializers import (
     RetificarSerializer,
     SolicitarLiberacaoSerializer,
     SubmeterSerializer,
+    AplicarModeloVerificacaoSerializer,
+    CancelarNcSerializer,
+    DuplicarModeloSerializer,
+    EncerrarNcSerializer,
+    GerarRestricaoSerializer,
+    ItemModeloVerificacaoSerializer,
+    ItemVerificacaoSerializer,
+    ModeloResumoSerializer,
+    ModeloVerificacaoSerializer,
+    NaoConformidadeSerializer,
+    NcResumoSerializer,
+    PlanoAcaoSerializer,
+    RegistrarEficaciaSerializer,
+    VerificacaoSerializer,
+    AnexoOcorrenciaSerializer,
+    ClassificarOcorrenciaSerializer,
+    DialogoSegurancaSerializer,
+    EncerrarDdsSerializer,
+    EncerrarOcorrenciaSerializer,
+    InterditarFrenteSerializer,
+    OcorrenciaResumoSerializer,
+    OcorrenciaSerializer,
+    RegistrarCatSerializer,
+    RegistrarPresencaSerializer,
 )
 
 
@@ -90,7 +146,7 @@ class PdcaStatusView(views.APIView):
             "status": "ativo",
             # A tela precisa saber o que existe para não oferecer o que ainda não
             # foi construído — dado honesto vale para a própria capacidade.
-            "fatia": "PDCA.4",
+            "fatia": "PDCA.8",
             "recursos": {
                 "locais": True,
                 "calendario": True,
@@ -106,6 +162,68 @@ class PdcaStatusView(views.APIView):
                 "aditivo": True,
                 "deducoes": True,
                 "material_estocado": True,
+                # PDCA.5 — o Check e o Act. A restrição bloqueia o compromisso,
+                # o compromisso vira PPC e o PPC vira ranking de causa.
+                "restricao": True,
+                "programacao_semanal": True,
+                "ppc": True,
+                "ranking_de_causas": True,
+                # O seam do SCM é vivo: restrição de material vira demanda.
+                "restricao_gera_demanda": True,
+                # A semana encerrada deixou de ser um beco: `reabrir/` desce um
+                # degrau, com motivo, e a correção fica visível no PPC.
+                "reabrir_semana": True,
+                # PDCA.6 — o plano visto pelo ritmo, e não pela duração.
+                "linha_de_balanco": True,
+                "ritmo": True,
+                "conflito_de_equipe": True,
+                # PDCA.7 — a máquina de verificação: uma máquina, quatro
+                # domínios. A ficha congela a pergunta que respondeu, e a NC não
+                # encerra sem eficácia verificada.
+                "modelo_verificacao": True,
+                "verificacao": True,
+                "nao_conformidade": True,
+                "plano_acao_5w2h": True,
+                "verificacao_eficacia": True,
+                "conformidade": True,
+                "ranking_de_itens_que_reprovam": True,
+                # E o seam vivo com o Last Planner: NC grave **para o serviço**
+                # de verdade — abre restrição, e a atividade sai do quadro.
+                "nc_gera_restricao": True,
+                # O que a PDCA.7 **não** fecha, dito na capacidade para a tela
+                # não oferecer botão que não existe: a NC aceita ser **ancorada**
+                # numa marcação da Prancheta (o campo existe e viaja resolvido),
+                # mas **criar** o pino sobre o desenho a partir daqui é verbo do
+                # outro módulo — exige revisão e folha, que são dele. E não há
+                # biblioteca de fichas de fábrica: FVS é o método da empresa, e
+                # semear a nossa faria o cliente se certificar contra o nosso
+                # chute (planta §11.14).
+                "nc_cria_marcacao_na_prancheta": False,
+                "modelos_de_fabrica": False,
+                # PDCA.8 — SSMA. Registrar é barato e classificar é que pesa;
+                # a CAT é devida mesmo sem afastamento e o sistema avisa o
+                # prazo; e o acidente grave **para o serviço** pela mesma
+                # corrente da NC crítica.
+                "dialogo_seguranca": True,
+                "ocorrencia": True,
+                "classificacao_segregada": True,
+                "cat_prazo_e_protocolo": True,
+                "ocorrencia_interdita_frente": True,
+                "ocorrencia_gera_investigacao": True,
+                "piramide_de_ocorrencias": True,
+                # O que a PDCA.8 **não** fecha, dito na capacidade para a tela
+                # não prometer o que o sistema não sabe:
+                #  · as taxas de frequência e gravidade dividem por homem-hora,
+                #    e homem-hora é a PDCA.9 — elas voltam nulas com motivo;
+                #  · a entrega de EPI é do SIL *(decisão do dono, 20/09/2026)*:
+                #    a SSMA lê, sob `sil.epi.view`, e declara quando o módulo
+                #    não está contratado;
+                #  · a transmissão do evento eSocial S-2210 é da folha. Aqui
+                #    mora o protocolo, não o envio.
+                "taxa_frequencia": False,
+                "taxa_gravidade": False,
+                "epi_proprio": False,
+                "transmite_esocial": False,
                 # O que a PDCA.4 **não** fecha, dito na própria capacidade: a
                 # planilha do empreiteiro entra colando coluna na grade, não por
                 # um wizard de xlsx com conferência lado a lado; e o anexo por
@@ -115,6 +233,23 @@ class PdcaStatusView(views.APIView):
                 # não foi feito.
                 "importar_planilha_do_empreiteiro": False,
                 "anexo_por_linha": False,
+                # O cockpit — as leituras que atravessam postos e obras. Estão
+                # aqui porque a tela decide **a navegação** por elas: com a
+                # busca única, o menu se mantém em seis postos; sem ela, cada
+                # assunto novo do backend volta a pressionar por uma porta.
+                "carteira": True,
+                "fila_do_dia": True,
+                "pulso_da_obra": True,
+                "busca_unica": True,
+                "mudancas_recentes": True,
+                # A quinta, e a única que responde a quem está **dentro** da
+                # obra: o que é meu, agora. É a leitura da superfície de campo.
+                "minhas_frentes": True,
+                # O que a superfície de campo **não** faz, dito na capacidade
+                # para a tela declarar a dependência em vez de fingir: não há
+                # fila local. Perder um apontamento em silêncio é pior do que
+                # recusá-lo, e o trabalho offline é fase de plataforma.
+                "campo_offline": False,
             },
             # Os tetos que a TELA precisa respeitar antes de mandar a requisição.
             # Só estes: quem decide o número continua sendo o dono, em
@@ -134,6 +269,36 @@ class PdcaStatusView(views.APIView):
                     PDCA_TETO_ADITIVOS_ABERTOS_POR_CONTRATO
                 ),
                 "deducoes_por_medicao": PDCA_TETO_DEDUCOES_POR_MEDICAO,
+                "itens_por_programacao": PDCA_TETO_ITENS_POR_PROGRAMACAO,
+                "restricoes_abertas_por_obra": (
+                    PDCA_TETO_RESTRICOES_ABERTAS_POR_OBRA
+                ),
+                "causas_por_tenant": PDCA_TETO_CAUSAS_POR_TENANT,
+                "locais_na_linha_de_balanco": (
+                    PDCA_TETO_LOCAIS_NA_LINHA_DE_BALANCO
+                ),
+                "linhas_de_balanco": PDCA_TETO_LINHAS_DE_BALANCO,
+                "locais_por_ritmo": PDCA_TETO_LOCAIS_POR_RITMO,
+                "itens_por_modelo_verificacao": (
+                    PDCA_TETO_ITENS_POR_MODELO_VERIFICACAO
+                ),
+                "modelos_por_tenant": PDCA_TETO_MODELOS_POR_TENANT,
+                "ncs_abertas_por_obra": PDCA_TETO_NCS_ABERTAS_POR_OBRA,
+                "acoes_por_nc": PDCA_TETO_ACOES_POR_NC,
+                # PDCA.8. **Não há `ocorrencias_abertas_por_obra`**, e a
+                # ausência é declarada: um teto ali recusaria o registro de um
+                # acidente porque a obra já tem registros demais (§5.5m).
+                "participantes_por_dds": PDCA_TETO_PARTICIPANTES_POR_DDS,
+                "anexos_por_ocorrencia": PDCA_TETO_ANEXOS_POR_OCORRENCIA,
+                "ocorrencias_na_fila": PDCA_TETO_OCORRENCIAS_NA_FILA,
+                # Os três do cockpit. A tela precisa deles para **dizer o que
+                # ficou de fora** em vez de mostrar uma lista cortada em
+                # silêncio — carteira truncada sem aviso é a diretoria
+                # decidindo sobre 40 obras achando que viu 57.
+                "obras_na_carteira": PDCA_TETO_OBRAS_NA_CARTEIRA,
+                "linhas_por_faixa_da_fila": PDCA_TETO_LINHAS_POR_FAIXA_DA_FILA,
+                "resultados_por_especie": PDCA_TETO_RESULTADOS_POR_ESPECIE,
+                "linhas_por_frente": PDCA_TETO_LINHAS_POR_FRENTE,
             },
         })
 
@@ -436,6 +601,52 @@ class CronogramaViewSet(BasePdcaViewSet):
             "cronograma": CronogramaSerializer(cronograma, context=self.get_serializer_context()).data,
             "cpm": resultado,
         })
+
+    @action(detail=True, methods=["get"], url_path="linha-de-balanco")
+    def linha_de_balanco(self, request, pk=None):
+        """A LOB — eixo de locais, retas por serviço, ritmo, gargalo e choques.
+
+        Derivada inteira (§4.9), como o CPM e a curva S: vem do servidor porque
+        a inclinação é conta sobre datas, e duas contas para o mesmo ritmo
+        produziriam dois ritmos na mesma obra.
+        """
+        cronograma = self.get_object()
+        return Response(_str_decimais(services.linha_de_balanco(
+            cronograma, tenant_id=request.user.tenant_id,
+        )))
+
+    @action(detail=True, methods=["post"])
+    def ritmo(self, request, pk=None):
+        """**Desenhar a linha** — o gesto que a planta §5.2 põe no lugar do arrastar.
+
+        Exige `pdca.cronograma.edit`, e não um verbo próprio: o que este gesto
+        faz é **criar atividades e precedências**. Um `pdca.lob.edit` separado
+        seria uma permissão para uma *vista* do plano, e daria a alguém o poder
+        de mudar o cronograma por uma porta que não se chama cronograma.
+        """
+        cronograma = self.get_object()
+        entrada = GerarRitmoSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        dados = entrada.validated_data
+        try:
+            resultado = services.gerar_ritmo(
+                cronograma=cronograma,
+                locais=dados["locais"],
+                inicio=dados["inicio"],
+                duracao_por_local=dados["duracao_por_local"],
+                ritmo_dias=dados.get("ritmo_dias"),
+                pai_id=dados.get("pai"),
+                nome=dados.get("nome", ""),
+                codigo=dados.get("codigo", ""),
+                simular=dados["simular"],
+                tenant_id=request.user.tenant_id,
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        return Response(
+            _str_decimais(resultado),
+            status=status.HTTP_200_OK if dados["simular"] else status.HTTP_201_CREATED,
+        )
 
     @action(detail=True, methods=["post"])
     def replanejar(self, request, pk=None):
@@ -955,6 +1166,26 @@ def _meu_contrato(request, contrato_id):
     return contrato
 
 
+def _minha_obra(request, obra_id):
+    """A obra, conferida contra o tenant de quem pede — irmão do `_meu_contrato`.
+
+    Mesma razão: a RLS recusaria o cruzamento, mas devolvendo "não existe", e
+    quem abre a programação da semana precisa saber a diferença entre um id
+    errado e uma obra de outra empresa.
+    """
+    from obras.models import Obra
+
+    if not obra_id:
+        raise ValidationError({"obra": "Informe a obra."})
+    obra = Obra.objects.filter(pk=obra_id).first()
+    if obra is None:
+        raise ValidationError({"obra": "Obra não encontrada."})
+    meu = getattr(request.user, "tenant_id", None)
+    if meu is not None and obra.tenant_id != meu:
+        raise ValidationError({"obra": "Esta obra não é desta empresa."})
+    return obra
+
+
 def _exige(request, permissao: str, motivo: str) -> None:
     """Confere uma permissão **além** da do portão, com a mesma leitura
     fail-closed do `RequirePermission`: admin de tenant e superusuário passam,
@@ -971,6 +1202,23 @@ def _exige(request, permissao: str, motivo: str) -> None:
         return
     if permissao not in (getattr(usuario, "iam_permissions", None) or []):
         raise PermissionDenied(motivo)
+
+
+def _tem_permissao(request, permissao: str) -> bool:
+    """A mesma leitura do `_exige`, mas **perguntando em vez de barrando**.
+
+    Existe para a regra que depende de duas coisas ao mesmo tempo — a permissão
+    e o estado —, e em que só quem conhece o estado sabe se a permissão é
+    exigida. O caso é o encerramento antecipado da semana: a data mora no
+    `services`, a claim mora aqui, e conferir a data nas duas pontas criaria
+    duas regras que discordam no dia em que uma delas mudar.
+    """
+    usuario = request.user
+    if getattr(usuario, "is_tenant_admin", False) or getattr(
+        usuario, "is_superuser", False
+    ):
+        return True
+    return permissao in (getattr(usuario, "iam_permissions", None) or [])
 
 
 class ContratoObraViewSet(BasePdcaViewSet):
@@ -1188,7 +1436,16 @@ class MedicaoViewSet(TenantScopedViewSetMixin,
         "linhas": "pdca.medicao.apurar",
         "submeter": "pdca.medicao.apurar",
         "retificar": "pdca.medicao.apurar",
-        "cancelar": "pdca.medicao.apurar",
+        #: **Piso, e o degrau certo é exigido dentro da ação** — mesma forma do
+        #: `reabrir` da programação, porque aqui também é o **estado** que
+        #: decide de quem é o ato. Cancelar um rascunho é de quem apura;
+        #: cancelar uma aprovada derruba um título a pagar e é de quem ateste.
+        #:
+        #: Exigir `apurar` no portão parecia o piso natural e **fechava a porta
+        #: para a pessoa certa**: `diretoria` e `fiscal_de_obra` têm
+        #: `medicao.atestar` e **não** têm `apurar` (é a segregação da §8, de
+        #: propósito), então o portão as barrava antes de a ação rodar.
+        "cancelar": "pdca.medicao.view",
         # Decidir é verbo de outra pessoa (planta §8). Quando há escada
         # configurada, o motor do `nucleo` confere a permissão do **degrau** e
         # esta aqui é só o portão de entrada; sem escada, ela é a decisão.
@@ -1442,24 +1699,42 @@ class MedicaoViewSet(TenantScopedViewSetMixin,
 
     @action(detail=True, methods=["post"])
     def cancelar(self, request, pk=None):
-        """Retira o documento sem decidir o mérito.
+        """Retira o documento sem decidir o mérito — **e o título do ERP junto**.
 
         Cancelar **também congela** (ver `Medicao.esta_congelada`): um documento
         retirado que voltasse a ser editável seria o caminho para reaproveitar
         número de medição.
+
+        **A medição aprovada passou a poder ser cancelada**, e é a correção do
+        defeito que o dono achou: antes a porta era fechada para ela, então o
+        gestor cancelava a que ainda estava em aprovação — e para a aprovada não
+        havia gesto nenhum que alcançasse o título já gerado no ERP. O título
+        ficava aberto no financeiro apontando para um boletim retirado.
+
+        **A permissão é a de atestar, não a de apurar.** Cancelar uma medição
+        aprovada derruba um título a pagar: é ato da mesma alçada que autorizou
+        o dinheiro a sair, e não de quem monta o boletim. Enquanto ela é
+        rascunho ou está em aprovação, nada saiu, e `apurar` basta.
         """
         from nucleo import aprovacao as motor
 
         medicao = self.get_object()
-        if medicao.esta_congelada:
-            raise ValidationError({
-                "detail": (
-                    f"A medição já está {medicao.get_status_display().lower()} e "
-                    f"não se cancela."
-                ),
-            })
+        if medicao.status == Medicao.Status.APROVADA:
+            self._exige(request, "pdca.medicao.atestar", (
+                "Cancelar uma medição aprovada derruba o título a pagar que ela "
+                "gerou — é ato de quem tem alçada sobre o dinheiro, e exige "
+                "'pdca.medicao.atestar'."
+            ))
+        else:
+            #: O portão só pede `view` (ver o `action_permission_map`), então o
+            #: degrau de quem **monta** o boletim é cobrado aqui. Sem esta linha,
+            #: baixar o piso teria deixado qualquer leitor retirar um rascunho.
+            self._exige(request, "pdca.medicao.apurar", (
+                "Retirar uma medição que ainda não foi aprovada é ato de quem a "
+                "monta — exige 'pdca.medicao.apurar'."
+            ))
         pedido = motor.pedido_de(medicao)
-        if pedido is not None:
+        if pedido is not None and not medicao.esta_congelada:
             try:
                 motor.cancelar(
                     pedido=pedido, usuario=request.user,
@@ -1467,10 +1742,18 @@ class MedicaoViewSet(TenantScopedViewSetMixin,
                 )
             except DjangoValidationError as erro:
                 raise ValidationError({"detail": erro.messages})
-        medicao.status = Medicao.Status.CANCELADA
-        medicao.congelada_em = timezone.now()
-        medicao.save(update_fields=["status", "congelada_em"])
-        return Response(self.get_serializer(medicao).data)
+        try:
+            resultado = services.cancelar_medicao(
+                medicao=medicao,
+                motivo=request.data.get("motivo", ""),
+                por=_quem_e(request),
+                usuario=request.user,
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        return Response({
+            **resultado, "medicao_dados": self.get_serializer(medicao).data,
+        })
 
     def perform_destroy(self, instance):
         self._so_rascunho(instance)
@@ -1697,21 +1980,1445 @@ class LiberacaoRetencaoViewSet(TenantScopedViewSetMixin,
     ordering_fields = ["data", "valor"]
 
 
-def _str_decimais(dados):
-    """`Decimal` vira string no JSON, recursivamente.
+#: `Decimal` vira string no JSON, recursivamente — a definição mora no
+#: `services` desde 15/09/2026, porque o serializer também precisa dela e não
+#: pode importar daqui (este módulo importa dele). Ver a docstring lá.
+_str_decimais = services.str_decimais
 
-    O `float` do JSON tem 53 bits de mantissa e **não representa centavo
-    exatamente** — é a razão de o DRF serializar `DecimalField` como string por
-    padrão. Estes endpoints devolvem dicionários montados à mão, fora de um
-    serializer, e sem esta passada o dinheiro sairia como float: R$ 1.234,57
-    viraria 1234.5699999999999 na tela do gestor.
+
+# ---------------------------------------------------------------------------
+# PDCA.5 — Last Planner: make-ready, compromisso da semana e causa
+# ---------------------------------------------------------------------------
+# Três viewsets e uma separação de verbos que segue a mesma régua da medição:
+#   - `pdca.restricao.view|edit|remover` — **remover** é ato que conclui (§5.4
+#     da planta), e não uma edição mais forte: é a declaração de que o
+#     make-ready aconteceu, e ela carrega a nota que a reunião seguinte lê;
+#   - `pdca.programacao.view|comprometer|encerrar` — **comprometer** é o time
+#     assumindo perante os colegas e **encerrar** é julgar o que saiu. Montar o
+#     quadro (puxar cartão) é `comprometer` também: quem monta a parede é quem
+#     vai assumi-la, e separar os dois criaria um papel que arruma cartão sem
+#     poder assinar embaixo.
+
+
+class RestricaoViewSet(BasePdcaViewSet):
+    """O *constraint log* — o que trava a obra, e o ato de destravar."""
+
+    queryset = Restricao.objects.select_related(
+        "atividade", "atividade__cronograma", "local", "demanda_scm",
+    ).all()
+    serializer_class = RestricaoSerializer
+    required_resource = "pdca.restricao"
+    action_permission_map = {
+        "remover": "pdca.restricao.remover",
+        "gerar_demanda": "pdca.restricao.edit",
+    }
+    filterset_fields = {
+        "atividade": ["exact"],
+        "atividade__cronograma__obra": ["exact"],
+        "tipo": ["exact"],
+        "status": ["exact"],
+        "prazo": ["exact", "lte", "gte"],
+    }
+    search_fields = ["descricao", "responsavel", "atividade__nome"]
+    ordering_fields = ["prazo", "criada_em", "status"]
+
+    def perform_create(self, serializer):
+        atividade = serializer.validated_data.get("atividade")
+        obra_id = getattr(
+            getattr(atividade, "cronograma", None), "obra_id", None
+        )
+        if obra_id:
+            try:
+                services.validar_teto_de_restricoes(
+                    obra_id, tenant_id=self.request.user.tenant_id,
+                )
+            except DjangoValidationError as erro:
+                raise ValidationError({"detail": erro.messages})
+        #: O `tenant_id` vai **explícito**, e não por herança: sobrescrever
+        #: `perform_create` sem repeti-lo faz a linha nascer sem tenant, e a RLS
+        #: recusa o INSERT com 500 (achado pelo `pdca5_programacao_test.py` — a
+        #: suíte não pegava porque monta `Restricao` pelo ORM, com o tenant na
+        #: mão, e nunca atravessa este método).
+        serializer.save(
+            tenant_id=getattr(self.request.user, "tenant_id", None),
+            criada_por=_quem_e(self.request),
+        )
+
+    @action(detail=True, methods=["post"])
+    def remover(self, request, pk=None):
+        """O ato que conclui o make-ready — e ele exige dizer **como**."""
+        restricao = self.get_object()
+        entrada = RemoverRestricaoSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        try:
+            services.remover_restricao(
+                restricao=restricao,
+                por=_quem_e(request),
+                nota=entrada.validated_data["nota"],
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        return Response(self.get_serializer(restricao).data)
+
+    @action(detail=True, methods=["post"], url_path="gerar-demanda")
+    def gerar_demanda(self, request, pk=None):
+        """O seam do SCM, vivo: restrição de material → demanda de compra.
+
+        Exige **a permissão de comprar, além da de editar restrição**: abrir
+        demanda é gesto do Suprimentos, e deixar que só `pdca.restricao.edit`
+        o fizesse criaria uma porta lateral para a fila de compras.
+        """
+        restricao = self.get_object()
+        _exige(request, "scm.demanda.edit", (
+            "Gerar demanda a partir de uma restrição abre um documento no "
+            "Suprimentos, e isso exige 'scm.demanda.edit'. Peça ao "
+            "administrador ou registre a restrição sem gerar a compra."
+        ))
+        entrada = GerarDemandaSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        try:
+            demanda_id = services.gerar_demanda_scm(
+                restricao=restricao,
+                quantidade=entrada.validated_data.get("quantidade"),
+                unidade=entrada.validated_data.get("unidade", ""),
+                solicitante=request.user,
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        return Response(
+            {"demanda": demanda_id,
+             "restricao": self.get_serializer(restricao).data},
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class CausaNaoCumprimentoViewSet(BasePdcaViewSet):
+    """O catálogo de causas — de fábrica e extensível pelo tenant.
+
+    **Gateado por `pdca.programacao.*`, e não por um recurso próprio.** A causa
+    não é um cadastro que alguém administra por si: ela existe para ser escolhida
+    no encerramento da semana, e quem encerra é quem precisa poder acrescentar a
+    que faltou na hora em que ela faltou. Um `pdca.causa.edit` separado
+    produziria a reunião parada esperando um administrador.
     """
-    from decimal import Decimal as _D
 
-    if isinstance(dados, _D):
-        return str(dados)
-    if isinstance(dados, dict):
-        return {chave: _str_decimais(valor) for chave, valor in dados.items()}
-    if isinstance(dados, (list, tuple)):
-        return [_str_decimais(valor) for valor in dados]
-    return dados
+    queryset = CausaNaoCumprimento.objects.all()
+    serializer_class = CausaNaoCumprimentoSerializer
+    required_resource = "pdca.programacao"
+    permission_map = {
+        "view": "pdca.programacao.view",
+        "write": "pdca.programacao.encerrar",
+    }
+    filterset_fields = ["categoria", "ativo", "de_fabrica"]
+    search_fields = ["codigo", "nome"]
+    ordering_fields = ["codigo", "categoria", "nome"]
+
+    def perform_create(self, serializer):
+        try:
+            services.validar_teto_de_causas(self.request.user.tenant_id)
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        #: Mesma razão da `Restricao` acima — o tenant vai explícito.
+        serializer.save(tenant_id=getattr(self.request.user, "tenant_id", None))
+
+    def perform_destroy(self, instance):
+        #: Causa já usada não se apaga — o histórico de PPC perderia o rótulo.
+        #: O caminho é `ativo=False`, que a tira da lista de escolha e a mantém
+        #: legível no passado.
+        if instance.itens.exists():
+            raise ValidationError({"detail": [
+                "Esta causa já foi usada para explicar um compromisso que não "
+                "saiu. Apagá-la deixaria aquele histórico sem rótulo — "
+                "desative-a: ela sai da lista de escolha e continua legível no "
+                "que já passou."
+            ]})
+        if instance.de_fabrica:
+            raise ValidationError({"detail": [
+                "Causa de fábrica não se apaga — desative-a. Ela é a âncora que "
+                "permite comparar o histórico de duas obras."
+            ]})
+        super().perform_destroy(instance)
+
+    @action(detail=False, methods=["post"])
+    def semear(self, request):
+        """Repõe o catálogo de fábrica. Idempotente."""
+        criadas = services.semear_causas_de_fabrica(request.user.tenant_id)
+        return Response({"criadas": criadas})
+
+
+class ItemProgramacaoViewSet(BasePdcaViewSet):
+    """Os cartões do quadro. **Puxar e devolver é `comprometer`** — quem monta
+    a parede é quem assina embaixo dela."""
+
+    queryset = ItemProgramacao.objects.select_related(
+        "atividade", "local", "causa", "programacao",
+    ).all()
+    serializer_class = ItemProgramacaoSerializer
+    required_resource = "pdca.programacao"
+    permission_map = {
+        "view": "pdca.programacao.view",
+        "write": "pdca.programacao.comprometer",
+    }
+    filterset_fields = ["programacao", "atividade", "cumprido", "causa"]
+    ordering_fields = ["ordem", "item_programacao_id"]
+
+    def get_serializer_context(self):
+        #: Resolve o agregado de restrições **uma vez por página**, e não por
+        #: cartão: um quadro de 300 cartões faria 300 consultas (é o D136 do
+        #: outro lado — a lista de medições que trazia ~200 consultas).
+        contexto = super().get_serializer_context()
+        if self.action == "list":
+            ids = list(
+                self.filter_queryset(self.get_queryset())
+                .values_list("atividade_id", flat=True)[
+                    :PDCA_TETO_ITENS_POR_PROGRAMACAO
+                ]
+            )
+            contexto["restricoes_por_atividade"] = (
+                services.restricoes_abertas_por_atividade(
+                    ids, tenant_id=self.request.user.tenant_id,
+                )
+            )
+            #: E os defeitos abertos da PDCA.7, pelo mesmo motivo: uma consulta
+            #: por quadro, não uma por cartão.
+            contexto["ncs_por_atividade"] = services.ncs_abertas_por_atividade(
+                ids, tenant_id=self.request.user.tenant_id,
+            )
+            #: E o avanço que o campo apontou na semana, pela mesma razão: é
+            #: uma consulta por quadro, não uma por cartão.
+            prog_id = self.request.query_params.get("programacao")
+            if prog_id:
+                prog = ProgramacaoSemanal.objects.filter(
+                    tenant_id=self.request.user.tenant_id, pk=prog_id,
+                ).first()
+                if prog is not None:
+                    contexto["apontado_por_item"] = (
+                        services.avanco_apontado_dos_itens(prog)
+                    )
+        return contexto
+
+    def perform_destroy(self, instance):
+        if not instance.programacao.esta_aberta_para_montagem:
+            raise ValidationError({"detail": [
+                "Esta semana já foi comprometida: o cartão não sai mais do "
+                "quadro. Tirar um compromisso depois de assumido é apagar a "
+                "aposta em vez de julgá-la — no encerramento, diga que não saiu "
+                "e por quê."
+            ]})
+        super().perform_destroy(instance)
+
+
+class ProgramacaoSemanalViewSet(TenantScopedViewSetMixin,
+                                mixins.ListModelMixin,
+                                mixins.RetrieveModelMixin,
+                                mixins.UpdateModelMixin,
+                                mixins.DestroyModelMixin,
+                                viewsets.GenericViewSet):
+    """A semana — **abre, compromete, julga, encerra**.
+
+    Sem `create` genérico: a programação nasce por `abrir/`, que ancora a semana
+    na segunda-feira e semeia o catálogo de causas. Um `POST` cru deixaria o
+    cliente escolher o dia da âncora, e duas telas escolheriam dias diferentes
+    para a mesma semana.
+
+    `PATCH` existe só para a `nota` da reunião — o resto do documento muda por
+    verbo, que é a mesma forma da medição e do aditivo.
+    """
+
+    queryset = ProgramacaoSemanal.objects.select_related("obra").all()
+    serializer_class = ProgramacaoSemanalSerializer
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
+    required_module = "pdca"
+    pagination_class = PdcaPageNumberPagination
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    permission_map = {
+        "view": "pdca.programacao.view",
+        "write": "pdca.programacao.comprometer",
+    }
+    action_permission_map = {
+        "abrir": "pdca.programacao.comprometer",
+        "comprometer": "pdca.programacao.comprometer",
+        "candidatos": "pdca.programacao.view",
+        "julgar": "pdca.programacao.encerrar",
+        #: Piso. Encerrar **antes** do fim da semana exige, além deste, o
+        #: `pdca.programacao.encerrar_antecipado` — conferido dentro da ação,
+        #: porque depende da data (ver `encerrar` abaixo).
+        "encerrar": "pdca.programacao.encerrar",
+        #: Arrastar é montar o quadro da semana seguinte: cartão que entra em
+        #: rascunho é gesto de quem compromete, não de quem julga.
+        "arrastar": "pdca.programacao.comprometer",
+        #: Piso: o degrau certo (`encerrar` ou `comprometer`) é exigido dentro
+        #: da ação, porque ele depende do estado em que a semana está.
+        "reabrir": "pdca.programacao.view",
+        "ppc": "pdca.programacao.view",
+        "causas": "pdca.programacao.view",
+    }
+    filterset_fields = ["obra", "status", "semana_inicio"]
+    ordering_fields = ["semana_inicio", "criada_em"]
+
+    @action(detail=False, methods=["post"])
+    def abrir(self, request):
+        """Abre (ou devolve) a programação da semana, em rascunho."""
+        entrada = AbrirProgramacaoSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        obra = _minha_obra(request, entrada.validated_data["obra"])
+        programacao = services.abrir_programacao(
+            obra=obra,
+            semana_inicio=entrada.validated_data["semana"],
+            por=_quem_e(request),
+            tenant_id=request.user.tenant_id,
+        )
+        return Response(
+            self.get_serializer(programacao).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["get"])
+    def candidatos(self, request, pk=None):
+        """A área de rascunho: o que o plano diz que é desta semana.
+
+        **Sugestão, não imposição** — o Last Planner existe porque o plano de
+        meses atrás não sabe da obra de hoje.
+        """
+        programacao = self.get_object()
+        return Response(services.candidatos_da_semana(programacao=programacao))
+
+    @action(detail=True, methods=["post"])
+    def comprometer(self, request, pk=None):
+        """Rascunho → comprometida. Depois disto a lista não recebe item novo."""
+        programacao = self.get_object()
+        try:
+            resultado = services.comprometer(
+                programacao=programacao, por=_quem_e(request),
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        return Response({
+            **resultado, "programacao_dados": self.get_serializer(programacao).data,
+        })
+
+    @action(detail=True, methods=["post"])
+    def julgar(self, request, pk=None):
+        """O gesto do fim da semana — o quadro inteiro numa transação."""
+        programacao = self.get_object()
+        entrada = JulgarSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        try:
+            resultado = services.julgar_itens(
+                programacao=programacao,
+                julgamentos=[
+                    dict(linha)
+                    for linha in entrada.validated_data["julgamentos"]
+                ],
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        return Response(resultado)
+
+    @action(detail=True, methods=["post"])
+    def encerrar(self, request, pk=None):
+        """Comprometida → encerrada. É aqui que o PPC passa a existir.
+
+        **A semana que ainda não acabou pede outra permissão.** `encerrar` é o
+        verbo de julgar o que saiu; fechar antes do domingo é decidir que a
+        semana acabou para a obra, e isso não é a mesma alçada — ver
+        `services.encerrar`. O `action_permission_map` continua exigindo
+        `pdca.programacao.encerrar` como piso, e o degrau extra é conferido
+        aqui, onde se sabe a data.
+
+        O serviço é quem decide **se** o degrau extra é preciso: passamos se ele
+        está disponível, não se ele é exigido. Conferir a data aqui também
+        duplicaria a regra em dois lugares, e o dia em que ela mudasse os dois
+        discordariam.
+        """
+        programacao = self.get_object()
+        entrada = EncerrarSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        pode_antecipar = _tem_permissao(
+            request, "pdca.programacao.encerrar_antecipado",
+        )
+        try:
+            resultado = services.encerrar(
+                programacao=programacao, por=_quem_e(request),
+                pode_antecipar=pode_antecipar,
+                motivo_antecipado=entrada.validated_data.get("motivo", ""),
+                arrastar=entrada.validated_data.get("arrastar", True),
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        #: O PPC é `Decimal`, e atravessa como string — o `types.ts` do frontend
+        #: já o declarava assim, e sem esta passada ele saía como número.
+        return Response(_str_decimais(resultado))
+
+    @action(detail=True, methods=["post"])
+    def arrastar(self, request, pk=None):
+        """Leva o que não saiu para a semana seguinte, em rascunho.
+
+        **Encerrar já faz isto**, e esta porta existe para os dois casos em que
+        o automático não alcança: a semana que foi encerrada com `arrastar:
+        false` e depois se decidiu o contrário, e a que foi **reaberta e
+        rejulgada** — aí o conjunto do que não saiu mudou, e o arrasto precisa
+        correr de novo. É idempotente (ver `services.arrastar_pendentes`), então
+        chamar duas vezes não duplica cartão.
+        """
+        programacao = self.get_object()
+        try:
+            resultado = services.arrastar_pendentes(
+                programacao=programacao, por=_quem_e(request),
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        return Response(resultado)
+
+    @action(detail=True, methods=["post"])
+    def reabrir(self, request, pk=None):
+        """Desce **um** degrau na semana, com motivo obrigatório.
+
+        **A permissão depende do degrau, e por isso é conferida aqui dentro.**
+        Desfazer o encerramento é desfazer o julgamento, e isso é de quem julga
+        (`encerrar`); desfazer o compromisso é de quem assume (`comprometer`).
+        Um só código para os dois daria a quem julga o poder de desmontar o
+        quadro que a equipe assumiu — ou o contrário, que é pior: quem monta a
+        parede passaria a poder apagar o índice que ela produziu.
+
+        Por isso o `action_permission_map` pede só `view`: ele é o piso (quem
+        nem enxerga a semana não a reabre), e o degrau certo é exigido abaixo.
+        """
+        programacao = self.get_object()
+        if programacao.status == ProgramacaoSemanal.Status.ENCERRADA:
+            _exige(request, "pdca.programacao.encerrar", (
+                "Reabrir uma semana encerrada desfaz o julgamento dela, e isso "
+                "é ato de quem julga — exige 'pdca.programacao.encerrar'."
+            ))
+        else:
+            _exige(request, "pdca.programacao.comprometer", (
+                "Desfazer o compromisso da semana devolve o quadro ao rascunho, "
+                "e isso é ato de quem assume — exige "
+                "'pdca.programacao.comprometer'."
+            ))
+        entrada = ReabrirSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        try:
+            resultado = services.reabrir(
+                programacao=programacao, por=_quem_e(request),
+                motivo=entrada.validated_data["motivo"],
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        return Response({
+            **resultado,
+            "programacao_dados": self.get_serializer(programacao).data,
+        })
+
+    @action(detail=False, methods=["get"])
+    def ppc(self, request):
+        """A série histórica de PPC da obra — só semanas encerradas."""
+        obra = _minha_obra(request, request.query_params.get("obra"))
+        return Response(_str_decimais({
+            "obra": obra.pk,
+            "serie": services.serie_ppc(
+                obra_id=obra.pk, tenant_id=request.user.tenant_id,
+            ),
+        }))
+
+    @action(detail=False, methods=["get"])
+    def causas(self, request):
+        """**O "Act"** — o ranking de por que os compromissos não saem."""
+        obra = _minha_obra(request, request.query_params.get("obra"))
+        return Response(_str_decimais(services.ranking_de_causas(
+            obra_id=obra.pk, tenant_id=request.user.tenant_id,
+            desde=request.query_params.get("desde") or None,
+            ate=request.query_params.get("ate") or None,
+        )))
+
+
+# ---------------------------------------------------------------------------
+# PDCA.7 — a máquina de verificação: FVS, NC, 5W2H e eficácia
+# ---------------------------------------------------------------------------
+# Cinco viewsets e uma separação de verbos que é a da qualidade, não a de CRUD:
+#
+#   - `pdca.verificacao.view|modelo_edit|aplicar` — **montar a ficha e responder
+#     a ficha são pessoas diferentes.** Quem escreve o método da empresa é o
+#     engenheiro da qualidade, no escritório, e isso muda o que toda obra passa
+#     a conferir; quem responde é o técnico no canteiro, e isso muda uma obra.
+#     Um `edit` único daria ao campo o poder de afrouxar o critério da FVS no
+#     momento em que ela reprovasse — que é exatamente quando alguém quer.
+#   - `pdca.nc.view|abrir|tratar|verificar_eficacia` — quatro degraus, e o
+#     último é o que dá sentido aos outros três. **Quem trata não verifica a
+#     própria eficácia**: é a mesma régua que separa `apurar` de `atestar` na
+#     medição, aplicada ao conserto. Sem ela, quem consertou assina que o
+#     conserto funcionou, e o laço do §4.5 vira carimbo.
+
+
+class ModeloVerificacaoViewSet(BasePdcaViewSet):
+    """A biblioteca de fichas em branco da empresa."""
+
+    queryset = ModeloVerificacao.objects.prefetch_related("itens").all()
+    serializer_class = ModeloVerificacaoSerializer
+    required_resource = "pdca.verificacao"
+    permission_map = {
+        "view": "pdca.verificacao.view",
+        "write": "pdca.verificacao.modelo_edit",
+    }
+    action_permission_map = {"duplicar": "pdca.verificacao.modelo_edit"}
+    filterset_fields = ["dominio", "ativo"]
+    search_fields = ["codigo", "nome"]
+    ordering_fields = ["codigo", "nome", "dominio", "criado_em"]
+
+    def get_serializer_class(self):
+        #: A listagem não carrega os 150 itens de cada ficha — D136.
+        if self.action == "list":
+            return ModeloResumoSerializer
+        return ModeloVerificacaoSerializer
+
+    def perform_create(self, serializer):
+        try:
+            services.validar_teto_de_modelos(self.request.user.tenant_id)
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        #: O `tenant_id` vai **explícito** — sobrescrever `perform_create` sem
+        #: repeti-lo faz a linha nascer sem tenant e a RLS recusar o INSERT com
+        #: 500. Foi o D149 da PDCA.5, e ele não se repete aqui.
+        serializer.save(
+            tenant_id=getattr(self.request.user, "tenant_id", None),
+            criado_por=_quem_e(self.request),
+        )
+
+    def perform_destroy(self, instance):
+        if instance.verificacoes.exists():
+            raise ValidationError({"detail": [
+                "Este modelo já foi aplicado em fichas de verificação. Apagá-lo "
+                "deixaria aquelas inspeções sem o nome do que responderam — "
+                "desative-o: ele sai da lista de escolha e continua legível em "
+                "tudo que já foi verificado com ele."
+            ]})
+        super().perform_destroy(instance)
+
+    @action(detail=True, methods=["post"])
+    def duplicar(self, request, pk=None):
+        """Copia a ficha inteira com os itens — o gesto real da biblioteca."""
+        modelo = self.get_object()
+        entrada = DuplicarModeloSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        try:
+            copia = services.duplicar_modelo(
+                modelo=modelo,
+                codigo=entrada.validated_data["codigo"],
+                nome=entrada.validated_data.get("nome", ""),
+                por=_quem_e(request),
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        return Response(
+            ModeloVerificacaoSerializer(copia).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class ItemModeloVerificacaoViewSet(BasePdcaViewSet):
+    """As perguntas da ficha em branco."""
+
+    queryset = ItemModeloVerificacao.objects.select_related("modelo").all()
+    serializer_class = ItemModeloVerificacaoSerializer
+    required_resource = "pdca.verificacao"
+    permission_map = {
+        "view": "pdca.verificacao.view",
+        "write": "pdca.verificacao.modelo_edit",
+    }
+    filterset_fields = ["modelo"]
+    ordering_fields = ["ordem", "item_modelo_id"]
+
+    def perform_create(self, serializer):
+        modelo = serializer.validated_data.get("modelo")
+        if modelo is not None:
+            try:
+                services.validar_teto_de_itens_do_modelo(modelo)
+            except DjangoValidationError as erro:
+                raise ValidationError({"detail": erro.messages})
+        serializer.save(tenant_id=getattr(self.request.user, "tenant_id", None))
+
+
+class VerificacaoViewSet(TenantScopedViewSetMixin,
+                         mixins.ListModelMixin,
+                         mixins.RetrieveModelMixin,
+                         mixins.UpdateModelMixin,
+                         mixins.DestroyModelMixin,
+                         viewsets.GenericViewSet):
+    """A ficha aplicada — **abre por `aplicar/`, fecha por `concluir/`**.
+
+    Sem `create` genérico, pela mesma razão da programação semanal: a ficha não é
+    um registro que alguém preenche, é o resultado de **copiar um modelo para
+    dentro dela** (o congelamento da pergunta). Um `POST` cru criaria ficha sem
+    item, que conclui com 100% de conformidade sem ninguém ter olhado nada.
+
+    `PATCH` existe para `nota` e `inspetor` — o resto do documento muda por
+    verbo, que é a forma da medição, do aditivo e da semana.
+    """
+
+    queryset = Verificacao.objects.select_related(
+        "modelo", "obra", "local", "atividade",
+    ).all()
+    serializer_class = VerificacaoSerializer
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
+    required_module = "pdca"
+    pagination_class = PdcaPageNumberPagination
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    permission_map = {
+        "view": "pdca.verificacao.view",
+        "write": "pdca.verificacao.aplicar",
+    }
+    action_permission_map = {
+        "aplicar": "pdca.verificacao.aplicar",
+        "concluir": "pdca.verificacao.aplicar",
+        "resultado": "pdca.verificacao.view",
+        #: Abrir a NC a partir dos reprovados é ato de **abrir NC**, e não de
+        #: responder ficha: é o degrau em que o defeito deixa de ser uma linha
+        #: da inspeção e passa a ser um documento que alguém tem de tratar.
+        "abrir_ncs": "pdca.nc.abrir",
+    }
+    filterset_fields = {
+        "obra": ["exact"],
+        "modelo": ["exact"],
+        "modelo__dominio": ["exact"],
+        "status": ["exact"],
+        "local": ["exact"],
+        "atividade": ["exact"],
+        "data": ["exact", "lte", "gte"],
+    }
+    ordering_fields = ["data", "criada_em", "status"]
+
+    def paginate_queryset(self, queryset):
+        #: Guardada porque o `get_serializer_context` abaixo precisa saber
+        #: **quais** fichas a página traz para montar o agregado de uma vez.
+        self._pagina = super().paginate_queryset(queryset)
+        return self._pagina
+
+    def get_serializer_context(self):
+        #: Resolve o resultado de todas as fichas da página **em uma consulta**.
+        #: Sem isto, uma lista de 50 fichas faria 50 agregações — é o D136 do
+        #: outro lado, a listagem de medições com ~200 consultas.
+        contexto = super().get_serializer_context()
+        if self.action == "list" and getattr(self, "_pagina", None):
+            contexto["resultado_por_verificacao"] = _str_decimais(
+                services.resultados_das_verificacoes(
+                    self._pagina, tenant_id=self.request.user.tenant_id,
+                )
+            )
+        return contexto
+
+    @action(detail=False, methods=["post"])
+    def aplicar(self, request):
+        """Abre a ficha copiando as perguntas do modelo para dentro dela."""
+        entrada = AplicarModeloVerificacaoSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        dados = entrada.validated_data
+        obra = _minha_obra(request, dados["obra"])
+        modelo = ModeloVerificacao.objects.filter(
+            tenant_id=request.user.tenant_id, pk=dados["modelo"],
+        ).first()
+        if modelo is None:
+            raise ValidationError({"modelo": "Modelo não encontrado."})
+        try:
+            verificacao = services.aplicar_verificacao(
+                modelo=modelo, obra=obra, data=dados["data"],
+                local_id=dados.get("local"), atividade_id=dados.get("atividade"),
+                inspetor=dados.get("inspetor", ""),
+                por=_quem_e(request), tenant_id=request.user.tenant_id,
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        return Response(
+            self.get_serializer(verificacao).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["get"])
+    def resultado(self, request, pk=None):
+        """As contagens e a conformidade — derivadas (§4.9)."""
+        return Response(_str_decimais(
+            services.resultado_da_verificacao(self.get_object())
+        ))
+
+    @action(detail=True, methods=["post"])
+    def concluir(self, request, pk=None):
+        """Fecha a ficha e devolve os reprovados que ainda não viraram NC."""
+        verificacao = self.get_object()
+        try:
+            resultado = services.concluir_verificacao(
+                verificacao=verificacao, por=_quem_e(request),
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        return Response(_str_decimais({
+            **resultado,
+            "verificacao_dados": self.get_serializer(verificacao).data,
+        }))
+
+    @action(detail=True, methods=["post"], url_path="abrir-ncs")
+    def abrir_ncs(self, request, pk=None):
+        """Uma NC por item reprovado que ainda não tem uma — idempotente.
+
+        **Sem corpo:** cada NC nasce com a gravidade do seu item, respondida por
+        quem o reprovou (§11.15). Este verbo não escolhe peso nenhum.
+        """
+        verificacao = self.get_object()
+        try:
+            resultado = services.abrir_ncs_dos_reprovados(
+                verificacao=verificacao, por=_quem_e(request),
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        return Response(resultado, status=status.HTTP_201_CREATED)
+
+
+class ItemVerificacaoViewSet(TenantScopedViewSetMixin,
+                             mixins.ListModelMixin,
+                             mixins.RetrieveModelMixin,
+                             mixins.UpdateModelMixin,
+                             viewsets.GenericViewSet):
+    """A resposta — **uma pergunta por vez, e é essa a física do instrumento**.
+
+    O campo é o oposto da grade de medição (planta §5.2): lá se digitam 200
+    células e a gravação é em lote; aqui se responde uma pergunta, com luva e
+    sol na tela, e cada resposta vale por si. Por isso a porta é o `PATCH` do
+    item, e não um lote — e por isso a foto sobe **nesta mesma requisição**, que
+    é o que evita o segundo gesto no canteiro.
+
+    **Sem `create` e sem `destroy`:** os itens nascem da aplicação do modelo e a
+    lista deles é a ficha. Acrescentar ou tirar pergunta depois de a inspeção
+    começar mudaria o denominador da conformidade no meio da conta.
+
+    A regra ("ficha aberta", "desvio exige observação") mora no **`services`**, e
+    este método a chama em vez de repeti-la: é a mesma função que a importação e
+    o comando de bancada usariam, e duas cópias divergiriam na primeira mudança.
+    """
+
+    queryset = ItemVerificacao.objects.select_related("verificacao").all()
+    serializer_class = ItemVerificacaoSerializer
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
+    required_module = "pdca"
+    pagination_class = PdcaPageNumberPagination
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    permission_map = {
+        "view": "pdca.verificacao.view",
+        "write": "pdca.verificacao.aplicar",
+    }
+    filterset_fields = ["verificacao", "resultado"]
+    ordering_fields = ["ordem", "item_verificacao_id"]
+
+    def perform_update(self, serializer):
+        item = serializer.instance
+        dados = serializer.validated_data
+        try:
+            services.responder_itens(
+                verificacao=item.verificacao,
+                respostas=[{
+                    "item_verificacao": item.pk,
+                    "resultado": dados.get("resultado", item.resultado),
+                    "observacao": dados.get("observacao", item.observacao),
+                    #: **O peso deste defeito** (§11.15). Sem repassá-lo aqui, o
+                    #: `PATCH` que traz a gravidade a perderia no caminho e o
+                    #: serviço recusaria a resposta que o campo acabou de dar —
+                    #: a recusa certa pelo motivo errado.
+                    "gravidade": dados.get("gravidade", item.gravidade),
+                }],
+                por=_quem_e(self.request),
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        #: A foto é o que **este** método grava, porque ela não passa pelo
+        #: serviço: o binário sobe pela porta única da plataforma, conferido
+        #: pelo `UploadValidationMixin` contra o teto do tenant.
+        if "foto" in dados:
+            item.refresh_from_db()
+            item.foto = dados["foto"]
+            item.save(update_fields=["foto"])
+        #: `serializer.instance` **é** este objeto, e o serviço escreveu no
+        #: banco por fora dele — sem o refresh a resposta do `PATCH` devolveria
+        #: o estado anterior, e a tela do campo mostraria a pergunta ainda
+        #: pendente logo depois de respondê-la.
+        item.refresh_from_db()
+
+
+class NaoConformidadeViewSet(BasePdcaViewSet):
+    """O defeito e o laço que o fecha.
+
+    **`encerrar` e `eficacia` exigem `verificar_eficacia`, e `tratar` não
+    alcança os dois.** É a segregação inteira desta fatia: quem monta o plano de
+    ação não assina que o plano funcionou.
+    """
+
+    queryset = NaoConformidade.objects.select_related(
+        "obra", "local", "atividade", "restricao", "marcacao_prancheta",
+        "item_verificacao",
+    ).prefetch_related("acoes", "eficacias").all()
+    serializer_class = NaoConformidadeSerializer
+    required_resource = "pdca.nc"
+    permission_map = {"view": "pdca.nc.view", "write": "pdca.nc.abrir"}
+    action_permission_map = {
+        "gerar_restricao": "pdca.nc.tratar",
+        "cancelar": "pdca.nc.tratar",
+        "eficacia": "pdca.nc.verificar_eficacia",
+        "encerrar": "pdca.nc.verificar_eficacia",
+        "fila": "pdca.nc.view",
+        "painel": "pdca.nc.view",
+    }
+    filterset_fields = {
+        "obra": ["exact"],
+        "atividade": ["exact"],
+        "local": ["exact"],
+        "gravidade": ["exact"],
+        "status": ["exact"],
+    }
+    search_fields = ["descricao", "aberta_por"]
+    ordering_fields = ["aberta_em", "gravidade", "status"]
+
+    def get_serializer_class(self):
+        if self.action == "list":
+            return NcResumoSerializer
+        return NaoConformidadeSerializer
+
+    def perform_create(self, serializer):
+        obra = serializer.validated_data.get("obra")
+        if obra is not None:
+            try:
+                services.validar_teto_de_ncs(
+                    obra.pk, tenant_id=self.request.user.tenant_id,
+                )
+            except DjangoValidationError as erro:
+                raise ValidationError({"detail": erro.messages})
+        serializer.save(
+            tenant_id=getattr(self.request.user, "tenant_id", None),
+            aberta_por=_quem_e(self.request),
+        )
+
+    @action(detail=True, methods=["post"], url_path="gerar-restricao")
+    def gerar_restricao(self, request, pk=None):
+        """O seam vivo com o Last Planner: a NC **para o serviço** de verdade.
+
+        Exige **a permissão de travar a obra, além da de tratar**: abrir
+        restrição impede o time de se comprometer com aquela frente, e deixar
+        que só `pdca.nc.tratar` o fizesse criaria uma porta lateral para o
+        quadro da semana. É a mesma régua do `gerar-demanda` da restrição.
+        """
+        nc = self.get_object()
+        _exige(request, "pdca.restricao.edit", (
+            "Gerar restrição a partir de uma NC trava a atividade no quadro da "
+            "semana, e isso exige 'pdca.restricao.edit'. Peça ao administrador "
+            "ou registre a não-conformidade sem parar a frente."
+        ))
+        entrada = GerarRestricaoSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        try:
+            restricao_id = services.gerar_restricao_da_nc(
+                nc=nc,
+                prazo=entrada.validated_data.get("prazo"),
+                responsavel=entrada.validated_data.get("responsavel", ""),
+                por=_quem_e(request),
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        return Response(
+            {"restricao": restricao_id, "nc": self.get_serializer(nc).data},
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["post"])
+    def eficacia(self, request, pk=None):
+        """Registra se o conserto pegou. O "não" devolve a NC ao tratamento."""
+        nc = self.get_object()
+        entrada = RegistrarEficaciaSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        try:
+            resultado = services.registrar_eficacia(
+                nc=nc,
+                data=entrada.validated_data["data"],
+                eficaz=entrada.validated_data["eficaz"],
+                evidencia=entrada.validated_data["evidencia"],
+                por=_quem_e(request),
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        nc.refresh_from_db()
+        return Response(
+            {**resultado, "nc": self.get_serializer(nc).data},
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["post"])
+    def encerrar(self, request, pk=None):
+        """Fecha a NC — e recusa fechar sem eficácia verificada (§4.5)."""
+        nc = self.get_object()
+        entrada = EncerrarNcSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        try:
+            services.encerrar_nc(
+                nc=nc, por=_quem_e(request),
+                nota=entrada.validated_data.get("nota", ""),
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        return Response(self.get_serializer(nc).data)
+
+    @action(detail=True, methods=["post"])
+    def cancelar(self, request, pk=None):
+        """"Não era não-conformidade" — e isso exige dizer por quê."""
+        nc = self.get_object()
+        entrada = CancelarNcSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        if nc.status == NaoConformidade.Status.ENCERRADA:
+            raise ValidationError({"detail": [
+                "Esta NC já foi encerrada com eficácia verificada — cancelá-la "
+                "agora apagaria da estatística um defeito que existiu e foi "
+                "consertado."
+            ]})
+        nc.status = NaoConformidade.Status.CANCELADA
+        nc.encerrada_em = timezone.now()
+        nc.encerrada_por = _quem_e(request)
+        nc.nota_encerramento = entrada.validated_data["motivo"].strip()
+        nc.save(update_fields=[
+            "status", "encerrada_em", "encerrada_por", "nota_encerramento",
+        ])
+        return Response(self.get_serializer(nc).data)
+
+    @action(detail=False, methods=["get"])
+    def fila(self, request):
+        """**A fila de decisão da qualidade** — o que espera alguém, agora."""
+        obra = _minha_obra(request, request.query_params.get("obra"))
+        return Response(_str_decimais(services.fila_da_qualidade(
+            obra_id=obra.pk, tenant_id=request.user.tenant_id,
+        )))
+
+    @action(detail=False, methods=["get"])
+    def painel(self, request):
+        """**O "Act" da qualidade** — conformidade e o que mais reprova."""
+        obra = _minha_obra(request, request.query_params.get("obra"))
+        return Response(_str_decimais(services.painel_de_conformidade(
+            obra_id=obra.pk, tenant_id=request.user.tenant_id,
+            desde=request.query_params.get("desde") or None,
+            ate=request.query_params.get("ate") or None,
+        )))
+
+
+class PlanoAcaoViewSet(BasePdcaViewSet):
+    """O 5W2H. **Montar é `tratar`; concluir também** — quem executa declara
+    que executou, e é justamente por isso que essa declaração não encerra a NC."""
+
+    queryset = PlanoAcao.objects.select_related("nao_conformidade").all()
+    serializer_class = PlanoAcaoSerializer
+    required_resource = "pdca.nc"
+    permission_map = {"view": "pdca.nc.view", "write": "pdca.nc.tratar"}
+    action_permission_map = {"concluir": "pdca.nc.tratar"}
+    filterset_fields = {
+        "nao_conformidade": ["exact"],
+        "nao_conformidade__obra": ["exact"],
+        "tipo": ["exact"],
+        "status": ["exact"],
+        "quando": ["exact", "lte", "gte"],
+    }
+    ordering_fields = ["quando", "criada_em", "status"]
+
+    def perform_create(self, serializer):
+        nc = serializer.validated_data.get("nao_conformidade")
+        if nc is not None:
+            try:
+                services.validar_teto_de_acoes(nc)
+            except DjangoValidationError as erro:
+                raise ValidationError({"detail": erro.messages})
+        serializer.save(
+            tenant_id=getattr(self.request.user, "tenant_id", None),
+            criada_por=_quem_e(self.request),
+        )
+        #: A NC passa a "em tratamento" no primeiro plano. É o degrau que separa
+        #: "ninguém pegou" de "está sendo consertado" na fila de decisão — sem
+        #: ele o cockpit mostraria as duas como a mesma urgência.
+        if nc is not None and nc.status == NaoConformidade.Status.ABERTA:
+            nc.status = NaoConformidade.Status.EM_TRATAMENTO
+            nc.save(update_fields=["status"])
+
+    @action(detail=True, methods=["post"])
+    def concluir(self, request, pk=None):
+        """Executado. **Não encerra a NC** — ver a docstring do serviço."""
+        plano = self.get_object()
+        try:
+            services.concluir_acao(plano=plano, por=_quem_e(request))
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        return Response(self.get_serializer(plano).data)
+
+
+# ---------------------------------------------------------------------------
+# PDCA.8 — SSMA
+# ---------------------------------------------------------------------------
+
+
+class DialogoSegurancaViewSet(BasePdcaViewSet):
+    """O DDS — a roda antes do turno, e a lista que a prova.
+
+    Verbo único de escrita (`registrar`), porque não há aqui o que segregar: a
+    roda é conduzida e registrada pela mesma pessoa, e quem a conduz é quem sabe
+    quem estava lá.
+    """
+
+    queryset = DialogoSeguranca.objects.select_related(
+        "obra", "local", "atividade", "responsavel", "diario",
+    ).prefetch_related("participantes__funcionario").all()
+    serializer_class = DialogoSegurancaSerializer
+    required_resource = "pdca.dds"
+    permission_map = {"view": "pdca.dds.view", "write": "pdca.dds.registrar"}
+    action_permission_map = {
+        "presenca": "pdca.dds.registrar",
+        "encerrar": "pdca.dds.registrar",
+    }
+    filterset_fields = {
+        "obra": ["exact"],
+        "local": ["exact"],
+        "atividade": ["exact"],
+        "status": ["exact"],
+        "data": ["exact", "gte", "lte"],
+    }
+    search_fields = ["tema", "assunto", "responsavel_nome"]
+    ordering_fields = ["data", "status"]
+
+    def perform_create(self, serializer):
+        serializer.save(
+            tenant_id=getattr(self.request.user, "tenant_id", None),
+            registrado_por=_quem_e(self.request),
+        )
+
+    @action(detail=True, methods=["post"])
+    def presenca(self, request, pk=None):
+        """Grava a lista em lote — e recusa depois do encerramento."""
+        dds = self.get_object()
+        entrada = RegistrarPresencaSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        try:
+            resultado = services.registrar_presenca(
+                dds=dds, participantes=entrada.validated_data["participantes"],
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        dds.refresh_from_db()
+        return Response(
+            {**resultado, "dds": self.get_serializer(dds).data},
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["post"])
+    def encerrar(self, request, pk=None):
+        """Fecha a roda, fecha a lista — **e escreve no diário do dia**."""
+        dds = self.get_object()
+        entrada = EncerrarDdsSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        try:
+            resultado = services.encerrar_dds(
+                dds=dds, por=_quem_e(request),
+                publicar_no_diario=entrada.validated_data["publicar_no_diario"],
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        dds.refresh_from_db()
+        return Response({**resultado, "dds": self.get_serializer(dds).data})
+
+
+class OcorrenciaViewSet(BasePdcaViewSet):
+    """O fato de segurança — **e os quatro verbos que ele separa**.
+
+    `registrar` é a porta larga e `classificar` é a estreita: a segregação desta
+    fatia é *quem é medido não classifica a própria medida*. `emitir_cat` mora
+    no RH, que é quem fala com o INSS, e `dado_medico` abre o bloco clínico —
+    nenhum dos dois alcança os outros.
+    """
+
+    queryset = Ocorrencia.objects.select_related(
+        "obra", "local", "atividade", "acidentado", "restricao",
+        "nao_conformidade",
+    ).prefetch_related("anexos").all()
+    serializer_class = OcorrenciaSerializer
+    required_resource = "pdca.ocorrencia"
+    permission_map = {
+        "view": "pdca.ocorrencia.view", "write": "pdca.ocorrencia.registrar",
+    }
+    action_permission_map = {
+        "classificar": "pdca.ocorrencia.classificar",
+        "cat": "pdca.ocorrencia.emitir_cat",
+        "interditar": "pdca.ocorrencia.classificar",
+        "investigar": "pdca.ocorrencia.registrar",
+        "encerrar": "pdca.ocorrencia.classificar",
+        "fila": "pdca.ocorrencia.view",
+        "painel": "pdca.ocorrencia.view",
+        "epi_vencido": "pdca.ocorrencia.view",
+    }
+    filterset_fields = {
+        "obra": ["exact"],
+        "local": ["exact"],
+        "atividade": ["exact"],
+        "tipo": ["exact"],
+        "classificacao": ["exact"],
+        "status": ["exact"],
+    }
+    search_fields = ["descricao", "agente_causador", "acidentado_nome"]
+    ordering_fields = ["ocorrido_em", "tipo", "status"]
+
+    def get_serializer_class(self):
+        if self.action == "list":
+            return OcorrenciaResumoSerializer
+        return OcorrenciaSerializer
+
+    def perform_create(self, serializer):
+        serializer.save(
+            tenant_id=getattr(self.request.user, "tenant_id", None),
+            registrada_por=_quem_e(self.request),
+        )
+
+    @action(detail=True, methods=["post"])
+    def classificar(self, request, pk=None):
+        """O verbo estreito — tipo, afastamento e dias."""
+        ocorrencia = self.get_object()
+        entrada = ClassificarOcorrenciaSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        try:
+            services.classificar_ocorrencia(
+                ocorrencia=ocorrencia,
+                classificacao=entrada.validated_data["classificacao"],
+                dias_perdidos=entrada.validated_data.get("dias_perdidos"),
+                dias_debitados=entrada.validated_data.get("dias_debitados"),
+                por=_quem_e(request),
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        ocorrencia.refresh_from_db()
+        return Response(self.get_serializer(ocorrencia).data)
+
+    @action(detail=True, methods=["post"])
+    def cat(self, request, pk=None):
+        """Guarda que a CAT foi comunicada — **o registro do ato, não o ato**.
+
+        O sistema não transmite o evento eSocial S-2210: é obrigação da folha, e
+        uma segunda porta para um ato com prazo legal criaria duas verdades
+        sobre se a CAT foi comunicada.
+        """
+        ocorrencia = self.get_object()
+        entrada = RegistrarCatSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        try:
+            resultado = services.registrar_cat(
+                ocorrencia=ocorrencia,
+                tipo=entrada.validated_data["tipo"],
+                emitida_em=entrada.validated_data["emitida_em"],
+                protocolo=entrada.validated_data.get("protocolo", ""),
+                por=_quem_e(request),
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        ocorrencia.refresh_from_db()
+        return Response(
+            {**resultado, "ocorrencia": self.get_serializer(ocorrencia).data},
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["post"])
+    def interditar(self, request, pk=None):
+        """**O dente**: a frente para de verdade, no quadro da semana.
+
+        Exige `pdca.restricao.edit` **além** do verbo de SSMA, pela mesma régua
+        do `gerar-restricao` da NC: sem isso a segurança viraria porta lateral
+        para travar a programação de quem quer que seja.
+        """
+        ocorrencia = self.get_object()
+        _exige(request, "pdca.restricao.edit", (
+            "Interditar a frente trava a atividade no quadro da semana, e isso "
+            "exige 'pdca.restricao.edit'. Peça ao administrador ou registre a "
+            "ocorrência sem parar o serviço."
+        ))
+        entrada = InterditarFrenteSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        try:
+            restricao = services.gerar_restricao_da_ocorrencia(
+                ocorrencia=ocorrencia,
+                prazo=entrada.validated_data.get("prazo"),
+                por=_quem_e(request),
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        ocorrencia.refresh_from_db()
+        return Response(
+            {
+                "restricao": restricao.pk,
+                "ocorrencia": self.get_serializer(ocorrencia).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["post"])
+    def investigar(self, request, pk=None):
+        """Põe o fato na máquina de tratamento da PDCA.7 — sem duplicá-la."""
+        ocorrencia = self.get_object()
+        _exige(request, "pdca.nc.abrir", (
+            "Investigar a ocorrência abre uma não-conformidade, e isso exige "
+            "'pdca.nc.abrir'."
+        ))
+        try:
+            nc = services.abrir_nc_da_ocorrencia(
+                ocorrencia=ocorrencia, por=_quem_e(request),
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        ocorrencia.refresh_from_db()
+        return Response(
+            {"nc": nc.pk, "ocorrencia": self.get_serializer(ocorrencia).data},
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["post"])
+    def encerrar(self, request, pk=None):
+        """Fecha o fato — e recusa fechar por cima de frente interditada."""
+        ocorrencia = self.get_object()
+        entrada = EncerrarOcorrenciaSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        try:
+            services.encerrar_ocorrencia(
+                ocorrencia=ocorrencia, por=_quem_e(request),
+                nota=entrada.validated_data.get("nota", ""),
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        ocorrencia.refresh_from_db()
+        return Response(self.get_serializer(ocorrencia).data)
+
+    @action(detail=False, methods=["get"])
+    def fila(self, request):
+        """**A fila de decisão da segurança** — a CAT primeiro, que tem prazo."""
+        obra = _minha_obra(request, request.query_params.get("obra"))
+        return Response(_str_decimais(services.fila_da_ssma(
+            obra_id=obra.pk, tenant_id=request.user.tenant_id,
+        )))
+
+    @action(detail=False, methods=["get"])
+    def painel(self, request):
+        """Os indicadores — **e os dois que o sistema declara não saber**."""
+        obra = _minha_obra(request, request.query_params.get("obra"))
+        return Response(_str_decimais(services.indicadores_de_ssma(
+            obra_id=obra.pk, tenant_id=request.user.tenant_id,
+            desde=request.query_params.get("desde") or None,
+            ate=request.query_params.get("ate") or None,
+        )))
+
+    @action(detail=False, methods=["get"], url_path="epi-vencido")
+    def epi_vencido(self, request):
+        """O seam com o SIL — **e ele cobra a permissão do outro módulo**.
+
+        A entrega de EPI é do SIL *(decisão do dono, 20/09/2026)*, e ler dado
+        protegido de outro módulo sem cobrar a permissão dele faria da SSMA uma
+        porta lateral. É a régua do `gerar-demanda` com o SCM.
+        """
+        obra = _minha_obra(request, request.query_params.get("obra"))
+        _exige(request, "sil.epi.view", (
+            "A ficha de EPI é do módulo de estoque (SIL), e lê-la exige "
+            "'sil.epi.view'. Peça ao administrador."
+        ))
+        return Response(services.epi_vencido_da_obra(
+            obra_id=obra.pk, tenant_id=request.user.tenant_id,
+        ))
+
+
+class AnexoOcorrenciaViewSet(BasePdcaViewSet):
+    """Os arquivos da ocorrência — com o teto que a coleção obrigou a criar."""
+
+    queryset = AnexoOcorrencia.objects.select_related("ocorrencia").all()
+    serializer_class = AnexoOcorrenciaSerializer
+    required_resource = "pdca.ocorrencia"
+    permission_map = {
+        "view": "pdca.ocorrencia.view", "write": "pdca.ocorrencia.registrar",
+    }
+    filterset_fields = {"ocorrencia": ["exact"], "especie": ["exact"]}
+
+    def perform_create(self, serializer):
+        ocorrencia = serializer.validated_data.get("ocorrencia")
+        if ocorrencia is not None:
+            try:
+                services.validar_teto_de_anexos(ocorrencia)
+            except DjangoValidationError as erro:
+                raise ValidationError({"detail": erro.messages})
+        serializer.save(
+            tenant_id=getattr(self.request.user, "tenant_id", None),
+            enviado_por=_quem_e(self.request),
+        )
+
+
+# ===========================================================================
+# O cockpit — as leituras que atravessam postos e obras
+# ===========================================================================
+#
+# **Estas quatro não declaram `RequirePermission`, e a ausência é deliberada.**
+# Todo o resto do módulo é um recurso com um dono (`pdca.medicao`,
+# `pdca.nc`, …) e o portão da camada 2 resolve num código só. Uma leitura que
+# junta cinco assuntos não tem um dono: exigir `pdca.nc.view` para abrir a
+# carteira recusaria a página ao técnico de segurança, e exigir o menor
+# denominador não recusaria nada.
+#
+# O recorte é **por bloco**, dentro do serviço, pela mesma leitura fail-closed
+# do `RequirePermission` (`_leitor` abaixo é o `_tem_permissao` virado do
+# avesso). O que a pessoa não pode ver não vem, e vem no lugar uma linha em
+# `sem_permissao` dizendo qual permissão falta — a régua omitir × trancar
+# aplicada a um agregado. O portão que continua valendo para todas é o
+# `RequireModule`: quem não assina o PDCA não abre o cockpit do PDCA.
+
+
+def _leitor(request):
+    """As claims de quem pede viram uma função `pode(codigo) -> bool`.
+
+    Espelho exato do `_tem_permissao`, incluindo o atalho de admin de tenant e
+    superusuário. Existe como função porque o `services` **não conhece
+    `request`** — é o que permite exercer a carteira e a fila do comando de
+    bancada e do teste sem forjar um token.
+    """
+    usuario = request.user
+    if getattr(usuario, "is_tenant_admin", False) or getattr(
+        usuario, "is_superuser", False
+    ):
+        return lambda _permissao: True
+    concedidas = frozenset(getattr(usuario, "iam_permissions", None) or [])
+    return lambda permissao: permissao in concedidas
+
+
+class LeituraDoCockpit(TenantScopedAPIViewMixin, views.APIView):
+    """A base das três: entitlement de módulo, e o recorte fica no serviço.
+
+    **O mixin de tenancy não é decoração.** Todo o resto do módulo é
+    `ModelViewSet` e herda o `TenantScopedViewSetMixin`, que arma a RLS no
+    `initial()`; uma `APIView` pura não arma nada, e foi exatamente o achado S1
+    (*"views de dashboard e de NF eram `APIView` puras, logo liam dados de
+    qualquer tenant"*). A carteira é uma view de dashboard: sem isto ela seria
+    a repetição literal daquele defeito, agora numa leitura que cruza obras de
+    propósito.
+    """
+
+    permission_classes = [permissions.IsAuthenticated, RequireModule]
+    required_module = "pdca"
+
+
+class CarteiraView(LeituraDoCockpit):
+    """`GET /api/pdca/carteira/` — **as obras lado a lado** (B1).
+
+    A porta de fora do módulo: daqui se **entra** numa obra. `?obras=1,2,3`
+    recorta; sem recorte vêm todas as do tenant, até o teto do `planos.py`.
+    """
+
+    def get(self, request):
+        recorte = (request.query_params.get("obras") or "").strip()
+        escolhidas = None
+        if recorte:
+            try:
+                escolhidas = [
+                    int(pedaco) for pedaco in recorte.split(",") if pedaco.strip()
+                ]
+            except ValueError:
+                raise ValidationError({
+                    "obras": "Informe os números das obras separados por vírgula.",
+                })
+        return Response(_str_decimais(services.carteira(
+            tenant_id=request.user.tenant_id,
+            pode=_leitor(request),
+            obras=escolhidas,
+        )))
+
+
+class HojeView(LeituraDoCockpit):
+    """`GET /api/pdca/hoje/?obra=N` — **a fila, o pulso e o que mudou** (B2+B6).
+
+    Os três blocos numa leitura só, e é o motivo de o endpoint existir: em
+    chamadas separadas a tela de abertura esperava três vezes e cada número
+    chegava com um recorte de período diferente do vizinho.
+
+    `?mudancas=0` desliga o terceiro bloco, para quem só quer atualizar a fila
+    sem recontar a semana inteira.
+    """
+
+    def get(self, request):
+        obra = _minha_obra(request, request.query_params.get("obra"))
+        pode = _leitor(request)
+        tenant_id = request.user.tenant_id
+        corpo = {
+            "obra": obra.pk,
+            "obra_nome": obra.nome_obra,
+            "fila": services.fila_do_dia(
+                obra_id=obra.pk, tenant_id=tenant_id, pode=pode,
+            ),
+            "pulso": services.pulso_da_obra(
+                obra_id=obra.pk, tenant_id=tenant_id, pode=pode,
+                desde=request.query_params.get("desde") or None,
+                ate=request.query_params.get("ate") or None,
+            ),
+        }
+        if request.query_params.get("mudancas") not in ("0", "false"):
+            corpo["mudancas"] = services.mudancas_recentes(
+                obra_id=obra.pk, tenant_id=tenant_id, pode=pode,
+                dias=_inteiro(
+                    request.query_params.get("dias"),
+                    services.DIAS_DE_MUDANCAS, campo="dias",
+                ),
+            )
+        return Response(_str_decimais(corpo))
+
+
+class MinhasFrentesView(LeituraDoCockpit):
+    """`GET /api/pdca/minhas-frentes/` — **o que é meu, agora** (B5).
+
+    A porta da segunda superfície. As outras três respondem a quem olha a obra
+    de fora; esta responde a quem está dentro dela, e por isso não exige
+    `?obra=`: o encarregado costuma estar numa obra, e o mestre que cobre duas
+    veria metade do trabalho dele se a leitura obrigasse a escolher.
+
+    `?como=` troca o nome contra o qual a busca casa. Existe porque o alvo é
+    **rótulo de texto** em todo o módulo (ver `services.minhas_frentes`): o
+    escritório escreve "Mestre Antônio" no quadro, e quem entra como
+    `antonio.silva` não casaria com nada. Sem essa saída, a pessoa cujo
+    cadastro diverge veria a frente vazia para sempre — e frente vazia sem
+    explicação é a forma de falha que não parece falha.
+    """
+
+    def get(self, request):
+        obra_id = None
+        if request.query_params.get("obra"):
+            obra_id = _minha_obra(request, request.query_params.get("obra")).pk
+        return Response(_str_decimais(services.minhas_frentes(
+            tenant_id=request.user.tenant_id,
+            quem=(request.query_params.get("como") or "").strip() or _quem_e(request),
+            pode=_leitor(request),
+            obra_id=obra_id,
+        )))
+
+
+class BuscaView(LeituraDoCockpit):
+    """`GET /api/pdca/busca/?q=` — **uma busca sobre as sete espécies** (B4).
+
+    É o que permite o menu ficar em seis postos: quem procura escreve o nome
+    em vez de caçar a porta. `?obra=N` restringe à obra corrente — é o que a
+    paleta de comando manda quando já se está dentro de uma.
+    """
+
+    def get(self, request):
+        obra_id = None
+        if request.query_params.get("obra"):
+            obra_id = _minha_obra(request, request.query_params.get("obra")).pk
+        return Response(_str_decimais(services.busca_unica(
+            tenant_id=request.user.tenant_id,
+            termo=request.query_params.get("q", ""),
+            pode=_leitor(request),
+            obra_id=obra_id,
+        )))
+
+
+def _inteiro(bruto, padrao: int, *, campo: str) -> int:
+    """Um inteiro de query string — **e a recusa tem frase**.
+
+    `?dias=ontem` cairia num `ValueError` cru e devolveria 500. É a régua do
+    D187 na entrada: erro de quem digitou responde 400 dizendo o que corrigir.
+    """
+    if bruto in (None, ""):
+        return padrao
+    try:
+        return int(bruto)
+    except (TypeError, ValueError):
+        raise ValidationError({campo: "Informe um número inteiro de dias."})

@@ -33,7 +33,24 @@ avanço** e conferido por gente (§11.4); e a escada de atesto do `nucleo`
 congela o documento no último degrau, gerando o título no ERP (§11.5). A
 `LiberacaoRetencao` fecha o ciclo do que ficou retido.
 
-Planta: docs/modulos/modulopdca.md §4.1, §4.2, §4.3 e §4.4.
+**Fatia PDCA.5: o Last Planner.** O módulo passa a responder **por que não
+aconteceu**. `Restricao` é o *make-ready* — atividade com restrição aberta não
+entra na programação, que é a regra que separa o LPS de uma lista de tarefas;
+`ProgramacaoSemanal`/`ItemProgramacao` são o **compromisso** da equipe, que é
+coisa diferente do que o plano mandava; e `CausaNaoCumprimento` é o catálogo de
+onde sai o ranking que alimenta o *Act*. O **PPC** é derivado dos itens, nunca
+gravado (§4.9).
+
+**Fatia PDCA.7: a verificação.** O módulo passa a perguntar se o serviço saiu
+**certo**, e não só se saiu. `ModeloVerificacao`/`ItemModeloVerificacao` são a
+ficha em branco da empresa; `Verificacao`/`ItemVerificacao` são a ficha aplicada,
+com a pergunta **congelada** dentro da resposta; `NaoConformidade` é o defeito,
+que nasce de um item reprovado ou avulsa; `PlanoAcao` é o 5W2H que a trata; e
+`VerificacaoEficacia` é o que impede a NC de encerrar por carimbo — ela só fecha
+quando alguém volta à frente e registra que o conserto pegou. Uma máquina, quatro
+domínios (§4.5): FVS, segurança, ambiental e entrega.
+
+Planta: docs/modulos/modulopdca.md §4.1, §4.2, §4.3, §4.4 e §4.5.
 """
 from __future__ import annotations
 
@@ -1893,3 +1910,1919 @@ class LiberacaoRetencao(TenantScopedModel, Excluivel):
         return self.status in (
             self.Status.APROVADA, self.Status.REPROVADA, self.Status.CANCELADA,
         )
+
+
+# ---------------------------------------------------------------------------
+# PDCA.5 — o Last Planner: restrição, compromisso da semana e causa
+# ---------------------------------------------------------------------------
+# É a fatia que fecha o **Check** e o **Act** do módulo que se chama PDCA. Até
+# aqui ele planejava (`Cronograma`), executava (`ApontamentoAvanco`) e pagava
+# (`Medicao`) — e as três respondiam *o que era para acontecer* e *o que
+# aconteceu*. Nenhuma respondia **por que não aconteceu**, que é a pergunta de
+# onde sai a melhoria.
+#
+# O Last Planner faz isso com três gestos que não existem no cronograma:
+#
+#   1. **make-ready** — antes de comprometer, remover o que impede (`Restricao`);
+#   2. **compromisso** — a equipe diz o que VAI fazer na semana, e isso é
+#      diferente do que o plano DIZ que ela faria (`ProgramacaoSemanal`);
+#   3. **aprendizado** — o que não saiu exige causa, e o ranking das causas é o
+#      que muda o sistema (`CausaNaoCumprimento`).
+#
+# O **PPC** é a razão entre o comprometido e o cumprido, e ele é derivado —
+# nunca gravado (§4.9): guardá-lo em coluna criaria a segunda verdade que a §4.9
+# proíbe, e ela envelheceria no instante em que um item mudasse de cumprido para
+# não-cumprido.
+
+
+class TipoRestricao(models.TextChoices):
+    """As oito famílias de impedimento do *make-ready*.
+
+    Lista fechada, e não texto livre, pelo mesmo motivo do `NivelLocal`: o
+    ranking de restrição por tipo é uma das duas leituras que fazem o make-ready
+    valer a pena (a outra é o vencimento). Com texto livre, "material" e
+    "materiais" viram duas famílias e o ranking deixa de somar.
+
+    As oito saem da prática do LPS e cobrem o que trava obra: **projeto** (falta
+    detalhe, RFI sem resposta), **material**, **mão de obra**, **equipamento**,
+    **área** (a frente anterior não liberou o local), **licença** (alvará,
+    liberação de órgão), **decisão** (o cliente não escolheu) e **clima**.
+    """
+
+    PROJETO = "projeto", _("Projeto")
+    MATERIAL = "material", _("Material")
+    MAO_DE_OBRA = "mao_de_obra", _("Mão de obra")
+    EQUIPAMENTO = "equipamento", _("Equipamento")
+    AREA = "area", _("Área / frente anterior")
+    LICENCA = "licenca", _("Licença / liberação")
+    DECISAO = "decisao", _("Decisão do cliente")
+    CLIMA = "clima", _("Clima")
+
+
+class Restricao(TenantScopedModel, Excluivel):
+    """O *make-ready* do Last Planner — **o que impede a atividade de começar**.
+
+    **É a regra que separa o LPS de uma lista de tarefas** (planta §4.3):
+    atividade com restrição aberta **não entra na programação**. Sem essa trava,
+    o quadro da semana vira uma lista de desejos — o time se compromete com o que
+    sabe estar travado, o PPC despenca, e a causa registrada toda semana é a
+    mesma restrição que ninguém removeu.
+
+    **Ela pende de uma atividade, e não de uma obra solta.** Restrição sem alvo
+    não bloqueia nada e não se fecha: é um recado. O que dá poder a este modelo é
+    poder responder *quais compromissos esta pendência está segurando* — e isso
+    exige a FK.
+
+    **`responsavel` é rótulo durável, não FK de usuário** — o padrão do módulo.
+    Quem responde por destravar é com frequência alguém de fora do sistema (o
+    projetista, o fornecedor, o fiscal da prefeitura), e uma FK obrigaria a
+    cadastrar a prefeitura como usuário para poder escrever "aguardando alvará".
+
+    **Removida não é apagada.** A restrição removida é a prova de que o
+    make-ready aconteceu, e o tempo entre `criada_em` e `removida_em` é a única
+    medida honesta de quanto a obra demora para destravar a si mesma. Apagar
+    apagaria a metade boa da história.
+    """
+
+    class Status(models.TextChoices):
+        ABERTA = "aberta", _("Aberta")
+        REMOVIDA = "removida", _("Removida")
+        #: Descartada sem ter sido resolvida — "não era restrição", "o serviço
+        #: saiu do escopo". Separada de `REMOVIDA` de propósito: contar as duas
+        #: juntas inflaria a leitura de quanto a obra destrava de fato.
+        CANCELADA = "cancelada", _("Cancelada")
+
+    restricao_id = models.AutoField(primary_key=True)
+
+    #: `CASCADE`, e não o `PROTECT` que a PDCA.3 dá à medição: a restrição não é
+    #: prova de dinheiro, é insumo de planejamento. Atividade que deixa de
+    #: existir num replanejamento leva junto as travas que só faziam sentido para
+    #: ela — mantê-las produziria pendência órfã, que é o entulho que o teto da
+    #: §5.5j existe para evitar.
+    atividade = models.ForeignKey(
+        Atividade, on_delete=models.CASCADE, related_name="restricoes",
+        verbose_name=_("Atividade"),
+    )
+
+    #: Opcional, e é o endereço fino: a mesma atividade pode estar liberada na
+    #: torre A e travada na torre B. Sem ele, destravar a torre A obrigaria a
+    #: fechar uma restrição que ainda vale para a B.
+    local = models.ForeignKey(
+        LocalObra, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="restricoes", verbose_name=_("Local"),
+    )
+
+    tipo = models.CharField(
+        max_length=12, choices=TipoRestricao.choices, verbose_name=_("Tipo"),
+    )
+    descricao = models.TextField(verbose_name=_("Descrição"))
+
+    responsavel = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Responsável por remover"),
+    )
+    #: Quando a restrição **precisa** estar removida para não atrasar o serviço.
+    #: Nula é permitido e honesto: existe restrição cujo prazo ninguém sabe ainda
+    #: ("aguardando resposta do projetista"). O que a tela faz com nula é
+    #: mostrá-la como *sem prazo* — nunca como vencida.
+    prazo = models.DateField(null=True, blank=True, verbose_name=_("Prazo"))
+
+    status = models.CharField(
+        max_length=10, choices=Status.choices, default=Status.ABERTA,
+        verbose_name=_("Status"),
+    )
+
+    #: O seam do SCM, e ele é **vivo**, não inerte: restrição de material é a
+    #: origem natural de uma demanda de compra (planta §6 e §7 — "não compra nem
+    #: cota; restrição vira demanda"). `SET_NULL` porque a demanda é documento do
+    #: outro módulo e pode ser cancelada lá sem levar a restrição junto.
+    demanda_scm = models.ForeignKey(
+        "moduloscm.Demanda", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="restricoes_pdca", verbose_name=_("Demanda no SCM"),
+    )
+
+    criada_por = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Criada por"),
+    )
+    criada_em = models.DateTimeField(auto_now_add=True)
+    removida_em = models.DateTimeField(
+        null=True, blank=True, verbose_name=_("Removida em"),
+    )
+    removida_por = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Removida por"),
+    )
+    #: Como foi destravada. É o campo que a reunião lê na semana seguinte, e o
+    #: que transforma o log de restrição em memória da obra.
+    nota_remocao = models.TextField(
+        blank=True, verbose_name=_("Como foi removida"),
+    )
+
+    class Meta:
+        verbose_name = _("Restrição")
+        verbose_name_plural = _("Restrições")
+        ordering = ["prazo", "-restricao_id"]
+        indexes = [
+            #: O gesto que a tela faz o tempo todo: *o que ainda trava esta
+            #: atividade?* — conferido antes de cada compromisso.
+            models.Index(
+                fields=["tenant", "atividade", "status"],
+                name="pdca_restricao_ativ_idx",
+            ),
+            #: E o do painel: a fila de make-ready da obra, ordenada por prazo.
+            models.Index(
+                fields=["tenant", "status", "prazo"],
+                name="pdca_restricao_fila_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.get_tipo_display()} · atividade {self.atividade_id}"
+
+    @property
+    def esta_aberta(self) -> bool:
+        return self.status == self.Status.ABERTA
+
+
+class CausaNaoCumprimento(TenantScopedModel):
+    """Por que o compromisso não saiu — **de um catálogo, nunca de texto livre**.
+
+    É o modelo mais simples desta fatia e o que decide se ela serve para alguma
+    coisa. O PPC diz *quanto* falhou; só a causa diz *o quê* mudar. E ela só
+    responde isso se for **a mesma lista toda semana**: com campo livre, "chuva",
+    "choveu" e "clima" viram três linhas no ranking, cada uma com um terço do
+    peso, e a causa que estava em primeiro lugar não aparece.
+
+    **De fábrica e extensível.** As causas de fábrica (`de_fabrica=True`) nascem
+    com o tenant e cobrem o que a literatura do LPS registra como recorrente; o
+    tenant acrescenta as dele. O que ele **não** pode é apagar uma de fábrica que
+    já foi usada — o histórico de PPC de dois anos atrás perderia o rótulo. Por
+    isso `ativo`: causa que não se usa mais sai da lista de escolha e continua
+    legível no passado.
+
+    **Não herda `Excluivel` de propósito.** A lixeira existe para o objeto de
+    valor que alguém apaga por engano; um item de catálogo desativado já é
+    reversível por um clique, e mandá-lo para a lixeira criaria dois mecanismos
+    de desfazer para o mesmo gesto.
+    """
+
+    class Categoria(models.TextChoices):
+        """A quem a causa aponta — e é isto que transforma o ranking em ação.
+
+        Saber que "falta de material" lidera é meia informação; saber que 60% das
+        falhas apontam para **fora da equipe** (projeto, fornecedor, cliente) e
+        40% para dentro é o que decide se a conversa da semana é com o time ou
+        com a contratante.
+        """
+
+        PLANEJAMENTO = "planejamento", _("Planejamento")
+        MAO_DE_OBRA = "mao_de_obra", _("Mão de obra")
+        MATERIAL = "material", _("Material")
+        EQUIPAMENTO = "equipamento", _("Equipamento")
+        PROJETO = "projeto", _("Projeto")
+        EXTERNO = "externo", _("Externo (clima, cliente, órgão)")
+        QUALIDADE = "qualidade", _("Retrabalho / qualidade")
+
+    causa_id = models.AutoField(primary_key=True)
+
+    #: Curto e estável — é o que aparece no cartão e no eixo do gráfico, onde
+    #: não cabe a frase inteira.
+    codigo = models.CharField(max_length=30, verbose_name=_("Código"))
+    nome = models.CharField(max_length=120, verbose_name=_("Nome"))
+    categoria = models.CharField(
+        max_length=14, choices=Categoria.choices, verbose_name=_("Categoria"),
+    )
+    #: Marca a linha que veio com o tenant. Serve para uma coisa só, e ela
+    #: importa: impedir que o catálogo de fábrica seja renomeado a ponto de a
+    #: comparação entre obras deixar de existir.
+    de_fabrica = models.BooleanField(
+        default=False, verbose_name=_("De fábrica"),
+    )
+    ativo = models.BooleanField(default=True, verbose_name=_("Ativo"))
+
+    class Meta:
+        verbose_name = _("Causa de não-cumprimento")
+        verbose_name_plural = _("Causas de não-cumprimento")
+        ordering = ["categoria", "codigo"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "codigo"],
+                name="pdca_causa_codigo_unico_por_tenant",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.codigo} · {self.nome}"
+
+
+class ProgramacaoSemanal(TenantScopedModel, Excluivel):
+    """**O que a equipe se comprometeu a fazer nesta semana** — não o que o plano
+    mandava.
+
+    A distinção é a razão de este modelo existir ao lado do `Cronograma`. O
+    cronograma diz o que *deveria* acontecer, calculado pelo CPM meses antes; a
+    programação é o que o time, olhando a obra de hoje, **assume** perante os
+    colegas. Guardar o compromisso na própria atividade destruiria a comparação:
+    o plano seria reescrito toda semana para bater com a realidade e o PPC daria
+    100% para sempre.
+
+    **Três estados, e a transição normal é de mão única.** `RASCUNHO` é a parede
+    sendo montada; `COMPROMETIDA` é o time tendo assumido (e a partir daí a
+    lista de compromissos não recebe item novo — acrescentar depois de assumir é
+    como escrever a aposta depois do resultado); `ENCERRADA` é o ciclo fechado,
+    cada item julgado e o PPC calculável.
+
+    **Mas existe volta, e ela é registrada.** `reabrir/` desce **um** degrau, com
+    motivo obrigatório, e carimba quem, quando e por quê (ver os campos de
+    reabertura abaixo). Sem ela a semana encerrada era um beco: julgamento errado
+    ficava para sempre, e o ranking de causas — que é o que decide o que a
+    empresa muda — passava a apontar para o problema errado.
+
+    **O PPC não mora aqui.** Ele é derivado dos itens (§4.9), e a razão é a
+    mesma que impediu o `percentual_conclusao` acumulado de virar coluna na
+    PDCA.2: guardá-lo obrigaria a reescrevê-lo a cada item julgado, e a primeira
+    vez que alguém gravasse fora desse caminho o número passaria a mentir.
+    """
+
+    class Status(models.TextChoices):
+        RASCUNHO = "rascunho", _("Rascunho")
+        COMPROMETIDA = "comprometida", _("Comprometida")
+        ENCERRADA = "encerrada", _("Encerrada")
+
+    programacao_id = models.AutoField(primary_key=True)
+
+    #: A obra, e não o cronograma. Uma programação atravessa o replanejamento:
+    #: a semana que o time assumiu continua tendo acontecido depois de a v2 do
+    #: cronograma ser publicada, e amarrá-la à versão faria o histórico de PPC
+    #: zerar a cada replanejamento — exatamente o que a PDCA.2 evitou no avanço.
+    obra = models.ForeignKey(
+        "obras.Obra", on_delete=models.CASCADE, related_name="programacoes_pdca",
+        verbose_name=_("Obra"),
+    )
+
+    #: Segunda-feira da semana. É a chave natural do documento, e o `UniqueConstraint`
+    #: abaixo a torna única por obra: duas programações da mesma semana seriam
+    #: dois compromissos concorrentes sobre o mesmo período, e o PPC não saberia
+    #: qual contar.
+    semana_inicio = models.DateField(verbose_name=_("Início da semana"))
+    semana_fim = models.DateField(verbose_name=_("Fim da semana"))
+
+    status = models.CharField(
+        max_length=12, choices=Status.choices, default=Status.RASCUNHO,
+        verbose_name=_("Status"),
+    )
+
+    #: O que a reunião decidiu e não cabe em nenhum item — o clima da semana, a
+    #: decisão que vale para todos os compromissos.
+    nota = models.TextField(blank=True, verbose_name=_("Nota da reunião"))
+
+    criada_por = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Criada por"),
+    )
+    criada_em = models.DateTimeField(auto_now_add=True)
+    comprometida_em = models.DateTimeField(
+        null=True, blank=True, verbose_name=_("Comprometida em"),
+    )
+    comprometida_por = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Comprometida por"),
+    )
+    encerrada_em = models.DateTimeField(
+        null=True, blank=True, verbose_name=_("Encerrada em"),
+    )
+    encerrada_por = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Encerrada por"),
+    )
+
+    #: --- A volta atrás, e por que ela é REGISTRADA e não impedida ------------
+    #:
+    #: A semana encerrada era um beco: `julgar/` só aceita programação
+    #: comprometida, então um julgamento errado — "saiu" no que não saiu, a causa
+    #: trocada — ficava para sempre. E o estrago não é do índice: é do
+    #: **ranking**, que é o que decide o que a empresa muda na semana seguinte.
+    #: Uma causa errada contada durante um ano manda a obra consertar o problema
+    #: que ela não tem.
+    #:
+    #: **Por que reabrir em vez de retificar.** A medição da PDCA.3 congela e se
+    #: corrige por um documento novo, porque ela virou dinheiro: existe um título
+    #: no ERP que não pode ser reescrito. Aqui não há documento nenhum a
+    #: reconciliar — o PPC é **derivado, nunca gravado** (§4.9), então reabrir e
+    #: rejulgar simplesmente recalcula. A régua aplicável é a do
+    #: `ApontamentoAvanco` da PDCA.2: o erro se corrige **com motivo declarado**,
+    #: não se apaga.
+    #:
+    #: **E por que sem prazo.** A tentação seria só deixar reabrir a semana
+    #: recente. Mas erro achado tarde é o mais caro de não poder consertar — e a
+    #: retificadora da medição, que mexe em dinheiro, também não tem prazo. O que
+    #: protege o histórico não é a porta trancada, é **a correção aparecer**:
+    #: quem lê a série vê quais semanas foram reabertas, e a reunião que discutiu
+    #: o número antigo não é contrariada em silêncio.
+    reaberta_em = models.DateTimeField(
+        null=True, blank=True, verbose_name=_("Reaberta em"),
+    )
+    reaberta_por = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Reaberta por"),
+    )
+    #: Obrigatório ao reabrir. É a frase que a reunião seguinte lê para saber
+    #: por que o número mudou depois de ela ter olhado para ele.
+    motivo_reabertura = models.TextField(
+        blank=True, verbose_name=_("Motivo da reabertura"),
+    )
+    #: Contador, e não booleano: uma semana reaberta cinco vezes não é a mesma
+    #: coisa que uma reaberta uma vez, e é o tipo de padrão que só aparece se
+    #: alguém contar.
+    vezes_reaberta = models.PositiveSmallIntegerField(
+        default=0, verbose_name=_("Vezes reaberta"),
+    )
+
+    #: --- O encerramento ANTES de a semana acabar -----------------------------
+    #:
+    #: **Dava para fechar a semana que ainda não aconteceu.** `encerrar/` só
+    #: olhava o status e os julgamentos pendentes, nunca o calendário: na
+    #: segunda-feira de manhã a equipe podia julgar os cinco compromissos como
+    #: "não saiu" e encerrar — e a semana inteira estava pela frente. O PPC que
+    #: sai daí não mede confiabilidade de plano nenhum; mede quem apertou o botão
+    #: cedo, e ele entra na série histórica indistinguível dos outros.
+    #:
+    #: **Não é proibido, é excepcional e carimbado** *(decisão do dono,
+    #: 15/09/2026)*. Existe o caso real — a obra que para na sexta de um feriado
+    #: prolongado e faz a retrospectiva na quinta —, e trancar de todo faria o
+    #: time julgar de memória na semana seguinte, que é pior. Então a porta pede
+    #: **permissão própria** (`pdca.programacao.encerrar_antecipado`) e **motivo
+    #: por escrito**, e a semana fica marcada: quem lê a série vê que aquele
+    #: ponto foi apurado antes do fim, do mesmo jeito que vê a semana reaberta.
+    encerrada_antes_do_fim = models.BooleanField(
+        default=False, verbose_name=_("Encerrada antes do fim da semana"),
+    )
+    motivo_encerramento_antecipado = models.TextField(
+        blank=True, verbose_name=_("Motivo do encerramento antecipado"),
+    )
+
+    class Meta:
+        verbose_name = _("Programação semanal")
+        verbose_name_plural = _("Programações semanais")
+        ordering = ["-semana_inicio"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["obra", "semana_inicio"],
+                condition=models.Q(excluido_em__isnull=True),
+                name="pdca_programacao_semana_unica_por_obra",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(semana_fim__gte=models.F("semana_inicio")),
+                name="pdca_programacao_semana_coerente",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["tenant", "obra", "semana_inicio"],
+                name="pdca_prog_obra_semana_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Semana de {self.semana_inicio} · obra {self.obra_id}"
+
+    @property
+    def esta_aberta_para_montagem(self) -> bool:
+        """Só o rascunho recebe item novo. Ver a docstring da classe."""
+        return self.status == self.Status.RASCUNHO
+
+
+class ItemProgramacao(TenantScopedModel):
+    """Um **compromisso** da semana — uma atividade, num local, com um dono.
+
+    **`cumprido` é tri-estado de propósito, e o `None` é o estado mais
+    importante dos três.** Enquanto a semana não encerra, o item **não tem**
+    julgamento — e um `BooleanField` com `default=False` diria que ele já
+    falhou, jogando o PPC da semana em curso para zero e tornando o número
+    inútil justamente enquanto ele poderia mudar alguma coisa. Nulo é "ainda não
+    julgado", e é o que mantém o PPC honesto: ele só existe depois do encerramento.
+
+    **Não cumprido exige causa**, e a trava é da aplicação (`services`) e do
+    banco (a `CheckConstraint` abaixo). Sem ela o Last Planner degenera em
+    marcar caixinhas: o time aprende a anotar "não saiu" e segue a semana, que é
+    exatamente a prática que o LPS foi inventado para substituir.
+
+    **Cumprido não pode ter causa.** É o outro lado da mesma regra, e sem ele a
+    grade de causas contaria falhas que não houve.
+
+    Não herda `Excluivel`: é linha filha de documento, na mesma régua do
+    `ItemMedicao` e do `ItemAditivo` — a lixeira guarda o objeto de valor, não a
+    linha dele.
+    """
+
+    item_programacao_id = models.AutoField(primary_key=True)
+
+    programacao = models.ForeignKey(
+        ProgramacaoSemanal, on_delete=models.CASCADE, related_name="itens",
+        verbose_name=_("Programação"),
+    )
+    #: `PROTECT`: o compromisso é prova de que alguém assumiu aquele serviço
+    #: naquela semana. Apagar a atividade e levá-lo junto apagaria o numerador e
+    #: o denominador de um PPC já publicado.
+    atividade = models.ForeignKey(
+        Atividade, on_delete=models.PROTECT, related_name="itens_programacao",
+        verbose_name=_("Atividade"),
+    )
+    local = models.ForeignKey(
+        LocalObra, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="itens_programacao", verbose_name=_("Local"),
+    )
+
+    #: Quem assume — rótulo durável, como o `responsavel` da restrição e pelo
+    #: mesmo motivo: o encarregado da empreiteira que assume a frente nem sempre
+    #: tem login.
+    responsavel = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Responsável"),
+    )
+
+    #: **Quanto** o time se compromete a avançar nesta semana, em pontos
+    #: percentuais da atividade. É delta, não acumulado — a mesma régua do
+    #: `ApontamentoAvanco` (planta §4.3), e pela mesma razão: "andou 15% esta
+    #: semana" é o que alguém responde olhando o serviço.
+    #:
+    #: Nulo é permitido e comum: muito compromisso de LPS é binário ("concretar
+    #: a laje do 4º"), e obrigar um número faria o time inventar um.
+    percentual_previsto = models.DecimalField(
+        max_digits=6, decimal_places=2, null=True, blank=True,
+        verbose_name=_("Avanço previsto na semana (%)"),
+    )
+
+    #: --- O peso do compromisso, e de onde ele veio ---------------------------
+    #:
+    #: **O PPC passa a ser ponderado** *(decisão do dono, 15/09/2026)*. Contar
+    #: cartões iguais dizia que assumir a concretagem da laje e assumir a
+    #: limpeza do canteiro valem o mesmo: a semana que entrega a laje e perde a
+    #: limpeza marcava os mesmos 50% da que entrega a limpeza e perde a laje, e
+    #: as duas semanas não são a mesma semana para ninguém que esteja na obra.
+    #:
+    #: **O número sai do planejamento, não de um campo novo para digitar.** É a
+    #: mesma escada do `services.peso_de` que o avanço do cronograma já usa, com
+    #: um degrau a mais no fim:
+    #:
+    #:   1. `orcado` — a atividade está vinculada ao `ItemOrcado`, e vale o que o
+    #:      item vale. É o físico-financeiro do Orçamento entrando no Last
+    #:      Planner sem ninguém redigitar nada;
+    #:   2. `informado` — o peso que o planejador pôs na atividade;
+    #:   3. `duracao` — os dias úteis da atividade. É o "por tempo": quem montou
+    #:      o cronograma já disse quanto cada serviço dura, e essa é a régua de
+    #:      esforço que toda obra tem mesmo sem orçamento vinculado.
+    #:
+    #: **Congelado quando o cartão entra no quadro**, como o
+    #: `retencao_percentual_aplicado` da medição e pelo mesmo motivo: reprecificar
+    #: o orçamento em dezembro não pode reescrever o PPC de uma semana que a
+    #: reunião de agosto já leu.
+    #:
+    #: Nulo é resposta honesta e não zero: a atividade não tem como ponderar
+    #: (sem vínculo, sem peso, sem duração — o marco, por exemplo). O item entra
+    #: em `sem_peso` na leitura, e a tela mostra o denominador ao lado do índice
+    #: — a mesma régua do `folhas_sem_peso` do avanço do cronograma.
+    peso = models.DecimalField(
+        max_digits=14, decimal_places=4, null=True, blank=True,
+        verbose_name=_("Peso do compromisso"),
+    )
+    #: Qual degrau da escada valeu. Viaja junto porque duas fontes silenciosas
+    #: para o mesmo número é como se perde a confiança nas duas — a mesma razão
+    #: do `peso_origem` do avanço (planta §11.2).
+    peso_origem = models.CharField(
+        max_length=12, blank=True, verbose_name=_("Origem do peso"),
+    )
+
+    #: --- O compromisso que não saiu e continua de pé -------------------------
+    #:
+    #: **Serviço que não saiu não deixa de ser preciso** *(decisão do dono,
+    #: 15/09/2026)*. Até aqui a semana encerrada era um fim de linha: o cartão
+    #: "não saiu" ficava no quadro de trás, e a semana seguinte nascia vazia —
+    #: quem quisesse continuar a armação de pilares tinha de achá-la de novo na
+    #: WBS e puxá-la à mão. O que se perdia não era o clique: era **o fato de
+    #: aquele compromisso estar na segunda semana seguida**, que é exatamente o
+    #: que o Last Planner existe para pôr na frente da reunião.
+    #:
+    #: `arrastado_de` aponta para o cartão da semana anterior, e `vezes_arrastado`
+    #: conta. Um serviço arrastado quatro semanas não é o mesmo problema que um
+    #: arrastado uma vez — é uma restrição que ninguém removeu, e o contador é o
+    #: que faz esse padrão aparecer sem alguém ter de cruzar quadros à mão.
+    arrastado_de = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="arrastos", verbose_name=_("Arrastado do compromisso"),
+    )
+    vezes_arrastado = models.PositiveSmallIntegerField(
+        default=0, verbose_name=_("Semanas arrastado"),
+    )
+
+    #: `None` até o encerramento — ver a docstring da classe.
+    cumprido = models.BooleanField(
+        null=True, blank=True, verbose_name=_("Cumprido"),
+    )
+    #: `PROTECT`: a causa é o rótulo de uma falha já contada num PPC publicado.
+    causa = models.ForeignKey(
+        CausaNaoCumprimento, on_delete=models.PROTECT, null=True, blank=True,
+        related_name="itens", verbose_name=_("Causa do não-cumprimento"),
+    )
+    #: O detalhe da causa — *qual* material faltou, *que* projeto não chegou. A
+    #: causa dá a família; esta linha dá o caso, e é dela que sai a ação.
+    nota = models.TextField(blank=True, verbose_name=_("Nota"))
+
+    ordem = models.PositiveIntegerField(default=0, verbose_name=_("Ordem"))
+
+    class Meta:
+        verbose_name = _("Item de programação")
+        verbose_name_plural = _("Itens de programação")
+        ordering = ["ordem", "item_programacao_id"]
+        constraints = [
+            #: A mesma atividade, no mesmo local, não se compromete duas vezes na
+            #: mesma semana: seriam dois cartões disputando o mesmo serviço, e o
+            #: PPC contaria a falha em dobro.
+            models.UniqueConstraint(
+                fields=["programacao", "atividade", "local"],
+                name="pdca_item_prog_unico_por_atividade_local",
+            ),
+            #: A de cima **não cobre `local IS NULL`** — e esse é o caso comum
+            #: aqui, não a exceção: muito compromisso de LPS é da frente inteira
+            #: ("concretar a laje do 4º"), sem endereço fino. No Postgres
+            #: NULL ≠ NULL, então dois cartões da mesma atividade sem local
+            #: passavam, e o PPC contava a mesma falha duas vezes — exatamente o
+            #: que a constraint acima existe para impedir. Achado pelo
+            #: `pdca5_programacao_test.py`.
+            #:
+            #: Constraint parcial, e não `nulls_distinct=False`, pelo mesmo
+            #: motivo já registrado na parcela do Orçamento: não depender de
+            #: PG 15+.
+            models.UniqueConstraint(
+                fields=["programacao", "atividade"],
+                condition=models.Q(local__isnull=True),
+                name="pdca_item_prog_unico_sem_local",
+            ),
+            #: **Não cumprido exige causa; cumprido não a admite.** A regra vive
+            #: também no `services`, para a mensagem ser legível — mas ela mora
+            #: aqui porque o comando de bancada e a importação entram por outras
+            #: portas (a mesma lição do append-only da PDCA.2).
+            models.CheckConstraint(
+                condition=(
+                    models.Q(cumprido__isnull=True, causa__isnull=True)
+                    | models.Q(cumprido=True, causa__isnull=True)
+                    | models.Q(cumprido=False, causa__isnull=False)
+                ),
+                name="pdca_item_prog_causa_coerente",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["tenant", "programacao", "cumprido"],
+                name="pdca_item_prog_ppc_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Compromisso · atividade {self.atividade_id}"
+
+    def save(self, *args, **kwargs):
+        """Congela o peso **quando o cartão nasce**, e só então.
+
+        Aqui, e não no serializer, pela mesma lição que pôs a `CheckConstraint`
+        da causa no banco: o comando de bancada, a importação e o arrasto da
+        semana seguinte entram por outras portas, e um peso que só o formulário
+        preenchesse deixaria o PPC de metade dos quadros sem denominador.
+
+        **Uma consulta, uma vez por cartão.** Não recalcula na atualização: o
+        julgamento do fim da semana chama `save`/`bulk_update` sobre um cartão
+        que já tem peso, e recalcular ali faria o orçamento reprecificado em
+        dezembro reescrever o PPC de agosto.
+        """
+        if self._state.adding and self.peso is None and not self.peso_origem:
+            from . import services
+
+            atividade = self.atividade
+            if atividade is not None:
+                valor, origem = services.peso_do_compromisso(atividade)
+                self.peso = valor
+                self.peso_origem = origem
+        super().save(*args, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# PDCA.7 — a máquina de verificação: FVS, não-conformidade e plano de ação
+# ---------------------------------------------------------------------------
+# **Uma máquina, quatro domínios** (planta §4.5 e §11.6). FVS, checklist de
+# segurança, vistoria de entrega e inspeção ambiental são a mesma coisa: um
+# modelo de verificação aplicado a um objeto, item a item, com resultado e
+# evidência. Três cópias divergiriam na primeira mudança de requisito — e a
+# quarta, a vistoria de entrega da PDCA.11, nasceria fora do laço de tratamento
+# que as outras três já teriam.
+#
+# O que esta fatia acrescenta ao módulo não é mais um cadastro: é o **laço**. O
+# PPC da PDCA.5 responde se a semana saiu; a medição da PDCA.3 responde quanto
+# se paga por ela. Nenhum dos dois pergunta se o serviço saiu **certo** — e o
+# retrabalho que essa pergunta evita é o que a causa `QUA-RETRAB` do catálogo da
+# PDCA.5 já contava sem ter de onde vir.
+
+
+class DominioVerificacao(models.TextChoices):
+    """Os quatro domínios da mesma máquina.
+
+    Lista fechada, e não texto livre, pelo mesmo motivo do `NivelLocal` e do
+    `TipoRestricao`: é por ela que a biblioteca de modelos se organiza e que a
+    leitura de conformidade se separa — o índice de qualidade de uma obra não se
+    soma com o de segurança dela, ainda que os dois saiam da mesma tabela.
+
+    **`entrega` não é redundante com `qualidade`.** A FVS confere o serviço no
+    momento em que ele é executado, com a frente ainda aberta; a vistoria de
+    entrega confere a unidade pronta, na frente do cliente, e o que ela gera é
+    *punch list*. Mesma mecânica, momentos e públicos diferentes — e é por isso
+    que a PDCA.11 reaproveita esta máquina em vez de ganhar a dela.
+    """
+
+    QUALIDADE = "qualidade", _("Qualidade (FVS)")
+    SEGURANCA = "seguranca", _("Segurança")
+    AMBIENTAL = "ambiental", _("Ambiental")
+    ENTREGA = "entrega", _("Entrega / vistoria")
+
+
+class ModeloVerificacao(TenantScopedModel, Excluivel):
+    """O **modelo** de verificação — a ficha em branco da empresa.
+
+    É a biblioteca de padrões da qualidade, irmã do plano modelo da PDCA.1b: o
+    que faz a conformidade de duas obras ser comparável é elas terem respondido
+    **à mesma ficha**. Modelo por obra, montado na hora, produziria um número de
+    conformidade por engenheiro — que é o mesmo que nenhum.
+
+    **`ativo` e a lixeira convivem, e não são o mesmo gesto.** O
+    `CausaNaoCumprimento` recusou herdar `Excluivel` porque um item de catálogo
+    desativado já é reversível por um clique, e dois mecanismos de desfazer para
+    o mesmo gesto confundem. Aqui os gestos são dois de verdade: `ativo=False` é
+    *"pare de oferecer esta ficha"* — ela sai da lista de escolha e continua
+    legível em tudo que já foi verificado com ela —, e a lixeira é *"isto foi um
+    engano"*, para o modelo de 150 itens que alguém montou no lugar errado. O
+    que **não** existe é apagar modelo já aplicado: as fichas perderiam o nome
+    do que responderam.
+    """
+
+    modelo_id = models.AutoField(primary_key=True)
+
+    #: Curto e estável — é o que aparece no cabeçalho da ficha impressa e no
+    #: eixo da leitura por modelo. Mesma régua do código da causa: o nome é do
+    #: tenant, o código é a âncora da comparação.
+    codigo = models.CharField(max_length=30, verbose_name=_("Código"))
+    nome = models.CharField(max_length=150, verbose_name=_("Nome"))
+    dominio = models.CharField(
+        max_length=10, choices=DominioVerificacao.choices,
+        default=DominioVerificacao.QUALIDADE, verbose_name=_("Domínio"),
+    )
+    #: Quando aplicar esta ficha — a instrução que o técnico lê antes de ir a
+    #: campo ("após a cura, antes do revestimento"). É o que impede a FVS certa
+    #: de ser aplicada na hora errada, que é o modo mais comum de ela não valer
+    #: nada.
+    descricao = models.TextField(blank=True, verbose_name=_("Quando aplicar"))
+
+    ativo = models.BooleanField(default=True, verbose_name=_("Ativo"))
+
+    criado_por = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Criado por"),
+    )
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = _("Modelo de verificação")
+        verbose_name_plural = _("Modelos de verificação")
+        ordering = ["dominio", "codigo"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "codigo"],
+                condition=models.Q(excluido_em__isnull=True),
+                name="pdca_modelo_verif_codigo_unico_por_tenant",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["tenant", "dominio", "ativo"],
+                name="pdca_modelo_verif_dominio_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.codigo} · {self.nome}"
+
+
+class ItemModeloVerificacao(TenantScopedModel):
+    """Uma pergunta da ficha em branco — **e o critério que a torna verificável**.
+
+    **`criterio` é o campo que separa a FVS de uma opinião.** "A alvenaria está
+    boa?" produz respostas diferentes de dois técnicos no mesmo dia; "prumo com
+    desvio menor ou igual a 3 mm em 2 m, conferido com régua" produz a mesma. A
+    NBR e o PBQP-H pedem critério objetivo exatamente por isso, e sem ele o
+    índice de conformidade mede quem inspecionou, não como a obra está.
+
+    **`exige_foto` é do item, não da ficha.** Obrigar foto em todos os itens faz
+    a vistoria de 150 perguntas virar 150 fotos que ninguém olha; não permitir
+    nenhuma deixa a NC sem prova. Quem monta o modelo marca os poucos itens em
+    que a foto é a evidência — e é neles que a tela do campo insiste.
+    """
+
+    item_modelo_id = models.AutoField(primary_key=True)
+
+    modelo = models.ForeignKey(
+        ModeloVerificacao, on_delete=models.CASCADE, related_name="itens",
+        verbose_name=_("Modelo"),
+    )
+    ordem = models.PositiveIntegerField(default=0, verbose_name=_("Ordem"))
+    texto = models.TextField(verbose_name=_("O que se verifica"))
+    criterio = models.TextField(
+        blank=True, verbose_name=_("Critério de aceitação"),
+    )
+    #: Item obrigatório não aceita ficha concluída com ele pendente. Os demais
+    #: aceitam — e isso é o que permite a ficha longa ser respondida no que
+    #: importa sem travar a conclusão por causa de uma pergunta acessória.
+    obrigatorio = models.BooleanField(
+        default=True, verbose_name=_("Obrigatório"),
+    )
+    exige_foto = models.BooleanField(
+        default=False, verbose_name=_("Exige foto"),
+    )
+
+    class Meta:
+        verbose_name = _("Item do modelo de verificação")
+        verbose_name_plural = _("Itens do modelo de verificação")
+        ordering = ["ordem", "item_modelo_id"]
+        indexes = [
+            models.Index(
+                fields=["tenant", "modelo", "ordem"],
+                name="pdca_item_modelo_ordem_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.ordem}. {self.texto[:60]}"
+
+
+class Verificacao(TenantScopedModel, Excluivel):
+    """A **ficha aplicada** — o modelo, uma obra, um lugar, uma data, um inspetor.
+
+    **Reprovação parcial é o caso normal, não a exceção** (planta §4.5). Uma FVS
+    de alvenaria com 18 itens em que 2 reprovam é o dia comum do canteiro; um
+    modelo que só soubesse dizer "aprovada" ou "reprovada" jogaria fora a
+    informação inteira, que é *qual* item reprovou. Por isso não existe um campo
+    `aprovada` aqui: o resultado é **derivado** dos itens (§4.9), e vem em quatro
+    contagens mais a conformidade, nunca gravado.
+
+    **`local` e `atividade` são os dois endereços, e os dois são opcionais.** A
+    FVS de um serviço aponta para a `Atividade`; a vistoria de entrega de um
+    apartamento aponta para o `LocalObra`; a inspeção de segurança do canteiro
+    não aponta para nenhum dos dois. Obrigar qualquer um deles excluiria um dos
+    quatro domínios da máquina.
+
+    **`inspetor` é rótulo durável, não FK de usuário** — o padrão do módulo,
+    pela mesma razão do `responsavel` da restrição: quem inspeciona é com
+    frequência alguém de fora do sistema (o laboratório, o consultor do PBQP-H,
+    o técnico da seguradora).
+    """
+
+    class Status(models.TextChoices):
+        #: A ficha aberta, sendo respondida. É o estado em que o campo escreve.
+        EM_ANDAMENTO = "em_andamento", _("Em andamento")
+        #: Respondida e assinada. A partir daqui ela é leitura — corrigir uma
+        #: ficha concluída é aplicar o modelo de novo, que é o que o mundo
+        #: físico também exige: reinspecionar.
+        CONCLUIDA = "concluida", _("Concluída")
+
+    verificacao_id = models.AutoField(primary_key=True)
+
+    #: `PROTECT`: a ficha respondida é prova de que alguém inspecionou aquele
+    #: serviço naquele dia. Apagar o modelo e levá-la junto apagaria a evidência
+    #: que o organismo certificador vem auditar.
+    modelo = models.ForeignKey(
+        ModeloVerificacao, on_delete=models.PROTECT, related_name="verificacoes",
+        verbose_name=_("Modelo"),
+    )
+    obra = models.ForeignKey(
+        "obras.Obra", on_delete=models.CASCADE, related_name="verificacoes_pdca",
+        verbose_name=_("Obra"),
+    )
+    local = models.ForeignKey(
+        LocalObra, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="verificacoes", verbose_name=_("Local"),
+    )
+    atividade = models.ForeignKey(
+        Atividade, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="verificacoes", verbose_name=_("Atividade"),
+    )
+
+    inspetor = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Inspetor"),
+    )
+    data = models.DateField(verbose_name=_("Data da inspeção"))
+
+    status = models.CharField(
+        max_length=12, choices=Status.choices, default=Status.EM_ANDAMENTO,
+        verbose_name=_("Status"),
+    )
+    nota = models.TextField(blank=True, verbose_name=_("Nota da inspeção"))
+
+    criada_por = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Criada por"),
+    )
+    criada_em = models.DateTimeField(auto_now_add=True)
+    concluida_em = models.DateTimeField(
+        null=True, blank=True, verbose_name=_("Concluída em"),
+    )
+    concluida_por = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Concluída por"),
+    )
+
+    class Meta:
+        verbose_name = _("Verificação")
+        verbose_name_plural = _("Verificações")
+        ordering = ["-data", "-verificacao_id"]
+        indexes = [
+            #: A leitura do cockpit: as fichas desta obra, da mais recente para
+            #: a mais antiga.
+            models.Index(
+                fields=["tenant", "obra", "-data"],
+                name="pdca_verificacao_obra_idx",
+            ),
+            #: E a fila do campo: o que ainda está aberto para responder.
+            models.Index(
+                fields=["tenant", "status"],
+                name="pdca_verificacao_status_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.modelo_id} · obra {self.obra_id} · {self.data}"
+
+    @property
+    def esta_aberta(self) -> bool:
+        """Só a ficha em andamento recebe resposta. Ver a docstring da classe."""
+        return self.status == self.Status.EM_ANDAMENTO
+
+
+
+
+class GravidadeNC(models.TextChoices):
+    """Quanto a não-conformidade pesa — e o que cada degrau **autoriza**.
+
+    Não é rótulo decorativo: é o que decide se a frente segue. O vocabulário é o
+    do PBQP-H e o da ISO 9001 (maior x menor), com o terceiro degrau que o
+    canteiro precisa e as normas de gestão não nomeiam.
+    """
+
+    MENOR = "menor", _("Menor — corrige-se na frente")
+    MAIOR = "maior", _("Maior — o serviço não é aceito assim")
+    CRITICA = "critica", _("Crítica — para o serviço")
+
+
+class ResultadoItem(models.TextChoices):
+    """As quatro respostas possíveis — e o `PENDENTE` é uma delas de propósito.
+
+    É a mesma lição do `cumprido` tri-estado da PDCA.5: um item ainda não
+    respondido **não é** um item reprovado. Sem o `PENDENTE`, a ficha
+    recém-aberta nasceria com 18 reprovações e a conformidade dela seria 0%
+    enquanto o técnico caminha até a frente de serviço — um número falso
+    justamente no momento em que alguém poderia agir sobre ele.
+    """
+
+    PENDENTE = "pendente", _("Pendente")
+    CONFORME = "conforme", _("Conforme")
+    NAO_CONFORME = "nao_conforme", _("Não conforme")
+    NAO_APLICAVEL = "nao_aplicavel", _("Não aplicável")
+
+
+class ItemVerificacao(TenantScopedModel):
+    """Uma resposta da ficha — **com a pergunta congelada dentro dela**.
+
+    **`texto` e `criterio` são cópia, não referência, e essa é a decisão que
+    torna a ficha uma prova.** O modelo é vivo: a empresa aperta o critério de
+    prumo de 3 mm para 2 mm no ano seguinte, e faz bem. Se a ficha lesse o texto
+    pelo FK, toda inspeção do ano anterior passaria a afirmar que conferiu 2 mm —
+    e a auditoria do PBQP-H encontraria um sistema que reescreve o passado
+    sozinho. É a mesma razão que congela preço no `ItemMedicao`: o documento
+    guarda o que foi respondido, não o que se pergunta hoje.
+
+    **Não conforme e não aplicável exigem observação**, e a trava é da aplicação
+    e do banco. Sem ela a ficha degenera nos dois sentidos: o "não conforme" sem
+    dizer o quê não vira ação nenhuma, e o "não aplicável" sem dizer por quê é a
+    porta pela qual uma ficha inteira passa sem ninguém verificar nada — marcar
+    N/A em tudo aprova o serviço sem mentir em nenhum campo.
+
+    Não herda `Excluivel`: é linha filha de documento, na régua do `ItemMedicao`
+    e do `ItemProgramacao`.
+    """
+
+    item_verificacao_id = models.AutoField(primary_key=True)
+
+    verificacao = models.ForeignKey(
+        Verificacao, on_delete=models.CASCADE, related_name="itens",
+        verbose_name=_("Verificação"),
+    )
+    #: `PROTECT` e **opcional**: a linha aponta de volta para a pergunta do
+    #: modelo enquanto ela existir, mas a ficha não depende disso para ser
+    #: legível — o texto está congelado aqui. Nulo é o caso do item
+    #: acrescentado à ficha em campo, que não veio de modelo nenhum.
+    item_modelo = models.ForeignKey(
+        ItemModeloVerificacao, on_delete=models.PROTECT, null=True, blank=True,
+        related_name="respostas", verbose_name=_("Item do modelo"),
+    )
+
+    ordem = models.PositiveIntegerField(default=0, verbose_name=_("Ordem"))
+    #: Congelados na aplicação do modelo — ver a docstring da classe.
+    texto = models.TextField(verbose_name=_("O que se verifica"))
+    criterio = models.TextField(
+        blank=True, verbose_name=_("Critério de aceitação"),
+    )
+    obrigatorio = models.BooleanField(
+        default=True, verbose_name=_("Obrigatório"),
+    )
+    exige_foto = models.BooleanField(
+        default=False, verbose_name=_("Exige foto"),
+    )
+
+    resultado = models.CharField(
+        max_length=14, choices=ResultadoItem.choices,
+        default=ResultadoItem.PENDENTE, verbose_name=_("Resultado"),
+    )
+    observacao = models.TextField(blank=True, verbose_name=_("Observação"))
+    #: **Quanto ESTE defeito pesa** — e ele mora aqui, no item, porque a
+    #: gravidade é propriedade do defeito e não da ficha.
+    #:
+    #: *(Decisão do dono, 16/09/2026, olhando o painel: "essa pergunta deveria
+    #: ser feita em cada item e não no final, porque aí fica parecendo que um
+    #: desalinhamento na porta é grave igual a falta de uma maçaneta".)*
+    #:
+    #: A primeira escrita desta fatia perguntava a gravidade **uma vez**, na
+    #: conclusão da ficha, e carimbava o mesmo rótulo em todos os itens
+    #: reprovados. O resultado era um painel dizendo "3 maiores" sobre três
+    #: coisas de tamanhos diferentes — e um ranking de gravidade que não
+    #: ranqueava nada, pelo mesmo mecanismo que faria o ranking de causas da
+    #: PDCA.5 parar de funcionar se a causa fosse escolhida por semana em vez de
+    #: por compromisso.
+    #:
+    #: **E é perguntada no item porque é lá que dá para responder.** Quem
+    #: conclui a ficha pode não ser quem a respondeu (o `campo` responde,
+    #: qualquer um com `aplicar` conclui) e pode nem ter estado na frente. Quem
+    #: acabou de olhar o defeito sabe se ele se corrige na hora ou se para o
+    #: serviço; quem lê uma lista depois, não.
+    gravidade = models.CharField(
+        max_length=8, choices=GravidadeNC.choices, null=True, blank=True,
+        verbose_name=_("Gravidade do defeito"),
+    )
+    #: A evidência. Sobe pela **porta única** da plataforma
+    #: (`nucleo.upload_validation`), que já impõe tipo e tamanho pelo teto do
+    #: tenant — é por isso que a §5.5l do `planos.py` não declara um "bytes por
+    #: item" próprio, que seria um segundo número para a mesma pergunta.
+    foto = models.FileField(
+        upload_to="pdca_verificacao/", null=True, blank=True,
+        verbose_name=_("Foto"),
+    )
+
+    respondido_em = models.DateTimeField(
+        null=True, blank=True, verbose_name=_("Respondido em"),
+    )
+    respondido_por = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Respondido por"),
+    )
+
+    class Meta:
+        verbose_name = _("Item de verificação")
+        verbose_name_plural = _("Itens de verificação")
+        ordering = ["ordem", "item_verificacao_id"]
+        constraints = [
+            #: **Desvio exige explicação.** A regra vive também no `services`,
+            #: para a mensagem ser legível — mas mora aqui porque a importação e
+            #: o comando de bancada entram por outras portas (a mesma lição do
+            #: append-only da PDCA.2 e da causa da PDCA.5).
+            models.CheckConstraint(
+                condition=(
+                    models.Q(resultado__in=["pendente", "conforme"])
+                    | ~models.Q(observacao="")
+                ),
+                name="pdca_item_verif_desvio_explicado",
+            ),
+            #: **Exatamente o item reprovado carrega gravidade** — e os outros
+            #: três resultados não carregam nenhuma.
+            #:
+            #: O primeiro lado impede a NC nascer sem peso, que é o que
+            #: obrigaria alguém a inventar um depois. O segundo impede o
+            #: contrário e é menos óbvio: um item que ficou *conforme* com
+            #: gravidade `maior` pendurada (porque alguém marcou "não conforme",
+            #: escolheu a gravidade e depois corrigiu para conforme) contaria no
+            #: painel por gravidade um defeito que não existe.
+            models.CheckConstraint(
+                condition=(
+                    models.Q(resultado="nao_conforme", gravidade__isnull=False)
+                    | (
+                        ~models.Q(resultado="nao_conforme")
+                        & models.Q(gravidade__isnull=True)
+                    )
+                ),
+                name="pdca_item_verif_gravidade_coerente",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["tenant", "verificacao", "resultado"],
+                name="pdca_item_verif_result_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.ordem}. {self.texto[:40]} — {self.get_resultado_display()}"
+
+
+
+class NaoConformidade(TenantScopedModel, Excluivel):
+    """O que saiu errado — **e o registro que não encerra sozinho**.
+
+    **Nasce de um item reprovado ou avulsa** (planta §4.5), e as duas portas são
+    necessárias. A primeira é a FVS: o item reprovou, e a NC leva junto o
+    endereço, a foto e a pergunta que ele respondia. A segunda é o canteiro: o
+    encarregado vê a trinca a caminho do almoxarifado, e obrigá-lo a abrir uma
+    ficha de verificação inteira para registrá-la é o que faz a trinca não ser
+    registrada.
+
+    **`marcacao_prancheta` é o seam declarado com a Prancheta** (planta §6): a
+    NC ancorada no pino sobre o desenho sai em **BCF** junto com o resto, e é
+    assim que ela chega ao projetista dentro da ferramenta dele em vez de num
+    e-mail. `SET_NULL` porque a marcação é documento do outro módulo e pode ser
+    resolvida lá sem levar a NC junto.
+
+    **`restricao` é o seam vivo com o Last Planner**, e é o que dá dente à
+    gravidade: uma NC crítica *para o serviço*, e parar o serviço no vocabulário
+    da PDCA.5 é exatamente uma `Restricao` aberta — a atividade deixa de poder
+    entrar na programação da semana. Sem esse elo a gravidade seria adjetivo: o
+    sistema diria "crítica" e o time se comprometeria com o serviço assim mesmo,
+    na segunda-feira seguinte.
+
+    **E ela não encerra enquanto a eficácia não for verificada** (§4.5). A regra
+    é a que separa tratar de arquivar, e é o padrão do SAP QM: sem ela, "plano de
+    ação concluído" vira o carimbo que fecha a NC, e ninguém volta à frente para
+    ver se o conserto pegou. A trava mora no `services` e não numa
+    `CheckConstraint` por uma razão física — ela olha **outra tabela**
+    (`VerificacaoEficacia`), e check de banco não atravessa tabela.
+    """
+
+    class Status(models.TextChoices):
+        ABERTA = "aberta", _("Aberta")
+        #: Tem plano de ação. O degrau existe para a fila de decisão separar "o
+        #: que ninguém pegou" de "o que está sendo consertado" — sem ele, o
+        #: cockpit mostraria as duas como a mesma urgência.
+        EM_TRATAMENTO = "em_tratamento", _("Em tratamento")
+        ENCERRADA = "encerrada", _("Encerrada")
+        #: Descartada sem tratamento — "não era NC", "o item saiu do escopo".
+        #: Separada de `ENCERRADA` de propósito, pela mesma razão que separou
+        #: `CANCELADA` de `REMOVIDA` na restrição: contar as duas juntas
+        #: inflaria a leitura de quanto a obra conserta de fato.
+        CANCELADA = "cancelada", _("Cancelada")
+
+    nc_id = models.AutoField(primary_key=True)
+
+    obra = models.ForeignKey(
+        "obras.Obra", on_delete=models.CASCADE, related_name="ncs_pdca",
+        verbose_name=_("Obra"),
+    )
+    local = models.ForeignKey(
+        LocalObra, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="nao_conformidades", verbose_name=_("Local"),
+    )
+    atividade = models.ForeignKey(
+        Atividade, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="nao_conformidades", verbose_name=_("Atividade"),
+    )
+    #: De onde ela nasceu, quando nasceu de uma ficha. `SET_NULL` e não
+    #: `CASCADE`: a NC sobrevive à ficha porque o que ela registra não é a
+    #: inspeção, é o defeito — e o defeito continua existindo.
+    item_verificacao = models.ForeignKey(
+        ItemVerificacao, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="nao_conformidades", verbose_name=_("Item que reprovou"),
+    )
+
+    gravidade = models.CharField(
+        max_length=8, choices=GravidadeNC.choices, default=GravidadeNC.MENOR,
+        verbose_name=_("Gravidade"),
+    )
+    descricao = models.TextField(verbose_name=_("Descrição"))
+    foto = models.FileField(
+        upload_to="pdca_nc/", null=True, blank=True, verbose_name=_("Foto"),
+    )
+
+    marcacao_prancheta = models.ForeignKey(
+        "moduloprancheta.Marcacao", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="ncs_pdca",
+        verbose_name=_("Marcação na Prancheta"),
+    )
+    restricao = models.ForeignKey(
+        Restricao, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="ncs", verbose_name=_("Restrição gerada"),
+    )
+
+    status = models.CharField(
+        max_length=14, choices=Status.choices, default=Status.ABERTA,
+        verbose_name=_("Status"),
+    )
+
+    aberta_por = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Aberta por"),
+    )
+    aberta_em = models.DateTimeField(auto_now_add=True)
+    encerrada_em = models.DateTimeField(
+        null=True, blank=True, verbose_name=_("Encerrada em"),
+    )
+    encerrada_por = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Encerrada por"),
+    )
+    nota_encerramento = models.TextField(
+        blank=True, verbose_name=_("Nota do encerramento"),
+    )
+
+    class Meta:
+        verbose_name = _("Não-conformidade")
+        verbose_name_plural = _("Não-conformidades")
+        ordering = ["-aberta_em"]
+        indexes = [
+            #: A fila de decisão do cockpit: o que está aberto nesta obra.
+            models.Index(
+                fields=["tenant", "obra", "status"],
+                name="pdca_nc_obra_status_idx",
+            ),
+            #: E a trava do quadro da semana: esta atividade tem NC aberta?
+            models.Index(
+                fields=["tenant", "atividade", "status"],
+                name="pdca_nc_atividade_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"NC {self.nc_id} · {self.get_gravidade_display()}"
+
+    @property
+    def esta_aberta(self) -> bool:
+        return self.status in (self.Status.ABERTA, self.Status.EM_TRATAMENTO)
+
+
+class PlanoAcao(TenantScopedModel):
+    """O **5W2H** — o que se vai fazer a respeito, em sete perguntas.
+
+    As sete existem porque cada uma sozinha é onde o tratamento falha na
+    prática: plano sem `quem` não tem dono e ninguém executa; sem `quando` não
+    vence e fica para sempre; sem `por_que` conserta o sintoma e a NC volta na
+    semana seguinte. É o formato que o PBQP-H pede e que o canteiro brasileiro já
+    escreve à mão — o software não está inventando um vocabulário novo.
+
+    **Corretiva e preventiva são as duas que o PBQP-H exige**, e a diferença não
+    é de grau: a corretiva conserta *esta* parede, a preventiva muda o processo
+    para as próximas cem não saírem tortas. Um sistema que só registrasse a
+    primeira produziria uma empresa que conserta a vida inteira sem nunca
+    aprender — que é exatamente o que o "Act" do ciclo existe para evitar.
+
+    Não herda `Excluivel`: é linha filha da NC, na régua do `ItemProgramacao`.
+    """
+
+    class Tipo(models.TextChoices):
+        CORRETIVA = "corretiva", _("Corretiva — conserta o que saiu errado")
+        PREVENTIVA = "preventiva", _("Preventiva — evita que volte a acontecer")
+
+    class Status(models.TextChoices):
+        PLANEJADA = "planejada", _("Planejada")
+        EM_EXECUCAO = "em_execucao", _("Em execução")
+        CONCLUIDA = "concluida", _("Concluída")
+        CANCELADA = "cancelada", _("Cancelada")
+
+    plano_id = models.AutoField(primary_key=True)
+
+    nao_conformidade = models.ForeignKey(
+        NaoConformidade, on_delete=models.CASCADE, related_name="acoes",
+        verbose_name=_("Não-conformidade"),
+    )
+    tipo = models.CharField(
+        max_length=10, choices=Tipo.choices, default=Tipo.CORRETIVA,
+        verbose_name=_("Tipo"),
+    )
+
+    #: --- As sete perguntas -------------------------------------------------
+    o_que = models.TextField(verbose_name=_("O quê"))
+    por_que = models.TextField(blank=True, verbose_name=_("Por quê"))
+    onde = models.CharField(max_length=200, blank=True, verbose_name=_("Onde"))
+    #: O prazo. É o único dos sete que o sistema **cobra**: plano vencido e não
+    #: concluído é linha da fila de decisão do cockpit.
+    quando = models.DateField(null=True, blank=True, verbose_name=_("Quando"))
+    #: Rótulo durável, como o `responsavel` da restrição e o `inspetor` da
+    #: ficha, e pelo mesmo motivo: quem conserta é com frequência a empreiteira.
+    quem = models.CharField(max_length=150, blank=True, verbose_name=_("Quem"))
+    como = models.TextField(blank=True, verbose_name=_("Como"))
+    #: Quanto custa. **Não vira título no ERP** (fronteira do módulo, §7): o
+    #: custo do retrabalho é registrado aqui para virar leitura — quanto a
+    #: qualidade desta obra custou —, e quem paga continua sendo o ERP pelo
+    #: caminho que já existe.
+    quanto = models.DecimalField(
+        max_digits=14, decimal_places=2, null=True, blank=True,
+        verbose_name=_("Quanto custa"),
+    )
+
+    status = models.CharField(
+        max_length=12, choices=Status.choices, default=Status.PLANEJADA,
+        verbose_name=_("Status"),
+    )
+    concluida_em = models.DateTimeField(
+        null=True, blank=True, verbose_name=_("Concluída em"),
+    )
+    concluida_por = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Concluída por"),
+    )
+
+    criada_por = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Criada por"),
+    )
+    criada_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = _("Plano de ação")
+        verbose_name_plural = _("Planos de ação")
+        ordering = ["quando", "plano_id"]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    ~models.Q(status="concluida")
+                    | models.Q(concluida_em__isnull=False)
+                ),
+                name="pdca_plano_acao_concluida_tem_data",
+            ),
+        ]
+        indexes = [
+            #: A fila do vencido: planos com prazo, ainda não concluídos.
+            models.Index(
+                fields=["tenant", "status", "quando"],
+                name="pdca_plano_acao_fila_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.get_tipo_display()} · NC {self.nao_conformidade_id}"
+
+
+class VerificacaoEficacia(TenantScopedModel):
+    """**Funcionou?** — o registro que fecha o laço, e que pode dizer que não.
+
+    É o que separa tratar de arquivar (planta §4.5). Sem ela, "plano de ação
+    concluído" seria o carimbo que encerra a NC, e ninguém voltaria à frente
+    para ver se o conserto pegou — que é como a maior parte dos sistemas de
+    qualidade, de papel e de software, perde o valor inteiro do ciclo.
+
+    **`eficaz=False` é o resultado mais útil dos dois.** Ele não encerra nada:
+    a NC volta para tratamento, e o que vem a seguir é um plano de ação novo —
+    porque o anterior, comprovadamente, não resolveu. É por isso que este
+    modelo é **append-only na prática**: a segunda verificação não sobrescreve a
+    primeira, e a sequência delas é a história honesta de quantas tentativas o
+    conserto levou. O mesmo raciocínio do estorno do `ApontamentoAvanco`.
+
+    Pende da **NC**, e não do plano de ação, porque é a NC que encerra: uma NC
+    com três ações não fecha três vezes, fecha uma — quando a frente, olhada de
+    novo, está certa.
+    """
+
+    eficacia_id = models.AutoField(primary_key=True)
+
+    nao_conformidade = models.ForeignKey(
+        NaoConformidade, on_delete=models.CASCADE, related_name="eficacias",
+        verbose_name=_("Não-conformidade"),
+    )
+    data = models.DateField(verbose_name=_("Data da verificação"))
+    eficaz = models.BooleanField(verbose_name=_("Foi eficaz"))
+    #: O que se olhou para concluir isso. É o campo que a auditoria lê, e o que
+    #: impede a verificação de eficácia de ser um `True` sem história.
+    evidencia = models.TextField(verbose_name=_("Evidência"))
+    foto = models.FileField(
+        upload_to="pdca_eficacia/", null=True, blank=True,
+        verbose_name=_("Foto"),
+    )
+
+    verificada_por = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Verificada por"),
+    )
+    verificada_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = _("Verificação de eficácia")
+        verbose_name_plural = _("Verificações de eficácia")
+        ordering = ["-data", "-eficacia_id"]
+        indexes = [
+            models.Index(
+                fields=["tenant", "nao_conformidade", "-data"],
+                name="pdca_eficacia_nc_idx",
+            ),
+        ]
+
+    def __str__(self):
+        marca = "eficaz" if self.eficaz else "não eficaz"
+        return f"NC {self.nao_conformidade_id} · {marca} em {self.data}"
+
+
+# ---------------------------------------------------------------------------
+# PDCA.8 — SSMA: o diálogo de segurança e a ocorrência
+# ---------------------------------------------------------------------------
+# As fatias anteriores mediram prazo (PPC), dinheiro (medição) e serviço
+# (verificação). Esta mede **gente** — e é a primeira do módulo cujo registro é
+# prova perante o Estado, com prazo em lei e multa por omissão.
+#
+# **O que esta fatia NÃO cria, e por quê.** A §4.6 da planta listava três
+# objetos: DDS, ocorrência e `EntregaEPI`. O terceiro **já existe**, completo,
+# em `modulosil.EntregaEPI` desde 25/07/2026 — item do catálogo, colaborador do
+# RH, CA e validade, troca, devolução, baixa de estoque. Recriá-lo aqui produzia
+# duas verdades sobre o mesmo capacete: o saldo podendo baixar sem a ficha
+# existir, e a ficha existindo sem o saldo baixar. E contradizia a §7 da própria
+# planta, que diz que o PDCA **não** movimenta estoque. *(Decisão do dono,
+# 20/09/2026: o PDCA lê o EPI do SIL e a §4.6 é corrigida.)* O que a SSMA faz
+# com o EPI é **ler** — pela permissão do outro módulo, com import tardio, e
+# declarando em voz alta quando o tenant não contrata o SIL.
+#
+# A segunda ausência é maior: **não existe `Efetivo`** (planta §4.7, fatia
+# PDCA.9). O sistema não sabe quem está em qual frente hoje. Por isso esta fatia
+# não promete "EPI vencido barra a entrada do trabalhador na frente" — o grão
+# honesto disponível é a **obra**, e prometer o resto seria fabricar.
+
+
+class TipoOcorrencia(models.TextChoices):
+    """A taxonomia do fato, e a ordem dela é a pirâmide de Bird.
+
+    **O quase-acidente é o primeiro da lista de propósito.** Ele é o registro
+    mais valioso da segurança — é o acidente que avisou antes — e o mais fácil
+    de não fazer, porque ninguém se machucou e o turno continua. Pôr o acidente
+    no topo da lista faria o formulário abrir na tragédia e ensinaria que só se
+    registra o que sangra.
+
+    `INCIDENTE` é o fato **sem lesão e com dano** (a fôrma que caiu de noite, o
+    cabo que queimou). Separado do quase-acidente porque tem custo e tem causa
+    apurável, e separado do acidente porque não tem vítima — contar os três
+    juntos é o que faz a pirâmide virar um número só e deixar de apontar nada.
+    """
+
+    QUASE_ACIDENTE = "quase_acidente", _("Quase-acidente (sem lesão e sem dano)")
+    INCIDENTE = "incidente", _("Incidente (dano material, sem lesão)")
+    ACIDENTE_TIPICO = "acidente_tipico", _("Acidente típico (no trabalho)")
+    ACIDENTE_TRAJETO = "acidente_trajeto", _("Acidente de trajeto")
+    DOENCA_OCUPACIONAL = "doenca_ocupacional", _("Doença ocupacional")
+
+
+class ClassificacaoOcorrencia(models.TextChoices):
+    """O que a ocorrência custou em tempo de gente — e o estado `PENDENTE`.
+
+    **`PENDENTE` é o default e é a metade do desenho.** Registrar tem de ser
+    barato; classificar é que muda o indicador. Se o formulário exigisse a
+    classificação no ato, quem registra às 7h no canteiro teria de decidir, ali,
+    se houve afastamento — coisa que só se sabe depois do atendimento médico. O
+    resultado seria o registro adiado "para quando eu souber", que é o mesmo que
+    o registro não feito.
+
+    É a mesma lição do `cumprido` tri-estado da PDCA.5: o nulo que diz "ainda
+    não se julgou" é informação, e o zero no lugar dele é mentira.
+    """
+
+    PENDENTE = "pendente", _("Ainda não classificada")
+    SEM_AFASTAMENTO = "sem_afastamento", _("Sem afastamento")
+    COM_AFASTAMENTO = "com_afastamento", _("Com afastamento")
+    OBITO = "obito", _("Óbito")
+
+
+class Lateralidade(models.TextChoices):
+    """Exigida pelo formulário da CAT, e não é preciosismo clínico.
+
+    O Anexo da Portaria SEPRT/ME 4.334/2021 pede parte do corpo **e** lado. A
+    razão é previdenciária: perder três dedos da mão direita e da esquerda são
+    incapacidades diferentes, e é sobre essa diferença que o benefício se
+    calcula.
+    """
+
+    NAO_SE_APLICA = "nao_se_aplica", _("Não se aplica")
+    ESQUERDA = "esquerda", _("Esquerda")
+    DIREITA = "direita", _("Direita")
+    AMBAS = "ambas", _("Ambas")
+
+
+class TipoCAT(models.TextChoices):
+    """Os três tipos do formulário vigente (Portaria SEPRT/ME 4.334/2021)."""
+
+    INICIAL = "inicial", _("Inicial")
+    REABERTURA = "reabertura", _("Reabertura")
+    OBITO = "obito", _("Comunicação de óbito")
+
+
+class DialogoSeguranca(TenantScopedModel, Excluivel):
+    """O **DDS** — a roda de conversa antes do turno, e quem esteve nela.
+
+    **Não é obrigatório por nome em norma nenhuma, e a fatia diz isso.** Varrendo
+    as NRs, "DDS" não aparece em nenhuma e "diálogo" aparece uma vez (NR-1, item
+    1.4.4.1). É prática de mercado consolidada — e é o principal **indicador
+    proativo** que uma construtora tem: contar diálogos feitos mede o que a obra
+    faz *antes*, e não só o que ela contabiliza depois. Registrar aqui um campo
+    "obrigatório por norma" seria afirmar o que a norma não diz, e o sistema
+    seria auditado por isso.
+
+    **Por que ele é modelo próprio e não uma `Verificacao` de domínio
+    `seguranca`.** A tentação é real, e a máquina da PDCA.7 já roda para os
+    quatro domínios. Mas a ficha de verificação responde *perguntas sobre um
+    objeto*, e o DDS não tem perguntas nem objeto: ele tem **tema, fala e lista
+    de presença**. Encaixá-lo na ficha obrigaria a inventar itens falsos ("o
+    diálogo foi realizado? conforme") só para caber, e a lista de presença — que
+    é a única coisa que a fiscalização olha — não teria onde morar.
+
+    **E por que ele escreve no Diário** (§7 — "não substitui o Diário: escreve e
+    lê nele"): o diálogo de segurança faz parte do que aconteceu na obra naquele
+    dia, e o diário é o registro contratual do dia. O PDCA é o primeiro módulo de
+    negócio a atravessar essa porta.
+    """
+
+    class Status(models.TextChoices):
+        RASCUNHO = "rascunho", _("Rascunho")
+        #: Encerrado fecha a lista de presença. Sem este degrau, alguém
+        #: acrescentaria um nome três dias depois e a lista deixaria de ser
+        #: prova de quem estava lá — que é a única coisa que ela é.
+        ENCERRADO = "encerrado", _("Encerrado")
+
+    dds_id = models.AutoField(primary_key=True)
+
+    obra = models.ForeignKey(
+        "obras.Obra", on_delete=models.CASCADE, related_name="dds_pdca",
+        verbose_name=_("Obra"),
+    )
+    #: Local e atividade opcionais, na régua escrita na `Verificacao`: o diálogo
+    #: da manhã é da obra inteira e não aponta para nenhum dos dois; obrigar
+    #: qualquer um excluiria o caso mais comum.
+    local = models.ForeignKey(
+        LocalObra, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="dialogos_seguranca", verbose_name=_("Local"),
+    )
+    atividade = models.ForeignKey(
+        Atividade, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="dialogos_seguranca", verbose_name=_("Atividade"),
+    )
+
+    data = models.DateField(verbose_name=_("Data"))
+    tema = models.CharField(max_length=160, verbose_name=_("Tema"))
+    assunto = models.TextField(blank=True, verbose_name=_("O que foi falado"))
+    duracao_min = models.PositiveSmallIntegerField(
+        null=True, blank=True, verbose_name=_("Duração (minutos)"),
+    )
+
+    #: O par FK + texto livre é o mesmo do `EntregaEPI` do SIL, e existe pela
+    #: mesma razão: metade de quem está no canteiro é de terceiro, e não tem
+    #: cadastro no RH da construtora. Recusar o nome em texto excluiria da lista
+    #: de presença justamente quem mais se acidenta.
+    responsavel = models.ForeignKey(
+        "rh.Funcionario", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+", verbose_name=_("Responsável (RH)"),
+    )
+    responsavel_nome = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Responsável (nome)"),
+    )
+
+    status = models.CharField(
+        max_length=10, choices=Status.choices, default=Status.RASCUNHO,
+        verbose_name=_("Situação"),
+    )
+    encerrado_em = models.DateTimeField(null=True, blank=True)
+    encerrado_por = models.CharField(max_length=150, blank=True)
+
+    #: O diário que recebeu este diálogo. `SET_NULL` porque o diário é documento
+    #: de outro módulo — a régua escrita na `Restricao.demanda`.
+    diario = models.ForeignKey(
+        "modulodiario.DiarioObra", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="dds_pdca",
+        verbose_name=_("Diário de obra"),
+    )
+
+    registrado_por = models.CharField(max_length=150, blank=True)
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = _("Diálogo de segurança (DDS)")
+        verbose_name_plural = _("Diálogos de segurança (DDS)")
+        ordering = ["-data", "-dds_id"]
+        indexes = [
+            #: A série do indicador proativo: quantos diálogos esta obra fez no
+            #: período. É a consulta que o painel faz sempre.
+            models.Index(
+                fields=["tenant", "obra", "-data"], name="pdca_dds_obra_data_idx",
+            ),
+        ]
+        constraints = [
+            #: Cabe numa linha, então é do banco: encerrado sem carimbo seria um
+            #: DDS fechado sem se saber quando — e a importação e o comando de
+            #: bancada entram por outras portas.
+            models.CheckConstraint(
+                name="pdca_dds_encerrado_tem_carimbo",
+                condition=(
+                    models.Q(status="encerrado", encerrado_em__isnull=False)
+                    | ~models.Q(status="encerrado")
+                ),
+            ),
+        ]
+
+    def __str__(self):
+        return f"DDS {self.data} · {self.tema}"
+
+    @property
+    def esta_aberto(self) -> bool:
+        return self.status == self.Status.RASCUNHO
+
+
+class ParticipanteDDS(TenantScopedModel):
+    """Quem esteve na roda — **a lista de presença, que é a prova**.
+
+    O DDS sem lista é um campo de texto dizendo que houve diálogo. O que a
+    fiscalização e a perícia olham é esta tabela: nomes, e se assinaram.
+
+    **`assinou` é booleano e não guarda o traço da assinatura**, e isso é
+    declarado em vez de disfarçado. Assinatura digital com valor probatório é
+    fatia de plataforma, não de módulo; o que existe hoje é a lista impressa e
+    assinada, fotografada e anexada à ocorrência ou ao diário. O campo diz que a
+    assinatura **existe em algum lugar**, não que o sistema a guarda.
+    """
+
+    participante_id = models.AutoField(primary_key=True)
+
+    dds = models.ForeignKey(
+        DialogoSeguranca, on_delete=models.CASCADE, related_name="participantes",
+        verbose_name=_("Diálogo"),
+    )
+    funcionario = models.ForeignKey(
+        "rh.Funcionario", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+", verbose_name=_("Funcionário (RH)"),
+    )
+    nome = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Nome (terceirizado)"),
+    )
+    presente = models.BooleanField(default=True, verbose_name=_("Presente"))
+    assinou = models.BooleanField(
+        default=False, verbose_name=_("Assinou a lista"),
+    )
+
+    class Meta:
+        verbose_name = _("Participante do DDS")
+        verbose_name_plural = _("Participantes do DDS")
+        ordering = ["participante_id"]
+        constraints = [
+            #: Ou o cadastro do RH, ou um nome escrito. Participante sem os dois
+            #: é uma linha em branco na lista de presença — e uma lista de
+            #: presença com linha em branco não prova nada.
+            models.CheckConstraint(
+                name="pdca_participante_dds_identificado",
+                condition=(
+                    models.Q(funcionario__isnull=False) | ~models.Q(nome="")
+                ),
+            ),
+            #: A mesma pessoa não assina duas vezes a mesma roda.
+            models.UniqueConstraint(
+                fields=["dds", "funcionario"],
+                condition=models.Q(funcionario__isnull=False),
+                name="pdca_participante_dds_unico",
+            ),
+        ]
+
+    def __str__(self):
+        return self.nome or f"Funcionário {self.funcionario_id}"
+
+
+class Ocorrencia(TenantScopedModel, Excluivel):
+    """O que aconteceu e ninguém queria — **do quase-acidente ao óbito**.
+
+    **Registrar é barato; classificar é que pesa.** A ocorrência nasce com
+    `classificacao = PENDENTE` e só o `tipo`, a hora e a descrição são exigidos.
+    Quem registra está no canteiro e acabou de ver; quem classifica decide o
+    número pelo qual a obra é cobrada. Fossem o mesmo ato, o encarregado cujo
+    bônus depende da taxa de frequência classificaria o próprio acidente — e é
+    por isso que `pdca.ocorrencia.registrar` e `pdca.ocorrencia.classificar` são
+    verbos separados no catálogo.
+
+    **Os campos da CAT moram aqui, e a transmissão não.** O formulário vigente é
+    o Anexo da Portaria SEPRT/ME 4.334/2021 (que revogou a 5.817/1999), e dele a
+    ocorrência guarda o que **só a obra sabe**: hora, local, agente causador,
+    situação geradora, parte do corpo e lado, último dia trabalhado, horas
+    trabalhadas antes, registro policial. O que a obra não sabe — vínculo,
+    remuneração, CNPJ — é do RH, e o que o sistema **não faz** é transmitir: o
+    evento eSocial S-2210 é obrigação da folha, e duplicar a porta de um ato com
+    prazo legal e multa criaria duas verdades sobre se a CAT foi comunicada.
+    O que esta fatia faz é **avisar o prazo** e **guardar o protocolo**.
+
+    *(O formulário vigente não tem campo de testemunhas — a 4.334/2021 o
+    retirou. A fatia não o inventa.)*
+
+    **`restricao` é o dente**, e é a mesma corrente que a NC crítica já
+    percorre: risco grave abre uma `Restricao` de tipo `AREA` e a atividade sai
+    do quadro da semana. Sem ela, "acidente grave" seria adjetivo e a equipe se
+    comprometeria com o mesmo serviço na segunda seguinte. Não há
+    `TipoRestricao.SEGURANCA` novo: interditar frente por risco **é** "a área
+    não está liberada", e um nono tipo partiria o ranking de restrição em dois
+    vocabulários para o mesmo fato — o argumento que a PDCA.7 já escreveu ao
+    recusar um tipo próprio para a qualidade.
+
+    **`nao_conformidade` é o laço.** Investigar acidente com árvore de causas e
+    5W2H é exatamente o que `NaoConformidade` + `PlanoAcao` +
+    `VerificacaoEficacia` já fazem, e refazê-los aqui produziria uma segunda
+    máquina de tratamento que divergiria da primeira na primeira mudança de
+    requisito. A ocorrência é o **fato**; a NC é o **tratamento** dele.
+    """
+
+    class Status(models.TextChoices):
+        ABERTA = "aberta", _("Aberta")
+        EM_INVESTIGACAO = "em_investigacao", _("Em investigação")
+        ENCERRADA = "encerrada", _("Encerrada")
+        #: Separada de `ENCERRADA` pela razão de sempre nesta casa (a mesma que
+        #: separou `CANCELADA` de `REMOVIDA` na restrição): contar as duas
+        #: juntas inflaria a leitura de quanto a obra de fato trata.
+        CANCELADA = "cancelada", _("Cancelada")
+
+    ocorrencia_id = models.AutoField(primary_key=True)
+
+    obra = models.ForeignKey(
+        "obras.Obra", on_delete=models.CASCADE, related_name="ocorrencias_pdca",
+        verbose_name=_("Obra"),
+    )
+    local = models.ForeignKey(
+        LocalObra, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="ocorrencias", verbose_name=_("Local"),
+    )
+    atividade = models.ForeignKey(
+        Atividade, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="ocorrencias", verbose_name=_("Atividade"),
+    )
+
+    #: **Data e hora**, não só data — a CAT pede a hora do acidente e as horas
+    #: trabalhadas antes dele, e as duas juntas é que dizem se o acidente
+    #: aconteceu na quarta hora ou na décima segunda.
+    ocorrido_em = models.DateTimeField(verbose_name=_("Ocorrido em"))
+    tipo = models.CharField(
+        max_length=20, choices=TipoOcorrencia.choices,
+        default=TipoOcorrencia.QUASE_ACIDENTE, verbose_name=_("Tipo"),
+    )
+    descricao = models.TextField(verbose_name=_("O que aconteceu"))
+
+    # --- Bloco da CAT que a obra conhece (Portaria SEPRT/ME 4.334/2021) ---
+    agente_causador = models.CharField(
+        max_length=160, blank=True, verbose_name=_("Agente causador"),
+    )
+    situacao_geradora = models.CharField(
+        max_length=160, blank=True, verbose_name=_("Situação geradora"),
+    )
+    houve_registro_policial = models.BooleanField(
+        default=False, verbose_name=_("Houve registro policial"),
+    )
+    horas_trabalhadas_antes = models.PositiveSmallIntegerField(
+        null=True, blank=True, verbose_name=_("Horas trabalhadas antes"),
+    )
+    ultimo_dia_trabalhado = models.DateField(
+        null=True, blank=True, verbose_name=_("Último dia trabalhado"),
+    )
+
+    # --- Quem se machucou ---
+    acidentado = models.ForeignKey(
+        "rh.Funcionario", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+", verbose_name=_("Acidentado (RH)"),
+    )
+    acidentado_nome = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Acidentado (nome)"),
+    )
+    parte_do_corpo = models.CharField(
+        max_length=120, blank=True, verbose_name=_("Parte do corpo atingida"),
+    )
+    lateralidade = models.CharField(
+        max_length=14, choices=Lateralidade.choices,
+        default=Lateralidade.NAO_SE_APLICA, verbose_name=_("Lateralidade"),
+    )
+
+    # --- Bloco clínico: PII do art. 11 da LGPD, atrás de verbo próprio ---
+    #: **A primeira PII do grupo `pdca`.** Estes quatro campos só saem pelo
+    #: serializer para quem tem `pdca.ocorrencia.dado_medico`; para todo o resto
+    #: eles vêm mascarados. É a régua do `rh.dado_medico`, e a razão é a mesma:
+    #: para classificar o acidente ninguém precisa do diagnóstico.
+    natureza_lesao = models.CharField(
+        max_length=160, blank=True, verbose_name=_("Natureza da lesão"),
+    )
+    cid10 = models.CharField(max_length=10, blank=True, verbose_name=_("CID-10"))
+    houve_internacao = models.BooleanField(
+        default=False, verbose_name=_("Houve internação"),
+    )
+    atestado_dias = models.PositiveSmallIntegerField(
+        null=True, blank=True, verbose_name=_("Dias de atestado"),
+    )
+
+    # --- Classificação: o verbo separado ---
+    classificacao = models.CharField(
+        max_length=16, choices=ClassificacaoOcorrencia.choices,
+        default=ClassificacaoOcorrencia.PENDENTE,
+        verbose_name=_("Classificação"),
+    )
+    #: `dias_perdidos` é o afastamento real; `dias_debitados` é a tabela da NBR
+    #: 14280 para incapacidade permanente e morte (6.000 dias no óbito). São
+    #: duas grandezas diferentes e a taxa de gravidade soma as duas — guardá-las
+    #: no mesmo campo perderia a distinção que a norma faz.
+    dias_perdidos = models.PositiveSmallIntegerField(
+        null=True, blank=True, verbose_name=_("Dias perdidos"),
+    )
+    dias_debitados = models.PositiveSmallIntegerField(
+        null=True, blank=True, verbose_name=_("Dias debitados (NBR 14280)"),
+    )
+    classificada_em = models.DateTimeField(null=True, blank=True)
+    classificada_por = models.CharField(max_length=150, blank=True)
+
+    # --- CAT: o registro do ato, não o ato ---
+    cat_tipo = models.CharField(
+        max_length=10, choices=TipoCAT.choices, blank=True,
+        verbose_name=_("Tipo de CAT"),
+    )
+    cat_emitida_em = models.DateField(
+        null=True, blank=True, verbose_name=_("CAT emitida em"),
+    )
+    cat_protocolo = models.CharField(
+        max_length=60, blank=True, verbose_name=_("Protocolo da CAT"),
+    )
+    cat_registrada_por = models.CharField(max_length=150, blank=True)
+
+    # --- Os dois seams ---
+    restricao = models.ForeignKey(
+        Restricao, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="ocorrencias", verbose_name=_("Restrição gerada"),
+    )
+    nao_conformidade = models.ForeignKey(
+        NaoConformidade, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="ocorrencias", verbose_name=_("Tratamento (NC)"),
+    )
+
+    status = models.CharField(
+        max_length=16, choices=Status.choices, default=Status.ABERTA,
+        verbose_name=_("Situação"),
+    )
+    registrada_por = models.CharField(max_length=150, blank=True)
+    registrada_em = models.DateTimeField(auto_now_add=True)
+    encerrada_em = models.DateTimeField(null=True, blank=True)
+    encerrada_por = models.CharField(max_length=150, blank=True)
+    nota_encerramento = models.TextField(blank=True)
+
+    class Meta:
+        verbose_name = _("Ocorrência de segurança")
+        verbose_name_plural = _("Ocorrências de segurança")
+        ordering = ["-ocorrido_em", "-ocorrencia_id"]
+        indexes = [
+            #: A fila do cockpit: o que está aberto nesta obra.
+            models.Index(
+                fields=["tenant", "obra", "status"],
+                name="pdca_ocor_obra_status_idx",
+            ),
+            #: A série dos indicadores: o que aconteceu no período, por tipo.
+            models.Index(
+                fields=["tenant", "obra", "-ocorrido_em"],
+                name="pdca_ocor_obra_data_idx",
+            ),
+            #: A trava do quadro da semana, no molde do `pdca_nc_atividade_idx`.
+            models.Index(
+                fields=["tenant", "atividade", "status"],
+                name="pdca_ocor_atividade_idx",
+            ),
+        ]
+        constraints = [
+            #: Cabe numa linha: afastamento sem dias é a classificação pela
+            #: metade, e é dela que a taxa de gravidade nasce.
+            models.CheckConstraint(
+                name="pdca_ocorrencia_afastamento_tem_dias",
+                condition=(
+                    models.Q(
+                        classificacao="com_afastamento",
+                        dias_perdidos__isnull=False,
+                    )
+                    | ~models.Q(classificacao="com_afastamento")
+                ),
+            ),
+            #: Os dois sentidos: CAT emitida sem tipo, e tipo pendurado em quem
+            #: não emitiu. É a forma do `pdca_item_verif_gravidade_coerente`.
+            models.CheckConstraint(
+                name="pdca_ocorrencia_cat_coerente",
+                condition=(
+                    models.Q(cat_emitida_em__isnull=True, cat_tipo="")
+                    | models.Q(cat_emitida_em__isnull=False)
+                    & ~models.Q(cat_tipo="")
+                ),
+            ),
+        ]
+
+    def __str__(self):
+        return f"Ocorrência {self.ocorrencia_id} · {self.get_tipo_display()}"
+
+    @property
+    def esta_aberta(self) -> bool:
+        return self.status in (self.Status.ABERTA, self.Status.EM_INVESTIGACAO)
+
+    #: Os tipos que geram CAT, **como constante e não como literal dentro do
+    #: `exige_cat`**. A regra precisa ser respondível de dois jeitos: objeto a
+    #: objeto (a propriedade abaixo, que é como a tela e o serializer
+    #: perguntam) e em SQL (`tipo__in=...`, que é como a carteira conta CATs
+    #: devidas em quarenta obras sem carregar quarenta mil ocorrências).
+    #: Repetir a tupla no `filter` criaria a segunda verdade que o D138 ensinou
+    #: a não criar — e o dia em que a lista mudasse, um dos dois lados ficaria.
+    TIPOS_QUE_EXIGEM_CAT = (
+        TipoOcorrencia.ACIDENTE_TIPICO,
+        TipoOcorrencia.ACIDENTE_TRAJETO,
+        TipoOcorrencia.DOENCA_OCUPACIONAL,
+    )
+
+    @property
+    def exige_cat(self) -> bool:
+        """**A CAT é devida mesmo sem afastamento** (MOS do eSocial, S-2210 §7.2).
+
+        É o erro mais comum do mercado — a empresa comunica só o que afasta —, e
+        é por isso que a regra mora aqui em vez de na cabeça de quem preenche.
+        Quase-acidente e incidente não têm vítima e não geram CAT; os três tipos
+        restantes geram, e a classificação não muda isso.
+        """
+        return self.tipo in self.TIPOS_QUE_EXIGEM_CAT
+
+
+class AnexoOcorrencia(TenantScopedModel):
+    """Os arquivos da ocorrência — **e é a primeira coleção do módulo**.
+
+    Toda foto do PDCA até aqui é um `FileField` único: uma no apontamento, uma
+    no item da ficha, uma na NC. A ocorrência é diferente por uma razão física —
+    a cena se fotografa de vários ângulos porque a perícia vai olhar de vários
+    ângulos, e junto vêm o atestado e o boletim. Forçá-la no campo único faria
+    quem registra escolher qual foto do acidente vale, no pior momento possível
+    para escolher.
+
+    A consequência é um teto novo (`PDCA_TETO_ANEXOS_POR_OCORRENCIA`): a porta
+    única da plataforma controla **bytes por arquivo** e nunca quantidade de
+    arquivos, então sem um número aqui o teto de bytes seria multiplicado por um
+    fator que ninguém declarou.
+    """
+
+    class Especie(models.TextChoices):
+        CENA = "cena", _("Cena / local do fato")
+        ATESTADO = "atestado", _("Atestado médico")
+        BOLETIM = "boletim", _("Boletim de ocorrência")
+        LISTA_PRESENCA = "lista_presenca", _("Lista de presença assinada")
+        OUTRO = "outro", _("Outro")
+
+    anexo_id = models.AutoField(primary_key=True)
+
+    ocorrencia = models.ForeignKey(
+        Ocorrencia, on_delete=models.CASCADE, related_name="anexos",
+        verbose_name=_("Ocorrência"),
+    )
+    arquivo = models.FileField(
+        upload_to="pdca_ssma/", verbose_name=_("Arquivo"),
+    )
+    #: A espécie decide **quem pode abrir**: o atestado é dado de saúde e sai
+    #: por `pdca.ocorrencia.dado_medico`; a foto da cena sai por
+    #: `pdca.ocorrencia.view`. É o mesmo corte por espécie que o `pdca.nc_foto`
+    #: já faz entre a foto do defeito e a da eficácia.
+    especie = models.CharField(
+        max_length=16, choices=Especie.choices, default=Especie.CENA,
+        verbose_name=_("Espécie"),
+    )
+    descricao = models.CharField(max_length=160, blank=True)
+    enviado_por = models.CharField(max_length=150, blank=True)
+    enviado_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = _("Anexo da ocorrência")
+        verbose_name_plural = _("Anexos da ocorrência")
+        ordering = ["anexo_id"]
+        indexes = [
+            models.Index(
+                fields=["tenant", "ocorrencia"], name="pdca_anexo_ocor_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.get_especie_display()} · ocorrência {self.ocorrencia_id}"

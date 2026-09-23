@@ -32,12 +32,14 @@ E, da PDCA.2:
   engrossa **declarando** qual valeu;
 - o percentual da etapa vira **apurado**, e a caneta passa a ter dono.
 """
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from modulocalendar.models import Feriado
@@ -46,14 +48,25 @@ from obras.models import EtapaObra, Obra
 from payment.planos import (
     PDCA_PROFUNDIDADE_MAXIMA_LOCAL, PDCA_TETO_APONTAMENTOS_POR_LOTE,
     PDCA_TETO_LOCAIS_POR_GERACAO, PDCA_TETO_PONTOS_CURVA_S,
+    PDCA_TETO_ITENS_POR_MODELO_VERIFICACAO,
+    PDCA_TETO_LINHAS_POR_FAIXA_DA_FILA, PDCA_TETO_LINHAS_POR_FRENTE,
+    PDCA_TETO_OBRAS_NA_CARTEIRA,
+    PDCA_TETO_RESULTADOS_POR_ESPECIE,
 )
 
 from . import services
 from .models import (
-    ApontamentoAvanco, Atividade, CalendarioTrabalho, ContratoObra, Cronograma,
+    ApontamentoAvanco, Atividade, CalendarioTrabalho, CausaNaoCumprimento,
+    ContratoObra, Cronograma,
     ExcecaoCalendario, ItemContrato, ItemMedicao, LiberacaoRetencao, LocalObra,
-    Medicao, NaturezaRetencao, NivelLocal, OrigemCusto, Precedencia,
+    ItemProgramacao, Medicao, NaturezaRetencao, NivelLocal, OrigemCusto,
+    Precedencia, ProgramacaoSemanal, Restricao, TipoRestricao,
     RegimeContrato,
+    DominioVerificacao, GravidadeNC, ItemModeloVerificacao, ItemVerificacao,
+    ModeloVerificacao, NaoConformidade, PlanoAcao, ResultadoItem, Verificacao,
+    VerificacaoEficacia,
+    AnexoOcorrencia, ClassificacaoOcorrencia, DialogoSeguranca, Lateralidade,
+    Ocorrencia, ParticipanteDDS, TipoCAT, TipoOcorrencia,
 )
 
 
@@ -424,7 +437,13 @@ class AcessoAoModuloTests(APITestCase):
         cronograma porque o módulo respondeu 'ativo'."""
         self._autenticar()
         dados = self.client.get("/api/pdca/status/").json()
-        self.assertEqual(dados["fatia"], "PDCA.4")
+        #: **Não se crava o número da fatia corrente aqui.** Um `== "PDCA.6"`
+        #: envelhece na entrega seguinte e passa a acusar falha no que é
+        #: sucesso — foi o que este teste fez quando a PDCA.7 saiu, e é a mesma
+        #: armadilha que o README dos E2E já nomeava do outro lado. O que
+        #: importa provar é que o módulo **declara** uma fatia; quais
+        #: capacidades estão de pé são as asserções abaixo, uma a uma.
+        self.assertTrue(dados["fatia"].startswith("PDCA."))
         self.assertTrue(dados["recursos"]["locais"])
         self.assertTrue(dados["recursos"]["cronograma"])
         self.assertTrue(dados["recursos"]["modelo"])
@@ -437,6 +456,18 @@ class AcessoAoModuloTests(APITestCase):
         self.assertTrue(dados["recursos"]["aditivo"])
         self.assertTrue(dados["recursos"]["deducoes"])
         self.assertTrue(dados["recursos"]["material_estocado"])
+        # PDCA.5: o Check e o Act. A restrição bloqueia o compromisso, o
+        # compromisso vira PPC e o PPC vira ranking de causa — e o seam do SCM
+        # é vivo, o que a tela precisa saber para oferecer o botão.
+        self.assertTrue(dados["recursos"]["restricao"])
+        # PDCA.6: o plano visto pelo ritmo. Sem tabela nova — a LOB é
+        # derivada de `Atividade` × `LocalObra` (§4.9).
+        self.assertTrue(dados["recursos"]["linha_de_balanco"])
+        self.assertTrue(dados["recursos"]["conflito_de_equipe"])
+        self.assertTrue(dados["recursos"]["programacao_semanal"])
+        self.assertTrue(dados["recursos"]["ppc"])
+        self.assertTrue(dados["recursos"]["ranking_de_causas"])
+        self.assertTrue(dados["recursos"]["restricao_gera_demanda"])
         # O que ainda NÃO existe continua dizendo que não existe: é a mesma
         # honestidade, agora sobre o que a PDCA.4 deixou de fora. A planilha do
         # empreiteiro entra colando coluna, não por wizard de xlsx; e o anexo
@@ -2925,6 +2956,128 @@ class TituloNoErpTests(BaseContrato):
         )
         self.assertIsNone(services.gerar_titulo_de_medicao(medicao))
 
+
+class CancelarMedicaoELevarOTituloTests(BaseContrato):
+    """**Cancelar a medição não cancelava o pagamento** *(achado do dono,
+    15/09/2026)*.
+
+    O `cancelar/` mexia só no PDCA: a medição virava `CANCELADA` e a
+    `ContaPagar` que ela gerou continuava aberta no financeiro, com a descrição
+    apontando para um boletim que não existe mais. O empreiteiro recebia por uma
+    medição retirada, e a conciliação só percebia no fim do mês.
+    """
+
+    def _aprovada(self):
+        self.apontar(self.alvenaria, "30", date(2026, 6, 15))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        services._congelar_medicao(medicao, aprovada=True)
+        medicao.refresh_from_db()
+        return medicao
+
+    def test_cancelar_a_aprovada_leva_o_titulo_junto(self):
+        from moduloerp.models import ContaPagar
+
+        medicao = self._aprovada()
+        resultado = services.cancelar_medicao(
+            medicao=medicao, motivo="Quantidade do item 1.1 estava errada.",
+            por="Ana",
+        )
+        medicao.refresh_from_db()
+        conta = ContaPagar.objects.get(pk=medicao.conta_pagar_ref)
+        self.assertEqual(medicao.status, Medicao.Status.CANCELADA)
+        self.assertEqual(conta.status, "CANCELADO")
+        self.assertEqual(resultado["titulo_cancelado"], conta.pk)
+
+    def test_o_titulo_JA_PAGO_tranca_o_cancelamento(self):
+        """O dinheiro que saiu do caixa não se apaga cancelando o papel que o
+        justificou: existe uma `Transacao` lançada, e um título cancelado com
+        baixa em cima é um buraco que a conciliação não fecha nunca."""
+        from moduloerp.models import ContaPagar
+
+        medicao = self._aprovada()
+        conta = ContaPagar.objects.get(pk=medicao.conta_pagar_ref)
+        conta.dar_baixa(valor=conta.valor, data=date(2026, 7, 5))
+        with self.assertRaises(ValidationError) as ctx:
+            services.cancelar_medicao(
+                medicao=medicao, motivo="tentando cancelar depois de pago",
+                por="Ana",
+            )
+        mensagem = " ".join(ctx.exception.messages)
+        self.assertIn("retificadora", mensagem)
+        medicao.refresh_from_db()
+        conta.refresh_from_db()
+        self.assertEqual(medicao.status, Medicao.Status.APROVADA)
+        self.assertEqual(conta.status, "QUITADO")
+
+    def test_a_baixa_PARCIAL_tranca_do_mesmo_jeito(self):
+        """O caso traiçoeiro: o status ainda não é `QUITADO`, o título parece
+        vivo, e já saiu dinheiro."""
+        from moduloerp.models import ContaPagar
+
+        medicao = self._aprovada()
+        conta = ContaPagar.objects.get(pk=medicao.conta_pagar_ref)
+        conta.dar_baixa(valor=Decimal("1000.00"), data=date(2026, 7, 5))
+        conta.refresh_from_db()
+        self.assertEqual(conta.status, "PARCIAL")
+        with self.assertRaises(ValidationError):
+            services.cancelar_medicao(
+                medicao=medicao, motivo="parcial", por="Ana",
+            )
+
+    def test_cancelar_aprovada_exige_motivo(self):
+        medicao = self._aprovada()
+        with self.assertRaises(ValidationError) as ctx:
+            services.cancelar_medicao(medicao=medicao, por="Ana")
+        self.assertIn("motivo", " ".join(ctx.exception.messages).lower())
+
+    def test_o_rascunho_cancela_sem_motivo_porque_nao_produziu_efeito(self):
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+            linhas=[],
+        )
+        resultado = services.cancelar_medicao(medicao=medicao, por="Ana")
+        medicao.refresh_from_db()
+        self.assertEqual(medicao.status, Medicao.Status.CANCELADA)
+        self.assertIsNone(resultado["titulo_cancelado"])
+
+    def test_cancelada_nao_se_cancela_de_novo(self):
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+            linhas=[],
+        )
+        services.cancelar_medicao(medicao=medicao, por="Ana")
+        with self.assertRaises(ValidationError):
+            services.cancelar_medicao(medicao=medicao, por="Ana")
+
+    def test_o_motivo_fica_escrito_na_observacao(self):
+        """O financeiro precisa da frase que explica por que o título sumiu."""
+        medicao = self._aprovada()
+        services.cancelar_medicao(
+            medicao=medicao, motivo="Item 1.1 mediu 300 e eram 180.", por="Ana",
+        )
+        medicao.refresh_from_db()
+        self.assertIn("mediu 300 e eram 180", medicao.observacao)
+
+    def test_a_tela_sabe_ANTES_de_clicar_se_da_para_cancelar(self):
+        """O aviso da tela e a trava do servidor saem do mesmo lugar — dois
+        lugares divergiriam na primeira mudança de regra."""
+        from moduloerp.models import ContaPagar
+
+        medicao = self._aprovada()
+        self.assertTrue(services.estado_do_titulo(medicao)["pode_cancelar"])
+        conta = ContaPagar.objects.get(pk=medicao.conta_pagar_ref)
+        conta.dar_baixa(valor=conta.valor, data=date(2026, 7, 5))
+        self.assertFalse(services.estado_do_titulo(medicao)["pode_cancelar"])
+
+    def test_medicao_sem_titulo_nao_tem_estado_de_titulo(self):
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+            linhas=[],
+        )
+        self.assertIsNone(services.estado_do_titulo(medicao))
+
     def test_o_vencimento_sai_do_prazo_do_contrato(self):
         """É cláusula comercial do contrato, não teto de plano (§5.6)."""
         from moduloerp.models import ContaPagar
@@ -3452,6 +3605,71 @@ class ApiDaMedicaoTests(APITestCase):
     def test_sem_o_modulo_a_camada_1_barra(self):
         self._autenticar(modules=())
         self.assertEqual(self.client.get("/api/pdca/medicoes/").status_code, 403)
+
+    # --- Cancelar: o degrau depende do ESTADO, e o portão é só o piso --------
+    #
+    # **Este par existe por causa de um buraco fechado antes de sair da bancada.**
+    # A primeira escrita do cancelamento da medição aprovada pôs
+    # `"cancelar": "pdca.medicao.apurar"` no `action_permission_map` — o que
+    # parecia o piso natural e **fechava a porta para a pessoa certa**: as
+    # personas `diretoria` e `fiscal_de_obra` têm `medicao.atestar` e **não** têm
+    # `apurar` (é a segregação da §8, de propósito), então o portão as barrava
+    # antes de a ação rodar. O portão virou `view`, e cada degrau é cobrado
+    # dentro da ação.
+
+    def _medicao(self, status=None):
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        if status is not None:
+            medicao.status = status
+            medicao.save(update_fields=["status"])
+        return medicao
+
+    def test_quem_so_ATESTA_cancela_a_medicao_aprovada(self):
+        """A `diretoria` e o `fiscal_de_obra` são exatamente este caso."""
+        medicao = self._medicao(Medicao.Status.APROVADA)
+        self._autenticar(permissions=("pdca.medicao.view", "pdca.medicao.atestar"))
+        resposta = self.client.post(
+            f"/api/pdca/medicoes/{medicao.pk}/cancelar/",
+            {"motivo": "Boletim emitido para o contrato errado."}, format="json",
+        )
+        self.assertEqual(resposta.status_code, 200, resposta.content)
+        medicao.refresh_from_db()
+        self.assertEqual(medicao.status, Medicao.Status.CANCELADA)
+
+    def test_quem_so_APURA_nao_cancela_a_aprovada(self):
+        """Derrubar um título a pagar é alçada de dinheiro, não de quem monta o
+        boletim — é a mesma separação que já vale entre apurar e atestar."""
+        medicao = self._medicao(Medicao.Status.APROVADA)
+        self._autenticar(permissions=("pdca.medicao.view", "pdca.medicao.apurar"))
+        resposta = self.client.post(
+            f"/api/pdca/medicoes/{medicao.pk}/cancelar/",
+            {"motivo": "tentando"}, format="json",
+        )
+        self.assertEqual(resposta.status_code, 403, resposta.content)
+        medicao.refresh_from_db()
+        self.assertEqual(medicao.status, Medicao.Status.APROVADA)
+
+    def test_quem_so_LE_nao_retira_nem_um_rascunho(self):
+        """O portão baixou para `view`; sem esta cobrança dentro da ação, baixar
+        o piso teria deixado qualquer leitor retirar um documento."""
+        medicao = self._medicao()
+        self._autenticar(permissions=("pdca.medicao.view",))
+        resposta = self.client.post(
+            f"/api/pdca/medicoes/{medicao.pk}/cancelar/", {}, format="json",
+        )
+        self.assertEqual(resposta.status_code, 403, resposta.content)
+
+    def test_quem_APURA_retira_o_rascunho(self):
+        medicao = self._medicao()
+        self._autenticar(permissions=("pdca.medicao.view", "pdca.medicao.apurar"))
+        resposta = self.client.post(
+            f"/api/pdca/medicoes/{medicao.pk}/cancelar/", {}, format="json",
+        )
+        self.assertEqual(resposta.status_code, 200, resposta.content)
+        medicao.refresh_from_db()
+        self.assertEqual(medicao.status, Medicao.Status.CANCELADA)
 
     def test_criar_item_de_contrato_pela_api_grava_o_tenant(self):
         """**Achado pelo E2E, e o teste de unidade não pegava.**
@@ -4460,3 +4678,4754 @@ class ApiDaPdca4Tests(APITestCase):
         )
         self.assertEqual(resposta.status_code, 200)
         self.assertEqual(resposta.json()["inicio"], "2026-06-01")
+
+
+# ===========================================================================
+# PDCA.5 — Last Planner: make-ready, compromisso da semana, PPC e causa
+# ===========================================================================
+# O que estes testes protegem, em uma frase cada:
+#
+# - **a regra que separa o LPS de uma lista de tarefas**: atividade com restrição
+#   aberta não entra na programação, e a trava é conferida duas vezes (ao puxar o
+#   cartão e ao assumir a semana) porque a trava pode nascer entre as duas;
+# - **o PPC é derivado e honesto**: não existe enquanto a semana não encerra, e a
+#   tela recebe `None`, nunca 0% — fabricar um fracasso que ainda não aconteceu é
+#   o mesmo pecado do avanço sem apontamento;
+# - **não cumprido exige causa**, e a regra vale no banco, não só na aplicação;
+# - **o seam do SCM é vivo e idempotente** — restrição de material vira demanda,
+#   e clicar duas vezes não compra o material duas vezes.
+
+
+class _BaseLastPlanner(TestCase):
+    """Fixture comum: uma obra com plano vigente e duas atividades folha."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.tenant = Tenant.objects.create(slug="pdca-lps", nome="Construtora LPS")
+        cls.obra = Obra.objects.create(
+            tenant=cls.tenant, nome_obra="Residencial Compromisso", endereco="Rua 5",
+        )
+        cls.calendario = CalendarioTrabalho.objects.create(
+            tenant=cls.tenant, obra=cls.obra, nome="Padrão",
+        )
+        cls.cronograma = Cronograma.objects.create(
+            tenant=cls.tenant, obra=cls.obra, descricao="Plano",
+            data_inicio=date(2026, 6, 1), calendario=cls.calendario,
+            status=Cronograma.Status.VIGENTE,
+        )
+        cls.a1 = Atividade.objects.create(
+            tenant=cls.tenant, cronograma=cls.cronograma, codigo="1",
+            nome="Alvenaria do 4º", duracao_dias=5, profundidade=1,
+        )
+        cls.a2 = Atividade.objects.create(
+            tenant=cls.tenant, cronograma=cls.cronograma, codigo="2",
+            nome="Contrapiso do 4º", duracao_dias=3, profundidade=1,
+        )
+
+    def _restricao(self, atividade=None, tipo=TipoRestricao.MATERIAL, **extra):
+        return Restricao.objects.create(
+            tenant=self.tenant, atividade=atividade or self.a1, tipo=tipo,
+            descricao=extra.pop("descricao", "Bloco cerâmico não entregue"),
+            **extra,
+        )
+
+    def _programacao(self, semana=date(2026, 6, 1), **extra):
+        return services.abrir_programacao(
+            obra=self.obra, semana_inicio=semana, tenant_id=self.tenant.pk, **extra
+        )
+
+    def _item(self, programacao, atividade=None, **extra):
+        return ItemProgramacao.objects.create(
+            tenant=self.tenant, programacao=programacao,
+            atividade=atividade or self.a1, **extra,
+        )
+
+
+class MakeReadyTests(_BaseLastPlanner):
+    """A restrição — e a regra que dá sentido a ela."""
+
+    def test_atividade_com_restricao_aberta_nao_entra_na_programacao(self):
+        """**É a regra que separa o LPS de uma lista de tarefas** (planta §4.3)."""
+        self._restricao(self.a1)
+        with self.assertRaises(ValidationError) as ctx:
+            services.validar_pode_comprometer(self.a1, tenant_id=self.tenant.pk)
+        self.assertIn("restrição", " ".join(ctx.exception.messages).lower())
+
+    def test_a_recusa_nomeia_o_que_trava(self):
+        """Dizer só "não pode" obrigaria a pessoa a procurar; a mensagem traz o
+        tipo e a descrição, que é o que ela precisa para ir destravar."""
+        self._restricao(self.a1, descricao="Projeto estrutural revisão 3 não liberado",
+                        tipo=TipoRestricao.PROJETO)
+        with self.assertRaises(ValidationError) as ctx:
+            services.validar_pode_comprometer(self.a1, tenant_id=self.tenant.pk)
+        mensagem = " ".join(ctx.exception.messages)
+        self.assertIn("Projeto estrutural", mensagem)
+
+    def test_restricao_removida_libera_a_atividade(self):
+        r = self._restricao(self.a1)
+        services.remover_restricao(
+            restricao=r, por="Ana", nota="Entrega recebida na 3ª feira",
+        )
+        services.validar_pode_comprometer(self.a1, tenant_id=self.tenant.pk)
+        r.refresh_from_db()
+        self.assertEqual(r.status, Restricao.Status.REMOVIDA)
+        self.assertIsNotNone(r.removida_em)
+
+    def test_remover_sem_dizer_como_e_recusado(self):
+        """Restrição que some sem explicação deixa a reunião seguinte sem saber
+        se ela foi resolvida ou esquecida."""
+        r = self._restricao(self.a1)
+        with self.assertRaises(ValidationError):
+            services.remover_restricao(restricao=r, por="Ana", nota="   ")
+
+    def test_restricao_ja_removida_nao_se_remove_de_novo(self):
+        r = self._restricao(self.a1)
+        services.remover_restricao(restricao=r, por="Ana", nota="ok")
+        with self.assertRaises(ValidationError):
+            services.remover_restricao(restricao=r, por="Ana", nota="de novo")
+
+    def test_a_trava_e_por_atividade_e_nao_por_obra(self):
+        """Travar a obra inteira porque uma frente está parada seria o oposto do
+        make-ready: o time deixaria de se comprometer com o que pode fazer."""
+        self._restricao(self.a1)
+        services.validar_pode_comprometer(self.a2, tenant_id=self.tenant.pk)
+
+    def test_o_agregado_de_travas_sai_em_uma_consulta(self):
+        """300 cartões perguntando cada um "estou travado?" seriam 300
+        consultas para desenhar uma parede (a lição do D136)."""
+        self._restricao(self.a1)
+        self._restricao(self.a1, tipo=TipoRestricao.AREA)
+        self._restricao(self.a2)
+        with self.assertNumQueries(1):
+            mapa = services.restricoes_abertas_por_atividade(
+                [self.a1.pk, self.a2.pk], tenant_id=self.tenant.pk,
+            )
+        self.assertEqual(mapa, {self.a1.pk: 2, self.a2.pk: 1})
+
+
+class CicloDaSemanaTests(_BaseLastPlanner):
+    """Abrir → comprometer → julgar → encerrar, e as recusas de cada degrau."""
+
+    def test_a_semana_ancora_na_segunda(self):
+        """Qualquer dia serve na entrada; a âncora é do servidor. Deixar o
+        cliente calcular a segunda produziria uma semana diferente por fuso de
+        navegador."""
+        prog = self._programacao(semana=date(2026, 6, 3))  # uma quarta-feira
+        self.assertEqual(prog.semana_inicio, date(2026, 6, 1))
+        self.assertEqual(prog.semana_fim, date(2026, 6, 7))
+
+    def test_abrir_duas_vezes_devolve_a_mesma_semana(self):
+        a = self._programacao(semana=date(2026, 6, 1))
+        b = self._programacao(semana=date(2026, 6, 4))
+        self.assertEqual(a.pk, b.pk)
+
+    def test_abrir_semeia_o_catalogo_de_fabrica(self):
+        """Catálogo vazio faria a primeira reunião inventar rótulos livres — que
+        é exatamente o que o modelo existe para impedir."""
+        self._programacao()
+        self.assertEqual(
+            CausaNaoCumprimento.objects.filter(
+                tenant=self.tenant, de_fabrica=True
+            ).count(),
+            len(services.CAUSAS_DE_FABRICA),
+        )
+
+    def test_semana_vazia_nao_se_compromete(self):
+        prog = self._programacao()
+        with self.assertRaises(ValidationError):
+            services.comprometer(programacao=prog, por="Ana")
+
+    def test_a_trava_e_conferida_de_novo_no_comprometer(self):
+        """Entre montar o quadro na segunda e assumi-lo pode ter aparecido uma
+        trava — assumir por cima dela é o erro que o make-ready evita."""
+        prog = self._programacao()
+        self._item(prog, self.a1)
+        self._restricao(self.a1)  # nasce DEPOIS de o cartão entrar
+        with self.assertRaises(ValidationError):
+            services.comprometer(programacao=prog, por="Ana")
+
+    def test_comprometida_nao_recebe_cartao_novo(self):
+        """Acrescentar compromisso depois que a semana andou é escrever a aposta
+        depois do resultado."""
+        prog = self._programacao()
+        self._item(prog, self.a1)
+        services.comprometer(programacao=prog, por="Ana")
+        prog.refresh_from_db()
+        self.assertFalse(prog.esta_aberta_para_montagem)
+
+    def test_nao_encerra_com_item_por_julgar(self):
+        """Contar o nulo como falha puniria a equipe por um julgamento que não se
+        fez; ignorá-lo inflaria o índice."""
+        prog = self._programacao()
+        self._item(prog, self.a1)
+        self._item(prog, self.a2)
+        services.comprometer(programacao=prog, por="Ana")
+        services.julgar_itens(programacao=prog, julgamentos=[
+            {"item": prog.itens.first().pk, "cumprido": True},
+        ])
+        with self.assertRaises(ValidationError) as ctx:
+            services.encerrar(programacao=prog, por="Ana")
+        self.assertIn("julgamento", " ".join(ctx.exception.messages).lower())
+
+    def test_o_ciclo_inteiro_fecha_e_produz_ppc(self):
+        prog = self._programacao()
+        i1 = self._item(prog, self.a1)
+        i2 = self._item(prog, self.a2)
+        services.comprometer(programacao=prog, por="Ana")
+        causa = CausaNaoCumprimento.objects.get(
+            tenant=self.tenant, codigo="MAT-FALTA",
+        )
+        services.julgar_itens(programacao=prog, julgamentos=[
+            {"item": i1.pk, "cumprido": True},
+            {"item": i2.pk, "cumprido": False, "causa": causa.pk,
+             "nota": "Bloco não chegou"},
+        ])
+        resultado = services.encerrar(programacao=prog, por="Ana")
+        self.assertEqual(resultado["comprometidos"], 2)
+        self.assertEqual(resultado["cumpridos"], 1)
+        #: **Um de dois cartões, e o índice não é 50%** — o PPC é ponderado
+        #: (decisão do dono, 15/09/2026). Nenhuma das duas atividades tem
+        #: orçamento nem peso informado, então o peso é a duração: a alvenaria
+        #: dura 5 dias e o contrapiso 3. Saiu a alvenaria: 5/8 = 62,5%.
+        #: Contar cartões diria 50% e trataria os dois serviços como iguais,
+        #: que é o que esta mudança existe para deixar de fazer.
+        self.assertEqual(resultado["ppc"], Decimal("62.5"))
+        self.assertEqual(resultado["peso_bases"], ["duracao"])
+        self.assertTrue(resultado["apurado"])
+
+
+class PpcHonestoTests(_BaseLastPlanner):
+    """O índice só existe depois do encerramento — a régua de dado honesto."""
+
+    def test_semana_aberta_nao_tem_ppc(self):
+        """Uma semana comprometida na segunda tem zero cumpridos por construção.
+        Exibir "PPC 0%" seria fabricar um fracasso que ainda não aconteceu."""
+        prog = self._programacao()
+        self._item(prog, self.a1)
+        services.comprometer(programacao=prog, por="Ana")
+        leitura = services.ppc_de(prog)
+        self.assertIsNone(leitura["ppc"])
+        self.assertFalse(leitura["apurado"])
+        self.assertEqual(leitura["por_julgar"], 1)
+
+    def test_o_denominador_e_o_comprometido_e_nao_o_plano(self):
+        """A pergunta do Last Planner é *daquilo que o time disse que ia fazer,
+        quanto saiu?* — e não "de tudo que o cronograma previa"."""
+        prog = self._programacao()
+        i1 = self._item(prog, self.a1)  # só UMA das duas atividades entra
+        services.comprometer(programacao=prog, por="Ana")
+        services.julgar_itens(
+            programacao=prog, julgamentos=[{"item": i1.pk, "cumprido": True}],
+        )
+        leitura = services.encerrar(programacao=prog, por="Ana")
+        self.assertEqual(leitura["comprometidos"], 1)
+        self.assertEqual(leitura["ppc"], Decimal("100.0"))
+
+    def test_o_ppc_nao_e_coluna(self):
+        """Derivado, nunca gravado (§4.9): guardá-lo obrigaria a reescrevê-lo a
+        cada item julgado, e a primeira escrita fora desse caminho o faria
+        mentir."""
+        campos = {f.name for f in ProgramacaoSemanal._meta.get_fields()}
+        self.assertNotIn("ppc", campos)
+
+    def test_a_serie_so_traz_semana_encerrada(self):
+        fechada = self._programacao(semana=date(2026, 6, 1))
+        i = self._item(fechada, self.a1)
+        services.comprometer(programacao=fechada, por="Ana")
+        services.julgar_itens(
+            programacao=fechada, julgamentos=[{"item": i.pk, "cumprido": True}],
+        )
+        services.encerrar(programacao=fechada, por="Ana")
+
+        aberta = self._programacao(semana=date(2026, 6, 8))
+        self._item(aberta, self.a2)
+        services.comprometer(programacao=aberta, por="Ana")
+
+        serie = services.serie_ppc(obra_id=self.obra.pk, tenant_id=self.tenant.pk)
+        self.assertEqual(len(serie), 1)
+        self.assertEqual(serie[0]["semana_inicio"], date(2026, 6, 1))
+
+    def test_a_serie_vem_em_ordem_cronologica(self):
+        """O gráfico lê da esquerda para a direita; devolver do mais novo para o
+        mais antigo faria a tendência aparecer invertida."""
+        for n, semana in enumerate([date(2026, 6, 1), date(2026, 6, 8)]):
+            prog = self._programacao(semana=semana)
+            i = self._item(prog, self.a1 if n == 0 else self.a2)
+            services.comprometer(programacao=prog, por="Ana")
+            services.julgar_itens(
+                programacao=prog, julgamentos=[{"item": i.pk, "cumprido": True}],
+            )
+            services.encerrar(programacao=prog, por="Ana")
+        serie = services.serie_ppc(obra_id=self.obra.pk, tenant_id=self.tenant.pk)
+        self.assertEqual(
+            [linha["semana_inicio"] for linha in serie],
+            [date(2026, 6, 1), date(2026, 6, 8)],
+        )
+
+
+class CausaEhObrigatoriaTests(_BaseLastPlanner):
+    """Sem causa o Last Planner degenera em marcar caixinhas."""
+
+    def _causa(self):
+        services.semear_causas_de_fabrica(self.tenant.pk)
+        return CausaNaoCumprimento.objects.get(
+            tenant=self.tenant, codigo="MAT-FALTA",
+        )
+
+    def test_nao_cumprido_sem_causa_e_recusado_pelo_servico(self):
+        prog = self._programacao()
+        i = self._item(prog, self.a1)
+        services.comprometer(programacao=prog, por="Ana")
+        with self.assertRaises(ValidationError) as ctx:
+            services.julgar_itens(
+                programacao=prog, julgamentos=[{"item": i.pk, "cumprido": False}],
+            )
+        self.assertIn("causa", " ".join(ctx.exception.messages).lower())
+
+    def test_nao_cumprido_sem_causa_e_recusado_pelo_BANCO(self):
+        """A trava mora no banco, e não só no `services`: o comando de bancada e
+        a importação entram por outras portas — a mesma lição do append-only."""
+        prog = self._programacao()
+        i = self._item(prog, self.a1)
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                ItemProgramacao.objects.filter(pk=i.pk).update(
+                    cumprido=False, causa=None,
+                )
+
+    def test_cumprido_com_causa_de_falha_e_recusado(self):
+        """O outro lado da mesma regra — sem ele a grade de causas contaria
+        falhas que não houve."""
+        prog = self._programacao()
+        i = self._item(prog, self.a1)
+        services.comprometer(programacao=prog, por="Ana")
+        with self.assertRaises(ValidationError):
+            services.julgar_itens(programacao=prog, julgamentos=[
+                {"item": i.pk, "cumprido": True, "causa": self._causa().pk},
+            ])
+
+    def test_o_ranking_de_causas_e_o_Act(self):
+        causa = self._causa()
+        outra = CausaNaoCumprimento.objects.get(
+            tenant=self.tenant, codigo="EXT-CLIMA",
+        )
+        prog = self._programacao()
+        i1 = self._item(prog, self.a1)
+        i2 = self._item(prog, self.a2)
+        services.comprometer(programacao=prog, por="Ana")
+        services.julgar_itens(programacao=prog, julgamentos=[
+            {"item": i1.pk, "cumprido": False, "causa": causa.pk},
+            {"item": i2.pk, "cumprido": False, "causa": outra.pk},
+        ])
+        services.encerrar(programacao=prog, por="Ana")
+
+        ranking = services.ranking_de_causas(
+            obra_id=self.obra.pk, tenant_id=self.tenant.pk,
+        )
+        self.assertEqual(ranking["total_falhas"], 2)
+        codigos = {linha["codigo"] for linha in ranking["causas"]}
+        self.assertEqual(codigos, {"MAT-FALTA", "EXT-CLIMA"})
+        categorias = {linha["categoria"] for linha in ranking["categorias"]}
+        self.assertEqual(categorias, {"material", "externo"})
+
+    def test_causa_usada_nao_se_apaga(self):
+        """Apagá-la deixaria o histórico de PPC sem rótulo."""
+        causa = self._causa()
+        prog = self._programacao()
+        i = self._item(prog, self.a1)
+        services.comprometer(programacao=prog, por="Ana")
+        services.julgar_itens(programacao=prog, julgamentos=[
+            {"item": i.pk, "cumprido": False, "causa": causa.pk},
+        ])
+        with self.assertRaises(Exception):
+            with transaction.atomic():
+                causa.delete()
+
+
+class SeamDoScmTests(_BaseLastPlanner):
+    """Restrição de material → demanda no SCM. A integração visível da régua."""
+
+    def test_restricao_de_material_vira_demanda(self):
+        from moduloscm.models import Demanda
+
+        r = self._restricao(self.a1, tipo=TipoRestricao.MATERIAL)
+        demanda_id = services.gerar_demanda_scm(restricao=r, unidade="mil")
+        demanda = Demanda.objects.get(pk=demanda_id)
+        self.assertEqual(demanda.origem, Demanda.Origem.RESTRICAO)
+        self.assertEqual(demanda.tenant_id, self.tenant.pk)
+        self.assertEqual(demanda.itens.count(), 1)
+        r.refresh_from_db()
+        self.assertEqual(r.demanda_scm_id, demanda_id)
+
+    def test_gerar_duas_vezes_nao_compra_duas_vezes(self):
+        """O botão fica na tela e alguém clica duas vezes; duas demandas para a
+        mesma falta produzem duas cotações e, no fim, duas compras."""
+        from moduloscm.models import Demanda
+
+        r = self._restricao(self.a1, tipo=TipoRestricao.MATERIAL)
+        primeiro = services.gerar_demanda_scm(restricao=r)
+        segundo = services.gerar_demanda_scm(restricao=r)
+        self.assertEqual(primeiro, segundo)
+        self.assertEqual(Demanda.objects.filter(tenant=self.tenant).count(), 1)
+
+    def test_restricao_de_projeto_nao_vira_compra(self):
+        """Oferecer o botão em todas faria a demanda virar lixeira de pendência."""
+        r = self._restricao(self.a1, tipo=TipoRestricao.PROJETO)
+        with self.assertRaises(ValidationError):
+            services.gerar_demanda_scm(restricao=r)
+
+    def test_restricao_ja_removida_nao_vira_compra(self):
+        r = self._restricao(self.a1, tipo=TipoRestricao.MATERIAL)
+        services.remover_restricao(restricao=r, por="Ana", nota="chegou")
+        with self.assertRaises(ValidationError):
+            services.gerar_demanda_scm(restricao=r)
+
+
+class TetosDoLastPlannerNoServicoTests(_BaseLastPlanner):
+    """Os tetos da §5.5j exercidos onde eles mordem."""
+
+    def test_o_quadro_respeita_o_teto_de_cartoes(self):
+        from payment.planos import PDCA_TETO_ITENS_POR_PROGRAMACAO
+
+        prog = self._programacao()
+        with self.assertRaises(ValidationError):
+            services.validar_teto_de_itens_da_programacao(
+                prog, acrescentando=PDCA_TETO_ITENS_POR_PROGRAMACAO + 1,
+            )
+
+    def test_o_log_de_restricao_respeita_o_teto(self):
+        from payment.planos import PDCA_TETO_RESTRICOES_ABERTAS_POR_OBRA
+
+        with self.assertRaises(ValidationError):
+            services.validar_teto_de_restricoes(
+                self.obra.pk, tenant_id=self.tenant.pk,
+                acrescentando=PDCA_TETO_RESTRICOES_ABERTAS_POR_OBRA + 1,
+            )
+
+    def test_o_catalogo_respeita_o_teto(self):
+        from payment.planos import PDCA_TETO_CAUSAS_POR_TENANT
+
+        services.semear_causas_de_fabrica(self.tenant.pk)
+        with self.assertRaises(ValidationError):
+            services.validar_teto_de_causas(
+                self.tenant.pk, acrescentando=PDCA_TETO_CAUSAS_POR_TENANT,
+            )
+
+    def test_semear_e_idempotente(self):
+        services.semear_causas_de_fabrica(self.tenant.pk)
+        criadas = services.semear_causas_de_fabrica(self.tenant.pk)
+        self.assertEqual(criadas, 0)
+
+
+class ApiDaPdca5Tests(APITestCase):
+    """As portas novas do Last Planner, **pelo HTTP** — e ela existe por um
+    defeito que a suíte inteira não via.
+
+    As classes acima montam `Restricao` e `CausaNaoCumprimento` pelo ORM, com o
+    tenant na mão, e testam o serviço. Nenhuma atravessava o `perform_create` do
+    viewset — e os dois sobrescreviam o do `TenantScopedViewSetMixin` **sem
+    repetir o `tenant_id`**, então a linha nascia sem tenant e a RLS recusava o
+    INSERT com 500. Passou por 309 testes verdes e caiu no primeiro POST real,
+    no [pdca5_programacao_test.py](../../testes/e2e/pdca5_programacao_test.py).
+
+    A régua que fica: **porta nova se exerce pela porta**, e não só pelo serviço
+    que está atrás dela.
+    """
+
+    def setUp(self):
+        self.tenant = Tenant.objects.create(slug="pdca5-api", nome="Construtora LPS API")
+        self.obra = Obra.objects.create(
+            tenant=self.tenant, nome_obra="Obra LPS", endereco="Rua API",
+        )
+        self.calendario = CalendarioTrabalho.objects.create(
+            tenant=self.tenant, obra=self.obra, nome="Padrão",
+        )
+        self.cronograma = Cronograma.objects.create(
+            tenant=self.tenant, obra=self.obra, descricao="Plano",
+            data_inicio=date(2026, 6, 1), calendario=self.calendario,
+            status=Cronograma.Status.VIGENTE,
+        )
+        self.atividade = Atividade.objects.create(
+            tenant=self.tenant, cronograma=self.cronograma, codigo="1",
+            nome="Alvenaria do 4º", duracao_dias=5, profundidade=1,
+        )
+        self.usuario = Usuario.objects.create(username="lps5", tenant=self.tenant)
+        self.usuario.iam_modules = ["pdca"]
+        self.usuario.iam_permissions = [
+            "pdca.restricao.view", "pdca.restricao.edit", "pdca.restricao.remover",
+            "pdca.programacao.view", "pdca.programacao.comprometer",
+            "pdca.programacao.encerrar",
+        ]
+        self.client.force_authenticate(user=self.usuario)
+
+    def test_a_restricao_criada_pela_api_nasce_com_tenant(self):
+        """O defeito de 15/09: sem isto a RLS recusa o INSERT em produção."""
+        resposta = self.client.post("/api/pdca/restricoes/", {
+            "atividade": self.atividade.pk, "tipo": TipoRestricao.MATERIAL,
+            "descricao": "Bloco cerâmico não entregue",
+        }, format="json")
+        self.assertEqual(resposta.status_code, 201, resposta.data)
+        restricao = Restricao.objects.get(pk=resposta.json()["restricao_id"])
+        self.assertEqual(restricao.tenant_id, self.tenant.pk)
+        # E quem criou fica registrado — é o outro efeito do `perform_create`.
+        self.assertTrue(restricao.criada_por)
+
+    def test_a_causa_criada_pela_api_nasce_com_tenant(self):
+        resposta = self.client.post("/api/pdca/causas/", {
+            "codigo": "CASA-PARADA", "nome": "Frente parada por decisão interna",
+            "categoria": CausaNaoCumprimento.Categoria.PLANEJAMENTO,
+        }, format="json")
+        self.assertEqual(resposta.status_code, 201, resposta.data)
+        causa = CausaNaoCumprimento.objects.get(pk=resposta.json()["causa_id"])
+        self.assertEqual(causa.tenant_id, self.tenant.pk)
+        self.assertFalse(causa.de_fabrica)
+
+    def test_o_cartao_criado_pela_api_nasce_com_tenant(self):
+        """O irmão que já estava certo — herda o `perform_create` do mixin.
+
+        Fica no teste porque é a contraprova: prova que o defeito era da
+        sobrescrita, e não do caminho.
+        """
+        prog = services.abrir_programacao(
+            obra=self.obra, semana_inicio=date(2026, 6, 1), tenant_id=self.tenant.pk,
+        )
+        resposta = self.client.post("/api/pdca/itens-programacao/", {
+            "programacao": prog.pk, "atividade": self.atividade.pk, "ordem": 1,
+        }, format="json")
+        self.assertEqual(resposta.status_code, 201, resposta.data)
+        item = ItemProgramacao.objects.get(pk=resposta.json()["item_programacao_id"])
+        self.assertEqual(item.tenant_id, self.tenant.pk)
+
+    def test_a_semana_aberta_pela_api_nasce_com_tenant(self):
+        resposta = self.client.post("/api/pdca/programacoes/abrir/", {
+            "obra": self.obra.pk, "semana": "2026-06-03",
+        }, format="json")
+        self.assertEqual(resposta.status_code, 201, resposta.data)
+        prog = ProgramacaoSemanal.objects.get(
+            pk=resposta.json()["programacao_id"],
+        )
+        self.assertEqual(prog.tenant_id, self.tenant.pk)
+        # Ancorou na segunda, mesmo tendo pedido uma quarta-feira.
+        self.assertEqual(prog.semana_inicio, date(2026, 6, 1))
+        # E o catálogo de fábrica veio junto, que é o que faz a primeira
+        # reunião ter de onde escolher.
+        self.assertTrue(
+            CausaNaoCumprimento.objects.filter(
+                tenant_id=self.tenant.pk, de_fabrica=True,
+            ).exists()
+        )
+
+
+class ExecucaoParcialTests(_BaseLastPlanner):
+    """**O compromisso é binário; a execução não é.**
+
+    O Last Planner julga "saiu" ou "não saiu" de propósito — é a definição do
+    PPC, e contar 80% como 0,8 faria o time aprender a prometer demais e mostrar
+    sempre uns 70%, com o índice deixando de medir a confiabilidade do plano.
+
+    Mas a obra que assumiu 20 pontos e entregou 12 **fez 12**. Estes testes
+    prendem as duas coisas ao mesmo tempo: o índice continua binário, e o que
+    andou aparece **ao lado** dele, vindo do apontamento do campo (PDCA.2) — não
+    digitado de novo.
+    """
+
+    def _semana_com_apontamento(self, pontos, *, local=None, dia=None):
+        prog = self._programacao(semana=date(2026, 6, 1))
+        item = self._item(prog, atividade=self.a1, percentual_previsto=Decimal("20"))
+        if local is not None:
+            item.local = local
+            item.save(update_fields=["local"])
+        if pontos is not None:
+            ApontamentoAvanco.objects.create(
+                tenant=self.tenant, atividade=self.a1, local=local,
+                data=dia or date(2026, 6, 3), percentual=Decimal(pontos),
+            )
+        return prog, item
+
+    def test_o_apontado_da_semana_chega_ao_cartao(self):
+        prog, item = self._semana_com_apontamento("12")
+        mapa = services.avanco_apontado_dos_itens(prog)
+        self.assertEqual(mapa[item.pk], Decimal("12"))
+
+    def test_apontamento_FORA_da_semana_nao_conta(self):
+        """A janela é a da programação — o que andou na semana passada é da
+        semana passada."""
+        prog, item = self._semana_com_apontamento("12", dia=date(2026, 5, 20))
+        self.assertEqual(services.avanco_apontado_dos_itens(prog), {})
+
+    def test_sem_apontamento_o_cartao_recebe_NULO_e_nao_zero(self):
+        """Nulo é 'o campo não apontou nada', que é diferente de 'apontou e
+        nada andou' — e a tela precisa das duas leituras."""
+        prog, item = self._semana_com_apontamento(None)
+        self.assertNotIn(item.pk, services.avanco_apontado_dos_itens(prog))
+
+    def test_estorno_cancela_sozinho_porque_o_apontamento_e_delta(self):
+        """Nada de subtrair acumulados de duas datas: o estorno é um lançamento
+        de sinal contrário, e ele se cancela na soma da janela."""
+        prog, item = self._semana_com_apontamento("12")
+        original = ApontamentoAvanco.objects.filter(atividade=self.a1).first()
+        ApontamentoAvanco.objects.create(
+            tenant=self.tenant, atividade=self.a1, data=date(2026, 6, 4),
+            percentual=Decimal("-12"), estorna=original,
+        )
+        self.assertEqual(services.avanco_apontado_dos_itens(prog)[item.pk], Decimal("0"))
+
+    def test_cartao_COM_local_conta_so_o_apontamento_daquele_local(self):
+        """Somar o da atividade inteira faria o mesmo apontamento pesar em dois
+        cartões."""
+        torre = LocalObra.objects.create(
+            tenant=self.tenant, obra=self.obra, nivel=NivelLocal.BLOCO,
+            codigo="T9", nome="Torre 9", profundidade=0,
+        )
+        prog, item = self._semana_com_apontamento("8", local=torre)
+        #: E um apontamento da atividade sem local, na mesma semana, fica de fora
+        #: deste cartão — ele é de outro endereço.
+        ApontamentoAvanco.objects.create(
+            tenant=self.tenant, atividade=self.a1, local=None,
+            data=date(2026, 6, 3), percentual=Decimal("30"),
+        )
+        self.assertEqual(services.avanco_apontado_dos_itens(prog)[item.pk], Decimal("8"))
+
+    def test_o_PPC_continua_BINARIO_com_execucao_parcial(self):
+        """**A regra que não se dobra.** Prometeu 20, andou 12, não terminou:
+        para o PPC isso é zero — e é assim que o índice continua medindo a
+        confiabilidade do plano em vez da boa vontade da equipe."""
+        prog, item = self._semana_com_apontamento("12")
+        services.comprometer(programacao=prog, por="m")
+        services.semear_causas_de_fabrica(self.tenant.pk)
+        causa = CausaNaoCumprimento.objects.get(
+            tenant=self.tenant, codigo="PLAN-MAL-DIM",
+        )
+        services.julgar_itens(programacao=prog, julgamentos=[
+            {"item": item.pk, "cumprido": False, "causa": causa.pk},
+        ])
+        services.encerrar(programacao=prog, por="m")
+        ppc = services.ppc_de(prog)
+        self.assertEqual(ppc["ppc"], Decimal("0.0"))
+
+    def test_mas_o_que_ANDOU_aparece_ao_lado_do_indice(self):
+        """Sem isto o sistema diria à equipe que ela não fez nada."""
+        prog, item = self._semana_com_apontamento("12")
+        services.comprometer(programacao=prog, por="m")
+        services.semear_causas_de_fabrica(self.tenant.pk)
+        causa = CausaNaoCumprimento.objects.get(
+            tenant=self.tenant, codigo="MO-PRODUT",
+        )
+        services.julgar_itens(programacao=prog, julgamentos=[
+            {"item": item.pk, "cumprido": False, "causa": causa.pk},
+        ])
+        services.encerrar(programacao=prog, por="m")
+        ppc = services.ppc_de(prog)
+        self.assertEqual(ppc["pontos_previstos"], Decimal("20.00"))
+        self.assertEqual(ppc["pontos_apontados"], Decimal("12"))
+        #: E continuam **separados** do índice: quem lê vê 0% de PPC e 12 de 20
+        #: pontos andados, e as duas coisas são verdade.
+        self.assertEqual(ppc["ppc"], Decimal("0.0"))
+
+    def test_semana_sem_ninguem_prometer_numero_nao_inventa_um(self):
+        """Muito compromisso de LPS é binário ('concretar a laje'), e obrigar um
+        número faria o time inventar um."""
+        prog = self._programacao(semana=date(2026, 6, 1))
+        self._item(prog, atividade=self.a1)
+        services.comprometer(programacao=prog, por="m")
+        services.julgar_itens(programacao=prog, julgamentos=[
+            {"item": prog.itens.first().pk, "cumprido": True},
+        ])
+        services.encerrar(programacao=prog, por="m")
+        ppc = services.ppc_de(prog)
+        self.assertIsNone(ppc["pontos_previstos"])
+        self.assertIsNone(ppc["pontos_apontados"])
+
+
+class ApiDaExecucaoParcialTests(APITestCase):
+    """O cartão, pelo HTTP — e o agregado resolvido uma vez por página."""
+
+    def setUp(self):
+        self.tenant = Tenant.objects.create(slug="pdca5-parcial", nome="LPS Parcial")
+        self.obra = Obra.objects.create(
+            tenant=self.tenant, nome_obra="Obra Parcial", endereco="Rua P",
+        )
+        self.calendario = CalendarioTrabalho.objects.create(
+            tenant=self.tenant, obra=self.obra, nome="Padrão",
+        )
+        self.cronograma = Cronograma.objects.create(
+            tenant=self.tenant, obra=self.obra, descricao="Plano",
+            data_inicio=date(2026, 6, 1), calendario=self.calendario,
+            status=Cronograma.Status.VIGENTE,
+        )
+        self.atividade = Atividade.objects.create(
+            tenant=self.tenant, cronograma=self.cronograma, codigo="1",
+            nome="Alvenaria", duracao_dias=5, profundidade=1,
+        )
+        self.prog = services.abrir_programacao(
+            obra=self.obra, semana_inicio=date(2026, 6, 1), tenant_id=self.tenant.pk,
+        )
+        self.item = ItemProgramacao.objects.create(
+            tenant=self.tenant, programacao=self.prog, atividade=self.atividade,
+            percentual_previsto=Decimal("20"),
+        )
+        ApontamentoAvanco.objects.create(
+            tenant=self.tenant, atividade=self.atividade, data=date(2026, 6, 3),
+            percentual=Decimal("12"),
+        )
+        self.usuario = Usuario.objects.create(username="lps5p", tenant=self.tenant)
+        self.usuario.iam_modules = ["pdca"]
+        self.usuario.iam_permissions = [
+            "pdca.programacao.view", "pdca.programacao.comprometer",
+            "pdca.programacao.encerrar",
+        ]
+        self.client.force_authenticate(user=self.usuario)
+
+    def test_a_listagem_do_quadro_traz_o_apontado_de_cada_cartao(self):
+        resposta = self.client.get(
+            f"/api/pdca/itens-programacao/?programacao={self.prog.pk}",
+        )
+        self.assertEqual(resposta.status_code, 200)
+        linha = resposta.json()["results"][0]
+        #: String, como todo `Decimal` que atravessa — a régua do D151.
+        #: O apontamento tem **4 casas** (`decimal_places=4`) e o previsto tem
+        #: 2 — cada campo atravessa com a precisão que tem, e é por isso que a
+        #: comparação aqui é numérica: assumir o formato do outro seria fixar no
+        #: teste um acoplamento que o modelo não promete.
+        self.assertEqual(Decimal(linha["percentual_apontado"]), Decimal("12"))
+        self.assertEqual(Decimal(linha["percentual_previsto"]), Decimal("20"))
+
+    def test_o_quadro_inteiro_vem_resolvido_do_servidor(self):
+        """O quadro comporta 300 cartões, e o agregado é resolvido **uma vez por
+        página** — 300 consultas para desenhar uma parede é o D136 do outro
+        lado. O que se prende aqui é o contrato: **todo** cartão chega com o
+        campo, e nenhum deles exige uma segunda chamada do cliente."""
+        for n in range(2, 8):
+            atividade = Atividade.objects.create(
+                tenant=self.tenant, cronograma=self.cronograma, codigo=str(n),
+                nome=f"Serviço {n}", duracao_dias=3, profundidade=1,
+            )
+            ItemProgramacao.objects.create(
+                tenant=self.tenant, programacao=self.prog, atividade=atividade,
+            )
+        resposta = self.client.get(
+            f"/api/pdca/itens-programacao/?programacao={self.prog.pk}",
+        )
+        linhas = resposta.json()["results"]
+        self.assertEqual(len(linhas), 7)
+        self.assertTrue(all("percentual_apontado" in l for l in linhas))
+        #: O cartão sem apontamento recebe `null`, e não zero — nulo é "o campo
+        #: não apontou nada", que é diferente de "apontou e nada andou".
+        self.assertEqual(
+            [l["percentual_apontado"] for l in linhas].count(None), 6,
+        )
+
+
+class ReabrirASemanaTests(_BaseLastPlanner):
+    """**A semana errada tem volta — e a volta fica registrada.**
+
+    Antes disto, `encerrar` era um beco: `julgar_itens` só aceita programação
+    comprometida, então um julgamento errado ficava para sempre. E o que estraga
+    não é o índice: é o ranking de causas, que é o que decide o que a empresa
+    muda.
+    """
+
+    def _semana_encerrada(self):
+        prog = self._programacao()
+        i1 = self._item(prog, atividade=self.a1)
+        i2 = self._item(prog, atividade=self.a2)
+        services.comprometer(programacao=prog, por="mestre")
+        services.semear_causas_de_fabrica(self.tenant.pk)
+        causa = CausaNaoCumprimento.objects.get(
+            tenant=self.tenant, codigo="MAT-FALTA",
+        )
+        services.julgar_itens(programacao=prog, julgamentos=[
+            {"item": i1.pk, "cumprido": True},
+            {"item": i2.pk, "cumprido": False, "causa": causa.pk},
+        ])
+        services.encerrar(programacao=prog, por="mestre")
+        return prog, i1, i2, causa
+
+    def test_a_semana_encerrada_reabre_para_COMPROMETIDA(self):
+        prog, _, _, _ = self._semana_encerrada()
+        self.assertEqual(prog.status, ProgramacaoSemanal.Status.ENCERRADA)
+        resultado = services.reabrir(
+            programacao=prog, por="mestre",
+            motivo="A elétrica saiu na sexta e ninguém avisou a tempo.",
+        )
+        prog.refresh_from_db()
+        self.assertEqual(prog.status, ProgramacaoSemanal.Status.COMPROMETIDA)
+        self.assertEqual(resultado["de"], "encerrada")
+        self.assertEqual(resultado["para"], "comprometida")
+        #: O encerramento é desfeito; o carimbo de quem encerrou sai junto,
+        #: porque ele voltará a ser posto por quem encerrar de novo.
+        self.assertIsNone(prog.encerrada_em)
+
+    def test_e_o_julgamento_FICA_para_corrigir_so_o_que_esta_errado(self):
+        """Refazer a semana inteira para trocar uma causa seria a pior forma de
+        oferecer a correção — a pessoa desistiria e o erro ficaria."""
+        prog, i1, i2, _ = self._semana_encerrada()
+        services.reabrir(programacao=prog, por="mestre", motivo="causa trocada")
+        i1.refresh_from_db()
+        i2.refresh_from_db()
+        self.assertIs(i1.cumprido, True)
+        self.assertIs(i2.cumprido, False)
+        self.assertIsNotNone(i2.causa_id)
+
+    def test_reaberta_ela_aceita_julgamento_de_novo(self):
+        prog, i1, i2, causa = self._semana_encerrada()
+        services.reabrir(programacao=prog, por="mestre", motivo="errei a causa")
+        outra = CausaNaoCumprimento.objects.get(
+            tenant=self.tenant, codigo="EXT-CLIMA",
+        )
+        services.julgar_itens(programacao=prog, julgamentos=[
+            {"item": i2.pk, "cumprido": False, "causa": outra.pk},
+        ])
+        i2.refresh_from_db()
+        self.assertEqual(i2.causa_id, outra.pk)
+        #: E encerra de novo, com o PPC recalculado do zero — ele é derivado.
+        services.encerrar(programacao=prog, por="mestre")
+        prog.refresh_from_db()
+        self.assertEqual(prog.status, ProgramacaoSemanal.Status.ENCERRADA)
+
+    def test_o_PPC_recalcula_sozinho_porque_nunca_foi_gravado(self):
+        prog, i1, i2, _ = self._semana_encerrada()
+        #: 62,5% e não 50%: ponderado pela duração (5 e 3 dias) — ver
+        #: `CicloDaSemanaTests.test_o_ciclo_inteiro_fecha_e_produz_ppc`.
+        self.assertEqual(services.ppc_de(prog)["ppc"], Decimal("62.5"))
+        services.reabrir(programacao=prog, por="mestre", motivo="o 2 saiu sim")
+        services.julgar_itens(programacao=prog, julgamentos=[
+            {"item": i2.pk, "cumprido": True},
+        ])
+        services.encerrar(programacao=prog, por="mestre")
+        self.assertEqual(services.ppc_de(prog)["ppc"], Decimal("100.0"))
+
+    def test_a_comprometida_reabre_para_RASCUNHO_e_apaga_o_julgamento(self):
+        """Rascunho quer dizer *a semana ainda não foi assumida*. Julgamento
+        pendurado numa semana que ninguém assumiu não é dado — é entulho que o
+        próximo encerramento contaria."""
+        prog, i1, i2, _ = self._semana_encerrada()
+        services.reabrir(programacao=prog, por="mestre", motivo="1")
+        resultado = services.reabrir(
+            programacao=prog, por="mestre", motivo="faltou um serviço no quadro",
+        )
+        prog.refresh_from_db()
+        self.assertEqual(prog.status, ProgramacaoSemanal.Status.RASCUNHO)
+        self.assertEqual(resultado["julgamentos_apagados"], 2)
+        i1.refresh_from_db()
+        i2.refresh_from_db()
+        self.assertIsNone(i1.cumprido)
+        self.assertIsNone(i2.cumprido)
+        #: A causa sai junto, senão a `CheckConstraint` do item recusaria a linha
+        #: (cumprido nulo com causa preenchida é o estado que ela proíbe).
+        self.assertIsNone(i2.causa_id)
+        self.assertIsNone(prog.comprometida_em)
+
+    def test_e_no_rascunho_o_quadro_volta_a_receber_cartao(self):
+        prog, _, _, _ = self._semana_encerrada()
+        services.reabrir(programacao=prog, por="m", motivo="1")
+        services.reabrir(programacao=prog, por="m", motivo="2")
+        self.assertTrue(prog.esta_aberta_para_montagem)
+
+    def test_reabrir_SEM_motivo_e_recusado(self):
+        prog, _, _, _ = self._semana_encerrada()
+        with self.assertRaises(ValidationError) as erro:
+            services.reabrir(programacao=prog, por="mestre", motivo="   ")
+        self.assertIn("em silêncio", str(erro.exception))
+        prog.refresh_from_db()
+        self.assertEqual(prog.status, ProgramacaoSemanal.Status.ENCERRADA)
+
+    def test_o_rascunho_nao_tem_degrau_abaixo(self):
+        prog = self._programacao()
+        with self.assertRaises(ValidationError) as erro:
+            services.reabrir(programacao=prog, por="m", motivo="tentando")
+        self.assertIn("rascunho", str(erro.exception).lower())
+
+    def test_cada_reabertura_e_CONTADA_e_carimbada(self):
+        """Contador, e não booleano: uma semana reaberta cinco vezes não é a
+        mesma coisa que uma reaberta uma vez, e é o tipo de padrão que só
+        aparece se alguém contar."""
+        prog, _, _, _ = self._semana_encerrada()
+        services.reabrir(programacao=prog, por="joana", motivo="primeira")
+        prog.refresh_from_db()
+        self.assertEqual(prog.vezes_reaberta, 1)
+        self.assertEqual(prog.reaberta_por, "joana")
+        self.assertEqual(prog.motivo_reabertura, "primeira")
+        self.assertIsNotNone(prog.reaberta_em)
+
+        services.encerrar(programacao=prog, por="joana")
+        services.reabrir(programacao=prog, por="joana", motivo="segunda")
+        prog.refresh_from_db()
+        self.assertEqual(prog.vezes_reaberta, 2)
+        self.assertEqual(prog.motivo_reabertura, "segunda")
+
+    def test_o_PPC_DIZ_que_foi_corrigido(self):
+        """Um PPC rejulgado depois de a reunião ter olhado para ele não pode
+        passar por número virgem."""
+        prog, _, _, _ = self._semana_encerrada()
+        self.assertEqual(services.ppc_de(prog)["vezes_reaberta"], 0)
+        services.reabrir(programacao=prog, por="m", motivo="a causa estava errada")
+        services.encerrar(programacao=prog, por="m")
+        ppc = services.ppc_de(prog)
+        self.assertEqual(ppc["vezes_reaberta"], 1)
+        self.assertEqual(ppc["motivo_reabertura"], "a causa estava errada")
+
+    def test_a_SERIE_historica_marca_o_ponto_corrigido(self):
+        """A série é o que a diretoria lê, e um ponto corrigido tem de se
+        anunciar ali."""
+        prog, _, _, _ = self._semana_encerrada()
+        services.reabrir(programacao=prog, por="m", motivo="x")
+        services.encerrar(programacao=prog, por="m")
+        serie = services.serie_ppc(obra_id=self.obra.pk, tenant_id=self.tenant.pk)
+        self.assertEqual(len(serie), 1)
+        self.assertEqual(serie[0]["vezes_reaberta"], 1)
+
+    def test_a_semana_reaberta_SAI_da_serie_ate_encerrar_de_novo(self):
+        """Ela deixou de ser apurada: contá-la com o julgamento velho seria
+        publicar um número que o próprio sistema declarou em revisão."""
+        prog, _, _, _ = self._semana_encerrada()
+        self.assertEqual(
+            len(services.serie_ppc(obra_id=self.obra.pk, tenant_id=self.tenant.pk)), 1,
+        )
+        services.reabrir(programacao=prog, por="m", motivo="revisando")
+        self.assertEqual(
+            services.serie_ppc(obra_id=self.obra.pk, tenant_id=self.tenant.pk), [],
+        )
+
+    def test_o_ranking_de_causas_tambem_solta_a_semana_reaberta(self):
+        """Pelo mesmo motivo: o ranking conta falha de semana **encerrada**, e
+        uma em revisão não é conclusão de nada."""
+        prog, _, _, _ = self._semana_encerrada()
+        antes = services.ranking_de_causas(
+            obra_id=self.obra.pk, tenant_id=self.tenant.pk,
+        )
+        self.assertEqual(antes["total_falhas"], 1)
+        services.reabrir(programacao=prog, por="m", motivo="revisando")
+        depois = services.ranking_de_causas(
+            obra_id=self.obra.pk, tenant_id=self.tenant.pk,
+        )
+        self.assertEqual(depois["total_falhas"], 0)
+
+
+class PpcPonderadoTests(_BaseLastPlanner):
+    """**O PPC deixou de contar cartões** *(decisão do dono, 15/09/2026)*.
+
+    Contar cartões dizia que assumir a concretagem da laje e assumir a limpeza
+    do canteiro valem o mesmo: a semana que entrega a laje e perde a limpeza
+    marcava os mesmos 50% da que entrega a limpeza e perde a laje. Agora o
+    numerador e o denominador são **peso**, e o peso sai do planejamento — do
+    orçamento, do peso informado ou da duração, nessa ordem.
+    """
+
+    def _semana_julgada(self, julgamentos):
+        prog = self._programacao()
+        services.comprometer(programacao=prog, por="Ana")
+        services.semear_causas_de_fabrica(self.tenant.pk)
+        causa = CausaNaoCumprimento.objects.get(
+            tenant=self.tenant, codigo="MAT-FALTA",
+        )
+        services.julgar_itens(programacao=prog, julgamentos=[
+            {"item": pk, "cumprido": ok,
+             **({} if ok else {"causa": causa.pk})}
+            for pk, ok in julgamentos
+        ])
+        return services.encerrar(programacao=prog, por="Ana", arrastar=False)
+
+    def test_o_peso_e_congelado_quando_o_cartao_nasce(self):
+        """Como o `retencao_percentual_aplicado` da medição, e pelo mesmo motivo:
+        reprecificar o orçamento em dezembro não pode reescrever o PPC de agosto."""
+        prog = self._programacao()
+        item = self._item(prog, atividade=self.a1)
+        self.assertEqual(item.peso, Decimal("5"))
+        self.assertEqual(item.peso_origem, "duracao")
+
+    def test_o_peso_informado_ganha_da_duracao(self):
+        """A escada é orçamento → peso do planejador → duração. Quem digitou um
+        peso disse quanto aquilo vale, e a duração é o degrau de quem não disse."""
+        self.a2.peso_informado = Decimal("40")
+        self.a2.save(update_fields=["peso_informado"])
+        prog = self._programacao()
+        item = self._item(prog, atividade=self.a2)
+        self.assertEqual(item.peso, Decimal("40"))
+        self.assertEqual(item.peso_origem, "informado")
+
+    def test_o_indice_pesa_o_que_saiu_e_nao_conta_cartoes(self):
+        """Duas atividades, uma cumprida. Contagem diria 50%; a alvenaria dura 5
+        dias e o contrapiso 3, então saiu 5 de 8."""
+        prog = self._programacao()
+        i1 = self._item(prog, atividade=self.a1)
+        i2 = self._item(prog, atividade=self.a2)
+        services.comprometer(programacao=prog, por="Ana")
+        services.semear_causas_de_fabrica(self.tenant.pk)
+        causa = CausaNaoCumprimento.objects.get(
+            tenant=self.tenant, codigo="MAT-FALTA",
+        )
+        services.julgar_itens(programacao=prog, julgamentos=[
+            {"item": i1.pk, "cumprido": True},
+            {"item": i2.pk, "cumprido": False, "causa": causa.pk},
+        ])
+        leitura = services.encerrar(
+            programacao=prog, por="Ana", arrastar=False,
+        )
+        self.assertEqual(leitura["ppc"], Decimal("62.5"))
+        self.assertEqual(leitura["peso_total"], Decimal("8"))
+        self.assertEqual(leitura["peso_cumprido"], Decimal("5"))
+
+    def test_o_inverso_do_mesmo_quadro_da_outro_indice(self):
+        """A prova de que o peso mudou alguma coisa: trocar **qual** dos dois
+        saiu deixava o índice igual antes, e agora não deixa."""
+        prog = self._programacao()
+        i1 = self._item(prog, atividade=self.a1)
+        i2 = self._item(prog, atividade=self.a2)
+        services.comprometer(programacao=prog, por="Ana")
+        services.semear_causas_de_fabrica(self.tenant.pk)
+        causa = CausaNaoCumprimento.objects.get(
+            tenant=self.tenant, codigo="MAT-FALTA",
+        )
+        services.julgar_itens(programacao=prog, julgamentos=[
+            {"item": i1.pk, "cumprido": False, "causa": causa.pk},
+            {"item": i2.pk, "cumprido": True},
+        ])
+        leitura = services.encerrar(
+            programacao=prog, por="Ana", arrastar=False,
+        )
+        self.assertEqual(leitura["ppc"], Decimal("37.5"))
+
+    def test_cartao_sem_regua_fica_FORA_da_divisao_e_e_contado_a_parte(self):
+        """Marco tem duração zero e nenhum vínculo: não há como pesá-lo. Ele
+        conta em `comprometidos`, fica fora da conta e aparece em `sem_peso` —
+        a régua do `folhas_sem_peso` do avanço do cronograma."""
+        marco = Atividade.objects.create(
+            tenant=self.tenant, cronograma=self.cronograma, codigo="3",
+            nome="Laje liberada", duracao_dias=0, eh_marco=True, profundidade=1,
+        )
+        prog = self._programacao()
+        i1 = self._item(prog, atividade=self.a1)
+        im = self._item(prog, atividade=marco)
+        self.assertIsNone(im.peso)
+        services.comprometer(programacao=prog, por="Ana")
+        services.semear_causas_de_fabrica(self.tenant.pk)
+        causa = CausaNaoCumprimento.objects.get(
+            tenant=self.tenant, codigo="MAT-FALTA",
+        )
+        services.julgar_itens(programacao=prog, julgamentos=[
+            {"item": i1.pk, "cumprido": True},
+            {"item": im.pk, "cumprido": False, "causa": causa.pk},
+        ])
+        leitura = services.encerrar(
+            programacao=prog, por="Ana", arrastar=False,
+        )
+        self.assertEqual(leitura["comprometidos"], 2)
+        self.assertEqual(leitura["sem_peso"], 1)
+        #: Só a alvenaria tem peso, e ela saiu: 100% do que dava para pesar.
+        self.assertEqual(leitura["ppc"], Decimal("100.0"))
+
+    def test_quadro_sem_peso_nenhum_cai_na_base_IGUAL(self):
+        """A obra que ainda não vinculou o cronograma ao orçamento e não digitou
+        duração não pode ficar sem índice — ela volta a contar cartões, e a
+        resposta **diz** que é isso que está fazendo."""
+        m1 = Atividade.objects.create(
+            tenant=self.tenant, cronograma=self.cronograma, codigo="4",
+            nome="Alvará", duracao_dias=0, eh_marco=True, profundidade=1,
+        )
+        m2 = Atividade.objects.create(
+            tenant=self.tenant, cronograma=self.cronograma, codigo="5",
+            nome="Habite-se", duracao_dias=0, eh_marco=True, profundidade=1,
+        )
+        prog = self._programacao()
+        i1 = self._item(prog, atividade=m1)
+        i2 = self._item(prog, atividade=m2)
+        services.comprometer(programacao=prog, por="Ana")
+        services.semear_causas_de_fabrica(self.tenant.pk)
+        causa = CausaNaoCumprimento.objects.get(
+            tenant=self.tenant, codigo="MAT-FALTA",
+        )
+        services.julgar_itens(programacao=prog, julgamentos=[
+            {"item": i1.pk, "cumprido": True},
+            {"item": i2.pk, "cumprido": False, "causa": causa.pk},
+        ])
+        leitura = services.encerrar(
+            programacao=prog, por="Ana", arrastar=False,
+        )
+        self.assertEqual(leitura["ppc"], Decimal("50.0"))
+        self.assertEqual(leitura["peso_bases"], ["igual"])
+
+    def test_a_serie_usa_a_MESMA_conta_da_tela(self):
+        """Ponto de série que discorda do ponto da tela é o defeito que o D138
+        já custou caro na grade de medição."""
+        prog = self._programacao()
+        i1 = self._item(prog, atividade=self.a1)
+        i2 = self._item(prog, atividade=self.a2)
+        services.comprometer(programacao=prog, por="Ana")
+        services.semear_causas_de_fabrica(self.tenant.pk)
+        causa = CausaNaoCumprimento.objects.get(
+            tenant=self.tenant, codigo="MAT-FALTA",
+        )
+        services.julgar_itens(programacao=prog, julgamentos=[
+            {"item": i1.pk, "cumprido": True},
+            {"item": i2.pk, "cumprido": False, "causa": causa.pk},
+        ])
+        da_tela = services.encerrar(
+            programacao=prog, por="Ana", arrastar=False,
+        )
+        serie = services.serie_ppc(
+            obra_id=self.obra.pk, tenant_id=self.tenant.pk,
+        )
+        self.assertEqual(len(serie), 1)
+        self.assertEqual(serie[0]["ppc"], da_tela["ppc"])
+        self.assertEqual(serie[0]["peso_bases"], ["duracao"])
+
+
+class SemanaQueAindaNaoAcabouTests(_BaseLastPlanner):
+    """**Dava para fechar a semana que não tinha acontecido** *(achado do dono,
+    15/09/2026)*.
+
+    `encerrar` só olhava o status: na segunda de manhã dava para julgar os cinco
+    compromissos como "não saiu" e fechar, com a semana inteira pela frente. O
+    índice que sai daí entra na série valendo o mesmo que os outros, e quem a lê
+    depois não consegue distinguir.
+    """
+
+    def _semana_julgada(self, semana):
+        prog = self._programacao(semana=semana)
+        i1 = self._item(prog, atividade=self.a1)
+        services.comprometer(programacao=prog, por="Ana")
+        services.julgar_itens(programacao=prog, julgamentos=[
+            {"item": i1.pk, "cumprido": True},
+        ])
+        return prog
+
+    def _semana_futura(self):
+        return services.segunda_da_semana(
+            timezone.localdate() + timedelta(days=14)
+        )
+
+    def test_a_semana_futura_e_recusada_sem_a_permissao(self):
+        prog = self._semana_julgada(self._semana_futura())
+        with self.assertRaises(ValidationError) as ctx:
+            services.encerrar(programacao=prog, por="Ana")
+        mensagem = " ".join(ctx.exception.messages)
+        self.assertIn("encerrar_antecipado", mensagem)
+
+    def test_com_a_permissao_ainda_exige_motivo(self):
+        """A trava que importa não é a de quem pode — é a do motivo por escrito,
+        que é o que a reunião seguinte lê para saber por que aquele ponto foi
+        apurado mais cedo."""
+        prog = self._semana_julgada(self._semana_futura())
+        with self.assertRaises(ValidationError) as ctx:
+            services.encerrar(
+                programacao=prog, por="Ana", pode_antecipar=True,
+            )
+        self.assertIn("motivo", " ".join(ctx.exception.messages).lower())
+
+    def test_com_permissao_e_motivo_encerra_E_FICA_MARCADA(self):
+        prog = self._semana_julgada(self._semana_futura())
+        leitura = services.encerrar(
+            programacao=prog, por="Ana", pode_antecipar=True,
+            motivo_antecipado="Obra parada na quinta — feriado prolongado.",
+            arrastar=False,
+        )
+        prog.refresh_from_db()
+        self.assertEqual(prog.status, ProgramacaoSemanal.Status.ENCERRADA)
+        self.assertTrue(prog.encerrada_antes_do_fim)
+        self.assertIn("feriado", prog.motivo_encerramento_antecipado)
+        self.assertTrue(leitura["encerrada_antes_do_fim"])
+
+    def test_a_semana_que_ja_acabou_encerra_sem_cerimonia(self):
+        """Encerrar a semana passada é o gesto normal — não pede permissão extra
+        nem justificativa, e pedir faria a sexta-feira à noite virar burocracia."""
+        prog = self._semana_julgada(date(2026, 6, 1))
+        leitura = services.encerrar(
+            programacao=prog, por="Ana", arrastar=False,
+        )
+        prog.refresh_from_db()
+        self.assertEqual(prog.status, ProgramacaoSemanal.Status.ENCERRADA)
+        self.assertFalse(prog.encerrada_antes_do_fim)
+        self.assertFalse(leitura["encerrada_antes_do_fim"])
+
+
+class ArrastoDoQueNaoSaiuTests(_BaseLastPlanner):
+    """**Serviço que não saiu não deixou de ser preciso** *(decisão do dono,
+    15/09/2026)*.
+
+    A semana encerrada era um fim de linha: o cartão "não saiu" ficava no quadro
+    de trás e a seguinte nascia vazia. O que se perdia não era o clique de puxar
+    de novo — era **o fato de aquele compromisso estar na segunda semana
+    seguida**, que é o que faz a reunião perguntar o que está travando.
+    """
+
+    def _semana_com_falha(self, previsto=None, apontado=None):
+        prog = self._programacao(semana=date(2026, 6, 1))
+        i1 = self._item(prog, atividade=self.a1, responsavel="Encarregado João",
+                        percentual_previsto=previsto)
+        i2 = self._item(prog, atividade=self.a2)
+        if apontado is not None:
+            ApontamentoAvanco.objects.create(
+                tenant=self.tenant, atividade=self.a1,
+                data=date(2026, 6, 3), percentual=Decimal(apontado),
+            )
+        services.comprometer(programacao=prog, por="Ana")
+        services.semear_causas_de_fabrica(self.tenant.pk)
+        causa = CausaNaoCumprimento.objects.get(
+            tenant=self.tenant, codigo="MAT-FALTA",
+        )
+        services.julgar_itens(programacao=prog, julgamentos=[
+            {"item": i1.pk, "cumprido": False, "causa": causa.pk,
+             "nota": "Bloco não chegou"},
+            {"item": i2.pk, "cumprido": True},
+        ])
+        return prog, i1, i2
+
+    def test_encerrar_leva_o_que_nao_saiu_para_a_semana_seguinte(self):
+        prog, i1, _ = self._semana_com_falha()
+        leitura = services.encerrar(programacao=prog, por="Ana")
+        self.assertEqual(leitura["arrasto"]["arrastados"], 1)
+        destino = ProgramacaoSemanal.objects.get(
+            pk=leitura["arrasto"]["programacao_destino"],
+        )
+        self.assertEqual(destino.semana_inicio, date(2026, 6, 8))
+        self.assertEqual(destino.status, ProgramacaoSemanal.Status.RASCUNHO)
+        novo = destino.itens.get()
+        self.assertEqual(novo.atividade_id, self.a1.pk)
+        self.assertEqual(novo.arrastado_de_id, i1.pk)
+        self.assertEqual(novo.vezes_arrastado, 1)
+        self.assertEqual(novo.responsavel, "Encarregado João")
+
+    def test_o_cumprido_NAO_e_arrastado(self):
+        prog, _, _ = self._semana_com_falha()
+        leitura = services.encerrar(programacao=prog, por="Ana")
+        destino = ProgramacaoSemanal.objects.get(
+            pk=leitura["arrasto"]["programacao_destino"],
+        )
+        self.assertEqual(
+            list(destino.itens.values_list("atividade_id", flat=True)),
+            [self.a1.pk],
+        )
+
+    def test_o_cartao_novo_nasce_POR_JULGAR_e_sem_a_causa_antiga(self):
+        """O julgamento é da semana que passou. Levar a causa junto faria o
+        ranking contar a mesma falha de novo antes de ela acontecer."""
+        prog, _, _ = self._semana_com_falha()
+        leitura = services.encerrar(programacao=prog, por="Ana")
+        novo = ItemProgramacao.objects.get(
+            programacao_id=leitura["arrasto"]["programacao_destino"],
+        )
+        self.assertIsNone(novo.cumprido)
+        self.assertIsNone(novo.causa_id)
+        self.assertEqual(novo.nota, "")
+
+    def test_arrasta_o_QUE_FALTA_quando_a_execucao_foi_parcial(self):
+        """A equipe que assumiu 20 pontos e apontou 12 **fez 12**: o que segue
+        para a semana seguinte são os 8 que ficaram."""
+        prog, i1, _ = self._semana_com_falha(previsto=Decimal("20"), apontado="12")
+        leitura = services.encerrar(programacao=prog, por="Ana")
+        novo = ItemProgramacao.objects.get(
+            programacao_id=leitura["arrasto"]["programacao_destino"],
+        )
+        self.assertEqual(novo.percentual_previsto, Decimal("8"))
+
+    def test_previsto_nulo_continua_nulo(self):
+        """Compromisso binário ("concretar a laje") não ganha número inventado
+        no arrasto."""
+        prog, _, _ = self._semana_com_falha()
+        leitura = services.encerrar(programacao=prog, por="Ana")
+        novo = ItemProgramacao.objects.get(
+            programacao_id=leitura["arrasto"]["programacao_destino"],
+        )
+        self.assertIsNone(novo.percentual_previsto)
+
+    def test_o_contador_soma_a_cada_semana_arrastada(self):
+        """Quatro semanas arrastado não é o mesmo problema que uma — e ninguém
+        veria esse padrão cruzando quadros à mão."""
+        prog, _, _ = self._semana_com_falha()
+        leitura = services.encerrar(programacao=prog, por="Ana")
+        destino = ProgramacaoSemanal.objects.get(
+            pk=leitura["arrasto"]["programacao_destino"],
+        )
+        segundo = destino.itens.get()
+        services.comprometer(programacao=destino, por="Ana")
+        causa = CausaNaoCumprimento.objects.get(
+            tenant=self.tenant, codigo="MAT-FALTA",
+        )
+        services.julgar_itens(programacao=destino, julgamentos=[
+            {"item": segundo.pk, "cumprido": False, "causa": causa.pk},
+        ])
+        leitura2 = services.encerrar(programacao=destino, por="Ana")
+        terceiro = ItemProgramacao.objects.get(
+            programacao_id=leitura2["arrasto"]["programacao_destino"],
+        )
+        self.assertEqual(terceiro.vezes_arrastado, 2)
+
+    def test_rodar_duas_vezes_nao_duplica_cartao(self):
+        prog, _, _ = self._semana_com_falha()
+        services.encerrar(programacao=prog, por="Ana")
+        segundo = services.arrastar_pendentes(programacao=prog, por="Ana")
+        self.assertEqual(segundo["arrastados"], 0)
+        self.assertEqual(segundo["ja_no_quadro"], 1)
+
+    def test_nao_arrasta_para_semana_ja_comprometida(self):
+        """Acrescentar compromisso a um quadro assumido é escrever a aposta
+        depois do resultado."""
+        seguinte = self._programacao(semana=date(2026, 6, 8))
+        self._item(seguinte, atividade=self.a2)
+        services.comprometer(programacao=seguinte, por="Ana")
+        prog, _, _ = self._semana_com_falha()
+        leitura = services.encerrar(programacao=prog, por="Ana")
+        self.assertTrue(leitura["arrasto"]["destino_fechado"])
+        self.assertEqual(leitura["arrasto"]["arrastados"], 0)
+
+    def test_arrastar_so_vale_para_semana_encerrada(self):
+        prog, _, _ = self._semana_com_falha()
+        with self.assertRaises(ValidationError):
+            services.arrastar_pendentes(programacao=prog, por="Ana")
+
+    def test_encerrar_com_arrastar_falso_nao_mexe_na_semana_seguinte(self):
+        prog, _, _ = self._semana_com_falha()
+        leitura = services.encerrar(
+            programacao=prog, por="Ana", arrastar=False,
+        )
+        self.assertIsNone(leitura["arrasto"])
+        self.assertFalse(
+            ProgramacaoSemanal.objects.filter(
+                obra=self.obra, semana_inicio=date(2026, 6, 8),
+            ).exists()
+        )
+
+
+class ApiDaReaberturaTests(APITestCase):
+    """A porta da reabertura — **e a permissão que muda com o degrau**."""
+
+    def setUp(self):
+        self.tenant = Tenant.objects.create(slug="pdca5-reabrir", nome="LPS Reabrir")
+        self.obra = Obra.objects.create(
+            tenant=self.tenant, nome_obra="Obra Reabrir", endereco="Rua R",
+        )
+        self.calendario = CalendarioTrabalho.objects.create(
+            tenant=self.tenant, obra=self.obra, nome="Padrão",
+        )
+        self.cronograma = Cronograma.objects.create(
+            tenant=self.tenant, obra=self.obra, descricao="Plano",
+            data_inicio=date(2026, 6, 1), calendario=self.calendario,
+            status=Cronograma.Status.VIGENTE,
+        )
+        self.atividade = Atividade.objects.create(
+            tenant=self.tenant, cronograma=self.cronograma, codigo="1",
+            nome="Alvenaria", duracao_dias=5, profundidade=1,
+        )
+        self.prog = services.abrir_programacao(
+            obra=self.obra, semana_inicio=date(2026, 6, 1), tenant_id=self.tenant.pk,
+        )
+        self.item = ItemProgramacao.objects.create(
+            tenant=self.tenant, programacao=self.prog, atividade=self.atividade,
+        )
+        services.comprometer(programacao=self.prog, por="x")
+        services.julgar_itens(programacao=self.prog, julgamentos=[
+            {"item": self.item.pk, "cumprido": True},
+        ])
+        services.encerrar(programacao=self.prog, por="x")
+
+        self.usuario = Usuario.objects.create(username="lps5r", tenant=self.tenant)
+        self.usuario.iam_modules = ["pdca"]
+        self.usuario.iam_permissions = [
+            "pdca.programacao.view", "pdca.programacao.comprometer",
+            "pdca.programacao.encerrar",
+        ]
+        self.client.force_authenticate(user=self.usuario)
+
+    def _url(self):
+        return f"/api/pdca/programacoes/{self.prog.pk}/reabrir/"
+
+    def test_reabrir_pela_api_devolve_o_documento_atualizado(self):
+        resposta = self.client.post(
+            self._url(), {"motivo": "a causa estava errada"}, format="json",
+        )
+        self.assertEqual(resposta.status_code, 200, resposta.data)
+        corpo = resposta.json()
+        self.assertEqual(corpo["para"], "comprometida")
+        self.assertEqual(corpo["programacao_dados"]["status"], "comprometida")
+        self.assertEqual(corpo["programacao_dados"]["vezes_reaberta"], 1)
+        self.assertEqual(
+            corpo["programacao_dados"]["motivo_reabertura"], "a causa estava errada",
+        )
+
+    def test_sem_motivo_a_recusa_fala_a_lingua_da_casa(self):
+        resposta = self.client.post(self._url(), {"motivo": "   "}, format="json")
+        self.assertEqual(resposta.status_code, 400)
+        self.assertIn("em silêncio", str(resposta.json()))
+
+    def test_quem_so_COMPROMETE_nao_desfaz_o_encerramento(self):
+        """Desfazer o encerramento é desfazer o julgamento, e isso é de quem
+        julga. Sem esta trava, quem monta a parede poderia apagar o índice que
+        ela produziu."""
+        self.usuario.iam_permissions = [
+            "pdca.programacao.view", "pdca.programacao.comprometer",
+        ]
+        resposta = self.client.post(self._url(), {"motivo": "tentando"}, format="json")
+        self.assertEqual(resposta.status_code, 403)
+
+    def test_quem_so_ENCERRA_nao_desfaz_o_compromisso(self):
+        """E o contrário: desfazer o compromisso devolve o quadro ao rascunho,
+        e isso é de quem assume."""
+        self.client.post(self._url(), {"motivo": "primeira"}, format="json")
+        self.usuario.iam_permissions = [
+            "pdca.programacao.view", "pdca.programacao.encerrar",
+        ]
+        resposta = self.client.post(self._url(), {"motivo": "segunda"}, format="json")
+        self.assertEqual(resposta.status_code, 403)
+
+    def test_quem_so_LE_nao_reabre_nada(self):
+        self.usuario.iam_permissions = ["pdca.programacao.view"]
+        resposta = self.client.post(self._url(), {"motivo": "tentando"}, format="json")
+        self.assertEqual(resposta.status_code, 403)
+
+    def test_o_status_declara_a_capacidade(self):
+        corpo = self.client.get("/api/pdca/status/").json()
+        self.assertIs(corpo["recursos"]["reabrir_semana"], True)
+
+
+# ---------------------------------------------------------------------------
+# PDCA.6 — a linha de balanço: ritmo, sincronia de equipes e gargalo
+# ---------------------------------------------------------------------------
+# O que estes testes prendem:
+#
+# - **a LOB é derivada, e não tem tabela** (§4.9): ela lê `Atividade` × `LocalObra`
+#   e nunca grava inclinação. Guardar o ritmo criaria a segunda verdade, que
+#   envelheceria no instante em que alguém arrastasse uma barra no Gantt;
+# - **o eixo Y é a árvore construtiva em ordem de leitura**, e não o código em
+#   ordem alfabética — "P10" depois de "P9", não antes;
+# - **a precedência do traço é `SS` com atraso**, que é o que faz a inclinação
+#   ser o ritmo pedido e não a duração;
+# - **o conflito é fato, não geometria**: dois serviços diferentes com janelas
+#   que se sobrepõem no mesmo local;
+# - **a leitura diz o que não está mostrando** — atividade sem local fica de
+#   fora, e o número dela vem no corpo.
+
+
+class _BaseLinhaDeBalanco(TestCase):
+    """Uma torre de quatro pavimentos, e um cronograma em rascunho."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.tenant = Tenant.objects.create(slug="pdca-lob", nome="Construtora LOB")
+        cls.obra = Obra.objects.create(
+            tenant=cls.tenant, nome_obra="Torre do Ritmo", endereco="Rua 6",
+        )
+        cls.calendario = CalendarioTrabalho.objects.create(
+            tenant=cls.tenant, obra=cls.obra, nome="Padrão",
+        )
+        cls.torre = LocalObra.objects.create(
+            tenant=cls.tenant, obra=cls.obra, nivel=NivelLocal.BLOCO,
+            codigo="T1", nome="Torre 1", ordem=1, profundidade=0,
+        )
+        #: Os códigos vão a "P10" de propósito: ordenados por texto, "P10" viria
+        #: antes de "P9" e a reta do serviço desceria no meio do gráfico.
+        cls.pavimentos = [
+            LocalObra.objects.create(
+                tenant=cls.tenant, obra=cls.obra, pai=cls.torre,
+                nivel=NivelLocal.PAVIMENTO, codigo=f"P{n}", nome=f"{n}º pavimento",
+                ordem=n, profundidade=1,
+            )
+            for n in (1, 2, 9, 10)
+        ]
+        cls.cronograma = Cronograma.objects.create(
+            tenant=cls.tenant, obra=cls.obra, descricao="Plano",
+            data_inicio=date(2026, 6, 1), calendario=cls.calendario,
+        )
+
+    def _tracar(self, nome="Alvenaria", codigo="1", duracao=4, ritmo=None,
+                locais=None, **extra):
+        return services.gerar_ritmo(
+            cronograma=self.cronograma,
+            locais=locais if locais is not None else [p.pk for p in self.pavimentos],
+            inicio=date(2026, 6, 1),
+            duracao_por_local=duracao, ritmo_dias=ritmo,
+            nome=nome, codigo=codigo, tenant_id=self.tenant.pk, **extra,
+        )
+
+
+class DesenharALinhaTests(_BaseLinhaDeBalanco):
+    """O gesto que a planta §5.2 põe no lugar do arrastar."""
+
+    def test_o_traco_cria_a_fileira_de_atividades_com_local(self):
+        resultado = self._tracar()
+        self.assertEqual(resultado["criar"], 4)
+        criadas = Atividade.objects.filter(
+            tenant=self.tenant, cronograma=self.cronograma, pai__isnull=False,
+        ).order_by("ordem")
+        self.assertEqual(criadas.count(), 4)
+        self.assertEqual(
+            [a.local_id for a in criadas], [p.pk for p in self.pavimentos],
+        )
+        self.assertTrue(all(a.duracao_dias == 4 for a in criadas))
+        #: O nome de cada folha diz **onde** — é o que a torna legível no Gantt,
+        #: onde não há eixo de localização.
+        self.assertIn("1º pavimento", criadas.first().nome)
+
+    def test_a_precedencia_e_SS_com_o_ritmo_como_atraso(self):
+        """**A diferença entre uma LOB e uma fila.**
+
+        Com `FS` o pavimento seguinte começaria depois de o anterior terminar, e
+        o ritmo passaria a ser a duração — impossível representar a equipe que
+        sobe a cada dois dias um serviço que leva quatro.
+        """
+        self._tracar(duracao=4, ritmo=2)
+        ligacoes = Precedencia.objects.filter(tenant=self.tenant)
+        self.assertEqual(ligacoes.count(), 3)
+        self.assertTrue(all(p.tipo == Precedencia.Tipo.SS for p in ligacoes))
+        self.assertTrue(all(p.atraso_dias == 2 for p in ligacoes))
+
+    def test_o_ritmo_nulo_herda_a_duracao_e_vira_fluxo_continuo(self):
+        self._tracar(duracao=3, ritmo=None)
+        self.assertTrue(all(
+            p.atraso_dias == 3 for p in Precedencia.objects.filter(tenant=self.tenant)
+        ))
+
+    def test_simular_nao_escreve_nada(self):
+        """A régua do gerador de locais da PDCA.0: a mesma conta, sem gravar."""
+        resultado = self._tracar(simular=True)
+        self.assertTrue(resultado["simulado"])
+        self.assertEqual(resultado["criar"], 4)
+        self.assertEqual(len(resultado["previa"]), 4)
+        self.assertEqual(
+            Atividade.objects.filter(cronograma=self.cronograma).count(), 0,
+        )
+
+    def test_a_simulacao_diz_o_prazo_do_traco_antes_de_gravar(self):
+        #: 4 locais, ritmo 2, duração 4 → o último começa 6 dias depois do
+        #: primeiro e leva 4: 10 dias úteis.
+        resultado = self._tracar(duracao=4, ritmo=2, simular=True)
+        self.assertEqual(resultado["dias_uteis_total"], 10)
+
+    def test_o_plano_vigente_nao_recebe_traco_novo(self):
+        self.cronograma.status = Cronograma.Status.VIGENTE
+        self.cronograma.save()
+        with self.assertRaises(ValidationError) as erro:
+            self._tracar()
+        self.assertIn("rascunho", str(erro.exception).lower())
+
+    def test_local_de_outra_obra_e_recusado(self):
+        outra = Obra.objects.create(
+            tenant=self.tenant, nome_obra="Outra", endereco="Rua 7",
+        )
+        alheio = LocalObra.objects.create(
+            tenant=self.tenant, obra=outra, nivel=NivelLocal.BLOCO,
+            codigo="X", nome="Torre alheia", profundidade=0,
+        )
+        with self.assertRaises(ValidationError):
+            self._tracar(locais=[self.pavimentos[0].pk, alheio.pk])
+
+    def test_servico_sem_nome_e_sem_pai_e_recusado(self):
+        with self.assertRaises(ValidationError) as erro:
+            self._tracar(nome="", codigo="1")
+        self.assertIn("serviço", str(erro.exception).lower())
+
+    def test_duracao_zero_e_recusada_porque_marco_nao_tem_ritmo(self):
+        with self.assertRaises(ValidationError) as erro:
+            self._tracar(duracao=0)
+        self.assertIn("marco", str(erro.exception).lower())
+
+    def test_o_segundo_traco_continua_a_numeracao_do_servico(self):
+        """Desenhar a segunda torre não pode renumerar a primeira por cima."""
+        primeiro = self._tracar(locais=[self.pavimentos[0].pk, self.pavimentos[1].pk])
+        services.gerar_ritmo(
+            cronograma=self.cronograma, locais=[self.pavimentos[2].pk],
+            inicio=date(2026, 7, 1), duracao_por_local=4,
+            pai_id=primeiro["pai"], tenant_id=self.tenant.pk,
+        )
+        codigos = list(
+            Atividade.objects.filter(
+                tenant=self.tenant, pai_id=primeiro["pai"],
+            ).order_by("ordem").values_list("codigo", flat=True)
+        )
+        self.assertEqual(codigos, ["1.1", "1.2", "1.3"])
+
+
+class LerALinhaDeBalancoTests(_BaseLinhaDeBalanco):
+    """A leitura derivada — eixo, retas, ritmo, gargalo e choques."""
+
+    def test_o_eixo_segue_a_arvore_e_nao_o_alfabeto(self):
+        """P10 depois de P9 — ordenar por código os inverteria."""
+        self._tracar()
+        lob = services.linha_de_balanco(self.cronograma, tenant_id=self.tenant.pk)
+        self.assertEqual(
+            [l["codigo"] for l in lob["eixo"]], ["P1", "P2", "P9", "P10"],
+        )
+
+    def test_a_reta_do_servico_tem_um_ponto_por_local(self):
+        self._tracar()
+        lob = services.linha_de_balanco(self.cronograma, tenant_id=self.tenant.pk)
+        self.assertEqual(len(lob["linhas"]), 1)
+        linha = lob["linhas"][0]
+        self.assertEqual(linha["nome"], "Alvenaria")
+        self.assertEqual(len(linha["pontos"]), 4)
+        #: Ordenados pelo eixo, para a reta ser desenhada sem o cliente ordenar.
+        self.assertEqual([p["y"] for p in linha["pontos"]], [0, 1, 2, 3])
+
+    def test_o_ritmo_e_a_inclinacao_pedida(self):
+        self._tracar(duracao=4, ritmo=2)
+        lob = services.linha_de_balanco(self.cronograma, tenant_id=self.tenant.pk)
+        linha = lob["linhas"][0]
+        #: Dias **corridos** entre os inícios, que é o que o eixo X desenha — a
+        #: conversão de dias úteis para calendário é do CPM, e a LOB lê o
+        #: resultado dele, não a intenção.
+        self.assertIsNotNone(linha["dias_por_local"])
+        self.assertIsNotNone(linha["locais_por_semana"])
+        self.assertGreater(linha["locais_por_semana"], 0)
+
+    def test_um_ponto_so_NAO_tem_ritmo(self):
+        """Uma reta precisa de dois pontos. Devolver o inverso da duração diria
+        que o serviço tem ritmo quando o que existe é um serviço em um lugar."""
+        self._tracar(locais=[self.pavimentos[0].pk])
+        lob = services.linha_de_balanco(self.cronograma, tenant_id=self.tenant.pk)
+        self.assertIsNone(lob["linhas"][0]["dias_por_local"])
+        self.assertIsNone(lob["linhas"][0]["locais_por_semana"])
+        self.assertIsNone(lob["gargalo"])
+
+    def test_o_gargalo_e_o_servico_mais_lento(self):
+        """**A leitura que a LOB tem e o Gantt não.** Acelerar qualquer outro
+        serviço não adianta: o trem anda na velocidade do vagão mais lento."""
+        rapido = self._tracar(nome="Alvenaria", codigo="1", duracao=2, ritmo=2)
+        lento = self._tracar(nome="Contrapiso", codigo="2", duracao=8, ritmo=8)
+        lob = services.linha_de_balanco(self.cronograma, tenant_id=self.tenant.pk)
+        self.assertEqual(lob["gargalo"], lento["pai"])
+        self.assertNotEqual(lob["gargalo"], rapido["pai"])
+
+    def test_dois_servicos_no_mesmo_local_ao_mesmo_tempo_e_CONFLITO(self):
+        """O que a LOB existe para achar — duas equipes no mesmo lugar."""
+        self._tracar(nome="Alvenaria", codigo="1", duracao=10, ritmo=10)
+        self._tracar(nome="Elétrica", codigo="2", duracao=10, ritmo=10)
+        lob = services.linha_de_balanco(self.cronograma, tenant_id=self.tenant.pk)
+        self.assertTrue(lob["conflitos"])
+        choque = lob["conflitos"][0]
+        self.assertNotEqual(choque["servico_a"], choque["servico_b"])
+        self.assertGreaterEqual(choque["dias"], 1)
+        self.assertIn("pavimento", choque["local_rotulo"].lower())
+
+    def test_o_mesmo_servico_duas_vezes_no_local_NAO_e_conflito(self):
+        """Duas frentes do mesmo empreiteiro são a mesma equipe — o choque é
+        entre ofícios, não dentro de um."""
+        traco = self._tracar(duracao=10, ritmo=10)
+        Atividade.objects.create(
+            tenant=self.tenant, cronograma=self.cronograma, pai_id=traco["pai"],
+            codigo="1.9", nome="Alvenaria — reforço", duracao_dias=10,
+            local=self.pavimentos[0], profundidade=2, ordem=99,
+        )
+        services.calcular_cpm(self.cronograma)
+        lob = services.linha_de_balanco(self.cronograma, tenant_id=self.tenant.pk)
+        self.assertEqual(lob["conflitos"], [])
+
+    def test_a_leitura_declara_o_que_NAO_esta_mostrando(self):
+        """Um gráfico que desenha 1 de 2 serviços sem avisar é pior que gráfico
+        nenhum — quem olha conclui que a obra tem uma frente só."""
+        self._tracar()
+        Atividade.objects.create(
+            tenant=self.tenant, cronograma=self.cronograma, codigo="9",
+            nome="Canteiro (sem endereço)", duracao_dias=5, profundidade=1,
+        )
+        services.calcular_cpm(self.cronograma)
+        lob = services.linha_de_balanco(self.cronograma, tenant_id=self.tenant.pk)
+        self.assertEqual(lob["atividades_sem_local"], 1)
+
+    def test_cronograma_sem_CPM_devolve_LOB_vazia_e_nao_quebra(self):
+        Atividade.objects.create(
+            tenant=self.tenant, cronograma=self.cronograma, codigo="1",
+            nome="Sem datas", duracao_dias=5, profundidade=1,
+            local=self.pavimentos[0],
+        )
+        lob = services.linha_de_balanco(self.cronograma, tenant_id=self.tenant.pk)
+        self.assertEqual(lob["linhas"], [])
+        self.assertEqual(lob["eixo"], [])
+        self.assertIsNone(lob["gargalo"])
+
+    def test_a_LOB_nao_grava_nada(self):
+        """Ela é derivada (§4.9). Ler duas vezes não muda o banco."""
+        self._tracar()
+        antes = Atividade.objects.filter(cronograma=self.cronograma).count()
+        services.linha_de_balanco(self.cronograma, tenant_id=self.tenant.pk)
+        services.linha_de_balanco(self.cronograma, tenant_id=self.tenant.pk)
+        self.assertEqual(
+            Atividade.objects.filter(cronograma=self.cronograma).count(), antes,
+        )
+
+
+class TetosDaLinhaDeBalancoNoServicoTests(_BaseLinhaDeBalanco):
+    """Os tetos da §5.5k exercidos onde eles mordem."""
+
+    def test_o_traco_respeita_o_teto_de_locais(self):
+        from payment.planos import PDCA_TETO_LOCAIS_POR_RITMO
+
+        with self.assertRaises(ValidationError):
+            services.validar_teto_de_locais_do_ritmo(PDCA_TETO_LOCAIS_POR_RITMO + 1)
+
+
+class ApiDaPdca6Tests(APITestCase):
+    """As duas portas novas, **pelo HTTP** — a régua que o D149 escreveu."""
+
+    def setUp(self):
+        self.tenant = Tenant.objects.create(slug="pdca6-api", nome="Construtora LOB API")
+        self.obra = Obra.objects.create(
+            tenant=self.tenant, nome_obra="Obra LOB", endereco="Rua API",
+        )
+        self.calendario = CalendarioTrabalho.objects.create(
+            tenant=self.tenant, obra=self.obra, nome="Padrão",
+        )
+        self.torre = LocalObra.objects.create(
+            tenant=self.tenant, obra=self.obra, nivel=NivelLocal.BLOCO,
+            codigo="T1", nome="Torre 1", profundidade=0,
+        )
+        self.pavimentos = [
+            LocalObra.objects.create(
+                tenant=self.tenant, obra=self.obra, pai=self.torre,
+                nivel=NivelLocal.PAVIMENTO, codigo=f"P{n}", nome=f"{n}º pavimento",
+                ordem=n, profundidade=1,
+            )
+            for n in (1, 2, 3)
+        ]
+        self.cronograma = Cronograma.objects.create(
+            tenant=self.tenant, obra=self.obra, descricao="Plano",
+            data_inicio=date(2026, 6, 1), calendario=self.calendario,
+        )
+        self.usuario = Usuario.objects.create(username="lob6", tenant=self.tenant)
+        self.usuario.iam_modules = ["pdca"]
+        self.usuario.iam_permissions = [
+            "pdca.cronograma.view", "pdca.cronograma.edit",
+        ]
+        self.client.force_authenticate(user=self.usuario)
+
+    def _url(self, sufixo):
+        return f"/api/pdca/cronogramas/{self.cronograma.pk}/{sufixo}"
+
+    def test_o_traco_pela_api_cria_as_atividades_com_tenant(self):
+        resposta = self.client.post(self._url("ritmo/"), {
+            "nome": "Alvenaria", "codigo": "1",
+            "locais": [p.pk for p in self.pavimentos],
+            "inicio": "2026-06-01", "duracao_por_local": 4, "ritmo_dias": 2,
+        }, format="json")
+        self.assertEqual(resposta.status_code, 201, resposta.data)
+        criadas = Atividade.objects.filter(
+            cronograma=self.cronograma, pai__isnull=False,
+        )
+        self.assertEqual(criadas.count(), 3)
+        self.assertTrue(all(a.tenant_id == self.tenant.pk for a in criadas))
+
+    def test_simular_responde_200_e_nao_grava(self):
+        resposta = self.client.post(self._url("ritmo/"), {
+            "nome": "Alvenaria", "codigo": "1",
+            "locais": [p.pk for p in self.pavimentos],
+            "inicio": "2026-06-01", "duracao_por_local": 4, "simular": True,
+        }, format="json")
+        self.assertEqual(resposta.status_code, 200)
+        self.assertTrue(resposta.json()["simulado"])
+        self.assertEqual(Atividade.objects.filter(cronograma=self.cronograma).count(), 0)
+
+    def test_a_leitura_responde_a_lob_inteira(self):
+        self.client.post(self._url("ritmo/"), {
+            "nome": "Alvenaria", "codigo": "1",
+            "locais": [p.pk for p in self.pavimentos],
+            "inicio": "2026-06-01", "duracao_por_local": 4, "ritmo_dias": 2,
+        }, format="json")
+        resposta = self.client.get(self._url("linha-de-balanco/"))
+        self.assertEqual(resposta.status_code, 200)
+        corpo = resposta.json()
+        self.assertEqual(len(corpo["eixo"]), 3)
+        self.assertEqual(len(corpo["linhas"]), 1)
+        #: O ritmo é `Decimal`, e atravessa como **string** — a régua do D151.
+        self.assertIsInstance(corpo["linhas"][0]["dias_por_local"], str)
+
+    def test_quem_so_le_o_plano_nao_desenha_a_linha(self):
+        """O traço **cria atividades**: é `edit`, não `view`."""
+        self.usuario.iam_permissions = ["pdca.cronograma.view"]
+        resposta = self.client.post(self._url("ritmo/"), {
+            "nome": "Alvenaria", "codigo": "1",
+            "locais": [self.pavimentos[0].pk],
+            "inicio": "2026-06-01", "duracao_por_local": 4,
+        }, format="json")
+        self.assertEqual(resposta.status_code, 403)
+
+    def test_o_status_declara_a_fatia_e_os_tetos_novos(self):
+        corpo = self.client.get("/api/pdca/status/").json()
+        #: O número da fatia **não** se afirma aqui, pela mesma razão do
+        #: `AcessoAoModuloTests`: este é o teste da PDCA.6, e ele quebraria na
+        #: PDCA.7 sem nada da PDCA.6 ter parado de funcionar. O que ele tem de
+        #: provar são as capacidades e os tetos que a PDCA.6 acrescentou.
+        self.assertTrue(corpo["fatia"].startswith("PDCA."))
+        self.assertIs(corpo["recursos"]["linha_de_balanco"], True)
+        self.assertIs(corpo["recursos"]["conflito_de_equipe"], True)
+        self.assertIsInstance(corpo["tetos"]["locais_por_ritmo"], int)
+
+
+# ---------------------------------------------------------------------------
+# PDCA.7 — a máquina de verificação: FVS, NC, 5W2H e eficácia
+# ---------------------------------------------------------------------------
+# O que estes testes protegem, em uma frase cada:
+#
+# - **a pergunta respondida é a pergunta feita**: apertar o critério do modelo no
+#   ano seguinte não reescreve nenhuma inspeção passada — é o congelamento que
+#   torna a ficha uma prova, e é o teste mais importante da fatia;
+# - **desvio exige explicação**, e a trava vale no banco, não só na aplicação:
+#   sem ela o "não aplicável" em tudo aprova o serviço sem mentir em campo algum;
+# - **a conformidade é derivada e honesta** — não existe enquanto nada foi
+#   respondido, e o não aplicável fica fora do denominador;
+# - **a NC não encerra por carimbo**: só com eficácia verificada, e a eficácia
+#   negativa devolve o defeito ao tratamento em vez de fechá-lo;
+# - **o seam do Last Planner é vivo**: NC grave vira restrição, e a restrição
+#   trava de verdade o compromisso da semana na PDCA.5.
+
+
+class _BaseVerificacao(TestCase):
+    """Fixture comum: uma obra com plano vigente e um modelo de FVS de 3 itens."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.tenant = Tenant.objects.create(slug="pdca-qua", nome="Construtora Qualidade")
+        cls.obra = Obra.objects.create(
+            tenant=cls.tenant, nome_obra="Residencial Conforme", endereco="Rua 7",
+        )
+        cls.calendario = CalendarioTrabalho.objects.create(
+            tenant=cls.tenant, obra=cls.obra, nome="Padrão",
+        )
+        cls.cronograma = Cronograma.objects.create(
+            tenant=cls.tenant, obra=cls.obra, descricao="Plano",
+            data_inicio=date(2026, 6, 1), calendario=cls.calendario,
+            status=Cronograma.Status.VIGENTE,
+        )
+        cls.atividade = Atividade.objects.create(
+            tenant=cls.tenant, cronograma=cls.cronograma, codigo="1",
+            nome="Alvenaria do 4º", duracao_dias=5, profundidade=1,
+        )
+        cls.local = LocalObra.objects.create(
+            tenant=cls.tenant, obra=cls.obra, codigo="T1-4",
+            nome="Torre 1 · 4º pavimento", nivel=NivelLocal.PAVIMENTO,
+        )
+
+    def setUp(self):
+        self.modelo = ModeloVerificacao.objects.create(
+            tenant=self.tenant, codigo="FVS-ALV", nome="FVS — Alvenaria",
+            dominio=DominioVerificacao.QUALIDADE,
+        )
+        self.i1 = ItemModeloVerificacao.objects.create(
+            tenant=self.tenant, modelo=self.modelo, ordem=1,
+            texto="Prumo da parede", criterio="Desvio até 3 mm em 2 m",
+        )
+        self.i2 = ItemModeloVerificacao.objects.create(
+            tenant=self.tenant, modelo=self.modelo, ordem=2,
+            texto="Espessura da junta", criterio="10 mm ± 2 mm",
+        )
+        self.i3 = ItemModeloVerificacao.objects.create(
+            tenant=self.tenant, modelo=self.modelo, ordem=3,
+            texto="Limpeza da frente", obrigatorio=False,
+        )
+
+    def _ficha(self, **extra):
+        return services.aplicar_verificacao(
+            modelo=self.modelo, obra=self.obra, data=date(2026, 6, 10),
+            tenant_id=self.tenant.pk, **extra,
+        )
+
+    def _responder(self, ficha, pares, por="tecnico"):
+        """`pares` = [(ordem, resultado, observacao)] ou com gravidade no fim.
+
+        **A gravidade cai para `menor` quando o teste não a declara.** Ela é
+        obrigatória no reprovado (§11.15), mas a maioria destes testes não trata
+        de gravidade — repetir `MENOR` em trinta tuplas esconderia o que cada um
+        está realmente provando. Os que testam a gradação passam a quarta
+        posição, e os que testam a **exigência** chamam o serviço direto.
+        """
+        por_ordem = {i.ordem: i for i in ficha.itens.all()}
+        respostas = []
+        for par in pares:
+            ordem, resultado, obs = par[0], par[1], par[2]
+            peso = par[3] if len(par) > 3 else (
+                GravidadeNC.MENOR if resultado == ResultadoItem.NAO_CONFORME
+                else None
+            )
+            respostas.append({
+                "item_verificacao": por_ordem[ordem].pk,
+                "resultado": resultado,
+                "observacao": obs,
+                "gravidade": peso,
+            })
+        return services.responder_itens(
+            verificacao=ficha, por=por, respostas=respostas,
+        )
+
+    def _nc(self, **extra):
+        return NaoConformidade.objects.create(
+            tenant=self.tenant, obra=self.obra,
+            descricao=extra.pop("descricao", "Parede fora de prumo"),
+            **extra,
+        )
+
+
+class MaquinaDeVerificacaoTests(_BaseVerificacao):
+    """A ficha aplicada — e o congelamento que a torna prova."""
+
+    def test_aplicar_copia_as_perguntas_para_dentro_da_ficha(self):
+        ficha = self._ficha()
+        self.assertEqual(ficha.itens.count(), 3)
+        primeiro = ficha.itens.order_by("ordem").first()
+        self.assertEqual(primeiro.texto, "Prumo da parede")
+        self.assertEqual(primeiro.criterio, "Desvio até 3 mm em 2 m")
+        # E todas nascem pendentes — nunca reprovadas.
+        self.assertEqual(
+            ficha.itens.filter(resultado=ResultadoItem.PENDENTE).count(), 3,
+        )
+
+    def test_apertar_o_criterio_do_modelo_NAO_reescreve_a_inspecao_passada(self):
+        """**O teste mais importante da fatia.**
+
+        A empresa aperta o prumo de 3 mm para 2 mm no ano seguinte, e faz bem. Se
+        a ficha lesse o texto pelo FK, toda inspeção do ano anterior passaria a
+        afirmar que conferiu 2 mm — e a auditoria do PBQP-H encontraria um
+        sistema que reescreve o passado sozinho.
+        """
+        ficha = self._ficha()
+        self.i1.criterio = "Desvio até 2 mm em 2 m"
+        self.i1.texto = "Prumo e planeza da parede"
+        self.i1.save()
+
+        congelado = ficha.itens.order_by("ordem").first()
+        congelado.refresh_from_db()
+        self.assertEqual(congelado.criterio, "Desvio até 3 mm em 2 m")
+        self.assertEqual(congelado.texto, "Prumo da parede")
+        # E o vínculo continua de pé, para quem quiser ver de onde veio.
+        self.assertEqual(congelado.item_modelo_id, self.i1.pk)
+
+    def test_modelo_inativo_nao_se_aplica(self):
+        self.modelo.ativo = False
+        self.modelo.save()
+        with self.assertRaises(ValidationError) as erro:
+            self._ficha()
+        self.assertIn("inativo", str(erro.exception).lower())
+
+    def test_modelo_sem_pergunta_nao_se_aplica(self):
+        """Ficha vazia conclui com 100% sem ninguém ter olhado nada."""
+        vazio = ModeloVerificacao.objects.create(
+            tenant=self.tenant, codigo="VAZIO", nome="Sem itens",
+        )
+        with self.assertRaises(ValidationError) as erro:
+            services.aplicar_verificacao(
+                modelo=vazio, obra=self.obra, data=date(2026, 6, 10),
+                tenant_id=self.tenant.pk,
+            )
+        self.assertIn("nenhuma pergunta", str(erro.exception))
+
+    def test_os_dois_enderecos_sao_opcionais(self):
+        """A inspeção de segurança do canteiro não aponta para local nem
+        atividade — obrigar qualquer um excluiria um dos quatro domínios."""
+        ficha = self._ficha()
+        self.assertIsNone(ficha.local_id)
+        self.assertIsNone(ficha.atividade_id)
+
+        com_endereco = self._ficha(
+            local_id=self.local.pk, atividade_id=self.atividade.pk,
+        )
+        self.assertEqual(com_endereco.local_id, self.local.pk)
+
+    def test_duplicar_copia_a_ficha_inteira(self):
+        copia = services.duplicar_modelo(
+            modelo=self.modelo, codigo="FVS-ALV-CONC",
+            nome="FVS — Alvenaria de concreto", por="qualidade",
+        )
+        self.assertEqual(copia.itens.count(), 3)
+        self.assertEqual(
+            list(copia.itens.order_by("ordem").values_list("texto", flat=True)),
+            ["Prumo da parede", "Espessura da junta", "Limpeza da frente"],
+        )
+        # A cópia é independente: mexer nela não toca na original.
+        copia.itens.filter(ordem=1).update(criterio="Outro critério")
+        self.i1.refresh_from_db()
+        self.assertEqual(self.i1.criterio, "Desvio até 3 mm em 2 m")
+
+
+class RespostaDaFichaTests(_BaseVerificacao):
+    """O desvio exige explicação — e a conformidade é honesta."""
+
+    def test_nao_conforme_sem_observacao_e_recusado(self):
+        ficha = self._ficha()
+        with self.assertRaises(ValidationError) as erro:
+            self._responder(ficha, [(1, ResultadoItem.NAO_CONFORME, "")])
+        self.assertIn("sem explicação", str(erro.exception))
+
+    def test_nao_aplicavel_sem_observacao_tambem_e_recusado(self):
+        """**É a porta pela qual uma ficha inteira passa sem ninguém verificar
+        nada**: marcar N/A em tudo aprova o serviço sem mentir em campo algum."""
+        ficha = self._ficha()
+        with self.assertRaises(ValidationError):
+            self._responder(ficha, [(1, ResultadoItem.NAO_APLICAVEL, "")])
+
+    def test_a_trava_do_desvio_vale_no_BANCO(self):
+        """A aplicação dá a mensagem; o banco é quem impede a segunda porta —
+        importação e comando de bancada não passam pelo `services`."""
+        ficha = self._ficha()
+        item = ficha.itens.order_by("ordem").first()
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                ItemVerificacao.objects.filter(pk=item.pk).update(
+                    resultado=ResultadoItem.NAO_CONFORME, observacao="",
+                )
+
+    def test_ficha_concluida_nao_recebe_mais_resposta(self):
+        ficha = self._ficha()
+        self._responder(ficha, [
+            (1, ResultadoItem.CONFORME, ""), (2, ResultadoItem.CONFORME, ""),
+        ])
+        services.concluir_verificacao(verificacao=ficha, por="tecnico")
+        ficha.refresh_from_db()
+        with self.assertRaises(ValidationError) as erro:
+            self._responder(ficha, [(3, ResultadoItem.CONFORME, "")])
+        self.assertIn("já foi concluída", str(erro.exception))
+
+    def test_conformidade_e_None_enquanto_nada_foi_respondido(self):
+        """A régua do PPC e do avanço: "sem apuração", nunca 0%."""
+        ficha = self._ficha()
+        resultado = services.resultado_da_verificacao(ficha)
+        self.assertIsNone(resultado["conformidade"])
+        self.assertEqual(resultado["pendentes"], 3)
+
+    def test_nao_aplicavel_fica_fora_do_denominador(self):
+        """Um item que não se aplica não é acerto nem erro. Contá-lo como
+        conforme inflaria toda ficha longa aplicada a um serviço pequeno."""
+        ficha = self._ficha()
+        self._responder(ficha, [
+            (1, ResultadoItem.CONFORME, ""),
+            (2, ResultadoItem.NAO_CONFORME, "Junta com 15 mm"),
+            (3, ResultadoItem.NAO_APLICAVEL, "Frente ainda não liberada"),
+        ])
+        resultado = services.resultado_da_verificacao(ficha)
+        # 1 conforme de 2 julgados = 50%, e não 1 de 3 = 33%.
+        self.assertEqual(resultado["conformidade"], Decimal("50.00"))
+        self.assertEqual(resultado["nao_aplicaveis"], 1)
+
+    def test_o_agregado_da_pagina_bate_com_o_da_ficha(self):
+        """O atalho de uma consulta só (D136) não pode dar outro número."""
+        ficha = self._ficha()
+        self._responder(ficha, [
+            (1, ResultadoItem.CONFORME, ""),
+            (2, ResultadoItem.NAO_CONFORME, "Junta com 15 mm"),
+        ])
+        um = services.resultado_da_verificacao(ficha)
+        varios = services.resultados_das_verificacoes(
+            [ficha], tenant_id=self.tenant.pk,
+        )
+        self.assertEqual(um, varios[ficha.pk])
+
+
+class ConclusaoDaFichaTests(_BaseVerificacao):
+    """Concluir é assinar — e não se assina com o essencial em branco."""
+
+    def test_obrigatorio_pendente_impede_a_conclusao(self):
+        ficha = self._ficha()
+        self._responder(ficha, [(1, ResultadoItem.CONFORME, "")])
+        with self.assertRaises(ValidationError) as erro:
+            services.concluir_verificacao(verificacao=ficha, por="tecnico")
+        self.assertIn("obrigatórios 2", str(erro.exception))
+
+    def test_nao_obrigatorio_pendente_nao_impede(self):
+        """É o que permite a ficha longa ser concluída sem a pergunta acessória
+        sobre a qual ninguém tem o que dizer."""
+        ficha = self._ficha()
+        self._responder(ficha, [
+            (1, ResultadoItem.CONFORME, ""), (2, ResultadoItem.CONFORME, ""),
+        ])
+        services.concluir_verificacao(verificacao=ficha, por="tecnico")
+        ficha.refresh_from_db()
+        self.assertEqual(ficha.status, Verificacao.Status.CONCLUIDA)
+        self.assertTrue(ficha.concluida_em)
+
+    def test_a_conclusao_devolve_os_reprovados_que_ainda_nao_viraram_nc(self):
+        ficha = self._ficha()
+        self._responder(ficha, [
+            (1, ResultadoItem.CONFORME, ""),
+            (2, ResultadoItem.NAO_CONFORME, "Junta com 15 mm"),
+        ])
+        saida = services.concluir_verificacao(verificacao=ficha, por="tecnico")
+        self.assertEqual(len(saida["reprovados_sem_nc"]), 1)
+        self.assertEqual(saida["reprovados_sem_nc"][0]["ordem"], 2)
+
+
+class NaoConformidadeTests(_BaseVerificacao):
+    """O defeito nasce de um item reprovado **ou avulsa** — as duas portas."""
+
+    def test_abrir_ncs_dos_reprovados_leva_endereco_e_pergunta(self):
+        ficha = self._ficha(
+            local_id=self.local.pk, atividade_id=self.atividade.pk,
+        )
+        self._responder(ficha, [
+            (1, ResultadoItem.NAO_CONFORME, "Desvio de 12 mm"),
+            (2, ResultadoItem.CONFORME, ""),
+        ])
+        saida = services.abrir_ncs_dos_reprovados(
+            verificacao=ficha, por="tecnico",
+        )
+        self.assertEqual(saida["abertas"], 1)
+
+        nc = NaoConformidade.objects.get(pk=saida["ncs"][0])
+        self.assertEqual(nc.local_id, self.local.pk)
+        self.assertEqual(nc.atividade_id, self.atividade.pk)
+        # A descrição junta a pergunta congelada com a observação do técnico.
+        self.assertIn("Prumo da parede", nc.descricao)
+        self.assertIn("Desvio de 12 mm", nc.descricao)
+
+    def test_cada_NC_nasce_com_a_gravidade_do_SEU_item(self):
+        """**A correção de 16/09/2026**, e é o ponto inteiro desta regra.
+
+        *(Decisão do dono, olhando o painel: "essa pergunta deveria ser feita em
+        cada item e não no final, porque aí fica parecendo que um
+        desalinhamento na porta é grave igual a falta de uma maçaneta".)*
+
+        A primeira escrita desta fatia recebia uma gravidade em
+        `abrir_ncs_dos_reprovados` e a carimbava em todas — o painel somava "3
+        maiores" sobre três coisas de tamanhos diferentes.
+        """
+        ficha = self._ficha(atividade_id=self.atividade.pk)
+        self._responder(ficha, [
+            (1, ResultadoItem.NAO_CONFORME, "Desalinhamento de 2 mm na porta",
+             GravidadeNC.MENOR),
+            (2, ResultadoItem.NAO_CONFORME, "Falta a maçaneta inteira",
+             GravidadeNC.MAIOR),
+        ])
+        saida = services.abrir_ncs_dos_reprovados(
+            verificacao=ficha, por="tecnico",
+        )
+        self.assertEqual(saida["abertas"], 2)
+
+        por_gravidade = {
+            nc.gravidade: nc
+            for nc in NaoConformidade.objects.filter(pk__in=saida["ncs"])
+        }
+        self.assertEqual(set(por_gravidade), {"menor", "maior"})
+        self.assertIn("Desalinhamento", por_gravidade["menor"].descricao)
+        self.assertIn("maçaneta", por_gravidade["maior"].descricao)
+
+    def test_reprovar_sem_dizer_quanto_pesa_e_recusado(self):
+        """Um defeito sem peso não dá para triar, e o peso é o que decide o que
+        a obra trata primeiro. Mesma família da observação obrigatória."""
+        ficha = self._ficha()
+        with self.assertRaises(ValidationError) as erro:
+            services.responder_itens(
+                verificacao=ficha, por="tecnico",
+                respostas=[{
+                    "item_verificacao": ficha.itens.first().pk,
+                    "resultado": ResultadoItem.NAO_CONFORME,
+                    "observacao": "Torto",
+                }],
+            )
+        self.assertIn("quanto** pesa", str(erro.exception))
+
+    def test_corrigir_para_conforme_LIMPA_a_gravidade(self):
+        """O outro lado da trava, e o menos óbvio.
+
+        Quem marca "não conforme", escolhe o peso e depois corrige para
+        "conforme" deixaria uma gravidade órfã pendurada — contada no painel
+        como um defeito que não existe.
+        """
+        ficha = self._ficha()
+        self._responder(ficha, [
+            (1, ResultadoItem.NAO_CONFORME, "Torto", GravidadeNC.CRITICA),
+        ])
+        item = ficha.itens.order_by("ordem").first()
+        item.refresh_from_db()
+        self.assertEqual(item.gravidade, GravidadeNC.CRITICA)
+
+        self._responder(ficha, [(1, ResultadoItem.CONFORME, "")])
+        item.refresh_from_db()
+        self.assertIsNone(item.gravidade)
+
+    def test_a_trava_da_gravidade_vale_no_BANCO(self):
+        """A aplicação dá a mensagem; o banco fecha a segunda porta."""
+        ficha = self._ficha()
+        item = ficha.itens.order_by("ordem").first()
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                ItemVerificacao.objects.filter(pk=item.pk).update(
+                    resultado=ResultadoItem.NAO_CONFORME,
+                    observacao="Torto", gravidade=None,
+                )
+        # E o contrário também: conforme não carrega peso.
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                ItemVerificacao.objects.filter(pk=item.pk).update(
+                    resultado=ResultadoItem.CONFORME,
+                    gravidade=GravidadeNC.MAIOR,
+                )
+
+    def test_a_conclusao_devolve_a_gravidade_de_cada_reprovado(self):
+        """A tela de conclusão **mostra** o que vai abrir e com que peso, em vez
+        de perguntar um peso só para todos."""
+        ficha = self._ficha()
+        self._responder(ficha, [
+            (1, ResultadoItem.NAO_CONFORME, "Trinca fina", GravidadeNC.MENOR),
+            (2, ResultadoItem.NAO_CONFORME, "Armadura exposta", GravidadeNC.CRITICA),
+        ])
+        saida = services.concluir_verificacao(verificacao=ficha, por="tecnico")
+        pesos = {
+            linha["ordem"]: linha["gravidade"]
+            for linha in saida["reprovados_sem_nc"]
+        }
+        self.assertEqual(pesos, {1: "menor", 2: "critica"})
+        self.assertTrue(
+            all(l["gravidade_rotulo"] for l in saida["reprovados_sem_nc"])
+        )
+
+    def test_abrir_ncs_duas_vezes_nao_duplica(self):
+        ficha = self._ficha()
+        self._responder(ficha, [(1, ResultadoItem.NAO_CONFORME, "Torto")])
+        primeira = services.abrir_ncs_dos_reprovados(verificacao=ficha)
+        segunda = services.abrir_ncs_dos_reprovados(verificacao=ficha)
+        self.assertEqual(primeira["abertas"], 1)
+        self.assertEqual(segunda["abertas"], 0)
+
+    def test_a_nc_avulsa_nao_precisa_de_ficha(self):
+        """O encarregado vê a trinca a caminho do almoxarifado — obrigá-lo a
+        abrir uma ficha inteira é o que faz a trinca não ser registrada."""
+        nc = self._nc(gravidade=GravidadeNC.MAIOR)
+        self.assertIsNone(nc.item_verificacao_id)
+        self.assertTrue(nc.esta_aberta)
+
+    def test_o_primeiro_plano_de_acao_poe_a_nc_em_tratamento(self):
+        """O degrau que separa "ninguém pegou" de "está sendo consertado" na
+        fila de decisão. Aqui pelo serviço da view — ver `ApiDaPdca7Tests`."""
+        nc = self._nc()
+        self.assertEqual(nc.status, NaoConformidade.Status.ABERTA)
+
+
+class LacoDaEficaciaTests(_BaseVerificacao):
+    """**A regra que separa tratar de arquivar** (planta §4.5)."""
+
+    def setUp(self):
+        super().setUp()
+        self.nc = self._nc(atividade=self.atividade, gravidade=GravidadeNC.MAIOR)
+        self.plano = PlanoAcao.objects.create(
+            tenant=self.tenant, nao_conformidade=self.nc,
+            tipo=PlanoAcao.Tipo.CORRETIVA,
+            o_que="Refazer o trecho fora de prumo", quem="Empreiteira Alfa",
+            quando=date(2026, 6, 20),
+        )
+
+    def test_nc_nao_encerra_sem_eficacia_verificada(self):
+        """Mesmo com o plano de ação concluído. É o ponto inteiro da fatia."""
+        services.concluir_acao(plano=self.plano, por="engenharia")
+        with self.assertRaises(ValidationError) as erro:
+            services.encerrar_nc(nc=self.nc, por="fiscal")
+        self.assertIn("eficácia", str(erro.exception))
+        self.nc.refresh_from_db()
+        self.assertNotEqual(self.nc.status, NaoConformidade.Status.ENCERRADA)
+
+    def test_eficacia_negativa_devolve_a_nc_ao_tratamento(self):
+        """O "não" é o resultado mais útil dos dois: o plano anterior
+        comprovadamente não resolveu, e o que vem a seguir é um plano novo."""
+        services.concluir_acao(plano=self.plano, por="engenharia")
+        saida = services.registrar_eficacia(
+            nc=self.nc, data=date(2026, 6, 25), eficaz=False,
+            evidencia="A parede continua fora de prumo no mesmo trecho.",
+            por="fiscal",
+        )
+        self.assertFalse(saida["pode_encerrar"])
+        self.nc.refresh_from_db()
+        self.assertEqual(self.nc.status, NaoConformidade.Status.EM_TRATAMENTO)
+
+        with self.assertRaises(ValidationError) as erro:
+            services.encerrar_nc(nc=self.nc, por="fiscal")
+        self.assertIn("não** funcionou", str(erro.exception))
+
+    def test_eficacia_positiva_permite_encerrar(self):
+        services.concluir_acao(plano=self.plano, por="engenharia")
+        services.registrar_eficacia(
+            nc=self.nc, data=date(2026, 6, 25), eficaz=True,
+            evidencia="Trecho refeito e conferido com régua: 2 mm.",
+            por="fiscal",
+        )
+        services.encerrar_nc(nc=self.nc, por="fiscal", nota="Conferido em obra.")
+        self.nc.refresh_from_db()
+        self.assertEqual(self.nc.status, NaoConformidade.Status.ENCERRADA)
+        self.assertTrue(self.nc.encerrada_em)
+
+    def test_a_ultima_eficacia_e_a_que_vale(self):
+        """Verificada como eficaz em março e reaberta em maio por ter voltado a
+        falhar não pode encerrar pela leitura de março."""
+        services.registrar_eficacia(
+            nc=self.nc, data=date(2026, 6, 20), eficaz=True,
+            evidencia="Parecia resolvido.", por="fiscal",
+        )
+        services.registrar_eficacia(
+            nc=self.nc, data=date(2026, 7, 20), eficaz=False,
+            evidencia="A trinca voltou no mesmo ponto.", por="fiscal",
+        )
+        self.assertEqual(self.nc.eficacias.count(), 2)
+        with self.assertRaises(ValidationError):
+            services.encerrar_nc(nc=self.nc, por="fiscal")
+
+    def test_eficacia_sem_evidencia_e_recusada(self):
+        with self.assertRaises(ValidationError) as erro:
+            services.registrar_eficacia(
+                nc=self.nc, data=date(2026, 6, 25), eficaz=True,
+                evidencia="   ", por="fiscal",
+            )
+        self.assertIn("evidência", str(erro.exception).lower())
+
+    def test_concluir_acao_NAO_encerra_a_nc(self):
+        """"Ação concluída" é quem consertou dizendo que consertou."""
+        services.concluir_acao(plano=self.plano, por="engenharia")
+        self.nc.refresh_from_db()
+        self.assertNotEqual(self.nc.status, NaoConformidade.Status.ENCERRADA)
+
+    def test_o_estado_diz_o_que_falta_a_seguir(self):
+        estado = services.estado_da_nc(self.nc)
+        self.assertEqual(estado["falta"], "executar o plano de ação")
+
+        services.concluir_acao(plano=self.plano, por="engenharia")
+        self.assertEqual(
+            services.estado_da_nc(self.nc)["falta"], "verificar a eficácia",
+        )
+
+        services.registrar_eficacia(
+            nc=self.nc, data=date(2026, 6, 25), eficaz=True,
+            evidencia="Refeito.", por="fiscal",
+        )
+        self.assertEqual(services.estado_da_nc(self.nc)["falta"], "encerrar")
+
+
+class SeamDoLastPlannerTests(_BaseVerificacao):
+    """**O que dá dente à gravidade** — NC crítica para o serviço de verdade."""
+
+    def test_a_nc_vira_restricao_e_a_restricao_trava_o_compromisso(self):
+        """O elo inteiro, ponta a ponta: sem ele o sistema diria "crítica" e a
+        equipe se comprometeria com o serviço na segunda-feira seguinte."""
+        nc = self._nc(atividade=self.atividade, gravidade=GravidadeNC.CRITICA)
+        # Antes: a atividade entra no quadro da semana sem problema.
+        services.validar_pode_comprometer(
+            self.atividade, tenant_id=self.tenant.pk,
+        )
+
+        restricao_id = services.gerar_restricao_da_nc(
+            nc=nc, prazo=date(2026, 6, 30), responsavel="Empreiteira Alfa",
+            por="qualidade",
+        )
+        restricao = Restricao.objects.get(pk=restricao_id)
+        self.assertEqual(restricao.atividade_id, self.atividade.pk)
+        self.assertEqual(restricao.tipo, TipoRestricao.AREA)
+        self.assertIn(f"NC #{nc.nc_id}", restricao.descricao)
+
+        # Depois: o quadro da PDCA.5 recusa o compromisso.
+        with self.assertRaises(ValidationError):
+            services.validar_pode_comprometer(
+                self.atividade, tenant_id=self.tenant.pk,
+            )
+
+    def test_nc_sem_atividade_nao_gera_restricao(self):
+        """Restrição sem alvo não bloqueia nada — é a regra da PDCA.5."""
+        nc = self._nc(gravidade=GravidadeNC.CRITICA)
+        with self.assertRaises(ValidationError) as erro:
+            services.gerar_restricao_da_nc(nc=nc, por="qualidade")
+        self.assertIn("atividade", str(erro.exception))
+
+    def test_gerar_restricao_duas_vezes_devolve_a_mesma(self):
+        """O botão fica na tela e alguém clica duas vezes — a régua do
+        `gerar_demanda_scm`."""
+        nc = self._nc(atividade=self.atividade)
+        primeira = services.gerar_restricao_da_nc(nc=nc, por="qualidade")
+        segunda = services.gerar_restricao_da_nc(nc=nc, por="qualidade")
+        self.assertEqual(primeira, segunda)
+        self.assertEqual(Restricao.objects.count(), 1)
+
+    def test_nc_encerrada_nao_trava_mais_nada(self):
+        nc = self._nc(atividade=self.atividade)
+        services.registrar_eficacia(
+            nc=nc, data=date(2026, 6, 25), eficaz=True,
+            evidencia="Refeito.", por="fiscal",
+        )
+        services.encerrar_nc(nc=nc, por="fiscal")
+        with self.assertRaises(ValidationError) as erro:
+            services.gerar_restricao_da_nc(nc=nc, por="qualidade")
+        self.assertIn("aberta", str(erro.exception))
+
+
+class LeituraDaQualidadeTests(_BaseVerificacao):
+    """A fila de decisão e o "Act" — as duas leituras derivadas."""
+
+    def test_a_fila_separa_quem_ninguem_pegou_de_quem_espera_conferencia(self):
+        sem_plano = self._nc(descricao="Trinca na viga")
+        com_plano = self._nc(descricao="Junta irregular")
+        plano = PlanoAcao.objects.create(
+            tenant=self.tenant, nao_conformidade=com_plano,
+            o_que="Refazer junta", quando=date(2026, 6, 20),
+        )
+        com_plano.status = NaoConformidade.Status.EM_TRATAMENTO
+        com_plano.save()
+        services.concluir_acao(plano=plano, por="engenharia")
+
+        fila = services.fila_da_qualidade(
+            obra_id=self.obra.pk, tenant_id=self.tenant.pk,
+        )
+        self.assertEqual(
+            [linha["nc"] for linha in fila["ncs_sem_plano"]], [sem_plano.pk],
+        )
+        self.assertEqual(
+            [linha["nc"] for linha in fila["ncs_esperando_eficacia"]],
+            [com_plano.pk],
+        )
+
+    def test_a_ficha_parada_em_andamento_entra_na_fila(self):
+        ficha = self._ficha()
+        fila = services.fila_da_qualidade(
+            obra_id=self.obra.pk, tenant_id=self.tenant.pk,
+        )
+        self.assertEqual(
+            [linha["verificacao"] for linha in fila["fichas_em_andamento"]],
+            [ficha.pk],
+        )
+
+    def test_o_painel_ranqueia_o_item_que_mais_reprova(self):
+        """**É a leitura que decide alguma coisa**: qual pergunta reprova mais
+        aponta o processo a corrigir, não o serviço a refazer."""
+        for dia in (10, 11, 12):
+            ficha = self._ficha()
+            self._responder(ficha, [
+                (1, ResultadoItem.NAO_CONFORME, "Fora de prumo"),
+                (2, ResultadoItem.CONFORME, ""),
+            ])
+            services.concluir_verificacao(verificacao=ficha, por="tecnico")
+
+        painel = services.painel_de_conformidade(
+            obra_id=self.obra.pk, tenant_id=self.tenant.pk,
+        )
+        self.assertEqual(painel["fichas_concluidas"], 3)
+        topo = painel["itens_que_mais_reprovam"][0]
+        self.assertEqual(topo["item_modelo"], self.i1.pk)
+        self.assertEqual(topo["reprovas"], 3)
+        # 3 conformes e 3 não conformes = 50% no domínio qualidade.
+        qualidade = next(
+            linha for linha in painel["por_dominio"]
+            if linha["dominio"] == DominioVerificacao.QUALIDADE
+        )
+        self.assertEqual(qualidade["conformidade"], Decimal("50.00"))
+
+    def test_o_ranking_diz_a_situacao_de_HOJE_de_cada_reprova(self):
+        """**O achado do dono, 16/09/2026**: "aqui fica parecendo que ainda tá
+        em não conformidade, ao invés de dizer a real situação".
+
+        O ranking conta história — é isso que aponta o processo a corrigir, e um
+        ranking que descartasse o tratado zeraria toda vez que a obra
+        funcionasse. O que faltava era a outra metade: daquelas reprovas,
+        quantas ainda estão abertas, quantas foram resolvidas, e quantas ninguém
+        sequer registrou como NC.
+        """
+        ficha = self._ficha()
+        self._responder(ficha, [
+            (1, ResultadoItem.NAO_CONFORME, "Fora de prumo"),
+            (2, ResultadoItem.NAO_CONFORME, "Junta irregular"),
+        ])
+        services.concluir_verificacao(verificacao=ficha, por="tecnico")
+        # Só o primeiro vira NC, e ela é tratada até o fim.
+        item1 = ficha.itens.order_by("ordem").first()
+        nc = NaoConformidade.objects.create(
+            tenant=self.tenant, obra=self.obra, item_verificacao=item1,
+            descricao="Fora de prumo", gravidade=GravidadeNC.MAIOR,
+        )
+        services.registrar_eficacia(
+            nc=nc, data=date(2026, 6, 25), eficaz=True,
+            evidencia="Refeito e conferido.", por="fiscal",
+        )
+        services.encerrar_nc(nc=nc, por="fiscal")
+
+        painel = services.painel_de_conformidade(
+            obra_id=self.obra.pk, tenant_id=self.tenant.pk,
+        )
+        por_item = {
+            l["item_modelo"]: l for l in painel["itens_que_mais_reprovam"]
+        }
+        resolvido = por_item[self.i1.pk]
+        self.assertEqual(resolvido["reprovas"], 1)
+        self.assertEqual(resolvido["encerradas"], 1)
+        self.assertEqual(resolvido["em_aberto"], 0)
+
+        #: E o que ninguém registrou aparece **como tal**, em vez de sumir entre
+        #: "aberto" e "encerrado" — é um defeito que ninguém está tratando.
+        esquecido = por_item[self.i2.pk]
+        self.assertEqual(esquecido["reprovas"], 1)
+        self.assertEqual(esquecido["sem_nc"], 1)
+        self.assertEqual(esquecido["em_aberto"], 0)
+        self.assertEqual(esquecido["encerradas"], 0)
+
+        #: As três partes somam o total — a barra da tela é a reprova inteira,
+        #: partida; se não somassem, ela mentiria pela largura.
+        for linha in painel["itens_que_mais_reprovam"]:
+            self.assertEqual(
+                linha["em_aberto"] + linha["encerradas"] + linha["sem_nc"],
+                linha["reprovas"],
+            )
+
+    def test_a_reprova_tratada_CONTINUA_no_ranking(self):
+        """O outro lado, e é a razão de o número ser cumulativo.
+
+        Some do ranking o que foi consertado e a pergunta que mais dá trabalho
+        na obra desaparece justamente quando a equipe está funcionando — o
+        ranking passaria a medir o que está atrasado, não o que é difícil.
+        """
+        ficha = self._ficha()
+        self._responder(ficha, [
+            (1, ResultadoItem.NAO_CONFORME, "Fora de prumo"),
+            # A 2 é obrigatória: sem ela a ficha não fecha, e o painel só conta
+            # ficha concluída.
+            (2, ResultadoItem.CONFORME, ""),
+        ])
+        services.concluir_verificacao(verificacao=ficha, por="tecnico")
+        item = ficha.itens.order_by("ordem").first()
+        nc = NaoConformidade.objects.create(
+            tenant=self.tenant, obra=self.obra, item_verificacao=item,
+            descricao="Fora de prumo",
+        )
+        services.registrar_eficacia(
+            nc=nc, data=date(2026, 6, 25), eficaz=True, evidencia="ok",
+            por="fiscal",
+        )
+        services.encerrar_nc(nc=nc, por="fiscal")
+
+        painel = services.painel_de_conformidade(
+            obra_id=self.obra.pk, tenant_id=self.tenant.pk,
+        )
+        self.assertEqual(len(painel["itens_que_mais_reprovam"]), 1)
+        self.assertEqual(painel["itens_que_mais_reprovam"][0]["reprovas"], 1)
+
+    def test_a_ficha_em_andamento_nao_entra_no_painel(self):
+        """O painel lê **só ficha concluída**: contar inspeção pela metade faria
+        a conformidade da obra oscilar ao sabor de quem está caminhando."""
+        ficha = self._ficha()
+        self._responder(ficha, [(1, ResultadoItem.NAO_CONFORME, "Torto")])
+        painel = services.painel_de_conformidade(
+            obra_id=self.obra.pk, tenant_id=self.tenant.pk,
+        )
+        self.assertEqual(painel["fichas_concluidas"], 0)
+        self.assertEqual(painel["itens_que_mais_reprovam"], [])
+
+    def test_ncs_abertas_por_atividade_e_uma_consulta(self):
+        """O que põe a qualidade na tela do Last Planner."""
+        self._nc(atividade=self.atividade)
+        self._nc(atividade=self.atividade)
+        mapa = services.ncs_abertas_por_atividade(
+            [self.atividade.pk], tenant_id=self.tenant.pk,
+        )
+        self.assertEqual(mapa, {self.atividade.pk: 2})
+
+
+class TetosDaPdca7NoServicoTests(_BaseVerificacao):
+    """Os quatro números da §5.5l, exercidos onde eles recusam."""
+
+    def test_o_teto_de_itens_do_modelo_recusa_com_a_razao(self):
+        with patch.object(
+            services, "PDCA_TETO_ITENS_POR_MODELO_VERIFICACAO", 3,
+        ):
+            with self.assertRaises(ValidationError) as erro:
+                services.validar_teto_de_itens_do_modelo(self.modelo)
+        self.assertIn("Quebre-a em duas", str(erro.exception))
+
+    def test_o_teto_de_modelos_recusa_com_a_razao(self):
+        with patch.object(services, "PDCA_TETO_MODELOS_POR_TENANT", 1):
+            with self.assertRaises(ValidationError) as erro:
+                services.validar_teto_de_modelos(self.tenant.pk)
+        self.assertIn("comparável", str(erro.exception))
+
+    def test_o_teto_de_ncs_conta_so_as_abertas(self):
+        nc = self._nc()
+        services.registrar_eficacia(
+            nc=nc, data=date(2026, 6, 25), eficaz=True,
+            evidencia="Refeito.", por="fiscal",
+        )
+        services.encerrar_nc(nc=nc, por="fiscal")
+        with patch.object(services, "PDCA_TETO_NCS_ABERTAS_POR_OBRA", 1):
+            # A encerrada não conta, então ainda cabe uma.
+            services.validar_teto_de_ncs(
+                self.obra.pk, tenant_id=self.tenant.pk,
+            )
+            self._nc()
+            with self.assertRaises(ValidationError):
+                services.validar_teto_de_ncs(
+                    self.obra.pk, tenant_id=self.tenant.pk,
+                )
+
+    def test_o_teto_de_acoes_recusa_com_a_razao(self):
+        nc = self._nc()
+        PlanoAcao.objects.create(
+            tenant=self.tenant, nao_conformidade=nc, o_que="Refazer",
+        )
+        with patch.object(services, "PDCA_TETO_ACOES_POR_NC", 1):
+            with self.assertRaises(ValidationError) as erro:
+                services.validar_teto_de_acoes(nc)
+        self.assertIn("quebrado em vários", str(erro.exception))
+
+
+class ApiDaPdca7Tests(APITestCase):
+    """As portas novas **pelo HTTP** — a régua que o D149 deixou.
+
+    Porta nova se exerce pela porta, e não só pelo serviço que está atrás dela:
+    os 309 testes verdes da PDCA.5 não pegaram que dois `perform_create`
+    sobrescritos faziam a linha nascer sem tenant, e a fatia era inutilizável em
+    produção porque a RLS recusava o INSERT.
+    """
+
+    def setUp(self):
+        self.tenant = Tenant.objects.create(
+            slug="pdca7-api", nome="Construtora Qualidade API",
+        )
+        self.obra = Obra.objects.create(
+            tenant=self.tenant, nome_obra="Obra FVS", endereco="Rua API",
+        )
+        self.calendario = CalendarioTrabalho.objects.create(
+            tenant=self.tenant, obra=self.obra, nome="Padrão",
+        )
+        self.cronograma = Cronograma.objects.create(
+            tenant=self.tenant, obra=self.obra, descricao="Plano",
+            data_inicio=date(2026, 6, 1), calendario=self.calendario,
+            status=Cronograma.Status.VIGENTE,
+        )
+        self.atividade = Atividade.objects.create(
+            tenant=self.tenant, cronograma=self.cronograma, codigo="1",
+            nome="Alvenaria do 4º", duracao_dias=5, profundidade=1,
+        )
+        self.usuario = Usuario.objects.create(username="qua7", tenant=self.tenant)
+        self.usuario.iam_modules = ["pdca"]
+        self.usuario.iam_permissions = [
+            "pdca.verificacao.view", "pdca.verificacao.modelo_edit",
+            "pdca.verificacao.aplicar",
+            "pdca.nc.view", "pdca.nc.abrir", "pdca.nc.tratar",
+            "pdca.nc.verificar_eficacia",
+        ]
+        self.client.force_authenticate(user=self.usuario)
+
+    def _modelo_pela_api(self):
+        resposta = self.client.post("/api/pdca/modelos-verificacao/", {
+            "codigo": "FVS-ALV", "nome": "FVS — Alvenaria",
+            "dominio": DominioVerificacao.QUALIDADE,
+        }, format="json")
+        self.assertEqual(resposta.status_code, 201, resposta.data)
+        modelo_id = resposta.json()["modelo_id"]
+        item = self.client.post("/api/pdca/itens-modelo-verificacao/", {
+            "modelo": modelo_id, "ordem": 1, "texto": "Prumo da parede",
+            "criterio": "Até 3 mm em 2 m",
+        }, format="json")
+        self.assertEqual(item.status_code, 201, item.data)
+        return modelo_id, item.json()["item_modelo_id"]
+
+    def test_o_status_declara_as_capacidades_da_verificacao(self):
+        """**A asserção do número da fatia saiu daqui, e foi de propósito.**
+
+        Ela morou nesta classe até a PDCA.8 (20/09/2026), e a docstring antiga
+        já dizia que era assim que ia ser: quem afirma o número é o teste da
+        fatia **mais nova**, porque o teste de uma fatia antiga que crava
+        `== "PDCA.7"` acusaria falha na entrega seguinte sem nada ter parado de
+        funcionar. Agora ela vive em `ApiDaPdca8Tests`.
+
+        O que continua aqui é o que é **desta** fatia: as capacidades da
+        máquina de verificação, e o que ela declara não fazer.
+        """
+        corpo = self.client.get("/api/pdca/status/").json()
+        recursos = corpo["recursos"]
+        for capacidade in (
+            "modelo_verificacao", "verificacao", "nao_conformidade",
+            "plano_acao_5w2h", "verificacao_eficacia", "nc_gera_restricao",
+        ):
+            self.assertTrue(recursos[capacidade], capacidade)
+        #: E o que a fatia **não** faz é declarado, para a tela não oferecer
+        #: botão morto — a mesma honestidade de capacidade da PDCA.4.
+        self.assertFalse(recursos["nc_cria_marcacao_na_prancheta"])
+        self.assertFalse(recursos["modelos_de_fabrica"])
+        tetos = corpo["tetos"]
+        self.assertEqual(
+            tetos["itens_por_modelo_verificacao"],
+            PDCA_TETO_ITENS_POR_MODELO_VERIFICACAO,
+        )
+        #: E **não** existe meta de conformidade entre eles: resultado medido
+        #: não é teto de plano (§5.6).
+        self.assertFalse([
+            k for k in tetos if "conformidade" in k or "meta" in k
+        ])
+
+    def test_o_modelo_criado_pela_api_nasce_com_tenant(self):
+        """O defeito que a PDCA.5 pagou caro — sem isto a RLS recusa o INSERT."""
+        modelo_id, item_id = self._modelo_pela_api()
+        modelo = ModeloVerificacao.objects.get(pk=modelo_id)
+        self.assertEqual(modelo.tenant_id, self.tenant.pk)
+        self.assertTrue(modelo.criado_por)
+        self.assertEqual(
+            ItemModeloVerificacao.objects.get(pk=item_id).tenant_id,
+            self.tenant.pk,
+        )
+
+    def test_a_ficha_aplicada_pela_api_nasce_com_tenant_e_com_itens(self):
+        modelo_id, _ = self._modelo_pela_api()
+        resposta = self.client.post("/api/pdca/verificacoes/aplicar/", {
+            "modelo": modelo_id, "obra": self.obra.pk, "data": "2026-06-10",
+            "atividade": self.atividade.pk, "inspetor": "Téc. Ana",
+        }, format="json")
+        self.assertEqual(resposta.status_code, 201, resposta.data)
+
+        ficha = Verificacao.objects.get(pk=resposta.json()["verificacao_id"])
+        self.assertEqual(ficha.tenant_id, self.tenant.pk)
+        self.assertEqual(ficha.itens.count(), 1)
+        self.assertEqual(ficha.itens.first().tenant_id, self.tenant.pk)
+        # E o resultado vem derivado junto, sem apuração ainda.
+        self.assertIsNone(resposta.json()["resultado"]["conformidade"])
+
+    def test_responder_pela_api_e_o_patch_do_item_e_ele_devolve_o_novo_estado(self):
+        """A física do instrumento: uma pergunta por vez. E a resposta do
+        `PATCH` tem de já vir respondida — senão a tela do campo mostra a
+        pergunta ainda pendente logo depois de respondê-la."""
+        modelo_id, _ = self._modelo_pela_api()
+        ficha_id = self.client.post("/api/pdca/verificacoes/aplicar/", {
+            "modelo": modelo_id, "obra": self.obra.pk, "data": "2026-06-10",
+        }, format="json").json()["verificacao_id"]
+        item = Verificacao.objects.get(pk=ficha_id).itens.first()
+
+        resposta = self.client.patch(
+            f"/api/pdca/itens-verificacao/{item.pk}/",
+            {"resultado": "nao_conforme", "observacao": "Desvio de 12 mm",
+             "gravidade": "maior"},
+            format="json",
+        )
+        self.assertEqual(resposta.status_code, 200, resposta.data)
+        self.assertEqual(resposta.json()["resultado"], "nao_conforme")
+        self.assertTrue(resposta.json()["respondido_em"])
+        #: O peso deste defeito volta resolvido — a tela do campo mostra a
+        #: pílula sem uma segunda chamada, e a conclusão lista o que vai abrir.
+        self.assertEqual(resposta.json()["gravidade"], "maior")
+        self.assertTrue(resposta.json()["gravidade_rotulo"])
+
+    def test_o_patch_recusa_reprovar_sem_dizer_quanto_pesa(self):
+        """**A pergunta é do item, não da ficha** (§11.15), e a porta cobra.
+
+        Antes de 16/09/2026 este `PATCH` passava e a gravidade era escolhida
+        uma vez na conclusão, para todos os reprovados de uma vez.
+        """
+        modelo_id, _ = self._modelo_pela_api()
+        ficha_id = self.client.post("/api/pdca/verificacoes/aplicar/", {
+            "modelo": modelo_id, "obra": self.obra.pk, "data": "2026-06-10",
+        }, format="json").json()["verificacao_id"]
+        item = Verificacao.objects.get(pk=ficha_id).itens.first()
+
+        resposta = self.client.patch(
+            f"/api/pdca/itens-verificacao/{item.pk}/",
+            {"resultado": "nao_conforme", "observacao": "Torto"}, format="json",
+        )
+        self.assertEqual(resposta.status_code, 400, resposta.data)
+        self.assertIn("pesa", str(resposta.data))
+
+    def test_o_patch_recusa_desvio_sem_observacao_pela_porta(self):
+        modelo_id, _ = self._modelo_pela_api()
+        ficha_id = self.client.post("/api/pdca/verificacoes/aplicar/", {
+            "modelo": modelo_id, "obra": self.obra.pk, "data": "2026-06-10",
+        }, format="json").json()["verificacao_id"]
+        item = Verificacao.objects.get(pk=ficha_id).itens.first()
+
+        resposta = self.client.patch(
+            f"/api/pdca/itens-verificacao/{item.pk}/",
+            {"resultado": "nao_conforme", "observacao": ""}, format="json",
+        )
+        self.assertEqual(resposta.status_code, 400, resposta.data)
+
+    def test_a_nc_criada_pela_api_nasce_com_tenant(self):
+        resposta = self.client.post("/api/pdca/ncs/", {
+            "obra": self.obra.pk, "atividade": self.atividade.pk,
+            "gravidade": "maior", "descricao": "Parede fora de prumo",
+        }, format="json")
+        self.assertEqual(resposta.status_code, 201, resposta.data)
+        nc = NaoConformidade.objects.get(pk=resposta.json()["nc_id"])
+        self.assertEqual(nc.tenant_id, self.tenant.pk)
+        self.assertTrue(nc.aberta_por)
+
+    def test_o_plano_de_acao_pela_api_poe_a_nc_em_tratamento(self):
+        nc_id = self.client.post("/api/pdca/ncs/", {
+            "obra": self.obra.pk, "descricao": "Trinca",
+        }, format="json").json()["nc_id"]
+        resposta = self.client.post("/api/pdca/planos-acao/", {
+            "nao_conformidade": nc_id, "tipo": "corretiva",
+            "o_que": "Refazer o trecho", "quem": "Alfa", "quando": "2026-06-30",
+        }, format="json")
+        self.assertEqual(resposta.status_code, 201, resposta.data)
+        plano = PlanoAcao.objects.get(pk=resposta.json()["plano_id"])
+        self.assertEqual(plano.tenant_id, self.tenant.pk)
+        self.assertEqual(
+            NaoConformidade.objects.get(pk=nc_id).status,
+            NaoConformidade.Status.EM_TRATAMENTO,
+        )
+
+    def test_o_laco_inteiro_pela_porta(self):
+        """Abrir → tratar → concluir → verificar → encerrar, tudo por HTTP."""
+        nc_id = self.client.post("/api/pdca/ncs/", {
+            "obra": self.obra.pk, "descricao": "Trinca na viga",
+        }, format="json").json()["nc_id"]
+        plano_id = self.client.post("/api/pdca/planos-acao/", {
+            "nao_conformidade": nc_id, "o_que": "Grautear", "quando": "2026-06-30",
+        }, format="json").json()["plano_id"]
+        self.assertEqual(
+            self.client.post(
+                f"/api/pdca/planos-acao/{plano_id}/concluir/", {}, format="json",
+            ).status_code, 200,
+        )
+
+        # Sem eficácia, encerrar é recusado — e a recusa é 400, não 500.
+        recusa = self.client.post(
+            f"/api/pdca/ncs/{nc_id}/encerrar/", {}, format="json",
+        )
+        self.assertEqual(recusa.status_code, 400, recusa.data)
+
+        eficacia = self.client.post(f"/api/pdca/ncs/{nc_id}/eficacia/", {
+            "data": "2026-07-05", "eficaz": True,
+            "evidencia": "Trecho grauteado e conferido.",
+        }, format="json")
+        self.assertEqual(eficacia.status_code, 201, eficacia.data)
+        self.assertEqual(
+            VerificacaoEficacia.objects.get(
+                pk=eficacia.json()["eficacia"],
+            ).tenant_id,
+            self.tenant.pk,
+        )
+
+        fechou = self.client.post(
+            f"/api/pdca/ncs/{nc_id}/encerrar/", {"nota": "ok"}, format="json",
+        )
+        self.assertEqual(fechou.status_code, 200, fechou.data)
+        self.assertEqual(
+            NaoConformidade.objects.get(pk=nc_id).status,
+            NaoConformidade.Status.ENCERRADA,
+        )
+
+    def test_gerar_restricao_exige_a_permissao_de_travar_a_obra(self):
+        """A porta lateral que a segregação fecha: `pdca.nc.tratar` sozinho não
+        pode travar o quadro da semana."""
+        nc_id = self.client.post("/api/pdca/ncs/", {
+            "obra": self.obra.pk, "atividade": self.atividade.pk,
+            "gravidade": "critica", "descricao": "Armadura exposta",
+        }, format="json").json()["nc_id"]
+
+        recusa = self.client.post(
+            f"/api/pdca/ncs/{nc_id}/gerar-restricao/", {}, format="json",
+        )
+        self.assertEqual(recusa.status_code, 403, recusa.data)
+
+        self.usuario.iam_permissions = [
+            *self.usuario.iam_permissions, "pdca.restricao.edit",
+        ]
+        aceita = self.client.post(
+            f"/api/pdca/ncs/{nc_id}/gerar-restricao/", {}, format="json",
+        )
+        self.assertEqual(aceita.status_code, 201, aceita.data)
+        self.assertEqual(
+            Restricao.objects.get(pk=aceita.json()["restricao"]).tenant_id,
+            self.tenant.pk,
+        )
+
+    def test_quem_so_trata_nao_verifica_a_propria_eficacia(self):
+        """**A segregação inteira da fatia**, exercida pela porta."""
+        self.usuario.iam_permissions = [
+            "pdca.nc.view", "pdca.nc.abrir", "pdca.nc.tratar",
+        ]
+        nc_id = self.client.post("/api/pdca/ncs/", {
+            "obra": self.obra.pk, "descricao": "Trinca",
+        }, format="json").json()["nc_id"]
+
+        recusa = self.client.post(f"/api/pdca/ncs/{nc_id}/eficacia/", {
+            "data": "2026-07-05", "eficaz": True, "evidencia": "Refeito.",
+        }, format="json")
+        self.assertEqual(recusa.status_code, 403, recusa.data)
+        self.assertEqual(
+            self.client.post(
+                f"/api/pdca/ncs/{nc_id}/encerrar/", {}, format="json",
+            ).status_code, 403,
+        )
+
+    def test_quem_aplica_ficha_nao_edita_o_metodo_da_empresa(self):
+        """Um `edit` único daria ao campo o poder de afrouxar o critério da FVS
+        no momento exato em que ela reprovasse."""
+        modelo_id, _ = self._modelo_pela_api()
+        self.usuario.iam_permissions = [
+            "pdca.verificacao.view", "pdca.verificacao.aplicar",
+        ]
+        recusa = self.client.patch(
+            f"/api/pdca/modelos-verificacao/{modelo_id}/",
+            {"nome": "Outro nome"}, format="json",
+        )
+        self.assertEqual(recusa.status_code, 403, recusa.data)
+
+    def test_o_modelo_ja_aplicado_nao_se_apaga(self):
+        modelo_id, _ = self._modelo_pela_api()
+        self.client.post("/api/pdca/verificacoes/aplicar/", {
+            "modelo": modelo_id, "obra": self.obra.pk, "data": "2026-06-10",
+        }, format="json")
+        recusa = self.client.delete(
+            f"/api/pdca/modelos-verificacao/{modelo_id}/",
+        )
+        self.assertEqual(recusa.status_code, 400, recusa.data)
+
+    def test_a_fila_e_o_painel_respondem_pela_obra(self):
+        self.client.post("/api/pdca/ncs/", {
+            "obra": self.obra.pk, "descricao": "Trinca",
+        }, format="json")
+        fila = self.client.get(f"/api/pdca/ncs/fila/?obra={self.obra.pk}")
+        self.assertEqual(fila.status_code, 200, fila.data)
+        self.assertEqual(len(fila.json()["ncs_sem_plano"]), 1)
+
+        painel = self.client.get(f"/api/pdca/ncs/painel/?obra={self.obra.pk}")
+        self.assertEqual(painel.status_code, 200, painel.data)
+        self.assertEqual(painel.json()["ncs_abertas"], 1)
+
+    def test_a_obra_de_outra_empresa_e_recusada(self):
+        """A fronteira do tenant, e **quem a fecha primeiro é a RLS**.
+
+        O `_minha_obra` tem duas redes: o banco e a conferência explícita. Sob
+        RLS ligada quem responde é a primeira, e por isso a mensagem é *"não
+        encontrada"* e não *"não é desta empresa"* — a linha alheia não existe
+        para esta conexão. A conferência do `_minha_obra` continua valendo para
+        o caminho em que a RLS esteja desligada (SQLite de dev, comando de
+        bancada), que é a razão de ela existir.
+
+        O que este teste prende é o que importa: a fila da qualidade de uma obra
+        alheia **não responde**, e recusa com 400 em vez de vazar ou dar 500.
+        """
+        outro = Tenant.objects.create(slug="pdca7-outro", nome="Outra")
+        alheia = Obra.objects.create(
+            tenant=outro, nome_obra="Obra alheia", endereco="Rua X",
+        )
+        resposta = self.client.get(f"/api/pdca/ncs/fila/?obra={alheia.pk}")
+        self.assertEqual(resposta.status_code, 400, resposta.data)
+        self.assertIn("obra", str(resposta.data).lower())
+        self.assertNotIn("Obra alheia", str(resposta.data))
+
+
+# ---------------------------------------------------------------------------
+# PDCA.8 — SSMA: o diálogo de segurança e a ocorrência
+# ---------------------------------------------------------------------------
+# O que estes testes protegem, em uma frase cada:
+#   · a lista de presença fecha quando o DDS encerra, e um DDS vazio não encerra;
+#   · registrar é barato e classificar é que pesa — os dois verbos são separados,
+#     e a classificação nasce pendente;
+#   · a CAT é devida mesmo sem afastamento, o prazo é o 1º dia útil, e o sistema
+#     conta a verdade quando ela sai fora do prazo em vez de recusá-la;
+#   · o acidente grave interdita a frente pela mesma corrente da NC crítica;
+#   · a ocorrência não encerra por cima de uma frente ainda interditada;
+#   · as taxas voltam nulas com motivo — nunca zero;
+#   · o EPI é lido do SIL e a indisponibilidade é declarada.
+
+
+class _BaseSsma(TestCase):
+    """Fixture comum: uma obra com plano vigente, uma atividade e um local."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.tenant = Tenant.objects.create(slug="pdca-ssma", nome="Construtora Segura")
+        cls.obra = Obra.objects.create(
+            tenant=cls.tenant, nome_obra="Residencial Seguro", endereco="Rua 9",
+        )
+        cls.calendario = CalendarioTrabalho.objects.create(
+            tenant=cls.tenant, obra=cls.obra, nome="Padrão",
+        )
+        cls.cronograma = Cronograma.objects.create(
+            tenant=cls.tenant, obra=cls.obra, descricao="Plano",
+            data_inicio=date(2026, 6, 1), calendario=cls.calendario,
+            status=Cronograma.Status.VIGENTE,
+        )
+        cls.atividade = Atividade.objects.create(
+            tenant=cls.tenant, cronograma=cls.cronograma, codigo="1",
+            nome="Estrutura do 8º", duracao_dias=10, profundidade=1,
+        )
+        cls.local = LocalObra.objects.create(
+            tenant=cls.tenant, obra=cls.obra, codigo="T1-8",
+            nome="Torre 1 · 8º pavimento", nivel=NivelLocal.PAVIMENTO,
+        )
+
+    # -- helpers ------------------------------------------------------------
+    def _dds(self, **extra):
+        return services.abrir_dds(
+            obra=self.obra, data=date(2026, 6, 10), tema="Trabalho em altura",
+            tenant_id=self.tenant.pk, por="encarregado", **extra,
+        )
+
+    def _ocorrencia(self, **extra):
+        """**Quase-acidente por padrão**, e é de propósito.
+
+        O caso comum do módulo é o registro que não tem vítima — pôr o acidente
+        no default faria metade destes testes exercitarem o caminho da CAT sem
+        estarem falando dela.
+        """
+        campos = {
+            "tipo": TipoOcorrencia.QUASE_ACIDENTE,
+            "descricao": "Tábua caiu do 8º, sem atingir ninguém.",
+            "ocorrido_em": timezone.now() - timedelta(days=1),
+        }
+        campos.update(extra)
+        return services.registrar_ocorrencia(
+            obra=self.obra, tenant_id=self.tenant.pk, por="encarregado", **campos,
+        )
+
+
+class DialogoDeSegurancaTests(_BaseSsma):
+    """O DDS — a roda, a lista e o que fecha as duas."""
+
+    def test_o_dds_nasce_em_rascunho_e_sem_ninguem(self):
+        dds = self._dds()
+        self.assertEqual(dds.status, DialogoSeguranca.Status.RASCUNHO)
+        self.assertEqual(dds.participantes.count(), 0)
+        self.assertTrue(dds.esta_aberto)
+
+    def test_dds_sem_tema_nao_abre(self):
+        """'DDS realizado' não é tema, e é o que a fiscalização vai ler."""
+        with self.assertRaises(ValidationError):
+            services.abrir_dds(
+                obra=self.obra, data=date(2026, 6, 10), tema="   ",
+                tenant_id=self.tenant.pk,
+            )
+
+    def test_a_presenca_aceita_funcionario_e_nome_solto(self):
+        """Metade do canteiro é de terceiro e não tem cadastro no RH."""
+        dds = self._dds()
+        resultado = services.registrar_presenca(dds=dds, participantes=[
+            {"nome": "José da Silva", "assinou": True},
+            {"nome": "Maria Souza"},
+        ])
+        self.assertEqual(resultado["registrados"], 2)
+        self.assertEqual(dds.participantes.count(), 2)
+
+    def test_participante_sem_funcionario_e_sem_nome_e_recusado(self):
+        dds = self._dds()
+        with self.assertRaises(ValidationError):
+            services.registrar_presenca(dds=dds, participantes=[{"nome": "  "}])
+
+    def test_dds_sem_presente_nao_encerra(self):
+        """A lista é a única parte do DDS que prova alguma coisa."""
+        dds = self._dds()
+        services.registrar_presenca(dds=dds, participantes=[
+            {"nome": "José da Silva", "presente": False},
+        ])
+        with self.assertRaises(ValidationError):
+            services.encerrar_dds(dds=dds, por="tst", publicar_no_diario=False)
+
+    def test_encerrado_nao_recebe_nome_novo(self):
+        """A trava que faz a lista ser prova de quem estava lá."""
+        dds = self._dds()
+        services.registrar_presenca(dds=dds, participantes=[{"nome": "José"}])
+        services.encerrar_dds(dds=dds, por="tst", publicar_no_diario=False)
+        dds.refresh_from_db()
+        with self.assertRaises(ValidationError):
+            services.registrar_presenca(dds=dds, participantes=[{"nome": "Ana"}])
+
+    def test_o_encerramento_escreve_no_diario_da_obra(self):
+        """PDCA §7 — 'não substitui o Diário: escreve e lê nele'."""
+        from modulodiario.models import DiarioObra, EntradaDiario
+
+        dds = self._dds()
+        services.registrar_presenca(dds=dds, participantes=[
+            {"nome": "José"}, {"nome": "Maria"},
+        ])
+        resultado = services.encerrar_dds(dds=dds, por="tst")
+
+        self.assertTrue(resultado["publicado_no_diario"])
+        diario = DiarioObra.objects.get(obra=self.obra, data=dds.data)
+        entrada = EntradaDiario.objects.get(diario_obra=diario)
+        self.assertIn("Trabalho em altura", entrada.texto)
+        self.assertIn("Participantes presentes: 2", entrada.texto)
+
+    def test_o_teto_de_participantes_vem_do_payment(self):
+        from payment.planos import PDCA_TETO_PARTICIPANTES_POR_DDS
+
+        dds = self._dds()
+        muitos = [
+            {"nome": f"Trabalhador {i}"}
+            for i in range(PDCA_TETO_PARTICIPANTES_POR_DDS + 1)
+        ]
+        with self.assertRaises(ValidationError):
+            services.registrar_presenca(dds=dds, participantes=muitos)
+
+
+class RegistroDaOcorrenciaTests(_BaseSsma):
+    """Registrar é barato — e cada ausência de trava aqui é uma decisão."""
+
+    def test_a_ocorrencia_nasce_sem_classificacao(self):
+        """O nulo que diz 'ainda não se julgou' é informação; o zero é mentira."""
+        ocorrencia = self._ocorrencia()
+        self.assertEqual(
+            ocorrencia.classificacao, ClassificacaoOcorrencia.PENDENTE,
+        )
+        self.assertIsNone(ocorrencia.dias_perdidos)
+        self.assertTrue(ocorrencia.esta_aberta)
+
+    def test_ocorrencia_no_futuro_e_recusada(self):
+        with self.assertRaises(ValidationError):
+            self._ocorrencia(ocorrido_em=timezone.now() + timedelta(days=1))
+
+    def test_ocorrencia_sem_descricao_e_recusada(self):
+        with self.assertRaises(ValidationError):
+            self._ocorrencia(descricao="   ")
+
+    def test_NAO_existe_teto_de_ocorrencias_abertas(self):
+        """**A ausência mais importante da fatia.**
+
+        Um teto aqui recusaria o registro de um acidente porque a obra já tem
+        registros demais — e o incentivo que ele criaria (não registrar para não
+        estourar) é o oposto exato do que a fatia existe para produzir.
+        """
+        for i in range(40):
+            self._ocorrencia(descricao=f"Quase-acidente {i}")
+        self.assertEqual(
+            Ocorrencia.objects.filter(tenant=self.tenant, obra=self.obra).count(),
+            40,
+        )
+
+
+class ClassificacaoDaOcorrenciaTests(_BaseSsma):
+    """A segregação da fatia: quem é medido não classifica a própria medida."""
+
+    def test_classificar_carimba_quem_e_quando(self):
+        ocorrencia = self._ocorrencia(tipo=TipoOcorrencia.ACIDENTE_TIPICO)
+        services.classificar_ocorrencia(
+            ocorrencia=ocorrencia,
+            classificacao=ClassificacaoOcorrencia.COM_AFASTAMENTO,
+            dias_perdidos=9, por="tst",
+        )
+        ocorrencia.refresh_from_db()
+        self.assertEqual(ocorrencia.dias_perdidos, 9)
+        self.assertEqual(ocorrencia.classificada_por, "tst")
+        self.assertIsNotNone(ocorrencia.classificada_em)
+
+    def test_afastamento_sem_dias_e_recusado(self):
+        """É desse número que a taxa de gravidade nasce."""
+        ocorrencia = self._ocorrencia(tipo=TipoOcorrencia.ACIDENTE_TIPICO)
+        with self.assertRaises(ValidationError):
+            services.classificar_ocorrencia(
+                ocorrencia=ocorrencia,
+                classificacao=ClassificacaoOcorrencia.COM_AFASTAMENTO,
+            )
+
+    def test_obito_cobra_dias_debitados_e_nao_perdidos(self):
+        """A NBR 14280 fixa 6.000 dias de **débito** para o óbito."""
+        ocorrencia = self._ocorrencia(tipo=TipoOcorrencia.ACIDENTE_TIPICO)
+        with self.assertRaises(ValidationError):
+            services.classificar_ocorrencia(
+                ocorrencia=ocorrencia,
+                classificacao=ClassificacaoOcorrencia.OBITO, dias_perdidos=1,
+            )
+        services.classificar_ocorrencia(
+            ocorrencia=ocorrencia, classificacao=ClassificacaoOcorrencia.OBITO,
+            dias_debitados=6000, por="tst",
+        )
+        ocorrencia.refresh_from_db()
+        self.assertEqual(ocorrencia.dias_debitados, 6000)
+
+    def test_quase_acidente_nao_tem_afastamento(self):
+        """Se houve alguém ferido, o **tipo** é que está errado."""
+        ocorrencia = self._ocorrencia()
+        with self.assertRaises(ValidationError):
+            services.classificar_ocorrencia(
+                ocorrencia=ocorrencia,
+                classificacao=ClassificacaoOcorrencia.COM_AFASTAMENTO,
+                dias_perdidos=3,
+            )
+
+
+class ComunicacaoDeAcidenteTests(_BaseSsma):
+    """A CAT — Lei 8.213/91 art. 22 e a Portaria SEPRT/ME 4.334/2021."""
+
+    def test_quase_acidente_e_incidente_nao_geram_cat(self):
+        self.assertFalse(self._ocorrencia().exige_cat)
+        self.assertFalse(
+            self._ocorrencia(tipo=TipoOcorrencia.INCIDENTE).exige_cat,
+        )
+
+    def test_a_cat_e_devida_mesmo_SEM_afastamento(self):
+        """O erro mais comum do mercado — comunicar só o que afasta."""
+        ocorrencia = self._ocorrencia(tipo=TipoOcorrencia.ACIDENTE_TIPICO)
+        services.classificar_ocorrencia(
+            ocorrencia=ocorrencia,
+            classificacao=ClassificacaoOcorrencia.SEM_AFASTAMENTO, por="tst",
+        )
+        ocorrencia.refresh_from_db()
+        self.assertTrue(ocorrencia.exige_cat)
+        self.assertTrue(services.prazo_da_cat(ocorrencia)["exige"])
+
+    def test_o_prazo_e_o_proximo_dia_util(self):
+        """Sexta-feira vence na segunda, não no sábado."""
+        sexta = timezone.make_aware(datetime(2026, 6, 12, 14, 0))
+        ocorrencia = self._ocorrencia(
+            tipo=TipoOcorrencia.ACIDENTE_TIPICO, ocorrido_em=sexta,
+        )
+        prazo = services.prazo_da_cat(ocorrencia)
+        self.assertEqual(prazo["vence_em"], date(2026, 6, 15))
+        self.assertEqual(prazo["base_legal"], "Lei 8.213/91, art. 22")
+
+    def test_o_obito_vence_no_mesmo_dia(self):
+        """'De imediato', diz a lei — não no dia seguinte."""
+        ocorrencia = self._ocorrencia(tipo=TipoOcorrencia.ACIDENTE_TIPICO)
+        services.classificar_ocorrencia(
+            ocorrencia=ocorrencia, classificacao=ClassificacaoOcorrencia.OBITO,
+            dias_debitados=6000, por="tst",
+        )
+        ocorrencia.refresh_from_db()
+        prazo = services.prazo_da_cat(ocorrencia)
+        self.assertTrue(prazo["imediata"])
+        self.assertEqual(
+            prazo["vence_em"], timezone.localtime(ocorrencia.ocorrido_em).date(),
+        )
+
+    def test_o_prazo_declara_que_a_base_de_feriados_pode_estar_vazia(self):
+        """D179 — sem a base sincronizada o desvio é só de fim de semana."""
+        ocorrencia = self._ocorrencia(tipo=TipoOcorrencia.ACIDENTE_TIPICO)
+        self.assertIn("feriados_carregados", services.prazo_da_cat(ocorrencia))
+
+    def test_a_cat_fora_do_prazo_e_registrada_e_contada_como_atrasada(self):
+        """**Recusá-la apagaria o registro de que ela foi feita.**"""
+        ocorrencia = self._ocorrencia(
+            tipo=TipoOcorrencia.ACIDENTE_TIPICO,
+            ocorrido_em=timezone.now() - timedelta(days=20),
+        )
+        resultado = services.registrar_cat(
+            ocorrencia=ocorrencia, tipo=TipoCAT.INICIAL,
+            emitida_em=timezone.localdate(), protocolo="123456", por="rh",
+        )
+        self.assertFalse(resultado["dentro_do_prazo"])
+        ocorrencia.refresh_from_db()
+        self.assertEqual(ocorrencia.cat_protocolo, "123456")
+
+    def test_cat_em_ocorrencia_sem_vitima_e_recusada(self):
+        ocorrencia = self._ocorrencia()
+        with self.assertRaises(ValidationError):
+            services.registrar_cat(
+                ocorrencia=ocorrencia, tipo=TipoCAT.INICIAL,
+                emitida_em=timezone.localdate(),
+            )
+
+
+class SeamsDaSsmaTests(_BaseSsma):
+    """O dente e o laço — a corrente que a PDCA.5 e a PDCA.7 já montaram."""
+
+    def test_a_ocorrencia_grave_interdita_a_frente(self):
+        ocorrencia = self._ocorrencia(
+            tipo=TipoOcorrencia.ACIDENTE_TIPICO, atividade=self.atividade,
+            local=self.local,
+        )
+        restricao = services.gerar_restricao_da_ocorrencia(
+            ocorrencia=ocorrencia, por="tst",
+        )
+        self.assertEqual(restricao.tipo, TipoRestricao.AREA)
+        self.assertEqual(restricao.status, Restricao.Status.ABERTA)
+        # E a atividade sai do quadro da semana pela trava que já existia.
+        with self.assertRaises(ValidationError):
+            services.validar_pode_comprometer(
+                self.atividade, tenant_id=self.tenant.pk,
+            )
+
+    def test_gerar_restricao_e_idempotente(self):
+        ocorrencia = self._ocorrencia(
+            tipo=TipoOcorrencia.ACIDENTE_TIPICO, atividade=self.atividade,
+        )
+        primeira = services.gerar_restricao_da_ocorrencia(ocorrencia=ocorrencia)
+        segunda = services.gerar_restricao_da_ocorrencia(ocorrencia=ocorrencia)
+        self.assertEqual(primeira.pk, segunda.pk)
+
+    def test_ocorrencia_sem_atividade_nao_interdita_nada(self):
+        ocorrencia = self._ocorrencia(tipo=TipoOcorrencia.ACIDENTE_TIPICO)
+        with self.assertRaises(ValidationError):
+            services.gerar_restricao_da_ocorrencia(ocorrencia=ocorrencia)
+
+    def test_a_investigacao_reusa_a_maquina_da_pdca7(self):
+        """A ocorrência é o fato; a NC é o tratamento dele."""
+        ocorrencia = self._ocorrencia(
+            tipo=TipoOcorrencia.ACIDENTE_TIPICO, atividade=self.atividade,
+        )
+        nc = services.abrir_nc_da_ocorrencia(ocorrencia=ocorrencia, por="tst")
+        self.assertEqual(nc.gravidade, GravidadeNC.CRITICA)
+        ocorrencia.refresh_from_db()
+        self.assertEqual(ocorrencia.status, Ocorrencia.Status.EM_INVESTIGACAO)
+        # Idempotente, como o irmão da restrição.
+        self.assertEqual(
+            services.abrir_nc_da_ocorrencia(ocorrencia=ocorrencia).pk, nc.pk,
+        )
+
+    def test_ocorrencias_abertas_por_atividade_numa_consulta(self):
+        self._ocorrencia(atividade=self.atividade)
+        self._ocorrencia(atividade=self.atividade)
+        mapa = services.ocorrencias_abertas_por_atividade(
+            [self.atividade.pk], tenant_id=self.tenant.pk,
+        )
+        self.assertEqual(mapa, {self.atividade.pk: 2})
+
+
+class EncerramentoDaOcorrenciaTests(_BaseSsma):
+    """As duas recusas — e as duas existem por um defeito medido no irmão."""
+
+    def test_nao_encerra_sem_classificar(self):
+        """Sem classificação ela some da fila **e** do indicador."""
+        ocorrencia = self._ocorrencia()
+        with self.assertRaises(ValidationError):
+            services.encerrar_ocorrencia(ocorrencia=ocorrencia, por="tst")
+
+    def test_nao_encerra_por_cima_de_frente_interditada(self):
+        """**A restrição não sai em cascata, e isso é deliberado.**
+
+        `encerrar_nc` não remove a restrição que a NC abriu, e ninguém o faz em
+        cascata — copiar isso aqui deixaria a frente travada depois de a
+        ocorrência ser dada por resolvida. Remover a trava é ato de quem
+        responde pela obra, não efeito colateral de um encerramento.
+        """
+        ocorrencia = self._ocorrencia(
+            tipo=TipoOcorrencia.ACIDENTE_TIPICO, atividade=self.atividade,
+        )
+        services.classificar_ocorrencia(
+            ocorrencia=ocorrencia,
+            classificacao=ClassificacaoOcorrencia.SEM_AFASTAMENTO, por="tst",
+        )
+        ocorrencia.refresh_from_db()
+        restricao = services.gerar_restricao_da_ocorrencia(ocorrencia=ocorrencia)
+
+        with self.assertRaises(ValidationError) as erro:
+            services.encerrar_ocorrencia(ocorrencia=ocorrencia, por="tst")
+        self.assertIn(str(restricao.pk), str(erro.exception))
+
+        # Removida a trava pelo verbo de quem responde pela obra, encerra.
+        services.remover_restricao(
+            restricao=restricao, por="engenharia", nota="Frente liberada.",
+        )
+        ocorrencia.refresh_from_db()
+        services.encerrar_ocorrencia(ocorrencia=ocorrencia, por="tst")
+        ocorrencia.refresh_from_db()
+        self.assertEqual(ocorrencia.status, Ocorrencia.Status.ENCERRADA)
+
+
+class IndicadoresDeSsmaTests(_BaseSsma):
+    """Os números — e os dois que o sistema declara não saber."""
+
+    def test_as_taxas_voltam_nulas_com_motivo(self):
+        """**Nunca zero.** 'Taxa de frequência 0,00' é a mentira mais cara.
+
+        A frase diz o que falta (homem-hora) e cita a norma que o técnico de
+        segurança conhece — e **não** cita o número da fatia. Esta asserção
+        cobrava `PDCA.9` dentro de uma string de tela até 20/09/2026, que é
+        literalmente o exemplo do que a §9 das convenções de frontend proíbe:
+        número de fatia responde à pergunta de quem escreveu o software, não à
+        de quem está olhando o painel.
+        """
+        self._ocorrencia(tipo=TipoOcorrencia.ACIDENTE_TIPICO)
+        painel = services.indicadores_de_ssma(
+            obra_id=self.obra.pk, tenant_id=self.tenant.pk,
+        )
+        self.assertIsNone(painel["taxa_frequencia"])
+        self.assertIsNone(painel["taxa_gravidade"])
+        motivo = painel["taxas_indisponiveis_porque"]
+        self.assertIn("homem-hora", motivo)
+        self.assertIn("NBR 14280", motivo)
+        self.assertNotIn("PDCA.", motivo)
+
+    def test_a_piramide_conta_aviso_por_acidente(self):
+        for _ in range(6):
+            self._ocorrencia()
+        self._ocorrencia(tipo=TipoOcorrencia.ACIDENTE_TIPICO)
+        painel = services.indicadores_de_ssma(
+            obra_id=self.obra.pk, tenant_id=self.tenant.pk,
+        )
+        self.assertEqual(painel["quase_acidentes"], 6)
+        self.assertEqual(painel["acidentes"], 1)
+        self.assertEqual(painel["avisos_por_acidente"], 6.0)
+
+    def test_sem_acidente_a_razao_da_piramide_e_nula_e_nao_infinita(self):
+        self._ocorrencia()
+        painel = services.indicadores_de_ssma(
+            obra_id=self.obra.pk, tenant_id=self.tenant.pk,
+        )
+        self.assertIsNone(painel["avisos_por_acidente"])
+
+    def test_o_indicador_proativo_conta_dds_encerrado(self):
+        """Mede o que a obra faz **antes** — e só o encerrado conta."""
+        aberto = self._dds()
+        fechado = self._dds()
+        services.registrar_presenca(dds=fechado, participantes=[{"nome": "José"}])
+        services.encerrar_dds(dds=fechado, por="tst", publicar_no_diario=False)
+        painel = services.indicadores_de_ssma(
+            obra_id=self.obra.pk, tenant_id=self.tenant.pk,
+        )
+        self.assertEqual(painel["dds_encerrados"], 1)
+        self.assertTrue(aberto.esta_aberto)
+
+    def test_a_fila_poe_a_cat_na_frente(self):
+        """A única parada com prazo em lei e multa."""
+        self._ocorrencia(tipo=TipoOcorrencia.ACIDENTE_TIPICO)
+        fila = services.fila_da_ssma(
+            obra_id=self.obra.pk, tenant_id=self.tenant.pk,
+        )
+        self.assertEqual(len(fila["cat_por_comunicar"]), 1)
+        self.assertEqual(len(fila["sem_classificacao"]), 1)
+        self.assertEqual(len(fila["sem_tratamento"]), 1)
+        self.assertFalse(fila["truncada"])
+
+
+class EpiLidoDoSilTests(_BaseSsma):
+    """O seam do EPI — a PDCA.8 lê, não duplica *(decisão do dono, 20/09/2026)*."""
+
+    def test_a_pdca8_nao_tem_tabela_de_epi(self):
+        """A prova da decisão: o modelo mora no SIL e em nenhum outro lugar."""
+        from django.apps import apps
+
+        nomes = {m.__name__ for m in apps.get_app_config("modulopdca").get_models()}
+        self.assertNotIn("EntregaEPI", nomes)
+
+    def test_le_o_epi_vencido_da_obra_pelo_modulo_dono(self):
+        from catalogo.models import Item
+        from modulosil.models import EntregaEPI
+
+        capacete = Item.objects.create(
+            tenant=self.tenant, codigo_interno="EPI-CAP",
+            descricao="Capacete classe B", tipo=Item.Tipo.EPI, unidade="un",
+        )
+        EntregaEPI.objects.create(
+            tenant=self.tenant, item=capacete, colaborador_nome="José da Silva",
+            obra=self.obra, ca_numero="34521",
+            ca_validade=timezone.localdate() - timedelta(days=5),
+        )
+        leitura = services.epi_vencido_da_obra(
+            obra_id=self.obra.pk, tenant_id=self.tenant.pk,
+        )
+        self.assertTrue(leitura["disponivel"])
+        self.assertEqual(leitura["total"], 1)
+        self.assertEqual(leitura["vencidos"][0]["colaborador"], "José da Silva")
+        # **O grão é declarado**: frente exige `Efetivo`, que é da PDCA.9.
+        self.assertEqual(leitura["grao"], "obra")
+
+
+class ApiDaPdca8Tests(APITestCase):
+    """As portas da SSMA **pelo HTTP** — a régua que o D149 deixou.
+
+    Porta nova se exerce pela porta, e não só pelo serviço que está atrás dela:
+    foi assim que se descobriu que dois `perform_create` sobrescritos faziam a
+    linha nascer sem tenant, e a fatia era inutilizável em produção porque a RLS
+    recusava o INSERT.
+    """
+
+    def setUp(self):
+        self.tenant = Tenant.objects.create(
+            slug="pdca8-api", nome="Construtora Segura API",
+        )
+        self.obra = Obra.objects.create(
+            tenant=self.tenant, nome_obra="Obra SSMA", endereco="Rua API",
+        )
+        self.calendario = CalendarioTrabalho.objects.create(
+            tenant=self.tenant, obra=self.obra, nome="Padrão",
+        )
+        self.cronograma = Cronograma.objects.create(
+            tenant=self.tenant, obra=self.obra, descricao="Plano",
+            data_inicio=date(2026, 6, 1), calendario=self.calendario,
+            status=Cronograma.Status.VIGENTE,
+        )
+        self.atividade = Atividade.objects.create(
+            tenant=self.tenant, cronograma=self.cronograma, codigo="1",
+            nome="Estrutura do 8º", duracao_dias=10, profundidade=1,
+        )
+        self.usuario = Usuario.objects.create(username="tst8", tenant=self.tenant)
+        self.usuario.iam_modules = ["pdca"]
+        #: O **técnico de segurança** de fábrica: registra e classifica, e não
+        #: emite CAT nem abre o bloco clínico.
+        self.usuario.iam_permissions = [
+            "pdca.dds.view", "pdca.dds.registrar",
+            "pdca.ocorrencia.view", "pdca.ocorrencia.registrar",
+            "pdca.ocorrencia.classificar",
+            "pdca.restricao.edit", "pdca.nc.abrir",
+        ]
+        self.client.force_authenticate(user=self.usuario)
+
+    # -- o número da fatia --------------------------------------------------
+
+    def test_o_status_declara_a_fatia_corrente_e_o_que_ela_NAO_faz(self):
+        """**O número da fatia se afirma aqui, e só aqui.**
+
+        Veio de `ApiDaPdca7Tests` com a PDCA.8, pela régua que a docstring de lá
+        escreveu: quem crava o número é o teste da fatia mais nova. Quando a
+        PDCA.9 sair, é esta asserção que se move.
+        """
+        corpo = self.client.get("/api/pdca/status/").json()
+        self.assertEqual(corpo["fatia"], "PDCA.8")
+        recursos = corpo["recursos"]
+        for capacidade in (
+            "dialogo_seguranca", "ocorrencia", "classificacao_segregada",
+            "cat_prazo_e_protocolo", "ocorrencia_interdita_frente",
+            "ocorrencia_gera_investigacao",
+        ):
+            self.assertTrue(recursos[capacidade], capacidade)
+        #: E o que ela **não** faz, para a tela não oferecer botão morto.
+        self.assertFalse(recursos["taxa_frequencia"])
+        self.assertFalse(recursos["taxa_gravidade"])
+        self.assertFalse(recursos["epi_proprio"])
+        self.assertFalse(recursos["transmite_esocial"])
+
+    def test_os_tetos_da_fatia_saem_do_payment_e_o_ausente_continua_ausente(self):
+        from payment.planos import (
+            PDCA_TETO_ANEXOS_POR_OCORRENCIA, PDCA_TETO_PARTICIPANTES_POR_DDS,
+        )
+
+        tetos = self.client.get("/api/pdca/status/").json()["tetos"]
+        self.assertEqual(
+            tetos["participantes_por_dds"], PDCA_TETO_PARTICIPANTES_POR_DDS,
+        )
+        self.assertEqual(
+            tetos["anexos_por_ocorrencia"], PDCA_TETO_ANEXOS_POR_OCORRENCIA,
+        )
+        #: **A ausência é o contrato.** Um teto de ocorrências abertas recusaria
+        #: o registro de um acidente, e não existe nenhum.
+        self.assertNotIn("ocorrencias_abertas_por_obra", tetos)
+        #: E não há meta de segurança: resultado medido não é teto (§5.6).
+        self.assertFalse([
+            k for k in tetos
+            if "frequencia" in k or "gravidade" in k or "meta" in k
+        ])
+
+    # -- o DDS pela porta ---------------------------------------------------
+
+    def test_o_dds_nasce_com_tenant_pela_porta(self):
+        """A asserção que o D149 comprou: a linha nasce escopada."""
+        resposta = self.client.post("/api/pdca/dds/", {
+            "obra": self.obra.pk, "data": "2026-06-10",
+            "tema": "Trabalho em altura", "assunto": "Cinto e talabarte.",
+        }, format="json")
+        self.assertEqual(resposta.status_code, 201, resposta.data)
+        dds = DialogoSeguranca.objects.get(pk=resposta.json()["dds_id"])
+        self.assertEqual(dds.tenant_id, self.tenant.pk)
+        self.assertEqual(dds.registrado_por, "tst8")
+
+    def test_o_ciclo_do_dds_pela_porta_ate_o_diario(self):
+        from modulodiario.models import DiarioObra
+
+        criado = self.client.post("/api/pdca/dds/", {
+            "obra": self.obra.pk, "data": "2026-06-10", "tema": "Escavação",
+        }, format="json").json()
+        dds_id = criado["dds_id"]
+
+        presenca = self.client.post(
+            f"/api/pdca/dds/{dds_id}/presenca/",
+            {"participantes": [
+                {"nome": "José da Silva", "assinou": True},
+                {"nome": "Maria Souza"},
+            ]},
+            format="json",
+        )
+        self.assertEqual(presenca.status_code, 201, presenca.data)
+        self.assertEqual(presenca.json()["registrados"], 2)
+        #: Os participantes nascem escopados — o inline também passa pelo tenant.
+        self.assertEqual(
+            ParticipanteDDS.objects.filter(tenant=self.tenant).count(), 2,
+        )
+
+        encerrado = self.client.post(
+            f"/api/pdca/dds/{dds_id}/encerrar/", {}, format="json",
+        )
+        self.assertEqual(encerrado.status_code, 200, encerrado.data)
+        self.assertTrue(encerrado.json()["publicado_no_diario"])
+        self.assertTrue(
+            DiarioObra.objects.filter(obra=self.obra, data=date(2026, 6, 10)).exists()
+        )
+
+    # -- a ocorrência pela porta -------------------------------------------
+
+    def _ocorrencia_pela_api(self, **extra):
+        dados = {
+            "obra": self.obra.pk,
+            "ocorrido_em": (timezone.now() - timedelta(hours=3)).isoformat(),
+            "tipo": TipoOcorrencia.ACIDENTE_TIPICO,
+            "descricao": "Queda de nível na periferia da laje.",
+            "atividade": self.atividade.pk,
+        }
+        dados.update(extra)
+        resposta = self.client.post(
+            "/api/pdca/ocorrencias/", dados, format="json",
+        )
+        self.assertEqual(resposta.status_code, 201, resposta.data)
+        return resposta.json()
+
+    def test_a_ocorrencia_nasce_com_tenant_e_prazo_de_cat_resolvido(self):
+        corpo = self._ocorrencia_pela_api()
+        ocorrencia = Ocorrencia.objects.get(pk=corpo["ocorrencia_id"])
+        self.assertEqual(ocorrencia.tenant_id, self.tenant.pk)
+        self.assertEqual(ocorrencia.registrada_por, "tst8")
+        #: **O prazo vem decidido pelo servidor**, não pela tela.
+        self.assertTrue(corpo["exige_cat"])
+        self.assertTrue(corpo["prazo_cat"]["exige"])
+        self.assertIn("vence_em", corpo["prazo_cat"])
+
+    def test_classificar_pela_porta_e_o_afastamento_cobra_os_dias(self):
+        corpo = self._ocorrencia_pela_api()
+        pk = corpo["ocorrencia_id"]
+
+        incompleta = self.client.post(
+            f"/api/pdca/ocorrencias/{pk}/classificar/",
+            {"classificacao": ClassificacaoOcorrencia.COM_AFASTAMENTO},
+            format="json",
+        )
+        self.assertEqual(incompleta.status_code, 400, incompleta.data)
+
+        completa = self.client.post(
+            f"/api/pdca/ocorrencias/{pk}/classificar/",
+            {
+                "classificacao": ClassificacaoOcorrencia.COM_AFASTAMENTO,
+                "dias_perdidos": 9,
+            },
+            format="json",
+        )
+        self.assertEqual(completa.status_code, 200, completa.data)
+        self.assertEqual(completa.json()["dias_perdidos"], 9)
+
+    def test_a_CAT_exige_o_verbo_do_RH_e_este_usuario_nao_o_tem(self):
+        """**A segregação, pela porta.** O TST classifica; o RH comunica."""
+        pk = self._ocorrencia_pela_api()["ocorrencia_id"]
+        resposta = self.client.post(
+            f"/api/pdca/ocorrencias/{pk}/cat/",
+            {"tipo": TipoCAT.INICIAL, "emitida_em": "2026-06-11"},
+            format="json",
+        )
+        self.assertEqual(resposta.status_code, 403, resposta.data)
+
+    def test_o_bloco_clinico_vem_mascarado_sem_o_verbo_proprio(self):
+        """A primeira PII do grupo `pdca`, e ela não sai para quem não pode."""
+        pk = self._ocorrencia_pela_api(
+            natureza_lesao="Fratura exposta", cid10="S52.5",
+        )["ocorrencia_id"]
+        corpo = self.client.get(f"/api/pdca/ocorrencias/{pk}/").json()
+        self.assertNotEqual(corpo["natureza_lesao"], "Fratura exposta")
+        self.assertNotEqual(corpo["cid10"], "S52.5")
+
+        #: Com o verbo, sai inteiro — a máscara é por permissão, não por campo.
+        self.usuario.iam_permissions = (
+            self.usuario.iam_permissions + ["pdca.ocorrencia.dado_medico"]
+        )
+        self.client.force_authenticate(user=self.usuario)
+        aberto = self.client.get(f"/api/pdca/ocorrencias/{pk}/").json()
+        self.assertEqual(aberto["cid10"], "S52.5")
+
+    def test_a_listagem_nao_carrega_o_bloco_clinico_de_ninguem(self):
+        """O jeito mais seguro de não vazar um campo é não o serializar."""
+        self._ocorrencia_pela_api(natureza_lesao="Fratura", cid10="S52.5")
+        corpo = self.client.get(
+            f"/api/pdca/ocorrencias/?obra={self.obra.pk}",
+        ).json()
+        linha = corpo["results"][0] if "results" in corpo else corpo[0]
+        for campo in ("natureza_lesao", "cid10", "atestado_dias"):
+            self.assertNotIn(campo, linha)
+
+    def test_interditar_a_frente_pela_porta_tira_a_atividade_do_quadro(self):
+        pk = self._ocorrencia_pela_api()["ocorrencia_id"]
+        resposta = self.client.post(
+            f"/api/pdca/ocorrencias/{pk}/interditar/", {}, format="json",
+        )
+        self.assertEqual(resposta.status_code, 201, resposta.data)
+        restricao = Restricao.objects.get(pk=resposta.json()["restricao"])
+        self.assertEqual(restricao.tipo, TipoRestricao.AREA)
+        self.assertEqual(restricao.tenant_id, self.tenant.pk)
+
+    def test_interditar_sem_o_verbo_de_travar_a_obra_e_recusado(self):
+        """Sem isso a SSMA vira porta lateral para o quadro da semana."""
+        pk = self._ocorrencia_pela_api()["ocorrencia_id"]
+        self.usuario.iam_permissions = [
+            p for p in self.usuario.iam_permissions if p != "pdca.restricao.edit"
+        ]
+        self.client.force_authenticate(user=self.usuario)
+        resposta = self.client.post(
+            f"/api/pdca/ocorrencias/{pk}/interditar/", {}, format="json",
+        )
+        self.assertEqual(resposta.status_code, 403, resposta.data)
+
+    def test_a_fila_e_o_painel_respondem_pela_porta(self):
+        self._ocorrencia_pela_api()
+        fila = self.client.get(f"/api/pdca/ocorrencias/fila/?obra={self.obra.pk}")
+        self.assertEqual(fila.status_code, 200, fila.data)
+        self.assertEqual(len(fila.json()["cat_por_comunicar"]), 1)
+
+        painel = self.client.get(
+            f"/api/pdca/ocorrencias/painel/?obra={self.obra.pk}",
+        )
+        self.assertEqual(painel.status_code, 200, painel.data)
+        #: **As taxas saem nulas com motivo, pela porta também** — e o motivo
+        #: fala a língua da obra (homem-hora, NBR), não a do repositório.
+        self.assertIsNone(painel.json()["taxa_frequencia"])
+        motivo = painel.json()["taxas_indisponiveis_porque"]
+        self.assertIn("homem-hora", motivo)
+        self.assertNotIn("PDCA.", motivo)
+
+    def test_o_epi_exige_a_permissao_do_modulo_dono(self):
+        """Ler dado protegido do SIL sem o verbo dele seria porta lateral."""
+        resposta = self.client.get(
+            f"/api/pdca/ocorrencias/epi-vencido/?obra={self.obra.pk}",
+        )
+        self.assertEqual(resposta.status_code, 403, resposta.data)
+
+        self.usuario.iam_permissions = (
+            self.usuario.iam_permissions + ["sil.epi.view"]
+        )
+        self.client.force_authenticate(user=self.usuario)
+        liberado = self.client.get(
+            f"/api/pdca/ocorrencias/epi-vencido/?obra={self.obra.pk}",
+        )
+        self.assertEqual(liberado.status_code, 200, liberado.data)
+        self.assertTrue(liberado.json()["disponivel"])
+
+    def test_a_obra_de_outra_empresa_nao_vaza_pelo_nome(self):
+        outro = Tenant.objects.create(slug="pdca8-outro", nome="Outra")
+        alheia = Obra.objects.create(
+            tenant=outro, nome_obra="Obra alheia", endereco="Rua X",
+        )
+        resposta = self.client.get(f"/api/pdca/ocorrencias/fila/?obra={alheia.pk}")
+        self.assertEqual(resposta.status_code, 400, resposta.data)
+        self.assertNotIn("Obra alheia", str(resposta.data))
+
+
+# ===========================================================================
+# O cockpit — carteira, fila do dia, pulso e busca única
+# ===========================================================================
+#
+# O que estes testes protegem:
+#
+# - a fila **junta** os assuntos e os ordena por consequência, com a CAT em
+#   cima — e um canteiro cheio de restrição vencida não empurra a CAT para
+#   fora, porque o teto é por faixa;
+# - o recorte de permissão é **por bloco**: quem não pode ver a SSMA recebe a
+#   fila da qualidade e uma frase, nunca 403 na página inteira nem uma fila
+#   vazia que parece "não há nada";
+# - **nenhum número é fabricado** — avanço sem apontamento, PPC sem semana
+#   encerrada e dias sem afastamento numa obra que nunca teve acidente voltam
+#   `None` com a frase, e zero nunca aparece no lugar;
+# - a carteira **cruza obras** (a leitura que não existia) e **não soma o que
+#   não se soma**: discrimina as pendências e nomeia a pior;
+# - a busca acha sem acento, corta por espécie e **não vaza o bloco clínico**;
+# - e as três portas são `APIView` pura, então o teste cobra a RLS que o
+#   achado S1 ensinou a armar.
+
+
+class _BaseCockpit(TestCase):
+    """Uma obra com plano vigente e uma pendência de cada consequência."""
+
+    @classmethod
+    def setUpTestData(cls):
+        from fornecedores.models import Fornecedor
+
+        cls.tenant = Tenant.objects.create(
+            slug="pdca-cockpit", nome="Construtora Cockpit",
+        )
+        cls.obra = Obra.objects.create(
+            tenant=cls.tenant, nome_obra="Residencial Fundação", endereco="Rua 11",
+        )
+        cls.calendario = CalendarioTrabalho.objects.create(
+            tenant=cls.tenant, obra=cls.obra, nome="Padrão",
+        )
+        cls.cronograma = Cronograma.objects.create(
+            tenant=cls.tenant, obra=cls.obra, descricao="Plano",
+            data_inicio=date(2026, 6, 1), calendario=cls.calendario,
+            status=Cronograma.Status.VIGENTE,
+            termino_calculado=date(2026, 12, 20),
+        )
+        cls.atividade = Atividade.objects.create(
+            tenant=cls.tenant, cronograma=cls.cronograma, codigo="1",
+            nome="Alvenaria do 4º", duracao_dias=5, profundidade=1,
+            peso_informado=Decimal("10"),
+        )
+        cls.local = LocalObra.objects.create(
+            tenant=cls.tenant, obra=cls.obra, codigo="T1-4",
+            nome="Torre 1 · 4º pavimento", nivel=NivelLocal.PAVIMENTO,
+        )
+        cls.fornecedor = Fornecedor.objects.create(
+            tenant=cls.tenant, razao_social="Empreiteira Cockpit",
+            email="cockpit@example.com",
+        )
+        cls.contrato = ContratoObra.objects.create(
+            tenant=cls.tenant, obra=cls.obra, fornecedor=cls.fornecedor,
+            numero="CT-100", objeto="Alvenaria e revestimento",
+            data_inicio=date(2026, 6, 1), status=ContratoObra.Status.VIGENTE,
+        )
+
+    # -- as pendências, uma por consequência ---------------------------------
+
+    def _ocorrencia_com_cat(self):
+        """Acidente típico sem CAT emitida — a única linha com prazo em lei."""
+        return Ocorrencia.objects.create(
+            tenant=self.tenant, obra=self.obra,
+            tipo=TipoOcorrencia.ACIDENTE_TIPICO,
+            ocorrido_em=timezone.now() - timedelta(days=3),
+            descricao="Queda de tábua sobre o pé do servente.",
+        )
+
+    def _medicao_em_atesto(self):
+        return Medicao.objects.create(
+            tenant=self.tenant, contrato=self.contrato, numero=1,
+            periodo_inicio=date(2026, 6, 1), periodo_fim=date(2026, 6, 30),
+            status=Medicao.Status.EM_APROVACAO,
+        )
+
+    def _restricao_vencida(self, dias=4):
+        return Restricao.objects.create(
+            tenant=self.tenant, atividade=self.atividade,
+            tipo=TipoRestricao.MATERIAL, descricao="Bloco cerâmico não entregue",
+            prazo=timezone.localdate() - timedelta(days=dias),
+        )
+
+    def _nc_sem_plano(self, descricao="Parede fora de prumo"):
+        return NaoConformidade.objects.create(
+            tenant=self.tenant, obra=self.obra, local=self.local,
+            gravidade=GravidadeNC.MAIOR, descricao=descricao,
+        )
+
+    def _semana_por_encerrar(self):
+        inicio = services.segunda_da_semana(
+            timezone.localdate() - timedelta(days=14),
+        )
+        return ProgramacaoSemanal.objects.create(
+            tenant=self.tenant, obra=self.obra, semana_inicio=inicio,
+            semana_fim=inicio + timedelta(days=6),
+            status=ProgramacaoSemanal.Status.COMPROMETIDA,
+        )
+
+    def _fila(self, **extra):
+        return services.fila_do_dia(
+            obra_id=self.obra.pk, tenant_id=self.tenant.pk, **extra
+        )
+
+
+class FilaDoDiaTests(_BaseCockpit):
+    """B2 — o que espera alguém nesta obra, numa ordenação só."""
+
+    def test_a_obra_sem_nada_pendente_devolve_fila_vazia_e_diz_quantas_varreu(self):
+        """Estado vazio **não** é a mesma coisa que fila não apurada.
+
+        `faixas` vem vazia e `faixas_varridas` diz 11 — é o que permite a tela
+        escrever "nenhuma das onze filas tem alguém esperando" em vez de abrir
+        uma página em branco que se lê como defeito.
+        """
+        fila = self._fila()
+        self.assertEqual(fila["faixas"], [])
+        self.assertEqual(fila["total"], 0)
+        self.assertEqual(fila["faixas_varridas"], 11)
+
+    def test_a_faixa_vazia_nao_entra_na_resposta(self):
+        """Aviso que aparece sempre e não pede ação é ruído (convenções §9)."""
+        self._nc_sem_plano()
+        fila = self._fila()
+        self.assertEqual([f["codigo"] for f in fila["faixas"]], ["ncs_sem_plano"])
+
+    def test_a_CAT_vem_antes_do_dinheiro_e_o_dinheiro_antes_do_retrabalho(self):
+        """**A ordem é por consequência, e é o coração da fatia.**
+
+        Ordenar no navegador daria a ordem errada: ele não sabe que a CAT tem
+        prazo em lei e multa, e que um defeito de pintura pode esperar.
+        """
+        self._ocorrencia_com_cat()
+        self._medicao_em_atesto()
+        self._restricao_vencida()
+        self._nc_sem_plano()
+
+        fila = self._fila()
+        consequencias = [f["consequencia"] for f in fila["faixas"]]
+        self.assertEqual(consequencias[0], "prazo_legal")
+        self.assertLess(
+            consequencias.index("dinheiro"), consequencias.index("retrabalho"),
+        )
+        self.assertLess(
+            consequencias.index("compromisso"),
+            consequencias.index("retrabalho"),
+        )
+
+    def test_toda_linha_diz_o_que_e_ha_quanto_tempo_espera_e_o_que_decidir(self):
+        """A régua de pronto §12.1: fila é isto, e contagem não é fila."""
+        self._nc_sem_plano()
+        faixa = self._fila()["faixas"][0]
+        self.assertTrue(faixa["o_que_decidir"])
+        linha = faixa["linhas"][0]
+        self.assertEqual(linha["tipo"], "nc")
+        self.assertTrue(linha["titulo"])
+        self.assertEqual(linha["dias"], 0)
+        self.assertIsNotNone(linha["desde"])
+        self.assertEqual(linha["onde"], "Torre 1 · 4º pavimento")
+
+    def test_o_prazo_da_restricao_vencida_vem_negativo_e_marcado(self):
+        self._restricao_vencida(dias=4)
+        faixa = next(
+            f for f in self._fila()["faixas"] if f["codigo"] == "restricoes_vencidas"
+        )
+        prazo = faixa["linhas"][0]["prazo"]
+        self.assertTrue(prazo["vencido"])
+        self.assertEqual(prazo["dias_restantes"], -4)
+
+    def test_a_semana_que_acabou_e_nao_foi_julgada_entra_na_fila(self):
+        self._semana_por_encerrar()
+        codigos = [f["codigo"] for f in self._fila()["faixas"]]
+        self.assertIn("semanas_a_encerrar", codigos)
+
+    def test_o_teto_corta_a_FAIXA_e_declara_o_total_verdadeiro(self):
+        """**Por faixa, e não do total** — senão a faixa grande come a CAT."""
+        for i in range(PDCA_TETO_LINHAS_POR_FAIXA_DA_FILA + 3):
+            self._nc_sem_plano(descricao=f"Defeito {i}")
+        self._ocorrencia_com_cat()
+
+        fila = self._fila()
+        defeitos = next(
+            f for f in fila["faixas"] if f["codigo"] == "ncs_sem_plano"
+        )
+        self.assertEqual(
+            len(defeitos["linhas"]), PDCA_TETO_LINHAS_POR_FAIXA_DA_FILA,
+        )
+        self.assertTrue(defeitos["truncada"])
+        self.assertEqual(
+            defeitos["total"], PDCA_TETO_LINHAS_POR_FAIXA_DA_FILA + 3,
+        )
+        #: E a CAT continua lá, que é o ponto do corte ser por faixa.
+        self.assertEqual(fila["faixas"][0]["codigo"], "cat_por_comunicar")
+
+    def test_quem_nao_ve_a_SSMA_recebe_a_qualidade_e_a_frase_do_que_falta(self):
+        """Omitir × trancar dentro de um agregado.
+
+        Recusar a página inteira esconderia o trabalho que a pessoa pode
+        fazer; omitir em silêncio faria a fila parecer vazia — e é a pior das
+        três saídas, porque não parece falha.
+        """
+        self._ocorrencia_com_cat()
+        self._nc_sem_plano()
+
+        fila = self._fila(pode=lambda p: p == "pdca.nc.view")
+        self.assertEqual([f["codigo"] for f in fila["faixas"]], ["ncs_sem_plano"])
+        negadas = {n["permissao"] for n in fila["sem_permissao"]}
+        self.assertIn("pdca.ocorrencia.view", negadas)
+        frase = next(
+            n for n in fila["sem_permissao"]
+            if n["permissao"] == "pdca.ocorrencia.view"
+        )["motivo"]
+        self.assertIn("administrador", frase)
+
+    def test_a_obra_vizinha_nao_entra_na_fila(self):
+        outro = Tenant.objects.create(slug="pdca-cockpit-2", nome="Outra")
+        alheia = Obra.objects.create(
+            tenant=outro, nome_obra="Obra alheia", endereco="Rua X",
+        )
+        NaoConformidade.objects.create(
+            tenant=outro, obra=alheia, gravidade=GravidadeNC.MAIOR,
+            descricao="Defeito da vizinha",
+        )
+        self.assertEqual(self._fila()["total"], 0)
+
+
+class PulsoDaObraTests(_BaseCockpit):
+    """B6 — as quatro leituras, e os `None` que **não** são zero."""
+
+    def _pulso(self, **extra):
+        return services.pulso_da_obra(
+            obra_id=self.obra.pk, tenant_id=self.tenant.pk, **extra
+        )
+
+    def test_avanco_sem_apontamento_e_None_com_frase_e_nunca_zero(self):
+        """§5.1: "avanço sem apontamento é *sem apuração*, nunca 0%"."""
+        avanco = self._pulso()["avanco"]
+        self.assertIsNone(avanco["fisico"])
+        self.assertIn("apontou", avanco["sem_apuracao_porque"])
+
+    def test_o_avanco_apontado_acende_o_numero_e_cala_a_frase(self):
+        ApontamentoAvanco.objects.create(
+            tenant=self.tenant, atividade=self.atividade,
+            data=date(2026, 6, 10), percentual=Decimal("40"),
+        )
+        avanco = self._pulso()["avanco"]
+        self.assertEqual(avanco["fisico"], 40.0)
+        self.assertEqual(avanco["sem_apuracao_porque"], "")
+
+    def test_ppc_sem_semana_encerrada_e_None_com_frase(self):
+        ppc = self._pulso()["ppc"]
+        self.assertIsNone(ppc["ppc"])
+        self.assertIn("encerrada", ppc["sem_apuracao_porque"])
+
+    def test_dias_sem_afastamento_e_None_quando_nunca_houve_acidente(self):
+        """**Zero aqui seria a mentira mais cara do módulo.**
+
+        Obra que nunca registrou acidente com afastamento não tem "0 dias" —
+        ela não tem a série. Contar desde o início da obra seria fabricar.
+        """
+        seguranca = self._pulso()["seguranca"]
+        self.assertIsNone(seguranca["dias_sem_afastamento"])
+        self.assertIn("Nenhum acidente", seguranca["sem_apuracao_porque"])
+
+    def test_o_afastamento_registrado_acende_a_contagem(self):
+        Ocorrencia.objects.create(
+            tenant=self.tenant, obra=self.obra,
+            tipo=TipoOcorrencia.ACIDENTE_TIPICO,
+            ocorrido_em=timezone.now() - timedelta(days=12),
+            descricao="Corte profundo na mão.",
+            classificacao=ClassificacaoOcorrencia.COM_AFASTAMENTO,
+            #: O banco exige os dias junto da classificação que os pressupõe
+            #: (`pdca_ocorrencia_afastamento_tem_dias`) — afastamento sem dias
+            #: é registro que não fecha a conta de gravidade.
+            dias_perdidos=5,
+        )
+        seguranca = self._pulso()["seguranca"]
+        self.assertEqual(seguranca["dias_sem_afastamento"], 12)
+        self.assertEqual(seguranca["sem_apuracao_porque"], "")
+
+    def test_as_taxas_continuam_nulas_com_a_MESMA_frase_do_painel_de_ssma(self):
+        """Dois textos para a mesma ausência viram duas explicações.
+
+        A frase é constante compartilhada de propósito: o dia em que uma delas
+        mudar sozinha, a pessoa passa a achar que são coisas diferentes.
+        """
+        seguranca = self._pulso()["seguranca"]
+        self.assertIsNone(seguranca["taxa_frequencia"])
+        self.assertIsNone(seguranca["taxa_gravidade"])
+        painel = services.indicadores_de_ssma(
+            obra_id=self.obra.pk, tenant_id=self.tenant.pk,
+        )
+        self.assertEqual(
+            seguranca["taxas_indisponiveis_porque"].split(",")[0],
+            painel["taxas_indisponiveis_porque"].split(",")[0],
+        )
+
+    def test_o_primeiro_plano_publicado_nao_tem_desvio_e_diz_por_que(self):
+        prazo = self._pulso()["prazo"]
+        self.assertTrue(prazo["tem_plano"])
+        self.assertIsNone(prazo["desvio_dias"])
+        self.assertIn("primeiro plano", prazo["sem_apuracao_porque"])
+
+    def test_o_bloco_sem_permissao_vem_nulo_e_declarado(self):
+        pulso = self._pulso(pode=lambda p: p == "pdca.cronograma.view")
+        self.assertIsNone(pulso["seguranca"])
+        self.assertIsNone(pulso["ppc"])
+        self.assertIsNotNone(pulso["prazo"])
+        self.assertIn(
+            "pdca.ocorrencia.view",
+            {n["permissao"] for n in pulso["sem_permissao"]},
+        )
+
+
+class CarteiraTests(_BaseCockpit):
+    """B1 — a leitura que cruza obras, que até aqui não existia."""
+
+    def _carteira(self, **extra):
+        return services.carteira(tenant_id=self.tenant.pk, **extra)
+
+    def test_a_carteira_poe_as_obras_lado_a_lado(self):
+        Obra.objects.create(
+            tenant=self.tenant, nome_obra="Galpão Norte", endereco="Rua 12",
+        )
+        carteira = self._carteira()
+        self.assertEqual(carteira["total"], 2)
+        self.assertFalse(carteira["truncada"])
+        self.assertEqual(
+            {l["nome"] for l in carteira["obras"]},
+            {"Residencial Fundação", "Galpão Norte"},
+        )
+
+    def test_as_pendencias_vem_discriminadas_e_a_pior_e_nomeada(self):
+        """**Não soma o que não se soma.**
+
+        Uma CAT vencendo e um defeito de pintura não viram "2 pendências": a
+        linha diz qual é cada uma, e `pior_pendencia` aponta a de maior
+        consequência para a carteira poder ser ordenada pelo que dói.
+        """
+        self._ocorrencia_com_cat()
+        self._nc_sem_plano()
+
+        linha = self._carteira()["obras"][0]
+        codigos = {p["codigo"]: p["quantas"] for p in linha["pendencias"]}
+        self.assertEqual(codigos["cat_por_comunicar"], 1)
+        self.assertEqual(codigos["ncs_abertas"], 1)
+        self.assertEqual(linha["pior_pendencia"]["codigo"], "cat_por_comunicar")
+        self.assertEqual(linha["pior_pendencia"]["consequencia"], "prazo_legal")
+
+    def test_a_obra_sem_pendencia_nao_inventa_uma_pior(self):
+        linha = self._carteira()["obras"][0]
+        self.assertEqual(linha["pendencias"], [])
+        self.assertIsNone(linha["pior_pendencia"])
+
+    def test_a_contagem_da_carteira_bate_com_a_lista_da_fila(self):
+        """**Entrar na obra não pode mudar o número.**
+
+        A carteira conta em SQL e a fila lista; se as duas divergissem, a
+        diretoria decidiria por um número e a obra trabalharia por outro — que
+        é o D138 em escala de carteira.
+        """
+        self._ocorrencia_com_cat()
+        self._restricao_vencida()
+        self._nc_sem_plano()
+        self._nc_sem_plano(descricao="Junta fora de espessura")
+
+        linha = self._carteira()["obras"][0]
+        contagens = {p["codigo"]: p["quantas"] for p in linha["pendencias"]}
+        fila = {f["codigo"]: f["total"] for f in self._fila()["faixas"]}
+        self.assertEqual(contagens["cat_por_comunicar"], fila["cat_por_comunicar"])
+        self.assertEqual(
+            contagens["restricoes_vencidas"], fila["restricoes_vencidas"],
+        )
+        self.assertEqual(contagens["ncs_abertas"], fila["ncs_sem_plano"])
+
+    def test_o_teto_corta_e_a_resposta_declara_quantas_ficaram_de_fora(self):
+        """Carteira truncada em silêncio é a diretoria decidindo sobre 40
+        obras achando que viu todas."""
+        for i in range(PDCA_TETO_OBRAS_NA_CARTEIRA + 2):
+            Obra.objects.create(
+                tenant=self.tenant, nome_obra=f"Obra {i:03d}", endereco="Rua",
+            )
+        carteira = self._carteira()
+        self.assertEqual(len(carteira["obras"]), PDCA_TETO_OBRAS_NA_CARTEIRA)
+        self.assertTrue(carteira["truncada"])
+        self.assertEqual(carteira["total"], PDCA_TETO_OBRAS_NA_CARTEIRA + 3)
+        self.assertEqual(carteira["teto"], PDCA_TETO_OBRAS_NA_CARTEIRA)
+
+    def test_a_obra_de_outra_empresa_nao_entra_na_carteira(self):
+        outro = Tenant.objects.create(slug="pdca-cockpit-3", nome="Outra")
+        Obra.objects.create(
+            tenant=outro, nome_obra="Obra alheia", endereco="Rua X",
+        )
+        nomes = {l["nome"] for l in self._carteira()["obras"]}
+        self.assertNotIn("Obra alheia", nomes)
+
+    def test_o_recorte_por_obras_devolve_so_as_pedidas(self):
+        outra = Obra.objects.create(
+            tenant=self.tenant, nome_obra="Galpão Norte", endereco="Rua 12",
+        )
+        carteira = self._carteira(obras=[outra.pk])
+        self.assertEqual([l["obra"] for l in carteira["obras"]], [outra.pk])
+
+    def test_sem_permissao_de_avanco_a_coluna_vem_nula_e_declarada(self):
+        carteira = self._carteira(pode=lambda p: p != "pdca.avanco.view")
+        self.assertIsNone(carteira["obras"][0]["avanco"])
+        self.assertIsNotNone(carteira["obras"][0]["prazo"])
+        self.assertIn(
+            "pdca.avanco.view",
+            {n["permissao"] for n in carteira["sem_permissao"]},
+        )
+
+
+class BuscaUnicaTests(_BaseCockpit):
+    """B4 — a válvula que permite o menu ficar em seis postos."""
+
+    def _busca(self, termo, **extra):
+        return services.busca_unica(
+            tenant_id=self.tenant.pk, termo=termo, **extra
+        )
+
+    def _especie(self, resposta, codigo):
+        return next(
+            (e for e in resposta["especies"] if e["codigo"] == codigo), None,
+        )
+
+    def test_o_termo_curto_nao_varre_e_explica(self):
+        resposta = self._busca("a")
+        self.assertTrue(resposta["curta"])
+        self.assertEqual(resposta["especies"], [])
+        self.assertIn("2 letras", resposta["aviso"])
+
+    def test_acha_sem_acento_nas_duas_direcoes(self):
+        """A régua de acessibilidade da casa: ninguém caça o `ç` de luva.
+
+        As **duas** direções, e é o que o `unaccent` dos dois lados garante:
+        quem escreve `fundacao` acha `Fundação`, e quem escreve `Fundação`
+        acha o mesmo registro. Normalizar só um lado passaria num teste e
+        falharia no outro.
+        """
+        LocalObra.objects.create(
+            tenant=self.tenant, obra=self.obra, codigo="FND",
+            nome="Bloco de Fundação", nivel=NivelLocal.BLOCO,
+        )
+        sem_acento = self._especie(self._busca("fundacao"), "local")
+        com_acento = self._especie(self._busca("Fundação"), "local")
+        self.assertEqual(len(sem_acento["resultados"]), 1)
+        self.assertEqual(len(com_acento["resultados"]), 1)
+
+    def test_varre_as_sete_especies_e_devolve_so_as_que_acharam(self):
+        """Sete cabeçalhos vazios afogam o único resultado que veio.
+
+        A busca varre as sete e devolve **duas** aqui — a atividade "Alvenaria
+        do 4º" e o contrato cujo objeto é "Alvenaria e revestimento". É o caso
+        que o teto por espécie protege: as duas aparecem, nenhuma esconde a
+        outra, e as cinco que não acharam nada não ocupam linha.
+        """
+        resposta = self._busca("alvenaria")
+        self.assertEqual(resposta["especies_varridas"], 7)
+        self.assertEqual(
+            [e["codigo"] for e in resposta["especies"]],
+            ["atividade", "contrato"],
+        )
+
+    def test_o_teto_e_por_especie_para_uma_nao_esconder_a_outra(self):
+        """Quarenta atividades "alvenaria" não podem esconder o contrato."""
+        for i in range(PDCA_TETO_RESULTADOS_POR_ESPECIE + 3):
+            Atividade.objects.create(
+                tenant=self.tenant, cronograma=self.cronograma,
+                codigo=f"2.{i}", nome=f"Alvenaria trecho {i}",
+                duracao_dias=1, profundidade=2,
+            )
+        ContratoObra.objects.create(
+            tenant=self.tenant, obra=self.obra, fornecedor=self.fornecedor,
+            numero="CT-200", objeto="Alvenaria estrutural",
+            data_inicio=date(2026, 6, 1),
+        )
+        resposta = self._busca("alvenaria")
+        atividades = self._especie(resposta, "atividade")
+        self.assertEqual(
+            len(atividades["resultados"]), PDCA_TETO_RESULTADOS_POR_ESPECIE,
+        )
+        self.assertTrue(atividades["truncada"])
+        self.assertIsNotNone(self._especie(resposta, "contrato"))
+
+    def test_a_especie_sem_permissao_vira_frase_e_nao_403(self):
+        resposta = self._busca("alvenaria", pode=lambda p: p == "pdca.nc.view")
+        self.assertEqual(resposta["especies"], [])
+        self.assertIn(
+            "pdca.cronograma.view",
+            {n["permissao"] for n in resposta["sem_permissao"]},
+        )
+
+    def test_o_recorte_por_obra_nao_traz_a_obra_vizinha(self):
+        outra = Obra.objects.create(
+            tenant=self.tenant, nome_obra="Galpão Norte", endereco="Rua 12",
+        )
+        LocalObra.objects.create(
+            tenant=self.tenant, obra=outra, codigo="GN-1",
+            nome="Alvenaria do galpão", nivel=NivelLocal.BLOCO,
+        )
+        ampla = self._especie(self._busca("alvenaria"), "local")
+        estreita = self._busca("alvenaria", obra_id=self.obra.pk)
+        self.assertEqual(len(ampla["resultados"]), 1)
+        self.assertIsNone(self._especie(estreita, "local"))
+
+    def test_a_ocorrencia_nao_vaza_o_bloco_clinico_no_resultado(self):
+        """A busca não pode ser a porta lateral do que o serializer fecha."""
+        Ocorrencia.objects.create(
+            tenant=self.tenant, obra=self.obra,
+            tipo=TipoOcorrencia.ACIDENTE_TIPICO,
+            ocorrido_em=timezone.now() - timedelta(days=1),
+            descricao="Queda na alvenaria do 4º.",
+            natureza_lesao="Fratura exposta de tíbia", cid10="S82.1",
+            atestado_dias=30,
+        )
+        achado = self._especie(self._busca("alvenaria"), "ocorrencia")
+        bruto = str(achado["resultados"])
+        self.assertNotIn("S82.1", bruto)
+        self.assertNotIn("Fratura", bruto)
+
+    def test_a_empresa_vizinha_nao_aparece_na_busca(self):
+        outro = Tenant.objects.create(slug="pdca-cockpit-4", nome="Outra")
+        alheia = Obra.objects.create(
+            tenant=outro, nome_obra="Obra alheia", endereco="Rua X",
+        )
+        LocalObra.objects.create(
+            tenant=outro, obra=alheia, codigo="AL-1",
+            nome="Alvenaria alheia", nivel=NivelLocal.BLOCO,
+        )
+        self.assertIsNone(self._especie(self._busca("alvenaria"), "local"))
+
+
+class MudancasRecentesTests(_BaseCockpit):
+    """O terceiro bloco do cockpit — fatos, não posts."""
+
+    def test_o_defeito_aberto_vira_fato_com_quem_e_quando(self):
+        NaoConformidade.objects.create(
+            tenant=self.tenant, obra=self.obra, gravidade=GravidadeNC.MAIOR,
+            descricao="Parede fora de prumo", aberta_por="tecnico",
+        )
+        recentes = services.mudancas_recentes(
+            obra_id=self.obra.pk, tenant_id=self.tenant.pk,
+        )
+        self.assertEqual(recentes["total"], 1)
+        fato = recentes["fatos"][0]
+        self.assertEqual(fato["verbo"], "defeito registrado")
+        self.assertEqual(fato["quem"], "tecnico")
+
+    def test_o_que_e_mais_velho_que_a_janela_fica_de_fora(self):
+        antiga = NaoConformidade.objects.create(
+            tenant=self.tenant, obra=self.obra, gravidade=GravidadeNC.MENOR,
+            descricao="Defeito antigo",
+        )
+        NaoConformidade.objects.filter(pk=antiga.pk).update(
+            aberta_em=timezone.now() - timedelta(days=60),
+        )
+        recentes = services.mudancas_recentes(
+            obra_id=self.obra.pk, tenant_id=self.tenant.pk,
+        )
+        self.assertEqual(recentes["total"], 0)
+        largo = services.mudancas_recentes(
+            obra_id=self.obra.pk, tenant_id=self.tenant.pk, dias=90,
+        )
+        self.assertEqual(largo["total"], 1)
+
+
+class ApiDoCockpitTests(APITestCase):
+    """As três portas **pelo HTTP** — e a RLS que o achado S1 ensinou.
+
+    As três são `APIView` pura, e é exatamente a família em que o S1 achou
+    views de dashboard lendo dado de qualquer tenant. Aqui a carteira cruza
+    obras *de propósito*, então o teste tem de cobrar o isolamento pela porta.
+    """
+
+    def setUp(self):
+        self.tenant = Tenant.objects.create(
+            slug="cockpit-api", nome="Construtora Cockpit API",
+        )
+        self.obra = Obra.objects.create(
+            tenant=self.tenant, nome_obra="Residencial Fundação",
+            endereco="Rua API",
+        )
+        self.cronograma = Cronograma.objects.create(
+            tenant=self.tenant, obra=self.obra, descricao="Plano",
+            data_inicio=date(2026, 6, 1), status=Cronograma.Status.VIGENTE,
+        )
+        Atividade.objects.create(
+            tenant=self.tenant, cronograma=self.cronograma, codigo="1",
+            nome="Alvenaria do 4º", duracao_dias=5, profundidade=1,
+        )
+        self.usuario = Usuario.objects.create(
+            username="cockpit", tenant=self.tenant,
+        )
+        self._autenticar()
+
+    def _autenticar(self, permissions=None, modules=("pdca",)):
+        self.usuario.iam_modules = list(modules)
+        self.usuario.iam_permissions = list(
+            permissions if permissions is not None else [
+                "pdca.cronograma.view", "pdca.avanco.view", "pdca.local.view",
+                "pdca.nc.view", "pdca.verificacao.view", "pdca.medicao.view",
+                "pdca.contrato.view", "pdca.programacao.view",
+                "pdca.restricao.view", "pdca.ocorrencia.view",
+            ]
+        )
+        self.client.force_authenticate(user=self.usuario)
+
+    def test_a_carteira_responde_e_declara_o_teto(self):
+        resposta = self.client.get("/api/pdca/carteira/")
+        self.assertEqual(resposta.status_code, 200, resposta.data)
+        corpo = resposta.json()
+        self.assertEqual(corpo["teto"], PDCA_TETO_OBRAS_NA_CARTEIRA)
+        self.assertEqual(
+            [l["nome"] for l in corpo["obras"]], ["Residencial Fundação"],
+        )
+
+    def test_hoje_traz_fila_pulso_e_mudancas_numa_leitura_so(self):
+        resposta = self.client.get(f"/api/pdca/hoje/?obra={self.obra.pk}")
+        self.assertEqual(resposta.status_code, 200, resposta.data)
+        corpo = resposta.json()
+        self.assertEqual(corpo["obra"], self.obra.pk)
+        for bloco in ("fila", "pulso", "mudancas"):
+            self.assertIn(bloco, corpo)
+
+    def test_hoje_aceita_desligar_as_mudancas(self):
+        corpo = self.client.get(
+            f"/api/pdca/hoje/?obra={self.obra.pk}&mudancas=0",
+        ).json()
+        self.assertNotIn("mudancas", corpo)
+
+    def test_dias_que_nao_e_numero_responde_400_e_nao_500(self):
+        """D187 na entrada: erro de quem digitou tem frase, não stack."""
+        resposta = self.client.get(
+            f"/api/pdca/hoje/?obra={self.obra.pk}&dias=ontem",
+        )
+        self.assertEqual(resposta.status_code, 400, resposta.data)
+
+    def test_a_busca_responde_e_corta_o_termo_curto(self):
+        curta = self.client.get("/api/pdca/busca/?q=a").json()
+        self.assertTrue(curta["curta"])
+        achou = self.client.get("/api/pdca/busca/?q=alvenaria").json()
+        self.assertEqual(
+            [e["codigo"] for e in achou["especies"]], ["atividade"],
+        )
+
+    def test_sem_o_modulo_contratado_as_tres_portas_fecham(self):
+        self._autenticar(modules=())
+        for rota in (
+            "/api/pdca/carteira/",
+            f"/api/pdca/hoje/?obra={self.obra.pk}",
+            "/api/pdca/busca/?q=alvenaria",
+        ):
+            self.assertEqual(self.client.get(rota).status_code, 403, rota)
+
+    def test_a_carteira_NAO_atravessa_o_tenant(self):
+        outro = Tenant.objects.create(slug="cockpit-api-2", nome="Outra")
+        Obra.objects.create(
+            tenant=outro, nome_obra="Obra alheia", endereco="Rua X",
+        )
+        corpo = self.client.get("/api/pdca/carteira/").json()
+        self.assertNotIn("Obra alheia", str(corpo))
+
+    def test_hoje_de_obra_alheia_recusa_sem_vazar_o_nome(self):
+        outro = Tenant.objects.create(slug="cockpit-api-3", nome="Outra")
+        alheia = Obra.objects.create(
+            tenant=outro, nome_obra="Obra alheia", endereco="Rua X",
+        )
+        resposta = self.client.get(f"/api/pdca/hoje/?obra={alheia.pk}")
+        self.assertEqual(resposta.status_code, 400, resposta.data)
+        self.assertNotIn("Obra alheia", str(resposta.data))
+
+    def test_o_status_anuncia_o_cockpit_e_os_tres_tetos(self):
+        corpo = self.client.get("/api/pdca/status/").json()
+        for capacidade in (
+            "carteira", "fila_do_dia", "pulso_da_obra", "busca_unica",
+        ):
+            self.assertTrue(corpo["recursos"][capacidade], capacidade)
+        self.assertEqual(
+            corpo["tetos"]["obras_na_carteira"], PDCA_TETO_OBRAS_NA_CARTEIRA,
+        )
+        self.assertEqual(
+            corpo["tetos"]["resultados_por_especie"],
+            PDCA_TETO_RESULTADOS_POR_ESPECIE,
+        )
+
+
+# ===========================================================================
+# B5 — a frente de quem está no canteiro
+# ===========================================================================
+#
+# O que estes testes protegem:
+#
+# - "meu" casa por **nome sem acento**, porque o alvo é rótulo de texto em todo
+#   o módulo — e quem entra com o nome do login pode pedir por outro;
+# - a leitura **atravessa obras** por desenho, e não vaza a obra do vizinho;
+# - o recorte de permissão é **por bloco**: sem `pdca.nc.view` a pessoa continua
+#   vendo os compromissos, e o que falta vem nomeado;
+# - bloco vazio vem **com razão escrita** — no celular, lista em branco é
+#   indistinguível de lista que não carregou;
+# - prometido e apontado viajam **separados**, e apontado nulo não é zero.
+
+
+class MinhasFrentesTests(TestCase):
+    """B5 — o que está atribuído a quem pede, na semana corrente."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.tenant = Tenant.objects.create(
+            slug="pdca-frente", nome="Construtora Frente",
+        )
+        cls.obra = Obra.objects.create(
+            tenant=cls.tenant, nome_obra="Residencial Frente", endereco="Rua 9",
+        )
+        cls.cronograma = Cronograma.objects.create(
+            tenant=cls.tenant, obra=cls.obra, descricao="Plano",
+            data_inicio=date(2026, 6, 1), status=Cronograma.Status.VIGENTE,
+        )
+        cls.atividade = Atividade.objects.create(
+            tenant=cls.tenant, cronograma=cls.cronograma, codigo="1.1",
+            nome="Alvenaria do 4º", duracao_dias=5, profundidade=1,
+        )
+        cls.local = LocalObra.objects.create(
+            tenant=cls.tenant, obra=cls.obra, codigo="T1-4",
+            nome="Torre 1 · 4º pavimento", nivel=NivelLocal.PAVIMENTO,
+        )
+
+    def setUp(self):
+        self.hoje = timezone.localdate()
+        self.semana = services.abrir_programacao(
+            obra=self.obra, semana_inicio=self.hoje,
+            tenant_id=self.tenant.pk,
+        )
+
+    def _cartao(self, responsavel="Mestre Antônio", **extra):
+        return ItemProgramacao.objects.create(
+            tenant=self.tenant, programacao=self.semana,
+            atividade=self.atividade, responsavel=responsavel, **extra
+        )
+
+    def _frente(self, quem="Mestre Antônio", **extra):
+        return services.minhas_frentes(
+            tenant_id=self.tenant.pk, quem=quem, **extra
+        )
+
+    # -- o casamento por nome ------------------------------------------------
+
+    def test_o_compromisso_da_semana_aparece_na_frente_de_quem_o_assumiu(self):
+        self._cartao(local=self.local, percentual_previsto=Decimal("20"))
+        frente = self._frente()
+        bloco = frente["compromissos"]
+        self.assertEqual(bloco["total"], 1)
+        linha = bloco["linhas"][0]
+        self.assertEqual(linha["nome"], "Alvenaria do 4º")
+        self.assertEqual(linha["local_rotulo"], "Torre 1 · 4º pavimento")
+        self.assertEqual(linha["previsto"], Decimal("20"))
+        self.assertEqual(frente["semana_inicio"], services.segunda_da_semana(self.hoje))
+
+    def test_o_nome_casa_sem_acento_e_sem_caixa(self):
+        """A régua de acessibilidade da casa, aplicada ao nome de quem trabalha.
+
+        Quem digita rápido digita sem acento, e no canteiro ninguém caça o `ô`.
+        Exigir grafia exata faria a frente aparecer vazia — a forma de falha que
+        não parece falha.
+        """
+        self._cartao(responsavel="Mestre Antônio")
+        self.assertEqual(self._frente(quem="mestre antonio")["total"], 1)
+        self.assertEqual(self._frente(quem="MESTRE ANTONIO")["total"], 1)
+
+    def test_o_compromisso_de_outra_pessoa_nao_entra(self):
+        self._cartao(responsavel="Encarregado Rita")
+        self.assertEqual(self._frente()["compromissos"]["total"], 0)
+
+    def test_sem_nome_a_leitura_devolve_vazio_dizendo_o_que_fazer(self):
+        self._cartao()
+        frente = self._frente(quem="   ")
+        self.assertEqual(frente["total"], 0)
+        self.assertIn("nome", frente["sem_nome_porque"])
+        self.assertIsNone(frente["compromissos"])
+
+    # -- prometido × apontado ------------------------------------------------
+
+    def test_apontado_nulo_nao_e_zero(self):
+        """Ninguém apontou é diferente de apontou e deu zero."""
+        self._cartao(percentual_previsto=Decimal("20"))
+        linha = self._frente()["compromissos"]["linhas"][0]
+        self.assertIsNone(linha["apontado"])
+        self.assertFalse(linha["apontou"])
+
+    def test_o_apontado_da_semana_vem_ao_lado_do_prometido(self):
+        item = self._cartao(percentual_previsto=Decimal("20"))
+        ApontamentoAvanco.objects.create(
+            tenant=self.tenant, atividade=self.atividade,
+            data=self.semana.semana_inicio, percentual=Decimal("12"),
+        )
+        linha = self._frente()["compromissos"]["linhas"][0]
+        self.assertEqual(linha["item"], item.pk)
+        self.assertEqual(linha["previsto"], Decimal("20"))
+        self.assertEqual(linha["apontado"], Decimal("12"))
+        self.assertTrue(linha["apontou"])
+
+    def test_a_trava_e_o_defeito_do_serviço_viajam_no_cartao(self):
+        """Quem vai à frente precisa saber que ela está travada antes de ir."""
+        self._cartao()
+        Restricao.objects.create(
+            tenant=self.tenant, atividade=self.atividade,
+            tipo=TipoRestricao.MATERIAL, descricao="Bloco não entregue",
+        )
+        NaoConformidade.objects.create(
+            tenant=self.tenant, obra=self.obra, atividade=self.atividade,
+            gravidade=GravidadeNC.MAIOR, descricao="Parede fora de prumo",
+        )
+        linha = self._frente()["compromissos"]["linhas"][0]
+        self.assertEqual(linha["restricoes_abertas"], 1)
+        self.assertEqual(linha["ncs_abertas"], 1)
+
+    # -- os outros três blocos ----------------------------------------------
+
+    def test_a_trava_no_meu_nome_entra_com_prazo(self):
+        Restricao.objects.create(
+            tenant=self.tenant, atividade=self.atividade,
+            tipo=TipoRestricao.PROJETO, descricao="Detalhe da laje não chegou",
+            responsavel="Mestre Antônio",
+            prazo=self.hoje - timedelta(days=2),
+        )
+        bloco = self._frente()["restricoes"]
+        self.assertEqual(bloco["total"], 1)
+        prazo = bloco["linhas"][0]["prazo"]
+        self.assertTrue(prazo["vencido"])
+        self.assertEqual(prazo["dias_restantes"], -2)
+
+    def test_a_trava_removida_sai_da_frente(self):
+        trava = Restricao.objects.create(
+            tenant=self.tenant, atividade=self.atividade,
+            tipo=TipoRestricao.MATERIAL, descricao="Bloco",
+            responsavel="Mestre Antônio",
+        )
+        services.remover_restricao(
+            restricao=trava, por="mestre", nota="Entregue hoje",
+        )
+        self.assertEqual(self._frente()["restricoes"]["total"], 0)
+
+    def test_o_conserto_no_meu_nome_entra_e_o_concluido_sai(self):
+        nc = NaoConformidade.objects.create(
+            tenant=self.tenant, obra=self.obra, gravidade=GravidadeNC.MAIOR,
+            descricao="Parede fora de prumo",
+        )
+        acao = PlanoAcao.objects.create(
+            tenant=self.tenant, nao_conformidade=nc,
+            o_que="Refazer o trecho", quem="Mestre Antônio",
+            quando=self.hoje,
+        )
+        bloco = self._frente()["acoes"]
+        self.assertEqual(bloco["total"], 1)
+        self.assertEqual(bloco["linhas"][0]["acao"], acao.pk)
+        self.assertEqual(bloco["linhas"][0]["prazo"]["dias_restantes"], 0)
+
+        PlanoAcao.objects.filter(pk=acao.pk).update(
+            status=PlanoAcao.Status.CONCLUIDA, concluida_em=timezone.now(),
+        )
+        self.assertEqual(self._frente()["acoes"]["total"], 0)
+
+    def test_a_ficha_parada_no_meu_nome_diz_quantas_perguntas_faltam(self):
+        modelo = ModeloVerificacao.objects.create(
+            tenant=self.tenant, codigo="FVS-ALV", nome="FVS — Alvenaria",
+            dominio=DominioVerificacao.QUALIDADE,
+        )
+        for ordem, texto in ((1, "Prumo"), (2, "Junta")):
+            ItemModeloVerificacao.objects.create(
+                tenant=self.tenant, modelo=modelo, ordem=ordem, texto=texto,
+            )
+        services.aplicar_verificacao(
+            modelo=modelo, obra=self.obra, data=self.hoje,
+            inspetor="Mestre Antônio", tenant_id=self.tenant.pk,
+        )
+        bloco = self._frente()["fichas"]
+        self.assertEqual(bloco["total"], 1)
+        self.assertEqual(bloco["linhas"][0]["por_responder"], 2)
+
+    # -- vazio com razão, recorte e isolamento -------------------------------
+
+    def test_bloco_vazio_traz_a_razao_escrita(self):
+        frente = self._frente()
+        self.assertEqual(frente["total"], 0)
+        for codigo in ("compromissos", "restricoes", "acoes", "fichas"):
+            self.assertTrue(
+                frente[codigo]["vazio_porque"],
+                f"{codigo} veio vazio sem dizer por quê",
+            )
+
+    def test_a_leitura_atravessa_obras_e_o_recorte_e_opcional(self):
+        outra = Obra.objects.create(
+            tenant=self.tenant, nome_obra="Comercial Frente", endereco="Rua 10",
+        )
+        crono = Cronograma.objects.create(
+            tenant=self.tenant, obra=outra, descricao="Plano 2",
+            data_inicio=date(2026, 6, 1), status=Cronograma.Status.VIGENTE,
+        )
+        ativ = Atividade.objects.create(
+            tenant=self.tenant, cronograma=crono, codigo="1",
+            nome="Fundação", duracao_dias=4, profundidade=1,
+        )
+        segunda = services.abrir_programacao(
+            obra=outra, semana_inicio=self.hoje, tenant_id=self.tenant.pk,
+        )
+        ItemProgramacao.objects.create(
+            tenant=self.tenant, programacao=segunda, atividade=ativ,
+            responsavel="Mestre Antônio",
+        )
+        self._cartao()
+
+        self.assertEqual(self._frente()["compromissos"]["total"], 2)
+        so_uma = self._frente(obra_id=outra.pk)
+        self.assertEqual(so_uma["compromissos"]["total"], 1)
+        self.assertEqual(
+            so_uma["compromissos"]["linhas"][0]["obra_nome"], "Comercial Frente",
+        )
+
+    def test_a_frente_NAO_atravessa_o_tenant(self):
+        vizinho = Tenant.objects.create(slug="pdca-frente-2", nome="Vizinha")
+        obra = Obra.objects.create(
+            tenant=vizinho, nome_obra="Obra alheia", endereco="Rua X",
+        )
+        crono = Cronograma.objects.create(
+            tenant=vizinho, obra=obra, descricao="Plano",
+            data_inicio=date(2026, 6, 1), status=Cronograma.Status.VIGENTE,
+        )
+        ativ = Atividade.objects.create(
+            tenant=vizinho, cronograma=crono, codigo="1", nome="Alheia",
+            duracao_dias=3, profundidade=1,
+        )
+        semana = services.abrir_programacao(
+            obra=obra, semana_inicio=self.hoje, tenant_id=vizinho.pk,
+        )
+        ItemProgramacao.objects.create(
+            tenant=vizinho, programacao=semana, atividade=ativ,
+            responsavel="Mestre Antônio",
+        )
+        self.assertNotIn("Obra alheia", str(self._frente()))
+
+    def test_a_permissao_recorta_por_bloco_e_nao_esvazia_a_pagina(self):
+        self._cartao()
+        nc = NaoConformidade.objects.create(
+            tenant=self.tenant, obra=self.obra, gravidade=GravidadeNC.MENOR,
+            descricao="Rejunte",
+        )
+        PlanoAcao.objects.create(
+            tenant=self.tenant, nao_conformidade=nc, o_que="Refazer",
+            quem="Mestre Antônio", quando=self.hoje,
+        )
+        frente = self._frente(pode=lambda p: p != "pdca.nc.view")
+        self.assertEqual(frente["compromissos"]["total"], 1)
+        self.assertIsNone(frente["acoes"])
+        self.assertEqual(
+            [n["permissao"] for n in frente["sem_permissao"]], ["pdca.nc.view"],
+        )
+
+    def test_o_bloco_corta_no_teto_e_declara_o_total(self):
+        for indice in range(PDCA_TETO_LINHAS_POR_FRENTE + 3):
+            ativ = Atividade.objects.create(
+                tenant=self.tenant, cronograma=self.cronograma,
+                codigo=f"2.{indice}", nome=f"Serviço {indice}",
+                duracao_dias=2, profundidade=1,
+            )
+            ItemProgramacao.objects.create(
+                tenant=self.tenant, programacao=self.semana, atividade=ativ,
+                responsavel="Mestre Antônio", ordem=indice,
+            )
+        bloco = self._frente()["compromissos"]
+        self.assertEqual(len(bloco["linhas"]), PDCA_TETO_LINHAS_POR_FRENTE)
+        self.assertEqual(bloco["total"], PDCA_TETO_LINHAS_POR_FRENTE + 3)
+        self.assertTrue(bloco["truncada"])
+
+
+class ApiDasMinhasFrentesTests(APITestCase):
+    """A quinta porta do cockpit — e a RLS que o achado S1 ensinou a armar."""
+
+    def setUp(self):
+        self.tenant = Tenant.objects.create(
+            slug="frente-api", nome="Construtora Frente API",
+        )
+        self.obra = Obra.objects.create(
+            tenant=self.tenant, nome_obra="Residencial Frente",
+            endereco="Rua API",
+        )
+        self.cronograma = Cronograma.objects.create(
+            tenant=self.tenant, obra=self.obra, descricao="Plano",
+            data_inicio=date(2026, 6, 1), status=Cronograma.Status.VIGENTE,
+        )
+        self.atividade = Atividade.objects.create(
+            tenant=self.tenant, cronograma=self.cronograma, codigo="1",
+            nome="Alvenaria do 4º", duracao_dias=5, profundidade=1,
+        )
+        self.semana = services.abrir_programacao(
+            obra=self.obra, semana_inicio=timezone.localdate(),
+            tenant_id=self.tenant.pk,
+        )
+        self.usuario = Usuario.objects.create(
+            username="encarregado", tenant=self.tenant,
+            first_name="Mestre", last_name="Antônio",
+        )
+        self.usuario.iam_modules = ["pdca"]
+        self.usuario.iam_permissions = [
+            "pdca.programacao.view", "pdca.restricao.view",
+            "pdca.nc.view", "pdca.verificacao.view",
+        ]
+        self.client.force_authenticate(user=self.usuario)
+
+    def _cartao(self, responsavel):
+        return ItemProgramacao.objects.create(
+            tenant=self.tenant, programacao=self.semana,
+            atividade=self.atividade, responsavel=responsavel,
+        )
+
+    def test_a_porta_casa_pelo_nome_de_quem_pede(self):
+        self._cartao("Mestre Antônio")
+        resposta = self.client.get("/api/pdca/minhas-frentes/")
+        self.assertEqual(resposta.status_code, 200, resposta.data)
+        corpo = resposta.json()
+        self.assertEqual(corpo["quem"], "Mestre Antônio")
+        self.assertEqual(corpo["compromissos"]["total"], 1)
+        self.assertEqual(corpo["teto"], PDCA_TETO_LINHAS_POR_FRENTE)
+
+    def test_como_troca_o_nome_procurado(self):
+        """O rótulo do quadro nem sempre é o nome do login — ver a view."""
+        self._cartao("Encarregado Rita")
+        vazio = self.client.get("/api/pdca/minhas-frentes/").json()
+        self.assertEqual(vazio["compromissos"]["total"], 0)
+        achou = self.client.get(
+            "/api/pdca/minhas-frentes/?como=encarregado rita",
+        ).json()
+        self.assertEqual(achou["compromissos"]["total"], 1)
+        self.assertEqual(achou["quem"], "encarregado rita")
+
+    def test_sem_o_modulo_contratado_a_porta_fecha(self):
+        self.usuario.iam_modules = []
+        self.client.force_authenticate(user=self.usuario)
+        self.assertEqual(
+            self.client.get("/api/pdca/minhas-frentes/").status_code, 403,
+        )
+
+    def test_a_obra_alheia_e_recusada_sem_vazar_o_nome(self):
+        vizinho = Tenant.objects.create(slug="frente-api-2", nome="Vizinha")
+        alheia = Obra.objects.create(
+            tenant=vizinho, nome_obra="Obra alheia", endereco="Rua X",
+        )
+        resposta = self.client.get(
+            f"/api/pdca/minhas-frentes/?obra={alheia.pk}",
+        )
+        self.assertEqual(resposta.status_code, 400, resposta.data)
+        self.assertNotIn("Obra alheia", str(resposta.data))
+
+    def test_o_status_anuncia_a_frente_e_declara_que_nao_ha_offline(self):
+        corpo = self.client.get("/api/pdca/status/").json()
+        self.assertTrue(corpo["recursos"]["minhas_frentes"])
+        self.assertFalse(corpo["recursos"]["campo_offline"])
+        self.assertEqual(
+            corpo["tetos"]["linhas_por_frente"], PDCA_TETO_LINHAS_POR_FRENTE,
+        )

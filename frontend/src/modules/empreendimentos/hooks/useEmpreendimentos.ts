@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import apiClient from '@/api/apiClient'
 import type { Empreendimento, StatusEmpreendimento } from '@/types'
 
+import { contemSemAcento } from '@/utils/texto'
+
 interface Filters {
   search?: string
   status?: StatusEmpreendimento | ''
@@ -31,11 +33,12 @@ export function useEmpreendimentos(filters: Filters = {}) {
       list = list.filter(e => e.status_empreendimento === filters.status)
     }
     if (filters.search) {
-      const q      = filters.search.toLowerCase()
+      const q      = filters.search
       const digits = q.replace(/\D/g, '')   // dígitos extraídos do termo buscado
       list = list.filter(e => {
-        const byName = e.empreendimento.toLowerCase().includes(q) ||
-                       e.razao_social.toLowerCase().includes(q)
+        // Sem acento dos dois lados — ver .
+        const byName = contemSemAcento(e.empreendimento, q) ||
+                       contemSemAcento(e.razao_social, q)
         // CNPJ só é comparado se o termo de busca contiver pelo menos um dígito
         const byCNPJ = digits.length > 0 &&
                        e.cnpj.replace(/\D/g, '').includes(digits)

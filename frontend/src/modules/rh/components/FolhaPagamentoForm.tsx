@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { abrirEmNovaAba } from '@/lib/arquivo'
 import type { FolhaPagamento, FolhaPagamentoFormData } from '@/types'
 import { FieldError, FormErrorBanner, parseApiErrors, type FieldErrors } from '@/utils/formErrors'
-import { minPagamentoISO, maxPagamentoISO, validateISO_Pagamento } from '@/utils/dates'
+import { validateISO_Pagamento, minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
 
 interface Props {
   open: boolean
@@ -67,15 +67,13 @@ const FolhaPagamentoForm: React.FC<Props> = ({ open, onClose, onSave, initial, f
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <Row2>
             <Field label="Mês de Referência *" error={fieldErrors.mes_referencia}>
-              <input type="date" value={form.mes_referencia}
-                min={minPagamentoISO()} max={maxPagamentoISO()}
+              <input type="date" min={minCalendarioISO} max={maxCalendarioISO} value={form.mes_referencia}
                 onChange={e => { set('mes_referencia', e.target.value); setFieldErrors(p => ({ ...p, mes_referencia: '' })) }}
                 onBlur={e => { const err = validateISO_Pagamento(e.target.value); if (err) setFieldErrors(p => ({ ...p, mes_referencia: err })) }}
                 style={inp} />
             </Field>
             <Field label="Data de Pagamento" error={fieldErrors.data_pagamento}>
-              <input type="date" value={form.data_pagamento}
-                min={minPagamentoISO()} max={maxPagamentoISO()}
+              <input type="date" min={minCalendarioISO} max={maxCalendarioISO} value={form.data_pagamento}
                 onChange={e => { set('data_pagamento', e.target.value); setFieldErrors(p => ({ ...p, data_pagamento: '' })) }}
                 onBlur={e => { const err = validateISO_Pagamento(e.target.value); if (err) setFieldErrors(p => ({ ...p, data_pagamento: err })) }}
                 style={inp} />

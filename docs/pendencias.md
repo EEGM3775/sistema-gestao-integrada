@@ -13,7 +13,7 @@
 
 | O que | Para onde | Por quê |
 | --- | --- | --- |
-| 143 achados corrigidos | [historico-correcoes.md](historico-correcoes.md) | Corrigido não é pendência — é histórico |
+| 144 achados corrigidos | [historico-correcoes.md](historico-correcoes.md) | Corrigido não é pendência — é histórico |
 | D29 · D30 · D32 (Maps) | [modulos/modulomaps.md](modulos/modulomaps.md) | Desvio consciente da planta, com gatilho de reabertura |
 | D35 · D36 · D37 · D55 (Prancheta) | [modulos/moduloprancheta.md](modulos/moduloprancheta.md) | Limite declarado do desenho, não defeito |
 | D74 (antivírus) | [modulos/funcoesimpexp.md](modulos/funcoesimpexp.md) | Decisão do dono, adiada com método definido |
@@ -118,6 +118,481 @@ consulte as duas fontes, ou envio dos eventos da IAM ao `AuditLog` por JWT de se
 outbox local para não perder evento se o backend estiver fora.
 
 ## 🟠 Altas
+
+
+### D194 — o JWT passou de 8 KB e derruba a plataforma inteira para quem tem muitas permissões · 🔴 contornado 20/09/2026
+
+Achado com o dono relatando *"quando atualizo a página, volta pra tela de login"* e *"erro ao
+carregar empreendimentos"*. O sintoma parecia sessão expirando; não era.
+
+O JWT da IAM leva o **catálogo de permissões do usuário dentro do token**, e ele cresceu com o
+catálogo — a PDCA.8 acrescentou `pdca.dds.*`, `pdca.ocorrencia.*` e uma persona. Medido no stack:
+
+| Usuário | Token | Linha `Authorization: Bearer …` | Gateway | Django direto |
+| --- | --- | --- | --- | --- |
+| `demo` | 8.055 B | 8.077 B | 200 | — |
+| `admin` | 8.311 B | 8.333 B | **400** | **431** |
+| `dono` | 8.308 B | 8.330 B | **400** | **431** |
+
+O limite padrão de uma linha de cabeçalho é **8.192 B** no nginx
+(`large_client_header_buffers 4 8k`) e **8.190 B** no gunicorn
+(`--limit-request-field_size`). Quem passa disso perde **toda** chamada autenticada, em todos os
+módulos — só `/auth/login/` e `/auth/refresh/` seguiam funcionando, por não levarem o cabeçalho.
+
+**Três coisas tornaram o diagnóstico caro, e valem como lição:**
+
+- o nginx registra "client sent too long header line" em nível **`info`**, e o `error_log` roda em
+  `error` — o 400 aparecia no access log **sem upstream e com `ua` vazio**, e nada no error log;
+- o sintoma imita expiração de sessão, porque o que sobrevive é exatamente o par login/refresh;
+- `demo` passava raspando (22 B de folga), então metade dos testes dizia que estava tudo bem.
+
+**Contornado**, não resolvido: `large_client_header_buffers 8 32k` no
+[nginx.unified.conf](../infra/gateway/nginx.unified.conf) e `GUNICORN_CMD_ARGS` com
+`--limit-request-field_size 32768` no `erp` e na `iam`
+([base.yml](../deploy/compose/base.yml)). Os dois tetos têm de subir **juntos**, ou o 431 só troca
+de porta. São **janela de protocolo de terceiro** (§5.6 do `planos.py`) e por isso não vão para
+`payment/planos.py`.
+
+**A cura é outra, e é decisão de arquitetura:** token que carrega o catálogo cresce com o catálogo,
+e volta a estourar na próxima leva de permissões — além de pagar ~8 KB em **toda** requisição da
+plataforma. As saídas, sem escolha feita:
+
+- **claim de versão em vez da lista** — o token leva um hash/versão do conjunto de permissões, e a
+  tela busca a lista uma vez em `/auth/me/`, revalidando quando o hash muda;
+- **agrupar por papel** — o token leva os papéis, e a resolução papel → permissões acontece no
+  resource server, que já tem o catálogo em código;
+- **comprimir** (JWE/deflate) — mais barato de implementar e o que menos ataca a causa.
+
+Enquanto a cura não vem, vale uma **guarda**: teste que falha quando o token de qualquer persona do
+seed passa de um teto declarado, para o estouro aparecer na esteira e não no navegador do dono.
+
+### D189 — a ocorrência de segurança não entra na trilha de LGPD, e entrar do jeito de hoje apagaria prova legal · 🟠 aberto 20/09/2026
+
+Achado ao fechar a PDCA.8, que trouxe a **primeira PII do grupo `pdca`**: `Ocorrencia` guarda nome de
+acidentado, parte do corpo, natureza da lesão, CID-10 e dias de afastamento — art. 11 da LGPD, vizinho
+de porta do ASO.
+
+`nucleo/lgpd.py` enumera os titulares e os modelos relacionados em `TITULARES`. **A `Ocorrencia` não
+está lá**, então ela não sai na portabilidade nem no relatório de titular. O lugar natural seria
+`relacionados_pii` do `funcionario`, pelo FK `acidentado` — e é aí que a coisa trava.
+
+**Entradas de `relacionados_pii` são APAGADAS, não anonimizadas.** O
+`anonimizar` faz `.delete()` sobre cada modelo relacionado (`lgpd.py`, a segunda varredura da lista).
+Registrar a ocorrência ali faria um pedido de esquecimento **destruir o registro de um acidente de
+trabalho** — que é exatamente o que a lei manda guardar: a CAT tem retenção previdenciária, e o próprio
+art. 16, I da LGPD ressalva a guarda para cumprimento de obrigação legal. O pedido de um titular
+apagaria a prova de que a empresa comunicou o acidente dele.
+
+**Não foi resolvido dentro da fatia de propósito**: o conserto não é uma linha no dicionário, é dar ao
+`lgpd.py` uma terceira categoria — o relacionado que **anonimiza em vez de apagar** —, e isso muda o
+comportamento de todos os titulares, não só deste. É mudança de fundação, e a decisão de como tratar
+dado sensível com retenção legal obrigatória é do dono.
+
+**Enquanto isso, o que vale:** a ocorrência **não** é exportada nem esquecida, e este parágrafo é o
+registro de que a ausência é conhecida. O mascaramento por permissão (`pdca.ocorrencia.dado_medico`)
+funciona e está testado — o que falta é o outro lado, o do titular.
+
+---
+### D196 — o plano `profissional` contrata o PDCA e não contrata a biblioteca de planos modelo · 🟡 aberto 21/09/2026
+
+Achado ao rodar os roteiros vizinhos para verificar a fatia da semana.
+`pdca1_cronograma_test.py` reprova em três checks seguidos (marcar modelo, listar a biblioteca,
+aplicar à obra nova) porque `POST .../marcar-modelo/` responde **402**:
+
+> *"O plano contratado inclui 0 planos modelo e o limite já foi atingido."* — `plano: profissional`
+
+O número está no [`planos.py`](../payment/planos.py), e a justificativa escrita ao lado dele é:
+*"os degraus abaixo do `empresarial` recebem 0 porque não contratam o `pdca`"*. **Só que contratam.**
+O tenant `demo` do seed está em `profissional` e tem o módulo `pdca` — é com ele que todo o módulo é
+demonstrado e testado. A premissa da quota e o que o produto faz divergiram em algum ponto, e o
+efeito é um cliente que paga pelo módulo de planejamento e recebe 402 ao tentar padronizar a torre
+que vai repetir 300 vezes — que é, segundo o próprio comentário, *"exatamente o que se vende"*.
+
+**Não é defeito de código, é uma decisão de plano**, e por isso fica aqui em vez de ser corrigida:
+ou `profissional` passa a incluir um punhado de planos modelo (e a frase da justificativa muda
+junto), ou o seed da demo sobe para o degrau que os inclui — e aí o que se está dizendo é que a
+demonstração do módulo exige um plano que a maioria não tem. A primeira parece a intenção original;
+a escolha é do dono.
+
+**Enquanto isso**, três checks do roteiro mais antigo do módulo ficam vermelhos por um motivo que
+nada tem a ver com cronograma, e quem rodar a suíte vai procurar o defeito no lugar errado.
+
+---
+### D195 — cinco roteiros de navegador do PDCA dirigem a tela que foi apagada · 🟠 aberto 21/09/2026
+
+Achado ao verificar a fatia da semana, rodando os roteiros vizinhos para conferir que nada quebrou.
+Cinco dos sete `pdca*_browser_test.py` falham com `TimeoutError` esperando um botão que não existe
+mais.
+
+Não é regressão: em 20/09/2026 o frontend do módulo foi **zerado e redesenhado do eixo**, e o
+endereço mudou de `/app/pdca/obra/{id}/<assunto>` para `/app/pdca/o/{id}/<posto>`. Os roteiros
+continuam pedindo o antigo, então abrem uma página que redireciona e ficam esperando um elemento que
+nunca chega. O que cada um cobria continua valendo como **régua**; o que envelheceu foi o caminho até
+a tela.
+
+| Roteiro | O que ele prova | Quando volta a ter tela |
+|---|---|---|
+| `pdca3_formulario_browser_test.py` | Os seis achados do formulário de contrato (D132) | F.4 — `MEDIÇÃO` |
+| `pdca3_grade_browser_test.py` | A grade de medição: prévia somente-leitura, memória de cálculo | F.4 — `MEDIÇÃO` |
+| `pdca5_quadro_browser_test.py` | O quadro da semana, o encerramento e o PPC | **já tem** — `pdca_semana_campo_browser_test.py` cobre o posto novo |
+| `pdca6_ritmo_browser_test.py` | A linha de balanço, o ritmo e o gargalo | **já tem** — a vista *Ritmo* do posto `PLANO` (F.3) |
+| `pdca7_ficha_browser_test.py` | Responder a ficha uma pergunta por vez, e a fila do laço | F.5 — `QUALIDADE` |
+
+**Por que fica aberto em vez de ser consertado agora.** Dois dos cinco (`pdca5_quadro`, `pdca6_ritmo`)
+são reescrita sobre telas que já existem, e é trabalho de portar assertiva por assertiva — não de
+trocar a URL, porque a física mudou (o quadro deixou de ser uma página e virou um posto com esteira e
+julgamento no cartão). Os outros três esperam a fatia que reconstrói a tela deles, e reescrevê-los
+antes seria escrever teste contra um desenho que ainda não existe.
+
+**O risco enquanto isso**: a régua que cada um guardava fica sem quem a cobre no navegador. O backend
+correspondente continua coberto — `pdca3_medicao_test.py`, `pdca5_programacao_test.py`,
+`pdca6_linha_de_balanco_test.py` e `pdca7_verificacao_test.py` passam —, então o que está descoberto
+é a **tela**, e só a das fatias que ainda não foram reconstruídas.
+
+**Gatilho de fechamento:** cada fatia do frontend fecha a linha dela. A F.4 revive os dois de
+medição, a F.5 revive o da ficha, e os dois já cobertos podem ser apagados ao portar a última
+assertiva que eles têm e os novos não.
+
+---
+### D190 — o teste que fia os tetos é cego em 47 dos 74, e o motivo é o cache de inteiros do CPython · 🟠 aberto 20/09/2026
+
+O `CLAUDE.md` diz que quem cobra a régua "todo teto vive em `payment/planos.py`" é
+[`backend/nucleo/test_tetos_no_payment.py`](../backend/nucleo/test_tetos_no_payment.py). Ele prende cada
+constante ao consumidor com `assertIs(services.X, planos.X)` — 29 ocorrências.
+
+**`assertIs` compara identidade de objeto, e o CPython interna todo inteiro de −5 a 256.** Para qualquer
+teto nessa faixa a asserção passa **mesmo que o módulo de engenharia tenha redeclarado o literal** em
+vez de importar de `planos.py`, que é precisamente a regressão que a regra existe para impedir.
+Verificado no Python 3.12 do projeto, com dois módulos independentes:
+
+| valor | `a is b` | o `assertIs` prova algo? |
+| --- | --- | --- |
+| 150 | `True` | não |
+| 500 | `False` | sim |
+| 1000 | `False` | sim |
+
+Contando as constantes escalares de `planos.py`: **27 são fiscalizadas de verdade** (valor > 256) e
+**47 estão na faixa cega** — entre elas `PDCA_TETO_ITENS_POR_MODELO_VERIFICACAO` (150),
+`PDCA_TETO_MODELOS_POR_TENANT` (200), `PDCA_TETO_ACOES_POR_NC` (10), `PDCA_PROFUNDIDADE_MAXIMA_WBS`
+(12) e `ORCAMENTO_PROFUNDIDADE_MAXIMA_COMPOSICAO` (12).
+
+**Nenhum teto está errado hoje** — todos os módulos importam de `payment.planos` como manda a regra.
+É o guarda-corpo que não pegaria a regressão futura, e por isso é 🟠 e não 🔴.
+
+**O caminho já existe e está exercido**: a PDCA.8 declarou seus três tetos (todos ≤ 256) e escreveu a
+prova de procedência por AST em `TetosDaSsmaTests` — o nome tem de chegar ao `services` por
+`ImportFrom` de `payment.planos` e não pode existir como atribuição no módulo. **Falta estender isso
+aos outros 44**, de preferência como uma varredura única que dispense o par escrito à mão.
+
+---
+### D191 — encerrar a não-conformidade não remove a restrição que ela abriu · 🟡 aberto 20/09/2026
+
+`services.encerrar_nc` só muda status e carimbos da NC. Não há signal nem chamada em cascata para
+`remover_restricao`, e o único chamador de produção dela é a ação manual do `RestricaoViewSet`. O teste
+`test_nc_encerrada_nao_trava_mais_nada` prova apenas que uma NC encerrada não gera restrição **nova** —
+não que a antiga saiu.
+
+Na prática: NC crítica trava a atividade, alguém trata, verifica a eficácia e encerra — **e a frente
+continua fora do quadro da semana**, sem nada na tela explicando por quê. Com o tempo o
+`PDCA_TETO_RESTRICOES_ABERTAS_POR_OBRA` (500) passa a estourar por entulho, que é o oposto do que ele
+existe para evitar.
+
+**A PDCA.8 não repetiu o padrão**: `encerrar_ocorrencia` **recusa** fechar enquanto a restrição
+estiver aberta, e diz qual é. Remover automaticamente seria pior — declarar que o risco cessou libera o
+serviço, e isso é ato de quem responde pela obra (`pdca.restricao.remover`), não efeito colateral de um
+encerramento. **A NC deveria fazer o mesmo**, e a mudança é pequena; fica aberta porque mexe no
+comportamento de uma fatia já entregue e validada.
+
+---
+### D192 — o ranking de causas não tem categoria de segurança, e a semana perdida por acidente cai em "externo" · 🟡 aberto 20/09/2026
+
+`CausaNaoCumprimento.Categoria` é lista fechada com sete valores (planejamento, mão de obra, material,
+equipamento, projeto, externo, qualidade). Nenhum de segurança. Com a PDCA.8 no ar, a frente interditada
+por risco **sai do quadro da semana** e o não cumprimento é atribuído à causa que o time escolher — e
+hoje a mais próxima é `EXTERNO`, que é onde mora "chuva" e "falta de energia da concessionária".
+
+O efeito é que o ranking de causas, que existe para apontar o que a empresa tem de consertar, empurra
+para "não foi culpa nossa" exatamente o caso em que foi.
+
+**Duas saídas, e a segunda é muito mais barata:** acrescentar `SEGURANCA` ao enum (mexe em lista
+fechada, migration, e no eixo de todo gráfico de PPC já publicado), ou **semear uma causa de fábrica**
+(`SEG-INTERD — frente interditada por risco`) na categoria que fizer sentido — o catálogo é extensível
+por tenant e reversível por `ativo=False`. A escolha é de produto.
+
+---
+### D193 — `EntregaEPISerializer.obra_nome` sempre vem nulo · 🟡 aberto 20/09/2026
+
+Achado ao construir o seam do EPI da PDCA.8. Em [`modulosil/serializers.py`](../backend/modulosil/serializers.py),
+`obra_nome = serializers.CharField(source="obra.nome", read_only=True, default=None)` — e `Obra` não
+tem campo `nome`: tem **`nome_obra`**. O DRF captura o `AttributeError` em `Field.get_attribute` e, como
+há `default`, devolve o default: a chave `obra_nome` sai `null` para **toda** entrega de EPI, inclusive
+as que têm obra.
+
+Não trava nada e não vaza nada — é campo de rótulo. Fica aberto porque é a espécie de defeito que
+sobrevive anos: a chave existe, o JSON é válido, e quem lê conclui que a entrega não tem obra.
+
+**A PDCA.8 não o consertou de propósito**: é defeito do SIL, e corrigi-lo de dentro da fatia do PDCA
+seria conserto silencioso em módulo alheio. A leitura da SSMA resolve a obra por `obra_id`.
+
+---
+### D183 — a carga real herda o rótulo da publicação que substituiu · 🟠 aberto 16/09/2026
+
+Causa em código do [D181](historico-correcoes.md), cujos **dados** já foram limpos. Em
+[`carga.py:730`](../backend/moduloorcamento/carga.py) e no gêmeo de
+[`importar_base_referencial.py`](../backend/moduloorcamento/management/commands/importar_base_referencial.py):
+
+```python
+if not base.rotulo:
+    base.rotulo = base.rotulo_automatico()
+```
+
+A publicação é encontrada por `get_or_create` na chave `fonte+uf+mês+regime`. Quando uma carga real
+cai sobre uma publicação que **já existe** nessa chave, o conteúdo é trocado inteiro e o rótulo
+**não**. Foi assim que "SINAPI SP 08/2026 desonerado — DEMONSTRAÇÃO" passou a descrever 4.886 insumos
+de SINAPI verdadeira, e ninguém tinha como saber olhando a tela.
+
+A guarda não é ingênua: ela protege o `--rotulo` que alguém escolheu à mão, e sobrescrever cegamente
+destruiria essa escolha. O problema é que **não existe como distinguir** "o usuário nomeou esta
+publicação" de "uma semente de demonstração escreveu este texto" — é um campo só, sem procedência.
+
+→ Decidir entre: (a) reescrever o rótulo sempre que a carga substituir o conteúdo, e aposentar o
+`--rotulo` (o nome automático já é completo e nunca envelhece); (b) um campo de procedência
+(`rotulo_manual`) que diga quem escreveu, e só preservar o que veio de gente; (c) deixar como está e
+tratar rótulo herdado como responsabilidade de quem carrega. **(a) é o menor**, e o
+`rotulo_automatico()` já é a fonte de verdade que a tela usa quando o campo está vazio.
+
+### D184 — SINAPI de 01/2026 e 02/2026 não entrou: a URL da Caixa devolve HTML, não o ZIP · 🟠 aberto 16/09/2026
+
+Das 20 competências carregadas em 15/09/2026 (01/2025 a 08/2026, 27 UFs × 3 regimes = 81 publicações
+por mês), **duas faltam**. As cargas 30 e 31 registraram:
+
+```
+url  = https://www.caixa.gov.br/Downloads/sinapi-relatorios-mensais/SINAPI-2026-01-formato-xlsx.zip
+lido = 295.035 bytes
+erro = O arquivo não é um ZIP nem uma planilha .xlsx.
+```
+
+Baixou ~295 KB de **alguma coisa** que não é o pacote — quase certamente a página que o anuncia, ou
+um aviso do WAF. O padrão de URL vale para os outros 18 meses, então não é o template: é aquele
+artefato específico que não está onde os demais estão. É exatamente a distinção que o histórico de
+cargas existe para registrar ("o WAF cortou" × "o mês não saiu" × "o layout mudou"), e aqui ela ainda
+não foi feita.
+
+**Consequência prática:** quem orçar com data-base de janeiro ou fevereiro de 2026 — data de edital é
+quase sempre passada — não acha a publicação e cai em outro mês, mudando o custo sem perceber.
+
+→ Conferir a URL real na página da Caixa e, se o pacote existir, rodar o plano B do comando, que não
+depende do download:
+
+```
+manage.py carregar_base_oficial --fonte sinapi --mes 2026-01 --arquivo /tmp/SINAPI-2026-01.zip
+```
+
+### D185 — o staging não tem o módulo de orçamento, e a SINAPI só existe na máquina de quem desenvolve · 🟠 aberto 16/09/2026
+
+O `erp_db` do staging tem **77 tabelas e 33 MB**; o de desenvolvimento tem **5.647 MB**. Nenhuma
+tabela de `moduloorcamento` existe lá, e `django_migrations` não registra **nenhuma** migration do
+app — a última aplicada em qualquer app é de 18/07/2026. A imagem do ERP de staging é tão antiga que
+o `manage.py` responde `No installed app with label 'moduloorcamento'`.
+
+Some junto o que o D169–D178 já apontou por outro caminho: o staging deixou de acompanhar o
+desenvolvimento e não valida mais o que se entrega.
+
+**O lado que é decisão, não esquecimento:** as 1.460 publicações ocupam 5,6 GB, e **não são
+reprodutíveis a partir do repositório** — chegaram ao banco de dev por 20 cargas manuais em
+15/09/2026 e vivem só no volume `02sistema_gestao_integrada_pg_data`. Subir o stack do zero dá um
+banco vazio. Então há duas perguntas separadas: (1) atualizar a imagem e as migrations do staging —
+que é manutenção devida; (2) **se** a base referencial deve existir em staging, e por qual caminho
+(dump restaurado, subconjunto de UFs/meses, ou carga rodada lá). A (2) é do dono: 5,6 GB por ambiente
+é custo, e testar com uma UF e três meses pode bastar.
+
+### D179 — o ajuste de vencimento só conhece feriado onde a base foi sincronizada e o lote foi geocodificado · 🟠 aberto 16/09/2026
+
+O dia útil bancário entrou em 16/09/2026 ([D169](historico-correcoes.md)), e ele **depende de duas
+coisas que não são código** — as duas têm degradação declarada na tela, nenhuma tem ação tomada:
+
+1. **A tabela `Feriado` é global e nasce vazia.** Quem a enche é `manage.py sincronizar_feriados`.
+   Sem ela, o vencimento desvia de sábado e domingo e **não** de feriado. As respostas de
+   `simular/`, `previa-parcelas/` e `gerar-parcelas/` trazem `calendario.feriadosCarregados`, e a
+   tela escreve a ressalva — mas o carnê emitido nesse estado tem parcelas vencendo em 25/12.
+   **Ação:** rodar o comando nos ambientes vivos e confirmar que o beat
+   `calendar-sincronizar-feriados` está de pé em produção.
+
+2. **O feriado municipal exige o código IBGE, e ele vem do Maps.** `Empreendimento` guarda cidade e
+   UF em texto, e nome de cidade não é chave (existem quatro "Bom Jesus"). O código sai do `Local` do
+   empreendimento, preenchido pela cascata de geocodificação. Empreendimento sem `Local` — ou com
+   `Local` que ainda não resolveu o município — cai em nacional + estadual, e a resposta **diz**
+   (`calendario.municipio: false`). **Ação:** rodar o backfill de `Local` dos empreendimentos, ou
+   decidir por um campo `ibge` em `Empreendimento` (troca a dependência do Maps por um dado
+   digitado — decisão do dono).
+
+Não é defeito do cálculo: é alcance dele. Fica aqui porque a diferença entre "ajustado para o
+próximo dia útil" e "ajustado, menos pelos feriados" é dinheiro entrando no dia errado.
+
+---
+### D180 — as correções de 16/09/2026 não foram compiladas nem testadas neste ambiente · 🟠 aberto 16/09/2026
+
+A leva D169–D178 foi escrita numa máquina **sem Node e sem GDAL**: `npm`/`tsc -b` não existem, e
+`manage.py test` para no import do PostGIS (`Could not find the GDAL library`). O que foi possível
+verificar rodou: o motor de proposta foi exercitado direto em Python (Price, recusa de saldo sem
+prazo, as três condições que quitam por fora, o ajuste de data que não mexe em um centavo) e todo
+arquivo tocado passa por `ast.parse`. O resto é revisão de código.
+
+**O risco concreto** é o `tsconfig` do frontend com `noUnusedLocals`/`noUnusedParameters` ligados:
+um símbolo esquecido derruba o build, e nove arquivos `.tsx` foram tocados. **Ação:** rodar
+`cd frontend && npm run build` e `cd backend && ../.venv/bin/python manage.py test clientes
+modulocalendar modulomaps empreendimentos funcoescobrancas` num ambiente completo antes de subir.
+
+Testes novos que acompanham a leva e ainda não rodaram: `clientes.test_plano_pagamento`
+(`CondicaoDePagamentoTests`, `AjusteDeVencimentoTests`), `clientes.test_venda_unidade`
+(`ResumoDeUnidadesTests`, `ContagemDaCarteiraAgrupadaTests`), `modulocalendar.tests`
+(`DiaUtilBancarioTests`), `modulomaps.tests` (`UnidadeNoMapaTests`) e `funcoescobrancas.tests`
+(`VencimentoBancarioDoBoletoTests`).
+
+---
+### D160 — a folha separada costuma ser um traço perdido, não outro desenho · 🟠 aberto 16/09/2026
+
+Achado ao medir o acervo a pedido do dono (item 24), e ele é a **causa** do item 31 — *"arquivos com
+distâncias muito grandes entre desenhos, onde o desenho é separado. Quero desfazer essa separação."*
+
+O `_agrupar` corta onde o vazio supera o desenho e **emite toda ilha como folha**, sem piso de
+substância. Nos três arquivos do acervo que se separam em duas folhas, a segunda é resíduo:
+
+| Arquivo | folha 1 | folha 2 | `viewBox` declarado |
+| --- | --- | --- | --- |
+| `Sensor de Incendio.dwg` | 129 traços, em (−559.725, 8.568.639) | **1 traço**, em (731, 200) | 371 × 226 |
+| `Loteamento Park Ville R8.dwg` | 5.955 traços | **1 traço** de 9,5 × 7,3 a 18.431 de distância | 7.006 × 3.392 |
+| `ESGOTO 2023.dwg` | 25.247 traços | **39 traços** de 99 × 330, a 42.815.267 no eixo Y | 467.288 × 8.557.859 |
+
+Repare no `Sensor de Incendio`: o desenho **real** (129 traços) é o que está a 8,5 milhões de unidades
+da página declarada, e o traço solto é o único que cai dentro dela. Não são dois desenhos distantes —
+é um desenho e um resto que o conversor largou longe (ver o **D159**).
+
+**Por que não foi consertado junto.** As duas saídas óbvias são ruins e a escolha é do dono:
+
+1. **Absorver o resíduo na folha maior** parece o "desfazer a separação" literal, e é o pior dos dois:
+   a envolvente da folha passaria a incluir um ponto a 42 milhões de unidades, e a página volta a ser
+   quilométrica — exatamente o que a PRA.1c existe para impedir.
+2. **Não promover o resíduo a folha** (piso de substância: uma ilha com menos de X% dos traços da
+   maior não é desenho) resolve os três casos e preserva o caso legítimo do `confrontantes.dwg`, que
+   tem 169 traços de cada lado. Mas implica **descartar geometria do cliente**, e o descarte precisa
+   ser declarado como o `_tem_traco` e o `desenhos_truncados` já fazem.
+
+O que foi entregue enquanto isso é a vista de conjunto do **D158**, que resolve o sintoma sem tocar
+em geometria: as folhas voltam a aparecer juntas, no lugar em que estão.
+
+Bancada: `ferramentas/medicao/` (o aferidor do D159 imprime as caixas por folha).
+
+---
+
+### D159 — o critério que escolhe o deslocamento do símbolo não decide em 80% do acervo · 🟠 aberto 16/09/2026
+
+Pedido do dono (15/09/2026): *"Pranchetas tem uma função de deslocamento, testar vários dwg para
+saber se esse deslocamento tá certo."* Medido sobre **159 DWGs** do acervo real + os 6 difíceis.
+
+**O que passou.** A derivação está certa e é robusta: o `viewBox` foi legível em **159/159** arquivos,
+e onde a correção se aplica ela acerta **exatamente** — nos símbolos afetados o centro vai de 4.541,5
+para **0,0**, não "para perto de zero". A correção piorou o enquadramento em **2 de 148** arquivos com
+símbolo, e marginalmente (0,6% → 0,0% e 1,7% → 1,1%, os dois já quase nulos).
+
+**O que reprovou.** O docstring do `deslocamento_dos_simbolos` justifica a escolha por símbolo assim:
+*"a diferença é de seis ordens de grandeza — não há empate a arbitrar"*. Isso vale para o arquivo de
+referência de 10/08/2026 e **não vale para o acervo**: em **118 dos 148** arquivos (80%) existe ao
+menos um símbolo em que as duas leituras ficam a menos de 10× uma da outra, com a vencedora ainda
+acima de 1% da folha. Exemplo medido em `JAMYLLE E PAULO_plantas executivas_R03.dwg`, cujo `viewBox`
+tem 4.794 unidades de largura e o deslocamento derivado é de 2.193:
+
+| Símbolo | \|centro\| cru | \|centro\| deslocado | razão |
+| --- | --- | --- | --- |
+| `…1933CC` | 36.047.303,5 | 36.047.458,7 | **1,00** |
+| `…247DC7` | 9.139.564,9 | 9.139.720,2 | **1,00** |
+| `…80207` | 4.541,5 | **0,0** | ∞ |
+
+Os dois primeiros estão a dezenas de milhões de unidades de uma folha de 4,8 mil: o deslocamento de
+2,2 mil não muda nada, e o critério "fica com o mais perto de zero" está sorteando entre duas
+respostas igualmente erradas. Não é que a correção erre — **ela não alcança esses símbolos**, e o
+docstring afirma uma garantia que o acervo não sustenta.
+
+**O que fazer:** (a) corrigir a afirmação do docstring, que hoje autoriza confiança indevida;
+(b) decidir o que fazer com símbolo que fica longe **nas duas** leituras — provavelmente declarar na
+memória de conversão, como `blocos_ausentes` e `xrefs_ausentes` já fazem, porque hoje eles somem
+dentro da envolvente e produzem o **D160**.
+
+Bancada: `aferir_deslocamento.py` (roda em container com `dwg2SVG`; imprime símbolos, deslocados,
+empates graves e a fração de geometria dentro do `viewBox` antes/depois).
+
+---
+
+### D161 — o de-para do D111 congelou uma resposta que a fonte já passou a dar, e discorda dela · 🟠 aberto 16/09/2026
+
+Auditoria pedida pelo dono (item 34), feita no banco vivo em 16/09/2026.
+
+**O que está certo.** O de-para de 14 linhas continua aplicado e íntegro (10 `encargos_complementares`
++ 4 `equipamento`). Varrendo os **90** itens SINAPI do catálogo contra a classificação da publicação
+01/2025, a **única** divergência são esses 10 — nenhum item nasceu torto depois de 21/08.
+
+**O que mudou por baixo.** O próprio arquivo declara: *"Some quando uma publicação 2025+ da mesma
+fonte for importada"*. Esse gatilho **já foi atingido** — as três publicações `SINAPI BA 01/2025`
+(onerado, desonerado, sem encargos) estão carregadas e classificam **4.220/4.220** insumos, contra
+**0/4.811** da BA 10/2024. O caminho 1 do D111 deixou de estar aberto; ele foi percorrido pela ORC.8 e
+o registro não acompanhou.
+
+**E a fonte discorda do de-para em 10 das 14 linhas.** A SINAPI 01/2025 classifica EPI, ferramenta,
+alimentação, transporte, exame e seguro como **MATERIAL**; o de-para os declara **ENCARGOS
+COMPLEMENTARES**. Como declaração da empresa vence a fonte, o CSV hoje **sobrepõe** a resposta da
+SINAPI — e sobrepõe em silêncio, porque foi escrito quando a fonte não respondia nada. Para o encargo
+social não muda (nem material nem encargos complementares recebem os 84,70%); muda a leitura material
+× mão de obra × equipamento na composição por natureza, na curva ABC de insumos e no Controlar.
+
+**Dois achados menores, da mesma varredura:**
+
+- **O código `13458` (COMPACTADOR DE SOLOS DE PERCUSSÃO) não existe na BA 01/2025.** É item em uso,
+  classificado por um de-para que aponta para uma publicação que já não o traz — a família do "item
+  descontinuado" que a ORC.7b passou a avisar na reprecificação, aqui sem aviso nenhum.
+- **39 dos 90 itens SINAPI estão sem procedência** (`publicacao_referencia` vazio) e 33 apontam para
+  10/2024; **zero** aponta para 2025. Entre os órfãos estão 3 dos 4 equipamentos do de-para (14525,
+  37734, 37758). O campo nasceu no D110 e só é preenchido na adoção, então o que foi adotado antes
+  ficou sem ele — e é por procedência que se decide se um item precisa ser reclassificado.
+
+**O que fazer:** decidir se a empresa mantém a classificação própria (e então o de-para deixa de ser
+remendo e vira política declarada, com a discordância **reportada** em vez de silenciosa) ou se adota
+a resposta da fonte; reapontar os itens para a publicação 2025; e dar procedência aos 39 órfãos.
+
+---
+
+### D153 — o tenant de demonstração assina um plano que não vende o PDCA · 🟠 aberto 15/09/2026
+
+Achado ao rodar os E2E do PDCA em série, fechando a PDCA.6: a seção **12c do
+[pdca1_cronograma_test.py](../testes/e2e/pdca1_cronograma_test.py)** — o plano modelo da PDCA.1b —
+falha com **402**, e a mensagem é a correta:
+
+> *"O plano contratado inclui 0 planos modelo e o limite já foi atingido."* · `plano: profissional`
+
+**A quota está certa; o cenário é que é incoerente.** O `pdca` é **vendido do `empresarial` para
+cima** *(decisão do dono, 22/08/2026)*, e é no `empresarial` que `planos_modelo` vale 25; no
+`profissional` ele é **0**, justamente porque ali o módulo não se vende. Só que o tenant `demo` está
+no `profissional` **e tem o módulo `pdca`**, porque o acesso a módulo vem de `AcessoUsuarioModulo`
+(concessão por usuário) e não da assinatura.
+
+O resultado é um ambiente de demonstração onde **metade do módulo funciona e a outra metade é
+recusada por quota**, sem que nada na tela explique por quê — e um E2E que não tem como passar por
+mérito. É a mesma família do **D114** e do **D115**: o plano e o que a empresa realmente faz não
+conversam.
+
+**Não é regressão da PDCA.6** — ela não toca plano nem quota, e as demais suítes do módulo passam. O
+que a PDCA.6 fez foi rodar as oito juntas pela primeira vez e expor isto.
+
+**Duas saídas, e a escolha é de produto, não de engenharia:**
+
+- **subir o `demo` para `empresarial`**, que é o plano que de fato vende o que ele demonstra. Barato,
+  e alinha o seed com a decisão de 22/08. Efeito colateral a conferir: os outros tetos do
+  `empresarial` mudam junto, e há E2E que medem teto;
+- **aceitar e declarar**: o `demo` fica no `profissional` de propósito (para exercitar a recusa por
+  quota com token real, que é coisa que nenhum outro ator do seed faz), e a §12c do `pdca1` passa a
+  **exigir** um tenant `empresarial` — ou a afirmar a recusa, em vez do sucesso.
+
+Enquanto nenhuma das duas acontece, o `pdca1_cronograma_test.py` sai com 4 recusas que não são
+defeito de código.
 
 ### D124 — a paywall não decidiu se orçamento tem quantidade · 🟠 aberto 13/09/2026
 
@@ -334,6 +809,44 @@ Decisão do dono, com o número novo na mão. Não trava nada hoje.
 
 ## 🟡 Médias
 
+### D155 — a foto da verificação não carimba data nem coordenada · 🟡 aberto 16/09/2026
+
+Achado ao fechar a PDCA.7, conferindo a entrega contra a própria planta. A §5.2
+descreve o instrumento do campo com a foto como *"cidadão de primeira classe
+(**com data e coordenada carimbadas sozinhas**, sem o inspetor anotar nada)"*.
+A fatia entregou a foto — sobe pela porta única, na mesma requisição da
+resposta, com `capture="environment"` para abrir a câmera direto. O **carimbo**
+não veio.
+
+**O que existe hoje e o que falta:**
+
+- **data** — existe de forma indireta: `ItemVerificacao.respondido_em` é gravado
+  no servidor no momento da resposta, e a foto sobe nessa mesma requisição. O
+  que não existe é o carimbo **na imagem**, que é o que sobrevive quando a foto
+  sai do sistema (anexada a um e-mail, impressa num relatório de auditoria);
+- **coordenada** — não existe em lugar nenhum. Nem o navegador é consultado
+  (`geolocation`), nem há campo para guardá-la, nem ela é lida do EXIF do
+  arquivo. A NC exportada para o projetista diz *em que local da obra* está o
+  defeito só pelo `LocalObra`, que é o endereço construtivo — não o geográfico.
+
+**Por que isso importa mais aqui do que no apontamento de avanço** (que também
+não carimba): a foto da PDCA.2 documenta *quanto andou*, e quem confere tem o
+avanço ao lado. A foto da PDCA.7 é **prova de inspeção**, e é ela que o
+organismo certificador do PBQP-H olha quando quer saber se o técnico esteve
+onde disse que esteve. Sem carimbo, ela prova que o defeito existe — não que
+ele foi visto naquele lugar naquele dia.
+
+**Não foi decidido como fazer, e as três saídas têm custos diferentes:** ler o
+EXIF do arquivo enviado (barato, mas o celular pode ter a geolocalização
+desligada e muitos navegadores removem o EXIF no upload); pedir
+`navigator.geolocation` na tela e mandar junto (preciso, mas exige permissão do
+usuário e um campo novo no modelo); ou gravar o carimbo **na imagem**, que é o
+que o mercado de vistoria faz e o que sobrevive à foto sair do sistema — e é o
+mais caro dos três.
+
+Enquanto nada disso acontece, o que a fatia entrega é honesto: ela não afirma
+em lugar nenhum que a foto está carimbada.
+
 ### D119 — o calendário de trabalho não modela turnos nem horários · 🟡 aberto 13/09/2026
 
 Levantado ao resumir a PDCA.2. O modelo `CalendarioTrabalho` tem campos para
@@ -463,7 +976,7 @@ no desenho #1 e nada se move.
 | A5  | `CobrancaCliente` duplica `ContaReceber`+`Boleto` → consolidar repetindo o playbook da `Fatura`. **Levantado 25/07/2026:** confirmado que **nada escreve** em `CobrancaCliente` (nenhum service, task, seed ou signal — só o CRUD exposto em `/api/erp/cobrancas-cliente/`): a tabela está vazia e a cadeia viva é `ContaReceber`→`Boleto`. A única capacidade que ela tinha a mais — amarrar a parcela ao **contrato/unidade** — passou a existir na `ContaReceber` (FKs `cliente_empreendimento`/`contrato`, migration `moduloerp/0013`), então a consolidação virou basicamente **remover** o modelo e a rota.                                                                                                                                                                                                                                                                                  | 🔴 aberto                                                          |
 | A7  | N+1 na galeria de IA e no CRM; busca de telefone O(N) em Python →`select_related`/`prefetch_related` + paginação + query no banco *(v01-B9)*                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | 🔴 aberto                                                          |
 | A8  | Acoplamento duro ao Redis (`delete_pattern` do django-redis; sem `IGNORE_EXCEPTIONS`) → cache tolerante a queda. **Parcial 19/07:** `IGNORE_EXCEPTIONS: True` no backend e na IAM — virou obrigatório com o S8, que faz o throttle consultar a cache em TODA requisição (sem isso, Redis fora deixaria de ser lentidão e passaria a ser API inteira fora do ar). **Falta** o `delete_pattern`, que segue amarrando o código ao django-redis.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | 🟠 parcial 19/07/2026                                              |
-| A14 | **Bases sem leitor: SICRO, SEINFRA e SEDOP** *(reescrito na ORC.8, 21/08/2026)* — a ORC.8 fechou o A13 e trocou o que falta aqui. `Fonte` aceita as seis desde o ORC.0 e o importador manual é genérico, mas o motor de carga automática lê **um** formato: o arquivo largo da Caixa (27 UFs em colunas). `carga.fontes_conhecidas()` declara isso, a tela diz na cara (*"o motor ainda não lê o formato desta fonte"*) e o agendamento se recusa a tentar — nada finge funcionar. Para cada base nova é preciso um leitor do formato dela, e aí ela entra no botão; enquanto não houver, o caminho continua sendo o comando por publicação. | 🟠 aberto |
+| A14 | **Bases sem leitor: ORSE, SICRO, SEINFRA e SEDOP** *(reescrito na ORC.8, 21/08/2026; estreitado na ORC.8b, 22/09/2026)* — a ORC.8 fechou o A13 e trocou o que falta aqui. `Fonte` aceita sete desde o ORC.0 e o importador manual é genérico, mas o motor de carga automática lê **dois** formatos: o arquivo largo da Caixa (27 UFs em colunas) e o PDF da EMBASA. `carga.fontes_conhecidas()` declara isso, a tela diz na cara (*"o motor ainda não lê o formato desta fonte"*) e o agendamento se recusa a tentar — nada finge funcionar. Para cada base nova é preciso um leitor do formato dela, e aí ela entra no botão; enquanto não houver, o caminho continua sendo o comando por publicação. | 🟠 aberto |
 | F13 | **O `Modal` do Orçamento reimplementa o modo `alto` em vez de usar o do `malha`** *(17/08/2026)* — [frontend.md §2.2](frontend.md) descreve o modo `alto` do `Modal` compartilhado para "diálogo cujo miolo é uma lista": cartão em coluna flex, cabeçalho e rodapé presos, miolo com `flex: 1`. O kit local do Orçamento (`modules/orcamento/ui.tsx`) **não tem esse modo**, então o modal de inserir item chegou à mesma altura por conta própria (`height: min(62vh, 660px)` na linha da lista) — funciona e respeita a regra de não usar pixel fixo, mas é a terceira implementação do mesmo comportamento. É um caso concreto do **F12** (quatro kits de UI paralelos), e o remédio é o mesmo: migrar para `components/malha/`. Enquanto não migrar, mexer no modo `alto` compartilhado não conserta este modal. | 🔴 aberto |
 | A16 | **A adoção nunca remove componente que a fonte aposentou** *(17/08/2026)* — `services._adotar_componentes` e `bancos._adotar_componentes` usam só `update_or_create`: quando a SINAPI tira um insumo de uma composição, o `ComponenteComposicao` correspondente **fica para sempre** no catálogo do tenant, e a composição adotada passa a ter um item a mais que a oficial. É o irmão do D99 — lá o defeito era no preço da planilha, aqui é na receita do catálogo. **Não corrigido de propósito:** apagar componente é mexer em dado do cliente, e o tenant pode ter ajustado o coeficiente à mão; sem procedência por componente não dá para distinguir "veio da SINAPI e sumiu" de "o cliente acrescentou". → decidir com o dono entre (a) remover na re-adoção e relatar quantos, ou (b) marcar como órfão e deixar a decisão na tela; (b) exige campo novo, (a) não. | 🔴 aberto |
 | A15 | **`--dry-run` do importador grava a publicação** *(17/08/2026)* — `importar_base_referencial` diz "nada foi gravado", mas o `BaseReferencial.objects.get_or_create` roda **antes** do desvio do `--dry-run`, sem transação em volta. Quem só quer conferir um arquivo (o uso que o próprio `help` do comando sugere) deixa para trás uma publicação **vazia**, que já aparece no seletor de base pela `bases-resumo` com 0 insumos e 0 composições — dado falso numa tela de escolha de data-base. Achado ao carregar a SINAPI BA 10/2024, cuja publicação nasceu de um `--dry-run` que falhou no sintético (D98). → criar a publicação só depois do desvio, ou envolver o `handle` em `transaction.atomic` com rollback quando `seco`. | 🔴 aberto |
@@ -479,9 +992,14 @@ o que resolve na tela — mas deixa as duas trilhas contando histórias diferent
 
 ## 🟢 Baixas
 
+Nenhum em aberto. O **D147** (seis erros de `eslint` em três telas da PDCA.3/4, que desligavam o
+fast refresh justamente na tela em que se passa o dia digitando) e o **D148** (o traceback `CRÍTICO`
+impresso a cada execução da suíte) foram corrigidos em 15/09/2026, junto do fechamento da PDCA.5;
+relatos em [historico-correcoes.md](historico-correcoes.md).
+
 | ID  | Achado → correção                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Status                  |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------- |
-| A10 | Higiene do repo:`nul`, `terminal*.txt`, scripts soltos na raiz → remover + `.gitignore` *(v01-G1)*. **Parcial 19/07:** o que tinha valor foi movido em vez de apagado — `terminal.txt` (guia de comandos atualizado) → [docs/comandos.md](comandos.md), `test_browser.py` → `testes/e2e/browser_smoke_test.py`, `serve_spa.py` → `infra/`. Docker e env saíram da raiz para [deploy/](../deploy/README.md). `.gitignore` ganhou `_verify_*.txt` e — achado no caminho — teve os padrões de virtualenv **ancorados** (`/env/` em vez de `env/`): sem a âncora, `env/` casava qualquer diretório com esse nome e escondia o `deploy/env/` inteiro, incluindo os modelos que precisam ser versionados. **Falta (exige decisão/ação do dono do repo):** (a) apagar 4 arquivos mortos na raiz — `nul` (um 502 do nginx capturado por engano), `_verify_testes.txt` (resíduo do bridge PHP removido) e `package.json`/`package-lock.json` (vestígio do monorepo Node; **nada os referencia** — o CI usa `frontend/package-lock.json`); (b) decidir o `requirements.txt` da RAIZ — não é usado por CI nem por Dockerfile algum (esses usam `backend/` e `iam/`), mas é plausível que seja o manifesto do `.venv` que roda as duas suítes localmente, e por isso **não foi tocado**. Se for isso, vale torná-lo explícito (`requirements-dev.txt`, somando backend+iam, hoje desatualizado: falta `django-redis`); se não, pode sair.                                                                                                                             | 🟠 parcial 19/07/2026   |
+| A10 | Higiene do repo:`nul`, `terminal*.txt`, scripts soltos na raiz → remover + `.gitignore` *(v01-G1)*. **Parcial 19/07:** o que tinha valor foi movido em vez de apagado — `terminal.txt` (guia de comandos atualizado) → [docs/comandos.md](comandos.md), `test_browser.py` → `testes/e2e/browser_smoke_test.py`, `serve_spa.py` → `infra/`. Docker e env saíram da raiz para [deploy/](../deploy/README.md). `.gitignore` ganhou `_verify_*.txt` e — achado no caminho — teve os padrões de virtualenv **ancorados** (`/env/` em vez de `env/`): sem a âncora, `env/` casava qualquer diretório com esse nome e escondia o `deploy/env/` inteiro, incluindo os modelos que precisam ser versionados. **Falta (exige decisão/ação do dono do repo):** (a) apagar 4 arquivos mortos na raiz — `nul` (um 502 do nginx capturado por engano), `_verify_testes.txt` (resíduo do bridge PHP removido) e `package.json`/`package-lock.json` (vestígio do monorepo Node; **nada os referencia** — o CI usa `frontend/package-lock.json`); (b) decidir o `requirements.txt` da RAIZ — não é usado por CI nem por Dockerfile algum (esses usam `backend/` e `iam/`), mas é plausível que seja o manifesto do `.venv` que roda as duas suítes localmente, e por isso **não foi tocado**. Se for isso, vale torná-lo explícito (`requirements-dev.txt`, somando backend+iam, hoje desatualizado: falta `django-redis`); se não, pode sair. **(c) 16/09/2026 — `infra/serve_spa.py` está morto E quebrado:** ao ser movido para `infra/` nesta mesma limpeza ele passou a resolver `infra/frontend/dist`, que não existe; e a SPA é servida pelo container `react` (nginx) e pelo Vite em dev. Ninguém notou em dois meses, o que é a prova de que ninguém o usa. A regra de entrada da pasta ficou escrita em [infra/README.md](../infra/README.md). | 🟠 parcial 19/07/2026   |
 | A12 | Modelagem: validador CPF/CNPJ sem dígito verificador no backend;`Boleto.VENCIDO` nunca setado; rota duplicada `/api/api/`; duplicata no fallback de tipos de IA *(v01-B8)*                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | 🔴 aberto               |
 | F6  | Sem`ErrorBoundary` nem padrão de loading/erro/vazio; i18n ausente → padronizar componentes de estado                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | 🔴 aberto               |
 | D77 | **`X-Content-Type-Options` sai duplicado em toda resposta do gateway** — o nginx o adiciona (`add_header … always`, Fase 5) e o Django também (`SecurityMiddleware`), então o cliente recebe `nosniff, nosniff`. Inofensivo hoje (mesmo valor, e o browser honra), mas é um header de segurança que ninguém sabe de onde vem: se um dia as duas fontes divergirem, uma delas fica invisível. Achado ao escrever o E2E do D70 em 09/08/2026, e ele explica por que nenhum E2E anterior o viu — todos leem headers com `dict(resp.headers)`, que descarta a duplicata em silêncio. → `proxy_hide_header` no gateway **ou** deixar o header por conta de uma fonte só, e ajustar as asserções que hoje comparam por igualdade. | 🔴 aberto               |

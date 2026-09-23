@@ -3,7 +3,7 @@ import { X } from 'lucide-react'
 import type { Cliente, ClienteFormData, EstadoCivil } from '@/types'
 import { FieldError, FormErrorBanner, parseApiErrors, type FieldErrors } from '@/utils/formErrors'
 import { maskCPFCNPJ, validateCPFCNPJ } from '@/utils/masks'
-import { minNascISO, maxTodayISO, validateISO_Nasc } from '@/utils/dates'
+import { validateISO_Nasc, minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
 
 interface Props {
   open: boolean
@@ -153,8 +153,7 @@ const ClienteForm: React.FC<Props> = ({ open, onClose, onSave, initial }) => {
             </div>
             <div>
               <label style={labelCls}>Data de nascimento *</label>
-              <input required type="date" style={inputCls} value={form.data_nascimento}
-                min={minNascISO} max={maxTodayISO()}
+              <input required type="date" min={minCalendarioISO} max={maxCalendarioISO} style={inputCls} value={form.data_nascimento}
                 onChange={e => { set('data_nascimento', e.target.value); setFieldErrors(p => ({ ...p, data_nascimento: '' })) }}
                 onBlur={e => { const err = validateISO_Nasc(e.target.value); if (err) setFieldErrors(p => ({ ...p, data_nascimento: err })) }} />
               <FieldError msg={fieldErrors.data_nascimento} />

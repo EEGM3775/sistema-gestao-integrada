@@ -17,7 +17,7 @@ from modulosil.models import LocalEstoque, MovimentacaoEstoque
 from obras.models import EtapaObra, Obra
 
 from . import planilha, services
-from .models import Fonte, ItemOrcado, Orcamento, RevisaoOrcamento
+from .models import BaseReferencial, Fonte, ItemOrcado, Orcamento, RevisaoOrcamento
 from .tests import ORC_PERMS_FULL, OrcamentoTestBase
 
 
@@ -482,3 +482,92 @@ class PlanilhaAPITests(PlanilhaTestBase):
     def test_revisoes_sao_read_only(self):
         resp = self.client.post("/api/orcamento/revisoes/", {}, format="json")
         self.assertEqual(resp.status_code, 405)
+
+
+class TrocarBaseDoOrcamentoTests(PlanilhaTestBase):
+    """Escolher a publicação **depois**, e trocá-la.
+
+    Existe porque a base só podia ser escolhida na criação, e o padrão da tela
+    era "Sem base — preço digitado à mão": quem deixasse o padrão inseria a
+    planilha inteira a custo zero e não tinha por onde consertar (D186).
+    """
+
+    def setUp(self):
+        self.autenticar()
+
+    def _publicacao(self, mes, regime):
+        return BaseReferencial.objects.create(
+            fonte=Fonte.SINAPI, uf="BA", mes_referencia=mes, regime_encargos=regime,
+        )
+
+    def test_definir_base_depois_arrasta_data_base_e_regime(self):
+        """O orçamento nasceu sem base; ao ganhar uma, a data-base é dela."""
+        orc = self._orcamento(base_referencial=None, data_base=None)
+        base = self._publicacao(date(2026, 8, 1), BaseReferencial.Regime.SEM_ENCARGOS)
+
+        resp = self.client.patch(
+            f"/api/orcamento/orcamentos/{orc.pk}/", {"base_referencial": base.pk}, format="json",
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.content)
+        orc.refresh_from_db()
+        self.assertEqual(orc.base_referencial_id, base.pk)
+        self.assertEqual(orc.data_base, date(2026, 8, 1))
+        self.assertEqual(orc.regime_encargos, BaseReferencial.Regime.SEM_ENCARGOS)
+
+    def test_trocar_de_publicacao_move_a_data_base_junto(self):
+        """Sem isto a planilha dizia 07/2026 apoiada em preço de 08/2026 — o
+        mesmo custo declarado em dois meses diferentes."""
+        antiga = self._publicacao(date(2026, 7, 1), BaseReferencial.Regime.DESONERADO)
+        nova = self._publicacao(date(2026, 8, 1), BaseReferencial.Regime.ONERADO)
+        orc = self._orcamento(base_referencial=antiga, data_base=date(2026, 7, 1))
+
+        self.client.patch(
+            f"/api/orcamento/orcamentos/{orc.pk}/", {"base_referencial": nova.pk}, format="json",
+        )
+
+        orc.refresh_from_db()
+        self.assertEqual(orc.data_base, date(2026, 8, 1))
+        self.assertEqual(orc.regime_encargos, BaseReferencial.Regime.ONERADO)
+
+    def test_data_base_informada_na_mesma_requisicao_vence(self):
+        """Data de edital ≠ mês da publicação é caso real: quem a informa está
+        dizendo que sabe o que quer, e o automatismo não pode passar por cima."""
+        base = self._publicacao(date(2026, 8, 1), BaseReferencial.Regime.DESONERADO)
+        orc = self._orcamento(base_referencial=None, data_base=None)
+
+        self.client.patch(
+            f"/api/orcamento/orcamentos/{orc.pk}/",
+            {"base_referencial": base.pk, "data_base": "2026-03-01"},
+            format="json",
+        )
+
+        orc.refresh_from_db()
+        self.assertEqual(orc.data_base, date(2026, 3, 1))
+
+    def test_tirar_a_base_nao_apaga_a_data_base(self):
+        """A data-base sobrevive à publicação (`models.Orcamento`): o preço já
+        congelado continua sendo de algum mês, mesmo sem base para consultar."""
+        base = self._publicacao(date(2026, 8, 1), BaseReferencial.Regime.DESONERADO)
+        orc = self._orcamento(base_referencial=base, data_base=date(2026, 8, 1))
+
+        self.client.patch(
+            f"/api/orcamento/orcamentos/{orc.pk}/", {"base_referencial": None}, format="json",
+        )
+
+        orc.refresh_from_db()
+        self.assertIsNone(orc.base_referencial_id)
+        self.assertEqual(orc.data_base, date(2026, 8, 1))
+
+    def test_editar_so_o_bdi_nao_mexe_na_data_base(self):
+        """A regra só dispara quando a publicação muda — senão salvar o BDI
+        reescreveria a data-base de quem a tinha ajustado à mão."""
+        base = self._publicacao(date(2026, 8, 1), BaseReferencial.Regime.DESONERADO)
+        orc = self._orcamento(base_referencial=base, data_base=date(2026, 3, 1))
+
+        self.client.patch(
+            f"/api/orcamento/orcamentos/{orc.pk}/", {"bdi_percentual": "22.5"}, format="json",
+        )
+
+        orc.refresh_from_db()
+        self.assertEqual(orc.data_base, date(2026, 3, 1))

@@ -3,7 +3,7 @@ import { X, Loader2 } from 'lucide-react'
 import type { Empreendimento, EmpreendimentoFormData, StatusEmpreendimento } from '@/types'
 import { FieldError, FormErrorBanner, parseApiErrors, type FieldErrors } from '@/utils/formErrors'
 import { maskCNPJ, validateCNPJ } from '@/utils/masks'
-import { minVigenciaISO, maxVigenciaISO, validateISO_Vigencia } from '@/utils/dates'
+import { validateISO_Vigencia, minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
 
 // ─── Máscaras ────────────────────────────────────────────────────────────────
 
@@ -267,8 +267,7 @@ export const EmpreendimentoForm: React.FC<Props> = ({ open, onClose, onSave, ini
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label style={labelStyle}>Início previsto</label>
-              <input type="date" style={inputStyle} value={form.data_inicio_prevista}
-                min={minVigenciaISO()} max={maxVigenciaISO()}
+              <input type="date" min={minCalendarioISO} max={maxCalendarioISO} style={inputStyle} value={form.data_inicio_prevista}
                 onChange={e => { set('data_inicio_prevista', e.target.value); setFieldErrors(p => ({ ...p, data_inicio_prevista: '' })) }}
                 onFocus={e => (e.currentTarget.style.borderColor = 'var(--color-brand)')}
                 onBlur={e => { e.currentTarget.style.borderColor = '#e2e8f0'; const err = validateISO_Vigencia(e.target.value); if (err) setFieldErrors(p => ({ ...p, data_inicio_prevista: err })) }} />
@@ -276,8 +275,7 @@ export const EmpreendimentoForm: React.FC<Props> = ({ open, onClose, onSave, ini
             </div>
             <div>
               <label style={labelStyle}>Fim previsto</label>
-              <input type="date" style={inputStyle} value={form.data_fim_prevista}
-                min={minVigenciaISO()} max={maxVigenciaISO()}
+              <input type="date" min={minCalendarioISO} max={maxCalendarioISO} style={inputStyle} value={form.data_fim_prevista}
                 onChange={e => { set('data_fim_prevista', e.target.value); setFieldErrors(p => ({ ...p, data_fim_prevista: '' })) }}
                 onFocus={e => (e.currentTarget.style.borderColor = 'var(--color-brand)')}
                 onBlur={e => { e.currentTarget.style.borderColor = '#e2e8f0'; const err = validateISO_Vigencia(e.target.value); if (err) setFieldErrors(p => ({ ...p, data_fim_prevista: err })) }} />
