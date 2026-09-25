@@ -10,6 +10,86 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D210 — a venda tinha uma condição de pagamento só, e a da incorporadora é combinada · ✅ corrigido 25/09/2026
+
+Relato do dono, itens 47–50: *"Em clientes Nova Aquisição o cliente pode escolher mais de um meio de
+pagar com um botão + Adicionar Meio de Pagamento"*; *"todos os métodos de pagamento tá com nomes assim
+(Quitado fora do carnê, Total no carnê)"*; *"Condições de pagamento Outros tem que ser um texto
+explicando"*; *"todos os meios de pagamento com entrada dividida não tá entrando nada de juros ou taxa
+(incorporadoras fazem assim?)"*.
+
+**Causa — os quatro são o mesmo desenho.** A aquisição tinha **uma** `condicoes_pagamento` e um jogo
+fixo de campos (entrada, saldo, balões). A venda real de incorporadora é combinada — sinal, mensais,
+anuais e banco na entrega, às vezes FGTS e uma permuta —, e o modelo só a registrava escolhendo uma
+condição e jogando o resto num **"quitado fora do carnê" calculado por diferença** (D171). Daí o
+rótulo genérico (48): o número não sabia se era do banco ou do carro dado em troca. "Outro" (49) era
+só uma condição permissiva, sem dizer o quê. E a entrada era **sempre** sem juros (50) porque a regra
+estava escrita no motor, sem campo.
+
+**Resposta à pergunta do item 50.** A entrada curta (ato + poucas vezes) é vendida sem juros no
+mercado, mas corrigida pelo índice do contrato — o que o sistema já fazia (a correção incide sobre
+todo título em aberto). A entrada **longa** (12x a 36x) muitas vezes cobra juros. Decisão do dono:
+**juros opcional na entrada, partindo de zero**.
+
+**Correção.** A venda virou uma **lista livre de meios** (`clientes.MeioPagamento`, decisão do dono:
+"lista livre", não "carnê + outros"): `a_vista`, `entrada`, `financiamento_direto`, `anuais`,
+`financiamento_bancario`, `fgts`, `permuta`, `cartao`, `outro` — quantos a negociação tiver, até
+`VENDA_TETO_MEIOS_DE_PAGAMENTO` ([planos.py](../payment/planos.py) §5.5q). O catálogo
+`plano_pagamento.TIPOS_DE_MEIO` diz o que cada tipo comporta e a tela lê dele. A conta só fecha
+quando **a soma dos meios é o negociado**, e o erro diz quanto falta ou passa, em reais.
+
+- **47** — "+ Adicionar meio de pagamento", "Usar o restante" e uma barra do que falta distribuir.
+  Dois financiamentos diretos com taxas diferentes são duas séries no boleto ("Parcela 3/24 (2ª
+  série)").
+- **48** — o resumo mostra **cada meio pelo nome do dinheiro**: "Financiado pelo banco — Caixa",
+  "Pago em permuta — Gol 2019", "Outro — 5 cheques pré-datados"; o total virou "A receber pela
+  construtora".
+- **49** — `outro` e `permuta` exigem descrição (backend e tela).
+- **50** — `entrada.juros_mensal` opcional: com taxa, a entrada vira um Price curto; em 1x a taxa é
+  ignorada.
+
+`condicoes_pagamento` ficou **derivada** (a condição da maior parte do valor — "sinal + banco" é
+financiamento bancário), porque é por ela que a carteira filtra. As migrations
+[`0014`](../backend/clientes/migrations/0014_meios_de_pagamento.py)/`0015` convertem cada venda
+gravada nos meios que o plano antigo descrevia (conferido com as seis condições antigas, ida e volta)
+e só então apagam os campos soltos. Testes: `MeiosDePagamentoTests`, `MeiosDaVendaTests` e a
+reescrita de `PropostaTests`; `clientes` 124/124; formulário exercitado no Chromium.
+
+---
+### D211 — `funcoesautorizacao/esquema.py` não importava, e o backend não subia · ✅ corrigido 25/09/2026
+
+Achado ao rodar a suíte para o D210. Na versão 1.0.22, os três `\n` de `gerar_limites_do_drone()`
+viraram quebra de linha **dentro** do literal — `SyntaxError: unterminated string literal`. O módulo
+é importado por `nucleo/autorizacao.py`, então `manage.py` inteiro parava no `django.setup()`.
+
+**Correção:** os `\n` de volta. Nenhum outro `.py` do repositório falha no `py_compile`.
+
+---
+### D180 — as correções de 16/09/2026 não foram compiladas nem testadas neste ambiente · ✅ corrigido 25/09/2026
+
+A leva D169–D178 foi escrita numa máquina **sem Node e sem GDAL**: `npm`/`tsc -b` não existem, e
+`manage.py test` para no import do PostGIS (`Could not find the GDAL library`). O que foi possível
+verificar rodou: o motor de proposta foi exercitado direto em Python (Price, recusa de saldo sem
+prazo, as três condições que quitam por fora, o ajuste de data que não mexe em um centavo) e todo
+arquivo tocado passa por `ast.parse`. O resto é revisão de código.
+
+**O risco concreto** é o `tsconfig` do frontend com `noUnusedLocals`/`noUnusedParameters` ligados:
+um símbolo esquecido derruba o build, e nove arquivos `.tsx` foram tocados. **Ação:** rodar
+`cd frontend && npm run build` e `cd backend && ../.venv/bin/python manage.py test clientes
+modulocalendar modulomaps empreendimentos funcoescobrancas` num ambiente completo antes de subir.
+
+Testes novos que acompanham a leva e ainda não rodaram: `clientes.test_plano_pagamento`
+(`CondicaoDePagamentoTests`, `AjusteDeVencimentoTests`), `clientes.test_venda_unidade`
+(`ResumoDeUnidadesTests`, `ContagemDaCarteiraAgrupadaTests`), `modulocalendar.tests`
+(`DiaUtilBancarioTests`), `modulomaps.tests` (`UnidadeNoMapaTests`) e `funcoescobrancas.tests`
+(`VencimentoBancarioDoBoletoTests`).
+
+**Fechado em 25/09/2026**, num ambiente com Node, PostGIS e GDAL: `npm run build` (`tsc -b` + `vite
+build`) limpo, e `manage.py test clientes modulocalendar modulomaps empreendimentos funcoescobrancas`
+**322/322** sobre PG — já com a leva do D210 (acima),
+que reescreveu os testes do motor de proposta.
+
+---
 ### D208 — um rollback prendia o tenant na fila de escrita do PDP · ✅ corrigido 25/09/2026
 
 Achado pela suíte da IAM logo que o contêiner passou a ter `SPICEDB_URL`. `pdp.agendar` garantia "uma

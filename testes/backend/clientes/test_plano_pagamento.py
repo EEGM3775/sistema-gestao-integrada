@@ -72,21 +72,46 @@ class SacTests(SimpleTestCase):
         self.assertLess(juros_sac, juros_price)
 
 
+def fd(valor, parcelas, juros="0", sistema="price", **extra):
+    """Um financiamento direto, para os testes lerem como a venda se fala."""
+    return dict(tipo="financiamento_direto", valor=Decimal(valor), parcelas=parcelas,
+                juros_mensal=Decimal(juros), sistema_amortizacao=sistema, **extra)
+
+
+def entrada(valor, parcelas=1, juros="0", **extra):
+    return dict(tipo="entrada", valor=Decimal(valor), parcelas=parcelas,
+                juros_mensal=Decimal(juros), **extra)
+
+
 class PropostaTests(SimpleTestCase):
 
     def test_desconto_percentual_e_valor_somam(self):
         plano = pp.montar(
             valor_tabela=Decimal("100000"), desconto_percentual=Decimal("10"),
-            desconto_valor=Decimal("5000"), entrada_valor=Decimal("85000"),
+            desconto_valor=Decimal("5000"),
+            meios=[dict(tipo="a_vista", valor="85000")],
             data_compra=date(2026, 1, 10),
         )
         self.assertEqual(plano.desconto, Decimal("15000.00"))
         self.assertEqual(plano.valor_negociado, Decimal("85000.00"))
 
-    def test_entrada_parcelada_nao_rende_juros(self):
+    def test_a_conta_so_fecha_quando_os_meios_somam_o_negociado(self):
+        """Faltar é saldo sem dono; sobrar é cobrar mais do que se negociou. O
+        erro diz quanto, em reais — é o vendedor que lê."""
+        with self.assertRaisesMessage(ValueError, "Faltam R$ 10.000,00"):
+            pp.montar(valor_tabela=Decimal("100000"), meios=[fd("90000", 12)])
+        with self.assertRaisesMessage(ValueError, "passam R$ 5.000,00"):
+            pp.montar(valor_tabela=Decimal("100000"),
+                      meios=[entrada("20000"), fd("85000", 12)])
+
+    def test_venda_sem_meio_nenhum_e_recusada(self):
+        with self.assertRaises(ValueError):
+            pp.montar(valor_tabela=Decimal("50000"), meios=[])
+
+    def test_entrada_parcelada_nao_rende_juros_por_padrao(self):
         plano = pp.montar(
-            valor_tabela=Decimal("60000"), entrada_valor=Decimal("12000"),
-            entrada_parcelas=6, juros_mensal=Decimal("1"), num_parcelas=48,
+            valor_tabela=Decimal("60000"),
+            meios=[entrada("12000", 6), fd("48000", 48, juros="1")],
             data_compra=date(2026, 1, 10),
         )
         entradas = [p for p in plano.parcelas if p.tipo == "entrada"]
@@ -94,29 +119,50 @@ class PropostaTests(SimpleTestCase):
         self.assertEqual(sum(p.valor for p in entradas), Decimal("12000.00"))
         self.assertEqual(sum(p.juros for p in entradas), Decimal("0"))
 
-    def test_balao_abate_saldo_antes_do_parcelamento(self):
-        """Sem isso o comprador pagaria juros sobre o que já se comprometeu a
-        quitar à parte, e o total do plano estouraria."""
-        com_balao = pp.montar(
-            valor_tabela=Decimal("100000"), entrada_valor=Decimal("20000"),
-            juros_mensal=Decimal("1"), num_parcelas=36,
-            balao_valor=Decimal("10000"), balao_quantidade=2,
+    def test_entrada_parcelada_pode_cobrar_juros_quando_o_contrato_cobra(self):
+        """A entrada longa às vezes cobra juros: a taxa é opcional e, quando
+        vem, a entrada vira um Price curto. 12.000 em 6x a 1% a.m. → 2.070,58
+        (fórmula do Price)."""
+        plano = pp.montar(
+            valor_tabela=Decimal("12000"), meios=[entrada("12000", 6, juros="1")],
             data_compra=date(2026, 1, 10),
         )
-        self.assertEqual(com_balao.baloes, Decimal("20000.00"))
-        self.assertEqual(com_balao.saldo_financiado, Decimal("60000.00"))
-        sem_balao = pp.montar(
-            valor_tabela=Decimal("100000"), entrada_valor=Decimal("20000"),
-            juros_mensal=Decimal("1"), num_parcelas=36, data_compra=date(2026, 1, 10),
+        self.assertEqual(plano.parcelas[0].valor, Decimal("2070.58"))
+        self.assertGreater(plano.total_juros, 0)
+        self.assertEqual(plano.meios[0].detalhe, "6x 1% a.m.")
+
+    def test_entrada_em_uma_vez_nao_tem_prazo_para_juros(self):
+        plano = pp.montar(
+            valor_tabela=Decimal("12000"), meios=[entrada("12000", 1, juros="2")],
         )
-        self.assertLess(com_balao.total, sem_balao.total)
+        self.assertEqual(plano.total, Decimal("12000.00"))
+        self.assertEqual(plano.total_juros, Decimal("0"))
+
+    def test_anuais_sao_um_meio_a_parte_e_nao_pagam_juros(self):
+        """As anuais têm o próprio valor: o financiamento direto só leva juros
+        sobre o que é dele."""
+        plano = pp.montar(
+            valor_tabela=Decimal("100000"),
+            meios=[
+                entrada("20000"), fd("60000", 36, juros="1"),
+                dict(tipo="anuais", valor="20000", parcelas=2),
+            ],
+            data_compra=date(2026, 1, 10),
+        )
+        anuais = [p for p in plano.parcelas if p.tipo == "balao"]
+        self.assertEqual([p.valor for p in anuais], [Decimal("10000.00")] * 2)
+        self.assertEqual(sum(p.juros for p in anuais), Decimal("0"))
+        self.assertEqual(plano.baloes, Decimal("20000.00"))
+        self.assertEqual(plano.saldo_financiado, Decimal("60000.00"))
+        self.assertEqual(anuais[0].vencimento, date(2027, 1, 10))
 
     def test_total_e_a_soma_do_carne(self):
         plano = pp.montar(
             valor_tabela=Decimal("250000"), desconto_percentual=Decimal("5"),
-            entrada_valor=Decimal("50000"), entrada_parcelas=5,
-            sistema="sac", juros_mensal=Decimal("0.8"), num_parcelas=60,
-            balao_valor=Decimal("15000"), balao_quantidade=3, balao_periodicidade="anual",
+            meios=[
+                entrada("50000", 5), fd("142500", 60, juros="0.8", sistema="sac"),
+                dict(tipo="anuais", valor="45000", parcelas=3, periodicidade="anual"),
+            ],
             data_compra=date(2026, 3, 20),
         )
         self.assertEqual(plano.total, sum(p.valor for p in plano.parcelas))
@@ -124,20 +170,49 @@ class PropostaTests(SimpleTestCase):
         # Com juros, o desembolso é maior que o negociado à vista.
         self.assertGreater(plano.total, plano.valor_negociado)
 
-    def test_venda_a_vista_nao_gera_parcela_mensal(self):
+    def test_dois_financiamentos_diretos_com_taxas_diferentes(self):
+        """A lista é livre: 24x sem juros de um lado, 60x a 1% do outro. Cada
+        um tem a sua série, e o carnê não mistura as duas numa "1/84"."""
         plano = pp.montar(
-            valor_tabela=Decimal("80000"), entrada_valor=Decimal("80000"),
-            entrada_parcelas=1, data_compra=date(2026, 5, 2),
+            valor_tabela=Decimal("100000"),
+            meios=[fd("20000", 24), fd("80000", 60, juros="1")],
+            data_compra=date(2026, 1, 10),
         )
-        self.assertEqual(plano.saldo_financiado, Decimal("0"))
+        primeiro = [p for p in plano.parcelas if p.meio == 1]
+        segundo = [p for p in plano.parcelas if p.meio == 2]
+        self.assertEqual(len(primeiro), 24)
+        self.assertEqual({p.juros for p in primeiro}, {Decimal("0")})
+        self.assertEqual(len(segundo), 60)
+        # 80.000 em 60x a 1% a.m. pelo Price → 1.779,56
+        self.assertEqual(segundo[0].valor, Decimal("1779.56"))
+
+        class _Aquisicao:
+            empreendimento = None
+
+            class unidade:
+                rotulo = "QD 1 · LT 01"
+
+        textos = pp.descricoes_do_carne(plano, _Aquisicao())
+        self.assertIn("Parcela 1/24 (1ª série) — QD 1 · LT 01", textos)
+        self.assertIn("Parcela 60/60 (2ª série) — QD 1 · LT 01", textos)
+
+    def test_venda_a_vista_e_um_titulo_so(self):
+        plano = pp.montar(
+            valor_tabela=Decimal("80000"), meios=[dict(tipo="a_vista", valor="80000")],
+            data_compra=date(2026, 5, 2),
+        )
         self.assertEqual(len(plano.parcelas), 1)
+        self.assertEqual(plano.parcelas[0].vencimento, date(2026, 5, 2))
         self.assertEqual(plano.total, Decimal("80000.00"))
+        self.assertEqual(plano.condicao, "a_vista")
 
     def test_carne_sai_em_ordem_de_vencimento(self):
         plano = pp.montar(
-            valor_tabela=Decimal("120000"), entrada_valor=Decimal("24000"), entrada_parcelas=3,
-            juros_mensal=Decimal("1"), num_parcelas=24,
-            balao_valor=Decimal("12000"), balao_quantidade=2, balao_periodicidade="semestral",
+            valor_tabela=Decimal("120000"),
+            meios=[
+                entrada("24000", 3), fd("72000", 24, juros="1"),
+                dict(tipo="anuais", valor="24000", parcelas=2, periodicidade="semestral"),
+            ],
             data_compra=date(2026, 1, 15),
         )
         vencimentos = [p.vencimento for p in plano.parcelas]
@@ -147,87 +222,106 @@ class PropostaTests(SimpleTestCase):
         with self.assertRaises(ValueError):
             pp.montar(valor_tabela=Decimal("1000"), desconto_valor=Decimal("1200"))
 
-    def test_entrada_maior_que_o_negociado_e_recusada(self):
-        with self.assertRaises(ValueError):
-            pp.montar(valor_tabela=Decimal("1000"), entrada_valor=Decimal("1500"))
 
-    def test_saldo_sem_prazo_e_recusado(self):
-        with self.assertRaises(ValueError):
-            pp.montar(valor_tabela=Decimal("50000"), entrada_valor=Decimal("10000"),
-                      num_parcelas=0)
+class MeiosDePagamentoTests(SimpleTestCase):
+    """Cada meio comporta um plano diferente — e quatro deles não viram título.
 
-
-class CondicaoDePagamentoTests(SimpleTestCase):
-    """Cada forma de pagamento admite um plano diferente — e duas delas não
-    admitem carnê nenhum.
-
-    Antes, `montar()` só conhecia "à vista" e tratava todo o resto como
-    financiamento direto. O efeito era uma venda **recusada**: numa permuta a
-    construtora não recebe parcela, então sobrava saldo sem prazo e o motor
-    devolvia "Sobrou saldo a financiar e nenhuma parcela foi informada" — uma
-    frase verdadeira sobre um problema que não existia.
+    O resumo fala cada meio pelo nome do dinheiro: "Financiado pelo banco",
+    "Pago em permuta — Gol 2019". Antes todos viravam um "Quitado fora do
+    carnê" calculado por diferença, que não dizia de onde vinha o dinheiro.
     """
 
-    def test_permuta_nao_tem_carne_e_declara_o_valor_fora(self):
+    def test_sinal_mais_banco_e_financiamento_bancario(self):
         plano = pp.montar(
-            valor_tabela=Decimal("100000"), condicoes_pagamento="permuta",
-            data_compra=date(2026, 5, 2),
-        )
-        self.assertEqual(plano.parcelas, [])
-        self.assertEqual(plano.total, Decimal("0.00"))
-        self.assertEqual(plano.fora_do_carne, Decimal("100000.00"))
-
-    def test_financiamento_bancario_cobra_so_o_sinal(self):
-        """O banco quita o resto direto com a construtora: 30 mil no carnê,
-        270 mil fora dele — e a soma continua fechando os 300 mil."""
-        plano = pp.montar(
-            valor_tabela=Decimal("300000"), condicoes_pagamento="financiamento_bancario",
-            entrada_valor=Decimal("30000"), entrada_parcelas=2,
+            valor_tabela=Decimal("300000"),
+            meios=[
+                entrada("30000", 2),
+                dict(tipo="financiamento_bancario", valor="270000", descricao="Caixa"),
+            ],
             data_compra=date(2026, 5, 2),
         )
         self.assertEqual(len(plano.parcelas), 2)
         self.assertEqual(plano.total, Decimal("30000.00"))
         self.assertEqual(plano.fora_do_carne, Decimal("270000.00"))
-        self.assertEqual(plano.total + plano.fora_do_carne, plano.valor_negociado)
+        self.assertEqual(plano.meios[1].rotulo, "Financiado pelo banco — Caixa")
+        self.assertFalse(plano.meios[1].no_carne)
+        # A venda leva o nome do meio que responde pela maior parte.
+        self.assertEqual(plano.condicao, "financiamento_bancario")
 
-    def test_condicao_apaga_o_que_ela_nao_comporta(self):
-        """Prazo e juros que cheguem no payload de um cartão são descartados —
-        o parcelamento do cartão é da operadora, não do contrato."""
+    def test_permuta_exige_dizer_o_que_foi_permutado(self):
+        with self.assertRaisesMessage(ValueError, "o que foi dado em permuta"):
+            pp.montar(valor_tabela=Decimal("100000"),
+                      meios=[dict(tipo="permuta", valor="100000")])
         plano = pp.montar(
-            valor_tabela=Decimal("50000"), condicoes_pagamento="cartao",
-            entrada_valor=Decimal("50000"), num_parcelas=36, juros_mensal=Decimal("2"),
-            balao_valor=Decimal("1000"), balao_quantidade=3,
+            valor_tabela=Decimal("100000"),
+            meios=[dict(tipo="permuta", valor="100000", descricao="Terreno na Rua B")],
+        )
+        self.assertEqual(plano.parcelas, [])
+        self.assertEqual(plano.meios[0].rotulo, "Pago em permuta — Terreno na Rua B")
+
+    def test_outro_e_um_texto_que_explica_a_condicao(self):
+        """"Outro" sem explicação é um valor sem dono: a venda não fecha."""
+        with self.assertRaisesMessage(ValueError, "explique a condição"):
+            pp.montar(valor_tabela=Decimal("50000"),
+                      meios=[dict(tipo="outro", valor="50000", descricao="   ")])
+        plano = pp.montar(
+            valor_tabela=Decimal("50000"),
+            meios=[dict(tipo="outro", valor="50000", descricao="5 cheques pré-datados")],
+        )
+        self.assertEqual(plano.parcelas, [])
+        self.assertEqual(plano.fora_do_carne, Decimal("50000.00"))
+        self.assertEqual(plano.meios[0].rotulo, "Outro — 5 cheques pré-datados")
+
+    def test_o_meio_apaga_o_que_ele_nao_comporta(self):
+        """Prazo e juros num FGTS são descartados — não há carnê para eles. O
+        nome do banco, no financiamento bancário, fica: é o que o meio é."""
+        meio = pp.meio_de(dict(
+            tipo="fgts", valor="30000", parcelas=36, juros_mensal="2",
+            sistema_amortizacao="sac", descricao="conta 1",
+        ))
+        self.assertEqual((meio.parcelas, meio.juros_mensal, meio.sistema_amortizacao),
+                         (1, Decimal("0"), "price"))
+        self.assertEqual(meio.descricao, "")
+        banco = pp.meio_de(dict(tipo="financiamento_bancario", valor="1", descricao=" Caixa "))
+        self.assertEqual(banco.descricao, "Caixa")
+
+    def test_cartao_e_um_titulo_da_operadora(self):
+        """O parcelamento do cartão é da operadora: fica registrado, mas o
+        título a receber é um só."""
+        plano = pp.montar(
+            valor_tabela=Decimal("50000"),
+            meios=[dict(tipo="cartao", valor="50000", parcelas=10, juros_mensal="2")],
             data_compra=date(2026, 5, 2),
         )
         self.assertEqual(len(plano.parcelas), 1)
         self.assertEqual(plano.total_juros, Decimal("0"))
-        self.assertEqual(plano.baloes, Decimal("0.00"))
+        self.assertEqual(plano.meios[0].detalhe, "10x na operadora")
 
-    def test_financiamento_direto_continua_exigindo_prazo_para_o_saldo(self):
-        """A condição que promete financiar tudo não pode "quitar por fora": aí
-        a falta de parcela é falta mesmo."""
+    def test_forma_desconhecida_e_recusada(self):
         with self.assertRaises(ValueError):
-            pp.montar(
-                valor_tabela=Decimal("50000"), condicoes_pagamento="financiamento_direto",
-                entrada_valor=Decimal("10000"), num_parcelas=0,
-            )
+            pp.montar(valor_tabela=Decimal("50000"),
+                      meios=[dict(tipo="inventada", valor="50000")])
 
-    def test_condicao_desconhecida_cai_na_mais_severa(self):
-        """Código fora do catálogo não pode virar um "pago por fora" silencioso
-        de R$ 40 mil."""
-        with self.assertRaises(ValueError):
-            pp.montar(
-                valor_tabela=Decimal("50000"), condicoes_pagamento="inventada",
-                entrada_valor=Decimal("10000"), num_parcelas=0,
-            )
+    def test_meio_sem_valor_e_recusado(self):
+        with self.assertRaisesMessage(ValueError, "Meio 2"):
+            pp.montar(valor_tabela=Decimal("50000"),
+                      meios=[dict(tipo="a_vista", valor="50000"), fd("0", 12)])
+
+    def test_teto_de_meios_vem_do_payment(self):
+        from payment.planos import VENDA_TETO_MEIOS_DE_PAGAMENTO as teto
+
+        meios = [dict(tipo="a_vista", valor="1")] * (teto + 1)
+        with self.assertRaisesMessage(ValueError, f"até {teto} meios"):
+            pp.montar(valor_tabela=Decimal(teto + 1), meios=meios)
 
     def test_catalogo_cobre_as_escolhas_do_modelo(self):
-        """A tela lê o catálogo daqui; se o modelo ganhar uma condição nova e o
+        """A tela lê o catálogo daqui; se o modelo ganhar um meio novo e o
         catálogo não, o formulário mostraria uma opção sem regra."""
-        from clientes.models import ClienteEmpreendimento
+        from clientes.models import ClienteEmpreendimento, MeioPagamento
 
-        do_modelo = {c for c, _ in ClienteEmpreendimento.CONDICOES_PAGAMENTO_CHOICES}
-        self.assertEqual(do_modelo, set(pp.CONDICOES))
+        self.assertEqual({c for c, _ in MeioPagamento.TIPO_CHOICES}, set(pp.TIPOS_DE_MEIO))
+        condicoes = {c for c, _ in ClienteEmpreendimento.CONDICOES_PAGAMENTO_CHOICES}
+        self.assertLessEqual({t.condicao for t in pp.TIPOS_DE_MEIO.values()}, condicoes)
 
 
 class AjusteDeVencimentoTests(SimpleTestCase):
@@ -244,8 +338,8 @@ class AjusteDeVencimentoTests(SimpleTestCase):
 
     def test_parcela_de_sabado_vai_para_segunda_e_guarda_a_data_do_contrato(self):
         plano = pp.montar(
-            valor_tabela=Decimal("12000"), num_parcelas=12,
-            primeiro_vencimento=date(2026, 3, 7),  # sábado
+            valor_tabela=Decimal("12000"),
+            meios=[fd("12000", 12, primeiro_vencimento=date(2026, 3, 7))],  # sábado
             ajustar_vencimento=self._FimDeSemana(),
         )
         primeira = plano.parcelas[0]
@@ -259,9 +353,11 @@ class AjusteDeVencimentoTests(SimpleTestCase):
         dia corrido. Se acrescentassem, o carnê exibido na venda não fecharia com
         o carnê emitido."""
         comum = dict(
-            valor_tabela=Decimal("120000"), entrada_valor=Decimal("24000"), entrada_parcelas=3,
-            juros_mensal=Decimal("1"), num_parcelas=24,
-            balao_valor=Decimal("6000"), balao_quantidade=2,
+            valor_tabela=Decimal("120000"),
+            meios=[
+                entrada("24000", 3), fd("84000", 24, juros="1"),
+                dict(tipo="anuais", valor="12000", parcelas=2),
+            ],
             data_compra=date(2026, 1, 10),
         )
         sem = pp.montar(**comum)
@@ -272,8 +368,8 @@ class AjusteDeVencimentoTests(SimpleTestCase):
 
     def test_sem_ajustador_o_carne_e_o_do_contrato_cru(self):
         plano = pp.montar(
-            valor_tabela=Decimal("12000"), num_parcelas=3,
-            primeiro_vencimento=date(2026, 3, 7),
+            valor_tabela=Decimal("12000"),
+            meios=[fd("12000", 3, primeiro_vencimento=date(2026, 3, 7))],
         )
         self.assertEqual(plano.parcelas[0].vencimento, date(2026, 3, 7))
         self.assertEqual(plano.parcelas_ajustadas, 0)

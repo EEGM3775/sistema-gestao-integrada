@@ -483,26 +483,6 @@ Não é defeito do cálculo: é alcance dele. Fica aqui porque a diferença entr
 próximo dia útil" e "ajustado, menos pelos feriados" é dinheiro entrando no dia errado.
 
 ---
-### D180 — as correções de 16/09/2026 não foram compiladas nem testadas neste ambiente · 🟠 aberto 16/09/2026
-
-A leva D169–D178 foi escrita numa máquina **sem Node e sem GDAL**: `npm`/`tsc -b` não existem, e
-`manage.py test` para no import do PostGIS (`Could not find the GDAL library`). O que foi possível
-verificar rodou: o motor de proposta foi exercitado direto em Python (Price, recusa de saldo sem
-prazo, as três condições que quitam por fora, o ajuste de data que não mexe em um centavo) e todo
-arquivo tocado passa por `ast.parse`. O resto é revisão de código.
-
-**O risco concreto** é o `tsconfig` do frontend com `noUnusedLocals`/`noUnusedParameters` ligados:
-um símbolo esquecido derruba o build, e nove arquivos `.tsx` foram tocados. **Ação:** rodar
-`cd frontend && npm run build` e `cd backend && ../.venv/bin/python manage.py test clientes
-modulocalendar modulomaps empreendimentos funcoescobrancas` num ambiente completo antes de subir.
-
-Testes novos que acompanham a leva e ainda não rodaram: `clientes.test_plano_pagamento`
-(`CondicaoDePagamentoTests`, `AjusteDeVencimentoTests`), `clientes.test_venda_unidade`
-(`ResumoDeUnidadesTests`, `ContagemDaCarteiraAgrupadaTests`), `modulocalendar.tests`
-(`DiaUtilBancarioTests`), `modulomaps.tests` (`UnidadeNoMapaTests`) e `funcoescobrancas.tests`
-(`VencimentoBancarioDoBoletoTests`).
-
----
 ### D160 — a folha separada costuma ser um traço perdido, não outro desenho · 🟠 aberto 16/09/2026
 
 Achado ao medir o acervo a pedido do dono (item 24), e ele é a **causa** do item 31 — *"arquivos com

@@ -29,7 +29,7 @@ from django.utils import timezone
 
 from clientes import plano_pagamento
 from clientes import vencimento as vencimento_svc
-from clientes.models import Cliente, ClienteEmpreendimento, ContratoCliente
+from clientes.models import Cliente, ClienteEmpreendimento, ContratoCliente, MeioPagamento
 from empreendimentos.models import Empreendimento, Unidade
 from moduloerp.models import ContaReceber, StatusConta
 from nucleo.documentos import gerar_cnpj, gerar_cpf
@@ -204,7 +204,7 @@ class Command(BaseCommand):
         """
         livres = [u for u in unidades if u.situacao == "disponivel"]
         aleatorio.shuffle(livres)
-        vendas, vendidas = [], []
+        vendas, vendidas, planos = [], [], []
 
         for i, cliente in enumerate(clientes):
             # Uma minoria compra dois lotes — o caso que a visão por unidade e o
@@ -218,7 +218,8 @@ class Command(BaseCommand):
                 negociado = (tabela * (1 - desconto / 100)).quantize(Decimal("0.01"))
                 entrada = (negociado * Decimal(aleatorio.choice(["0.10", "0.15", "0.20"]))).quantize(Decimal("0.01"))
                 tem_balao = aleatorio.random() < 0.25
-                balao = (negociado * Decimal("0.05")).quantize(Decimal("0.01")) if tem_balao else Decimal("0")
+                # Duas anuais de 5% cada: o total delas é um meio à parte.
+                anuais = (negociado * Decimal("0.05")).quantize(Decimal("0.01")) * 2 if tem_balao else Decimal("0")
                 compra = hoje - timedelta(days=aleatorio.randint(60, 1000))
 
                 vendas.append(ClienteEmpreendimento(
@@ -227,25 +228,36 @@ class Command(BaseCommand):
                     condicoes_pagamento="financiamento_direto",
                     valor_tabela=tabela, desconto_percentual=desconto,
                     valor_compra=negociado,
-                    entrada_valor=entrada, entrada_parcelas=aleatorio.choice([1, 3, 6]),
-                    entrada_primeiro_vencimento=compra,
-                    sistema_amortizacao=aleatorio.choice(["price", "price", "sac"]),
-                    juros_mensal=Decimal(aleatorio.choice(["0", "0.5", "0.79", "1.0"])),
-                    num_parcelas=aleatorio.choice([24, 36, 48]),
-                    primeiro_vencimento=plano_pagamento.somar_meses(compra, 1),
-                    balao_valor=balao, balao_quantidade=2 if tem_balao else 0,
-                    balao_periodicidade="anual",
-                    balao_primeiro_vencimento=plano_pagamento.somar_meses(compra, 12) if tem_balao else None,
                 ))
+                meios = [
+                    dict(tipo="entrada", valor=entrada, parcelas=aleatorio.choice([1, 3, 6]),
+                         primeiro_vencimento=compra),
+                    dict(tipo="financiamento_direto", valor=negociado - entrada - anuais,
+                         sistema_amortizacao=aleatorio.choice(["price", "price", "sac"]),
+                         juros_mensal=Decimal(aleatorio.choice(["0", "0.5", "0.79", "1.0"])),
+                         parcelas=aleatorio.choice([24, 36, 48]),
+                         primeiro_vencimento=plano_pagamento.somar_meses(compra, 1)),
+                ]
+                if tem_balao:
+                    meios.append(dict(tipo="anuais", valor=anuais, parcelas=2, periodicidade="anual",
+                                      primeiro_vencimento=plano_pagamento.somar_meses(compra, 12)))
+                planos.append(meios)
                 unidade.situacao = "vendida"
                 vendidas.append(unidade)
 
         with transaction.atomic():
             ClienteEmpreendimento.objects.bulk_create(vendas, batch_size=500)
+            # O Postgres devolve a PK no `bulk_create`: é ela que amarra os meios.
+            MeioPagamento.objects.bulk_create([
+                MeioPagamento(tenant=tenant, aquisicao=venda, ordem=ordem, **dados)
+                for venda, meios in zip(vendas, planos)
+                for ordem, dados in enumerate(meios, start=1)
+            ], batch_size=1000)
             Unidade.objects.bulk_update(vendidas, ["situacao"], batch_size=1000)
         return list(
             ClienteEmpreendimento.objects.filter(tenant=tenant)
             .select_related("cliente", "empreendimento", "unidade")
+            .prefetch_related("meios")
         )
 
     def _gerar_carnes(self, tenant, aquisicoes, hoje, aleatorio):
@@ -279,20 +291,16 @@ class Command(BaseCommand):
                 )
             except ValueError:
                 continue
-            totais = {}
-            for parcela in plano.parcelas:
-                totais[parcela.tipo] = totais.get(parcela.tipo, 0) + 1
+            descricoes = plano_pagamento.descricoes_do_carne(plano, aquisicao)
             # 3 em cada 4 compradores estão em dia: pagam tudo o que já venceu.
             pontual = aleatorio.random() < 0.75
-            for parcela in plano.parcelas:
+            for parcela, descricao in zip(plano.parcelas, descricoes):
                 vencida = parcela.vencimento < hoje
                 quitada = vencida and pontual
                 titulos.append(ContaReceber(
                     tenant=tenant, cliente=aquisicao.cliente,
                     empreendimento=aquisicao.empreendimento, cliente_empreendimento=aquisicao,
-                    descricao=plano_pagamento.descricao_do_titulo(
-                        parcela, totais[parcela.tipo], aquisicao,
-                    ),
+                    descricao=descricao,
                     valor=parcela.valor,
                     valor_pago=parcela.valor if quitada else Decimal("0"),
                     data_emissao=aquisicao.data_compra,

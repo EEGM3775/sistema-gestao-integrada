@@ -1,5 +1,4 @@
 # backend/clientes/serializers.py
-from decimal import Decimal
 
 from rest_framework import serializers
 from funcoesimpexp.entrega import ArquivoGateadoSerializerMixin
@@ -16,7 +15,8 @@ from .models import (
     ClienteEmpreendimento,
     ContratoCliente,
     DocumentoCliente,
-    DadoBancarioCliente
+    DadoBancarioCliente,
+    MeioPagamento,
 )
 
 
@@ -33,6 +33,19 @@ class ClienteSerializer(FieldMaskingSerializerMixin, TenantScopedUniqueSerialize
     sensitive_fields = {
         "cpf_cnpj": "cadastro.cliente_doc.view",
     }
+
+
+class MeioPagamentoSerializer(serializers.ModelSerializer):
+    """Um meio de pagamento da venda. A ordem é a da lista enviada, e quem diz
+    quais campos o tipo comporta é o motor (`plano_pagamento.TIPOS_DE_MEIO`)."""
+
+    class Meta:
+        model = MeioPagamento
+        fields = [
+            'meio_pagamento_id', 'ordem', 'tipo', 'valor', 'descricao', 'parcelas',
+            'primeiro_vencimento', 'juros_mensal', 'sistema_amortizacao', 'periodicidade',
+        ]
+        read_only_fields = ['meio_pagamento_id', 'ordem']
 
 
 class ClienteEmpreendimentoSerializer(serializers.ModelSerializer):
@@ -52,6 +65,10 @@ class ClienteEmpreendimentoSerializer(serializers.ModelSerializer):
         source='unidade.valor_base', max_digits=15, decimal_places=2, read_only=True,
     )
     plano = serializers.SerializerMethodField()
+    # A lista livre de meios de pagamento. No PATCH, mandá-la **substitui** a
+    # lista inteira (é um documento, não linhas soltas); omiti-la mantém a
+    # gravada.
+    meios = MeioPagamentoSerializer(many=True, required=False)
     indice_correcao_codigo = serializers.CharField(
         source='indice_correcao.codigo', read_only=True, default=None,
     )
@@ -67,9 +84,11 @@ class ClienteEmpreendimentoSerializer(serializers.ModelSerializer):
         # motor de cálculo. Aceitá-los do cliente da API permitiria gravar um
         # contrato cujo total não bate com o próprio plano — e nada na tela
         # denunciaria a diferença.
+        # A condição também: ela é o rótulo que os meios dão à venda
+        # (`plano_pagamento.condicao_da_venda`), não uma escolha à parte.
         read_only_fields = [
             'cliente_empreendimento_id', 'tenant', 'valor_tabela', 'valor_compra',
-            'valor_total_plano', 'parcelas_geradas_em',
+            'valor_total_plano', 'parcelas_geradas_em', 'condicoes_pagamento',
         ]
 
     def get_plano(self, obj):
@@ -109,8 +128,8 @@ class ClienteEmpreendimentoSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         """A proposta precisa fechar antes de virar contrato — o motor de cálculo
-        é quem diz se fecha (desconto maior que a tabela, entrada maior que o
-        negociado, saldo sem parcela)."""
+        é quem diz se fecha (desconto maior que a tabela, meios que não somam o
+        valor negociado, permuta sem descrição)."""
         dados = {**({} if not self.instance else _dados_da_instancia(self.instance)), **attrs}
         unidade = dados.get('unidade')
         if unidade is not None and 'unidade' in attrs:
@@ -118,57 +137,55 @@ class ClienteEmpreendimentoSerializer(serializers.ModelSerializer):
             # tirado agora. Reprecificar a unidade amanhã não mexe neste contrato.
             dados['valor_tabela'] = unidade.valor_base
             attrs['valor_tabela'] = unidade.valor_base
+        if 'meios' in attrs:
+            origem = attrs['meios']
+        else:
+            origem = list(self.instance.meios.all()) if self.instance else []
         try:
+            # Lidos pelo motor: é ele que apaga o que cada tipo não comporta
+            # (juros num FGTS, prazo numa permuta). O que se grava é o lido, não
+            # o enviado — senão a ficha mostraria o que o carnê ignora.
+            meios = [plano_pagamento.meio_de(m, i) for i, m in enumerate(origem, start=1)]
             plano = plano_pagamento.montar(
                 valor_tabela=dados.get('valor_tabela') or 0,
                 desconto_percentual=dados.get('desconto_percentual') or 0,
                 desconto_valor=dados.get('desconto_valor') or 0,
-                entrada_valor=dados.get('entrada_valor') or 0,
-                entrada_parcelas=dados.get('entrada_parcelas') or 1,
-                entrada_primeiro_vencimento=dados.get('entrada_primeiro_vencimento'),
-                sistema=dados.get('sistema_amortizacao') or 'price',
-                juros_mensal=dados.get('juros_mensal') or 0,
-                num_parcelas=dados.get('num_parcelas') or 0,
-                primeiro_vencimento=dados.get('primeiro_vencimento'),
-                balao_valor=dados.get('balao_valor') or 0,
-                balao_quantidade=dados.get('balao_quantidade') or 0,
-                balao_periodicidade=dados.get('balao_periodicidade') or 'anual',
-                balao_primeiro_vencimento=dados.get('balao_primeiro_vencimento'),
+                meios=meios,
                 data_compra=dados.get('data_compra'),
-                condicoes_pagamento=dados.get('condicoes_pagamento'),
             )
         except ValueError as erro:
-            raise serializers.ValidationError({'plano': str(erro)})
-        # Derivados gravados: o que a carteira soma e a ficha mostra sem recalcular.
+            raise serializers.ValidationError({'meios': str(erro)})
+        # Derivados gravados: o que a carteira soma e filtra, e a ficha mostra
+        # sem recalcular.
         attrs['valor_compra'] = plano.valor_negociado
         attrs['valor_total_plano'] = plano.total
-        # O que a condição não comporta sai do registro, e a regra de o que ela
-        # comporta é do motor (`plano_pagamento.CONDICOES`), não deste arquivo:
-        # uma venda convertida de "financiamento" para "à vista" não pode ficar
-        # com 60 parcelas gravadas que o plano não reconhece mais, e uma permuta
-        # não pode guardar juros de um parcelamento que ela não tem.
-        condicao = dados.get('condicoes_pagamento')
-        if condicao == 'a_vista':
-            attrs.update(
-                entrada_valor=plano.valor_negociado, entrada_parcelas=1,
-                num_parcelas=0, juros_mensal=Decimal('0'),
-                balao_valor=Decimal('0'), balao_quantidade=0,
-                primeiro_vencimento=None, balao_primeiro_vencimento=None,
-            )
-        else:
-            attrs.update(plano_pagamento.normalizar_por_condicao(condicao, dados))
+        attrs['condicoes_pagamento'] = plano.condicao
+        if 'meios' in attrs or not self.instance:
+            attrs['meios'] = [vars(m) for m in meios]
         return attrs
 
+    def _gravar_meios(self, aquisicao, meios):
+        aquisicao.meios.all().delete()
+        MeioPagamento.objects.bulk_create([
+            MeioPagamento(tenant_id=aquisicao.tenant_id, aquisicao=aquisicao, ordem=ordem, **dados)
+            for ordem, dados in enumerate(meios, start=1)
+        ])
+
     def create(self, validated_data):
+        meios = validated_data.pop('meios', [])
         unidade = validated_data['unidade']
         validated_data['empreendimento'] = unidade.empreendimento
         aquisicao = super().create(validated_data)
+        self._gravar_meios(aquisicao, meios)
         _marcar_unidade_vendida(unidade)
         return aquisicao
 
     def update(self, instance, validated_data):
+        meios = validated_data.pop('meios', None)
         anterior = instance.unidade
         aquisicao = super().update(instance, validated_data)
+        if meios is not None:
+            self._gravar_meios(aquisicao, meios)
         if aquisicao.unidade_id != anterior.pk:
             _liberar_unidade(anterior)
             _marcar_unidade_vendida(aquisicao.unidade)
@@ -179,14 +196,7 @@ def _dados_da_instancia(instancia) -> dict:
     """Os campos do plano como estão gravados — base do PATCH parcial, que só
     manda o que mudou e ainda assim precisa ser validado inteiro."""
     campos = (
-        'unidade', 'valor_tabela', 'desconto_percentual', 'desconto_valor', 'entrada_valor',
-        'entrada_parcelas', 'entrada_primeiro_vencimento', 'sistema_amortizacao', 'juros_mensal',
-        'num_parcelas', 'primeiro_vencimento', 'balao_valor', 'balao_quantidade',
-        'balao_periodicidade', 'balao_primeiro_vencimento', 'data_compra',
-        # A condição entra aqui porque ela **é** parte do plano: sem ela, um
-        # PATCH que só mexe no desconto reavaliaria uma venda à vista como se
-        # fosse parcelada.
-        'condicoes_pagamento',
+        'unidade', 'valor_tabela', 'desconto_percentual', 'desconto_valor', 'data_compra',
     )
     return {campo: getattr(instancia, campo) for campo in campos}
 

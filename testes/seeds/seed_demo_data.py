@@ -25,7 +25,7 @@ from nucleo.models import Tenant, Usuario, Notificacao
 from nucleo.tenancy import rls_bypass, tenant_context
 from empreendimentos.models import Empreendimento, Unidade
 from obras.models import Obra, EtapaObra
-from clientes.models import Cliente, ClienteEmpreendimento, ContratoCliente
+from clientes.models import Cliente, ClienteEmpreendimento, ContratoCliente, MeioPagamento
 from rh.models import Cargo, Funcionario
 from modulocalendar.models import CalendarEvent
 from funcoeswhatsapp.models import CanalWhatsApp
@@ -308,8 +308,8 @@ def seed_clientes(tenant, empreendimentos):
         unidades.append(un)
 
     # Aquisições: quem comprou o quê, e em que condições. O plano de pagamento é
-    # o do produto (entrada + Price/SAC), para a demo mostrar a mesma conta que
-    # a tela faz.
+    # o do produto (meios: entrada + financiamento direto Price/SAC), para a
+    # demo mostrar a mesma conta que a tela faz. Sem parcelas = à vista.
     aquisicoes = [
         # (cliente, unidade, entrada, sistema, juros a.m., parcelas)
         (criados[0], unidades[0], Decimal("70000.00"), "price", Decimal("0.79"), 48),
@@ -329,16 +329,24 @@ def seed_clientes(tenant, empreendimentos):
                 "condicoes_pagamento": "a_vista" if parcelas == 0 else "financiamento_direto",
                 "valor_tabela": unidade.valor_base,
                 "valor_compra": unidade.valor_base,
-                "entrada_valor": entrada,
-                "entrada_parcelas": 1,
-                "entrada_primeiro_vencimento": compra,
-                "sistema_amortizacao": sistema,
-                "juros_mensal": juros,
-                "num_parcelas": parcelas,
-                "primeiro_vencimento": compra + datetime.timedelta(days=30),
             },
         )
         if created:
+            if parcelas == 0:
+                meios = [dict(tipo="a_vista", valor=unidade.valor_base, primeiro_vencimento=compra)]
+            else:
+                meios = [
+                    dict(tipo="entrada", valor=entrada, primeiro_vencimento=compra),
+                    dict(
+                        tipo="financiamento_direto", valor=unidade.valor_base - entrada,
+                        parcelas=parcelas, sistema_amortizacao=sistema, juros_mensal=juros,
+                        primeiro_vencimento=compra + datetime.timedelta(days=30),
+                    ),
+                ]
+            MeioPagamento.objects.bulk_create([
+                MeioPagamento(tenant=tenant, aquisicao=aq, ordem=ordem, **dados)
+                for ordem, dados in enumerate(meios, start=1)
+            ])
             unidade.situacao = "vendida"
             unidade.save(update_fields=["situacao"])
             print(f"  Aquisição criada: {cli.nome_completo} → {unidade.rotulo}")

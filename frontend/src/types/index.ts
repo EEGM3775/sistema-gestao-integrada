@@ -260,6 +260,65 @@ export interface ClienteFormData {
 
 export type SistemaAmortizacao = 'price' | 'sac'
 export type PeriodicidadeBalao = 'anual' | 'semestral'
+export type TipoMeioPagamento =
+  | 'a_vista' | 'entrada' | 'financiamento_direto' | 'anuais'
+  | 'financiamento_bancario' | 'fgts' | 'permuta' | 'cartao' | 'outro'
+
+/** Um meio de pagamento da venda, como a API grava e recebe. A venda é uma
+ *  lista livre destes, e a soma dos valores é o valor negociado. */
+export interface MeioPagamento {
+  meio_pagamento_id?: number
+  ordem?: number
+  tipo: TipoMeioPagamento
+  /** Principal que o meio quita, sem juros. */
+  valor: string
+  descricao: string
+  parcelas: number
+  primeiro_vencimento: string | null
+  juros_mensal: string
+  sistema_amortizacao: SistemaAmortizacao
+  periodicidade: PeriodicidadeBalao
+}
+
+/** O que cada tipo de meio comporta — catálogo do backend
+ *  (`GET /api/clientes-empreendimentos/condicoes/`), nunca reescrito aqui. */
+export interface TipoDeMeio {
+  codigo: TipoMeioPagamento
+  rotulo: string
+  rotuloResumo: string
+  noCarne: boolean
+  condicao: CondicoesPagamento
+  nota: string
+  parcelas: boolean
+  rotuloParcelas: string
+  juros: boolean
+  sistema: boolean
+  periodicidade: boolean
+  vencimento: boolean
+  rotuloVencimento: string
+  descricao: 'obrigatoria' | 'opcional' | ''
+  rotuloDescricao: string
+}
+
+/** Uma linha do resumo da proposta: o meio pelo nome do dinheiro
+ *  ("Financiado pelo banco — Caixa"), e não "quitado fora do carnê". */
+export interface ResumoMeio {
+  ordem: number
+  tipo: TipoMeioPagamento
+  rotulo: string
+  /** "60x Price, 1% a.m.", "3x sem juros", "10x na operadora". */
+  detalhe: string
+  descricao: string
+  valor: string
+  /** Vira título a receber da construtora? */
+  noCarne: boolean
+  juros: string
+  /** Valor + juros, para os meios do carnê; o valor, para os demais. */
+  total: string
+  quantidade: number
+  primeiraParcela: string
+  ultimaParcela: string
+}
 
 /** O resumo da proposta, calculado no backend (`clientes/plano_pagamento.py`).
  *  Valores em string decimal — a conta é feita lá, nunca refeita aqui. */
@@ -271,22 +330,16 @@ export interface ResumoPlano {
   baloes: string
   saldoFinanciado: string
   totalJuros: string
-  /** O total do **carnê**: entrada + parcelas + balões. */
+  /** O total a receber pela construtora: a soma dos títulos dos meios dela. */
   total: string
   primeiraParcela: string
   ultimaParcela: string
-  /**
-   * O que o comprador paga, mas não à construtora e não por boleto: o saldo que
-   * o banco quita no financiamento bancário, o bem dado em permuta, a parte que
-   * passou na maquininha.
-   *
-   * Não é desconto e não é dívida esquecida — `total + foraDoCarne` cobre o
-   * valor negociado. Sem este campo essas vendas não podiam ser registradas: o
-   * motor as recusava por "sobrou saldo sem parcela".
-   */
+  /** Soma dos meios que não viram título (banco, FGTS, permuta, outro). A tela
+   *  mostra cada um pelo nome, em `meios`, e não este agregado. */
   foraDoCarne?: string
-  /** A condição que o backend efetivamente aplicou ao montar o plano. */
+  /** A condição que os meios dão à venda: a da maior parte do valor. */
   condicao?: string
+  meios?: ResumoMeio[]
   quantidadeParcelas?: number
   /** Quantas caíram em fim de semana ou feriado e foram ao próximo dia útil. */
   parcelasAjustadas?: number
@@ -294,7 +347,9 @@ export interface ResumoPlano {
 
 export interface ParcelaPlano {
   numero: number
-  tipo: 'entrada' | 'parcela' | 'balao'
+  tipo: 'a_vista' | 'entrada' | 'parcela' | 'balao' | 'cartao'
+  /** A ordem do meio que gerou a linha. */
+  meio?: number
   /** A data **pagável** — já no dia útil bancário. */
   vencimento: string
   /** A data do contrato, antes do ajuste de dia útil. Iguais quando não houve
@@ -330,6 +385,7 @@ export interface ClienteEmpreendimento {
   /** Montado pelo backend: "QD 12 · LT 05" ou "Torre A · 3º · 302". */
   rotulo_unidade: string
   data_compra: string
+  /** Derivada dos meios (a condição da maior parte do valor) — read-only. */
   condicoes_pagamento: CondicoesPagamento
   observacoes_compra: string | null
   /** Proposta: da tabela ao que o cliente paga. */
@@ -338,17 +394,7 @@ export interface ClienteEmpreendimento {
   desconto_valor: string
   /** Negociado à vista (tabela − desconto) — derivado, read-only na API. */
   valor_compra: string
-  entrada_valor: string
-  entrada_parcelas: number
-  entrada_primeiro_vencimento: string | null
-  sistema_amortizacao: SistemaAmortizacao
-  juros_mensal: string
-  num_parcelas: number
-  primeiro_vencimento: string | null
-  balao_valor: string
-  balao_quantidade: number
-  balao_periodicidade: PeriodicidadeBalao
-  balao_primeiro_vencimento: string | null
+  meios: MeioPagamento[]
   valor_total_plano: string
   /** Carimbo do botão "Gerar parcelas" — nulo = carnê ainda não existe. */
   parcelas_geradas_em: string | null
@@ -367,21 +413,10 @@ export interface ClienteEmpreendimentoFormData {
   cliente: number
   unidade: number | ''
   data_compra: string
-  condicoes_pagamento: CondicoesPagamento | ''
   observacoes_compra: string
   desconto_percentual: string
   desconto_valor: string
-  entrada_valor: string
-  entrada_parcelas: number
-  entrada_primeiro_vencimento: string
-  sistema_amortizacao: SistemaAmortizacao
-  juros_mensal: string
-  num_parcelas: number
-  primeiro_vencimento: string
-  balao_valor: string
-  balao_quantidade: number
-  balao_periodicidade: PeriodicidadeBalao
-  balao_primeiro_vencimento: string
+  meios: MeioPagamento[]
   indice_correcao: number | ''
   periodicidade_correcao: PeriodicidadeCorrecao
   data_base_correcao: string

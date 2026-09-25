@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { X } from 'lucide-react'
+import { Plus, X } from 'lucide-react'
 import apiClient from '@/api/apiClient'
 import type {
-  ClienteEmpreendimento, ClienteEmpreendimentoFormData, CondicoesPagamento,
-  Empreendimento, IndiceEconomico, SimulacaoPlano, Unidade,
+  ClienteEmpreendimento, ClienteEmpreendimentoFormData, Empreendimento, IndiceEconomico,
+  MeioPagamento, SimulacaoPlano, TipoDeMeio, TipoMeioPagamento, Unidade,
 } from '@/types'
 import { buscarUnidadesDisponiveis } from '@/modules/empreendimentos/hooks/useUnidades'
 import { FieldError, FormErrorBanner, parseApiErrors, type FieldErrors } from '@/utils/formErrors'
@@ -12,17 +12,16 @@ import { validateISO_Pagamento, minCalendarioISO, maxCalendarioISO } from '@/uti
 /**
  * A venda de uma unidade — escolher **qual** e montar a proposta.
  *
- * A identificação da unidade não se digita mais aqui: ela é cadastro do
+ * A identificação da unidade não se digita aqui: ela é cadastro do
  * empreendimento (aba Unidades), e este formulário só escolhe uma das que estão
- * à venda. Era daí que vinha o conflito — rótulo livre e campos estruturados
- * preenchidos na venda podiam divergir, e o mesmo lote podia ser vendido duas
- * vezes.
+ * à venda.
  *
- * O preço parte do **valor de tabela** da unidade e o que o cliente paga sai de
- * uma conta: desconto → entrada (sem juros) → saldo em N parcelas por Price ou
- * SAC → balões. A conta é feita **no backend** (`/simular/`), a cada mudança:
- * repetir a fórmula aqui criaria duas matemáticas para o mesmo contrato, e a da
- * tela seria a que o cliente vê.
+ * O preço parte do **valor de tabela** da unidade, menos o desconto, e o valor
+ * negociado é dividido numa **lista livre de meios de pagamento** — entrada,
+ * financiamento direto, anuais, banco, FGTS, permuta, cartão, outro — quantos a
+ * negociação tiver. A conta é feita **no backend** (`/simular/`), a cada
+ * mudança: repetir a fórmula aqui criaria duas matemáticas para o mesmo
+ * contrato, e a da tela seria a que o cliente vê.
  */
 interface Props {
   open: boolean
@@ -33,37 +32,27 @@ interface Props {
 }
 
 /**
- * A regra de o que cada condição de pagamento comporta **vem do backend**
- * (`GET /api/clientes-empreendimentos/condicoes/`), e não daqui.
- *
- * A condição é a primeira pergunta da venda porque é ela que diz quais campos
- * existem: perguntar juros e sistema de amortização numa venda à vista não é só
- * ruído — é convidar o vendedor a preencher um prazo que o contrato não tem, e
- * depois ninguém sabe se o que está gravado é o combinado.
- *
- * Esta tabela morava aqui, em paralelo à do motor de cálculo. Duas cópias da
- * mesma regra é uma que um dia discorda da outra, e a que discorda em silêncio é
- * a da tela — porque ela some do rastro. Agora existe uma só, no mesmo lugar que
- * grava o carnê (`clientes/plano_pagamento.py::CONDICOES`).
+ * Um meio no formulário. `valorTexto` é o que está no campo, com máscara; nas
+ * anuais ele é o valor **de cada** uma, que é como o vendedor fala ("duas
+ * anuais de 10 mil"), e o `valor` do meio é o total delas.
  */
-interface RegraDaCondicao {
-  codigo: CondicoesPagamento
-  rotulo: string
-  entrada: boolean
-  parcelas: boolean
-  baloes: boolean
-  /** O que sobra do valor negociado é quitado por fora (banco, permuta, cartão). */
-  quitaFora: boolean
-  nota: string
+interface MeioForm extends MeioPagamento {
+  chave: number
+  valorTexto: string
 }
 
-/** Enquanto o catálogo não chega, o formulário não some — mostra tudo e não
- *  apaga nada. Permissivo de propósito: o backend valida de qualquer forma, e
- *  esconder campo por causa de uma requisição lenta seria pior. */
-const REGRA_PROVISORIA: RegraDaCondicao = {
-  codigo: 'outro', rotulo: 'Outro',
-  entrada: true, parcelas: true, baloes: true, quitaFora: false,
-  nota: 'Carregando as regras desta condição…',
+interface FormState extends Omit<ClienteEmpreendimentoFormData, 'meios'> {
+  meios: MeioForm[]
+}
+
+/** A ordem em que "+ Adicionar" sugere o próximo meio: a de uma venda típica. */
+const SUGESTAO: TipoMeioPagamento[] = [
+  'entrada', 'financiamento_direto', 'anuais', 'financiamento_bancario', 'fgts',
+  'permuta', 'cartao', 'outro', 'a_vista',
+]
+
+const NOME_DA_LINHA: Record<string, string> = {
+  a_vista: 'À vista', entrada: 'Entrada', parcela: 'Parcela', balao: 'Anual', cartao: 'Cartão',
 }
 
 function maskCurrency(v: string) {
@@ -76,8 +65,15 @@ function maskCurrency(v: string) {
 
 const currencyToDecimal = (v: string) => v.replace(/\./g, '').replace(',', '.')
 
-const brl = (v?: string | null) =>
+const brl = (v?: string | number | null) =>
   v == null ? '—' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+
+const decimalParaTexto = (v: string | number) =>
+  Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+/** Soma em centavos inteiros: somar reais em ponto flutuante erra o centavo
+ *  que decide se a conta fecha. */
+const centavos = (v: string | number) => Math.round(Number(v || 0) * 100)
 
 const hojeISO = () => new Date().toISOString().slice(0, 10)
 
@@ -90,53 +86,87 @@ function somarMeses(iso: string, meses: number) {
   return alvo.toISOString().slice(0, 10)
 }
 
-const EMPTY = (clienteId: number): ClienteEmpreendimentoFormData => ({
+let proximaChave = 1
+
+function vencimentoPadrao(tipo: TipoMeioPagamento, dataCompra: string) {
+  const base = dataCompra || hojeISO()
+  if (tipo === 'financiamento_direto') return somarMeses(base, 1)
+  if (tipo === 'anuais') return somarMeses(base, 12)
+  return base
+}
+
+function novoMeio(tipo: TipoMeioPagamento, dataCompra: string): MeioForm {
+  return {
+    chave: proximaChave++,
+    tipo,
+    valor: '0',
+    valorTexto: '',
+    descricao: '',
+    parcelas: tipo === 'financiamento_direto' ? 12 : 1,
+    primeiro_vencimento: vencimentoPadrao(tipo, dataCompra),
+    juros_mensal: '0',
+    sistema_amortizacao: 'price',
+    periodicidade: 'anual',
+  }
+}
+
+function meioDaApi(m: MeioPagamento): MeioForm {
+  const cada = m.tipo === 'anuais' && m.parcelas > 0 ? Number(m.valor) / m.parcelas : Number(m.valor)
+  return {
+    ...m,
+    chave: proximaChave++,
+    valorTexto: decimalParaTexto(cada),
+    descricao: m.descricao ?? '',
+    primeiro_vencimento: m.primeiro_vencimento ?? '',
+  }
+}
+
+/** O total do meio a partir do que está no campo — nas anuais, cada × quantas. */
+function valorDoMeio(m: Pick<MeioForm, 'tipo' | 'valorTexto' | 'parcelas'>) {
+  const digitado = currencyToDecimal(m.valorTexto) || '0'
+  if (m.tipo !== 'anuais') return digitado
+  return ((centavos(digitado) * Math.max(1, m.parcelas || 1)) / 100).toFixed(2)
+}
+
+const EMPTY = (clienteId: number): FormState => ({
   cliente: clienteId,
   unidade: '',
   data_compra: hojeISO(),
-  condicoes_pagamento: 'financiamento_direto',
   observacoes_compra: '',
   desconto_percentual: '0',
   desconto_valor: '0',
-  entrada_valor: '0',
-  entrada_parcelas: 1,
-  entrada_primeiro_vencimento: hojeISO(),
-  sistema_amortizacao: 'price',
-  juros_mensal: '0',
-  num_parcelas: 0,
-  primeiro_vencimento: somarMeses(hojeISO(), 1),
-  balao_valor: '0',
-  balao_quantidade: 0,
-  balao_periodicidade: 'anual',
-  balao_primeiro_vencimento: '',
+  meios: [novoMeio('entrada', hojeISO())],
   indice_correcao: '',
   periodicidade_correcao: 'anual',
   data_base_correcao: '',
 })
 
-function toForm(a: ClienteEmpreendimento): ClienteEmpreendimentoFormData {
+function toForm(a: ClienteEmpreendimento): FormState {
   return {
     cliente: a.cliente,
     unidade: a.unidade,
     data_compra: a.data_compra,
-    condicoes_pagamento: a.condicoes_pagamento,
     observacoes_compra: a.observacoes_compra ?? '',
     desconto_percentual: a.desconto_percentual,
     desconto_valor: a.desconto_valor,
-    entrada_valor: a.entrada_valor,
-    entrada_parcelas: a.entrada_parcelas,
-    entrada_primeiro_vencimento: a.entrada_primeiro_vencimento ?? a.data_compra,
-    sistema_amortizacao: a.sistema_amortizacao,
-    juros_mensal: a.juros_mensal,
-    num_parcelas: a.num_parcelas,
-    primeiro_vencimento: a.primeiro_vencimento ?? somarMeses(a.data_compra, 1),
-    balao_valor: a.balao_valor,
-    balao_quantidade: a.balao_quantidade,
-    balao_periodicidade: a.balao_periodicidade,
-    balao_primeiro_vencimento: a.balao_primeiro_vencimento ?? '',
+    meios: (a.meios ?? []).map(meioDaApi),
     indice_correcao: a.indice_correcao ?? '',
     periodicidade_correcao: a.periodicidade_correcao ?? 'anual',
     data_base_correcao: a.data_base_correcao ?? '',
+  }
+}
+
+/** O meio como a API recebe: sem o que é só do formulário. */
+function meioParaApi(m: MeioForm): MeioPagamento {
+  return {
+    tipo: m.tipo,
+    valor: m.valor,
+    descricao: m.descricao,
+    parcelas: m.parcelas,
+    primeiro_vencimento: m.primeiro_vencimento || null,
+    juros_mensal: m.juros_mensal || '0',
+    sistema_amortizacao: m.sistema_amortizacao,
+    periodicidade: m.periodicidade,
   }
 }
 
@@ -150,6 +180,9 @@ const labelCls: React.CSSProperties = {
   display: 'block', fontSize: '0.75rem', fontWeight: 600,
   marginBottom: '4px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-body)',
 }
+const notaCls: React.CSSProperties = {
+  fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 4,
+}
 const SectionTitle: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <p style={{
     fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.08em',
@@ -159,20 +192,20 @@ const SectionTitle: React.FC<{ children: React.ReactNode }> = ({ children }) => 
 )
 
 const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, initial }) => {
-  const [form, setForm] = useState<ClienteEmpreendimentoFormData>(EMPTY(clienteId))
+  const [form, setForm] = useState<FormState>(EMPTY(clienteId))
   const [empreendimentos, setEmpreendimentos] = useState<Empreendimento[]>([])
   const [empSelecionado, setEmpSelecionado] = useState<number | ''>('')
   const [unidades, setUnidades] = useState<Unidade[]>([])
   const [carregandoUnidades, setCarregandoUnidades] = useState(false)
-  const [displayEntrada, setDisplayEntrada] = useState('')
-  const [displayBalao, setDisplayBalao] = useState('')
   const [simulacao, setSimulacao] = useState<SimulacaoPlano | null>(null)
   const [erroSimulacao, setErroSimulacao] = useState<string | null>(null)
+  const [negociado, setNegociado] = useState<string | null>(null)
   const [verCarne, setVerCarne] = useState(false)
   const [saving, setSaving] = useState(false)
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [indices, setIndices] = useState<IndiceEconomico[]>([])
-  const [condicoes, setCondicoes] = useState<RegraDaCondicao[]>([])
+  const [tipos, setTipos] = useState<TipoDeMeio[]>([])
+  const [tetoMeios, setTetoMeios] = useState(12)
 
   useEffect(() => {
     apiClient.get('/empreendimentos/')
@@ -182,24 +215,24 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
       .then(r => setIndices(r.data))
       .catch(() => setIndices([]))
     apiClient.get('/clientes-empreendimentos/condicoes/')
-      .then(r => setCondicoes(r.data.condicoes ?? []))
-      .catch(() => setCondicoes([]))
+      .then(r => {
+        setTipos(r.data.meios ?? [])
+        if (r.data.tetoMeios) setTetoMeios(r.data.tetoMeios)
+      })
+      .catch(() => setTipos([]))
   }, [])
 
   useEffect(() => {
     if (initial) {
       setForm(toForm(initial))
-      setDisplayEntrada(Number(initial.entrada_valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 }))
-      setDisplayBalao(Number(initial.balao_valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 }))
       setEmpSelecionado(initial.empreendimento)
     } else {
       setForm(EMPTY(clienteId))
-      setDisplayEntrada('')
-      setDisplayBalao('')
       setEmpSelecionado('')
     }
     setSimulacao(null)
     setErroSimulacao(null)
+    setNegociado(null)
     setVerCarne(false)
     setFieldErrors({})
   }, [initial, open, clienteId])
@@ -225,10 +258,11 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
   )
 
   // Simulação ao vivo, com folga para o usuário terminar de digitar. A conta é
-  // do backend — a mesma que grava o contrato depois.
+  // do backend — a mesma que grava o contrato depois. O negociado volta mesmo
+  // quando os meios ainda não fecham, para a barra dizer quanto falta.
   const timer = useRef<number | undefined>(undefined)
   const simular = useCallback(() => {
-    if (!form.unidade) { setSimulacao(null); return }
+    if (!form.unidade) { setSimulacao(null); setNegociado(null); return }
     window.clearTimeout(timer.current)
     timer.current = window.setTimeout(async () => {
       try {
@@ -236,29 +270,18 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
           unidade: form.unidade,
           desconto_percentual: form.desconto_percentual || 0,
           desconto_valor: form.desconto_valor || 0,
-          entrada_valor: form.entrada_valor || 0,
-          entrada_parcelas: form.entrada_parcelas || 1,
-          entrada_primeiro_vencimento: form.entrada_primeiro_vencimento || null,
-          sistema_amortizacao: form.sistema_amortizacao,
-          juros_mensal: form.juros_mensal || 0,
-          num_parcelas: form.num_parcelas || 0,
-          primeiro_vencimento: form.primeiro_vencimento || null,
-          balao_valor: form.balao_valor || 0,
-          balao_quantidade: form.balao_quantidade || 0,
-          balao_periodicidade: form.balao_periodicidade,
-          balao_primeiro_vencimento: form.balao_primeiro_vencimento || null,
           data_compra: form.data_compra || null,
-          // Sem a condição, o backend calcularia um "à vista" como venda sem
-          // plano e devolveria erro de saldo sem parcela — o painel mostraria
-          // falha numa proposta que é válida.
-          condicoes_pagamento: form.condicoes_pagamento,
+          meios: form.meios.map(meioParaApi),
         })
         setSimulacao(data)
+        setNegociado(data.valorNegociado)
         setErroSimulacao(null)
       } catch (err) {
         setSimulacao(null)
-        const detalhe = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-        setErroSimulacao(detalhe ?? 'Não foi possível calcular a proposta.')
+        const dados = (err as { response?: { data?: { detail?: string; valorNegociado?: string } } })
+          ?.response?.data
+        setNegociado(dados?.valorNegociado ?? null)
+        setErroSimulacao(dados?.detail ?? 'Não foi possível calcular a proposta.')
       }
     }, 350)
   }, [form])
@@ -270,28 +293,66 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
 
   if (!open) return null
 
-  const set = (campo: keyof ClienteEmpreendimentoFormData, valor: string | number) =>
+  const set = (campo: keyof FormState, valor: string | number) =>
     setForm(anterior => ({ ...anterior, [campo]: valor }))
 
-  const plano = condicoes.find(c => c.codigo === form.condicoes_pagamento) ?? REGRA_PROVISORIA
+  const tipoDe = (codigo: TipoMeioPagamento) => tipos.find(t => t.codigo === codigo)
 
-  /** Trocar a condição apaga o que ela não comporta. Sem isso, mudar de
-   *  "financiamento direto" para "à vista" deixaria 60 parcelas gravadas num
-   *  contrato que a tela mostra como pagamento único — e o carnê sairia com
-   *  elas. O backend repete a limpeza (`normalizar_por_condicao`), porque a tela
-   *  não é a única porta; aqui ela é imediata, para o vendedor ver o efeito. */
-  const trocarCondicao = (valor: string) => {
-    const novo = condicoes.find(c => c.codigo === valor) ?? REGRA_PROVISORIA
+  const alterarMeio = (chave: number, mudanca: Partial<MeioForm>) =>
     setForm(anterior => ({
       ...anterior,
-      condicoes_pagamento: valor as CondicoesPagamento,
-      ...(novo.entrada ? {} : { entrada_valor: '0', entrada_parcelas: 1 }),
-      ...(novo.parcelas ? {} : { num_parcelas: 0, juros_mensal: '0' }),
-      ...(novo.baloes ? {} : { balao_valor: '0', balao_quantidade: 0, balao_primeiro_vencimento: '' }),
+      meios: anterior.meios.map(m => {
+        if (m.chave !== chave) return m
+        const novo = { ...m, ...mudanca }
+        return { ...novo, valor: valorDoMeio(novo) }
+      }),
     }))
-    if (!novo.entrada) setDisplayEntrada('')
-    if (!novo.baloes) setDisplayBalao('')
+
+  /** Trocar o tipo apaga o que o novo não comporta — o backend repete a
+   *  limpeza ao gravar, porque a tela não é a única porta. O valor fica: quem
+   *  troca "entrada" por "à vista" está corrigindo o nome, não a conta. A
+   *  descrição não fica: o nome do banco não explica um "outro". */
+  const trocarTipo = (m: MeioForm, codigo: TipoMeioPagamento) => {
+    const regra = tipoDe(codigo)
+    const cada = m.tipo === 'anuais' ? m.valor : currencyToDecimal(m.valorTexto) || '0'
+    alterarMeio(m.chave, {
+      tipo: codigo,
+      valorTexto: Number(cada) > 0 ? decimalParaTexto(cada) : '',
+      parcelas: regra?.parcelas ? (codigo === 'financiamento_direto' ? Math.max(m.parcelas, 12) : m.parcelas) : 1,
+      juros_mensal: regra?.juros ? m.juros_mensal : '0',
+      descricao: '',
+      primeiro_vencimento: regra?.vencimento ? vencimentoPadrao(codigo, form.data_compra) : '',
+    })
   }
+
+  const adicionarMeio = () => setForm(anterior => {
+    const usados = new Set(anterior.meios.map(m => m.tipo))
+    const tipo = SUGESTAO.find(t => !usados.has(t)) ?? 'outro'
+    return { ...anterior, meios: [...anterior.meios, novoMeio(tipo, anterior.data_compra)] }
+  })
+
+  const removerMeio = (chave: number) =>
+    setForm(anterior => ({ ...anterior, meios: anterior.meios.filter(m => m.chave !== chave) }))
+
+  const distribuido = form.meios.reduce((soma, m) => soma + centavos(m.valor), 0)
+  const falta = negociado == null ? null : centavos(negociado) - distribuido
+
+  /** Põe neste meio o que falta para fechar o negociado. Nas anuais, divide
+   *  pela quantidade — e o centavo que não divide fica aparecendo na barra. */
+  const usarRestante = (m: MeioForm) => {
+    if (falta == null) return
+    const livre = falta + centavos(m.valor)
+    if (livre <= 0) return
+    const cada = m.tipo === 'anuais' ? Math.floor(livre / Math.max(1, m.parcelas)) : livre
+    alterarMeio(m.chave, { valorTexto: decimalParaTexto(cada / 100) })
+  }
+
+  const temSac = form.meios.some(m => m.tipo === 'financiamento_direto' && m.sistema_amortizacao === 'sac')
+  const temPrazo = form.meios.some(m =>
+    m.tipo === 'financiamento_direto' || m.tipo === 'anuais' || (m.tipo === 'entrada' && m.parcelas > 1))
+  const repetidos = new Set(
+    form.meios.map(m => m.tipo).filter((t, i, todos) => todos.indexOf(t) !== i),
+  )
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -303,6 +364,7 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
       await onSave({
         ...form,
         cliente: clienteId,
+        meios: form.meios.map(meioParaApi),
         indice_correcao: form.indice_correcao === '' ? null : form.indice_correcao,
         data_base_correcao: form.data_base_correcao || null,
       } as unknown as ClienteEmpreendimentoFormData)
@@ -314,11 +376,14 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
     }
   }
 
+  const resumoDe = (ordem: number) => simulacao?.meios?.find(r => r.ordem === ordem)
+  const temForaDoCarne = (simulacao?.meios ?? []).some(r => !r.noCarne)
+
   return (
     <>
       <div className="fixed inset-0 z-40" style={{ background: 'rgba(0,0,0,0.3)' }} onClick={onClose} />
       <div className="fixed top-0 right-0 h-full z-50 flex flex-col"
-        style={{ width: '520px', background: '#FFFFFF', boxShadow: '-4px 0 24px rgba(0,0,0,0.12)', overflow: 'hidden' }}>
+        style={{ width: '560px', maxWidth: '100vw', background: '#FFFFFF', boxShadow: '-4px 0 24px rgba(0,0,0,0.12)', overflow: 'hidden' }}>
 
         <div className="flex items-center justify-between px-6 py-4 shrink-0"
           style={{ borderBottom: '1px solid #e2e8f0' }}>
@@ -385,23 +450,6 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
             </p>
           )}
 
-          {/* A condição vem antes do plano porque é ela que decide quais campos
-              o plano tem. */}
-          <SectionTitle>Condições de pagamento</SectionTitle>
-          <div>
-            <label style={labelCls}>Como o cliente paga *</label>
-            <select required style={inputCls} value={form.condicoes_pagamento}
-              disabled={condicoes.length === 0}
-              onChange={e => trocarCondicao(e.target.value)}>
-              {condicoes.length === 0 && <option value="">Carregando condições…</option>}
-              {condicoes.map(o => <option key={o.codigo} value={o.codigo}>{o.rotulo}</option>)}
-            </select>
-            <FieldError msg={fieldErrors.condicoes_pagamento} />
-            <p style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
-              {plano.nota}
-            </p>
-          </div>
-
           <SectionTitle>Proposta</SectionTitle>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -409,108 +457,154 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
               <input style={inputCls} value={form.desconto_percentual} inputMode="decimal"
                 onChange={e => set('desconto_percentual', e.target.value.replace(',', '.'))} />
             </div>
-            {plano.entrada && (
-              <div>
-                <label style={labelCls}>
-                  {form.condicoes_pagamento === 'cartao' ? 'Valor no cartão (R$)' : 'Entrada / ATO (R$)'}
-                </label>
-                <input style={inputCls} value={displayEntrada} placeholder="0,00"
-                  onChange={e => {
-                    const mascarado = maskCurrency(e.target.value)
-                    setDisplayEntrada(mascarado)
-                    set('entrada_valor', currencyToDecimal(mascarado) || '0')
-                  }} />
-              </div>
-            )}
+            <div>
+              <label style={labelCls}>Desconto (R$)</label>
+              <input style={inputCls} placeholder="0,00"
+                value={Number(form.desconto_valor) > 0 ? decimalParaTexto(form.desconto_valor) : ''}
+                onChange={e => set('desconto_valor', currencyToDecimal(maskCurrency(e.target.value)) || '0')} />
+            </div>
           </div>
 
-          {plano.entrada && (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label style={labelCls}>Entrada em (x)</label>
-                <input type="number" min={1} max={36} style={inputCls} value={form.entrada_parcelas}
-                  onChange={e => set('entrada_parcelas', Number(e.target.value))} />
-              </div>
-              <div>
-                <label style={labelCls}>1º venc. da entrada</label>
-                <input type="date" min={minCalendarioISO} max={maxCalendarioISO} style={inputCls} value={form.entrada_primeiro_vencimento}
-                  onChange={e => set('entrada_primeiro_vencimento', e.target.value)} />
-              </div>
-            </div>
-          )}
+          {/* A lista livre: cada meio traz só os campos que ele comporta, e a
+              regra de quais são vem do backend. */}
+          <SectionTitle>Meios de pagamento</SectionTitle>
+          <BarraDeDistribuicao negociado={negociado} distribuido={distribuido} />
 
-          {plano.parcelas && (
-            <>
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label style={labelCls}>Sistema</label>
-                  <select style={inputCls} value={form.sistema_amortizacao}
-                    onChange={e => set('sistema_amortizacao', e.target.value)}>
-                    <option value="price">Price (parcela fixa)</option>
-                    <option value="sac">SAC (decrescente)</option>
+          {form.meios.map((m, i) => {
+            const regra = tipoDe(m.tipo)
+            const resumo = resumoDe(i + 1)
+            return (
+              <div key={m.chave} style={{ border: '1.5px solid #e2e8f0', borderRadius: 10, padding: '10px 12px' }}
+                className="flex flex-col gap-2">
+                <div className="flex items-center gap-2">
+                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>
+                    {i + 1}.
+                  </span>
+                  <select style={{ ...inputCls, fontWeight: 600 }} value={m.tipo}
+                    aria-label={`Forma de pagamento do meio ${i + 1}`}
+                    disabled={tipos.length === 0}
+                    onChange={e => trocarTipo(m, e.target.value as TipoMeioPagamento)}>
+                    {tipos.length === 0 && <option value={m.tipo}>Carregando…</option>}
+                    {tipos.map(t => <option key={t.codigo} value={t.codigo}>{t.rotulo}</option>)}
                   </select>
+                  <button type="button" onClick={() => removerMeio(m.chave)}
+                    title="Remover este meio" aria-label={`Remover o meio ${i + 1}`}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)', padding: 4 }}>
+                    <X size={16} />
+                  </button>
                 </div>
-                <div>
-                  <label style={labelCls}>Juros (% ao mês)</label>
-                  <input style={inputCls} value={form.juros_mensal} inputMode="decimal"
-                    onChange={e => set('juros_mensal', e.target.value.replace(',', '.'))} />
-                </div>
-                <div>
-                  <label style={labelCls}>Nº de parcelas</label>
-                  <input type="number" min={0} max={480} style={inputCls} value={form.num_parcelas}
-                    onChange={e => set('num_parcelas', Number(e.target.value))} />
-                </div>
-              </div>
-              <div>
-                <label style={labelCls}>1º venc. das parcelas</label>
-                <input type="date" min={minCalendarioISO} max={maxCalendarioISO} style={inputCls} value={form.primeiro_vencimento}
-                  onChange={e => set('primeiro_vencimento', e.target.value)} />
-              </div>
-            </>
-          )}
 
-          {plano.baloes && (
-            <>
-              {/* O nome de mercado é "anual/intercalada" — quase todo loteamento
-                  tem uma por ano, casada com o 13º. */}
-              <SectionTitle>Parcelas anuais (intercaladas)</SectionTitle>
-              <p style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: -6 }}>
-                Reforços que somam à mensal do mês em que caem. Abatem o saldo antes do
-                parcelamento, então não pagam juros.
-              </p>
-              <div className="grid grid-cols-4 gap-3">
-                <div style={{ gridColumn: 'span 2' }}>
-                  <label style={labelCls}>Valor de cada (R$)</label>
-                  <input style={inputCls} value={displayBalao} placeholder="0,00"
-                    onChange={e => {
-                      const mascarado = maskCurrency(e.target.value)
-                      setDisplayBalao(mascarado)
-                      set('balao_valor', currencyToDecimal(mascarado) || '0')
-                    }} />
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label style={labelCls}>
+                      {m.tipo === 'anuais' ? 'Valor de cada (R$)' : m.tipo === 'cartao' ? 'Valor no cartão (R$)' : 'Valor (R$)'}
+                    </label>
+                    <input style={inputCls} value={m.valorTexto} placeholder="0,00" inputMode="numeric"
+                      onChange={e => alterarMeio(m.chave, { valorTexto: maskCurrency(e.target.value) })} />
+                    {falta != null && falta !== 0 && (falta > 0 || centavos(m.valor) > 0) && (
+                      <button type="button" onClick={() => usarRestante(m)}
+                        style={{ background: 'none', border: 'none', padding: 0, marginTop: 4, cursor: 'pointer',
+                          fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-brand)' }}>
+                        {falta > 0 ? 'Usar o restante' : 'Ajustar ao negociado'}
+                      </button>
+                    )}
+                  </div>
+                  {regra?.parcelas && (
+                    <div>
+                      <label style={labelCls}>{regra.rotuloParcelas}</label>
+                      <input type="number" min={1} style={inputCls} value={m.parcelas}
+                        onChange={e => alterarMeio(m.chave, { parcelas: Number(e.target.value) })} />
+                    </div>
+                  )}
                 </div>
-                <div>
-                  <label style={labelCls}>Quantas</label>
-                  <input type="number" min={0} max={40} style={inputCls} value={form.balao_quantidade}
-                    onChange={e => set('balao_quantidade', Number(e.target.value))} />
-                </div>
-                <div>
-                  <label style={labelCls}>A cada</label>
-                  <select style={inputCls} value={form.balao_periodicidade}
-                    onChange={e => set('balao_periodicidade', e.target.value)}>
-                    <option value="anual">12 meses</option>
-                    <option value="semestral">6 meses</option>
-                  </select>
-                </div>
+
+                {(regra?.sistema || regra?.periodicidade || (regra?.juros && (m.tipo !== 'entrada' || m.parcelas > 1)) || regra?.vencimento) && (
+                  <div className="grid grid-cols-3 gap-3">
+                    {regra?.sistema && (
+                      <div>
+                        <label style={labelCls}>Sistema</label>
+                        <select style={inputCls} value={m.sistema_amortizacao}
+                          onChange={e => alterarMeio(m.chave, { sistema_amortizacao: e.target.value as MeioForm['sistema_amortizacao'] })}>
+                          <option value="price">Price (fixa)</option>
+                          <option value="sac">SAC (decrescente)</option>
+                        </select>
+                      </div>
+                    )}
+                    {regra?.periodicidade && (
+                      <div>
+                        <label style={labelCls}>A cada</label>
+                        <select style={inputCls} value={m.periodicidade}
+                          onChange={e => alterarMeio(m.chave, { periodicidade: e.target.value as MeioForm['periodicidade'] })}>
+                          <option value="anual">12 meses</option>
+                          <option value="semestral">6 meses</option>
+                        </select>
+                      </div>
+                    )}
+                    {/* A entrada só pergunta juros quando é parcelada — e parte de
+                        zero: a entrada curta é vendida sem juros. */}
+                    {regra?.juros && (m.tipo !== 'entrada' || m.parcelas > 1) && (
+                      <div>
+                        <label style={labelCls}>{m.tipo === 'entrada' ? 'Juros (% a.m.) — opcional' : 'Juros (% a.m.)'}</label>
+                        <input style={inputCls} value={m.juros_mensal} inputMode="decimal"
+                          onChange={e => alterarMeio(m.chave, { juros_mensal: e.target.value.replace(',', '.') })} />
+                      </div>
+                    )}
+                    {regra?.vencimento && (
+                      <div>
+                        <label style={labelCls}>{regra.rotuloVencimento}</label>
+                        <input type="date" min={minCalendarioISO} max={maxCalendarioISO} style={inputCls}
+                          value={m.primeiro_vencimento ?? ''}
+                          onChange={e => alterarMeio(m.chave, { primeiro_vencimento: e.target.value })} />
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {regra?.descricao && (
+                  <div>
+                    <label style={labelCls}>
+                      {regra.rotuloDescricao}{regra.descricao === 'obrigatoria' ? ' *' : ''}
+                    </label>
+                    {regra.descricao === 'obrigatoria' ? (
+                      <textarea required style={{ ...inputCls, minHeight: 56, resize: 'vertical' }}
+                        value={m.descricao}
+                        placeholder={m.tipo === 'outro'
+                          ? 'Ex.: 5 cheques pré-datados de R$ 4.000, a partir de 10/03'
+                          : 'Ex.: Gol 2019, placa ABC1D23, avaliado pela tabela FIPE'}
+                        onChange={e => alterarMeio(m.chave, { descricao: e.target.value })} />
+                    ) : (
+                      <input style={inputCls} value={m.descricao}
+                        onChange={e => alterarMeio(m.chave, { descricao: e.target.value })} />
+                    )}
+                  </div>
+                )}
+
+                <p style={{ ...notaCls, marginTop: 0 }}>
+                  {regra?.nota}
+                  {m.tipo === 'anuais' && m.parcelas > 1 && Number(m.valor) > 0 && (
+                    <> Total das {m.parcelas}: <strong>{brl(m.valor)}</strong>.</>
+                  )}
+                  {resumo && Number(resumo.juros) > 0 && (
+                    <> Juros deste meio: <strong>{brl(resumo.juros)}</strong>.</>
+                  )}
+                  {repetidos.has(m.tipo) && <> No boleto, esta série sai numerada à parte.</>}
+                </p>
               </div>
-              {form.balao_quantidade > 0 && (
-                <div>
-                  <label style={labelCls}>1º vencimento da anual</label>
-                  <input type="date" min={minCalendarioISO} max={maxCalendarioISO} style={inputCls} value={form.balao_primeiro_vencimento}
-                    onChange={e => set('balao_primeiro_vencimento', e.target.value)} />
-                </div>
-              )}
-            </>
-          )}
+            )
+          })}
+
+          <button type="button" onClick={adicionarMeio}
+            disabled={form.meios.length >= tetoMeios || tipos.length === 0}
+            className="flex items-center justify-center gap-1.5"
+            style={{
+              padding: '8px 12px', borderRadius: 10, border: '1.5px dashed #cbd5e1',
+              background: 'none', cursor: form.meios.length >= tetoMeios ? 'not-allowed' : 'pointer',
+              fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-brand)', fontFamily: 'var(--font-body)',
+              opacity: form.meios.length >= tetoMeios ? 0.5 : 1,
+            }}>
+            <Plus size={15} /> Adicionar meio de pagamento
+          </button>
+          <FieldError msg={fieldErrors.meios} />
 
           {/* ── O resultado da conta ── */}
           {erroSimulacao && (
@@ -528,45 +622,41 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
                 <Linha rotulo="Valor de tabela" valor={brl(simulacao.valorTabela)} />
                 <Linha rotulo="Desconto" valor={`− ${brl(simulacao.desconto)}`} />
                 <Linha rotulo="Negociado (à vista)" valor={brl(simulacao.valorNegociado)} destaque />
-                {/* Só entra no resumo o que a condição comporta: uma linha
-                    "Juros do plano — R$ 0,00" numa venda à vista faz o leitor
-                    procurar o juro que não existe. */}
-                {plano.entrada && <Linha rotulo="Entrada" valor={brl(simulacao.entrada)} />}
-                {plano.baloes && Number(simulacao.baloes) > 0 && (
-                  <Linha rotulo="Anuais" valor={brl(simulacao.baloes)} />
-                )}
-                {plano.parcelas && <Linha rotulo="Saldo financiado" valor={brl(simulacao.saldoFinanciado)} />}
-                {plano.parcelas && <Linha rotulo="Juros do plano" valor={brl(simulacao.totalJuros)} />}
-                {/* O que o comprador paga, mas não à construtora e não por
-                    boleto: o saldo que o banco quita, o bem da permuta, a parte
-                    que passou na maquininha. Não é desconto nem dívida
-                    esquecida — e sem esta linha a venda não fechava, porque o
-                    motor a recusava por "sobrou saldo sem parcela". */}
-                {Number(simulacao.foraDoCarne ?? 0) > 0 && (
-                  <Linha rotulo="Quitado fora do carnê" valor={brl(simulacao.foraDoCarne)} />
+                {/* Cada meio pelo nome do dinheiro: "Financiado pelo banco —
+                    Caixa", e não um "quitado fora do carnê" que não diz de
+                    onde ele vem. */}
+                {(simulacao.meios ?? []).map(r => (
+                  <Linha key={r.ordem}
+                    rotulo={r.detalhe ? `${r.rotulo} · ${r.detalhe}` : r.rotulo}
+                    valor={brl(r.valor)} />
+                ))}
+                {Number(simulacao.totalJuros) > 0 && (
+                  <Linha rotulo="Juros do plano" valor={brl(simulacao.totalJuros)} />
                 )}
                 <Linha
-                  rotulo={Number(simulacao.foraDoCarne ?? 0) > 0 ? 'Total no carnê' : 'Total a pagar'}
+                  rotulo={temForaDoCarne ? 'A receber pela construtora' : 'Total a pagar'}
                   valor={brl(simulacao.total)}
                   destaque
                 />
                 {Number(simulacao.primeiraParcela) > 0 && (
                   <Linha
-                    rotulo={form.sistema_amortizacao === 'sac' ? 'Parcela (1ª → última)' : 'Parcela mensal'}
-                    valor={form.sistema_amortizacao === 'sac'
+                    rotulo={temSac ? 'Parcela mensal (1ª → última)' : 'Parcela mensal'}
+                    valor={temSac
                       ? `${brl(simulacao.primeiraParcela)} → ${brl(simulacao.ultimaParcela)}`
                       : brl(simulacao.primeiraParcela)}
                     destaque
                   />
                 )}
               </div>
-              <button type="button" onClick={() => setVerCarne(v => !v)}
-                style={{
-                  marginTop: 10, background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-                  fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-brand)',
-                }}>
-                {verCarne ? 'Ocultar' : `Ver as ${simulacao.parcelas.length} parcelas`}
-              </button>
+              {simulacao.parcelas.length > 0 && (
+                <button type="button" onClick={() => setVerCarne(v => !v)}
+                  style={{
+                    marginTop: 10, background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                    fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-brand)',
+                  }}>
+                  {verCarne ? 'Ocultar' : `Ver os ${simulacao.parcelas.length} títulos a receber`}
+                </button>
+              )}
               {verCarne && (
                 <div style={{ maxHeight: 220, overflowY: 'auto', marginTop: 8 }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
@@ -581,15 +671,16 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
                     </thead>
                     <tbody>
                       {simulacao.parcelas.map((p, i) => (
-                        <tr key={`${p.tipo}-${p.numero}-${i}`} style={{ borderTop: '1px solid #e2e8f0' }}>
+                        <tr key={`${p.meio}-${p.tipo}-${p.numero}-${i}`} style={{ borderTop: '1px solid #e2e8f0' }}>
                           <td style={{ padding: '3px 4px' }}>{p.numero}</td>
                           <td style={{ padding: '3px 4px' }}>
-                            {p.tipo === 'entrada' ? 'Entrada' : p.tipo === 'balao' ? 'Balão' : 'Parcela'}
+                            {NOME_DA_LINHA[p.tipo] ?? p.tipo}
+                            {p.meio && form.meios[p.meio - 1] && repetidos.has(form.meios[p.meio - 1].tipo) && (
+                              <span style={{ color: 'var(--color-text-muted)' }}> (meio {p.meio})</span>
+                            )}
                           </td>
                           {/* A data pagável, com a do contrato ao lado quando
-                              as duas diferem. Mostrar só a ajustada faria o
-                              vendedor procurar, no contrato, um dia 7 que a tela
-                              insiste em chamar de 9. */}
+                              as duas diferem. */}
                           <td style={{ padding: '3px 4px' }} title={p.ajusteMotivo || undefined}>
                             {p.vencimento.split('-').reverse().join('/')}
                             {p.vencimentoContratual && p.vencimentoContratual !== p.vencimento && (
@@ -601,7 +692,7 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
                           </td>
                           <td style={{ padding: '3px 4px', textAlign: 'right' }}>{brl(p.valor)}</td>
                           <td style={{ padding: '3px 4px', textAlign: 'right', color: 'var(--color-text-muted)' }}>
-                            {p.tipo === 'parcela' ? brl(p.saldo) : '—'}
+                            {p.tipo === 'parcela' || Number(p.juros) > 0 ? brl(p.saldo) : '—'}
                           </td>
                         </tr>
                       ))}
@@ -610,9 +701,7 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
                 </div>
               )}
               {/* O ajuste de dia útil dito na tela, com a ressalva de quando a
-                  base de feriados nunca foi sincronizada: "ajustado para o
-                  próximo dia útil" sem feriados carregados é meia verdade, e
-                  meia verdade sobre vencimento vira boleto pago em atraso. */}
+                  base de feriados nunca foi sincronizada. */}
               {Number(simulacao.parcelasAjustadas ?? 0) > 0 && (
                 <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: 8 }}>
                   {simulacao.parcelasAjustadas} parcela{simulacao.parcelasAjustadas !== 1 ? 's' : ''} caí
@@ -637,12 +726,13 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
 
           {/* Só faz sentido em contrato com prazo: pagamento único não atravessa
               o tempo, então não há o que corrigir. */}
-          {(plano.parcelas || plano.baloes) && (
+          {temPrazo && (
             <>
               <SectionTitle>Correção monetária</SectionTitle>
               <p style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: -6 }}>
                 Reajuste conta do <strong>aniversário da data-base</strong>, não da data do boleto —
-                o boleto só carrega o valor já corrigido. Sem índice, o contrato é nominal.
+                o boleto só carrega o valor já corrigido. Vale para todo título em aberto,
+                inclusive a entrada parcelada. Sem índice, o contrato é nominal.
               </p>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -714,6 +804,34 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
         </div>
       </div>
     </>
+  )
+}
+
+/** Quanto do negociado os meios já cobrem — e quanto falta ou passa. */
+function BarraDeDistribuicao({ negociado, distribuido }: { negociado: string | null; distribuido: number }) {
+  if (negociado == null) {
+    return (
+      <p style={notaCls}>
+        Escolha a unidade: a soma dos meios de pagamento tem de fechar o valor negociado.
+      </p>
+    )
+  }
+  const total = centavos(negociado)
+  const falta = total - distribuido
+  const pct = total > 0 ? Math.min(100, (distribuido / total) * 100) : 0
+  const cor = falta === 0 ? '#15803d' : falta < 0 ? '#b91c1c' : '#b45309'
+  return (
+    <div>
+      <div style={{ height: 6, borderRadius: 999, background: '#e2e8f0', overflow: 'hidden' }}>
+        <div style={{ width: `${pct}%`, height: '100%', background: cor, transition: 'width .2s' }} />
+      </div>
+      <p style={{ ...notaCls, color: cor, fontWeight: 600 }}>
+        {brl(distribuido / 100)} de {brl(total / 100)}
+        {falta === 0 && ' — a conta fecha.'}
+        {falta > 0 && ` — faltam ${brl(falta / 100)}.`}
+        {falta < 0 && ` — passam ${brl(-falta / 100)} do negociado.`}
+      </p>
+    </div>
   )
 }
 

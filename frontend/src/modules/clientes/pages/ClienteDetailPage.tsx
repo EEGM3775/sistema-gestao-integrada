@@ -315,14 +315,13 @@ const ClienteDetailPage: React.FC = () => {
                       <span className="text-xs" style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-body)' }}>
                         {formatDate(a.data_compra)} · {formatCurrency(a.valor_compra)} · {CONDICAO_LABEL[a.condicoes_pagamento]}
                       </span>
-                      {/* O plano em uma linha: o que se paga, e como. */}
-                      {Number(a.valor_total_plano) > 0 && (
+                      {/* O plano em uma linha: cada meio pelo nome do dinheiro. */}
+                      {(a.plano?.meios?.length ?? 0) > 0 && (
                         <span className="text-xs" style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-body)' }}>
-                          Plano: {formatCurrency(a.entrada_valor)} de entrada
-                          {a.num_parcelas > 0 && ` + ${a.num_parcelas}x ${a.sistema_amortizacao === 'sac' ? 'SAC' : 'Price'}`}
-                          {Number(a.juros_mensal) > 0 ? ` a ${a.juros_mensal}% a.m.` : ' sem juros'}
-                          {a.balao_quantidade > 0 && ` + ${a.balao_quantidade} balão(ões)`}
-                          {' · total '}{formatCurrency(a.valor_total_plano)}
+                          Plano: {a.plano!.meios!.map(m =>
+                            `${m.rotulo} ${formatCurrency(m.valor)}${m.detalhe ? ` (${m.detalhe})` : ''}`,
+                          ).join(' + ')}
+                          {Number(a.valor_total_plano) > 0 && <>{' · a receber '}{formatCurrency(a.valor_total_plano)}</>}
                         </span>
                       )}
                       {/* A correção é do contrato, não do boleto: o rótulo diz a

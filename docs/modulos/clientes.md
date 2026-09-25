@@ -18,7 +18,8 @@ Mascaramento de campos por papel é pendência da Fase 9.
 | Modelo | Campos principais |
 |---|---|
 | `Cliente` | `nome_completo`, `cpf_cnpj` (único), `email` (único), `telefone`, endereço completo (`endereco`, `numero_endereco`, `complemento_endereco`, `bairro`, `cidade`, `estado`, `cep`, `cidade_ibge`), `data_nascimento`, `estado_civil` (choices), `profissao`, `data_cadastro`, `id_cliente_gateway` |
-| `ClienteEmpreendimento` | `cliente` FK, `unidade` FK → `empreendimentos.Unidade`, `empreendimento` FK (denormalizado, mantido a partir da unidade no `save()`), `data_compra`, `condicoes_pagamento` (choices), `observacoes_compra` **+ o plano de pagamento** (abaixo) |
+| `ClienteEmpreendimento` | `cliente` FK, `unidade` FK → `empreendimentos.Unidade`, `empreendimento` FK (denormalizado, mantido a partir da unidade no `save()`), `data_compra`, `condicoes_pagamento` (choices, **derivada** dos meios), `observacoes_compra` **+ preço e carnê** (abaixo) |
+| `MeioPagamento` | `aquisicao` FK (`related_name='meios'`, CASCADE), `ordem`, `tipo` (choices), `valor`, `descricao`, `parcelas`, `primeiro_vencimento`, `juros_mensal`, `sistema_amortizacao`, `periodicidade` — uma linha por forma de pagamento da venda; RLS fail-closed |
 | `ContratoCliente` | `cliente` FK, `empreendimento` FK, `cliente_empreendimento` FK (opcional), `numero_contrato` (único), `data_assinatura`, `objeto_contrato`, `arquivo_contrato` (URLField), `status_contrato` (choices), `responsavel` FK `rh.Funcionario`, `vendedor` FK `fornecedores.Fornecedor` |
 | `DocumentoCliente` | `cliente` FK, `tipo_documento` (choices), `nome_documento`, `arquivo` (FileField → `media/documentos_clientes/`), `data_upload` |
 | `DadoBancarioCliente` | `cliente` FK, `codigo_banco`, `agencia`, `agencia_dv`, `conta`, `conta_dv`, `tipo_conta` (choices), `titular_nome`, `titular_cpf_cnpj`, `chave_pix`, `codigo_cedente`, `carteira`, `observacoes` |
@@ -29,6 +30,7 @@ Mascaramento de campos por papel é pendência da Fase 9.
 |---|---|
 | `estado_civil` | `solteiro`, `casado`, `divorciado`, `viuvo`, `uniao_estavel` |
 | `condicoes_pagamento` | `a_vista`, `financiamento_bancario`, `financiamento_direto`, `permuta`, `cartao`, `outro` |
+| `MeioPagamento.tipo` | `a_vista`, `entrada`, `financiamento_direto`, `anuais`, `financiamento_bancario`, `fgts`, `permuta`, `cartao`, `outro` |
 | `status_contrato` | `ativo`, `inativo`, `cancelado`, `concluido` |
 | `tipo_documento` | `rg`, `cpf`, `cnh`, `comprovante_residencia`, `certidao_casamento`, `outros` |
 | `tipo_conta` | `corrente`, `poupanca`, `investimento`, `salario`, `outros` |
@@ -37,33 +39,35 @@ Mascaramento de campos por papel é pendência da Fase 9.
 
 A aquisição deixou de descrever a unidade (isso é cadastro do empreendimento — ver
 [empreendimentos.md](empreendimentos.md)) e passou a descrever **a venda**: qual unidade, por quanto
-e em que condições. Os campos do plano, todos na aquisição:
+e em que condições.
 
 | Grupo | Campos |
 |---|---|
-| Preço | `valor_tabela` (**snapshot** do `valor_base` da unidade no dia da venda), `desconto_percentual`, `desconto_valor`, `valor_compra` (negociado à vista — derivado), `valor_total_plano` (desembolso — derivado) |
-| Entrada | `entrada_valor`, `entrada_parcelas`, `entrada_primeiro_vencimento` |
-| Saldo | `sistema_amortizacao` (`price`/`sac`), `juros_mensal`, `num_parcelas`, `primeiro_vencimento` |
-| Balão | `balao_valor`, `balao_quantidade`, `balao_periodicidade` (`anual`/`semestral`), `balao_primeiro_vencimento` |
-| Carnê | `parcelas_geradas_em` (carimbo do botão "Gerar parcelas") |
+| Preço (na aquisição) | `valor_tabela` (**snapshot** do `valor_base` da unidade no dia da venda), `desconto_percentual`, `desconto_valor`, `valor_compra` (negociado à vista — derivado), `valor_total_plano` (a receber pela construtora — derivado) |
+| Meios (`MeioPagamento`) | lista livre, uma linha por forma de pagamento — ver [Os meios de pagamento compõem o plano](#os-meios-de-pagamento-compõem-o-plano) |
+| Carnê (na aquisição) | `parcelas_geradas_em` (carimbo do botão "Gerar parcelas") |
 
 O cálculo vive em [`clientes/plano_pagamento.py`](../../backend/clientes/plano_pagamento.py), em
-funções puras (não tocam banco — é o que permite simular a cada tecla). Três regras que o motor
+funções puras (não tocam banco — é o que permite simular a cada tecla). As regras que o motor
 assume, alinhadas à prática de venda direta de loteadora/incorporadora:
 
-- **A entrada não rende juros** — é sinal, não financiamento. Cobrar juros sobre entrada é o que faz
-  a proposta do sistema não bater com a que o corretor fez na mão.
-- **O balão abate saldo antes do parcelamento** — senão o comprador pagaria juros sobre o que já se
-  comprometeu a quitar à parte.
-- **Juros correm a partir da 1ª parcela do saldo**, não da data da venda ("juros inicia na 1ª parcela").
+- **A soma dos meios é o valor negociado**, ao centavo. Faltar é saldo sem dono; sobrar é cobrar
+  mais do que se negociou. O erro diz quanto, em reais ("Faltam R$ 10.000,00…").
+- **A entrada, por padrão, não rende juros** — é sinal, e a entrada curta é vendida sem juros. A
+  entrada longa às vezes cobra: o meio `entrada` aceita `juros_mensal` opcional (parte de zero), e
+  com taxa a entrada vira um Price curto. Entrada em 1x ignora a taxa — não há prazo para o juro.
+- **Cada meio carrega só o seu principal.** As anuais são um meio com valor próprio, então não pagam
+  os juros do financiamento direto.
+- **Juros correm a partir da 1ª parcela do meio**, não da data da venda ("juros inicia na 1ª parcela").
 
 `price()` com taxa zero degenera em saldo ÷ n — a venda "sem juros" não precisa de um terceiro
 sistema. A última parcela absorve a sobra de centavos, senão o título fecha com R$ 0,03 em aberto.
-**Sem correção monetária** (INCC/IGP-M/IPCA): reajuste anual mexe em parcela já emitida e boleto
-vivo — entra depois, com lugar próprio. O que o motor devolve é o plano **na data da assinatura**.
+A correção monetária mora em [`clientes/correcao.py`](../../backend/clientes/correcao.py) e incide
+sobre todo título em aberto, inclusive a entrada parcelada; o que o motor devolve é o plano **na
+data da assinatura**.
 
 **Gerar parcelas é ato explícito.** Salvar a aquisição grava a proposta; o carnê só vira
-`ContaReceber` (uma linha por entrada/parcela/balão, amarrada à unidade) quando o usuário aciona
+`ContaReceber` (uma linha por título dos meios que viram carnê, amarrada à unidade) quando o usuário aciona
 `POST /api/clientes-empreendimentos/<id>/gerar-parcelas/`, depois de conferir a simulação. **Não
 emite boleto** — cobrar é decisão separada, no ERP, unitária ou por lote. Idempotente: a segunda
 chamada responde 409 em vez de duplicar o carnê.
@@ -83,10 +87,10 @@ chamada responde 409 em vez de duplicar o carnê.
 | `GET/POST /clientes/` | `?search=` (nome/CPF/email/telefone), `?empreendimento=<id>` (filtra por aquisição), `?estado_civil=`, `?cidade=`, `?estado=` |
 | `GET/PUT/PATCH/DELETE /clientes/:id/` | — |
 | `GET /clientes/divergencias-asaas/` | Relatório (só leitura) de divergências de identidade banco × Asaas — `sem_documento`/`nome_divergente`/`vinculo_divergente`. Consumido ao abrir "Novo Cliente". Ver [funcoescobrancas.md](funcoescobrancas.md#auditoria-de-divergências-banco--asaas). |
-| `GET/POST /clientes-empreendimentos/` | `?cliente=`, `?empreendimento=`, `?condicoes_pagamento=` |
+| `GET/POST /clientes-empreendimentos/` | `?cliente=`, `?empreendimento=`, `?condicoes_pagamento=` · o corpo leva `meios: [...]`; no `PATCH`, mandar `meios` **substitui** a lista, omitir mantém |
 | `GET/PUT/PATCH/DELETE /clientes-empreendimentos/:id/` | — |
-| `GET /clientes-empreendimentos/condicoes/` | O catálogo de formas de pagamento e o que cada uma comporta. A tela **lê** a regra daqui em vez de reescrevê-la. `cadastro.venda.view` |
-| `POST /clientes-empreendimentos/simular/` | A proposta sem gravar, recalculada a cada tecla. `cadastro.venda.view` |
+| `GET /clientes-empreendimentos/condicoes/` | O catálogo de meios (`meios`) e o que cada um comporta, as condições da carteira (`condicoes`) e o teto de meios (`tetoMeios`). A tela **lê** a regra daqui em vez de reescrevê-la. `cadastro.venda.view` |
+| `POST /clientes-empreendimentos/simular/` | A proposta sem gravar, recalculada a cada tecla, com o resumo por meio (`meios`). No 400 devolve também `valorNegociado`, para a tela dizer quanto falta. `cadastro.venda.view` |
 | `GET /clientes-empreendimentos/:id/previa-parcelas/` | O carnê que **seria** gerado — quantidade, total, cliente, unidade, faixa de vencimentos. Alimenta a confirmação do botão "Gerar parcelas". `cadastro.venda.view` |
 | `POST /clientes-empreendimentos/:id/gerar-parcelas/` | Materializa o carnê como `ContaReceber`. Idempotente (409 na segunda). `cadastro.venda.gerar_carne` |
 | `GET\|POST /clientes-empreendimentos/:id/corrigir/` | Correção monetária: `GET` é prévia, `POST` aplica. `cadastro.venda.gerar_carne` |
@@ -97,34 +101,42 @@ chamada responde 409 em vez de duplicar o carnê.
 | `GET/POST /dados-bancarios-clientes/` | `?cliente=` |
 | `GET/PUT/PATCH/DELETE /dados-bancarios-clientes/:id/` | — |
 
-### A condição de pagamento rege o plano
+### Os meios de pagamento compõem o plano
 
-O catálogo é [`plano_pagamento.CONDICOES`](../../backend/clientes/plano_pagamento.py) — **um lugar
-só**, lido pelo motor de cálculo, pelo serializer e pela tela. Cada condição declara se há entrada,
-parcelas e balões (intercaladas/anuais), e se ela **quita por fora**:
+A venda é uma **lista livre** de `MeioPagamento` — quantos a negociação tiver, até
+`VENDA_TETO_MEIOS_DE_PAGAMENTO` ([payment/planos.py](../../payment/planos.py) §5.5q). O catálogo é
+[`plano_pagamento.TIPOS_DE_MEIO`](../../backend/clientes/plano_pagamento.py) — **um lugar só**, lido
+pelo motor, pelo serializer e pela tela. Cada tipo declara os campos que comporta e se vira título:
 
-| Condição | Entrada | Parcelas | Balões | Quita fora |
-|---|:--:|:--:|:--:|:--:|
-| `financiamento_direto` | ✔ | ✔ | ✔ | — |
-| `a_vista` | — | — | — | — |
-| `financiamento_bancario` | ✔ | — | — | ✔ |
-| `permuta` | — | — | — | ✔ |
-| `cartao` | ✔ | — | — | ✔ |
-| `outro` | ✔ | ✔ | ✔ | ✔ |
+| Tipo | Carnê | Parcelas | Juros | Price/SAC | Periodicidade | Descrição | Condição da carteira |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|---|
+| `a_vista` | 1 título | — | — | — | — | — | `a_vista` |
+| `entrada` | ✔ | ✔ | opcional | — | — | — | `financiamento_direto` |
+| `financiamento_direto` | ✔ | ✔ | ✔ | ✔ | — | — | `financiamento_direto` |
+| `anuais` | ✔ | ✔ | — | — | ✔ | — | `financiamento_direto` |
+| `financiamento_bancario` | — | — | — | — | — | banco | `financiamento_bancario` |
+| `fgts` | — | — | — | — | — | — | `financiamento_bancario` |
+| `permuta` | — | — | — | — | — | **obrigatória** | `permuta` |
+| `cartao` | 1 título | vezes na operadora (registro) | — | — | — | — | `cartao` |
+| `outro` | — | — | — | — | — | **obrigatória** | `outro` |
 
-**`quita_fora` existe porque nem toda venda passa inteira pelo carnê.** Na permuta a construtora não
-recebe parcela; no financiamento bancário recebe só o sinal e o banco quita o resto; no cartão o
-parcelamento é da operadora. O que sobra do valor negociado depois de entrada e balões vira
-`Plano.fora_do_carne` — um número declarado, exibido na proposta, que fecha a conta
-(`total + fora_do_carne == valor_negociado`). Não é desconto nem dívida esquecida: é valor liquidado
-por outro caminho.
+**O resumo fala cada meio pelo nome do dinheiro** (`ResumoDoMeio.rotulo`): "Financiado pelo banco —
+Caixa", "Pago em permuta — Gol 2019", "Outro — 5 cheques pré-datados". Os meios fora do carnê somam
+`Plano.fora_do_carne`, mas a tela não mostra esse agregado — ele não diz de onde vem o dinheiro. O
+total é "A receber pela construtora" quando algum meio não vira título.
 
-O `financiamento_direto` **não** quita por fora: ali, saldo sem parcela é falta real e vira erro.
-Condição desconhecida cai nessa mesma severidade — no permissivo, um plano incompleto viraria um
-"pago por fora" silencioso.
+**A condição da venda é derivada**, não escolhida: `condicao_da_venda()` devolve a condição que
+responde pela **maior parte do valor** (entrada, mensais e anuais somam juntas como financiamento
+direto; empate fica com o primeiro meio). "Sinal + banco" é `financiamento_bancario`. É ela que a
+carteira filtra e agrupa, gravada em `condicoes_pagamento` pelo serializer.
 
-`normalizar_por_condicao()` apaga do registro o que a condição não comporta, e roda no serializer
-além da tela: a tela não é a única porta (API, importação, admin).
+`meio_de()` apaga do meio o que o tipo não comporta (juros num FGTS, prazo numa permuta) e roda no
+serializer além da tela: a tela não é a única porta (API, importação). O que se grava é o lido, não o
+enviado. O admin mostra os meios **só leitura** — editar uma linha solta gravaria um plano que não
+fecha.
+
+**No carnê, a contagem é por meio**: dois financiamentos diretos são duas séries
+(`descricoes_do_carne()` → "Parcela 3/24 (2ª série) — Residencial Aurora · QD 4 · LT 06").
 
 ### O vencimento que vai ao boleto
 
@@ -190,7 +202,7 @@ Campos de exibição adicionados (somente leitura):
 | Arquivo | Descrição |
 |---|---|
 | `ClienteForm.tsx` | Sheet criar/editar `Cliente` — 3 seções (Dados Pessoais, Contato, Endereço); máscaras CPF/CNPJ e CEP; validação de dígito verificador CPF/CNPJ com erro inline; `data_nascimento` com `min=1900-01-01` e `max=hoje` |
-| `AquisicaoForm.tsx` | Sheet criar/editar `ClienteEmpreendimento` — select de empreendimento; máscara de moeda; 6 opções de condições de pagamento |
+| `AquisicaoForm.tsx` | Sheet criar/editar `ClienteEmpreendimento` — unidade, desconto e a **lista de meios de pagamento** (cartão por meio, "+ Adicionar meio de pagamento", "Usar o restante", barra do que falta distribuir); campos de cada meio lidos do catálogo do backend |
 | `ContratoForm.tsx` | Sheet criar/editar `ContratoCliente` — select de empreendimento + aquisição vinculada; URL do arquivo de contrato |
 | `DadoBancarioForm.tsx` | Sheet criar/editar `DadoBancarioCliente` — campos bancários completos; validação de dígito verificador CPF/CNPJ do titular |
 | `DocumentoUploadForm.tsx` | Sheet upload de `DocumentoCliente` — seletor de tipo, nome, drop zone com feedback visual |

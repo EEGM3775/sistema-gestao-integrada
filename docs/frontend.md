@@ -865,12 +865,17 @@ A identificação da unidade **não se digita mais na venda**: ela é cadastro d
 conflito — o rótulo livre (`Unidade comprada`) e os cinco campos estruturados eram preenchidos lado a
 lado, podiam divergir, e o mesmo lote podia ser vendido duas vezes por caminhos diferentes.
 
-O preço parte do **valor de tabela** da unidade e o que o cliente paga sai de uma conta: desconto →
-entrada (parcelável, **sem juros**) → saldo em N parcelas por **Price** (fixa) ou **SAC**
-(decrescente) → **balões** anuais/semestrais. A conta roda no **backend** (`POST
-/api/clientes-empreendimentos/simular/`, com folga de digitação), nunca no navegador: repetir a
-fórmula na tela criaria duas matemáticas para o mesmo contrato, e a da tela seria a que o cliente vê.
-O painel mostra o resumo (negociado, entrada, saldo, juros, total, parcela) e abre o carnê linha a
+O preço parte do **valor de tabela** da unidade, menos o desconto, e o valor negociado é dividido
+numa **lista livre de meios de pagamento**: cada meio é um cartão com o seu tipo (entrada,
+financiamento direto, anuais, banco, FGTS, permuta, cartão, outro, à vista) e só os campos que ele
+comporta, lidos do catálogo do backend (`GET .../condicoes/`). **"+ Adicionar meio de pagamento"**
+acrescenta o próximo meio da venda típica; **"Usar o restante"** põe num meio o que falta; uma barra
+diz quanto dos meios já cobre o negociado ("faltam R$ X" / "a conta fecha"). "Outro" e "Permuta"
+pedem texto obrigatório; a entrada parcelada tem juros **opcional**, que parte de zero. A conta roda
+no **backend** (`POST /api/clientes-empreendimentos/simular/`, com folga de digitação), nunca no
+navegador: repetir a fórmula na tela criaria duas matemáticas para o mesmo contrato, e a da tela
+seria a que o cliente vê. O painel mostra **cada meio pelo nome do dinheiro** ("Financiado pelo
+banco — Caixa"), os juros, o total a receber pela construtora e a parcela, e abre o carnê linha a
 linha antes de salvar.
 
 **Salvar registra a proposta; o carnê é outro ato.** As parcelas só viram `ContaReceber` pelo botão

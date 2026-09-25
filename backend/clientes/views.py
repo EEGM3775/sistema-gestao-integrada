@@ -21,6 +21,7 @@ from nucleo.models import IndiceEconomico
 from funcoescobrancas.services import analisar_divergencias_asaas
 from funcoescobrancas.client import AsaasAPIError
 from moduloerp.models import ContaReceber, StatusConta
+from payment.planos import VENDA_TETO_MEIOS_DE_PAGAMENTO
 from . import carteira as carteira_svc
 from . import correcao
 from . import plano_pagamento
@@ -227,9 +228,11 @@ class ClienteViewSet(QuotaEnforcedMixin, TenantScopedViewSetMixin, viewsets.Mode
 
 
 class ClienteEmpreendimentoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    # `meios` no prefetch: o resumo do plano de cada linha é montado a partir
+    # deles, e sem isto a lista faria uma consulta por aquisição.
     queryset = ClienteEmpreendimento.objects.select_related(
         'cliente', 'empreendimento', 'unidade'
-    ).order_by('-data_compra')
+    ).prefetch_related('meios').order_by('-data_compra')
     serializer_class = ClienteEmpreendimentoSerializer
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_class = ClienteEmpreendimentoFilter
@@ -257,8 +260,9 @@ class ClienteEmpreendimentoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewS
 
     @action(detail=False, methods=['get'], url_path='condicoes')
     def condicoes(self, request):
-        """`GET /api/clientes-empreendimentos/condicoes/` — o que cada forma de
-        pagamento comporta.
+        """`GET /api/clientes-empreendimentos/condicoes/` — o que cada meio de
+        pagamento comporta (`meios`), e como a venda inteira é rotulada na
+        carteira (`condicoes`).
 
         Existe para o formulário **ler** a regra em vez de reescrevê-la. Ela
         morava duplicada: um `PLANO_DA_CONDICAO` no React decidia quais campos
@@ -269,7 +273,12 @@ class ClienteEmpreendimentoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewS
         Leitura pura, sem tenant: é o catálogo do produto, igual para todo mundo.
         """
         return Response({
-            'condicoes': [c.como_dict() for c in plano_pagamento.CONDICOES.values()],
+            'meios': [t.como_dict() for t in plano_pagamento.TIPOS_DE_MEIO.values()],
+            'condicoes': [
+                {'codigo': codigo, 'rotulo': str(rotulo)}
+                for codigo, rotulo in ClienteEmpreendimento.CONDICOES_PAGAMENTO_CHOICES
+            ],
+            'tetoMeios': VENDA_TETO_MEIOS_DE_PAGAMENTO,
         })
 
     @action(detail=False, methods=['post'], url_path='simular')
@@ -303,27 +312,27 @@ class ClienteEmpreendimentoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewS
         )
 
         try:
+            meios = dados.get('meios') or []
+            if not isinstance(meios, list):
+                raise ValueError('Os meios de pagamento vêm em lista.')
             plano = plano_pagamento.montar(
                 valor_tabela=_decimal(valor_tabela),
                 desconto_percentual=_decimal(dados.get('desconto_percentual')),
                 desconto_valor=_decimal(dados.get('desconto_valor')),
-                entrada_valor=_decimal(dados.get('entrada_valor')),
-                entrada_parcelas=_inteiro(dados.get('entrada_parcelas'), 1),
-                entrada_primeiro_vencimento=_data(dados.get('entrada_primeiro_vencimento')),
-                sistema=dados.get('sistema_amortizacao') or 'price',
-                juros_mensal=_decimal(dados.get('juros_mensal')),
-                num_parcelas=_inteiro(dados.get('num_parcelas'), 0),
-                primeiro_vencimento=_data(dados.get('primeiro_vencimento')),
-                balao_valor=_decimal(dados.get('balao_valor')),
-                balao_quantidade=_inteiro(dados.get('balao_quantidade'), 0),
-                balao_periodicidade=dados.get('balao_periodicidade') or 'anual',
-                balao_primeiro_vencimento=_data(dados.get('balao_primeiro_vencimento')),
+                meios=[m if isinstance(m, dict) else {} for m in meios],
                 data_compra=_data(dados.get('data_compra')),
-                condicoes_pagamento=dados.get('condicoes_pagamento'),
                 ajustar_vencimento=ajuste,
             )
         except (ValueError, InvalidOperation) as erro:
-            return Response({'detail': str(erro)}, status=400)
+            resposta = {'detail': str(erro)}
+            try:
+                resposta['valorNegociado'] = str(plano_pagamento.negociar(
+                    _decimal(valor_tabela), _decimal(dados.get('desconto_percentual')),
+                    _decimal(dados.get('desconto_valor')),
+                )[2])
+            except (ValueError, InvalidOperation):
+                pass
+            return Response(resposta, status=400)
         return Response({
             **plano.como_dict(),
             # A tela precisa poder dizer "ajustado para o próximo dia útil" e,
@@ -374,9 +383,7 @@ class ClienteEmpreendimentoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewS
         if not plano.parcelas:
             return Response({'detail': 'O plano não tem parcelas a gerar.'}, status=400)
 
-        totais = {}
-        for parcela in plano.parcelas:
-            totais[parcela.tipo] = totais.get(parcela.tipo, 0) + 1
+        descricoes = plano_pagamento.descricoes_do_carne(plano, aquisicao)
 
         with transaction.atomic():
             titulos = [
@@ -385,14 +392,12 @@ class ClienteEmpreendimentoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewS
                     cliente=aquisicao.cliente,
                     empreendimento=aquisicao.empreendimento,
                     cliente_empreendimento=aquisicao,
-                    descricao=plano_pagamento.descricao_do_titulo(
-                        parcela, totais[parcela.tipo], aquisicao,
-                    ),
+                    descricao=descricao,
                     valor=parcela.valor,
                     data_emissao=aquisicao.data_compra,
                     data_vencimento=parcela.vencimento,
                 )
-                for parcela in plano.parcelas
+                for parcela, descricao in zip(plano.parcelas, descricoes)
             ]
             ContaReceber.objects.bulk_create(titulos)
             aquisicao.parcelas_geradas_em = timezone.now()
@@ -543,13 +548,6 @@ def _decimal(valor) -> Decimal:
     if valor in (None, ''):
         return Decimal('0')
     return Decimal(str(valor))
-
-
-def _inteiro(valor, padrao: int) -> int:
-    try:
-        return int(valor)
-    except (TypeError, ValueError):
-        return padrao
 
 
 def _data(valor):

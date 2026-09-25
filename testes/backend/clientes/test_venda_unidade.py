@@ -9,7 +9,7 @@ from decimal import Decimal
 
 from rest_framework.test import APITestCase
 
-from clientes.models import ClienteEmpreendimento
+from clientes.models import ClienteEmpreendimento, MeioPagamento
 from empreendimentos.models import Empreendimento, Unidade
 from moduloerp.models import ContaReceber
 from nucleo.models import Tenant, Usuario
@@ -98,7 +98,7 @@ class CadastroDeUnidadeTests(VendaBaseTestCase):
             tenant=self.tenant, cliente=self.cliente, empreendimento=self.emp,
             unidade=self.unidade, data_compra=date(2026, 1, 10),
             valor_tabela=Decimal("100000.00"), valor_compra=Decimal("100000.00"),
-            condicoes_pagamento="a_vista", entrada_valor=Decimal("100000.00"),
+            condicoes_pagamento="a_vista",
         )
         r = self.client.delete(f"/api/unidades/{self.unidade.pk}/")
         self.assertEqual(r.status_code, 409)
@@ -117,9 +117,12 @@ class SimulacaoTests(VendaBaseTestCase):
         self.autenticar()
         r = self.client.post("/api/clientes-empreendimentos/simular/", {
             "unidade": self.unidade.pk, "desconto_percentual": "10",
-            "entrada_valor": "20000", "entrada_parcelas": 2,
-            "sistema_amortizacao": "price", "juros_mensal": "1",
-            "num_parcelas": 12, "data_compra": "2026-01-10",
+            "data_compra": "2026-01-10",
+            "meios": [
+                {"tipo": "entrada", "valor": "20000", "parcelas": 2},
+                {"tipo": "financiamento_direto", "valor": "70000", "parcelas": 12,
+                 "juros_mensal": "1", "sistema_amortizacao": "price"},
+            ],
         }, format="json")
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(r.data["valorTabela"], "100000.00")
@@ -133,10 +136,14 @@ class SimulacaoTests(VendaBaseTestCase):
     def test_proposta_impossivel_volta_400_com_o_motivo(self):
         self.autenticar()
         r = self.client.post("/api/clientes-empreendimentos/simular/", {
-            "unidade": self.unidade.pk, "entrada_valor": "500000",
+            "unidade": self.unidade.pk,
+            "meios": [{"tipo": "entrada", "valor": "500000"}],
         }, format="json")
         self.assertEqual(r.status_code, 400)
-        self.assertIn("balões", r.data["detail"])
+        self.assertIn("passam R$ 400.000,00", r.data["detail"])
+        # O negociado volta mesmo com a conta aberta: é ele que a tela usa para
+        # dizer quanto falta e oferecer "usar o restante".
+        self.assertEqual(r.data["valorNegociado"], "100000.00")
 
 
 class VendaTests(VendaBaseTestCase):
@@ -144,11 +151,14 @@ class VendaTests(VendaBaseTestCase):
     def _vender(self, **extra):
         dados = {
             "cliente": self.cliente.pk, "unidade": self.unidade.pk,
-            "data_compra": "2026-01-10", "condicoes_pagamento": "financiamento_direto",
-            "desconto_percentual": "10", "entrada_valor": "20000", "entrada_parcelas": 2,
-            "entrada_primeiro_vencimento": "2026-01-10",
-            "sistema_amortizacao": "price", "juros_mensal": "1", "num_parcelas": 12,
-            "primeiro_vencimento": "2026-02-10",
+            "data_compra": "2026-01-10", "desconto_percentual": "10",
+            "meios": [
+                {"tipo": "entrada", "valor": "20000", "parcelas": 2,
+                 "primeiro_vencimento": "2026-01-10"},
+                {"tipo": "financiamento_direto", "valor": "70000", "parcelas": 12,
+                 "juros_mensal": "1", "sistema_amortizacao": "price",
+                 "primeiro_vencimento": "2026-02-10"},
+            ],
         }
         dados.update(extra)
         return self.client.post("/api/clientes-empreendimentos/", dados, format="json")
@@ -183,7 +193,7 @@ class VendaTests(VendaBaseTestCase):
 
     def test_desconto_maior_que_a_tabela_e_recusado(self):
         self.autenticar()
-        r = self._vender(desconto_percentual="120", entrada_valor="0")
+        r = self._vender(desconto_percentual="120", meios=[])
         self.assertEqual(r.status_code, 400)
 
 
@@ -196,10 +206,15 @@ class GerarParcelasTests(VendaBaseTestCase):
             unidade=self.unidade, data_compra=date(2026, 1, 10),
             condicoes_pagamento="financiamento_direto",
             valor_tabela=Decimal("100000.00"), valor_compra=Decimal("100000.00"),
-            entrada_valor=Decimal("20000.00"), entrada_parcelas=2,
-            entrada_primeiro_vencimento=date(2026, 1, 10),
-            sistema_amortizacao="price", juros_mensal=Decimal("1"), num_parcelas=12,
-            primeiro_vencimento=date(2026, 2, 10),
+        )
+        MeioPagamento.objects.create(
+            tenant=self.tenant, aquisicao=self.aquisicao, ordem=1, tipo="entrada",
+            valor=Decimal("20000.00"), parcelas=2, primeiro_vencimento=date(2026, 1, 10),
+        )
+        MeioPagamento.objects.create(
+            tenant=self.tenant, aquisicao=self.aquisicao, ordem=2, tipo="financiamento_direto",
+            valor=Decimal("80000.00"), parcelas=12, juros_mensal=Decimal("1"),
+            sistema_amortizacao="price", primeiro_vencimento=date(2026, 2, 10),
         )
 
     def test_gera_um_titulo_por_parcela_amarrado_a_unidade(self):
@@ -263,31 +278,32 @@ class PermissaoDeVendaTests(VendaBaseTestCase):
     def _payload(self):
         return {
             "cliente": self.cliente.pk, "unidade": self.unidade.pk,
-            "data_compra": "2026-01-10", "condicoes_pagamento": "a_vista",
-            "entrada_valor": "100000.00",
+            "data_compra": "2026-01-10",
+            "meios": [{"tipo": "a_vista", "valor": "100000.00"}],
         }
 
     def test_cadastro_de_cliente_nao_vende_unidade(self):
         self.autenticar(["cadastro.cliente.view", "cadastro.cliente.edit"])
-        r = self.client.post("/api/clientes-empreendimentos/", self._payload())
+        r = self.client.post("/api/clientes-empreendimentos/", self._payload(), format="json")
         self.assertEqual(r.status_code, 403)
 
     def test_venda_edit_vende(self):
         self.autenticar(["cadastro.venda.view", "cadastro.venda.edit"])
-        r = self.client.post("/api/clientes-empreendimentos/", self._payload())
+        r = self.client.post("/api/clientes-empreendimentos/", self._payload(), format="json")
         self.assertEqual(r.status_code, 201, r.data)
 
     def test_simular_e_leitura_nao_exige_vender(self):
         """Cotar é anterior a fechar: o corretor simula sem poder vender."""
         self.autenticar(["cadastro.venda.view"])
         r = self.client.post("/api/clientes-empreendimentos/simular/", {
-            "unidade": self.unidade.pk, "num_parcelas": 10,
+            "unidade": self.unidade.pk,
+            "meios": [{"tipo": "financiamento_direto", "valor": "100000", "parcelas": 10}],
         }, format="json")
         self.assertEqual(r.status_code, 200, r.data)
 
     def test_vender_nao_basta_para_gerar_o_carne(self):
         self.autenticar(["cadastro.venda.view", "cadastro.venda.edit"])
-        criada = self.client.post("/api/clientes-empreendimentos/", self._payload())
+        criada = self.client.post("/api/clientes-empreendimentos/", self._payload(), format="json")
         self.assertEqual(criada.status_code, 201, criada.data)
         aquisicao_id = criada.data["cliente_empreendimento_id"]
 
@@ -299,61 +315,123 @@ class PermissaoDeVendaTests(VendaBaseTestCase):
         self.autenticar([
             "cadastro.venda.view", "cadastro.venda.edit", "cadastro.venda.gerar_carne",
         ])
-        criada = self.client.post("/api/clientes-empreendimentos/", self._payload())
+        criada = self.client.post("/api/clientes-empreendimentos/", self._payload(), format="json")
         aquisicao_id = criada.data["cliente_empreendimento_id"]
         r = self.client.post(f"/api/clientes-empreendimentos/{aquisicao_id}/gerar-parcelas/")
         self.assertEqual(r.status_code, 201, r.data)
         self.assertTrue(ContaReceber.objects.filter(cliente_empreendimento_id=aquisicao_id).exists())
 
 
-class CondicaoDePagamentoTests(VendaBaseTestCase):
-    """A condição de pagamento deixou de ser rótulo e passou a reger o plano."""
+class MeiosDaVendaTests(VendaBaseTestCase):
+    """A venda é uma lista livre de meios de pagamento, e a condição é o nome
+    que eles dão a ela — não uma escolha à parte."""
 
-    def test_a_vista_e_pagamento_unico_sem_prazo(self):
+    def _vender(self, meios, **extra):
+        return self.client.post("/api/clientes-empreendimentos/", {
+            "cliente": self.cliente.pk, "unidade": self.unidade.pk,
+            "data_compra": "2026-01-10", "meios": meios, **extra,
+        }, format="json")
+
+    def test_catalogo_de_meios_vem_do_backend(self):
+        self.autenticar()
+        r = self.client.get("/api/clientes-empreendimentos/condicoes/")
+        self.assertEqual(r.status_code, 200)
+        tipos = {m["codigo"]: m for m in r.data["meios"]}
+        self.assertEqual(tipos["outro"]["descricao"], "obrigatoria")
+        self.assertTrue(tipos["entrada"]["juros"])
+        self.assertFalse(tipos["fgts"]["noCarne"])
+        self.assertGreater(r.data["tetoMeios"], 1)
+
+    def test_a_vista_e_um_titulo_so(self):
         self.autenticar()
         r = self.client.post("/api/clientes-empreendimentos/simular/", {
-            "unidade": self.unidade.pk, "condicoes_pagamento": "a_vista",
-            "desconto_percentual": "10",
+            "unidade": self.unidade.pk, "desconto_percentual": "10",
+            "meios": [{"tipo": "a_vista", "valor": "90000"}],
         }, format="json")
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(r.data["valorNegociado"], "90000.00")
-        self.assertEqual(r.data["entrada"], "90000.00")
         self.assertEqual(r.data["totalJuros"], "0.00")
         self.assertEqual(r.data["total"], "90000.00")
         self.assertEqual(len(r.data["parcelas"]), 1)
+        self.assertEqual(r.data["condicao"], "a_vista")
 
-    def test_a_vista_ignora_prazo_e_juros_que_venham_no_payload(self):
-        """A condição manda: mandar 60x junto de 'à vista' não cria 60 parcelas."""
+    def test_venda_combinada_grava_os_meios_e_deriva_a_condicao(self):
+        """Sinal + banco + FGTS: a condição é a do banco, que responde pela maior
+        parte, e o que se grava é o que o motor leu — sem os juros que um FGTS
+        não comporta."""
         self.autenticar()
-        r = self.client.post("/api/clientes-empreendimentos/simular/", {
-            "unidade": self.unidade.pk, "condicoes_pagamento": "a_vista",
-            "num_parcelas": 60, "juros_mensal": "1.5", "entrada_valor": "1000",
-        }, format="json")
-        self.assertEqual(r.status_code, 200, r.data)
-        self.assertEqual(len(r.data["parcelas"]), 1)
-        self.assertEqual(r.data["totalJuros"], "0.00")
-
-    def test_venda_a_vista_grava_o_plano_sem_parcelas(self):
-        self.autenticar()
-        r = self.client.post("/api/clientes-empreendimentos/", {
-            "cliente": self.cliente.pk, "unidade": self.unidade.pk,
-            "data_compra": "2026-01-10", "condicoes_pagamento": "a_vista",
-            "num_parcelas": 60, "juros_mensal": "1.5",
-        }, format="json")
+        r = self._vender([
+            {"tipo": "entrada", "valor": "10000", "parcelas": 2},
+            {"tipo": "financiamento_bancario", "valor": "80000", "descricao": "Caixa"},
+            {"tipo": "fgts", "valor": "10000", "juros_mensal": "2", "parcelas": 12},
+        ], condicoes_pagamento="a_vista")
         self.assertEqual(r.status_code, 201, r.data)
-        self.assertEqual(r.data["num_parcelas"], 0)
-        self.assertEqual(r.data["valor_total_plano"], "100000.00")
+        self.assertEqual(r.data["condicoes_pagamento"], "financiamento_bancario")
+        self.assertEqual([m["tipo"] for m in r.data["meios"]],
+                         ["entrada", "financiamento_bancario", "fgts"])
+        self.assertEqual([m["ordem"] for m in r.data["meios"]], [1, 2, 3])
+        fgts = MeioPagamento.objects.get(tipo="fgts")
+        self.assertEqual((fgts.juros_mensal, fgts.parcelas), (Decimal("0"), 1))
+        self.assertEqual(r.data["valor_total_plano"], "10000.00")
+        rotulos = [m["rotulo"] for m in r.data["plano"]["meios"]]
+        self.assertEqual(rotulos, ["Entrada", "Financiado pelo banco — Caixa", "Pago com FGTS"])
 
-    def test_carne_a_vista_tem_um_titulo_so(self):
+    def test_meios_que_nao_fecham_o_negociado_voltam_400(self):
         self.autenticar()
-        criada = self.client.post("/api/clientes-empreendimentos/", {
-            "cliente": self.cliente.pk, "unidade": self.unidade.pk,
-            "data_compra": "2026-01-10", "condicoes_pagamento": "a_vista",
-        }, format="json")
+        r = self._vender([{"tipo": "entrada", "valor": "10000"}])
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Faltam R$ 90.000,00", str(r.data["meios"]))
+        self.assertFalse(ClienteEmpreendimento.objects.exists())
+
+    def test_outro_sem_explicacao_volta_400(self):
+        self.autenticar()
+        r = self._vender([{"tipo": "outro", "valor": "100000"}])
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("explique a condição", str(r.data["meios"]))
+
+    def test_patch_sem_meios_mantem_os_gravados_e_revalida(self):
+        """Mudar o desconto de uma venda com os mesmos meios não fecha mais a
+        conta — e o PATCH precisa dizer isso, não gravar um plano furado."""
+        self.autenticar()
+        criada = self._vender([{"tipo": "a_vista", "valor": "100000"}])
+        url = f"/api/clientes-empreendimentos/{criada.data['cliente_empreendimento_id']}/"
+        r = self.client.patch(url, {"desconto_percentual": "10"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        r = self.client.patch(url, {"observacoes_compra": "cliente pediu boleto por e-mail"},
+                              format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(len(r.data["meios"]), 1)
+
+    def test_patch_com_meios_substitui_a_lista(self):
+        self.autenticar()
+        criada = self._vender([{"tipo": "a_vista", "valor": "100000"}])
+        url = f"/api/clientes-empreendimentos/{criada.data['cliente_empreendimento_id']}/"
+        r = self.client.patch(url, {"meios": [
+            {"tipo": "permuta", "valor": "40000", "descricao": "Gol 2019"},
+            {"tipo": "cartao", "valor": "60000", "parcelas": 10},
+        ]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(MeioPagamento.objects.count(), 2)
+        self.assertEqual(r.data["condicoes_pagamento"], "cartao")
+        # A resposta já é a lista nova — não a que o prefetch tinha em cache.
+        self.assertEqual([m["tipo"] for m in r.data["meios"]], ["permuta", "cartao"])
+        self.assertEqual(r.data["plano"]["foraDoCarne"], "40000.00")
+
+    def test_carne_numera_por_meio(self):
+        """Dois financiamentos diretos são duas séries no boleto."""
+        self.autenticar()
+        criada = self._vender([
+            {"tipo": "financiamento_direto", "valor": "40000", "parcelas": 2},
+            {"tipo": "financiamento_direto", "valor": "60000", "parcelas": 3, "juros_mensal": "1"},
+        ])
+        self.assertEqual(criada.status_code, 201, criada.data)
         aquisicao_id = criada.data["cliente_empreendimento_id"]
         r = self.client.post(f"/api/clientes-empreendimentos/{aquisicao_id}/gerar-parcelas/")
         self.assertEqual(r.status_code, 201, r.data)
-        self.assertEqual(r.data["geradas"], 1)
+        self.assertEqual(r.data["geradas"], 5)
+        descricoes = set(ContaReceber.objects.values_list("descricao", flat=True))
+        self.assertIn("Parcela 2/2 (1ª série) — Residencial Ipê · QD 1 · LT 01", descricoes)
+        self.assertIn("Parcela 3/3 (2ª série) — Residencial Ipê · QD 1 · LT 01", descricoes)
 
 
 class ResumoDeUnidadesTests(VendaBaseTestCase):
@@ -446,7 +524,6 @@ class ContagemDaCarteiraAgrupadaTests(VendaBaseTestCase):
                 unidade=unidade, data_compra=date(2026, 1, 10),
                 condicoes_pagamento="a_vista",
                 valor_tabela=unidade.valor_base, valor_compra=unidade.valor_base,
-                entrada_valor=unidade.valor_base,
             )
 
     def test_o_total_nao_muda_ao_agrupar(self):

@@ -185,12 +185,9 @@ def gerar_limites_do_drone(pdp_timeout_ms: int) -> str:
     arquivo no contêiner do drone, e o Spring o lê por `spring.config.import`.
     """
     return (
-        "# GERADO de payment/planos.py — não editar à mão.
-"
-        "# Regerar: python funcoesautorizacao/gerar.py  (a IAM cobra por teste).
-"
-        f"authz.spicedb.timeout-ms={int(pdp_timeout_ms)}
-"
+        "# GERADO de payment/planos.py — não editar à mão.\n"
+        "# Regerar: python funcoesautorizacao/gerar.py  (a IAM cobra por teste).\n"
+        f"authz.spicedb.timeout-ms={int(pdp_timeout_ms)}\n"
     )
 
 

@@ -1795,6 +1795,25 @@ AUTORIZACAO_DIVERGENCIA_JANELA_S: int = 3600
 AUTORIZACAO_SOMBRA_DIAS_SEM_DIVERGENCIA: int = 14
 
 # ---------------------------------------------------------------------------
+# 5.5q A venda de unidade — quantos meios de pagamento uma proposta comporta
+# ---------------------------------------------------------------------------
+# A venda deixou de ter **uma** condição e passou a ser uma lista livre de meios
+# (entrada, financiamento direto, anuais, banco, FGTS, permuta, cartão, outro),
+# e lista livre que chega por API sem teto é porta para uma proposta de dez mil
+# linhas recalculada a cada tecla da simulação. É tamanho de documento, não
+# valor — a mesma família dos tetos do PDCA.
+#
+# A venda real mais retalhada tem cinco ou seis meios (sinal, entrada parcelada,
+# mensais, anuais, banco e FGTS, às vezes uma permuta); **12** cobre essa com
+# folga — inclusive dois financiamentos diretos com taxas diferentes — sem virar
+# planilha colada.
+#
+# **Nem o valor nem o prazo estão aqui.** Quanto o comprador financia e em
+# quantas vezes é o que ele negocia com a construtora — cláusula do contrato,
+# pela fronteira da §5.6.
+VENDA_TETO_MEIOS_DE_PAGAMENTO: int = 12
+
+# ---------------------------------------------------------------------------
 # 5.6 O que NÃO é limite — e por isso continua no código de engenharia
 # ---------------------------------------------------------------------------
 # A régua é "todo teto ou limite vive aqui", e ela tem uma fronteira: número que

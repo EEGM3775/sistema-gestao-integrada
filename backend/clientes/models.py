@@ -71,16 +71,6 @@ class ClienteEmpreendimento(TenantScopedModel, Excluivel):
         ('outro', _('Outro')),
     ]
 
-    SISTEMA_AMORTIZACAO_CHOICES = [
-        ('price', _('Price — parcela fixa')),
-        ('sac', _('SAC — amortização constante, parcela decrescente')),
-    ]
-
-    PERIODICIDADE_BALAO_CHOICES = [
-        ('anual', _('Anual')),
-        ('semestral', _('Semestral')),
-    ]
-
     PERIODICIDADE_CORRECAO_CHOICES = [
         ('anual', _('Anual (aniversário do contrato)')),
         ('mensal', _('Mensal')),
@@ -101,6 +91,12 @@ class ClienteEmpreendimento(TenantScopedModel, Excluivel):
         verbose_name=_("Unidade"),
     )
     data_compra = models.DateField(verbose_name=_("Data da Compra"))
+    # **Derivada** dos meios de pagamento (`plano_pagamento.condicao_da_venda`),
+    # nunca digitada: a condição que responde pela maior parte do valor — "sinal
+    # + banco" é financiamento bancário, "entrada + mensais + anuais" é
+    # financiamento direto. Continua gravada porque é por ela que a carteira
+    # filtra e agrupa; recalcular o plano de cada venda para saber o rótulo seria
+    # uma consulta por linha.
     condicoes_pagamento = models.CharField(max_length=50, choices=CONDICOES_PAGAMENTO_CHOICES, verbose_name=_("Condições de Pagamento"))
     observacoes_compra = models.TextField(null=True, blank=True, verbose_name=_("Observações da Compra"))
 
@@ -121,48 +117,15 @@ class ClienteEmpreendimento(TenantScopedModel, Excluivel):
     # porque é o "valor da compra" que a carteira e as quotas já leem.
     valor_compra = models.DecimalField(max_digits=20, decimal_places=2, verbose_name=_("Valor negociado (à vista)"))
 
-    entrada_valor = models.DecimalField(
-        max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name=_("Entrada / ATO (R$)"),
-    )
-    entrada_parcelas = models.PositiveSmallIntegerField(
-        default=1, verbose_name=_("Parcelas da entrada"),
-        help_text=_("A entrada parcelada não rende juros — é sinal, não financiamento."),
-    )
-    entrada_primeiro_vencimento = models.DateField(
-        null=True, blank=True, verbose_name=_("1º vencimento da entrada"),
-    )
-
-    sistema_amortizacao = models.CharField(
-        max_length=10, choices=SISTEMA_AMORTIZACAO_CHOICES, default='price',
-        verbose_name=_("Sistema de amortização"),
-    )
-    juros_mensal = models.DecimalField(
-        max_digits=6, decimal_places=4, default=Decimal('0'), verbose_name=_("Juros (% ao mês)"),
-        help_text=_("Zero é venda sem juros: a parcela vira o saldo dividido pelo prazo."),
-    )
-    num_parcelas = models.PositiveSmallIntegerField(default=0, verbose_name=_("Nº de parcelas do saldo"))
-    primeiro_vencimento = models.DateField(
-        null=True, blank=True, verbose_name=_("1º vencimento das parcelas"),
-    )
-
-    # Balão/intercalada: parcela extra periódica, prática corrente em loteamento.
-    # Soma-se à mensal que vence no mesmo mês, não a substitui.
-    balao_valor = models.DecimalField(
-        max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name=_("Valor do balão (R$)"),
-    )
-    balao_quantidade = models.PositiveSmallIntegerField(default=0, verbose_name=_("Quantidade de balões"))
-    balao_periodicidade = models.CharField(
-        max_length=10, choices=PERIODICIDADE_BALAO_CHOICES, default='anual',
-        verbose_name=_("Periodicidade do balão"),
-    )
-    balao_primeiro_vencimento = models.DateField(
-        null=True, blank=True, verbose_name=_("1º vencimento do balão"),
-    )
+    # O plano de pagamento **não** mora mais aqui: é a lista `meios`
+    # (`MeioPagamento`), uma linha por forma de pagamento. Os campos soltos de
+    # entrada, parcelas e balões descreviam uma venda com uma condição só, e a
+    # venda real de incorporadora é combinada — sinal, mensais, anuais e banco.
 
     valor_total_plano = models.DecimalField(
         max_digits=15, decimal_places=2, default=Decimal('0'),
         verbose_name=_("Total do plano (desembolso)"),
-        help_text=_("Entrada + parcelas + balões. Maior que o negociado quando há juros."),
+        help_text=_("Soma dos títulos a receber da construtora. Maior que a parte dela quando há juros."),
     )
     # Carimbo do botão "Gerar parcelas": impede gerar o mesmo carnê duas vezes e
     # diz na tela que o financeiro já existe.
@@ -225,6 +188,74 @@ class ClienteEmpreendimento(TenantScopedModel, Excluivel):
                 fields=['tenant', 'unidade'], condition=models.Q(excluido_em__isnull=True), name='aquisicao_unica_por_unidade',
             ),
         ]
+
+
+class MeioPagamento(TenantScopedModel):
+    """Uma forma de pagamento da venda, com o plano que ela tem.
+
+    A venda é uma **lista livre** destes: entrada, financiamento direto, anuais,
+    banco, FGTS, permuta, cartão, outro — quantos a negociação tiver. A soma dos
+    valores é o valor negociado; quem confere é o motor
+    (`plano_pagamento.montar`), e é também ele quem diz quais campos cada tipo
+    comporta (`plano_pagamento.TIPOS_DE_MEIO`). Os campos que um tipo não usa
+    ficam no padrão — o serializer os apaga ao gravar.
+    """
+    TIPO_CHOICES = [
+        ('a_vista', _('À vista')),
+        ('entrada', _('Entrada / sinal (ATO)')),
+        ('financiamento_direto', _('Financiamento direto (construtora)')),
+        ('anuais', _('Parcelas anuais (intercaladas)')),
+        ('financiamento_bancario', _('Financiamento bancário')),
+        ('fgts', _('FGTS')),
+        ('permuta', _('Permuta')),
+        ('cartao', _('Cartão de crédito/débito')),
+        ('outro', _('Outro')),
+    ]
+    SISTEMA_AMORTIZACAO_CHOICES = [
+        ('price', _('Price — parcela fixa')),
+        ('sac', _('SAC — amortização constante, parcela decrescente')),
+    ]
+    PERIODICIDADE_CHOICES = [
+        ('anual', _('Anual')),
+        ('semestral', _('Semestral')),
+    ]
+
+    meio_pagamento_id = models.AutoField(primary_key=True)
+    aquisicao = models.ForeignKey(
+        ClienteEmpreendimento, on_delete=models.CASCADE, related_name='meios',
+        verbose_name=_("Aquisição"),
+    )
+    ordem = models.PositiveSmallIntegerField(default=1, verbose_name=_("Ordem"))
+    tipo = models.CharField(max_length=30, choices=TIPO_CHOICES, verbose_name=_("Forma de pagamento"))
+    valor = models.DecimalField(
+        max_digits=15, decimal_places=2, verbose_name=_("Valor (R$)"),
+        help_text=_("O principal que este meio quita, sem juros."),
+    )
+    # Obrigatória em "outro" (é ela que explica a condição) e em "permuta" (o
+    # bem dado em troca); no banco, é o nome dele.
+    descricao = models.TextField(blank=True, default='', verbose_name=_("Descrição"))
+    parcelas = models.PositiveSmallIntegerField(default=1, verbose_name=_("Parcelas"))
+    primeiro_vencimento = models.DateField(null=True, blank=True, verbose_name=_("1º vencimento"))
+    juros_mensal = models.DecimalField(
+        max_digits=6, decimal_places=4, default=Decimal('0'), verbose_name=_("Juros (% ao mês)"),
+        help_text=_("Financiamento direto, e a entrada parcelada quando o contrato cobra."),
+    )
+    sistema_amortizacao = models.CharField(
+        max_length=10, choices=SISTEMA_AMORTIZACAO_CHOICES, default='price',
+        verbose_name=_("Sistema de amortização"),
+    )
+    periodicidade = models.CharField(
+        max_length=10, choices=PERIODICIDADE_CHOICES, default='anual',
+        verbose_name=_("Periodicidade (anuais)"),
+    )
+
+    def __str__(self):
+        return f"{self.get_tipo_display()} — R$ {self.valor}"
+
+    class Meta:
+        verbose_name = _("Meio de pagamento")
+        verbose_name_plural = _("Meios de pagamento")
+        ordering = ['aquisicao_id', 'ordem', 'meio_pagamento_id']
 
 
 class ContratoCliente(TenantScopedModel, Excluivel):

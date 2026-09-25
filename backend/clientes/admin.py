@@ -6,7 +6,8 @@ from .models import (
     ClienteEmpreendimento,
     ContratoCliente,
     DocumentoCliente,
-    DadoBancarioCliente
+    DadoBancarioCliente,
+    MeioPagamento,
 )
 
 
@@ -134,6 +135,20 @@ class ClienteAdmin(admin.ModelAdmin):
     ]
 
 
+class MeioPagamentoInline(admin.TabularInline):
+    """Os meios da venda, **só leitura**: a soma deles tem de fechar o valor
+    negociado, e quem confere é o motor, pelo serializer. Editar uma linha solta
+    aqui gravaria um plano que não fecha — a venda se edita pela tela."""
+    model = MeioPagamento
+    extra = 0
+    can_delete = False
+    max_num = 0
+    fields = readonly_fields = (
+        'ordem', 'tipo', 'valor', 'descricao', 'parcelas', 'primeiro_vencimento',
+        'juros_mensal', 'sistema_amortizacao', 'periodicidade',
+    )
+
+
 @admin.register(ClienteEmpreendimento)
 class ClienteEmpreendimentoAdmin(admin.ModelAdmin):
     list_display = (
@@ -158,8 +173,9 @@ class ClienteEmpreendimentoAdmin(admin.ModelAdmin):
         'unidade__apto',
     )
     ordering = ('-data_compra',)
-    readonly_fields = ('cliente_empreendimento_id',)
-    
+    readonly_fields = ('cliente_empreendimento_id', 'condicoes_pagamento')
+    inlines = [MeioPagamentoInline]
+
     fieldsets = (
         (_('Identificação'), {
             'fields': (
@@ -180,9 +196,6 @@ class ClienteEmpreendimentoAdmin(admin.ModelAdmin):
             'fields': (
                 'valor_tabela',
                 ('desconto_percentual', 'desconto_valor'),
-                ('entrada_valor', 'entrada_parcelas', 'entrada_primeiro_vencimento'),
-                ('sistema_amortizacao', 'juros_mensal', 'num_parcelas', 'primeiro_vencimento'),
-                ('balao_valor', 'balao_quantidade', 'balao_periodicidade', 'balao_primeiro_vencimento'),
                 ('valor_total_plano', 'parcelas_geradas_em'),
             )
         }),
