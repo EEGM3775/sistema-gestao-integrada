@@ -62,7 +62,10 @@ Achado ao rodar a suíte para o D210. Na versão 1.0.22, os três `\n` de `gerar
 viraram quebra de linha **dentro** do literal — `SyntaxError: unterminated string literal`. O módulo
 é importado por `nucleo/autorizacao.py`, então `manage.py` inteiro parava no `django.setup()`.
 
-**Correção:** os `\n` de volta. Nenhum outro `.py` do repositório falha no `py_compile`.
+**Correção:** os `\n` de volta. Nenhum outro `.py` do repositório falha no `py_compile`. Com a
+função quebrada, o `gerado/limites-drone.properties` nunca tinha sido gerado — e a suíte da IAM
+reprovava em `test_o_teto_do_drone_e_o_do_payment`. Regerado com `python funcoesautorizacao/gerar.py`
+(os outros dois artefatos já estavam em dia); IAM 193/193.
 
 ---
 ### D180 — as correções de 16/09/2026 não foram compiladas nem testadas neste ambiente · ✅ corrigido 25/09/2026
