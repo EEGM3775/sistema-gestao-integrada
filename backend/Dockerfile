@@ -169,6 +169,9 @@ COPY funcoesemail/ ./funcoesemail/
 # deles no D24, para servir o medidor de quota e a vitrine de upgrade a partir da
 # MESMA tabela que a IAM usa para emitir os tetos.
 COPY payment/ ./payment/
+# Idem: o cliente do PDP, o catálogo gerado e as classes de ação (remodelagem da
+# segurança, fases 2 e 3 — funcoesautorizacao/__init__.py).
+COPY funcoesautorizacao/ ./funcoesautorizacao/
 # Aviso de licenças redistribuídas — a metade documental da obrigação GPLv3 do
 # LibreDWG. A outra metade (o COPYING) já veio do estágio 1.
 COPY THIRD-PARTY-LICENSES.md /usr/share/licenses/THIRD-PARTY-LICENSES.md

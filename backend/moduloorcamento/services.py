@@ -483,7 +483,7 @@ def custo_de_referencia(item: Item, base) -> Decimal | None:
 
 def linha_a_partir_do_item(
     *, orcamento, item: Item, quantidade, custo_unitario=None,
-    pai_id=None, etapa_id=None, ordem=0,
+    pai_id=None, etapa_id=None, ordem=0, base=None,
 ):
     """Cria o `ItemOrcado` **tirando o snapshot** do item do catálogo.
 
@@ -491,15 +491,30 @@ def linha_a_partir_do_item(
     catálogo a partir daqui — ver `models.ItemOrcado`. A FK `item` fica, e é ela
     que depois deixa o SCM/SIL casarem comprado e aplicado com o orçado.
 
+    **O preço viaja com a linha (ORC.10a).** `base` é a publicação de onde o
+    item foi efetivamente pescado — a que estava aberta no seletor na hora de
+    inserir. Antes o preço saía sempre da publicação do *cabeçalho*, e isso
+    produzia dois zeros silenciosos: o orçamento sem base vinculada inseria tudo
+    a custo zero, e o item de outra fonte (um ORSE numa planilha SINAPI) também,
+    porque `custo_de_referencia` exige que a fonte do item e a da publicação
+    batam. É o modelo do Arquimedes: a partida arrastada traz o preço do banco
+    de onde veio, e a data-base do cabeçalho é o **rótulo do documento**, não um
+    filtro sobre o preço.
+
+    Sem `base` vale a regra antiga — a publicação do cabeçalho —, que é o que
+    mantém o seed, a precificação e os demais chamadores internos funcionando
+    sem saber de nada disto.
+
     Precedência do preço: o informado pelo cliente ganha do de referência. Quem
     está montando a planilha pode ter cotação melhor que a SINAPI, e o sistema
     não tem por que discordar — mas registra de onde veio o número.
     """
     from .models import ItemOrcado  # import tardio: evita ciclo com models
 
+    publicacao = base if base is not None else orcamento.base_referencial
     preco = custo_unitario
     if preco in (None, ""):
-        preco = custo_de_referencia(item, orcamento.base_referencial)
+        preco = custo_de_referencia(item, publicacao)
     veio_da_base = custo_unitario in (None, "") and preco is not None
 
     return ItemOrcado.objects.create(
@@ -516,5 +531,10 @@ def linha_a_partir_do_item(
         custo_unitario=Decimal(str(preco or 0)),
         fonte_referencia=item.fonte_referencia or "",
         codigo_referencia=item.codigo_referencia or "",
-        data_base_preco=orcamento.data_base if veio_da_base else None,
+        # A data-base é a **da publicação que deu o preço**, não a do
+        # cabeçalho: com linhas de fontes diferentes na mesma planilha, é ela
+        # que faz a coluna Data-base da grade dizer a verdade (e a marca
+        # vermelha da ORC.7b aparecer onde deve). Quando a base é a do próprio
+        # orçamento dá no mesmo: `data_base` já é copiada dela.
+        data_base_preco=publicacao.mes_referencia if veio_da_base else None,
     )

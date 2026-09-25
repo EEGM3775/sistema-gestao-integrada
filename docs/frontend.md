@@ -471,6 +471,7 @@ Utiliza `createBrowserRouter` com rotas aninhadas.
 /login                  → LoginPage (pública)
 /app                    → AppShell (PrivateRoute — exige token válido)
   /app/dashboard        → DashboardPage
+  /app/conta            → MinhaContaPage (segundo fator, janela de confirmação, senha)
   /app/empreendimentos  → EmpreendimentosListPage
   /app/empreendimentos/:eId
                         → EmpreendimentoDetailPage
@@ -649,6 +650,21 @@ direita com o formulário. Mobile: só o formulário com logo no topo.
 - `POST /auth/login/` via `AuthContext.login()` → token em `localStorage` (cookie `HttpOnly` na Fase 10.6)
 - Spinner e botão desabilitado durante submit; alerta vermelho inline em caso de erro
 - Redireciona para `/app/dashboard` ou `location.state.from`
+- **Segunda etapa** ([acesso-e-permissoes.md §5.3](acesso-e-permissoes.md)): quando a senha
+  devolve o desafio, o painel direito troca de conteúdo — `EntrarComCodigo` (código do app ou
+  de recuperação, `input#codigo-segundo-fator`) ou, para o admin que ainda não tem,
+  `CadastroSegundoFator` (QR, chave para digitar, código, e os códigos de recuperação com
+  copiar/baixar e "guardei"). Desafio vencido volta à senha com a frase. Os componentes moram
+  em `components/seguranca/` e são os mesmos da página Minha conta.
+
+### 5.2b Minha conta (`/app/conta`)
+
+Aberta pelo menu do usuário na barra de cima ("Minha conta e segurança"). Três cartões:
+**Segundo fator** (estado, por que ativar nesta conta, ativar / gerar códigos novos /
+desativar — "trocar de celular" para quem é obrigado), **Confirmação de atos graves** (a
+janela em minutos, com a faixa e o aviso ao passar do padrão; pílula "em breve" até o
+step-up existir) e **Senha** (o `ChangePasswordModal`). Na lista de usuários do admin, a
+marca "2º fator" e a ação de redefinir para quem perdeu o celular.
 
 ### 5.3 AppHomePage — Hub da Edição Construtora (`/app/dashboard`)
 
@@ -1151,7 +1167,9 @@ Acima da obra existe **uma** leitura multi-obra, e é para quem dirige: a **cart
 
 Quatro peças fazem de seis postos um sistema, e não seis depósitos menores:
 
-- **contexto de obra** na topbar e na rota — trocar de obra mantém o posto, e todo link é colável;
+- **contexto de obra** na topbar e na rota — trocar de obra mantém o posto, e todo link é colável.
+  O recorte de dentro do posto mora no endereço junto (no `MEDIÇÃO`, `?contrato=&boletim=&v=`):
+  guardá-lo na memória do componente quebra a promessa em silêncio, e a aba nova cai noutro lugar;
 - **objeto compartilhado** — a mesma atividade é barra no Gantt, reta na linha de balanço, cartão no
   quadro, linha na medição e alvo da ficha; selecionar num posto mantém selecionado nos outros;
 - **inspetor** lateral — é ele que absorve os ~75 verbos sem que nenhum vire página, e é onde a
@@ -1195,9 +1213,9 @@ Stack: TanStack Query sobre `pdcaApi`, kit Malha compartilhado, `@tanstack/react
 Gantt em biblioteca **MIT** (licença permissiva é regra —
 [THIRD-PARTY-LICENSES.md](../THIRD-PARTY-LICENSES.md)). O CPM roda no servidor.
 
-O desenho **cobra sete agregados do backend**; quatro já existem (carteira multi-obra, fila
-unificada, busca única e pulso da obra) e três nascem com a fatia que os consome (fila de medição,
-minhas frentes e rollup de obra) — inventário, regras e faseamento em
+O desenho **cobra sete agregados do backend**; seis já existem (carteira multi-obra, fila unificada,
+fila de medição, busca única, minhas frentes e pulso da obra) e um nasce com a fatia que o consome
+(rollup de obra) — inventário, regras e faseamento em
 [modulos/modulopdca-frontend.md §10–§11](modulos/modulopdca-frontend.md).
 
 ---
@@ -1573,3 +1591,16 @@ coluna.
 Quem decide, nos três casos, é `isPlatformAdmin` do `AuthContext` — que vem de
 `is_platform_admin` no `/auth/me/`, e cuja semântica está em
 [acesso-e-permissoes.md](acesso-e-permissoes.md).
+
+## Assistente — o que a tela sabe fazer, dito por ela
+
+Uma chave na barra de cima liga e desliga a ajuda da tela aberta: ligada, um cartão no canto mostra
+as poucas frases que tiram alguém do lugar; a tecla `?` abre a referência inteira de gestos e
+atalhos. Nasceu da ORC.10, quando a planilha do Orçamento ganhou seleção múltipla, arrastar,
+`Alt`+setas e `Ctrl+Z` — e nada disso se anunciava.
+
+**A régua que fica:** tela que ganha gesto novo **publica o gesto**, com
+`useAjudaDaTela({ tela, dicas, grupos })`. Tela que não publica não tem assistente, e continua
+funcionando igual.
+
+Desenho, decisões e como participar: [modulos/funcoesassistente.md](modulos/funcoesassistente.md).

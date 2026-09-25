@@ -6,6 +6,7 @@ import RedefinirSenhaPage from './pages/RedefinirSenhaPage'
 import ConfirmarEmailPage from './pages/ConfirmarEmailPage'
 import AppShell from './components/layout/AppShell'
 import AppHomePage from './pages/app/AppHomePage'
+import MinhaContaPage from './pages/app/MinhaContaPage'
 import PrivateRoute from './components/PrivateRoute'
 import ModuleRoute from './components/ModuleRoute'
 import AdminRoute from './components/AdminRoute'
@@ -62,6 +63,7 @@ function App() {
         >
           <Route index element={<Navigate to="/app/dashboard" replace />} />
           <Route path="dashboard" element={<AppHomePage />} />
+          <Route path="conta" element={<MinhaContaPage />} />
 
           {/* ── Empreendimentos ── */}
           <Route path="empreendimentos" element={<EmpreendimentosListPage />} />

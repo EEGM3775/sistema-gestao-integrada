@@ -41,7 +41,7 @@ são persistidos em texto plano.
 O comando `create_service_token` (`management/commands/`) gerava tokens estáticos DRF para
 microsserviços chamarem a API do backend (`Authorization: Token …`). **Esse mecanismo está morto desde
 a Fase 6** — o backend só aceita JWT da IAM; tokens gerados por ele recebem 401 (achado **D1**,
-confirmado por teste em `nucleo/test_legacy_token.py`: afeta os callbacks de `funcoesia`,
+confirmado por teste em `testes/backend/nucleo/test_legacy_token.py`: afeta os callbacks de `funcoesia`,
 `funcoesnf` e `funcoeswhatsapp`; o `funcoeslead` foi absorvido pelo backend na Fase 11.2). O substituto
 planejado é **JWT de serviço de vida curta emitido pela IAM** (Fase 10.8 do
 [roadmap](../roadmap.md)); o comando e as instruções antigas de "criar Perfil no Django Admin"

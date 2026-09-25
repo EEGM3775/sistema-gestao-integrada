@@ -16,6 +16,8 @@ from django.db.models import Q
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
+from payment.planos import CONFIRMACAO_JANELA_PADRAO_MIN
+
 
 class Tenant(models.Model):
     class Status(models.TextChoices):
@@ -30,6 +32,12 @@ class Tenant(models.Model):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ATIVO)
     plano = models.CharField(_("Plano"), max_length=100, blank=True, null=True)
     data_criacao = models.DateTimeField(auto_now_add=True)
+    # Remodelagem, fase 1 — o admin desta empresa só entra com segundo fator.
+    # É a **volta atrás** da fase (acesso-e-permissoes.md §10.12): desligar aqui
+    # devolve o login só com senha aos admins deste tenant, sem deploy. Não
+    # alcança o supervisor da plataforma, que é obrigado sempre (ver
+    # `segundo_fator.obrigatorio`).
+    segundo_fator_obrigatorio = models.BooleanField(default=True)
 
     class Meta:
         verbose_name = _("Tenant")
@@ -162,6 +170,13 @@ class Usuario(AbstractUser):
     # token. Sem essa carência, trocar o e-mail e pedir reset em seguida é
     # takeover em dois passos.
     email_alterado_em = models.DateTimeField(null=True, blank=True, editable=False)
+    # Remodelagem, fase 1 — quanto tempo depois de provar quem é a pessoa pode
+    # fazer um ato grave sem provar de novo (acesso-e-permissoes.md §10.5).
+    # Escolha dela, na tela de perfil; o padrão e a faixa são do dono
+    # (`payment/planos.py` §5.5o). Quem cobra a faixa é o endpoint, não o banco.
+    janela_confirmacao_min = models.PositiveSmallIntegerField(
+        default=CONFIRMACAO_JANELA_PADRAO_MIN
+    )
 
     USERNAME_FIELD = "username"
     REQUIRED_FIELDS = ["email"]
@@ -339,6 +354,12 @@ class EventoSeguranca(models.Model):
         EMAIL_TROCA_CANCELADA = "email_troca_cancelada", _("Troca de e-mail cancelada")
         PRIVILEGIO_ALTERADO = "privilegio_alterado", _("Papéis/privilégios alterados")
         USUARIO_DESATIVADO = "usuario_desativado", _("Usuário desativado")
+        SEGUNDO_FATOR_ATIVADO = "segundo_fator_ativado", _("Segundo fator ativado")
+        SEGUNDO_FATOR_DESATIVADO = "segundo_fator_desativado", _("Segundo fator desativado")
+        SEGUNDO_FATOR_REDEFINIDO = "segundo_fator_redefinido", _("Segundo fator redefinido pelo admin")
+        SEGUNDO_FATOR_CODIGOS = "segundo_fator_codigos", _("Códigos de recuperação trocados")
+        SEGUNDO_FATOR_RECUPERACAO = "segundo_fator_recuperacao", _("Entrada com código de recuperação")
+        SEGUNDO_FATOR_BLOQUEADO = "segundo_fator_bloqueado", _("Segundo fator bloqueado por tentativas")
 
     id = models.BigAutoField(primary_key=True)
     tipo = models.CharField(max_length=40, choices=Tipo.choices)
@@ -479,3 +500,73 @@ class TrocaEmailPendente(models.Model):
             and self.cancelado_em is None
             and self.expira_em > timezone.now()
         )
+
+
+# ---------------------------------------------------------------------------
+# Remodelagem da segurança, fase 1 — segundo fator (acesso-e-permissoes.md §10.5)
+# ---------------------------------------------------------------------------
+
+
+class SegundoFator(models.Model):
+    """O segundo fator de uma pessoa — hoje, TOTP (o código de 6 dígitos do app
+    autenticador). Passkey entra como outro `metodo`, na mesma linha.
+
+    **O segredo é cifrado, não resumido.** Diferente de senha e de token de
+    recuperação, o servidor precisa do segredo em claro a cada login para
+    calcular o código do instante — um hash não serve. Cifrado com uma chave que
+    não mora no banco (`segundo_fator.cifra`), um dump da tabela não dá o
+    segundo fator de ninguém.
+
+    Existe sem `confirmado_em` enquanto o cadastro não terminou: a pessoa leu o
+    QR mas ainda não digitou um código certo. Só a linha confirmada conta como
+    segundo fator ativo — senão um cadastro abandonado no meio trancaria a conta.
+    """
+
+    class Metodo(models.TextChoices):
+        TOTP = "totp", _("App autenticador (TOTP)")
+
+    id = models.BigAutoField(primary_key=True)
+    usuario = models.OneToOneField(
+        Usuario, on_delete=models.CASCADE, related_name="segundo_fator"
+    )
+    metodo = models.CharField(max_length=20, choices=Metodo.choices, default=Metodo.TOTP)
+    segredo_cifrado = models.TextField()
+    confirmado_em = models.DateTimeField(null=True, blank=True)
+    # Anti-reuso: o último passo de 30 s aceito. Um código visto por cima do
+    # ombro (ou capturado) não vale uma segunda vez, nem dentro do mesmo passo.
+    ultimo_passo = models.BigIntegerField(default=0)
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = _("Segundo fator")
+        verbose_name_plural = _("Segundos fatores")
+
+    def __str__(self):
+        estado = "ativo" if self.confirmado_em else "em cadastro"
+        return f"{self.usuario_id}: {self.metodo} ({estado})"
+
+    @property
+    def ativo(self) -> bool:
+        return self.confirmado_em is not None
+
+
+class CodigoRecuperacao(models.Model):
+    """Código de uso único para entrar sem o celular. Guardado só o SHA-256,
+    pela mesma disciplina do `TokenRecuperacaoSenha`: o código tem entropia
+    alta, então o hash lento de senha não acrescentaria nada."""
+
+    id = models.BigAutoField(primary_key=True)
+    usuario = models.ForeignKey(
+        Usuario, on_delete=models.CASCADE, related_name="codigos_recuperacao"
+    )
+    codigo_hash = models.CharField(max_length=64, db_index=True)
+    usado_em = models.DateTimeField(null=True, blank=True)
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = _("Código de recuperação")
+        verbose_name_plural = _("Códigos de recuperação")
+        indexes = [models.Index(fields=["usuario", "usado_em"])]
+
+    def __str__(self):
+        return f"{self.usuario_id}: {'usado' if self.usado_em else 'livre'}"

@@ -107,10 +107,10 @@ Sem isso o navegador mostra a tela antiga e parece que não funcionou.
 Rode os DOIS, nesta ordem. Pode repetir sem medo — não duplica.
 
  1) Usuários e permissões:
-    docker compose exec -T iam python manage.py shell < iam/seed_demo.py
+    docker compose exec -T iam python manage.py shell < testes/seeds/seed_demo.py
 
  2) Empreendimentos, obras, clientes, RH, eventos:
-    docker compose exec -T erp python manage.py shell < backend/seed_demo_data.py
+    docker compose exec -T erp python manage.py shell < testes/seeds/seed_demo_data.py
 
  O seed NÃO cria boletos, notas fiscais nem contas a pagar/receber —
  esses nascem de você usar o sistema (e dependem de Asaas / NFE.io).
@@ -158,7 +158,7 @@ seguras, sessão real. Fica em portas separadas e não mexe no dev.
     bash infra/staging/up.sh
 
  CRIAR OS DADOS DE DEMONSTRAÇÃO (só na 1ª vez ou após apagar o banco)
-    bash infra/staging/seed.sh
+    bash testes/seeds/seed_staging.sh
 
  ABRIR NO NAVEGADOR
     https://localhost:8443
@@ -215,15 +215,21 @@ seguras, sessão real. Fica em portas separadas e não mexe no dev.
  TESTES AUTOMATIZADOS
 ============================================================
 
+ Os testes moram em testes/ (raiz do repositório) e NÃO vão para a
+ imagem. Antes de rodar dentro do contêiner, copie a pasta para lá:
+    docker exec sgi-erp mkdir -p /app/testes
+    docker cp testes/. sgi-erp:/app/testes/
+    (para a IAM, o mesmo com sgi-iam)
+
  Backend (Python) — a bateria completa:
-    docker compose exec erp python manage.py test
+    docker exec sgi-erp python manage.py test --noinput
 
  Só um módulo (mais rápido):
-    docker compose exec erp python manage.py test moduloerp
-    docker compose exec erp python manage.py test rh
+    docker exec sgi-erp python manage.py test moduloerp --noinput
+    docker exec sgi-erp python manage.py test rh --noinput
 
  Login / IAM:
-    docker compose exec iam python manage.py test identity
+    docker exec sgi-iam python manage.py test --noinput
 
  Frontend — conferir erros de tipo (não altera nada):
     docker run --rm -v $PWD/frontend:/app -w /app node:22-alpine npx tsc -b --pretty false

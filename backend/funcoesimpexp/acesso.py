@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from rest_framework.exceptions import PermissionDenied
 
+from nucleo import autorizacao
+
 from .registro import Recurso
 
 
@@ -32,8 +34,8 @@ def permissoes_faltantes(user, recurso: Recurso, exigidas=None) -> tuple[str, ..
     """
     if _privilegiado(user):
         return ()
-    concedidas = set(getattr(user, "iam_permissions", None) or [])
     alvo = recurso.permissoes_exigidas if exigidas is None else exigidas
+    concedidas = autorizacao.permitidos(user, alvo)
     return tuple(p for p in alvo if p not in concedidas)
 
 
@@ -101,7 +103,7 @@ def exigir_entitlement_de_escrita(user, recurso: Recurso) -> None:
     exigido = recurso.entitlement
     if not exigido:
         return
-    if exigido in (getattr(user, "iam_modules", None) or ()):
+    if autorizacao.usa_modulo(user, exigido):
         return
     raise PermissionDenied(
         f"Importar para '{recurso.rotulo}' exige o módulo '{exigido}' contratado. "
@@ -144,7 +146,7 @@ def exigir_entrega(user, recurso: Recurso) -> None:
         raise PermissionDenied("Autenticação necessária.")
 
     exigido = recurso.entitlement
-    if exigido and exigido not in (getattr(user, "iam_modules", None) or ()):
+    if exigido and not autorizacao.usa_modulo(user, exigido):
         raise PermissionDenied(
             f"Baixar arquivo de '{recurso.rotulo}' exige o módulo '{exigido}' "
             "contratado. A exportação dos dados que já existem continua disponível."
@@ -165,8 +167,4 @@ def recursos_permitidos(user, recursos) -> tuple[Recurso, ...]:
 
 def _privilegiado(user) -> bool:
     """Mesmo bypass que já vale em `RequirePermission` — um único modelo mental."""
-    return bool(
-        getattr(user, "is_tenant_admin", False)
-        or getattr(user, "is_platform_admin", False)
-        or getattr(user, "is_superuser", False)
-    )
+    return autorizacao.administra(user) or autorizacao.supervisiona(user)

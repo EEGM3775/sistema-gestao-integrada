@@ -1,6 +1,9 @@
 import React, { useState, useMemo } from 'react'
-import { Users, Search, Pencil, ShieldCheck, KeyRound, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { Users, Search, Pencil, ShieldCheck, ShieldOff, KeyRound, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { Modal, Btn } from '@/components/malha'
+import { FormErrorBanner, parseApiErrors, type FieldErrors } from '@/utils/formErrors'
 import { useUsuarios } from '../hooks/useUsuarios'
+import { useAuth } from '@/hooks/useAuth'
 import { PasswordField } from '@/components/PasswordField'
 import type { UsuarioAdmin, Perfil } from '../types'
 
@@ -152,11 +155,66 @@ const ResetSenhaModal: React.FC<{
   )
 }
 
+const RedefinirSegundoFatorModal: React.FC<{
+  usuario: UsuarioAdmin
+  onClose: () => void
+  onConfirm: () => Promise<void>
+}> = ({ usuario, onClose, onConfirm }) => {
+  const [ciente, setCiente] = useState(false)
+  const [enviando, setEnviando] = useState(false)
+  const [erros, setErros] = useState<FieldErrors>({})
+  const [feito, setFeito] = useState(false)
+
+  const confirmar = async () => {
+    setErros({})
+    setEnviando(true)
+    try { await onConfirm(); setFeito(true) }
+    catch (e) { setErros(parseApiErrors(e)) }
+    finally { setEnviando(false) }
+  }
+
+  return (
+    <Modal titulo={`Redefinir o segundo fator de ${usuario.username}`} onClose={onClose}
+      rodape={feito ? <Btn onClick={onClose}>Fechar</Btn> : (
+        <>
+          <Btn onClick={onClose}>Cancelar</Btn>
+          <Btn variant="perigo" disabled={!ciente || enviando} onClick={confirmar}>
+            {enviando ? 'Redefinindo…' : 'Redefinir'}
+          </Btn>
+        </>
+      )}>
+      {feito ? (
+        <p style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.5, margin: 0 }}>
+          Pronto. As sessões de <b>{usuario.username}</b> foram encerradas e ele recebeu um e-mail
+          avisando. No próximo login, ele entra com a senha
+          {usuario.is_tenant_admin ? ' e cadastra o celular novo ali mesmo.' : ' e pode ativar o segundo fator de novo em Minha conta.'}
+        </p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <p style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.5, margin: 0 }}>
+            Use só quando <b>{usuario.username}</b> perdeu o celular <b>e</b> os códigos de recuperação.
+            Confirme com a própria pessoa antes — por telefone ou pessoalmente: depois disto, a senha
+            sozinha volta a abrir a conta dela.
+          </p>
+          <FormErrorBanner errors={erros} />
+          <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 13, color: 'var(--ink)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={ciente} onChange={e => setCiente(e.target.checked)}
+              style={{ width: 15, height: 15, marginTop: 2, accentColor: 'var(--brand)' }} />
+            Falei com {usuario.username} e confirmei que foi a pessoa que pediu.
+          </label>
+        </div>
+      )}
+    </Modal>
+  )
+}
+
 const UsuariosPage: React.FC = () => {
-  const { usuarios, perfis, loading, error, setPerfisDoUsuario, resetSenha } = useUsuarios()
+  const { usuarios, perfis, loading, error, setPerfisDoUsuario, resetSenha, redefinirSegundoFator } = useUsuarios()
   const [search, setSearch] = useState('')
   const [editing, setEditing] = useState<UsuarioAdmin | null>(null)
   const [resetting, setResetting] = useState<UsuarioAdmin | null>(null)
+  const [redefinindo, setRedefinindo] = useState<UsuarioAdmin | null>(null)
+  const { user } = useAuth()
 
   const nomePorId = useMemo(() => new Map(perfis.map(p => [p.id, p.nome])), [perfis])
   const filtered = useMemo(() => {
@@ -211,6 +269,12 @@ const UsuariosPage: React.FC = () => {
                       {u.is_tenant_admin && (
                         <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: '#eef2ff', color: 'var(--color-brand)', fontFamily: 'var(--font-body)' }}>admin</span>
                       )}
+                      {u.segundo_fator_ativo && (
+                        <span className="text-xs px-1.5 py-0.5 rounded inline-flex items-center gap-1" title="Entra com senha e com o código do celular"
+                          style={{ background: 'var(--good-soft)', color: 'var(--good-ink)', fontFamily: 'var(--font-body)' }}>
+                          <ShieldCheck size={11} /> 2º fator
+                        </span>
+                      )}
                     </div>
                     <p className="text-xs" style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-body)' }}>{u.email || '—'}</p>
                   </td>
@@ -224,7 +288,7 @@ const UsuariosPage: React.FC = () => {
                       ))}
                     </div>
                   </td>
-                  <td style={{ padding: '12px 16px', width: '96px' }}>
+                  <td style={{ padding: '12px 16px', width: '120px' }}>
                     <div className="flex items-center gap-1">
                       <button onClick={() => setEditing(u)} className="p-1.5 rounded" title="Editar papéis"
                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)' }}>
@@ -234,6 +298,12 @@ const UsuariosPage: React.FC = () => {
                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)' }}>
                         <KeyRound size={14} />
                       </button>
+                      {u.segundo_fator_ativo && u.id !== user?.id && (
+                        <button onClick={() => setRedefinindo(u)} className="p-1.5 rounded" title="Redefinir o segundo fator (celular perdido)"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)' }}>
+                          <ShieldOff size={14} />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -251,6 +321,11 @@ const UsuariosPage: React.FC = () => {
       {resetting && (
         <ResetSenhaModal usuario={resetting} onClose={() => setResetting(null)}
           onConfirm={async (atual, nova) => { await resetSenha(resetting.id, atual, nova) }} />
+      )}
+
+      {redefinindo && (
+        <RedefinirSegundoFatorModal usuario={redefinindo} onClose={() => setRedefinindo(null)}
+          onConfirm={() => redefinirSegundoFator(redefinindo.id)} />
       )}
     </div>
   )

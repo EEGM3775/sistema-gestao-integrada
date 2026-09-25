@@ -38,6 +38,7 @@ from rest_framework.response import Response
 
 from catalogo.models import Item
 from nucleo.frota import MINUTOS_ATE_ORFA
+from nucleo import autorizacao
 from nucleo.permissions import RequireModule, RequirePermission
 from nucleo.quotas import QuotaEnforcedMixin
 from nucleo.tenancy import TenantScopedViewSetMixin
@@ -49,6 +50,7 @@ from . import (
     carga,
     controle,
     duplicacao,
+    edicao,
     encargos,
     exportacao,
     insumos as servico_insumos,
@@ -76,6 +78,7 @@ from .models import (
     InsumoReferencia,
     ItemBancoPreco,
     ItemOrcado,
+    ItemOrcadoInsumo,
     LinhaMedicao,
     LinhaReprecificacao,
     MemorialNBR,
@@ -105,6 +108,7 @@ from .serializers import (
     IndiceEconomicoSerializer,
     InsumoReferenciaSerializer,
     ItemBancoPrecoSerializer,
+    ItemOrcadoInsumoSerializer,
     ItemOrcadoSerializer,
     LinhaMedicaoSerializer,
     LinhaReprecificacaoSerializer,
@@ -349,7 +353,15 @@ class BaseReferencialResumoView(views.APIView):
         for linha in (
             InsumoReferencia.objects.filter(tipo=InsumoReferencia.Tipo.INSUMO)
             .exclude(grupo="")
-            .values("base_id", "grupo")
+            # `base__fonte` entra no GROUP BY porque **ler classe é por fonte**: o
+            # de-para declarado vive em `dados/classes/<fonte>.csv` e vence o
+            # embutido (ORC.9c). Sem a fonte aqui só o `PREFIXOS_DE_CLASSE`
+            # respondia, e o vocabulário em sigla da EMBASA (`MAT.`, `M.O.`,
+            # `EQ.LOC`) era reportado como ilegível embora o CSV o traduza — o
+            # indicador de honestidade acusando defeito onde não havia, que é o
+            # mesmo tipo de mentira que a ORC.9c existe para impedir, só que na
+            # direção contrária.
+            .values("base_id", "base__fonte", "grupo")
             .annotate(n=Count("referencia_id"))
             .order_by()
         ):
@@ -357,7 +369,7 @@ class BaseReferencialResumoView(views.APIView):
             classificados_por_base[base_id] = (
                 classificados_por_base.get(base_id, 0) + linha["n"]
             )
-            if services.classificacao_desconhecida(grupo):
+            if services.classificacao_desconhecida(grupo, linha["base__fonte"]):
                 desconhecidas_por_base.setdefault(base_id, set()).add(grupo.strip())
         def resumo_de(b) -> dict:
             contagens = totais_por_base.get(b.base_id, {})
@@ -425,9 +437,7 @@ class SoDonoDaPlataforma(permissions.BasePermission):
 
     def has_permission(self, request, view):
         user = getattr(request, "user", None)
-        return bool(
-            user and user.is_authenticated and getattr(user, "is_platform_admin", False)
-        )
+        return bool(user and user.is_authenticated and autorizacao.supervisiona(user))
 
 
 def _nome_de_quem_pediu(request) -> str:
@@ -769,6 +779,10 @@ class OrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.
     required_resource = "orcamento.orcamento"
     action_permission_map = {
         "aprovar": "orcamento.orcamento.aprovar",
+        # ORC.10e — permissão própria, e não `edit`: reabrir documento aprovado
+        # é alçada, do mesmo tipo que aprovar. Quem monta a planilha não herda
+        # o poder de descongelar a régua contra a qual o custo é medido.
+        "destravar": "orcamento.orcamento.destravar",
         "revisar": "orcamento.orcamento.revisar",
         "recalcular": "orcamento.orcamento.edit",
         "arvore": "orcamento.orcamento.view",
@@ -1033,6 +1047,28 @@ class OrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.
         """Previsto acumulado × realizado acumulado, mês a mês."""
         return Response(controle.curva_s(self.get_object()))
 
+    @action(detail=True, methods=["post"], url_path="destravar")
+    def destravar(self, request, pk=None):
+        """Devolve o orçamento aprovado ao rascunho — com motivo e rastro.
+
+        O congelamento continua sendo o padrão, e `revisar` continua sendo o
+        caminho quando o escopo muda de verdade: ele versiona, que é o que uma
+        obra pública exige e o que faz o orçado×realizado ter régua fixa. Este
+        verbo é para o outro caso — o erro de digitação encontrado dez minutos
+        depois de aprovar —, e por isso tem permissão própria
+        (`orcamento.orcamento.destravar`), motivo obrigatório e registro que
+        acompanha o documento.
+        """
+        orcamento = self.get_object()
+        try:
+            edicao.destravar_orcamento(
+                orcamento, motivo=request.data.get("motivo") or "",
+                usuario_nome=self._nome_do_usuario(request),
+            )
+        except edicao.EdicaoInvalida as exc:
+            raise exceptions.ValidationError({"detail": str(exc)}) from exc
+        return Response(OrcamentoSerializer(orcamento).data)
+
     @action(detail=True, methods=["post"], url_path="revisar")
     def revisar(self, request, pk=None):
         """Gera a versão seguinte a partir da aprovada (aditivo/supressão)."""
@@ -1260,6 +1296,23 @@ class ItemOrcadoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets
         "explodir": "orcamento.item.edit",
         "aplicar_preco_real": "orcamento.item.edit",
         "do_catalogo": "orcamento.item.edit",
+        # ORC.10 — todos os verbos de edição estrutural pedem a mesma permissão
+        # de escrita de linha. Não ganham permissão própria de propósito: quem
+        # pode mudar a quantidade de um item já pode mudar o total da planilha,
+        # e inventar `orcamento.item.mover` daria a falsa impressão de que
+        # arrastar é mais perigoso que digitar.
+        "mover": "orcamento.item.edit",
+        "duplicar": "orcamento.item.edit",
+        "excluir_lote": "orcamento.item.edit",
+        "restaurar": "orcamento.item.edit",
+        "aplicar_percentual": "orcamento.item.edit",
+        "arredondar": "orcamento.item.edit",
+        "substituir_texto": "orcamento.item.edit",
+        "recompor": "orcamento.item.edit",
+        # Promover é escrita no **banco da empresa**, não na planilha: é a
+        # permissão do banco que manda, pela mesma régua que separa "orçar" de
+        # "curar preço" desde a ORC.9.
+        "promover_composicao": "orcamento.banco.edit",
     }
 
     def perform_create(self, serializer):
@@ -1290,12 +1343,20 @@ class ItemOrcadoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets
         agora e congelam aqui — mudar o item no catálogo depois não mexe neste
         orçamento.
 
-        O preço vem da base referencial quando o item foi adotado dela; senão o
-        cliente informa. Nunca inventamos preço: sem preço conhecido a linha
-        nasce zerada e visível como pendência, em vez de com um número plausível.
+        **De onde sai o preço (ORC.10a).** `base` é a publicação que estava
+        aberta no seletor quando o item foi escolhido, e é dela que o preço vem
+        — não da publicação do cabeçalho. O cliente manda o que pescou; sem
+        `base`, cai na do orçamento, como era antes. Isso é o que permite
+        planilha com linhas de fontes diferentes (uma SINAPI, uma ORSE, uma de
+        preço digitado), cada uma carregando a sua data-base, que é como o
+        Arquimedes e os bancos de preço do setor funcionam.
+
+        Nunca inventamos preço: sem preço conhecido a linha nasce zerada e
+        visível como pendência, em vez de com um número plausível.
         """
         orcamento_id = request.data.get("orcamento")
         item_id = request.data.get("item")
+        base_id = request.data.get("base")
         orcamento = Orcamento.objects.filter(
             tenant_id=self._tenant_id(), pk=orcamento_id
         ).select_related("base_referencial").first()
@@ -1307,6 +1368,19 @@ class ItemOrcadoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets
         if item is None:
             return Response({"item": "Item não encontrado no catálogo."}, status=status.HTTP_404_NOT_FOUND)
 
+        # A base referencial é pública e sem tenant (§11.1), então não há o que
+        # escopar aqui — só conferir que o id existe. Id inválido vira 400 e não
+        # silêncio: se o cliente disse de onde pescou, errar o endereço não pode
+        # virar uma linha zerada sem explicação, que é o defeito que a ORC.10a
+        # está justamente fechando.
+        base = None
+        if base_id not in (None, ""):
+            base = BaseReferencial.objects.filter(pk=base_id).first()
+            if base is None:
+                return Response(
+                    {"base": "Publicação não encontrada."}, status=status.HTTP_400_BAD_REQUEST,
+                )
+
         linha = services.linha_a_partir_do_item(
             orcamento=orcamento,
             item=item,
@@ -1315,10 +1389,154 @@ class ItemOrcadoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets
             pai_id=request.data.get("pai"),
             etapa_id=request.data.get("etapa"),
             ordem=request.data.get("ordem") or 0,
+            base=base,
         )
         planilha.recalcular_orcamento(orcamento)
         linha.refresh_from_db()
         return Response(ItemOrcadoSerializer(linha).data, status=status.HTTP_201_CREATED)
+
+
+    # --- ORC.10b/d — os verbos de edição estrutural ------------------------
+
+    def _orcamento_do_pedido(self, request):
+        """Resolve e escopa o orçamento que o lote vai mexer.
+
+        Os verbos de lote são `detail=False` e recebem os ids no corpo, então o
+        escopo por tenant não vem de graça do `get_object()` — é preciso pedir
+        explicitamente, senão um id de outra empresa entraria pelo payload.
+        """
+        orcamento = Orcamento.objects.filter(
+            tenant_id=self._tenant_id(), pk=request.data.get("orcamento"),
+        ).first()
+        if orcamento is None:
+            raise exceptions.NotFound("Orçamento não encontrado.")
+        return orcamento
+
+    @staticmethod
+    def _responder_edicao(fn, *args, **kwargs):
+        """Traduz as duas exceções de domínio para o vocabulário HTTP.
+
+        `EdicaoInvalida` é 400 (o pedido não faz sentido na árvore) e
+        `OrcamentoNaoEditavel` é 409 (o pedido faz sentido, o documento é que
+        está fechado) — a mesma distinção que o módulo já fazia na ORC.1.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except edicao.EdicaoInvalida as exc:
+            raise exceptions.ValidationError({"detail": str(exc)}) from exc
+        except planilha.OrcamentoNaoEditavel as exc:
+            raise DocumentoFechado(str(exc)) from exc
+
+    @action(detail=False, methods=["post"], url_path="mover")
+    def mover(self, request):
+        """Arrastar, indentar, desindentar e reordenar — com a subárvore junto.
+
+        Corpo: `orcamento`, `itens` e **ou** `operacao`
+        (`indentar`/`desindentar`/`cima`/`baixo`) **ou** `pai` + `posicao`.
+        """
+        orcamento = self._orcamento_do_pedido(request)
+        movidas = self._responder_edicao(
+            edicao.mover, orcamento, request.data.get("itens") or [],
+            operacao=request.data.get("operacao") or None,
+            pai_id=request.data.get("pai"),
+            posicao=request.data.get("posicao"),
+        )
+        return Response({"movidas": movidas})
+
+    @action(detail=False, methods=["post"], url_path="duplicar")
+    def duplicar(self, request):
+        """Copia as linhas logo abaixo das originais, com composição e medição."""
+        orcamento = self._orcamento_do_pedido(request)
+        novos = self._responder_edicao(
+            edicao.duplicar, orcamento, request.data.get("itens") or [],
+        )
+        return Response({"criadas": len(novos), "itens": novos}, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=["post"], url_path="excluir-lote")
+    def excluir_lote(self, request):
+        """Exclui a seleção e devolve o material do Ctrl+Z em `desfazer`."""
+        orcamento = self._orcamento_do_pedido(request)
+        resultado = self._responder_edicao(
+            edicao.excluir, orcamento, request.data.get("itens") or [],
+        )
+        return Response(resultado)
+
+    @action(detail=False, methods=["post"], url_path="restaurar")
+    def restaurar(self, request):
+        """Recria o que `excluir-lote` devolveu — o outro lado do desfazer."""
+        orcamento = self._orcamento_do_pedido(request)
+        criados = self._responder_edicao(
+            edicao.restaurar, orcamento, request.data.get("linhas") or [],
+        )
+        return Response({"restauradas": len(criados), "itens": criados})
+
+    @action(detail=False, methods=["post"], url_path="aplicar-percentual")
+    def aplicar_percentual(self, request):
+        """±x% sobre custo unitário ou quantidade da seleção."""
+        orcamento = self._orcamento_do_pedido(request)
+        afetadas = self._responder_edicao(
+            edicao.aplicar_percentual, orcamento, request.data.get("itens") or [],
+            request.data.get("percentual") or 0,
+            campo=request.data.get("campo") or "custo_unitario",
+        )
+        return Response({"afetadas": afetadas})
+
+    @action(detail=False, methods=["post"], url_path="arredondar")
+    def arredondar(self, request):
+        """Arredonda quantidade ou custo da seleção para N casas."""
+        orcamento = self._orcamento_do_pedido(request)
+        afetadas = self._responder_edicao(
+            edicao.arredondar, orcamento, request.data.get("itens") or [],
+            request.data.get("casas", 2), campo=request.data.get("campo") or "quantidade",
+        )
+        return Response({"afetadas": afetadas})
+
+    @action(detail=False, methods=["post"], url_path="substituir-texto")
+    def substituir_texto(self, request):
+        """Localizar e substituir na descrição — só nela, por desenho (ORC.10f)."""
+        orcamento = self._orcamento_do_pedido(request)
+        afetadas = self._responder_edicao(
+            edicao.substituir_texto, orcamento,
+            request.data.get("procurar") or "", request.data.get("trocar_por") or "",
+            ids=request.data.get("itens") or None,
+        )
+        return Response({"afetadas": afetadas})
+
+    # --- ORC.10c — a composição editada vira composição de banco -----------
+
+    @action(detail=True, methods=["post"], url_path="recompor")
+    def recompor(self, request, pk=None):
+        """Refaz o custo unitário a partir dos insumos que a linha tem agora."""
+        linha = self.get_object()
+        _exigir_editavel(linha.orcamento)
+        total = self._responder_edicao(edicao.recompor_linha, linha)
+        linha.refresh_from_db()
+        return Response({"custo_unitario": str(total), **precificacao.memoria_de_calculo(linha)})
+
+    @action(detail=True, methods=["post"], url_path="promover-composicao")
+    def promover_composicao(self, request, pk=None):
+        """Publica a composição da linha num banco da empresa — o reuso explícito.
+
+        Sem `banco` no corpo, vai para o banco **da obra**, que é onde a edição
+        já grava sozinha; com `banco`, vai para o acervo que o orçamentista
+        escolheu, que é como uma composição ajustada numa obra vira régua da
+        empresa.
+        """
+        linha = self.get_object()
+        banco_id = request.data.get("banco")
+        if banco_id in (None, ""):
+            banco = edicao.banco_da_obra(linha.orcamento)
+        else:
+            banco = BancoPreco.objects.filter(
+                tenant_id=self._tenant_id(), pk=banco_id,
+            ).first()
+            if banco is None:
+                raise exceptions.NotFound("Banco de preço não encontrado.")
+        composicao = self._responder_edicao(edicao.promover_para_banco, linha, banco)
+        return Response({
+            "banco": banco.banco_id, "banco_nome": banco.nome,
+            "item_banco": composicao.item_banco_id, "codigo": composicao.codigo,
+        }, status=status.HTTP_201_CREATED)
 
     # --- ORC.2: composição analítica ---
 
@@ -1400,6 +1618,52 @@ class ItemOrcadoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets
         linha.refresh_from_db()
         return Response(ItemOrcadoSerializer(linha).data)
 
+
+
+class ItemOrcadoInsumoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
+    """A composição de uma linha — ORC.10c.
+
+    **Por que isto não existia.** A memória de cálculo nasceu na ORC.2 como
+    saída da explosão: o catálogo dizia a composição, o módulo a achatava em
+    folhas e gravava. Ler de volta nunca fez falta porque não havia como
+    escrever. O resultado é que o preço de um serviço só podia ser aceito
+    inteiro ou digitado por cima — e ajustar o coeficiente que estava errado,
+    que é o gesto mais comum de quem orça no Arquimedes, não tinha caminho.
+
+    **Toda escrita recompõe.** Mexer num coeficiente sem refazer o custo
+    unitário deixaria a composição somando um número e a linha exibindo outro,
+    que é a divergência que uma memória de cálculo existe para impedir. O
+    recompor também espelha a composição no banco da obra (ver
+    `edicao.banco_da_obra`) e recalcula a planilha.
+    """
+
+    queryset = ItemOrcadoInsumo.objects.select_related("item_orcado", "item").all()
+    serializer_class = ItemOrcadoInsumoSerializer
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
+    filterset_fields = ["item_orcado", "categoria", "item"]
+    search_fields = ["descricao"]
+    ordering_fields = ["categoria", "descricao", "custo_no_item"]
+    required_resource = "orcamento.item"
+
+    def _linha_do(self, serializer_ou_instancia):
+        alvo = getattr(serializer_ou_instancia, "instance", serializer_ou_instancia)
+        return alvo.item_orcado
+
+    def perform_create(self, serializer):
+        _exigir_editavel(serializer.validated_data["item_orcado"].orcamento)
+        super().perform_create(serializer)
+        edicao.recompor_linha(self._linha_do(serializer))
+
+    def perform_update(self, serializer):
+        _exigir_editavel(serializer.instance.item_orcado.orcamento)
+        super().perform_update(serializer)
+        edicao.recompor_linha(self._linha_do(serializer))
+
+    def perform_destroy(self, instance):
+        linha = instance.item_orcado
+        _exigir_editavel(linha.orcamento)
+        instance.delete()
+        edicao.recompor_linha(linha)
 
 class ComposicaoBDIViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
     """BDI analítico (Acórdão 2622/2013-TCU).

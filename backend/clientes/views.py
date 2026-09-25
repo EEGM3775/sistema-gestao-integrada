@@ -13,6 +13,7 @@ from django.utils.dateparse import parse_date
 from django_filters.rest_framework import DjangoFilterBackend
 from empreendimentos.models import Unidade
 from nucleo.tenancy import TenantScopedViewSetMixin, TenantScopedAPIViewMixin
+from nucleo import autorizacao
 from nucleo.permissions import RequirePermission
 from nucleo.field_masking import mask_document_unless
 from nucleo.quotas import QuotaEnforcedMixin
@@ -76,9 +77,7 @@ class ClienteViewSet(QuotaEnforcedMixin, TenantScopedViewSetMixin, viewsets.Mode
         num tenant com ERP não deve ver isto). O documento (CPF/CNPJ) ainda vem
         **mascarado** para quem não tem `cadastro.cliente_doc.view` (regra da 9.C).
         """
-        user = request.user
-        is_admin = getattr(user, "is_tenant_admin", False) or getattr(user, "is_superuser", False)
-        if not is_admin and "erp.cobranca.view" not in (getattr(user, "iam_permissions", None) or []):
+        if not autorizacao.pode(request.user, "erp.cobranca.view"):
             return Response(
                 {'detail': 'Requer permissão de cobranças (erp.cobranca.view).'},
                 status=drf_status.HTTP_403_FORBIDDEN,
@@ -600,10 +599,7 @@ def _pode_financeiro(request) -> bool:
     do tenant, não permissão do usuário). Sem isto, os números da adimplência
     não saem do backend — a tela nunca recebe o que não pode mostrar.
     """
-    user = request.user
-    if getattr(user, "is_tenant_admin", False) or getattr(user, "is_superuser", False):
-        return True
-    return "erp.cobranca.view" in (getattr(user, "iam_permissions", None) or [])
+    return autorizacao.pode(request.user, "erp.cobranca.view")
 
 
 def _pode_documento(request) -> bool:
@@ -612,10 +608,7 @@ def _pode_documento(request) -> bool:
     Vale para **ordenar** por documento, não só para lê-lo: a ordem alfabética
     dos CPFs reconstrói, linha a linha, o dígito que a máscara esconde.
     """
-    user = request.user
-    if getattr(user, "is_tenant_admin", False) or getattr(user, "is_superuser", False):
-        return True
-    return "cadastro.cliente_doc.view" in (getattr(user, "iam_permissions", None) or [])
+    return autorizacao.pode(request.user, "cadastro.cliente_doc.view")
 
 
 class CarteiraBaseView(TenantScopedAPIViewMixin, APIView):

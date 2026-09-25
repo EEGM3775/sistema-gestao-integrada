@@ -15,7 +15,7 @@ O teste começa pelo achado que originou a fatia:
 > e a verificação 4 é a rede: o acumulado **exclui a própria medição** e o saldo
 > **nunca** passa do contratado.
 
-Seed: iam/seed_demo.py + backend/seed_demo_data.py
+Seed: testes/seeds/seed_demo.py + testes/seeds/seed_demo_data.py
 
   demo     / demo123     -> `gestor_contratos`: monta contrato, apura medição e
                             **monta** aditivo. Não ateste e não aprova aditivo.
@@ -45,6 +45,8 @@ import ssl
 import sys
 import urllib.error
 import urllib.request
+
+from _segundo_fator import completar_login
 import uuid
 from datetime import date, timedelta
 
@@ -97,7 +99,7 @@ def login(u, p):
     r = urllib.request.Request(GW + "/auth/login/", data=data, method="POST",
                                headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(r, timeout=30, context=_CTX) as resp:
-        return json.load(resp)["access"]
+        return completar_login(GW, json.load(resp), _CTX)["access"]
 
 
 def texto(resposta) -> str:
@@ -186,7 +188,7 @@ lista_forn = (
     else (fornecedores or {}).get("results") or []
 )
 if not lista_forn:
-    fatal("o seed não tem fornecedor — rode backend/seed_demo_data.py")
+    fatal("o seed não tem fornecedor — rode testes/seeds/seed_demo_data.py")
 fornecedor_id = lista_forn[0]["fornecedor_id"]
 
 status, contrato = req("POST", "/api/pdca/contratos/", demo, {

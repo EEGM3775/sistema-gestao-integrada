@@ -50,7 +50,7 @@ contrato estabilizar.
   `funcoesia.llm_client` e grava `AnaliseImagemIA` no tenant correto (`rls_bypass` p/ achar o tenant →
   `tenant_context` p/ gravar). Indisponibilidade → retry+DLQ; resposta malformada → `erro`. Os proxies FBV
   (`iniciar`/`reprocessar`/`tipos`/`recomendacoes`) e o `modulodiario` deixaram de chamar o Node (fecha a
-  parte de IA do **D1**). Suíte `funcoesia/tests.py` 6/6 sobre Postgres.
+  parte de IA do **D1**). Suíte `testes/backend/funcoesia/tests.py` 6/6 sobre Postgres.
 - **Pendente:** serviço da **LLM local** (Python/FastAPI) no compose — contrato HTTP `LLM_VISION_URL`
   (entra imagem+tipo, sai o JSON acima); sem a URL a análise fica `erro` sem travar o diário.
 

@@ -18,7 +18,7 @@ E prova, sobretudo, três coisas que só existem no stack vivo:
 - **a porta de leitura do acervo é da API**, não de `/media/` — o **S10** que o
   MAP.3 recusou repetir e que a PRA.2 fechou aqui.
 
-Seed: iam/seed_demo.py (demo + acme + campo) · backend/seed_demo_data.py
+Seed: testes/seeds/seed_demo.py (demo + acme + campo) · testes/seeds/seed_demo_data.py
 
   demo     / demo123     -> assina `prancheta`, persona `projetista`: governa o
                             acervo, publica revisão, calibra, resolve marcação
@@ -219,7 +219,7 @@ def check(label, cond):
 
 def fatal(msg):
     print(f"\n  !! {msg}")
-    print("     O seed da IAM (iam/seed_demo.py) e o do backend precisam ter rodado.")
+    print("     O seed da IAM (testes/seeds/seed_demo.py) e o do backend precisam ter rodado.")
     print("     Entitlement/persona novos exigem rebuild da imagem `sgi-iam` + re-seed (D31).")
     print(f"     Parcial: {sum(1 for p in passed if p)}/{len(passed)}")
     sys.exit(2)
@@ -253,7 +253,7 @@ except urllib.error.HTTPError:
     print("     Ele é o único ator capaz de provar a segregação `edit` × `resolver`")
     print("     da PRA.3. Rebuilde a imagem `sgi-iam` e rode o seed de novo:")
     print("       docker compose build iam && docker compose up -d iam")
-    print("       docker exec -i sgi-iam python manage.py shell < iam/seed_demo.py")
+    print("       docker exec -i sgi-iam python manage.py shell < testes/seeds/seed_demo.py")
     sys.exit(2)
 
 # ---------------------------------------------------------------------------

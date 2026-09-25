@@ -71,7 +71,15 @@ class IamJWTAuthentication(JWTAuthentication):
 
         self._sync_user(user, validated_token, tenant)
 
-        # Claims voláteis, disponíveis para permissões/escopo na request.
+        # Quem é a pessoa para o PDP (`usuario:<id da IAM>`), de qual empresa é
+        # esta sessão e quando o token nasceu — é o que a sombra usa para dizer
+        # se uma divergência é o token velho ou um defeito (nucleo/autorizacao.py).
+        user.iam_user_id = validated_token.get("user_id")
+        user.iam_tenant_id = validated_token.get("tenant_id")
+        user.iam_token_iat = validated_token.get("iat")
+
+        # Claims voláteis. **Só `nucleo/autorizacao.py` as lê** (cobrado por
+        # teste): toda pergunta "pode?" passa por lá.
         user.iam_modules = validated_token.get("modules", []) or []
         user.iam_roles = validated_token.get("roles", []) or []
         # `permissions` (Fase 9.B): conjunto efetivo p/ RequirePermission. Desde a

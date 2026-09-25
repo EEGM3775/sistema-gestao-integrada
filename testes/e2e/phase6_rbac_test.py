@@ -32,11 +32,16 @@ def login(u, p):
 demo = login("demo", "demo123")
 sem = login("semdrone", "semdrone123")
 
+falhas = []
+
+
 def row(label, path, exp_demo, exp_sem):
     d = req("GET", path, demo)
     s = req("GET", path, sem)
     okd = "OK" if d == exp_demo else "XXX"
     oks = "OK" if s == exp_sem else "XXX"
+    if "XXX" in (okd, oks):
+        falhas.append(label)
     print(f"  {label:<34} demo={d}[{okd}]  semdrone={s}[{oks}]")
 
 print("== Camada 1: ENTITLEMENT DE MÓDULO ==")
@@ -47,8 +52,17 @@ row("módulo crm /api/crm/leads/",        "/api/crm/leads/", 200, 403)
 
 print("== Camada 2: RBAC POR PAPEL (financeiro) ==")
 print("  (ambos têm o módulo erp_financeiro; só demo tem o papel 'financeiro')")
-row("financeiro /api/erp/faturas/",      "/api/erp/faturas/", 200, 403)
+# `/api/erp/faturas/` saiu na versão 1.0 (D209); o ledger é a leitura que o
+# papel `financeiro` tem e o `operacional` não.
+row("financeiro /api/erp/transacoes/",   "/api/erp/transacoes/", 200, 403)
 
 print("== 6.1: login local do backend foi APOSENTADO (404) ==")
 print("  POST /api/token/      ->", req("POST", "/api/token/", body={}), "(esperado 404)")
 print("  POST /api/auth/login/ ->", req("POST", "/api/auth/login/", body={}), "(esperado 404)")
+
+for rota, esperado in (("/api/token/", 404), ("/api/auth/login/", 404)):
+    if req("POST", rota, body={}) != esperado:
+        falhas.append(f"POST {rota}")
+print()
+print(f"  Resultado: {'OK' if not falhas else 'FALHOU em ' + ', '.join(falhas)}")
+raise SystemExit(1 if falhas else 0)

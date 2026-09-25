@@ -49,7 +49,7 @@ Antes de documentar um campo, verificar se o modelo Python reflete o estado atua
   síncrono×job, profundidade de recursão, teto de comando de bancada. Nenhum número desses fica em
   código de engenharia, nem em `config/settings.py`, que é arquivo de deploy. O módulo importa a
   constante e dá a ela o nome local que quiser; o **valor** é do dono. Quem cobra é
-  `backend/nucleo/test_tetos_no_payment.py`; a fronteira do que **não** é limite (constante física,
+  `testes/backend/nucleo/test_tetos_no_payment.py`; a fronteira do que **não** é limite (constante física,
   largura de campo, TTL de cache, janela de protocolo de terceiro) está na §5.6 do `planos.py`.
 - **Frontend de módulo segue a régua** (grandioso + expansível): cockpit com fila de decisão,
 - loop do domínio ponta a ponta, dados honestos (agregado real ou "em breve", nunca fabricado),

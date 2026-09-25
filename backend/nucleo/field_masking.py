@@ -43,6 +43,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from . import autorizacao
+
 from rest_framework import serializers
 
 logger = logging.getLogger(__name__)
@@ -88,18 +90,13 @@ def _choose_masker(field_name: str, value: Any):
 
 
 def _is_privileged(user) -> bool:
-    return bool(
-        getattr(user, "is_tenant_admin", False) or getattr(user, "is_superuser", False)
-    )
+    return autorizacao.administra(user)
 
 
 def _has(user, permission: str) -> bool:
-    """Usuário tem a permissão? Admin passa. **Fail-closed:** sem a permissão no
-    claim (inclusive lista vazia / token legado), retorna False."""
-    if _is_privileged(user):
-        return True
-    perms = getattr(user, "iam_permissions", None) or []
-    return permission in perms
+    """Usuário tem a permissão? Admin passa. **Fail-closed:** sem a permissão
+    (inclusive lista vazia / token legado), retorna False."""
+    return autorizacao.pode(user, permission)
 
 
 def mask_document_unless(user, value, permission: str = "cadastro.cliente_doc.view"):

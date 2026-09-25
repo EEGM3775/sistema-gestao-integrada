@@ -6,7 +6,7 @@ depende só dele. A suíte de 378 testes usa `force_authenticate`, que empurra o
 atributo no objeto de usuário — aqui ele tem de atravessar login, assinatura
 RS256, gateway e autenticação, que é onde um gate quebra de verdade.
 
-Seed: iam/seed_demo.py (o usuário `dono` nasceu para este teste) + backend/seed_demo_data.py
+Seed: testes/seeds/seed_demo.py (o usuário `dono` nasceu para este teste) + testes/seeds/seed_demo_data.py
 
   dono  / dono123  -> is_superuser na IAM => `is_platform_admin` no token
   admin / admin123 -> is_tenant_admin do tenant demo, herda o catálogo INTEIRO
@@ -41,6 +41,8 @@ import ssl
 import sys
 import urllib.error
 import urllib.request
+
+from _segundo_fator import completar_login
 import uuid
 from zipfile import ZipFile
 
@@ -134,7 +136,7 @@ def login(u, p):
     r = urllib.request.Request(GW + "/auth/login/", data=data, method="POST",
                                headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(r, timeout=30, context=_CTX) as resp:
-        return json.load(resp)["access"]
+        return completar_login(GW, json.load(resp), _CTX)["access"]
 
 
 def pacote() -> bytes:
@@ -239,7 +241,7 @@ try:
 except Exception as exc:
     fatal(
         f"login do `dono` falhou ({exc}). O usuário nasceu na ORC.8 — rode o seed da "
-        "IAM: docker exec sgi-iam python seed_demo.py"
+        "IAM: docker exec -i sgi-iam python manage.py shell < testes/seeds/seed_demo.py"
     )
 admin = login("admin", "admin123")
 demo = login("demo", "demo123")
@@ -271,8 +273,14 @@ status, fonte = req("POST", "/api/orcamento/fontes-oficiais/", dono, {
     "dia_do_mes": 0,
 })
 if status == 400 and "fonte" in (fonte or {}):
+    # Já cadastrada de uma corrida anterior: relê e **procura a SINAPI pelo
+    # nome**. Pegar `[0]` funcionou enquanto ela era a única fonte do banco; a
+    # ORC.8b cadastrou a EMBASA, que vem antes na ordenação, e a asserção
+    # seguinte passou a comparar a fonte errada — vermelho que não era defeito
+    # do produto, que é o pior tipo de vermelho numa suíte.
     status, lista = req("GET", "/api/orcamento/fontes-oficiais/", dono)
-    fonte = (lista if isinstance(lista, list) else lista.get("results", []))[0]
+    cadastradas = lista if isinstance(lista, list) else lista.get("results", [])
+    fonte = next((f for f in cadastradas if f.get("fonte") == "sinapi"), None) or {}
     status = 200
 check("a fonte fica cadastrada", status in (200, 201) and fonte.get("fonte") == "sinapi")
 check("com a competência que a defasagem indica", bool(fonte.get("competencia_sugerida")))

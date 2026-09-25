@@ -5,6 +5,8 @@ Fluxo: Login → Lista de Clientes → Verifica dados tenant-scoped
 import os, sys
 from playwright.sync_api import sync_playwright, expect
 
+from _segundo_fator import responder_no_navegador
+
 FRONTEND = "http://localhost:5173"
 ERP_API  = "http://localhost:8000/api"
 
@@ -29,6 +31,7 @@ def run():
         page.fill("input#password", "admin123")
         page.screenshot(path=f"{shots_dir}/02_login_preenchido.png")
         page.click("button[type=submit]")
+        responder_no_navegador(page)
         page.wait_for_url("**/clientes", timeout=10000)
         page.wait_for_load_state("networkidle")
         page.screenshot(path=f"{shots_dir}/03_clientes.png")

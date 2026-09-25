@@ -69,6 +69,12 @@ _IDENTIDADE = [
         "Seus acessos foram alterados",
         "Escalada de privilégio é anunciada ao dono da conta.",
     ),
+    _m(
+        "identidade.aviso_segundo_fator",
+        "identidade/aviso_segundo_fator.txt",
+        "Segundo fator da sua conta: {assunto}",
+        "Ativar, desativar, redefinir, trocar códigos ou entrar com código de recuperação.",
+    ),
 ]
 
 # --- CRM -------------------------------------------------------------------

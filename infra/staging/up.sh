@@ -4,7 +4,7 @@
 #
 # Coexiste com o stack de dev na mesma máquina — projeto/containers/portas/volumes
 # próprios (COMPOSE_PROJECT_NAME + SGI_PREFIX no deploy/env/staging.env). Depois de subir,
-# rode `bash infra/staging/seed.sh` (fixtures) e `bash infra/staging/validate.sh`.
+# rode `bash testes/seeds/seed_staging.sh` (fixtures) e `bash infra/staging/validate.sh`.
 #
 # Args extras são repassados ao `docker compose up` (ex.: nomes de serviço).
 # ------------------------------------------------------------
@@ -41,5 +41,5 @@ echo "Staging subindo (aguarde os healthchecks). Entrada:"
 echo "  https://localhost:${PORT}/     (cert self-signed → aceite o aviso do browser)"
 echo
 echo "Próximos passos:"
-echo "  bash infra/staging/seed.sh       # fixtures demo/acme (uma vez)"
+echo "  bash testes/seeds/seed_staging.sh       # fixtures demo/acme (uma vez)"
 echo "  bash infra/staging/validate.sh   # validação integrada da leva 8→11"

@@ -474,9 +474,9 @@ atravessa, a superfície de campo, o que o desenho cobra do backend e o faseamen
 O que continua valendo daqui: a **unidade de trabalho é a obra** (§5.1), **quem usa o quê** (§5.3) e
 os limites que a construção do Gantt fixou (§5.4).
 
-#### As quatro rotas que não são recurso de router
+#### As cinco rotas que não são recurso de router
 
-A API do módulo é um `DefaultRouter` sobre 24 recursos, mais `status/` e **quatro leituras que
+A API do módulo é um `DefaultRouter` sobre 24 recursos, mais `status/` e **cinco leituras que
 atravessam** — registradas à mão em `urls.py` porque não têm dono:
 
 | Rota | O que devolve | Permissão |
@@ -485,11 +485,23 @@ atravessam** — registradas à mão em `urls.py` porque não têm dono:
 | `GET /api/pdca/hoje/?obra=N` | **Fila + pulso + o que mudou**, numa leitura. `?mudancas=0` e `?dias=` ajustam a terceira | idem |
 | `GET /api/pdca/busca/?q=` | As sete espécies do módulo, sem acento, cortadas por espécie. `?obra=N` restringe | idem |
 | `GET /api/pdca/minhas-frentes/` | **O que está no nome de quem pede**, na semana corrente: compromisso, trava, conserto e ficha. `?obra=N` recorta; `?como=` troca o nome procurado | idem |
+| `GET /api/pdca/medicao/?obra=N` | **Os contratos com saldo + a fila do dinheiro**, numa leitura (B3): boletim parado em rascunho, boletim esperando atesto, retenção pedida e aditivo sem decisão | idem |
+| `GET /api/pdca/qualidade/?obra=N` | **O laço aberto + o painel de conformidade** (B8). A fila é a das quatro faixas de retrabalho da fila do dia (`faixas_da_qualidade`); o painel vem nulo, com a permissão nomeada, para quem não vê NC. `?desde=&ate=` recortam o painel | idem |
+| `GET /api/pdca/seguranca/?obra=N` | **A fila da SSMA + os indicadores + as frentes interditadas** (B9). A fila é a das três faixas de prazo legal e segurança (`faixas_da_seguranca`); as taxas de frequência e de gravidade voltam nulas com a frase. O EPI vencido **não** vem aqui — exige a permissão do SIL, e fica em `ocorrencias/epi-vencido/` | idem |
 
-As quatro declaram **só `RequireModule`**, e o recorte por permissão acontece dentro do serviço —
+As cinco declaram **só `RequireModule`**, e o recorte por permissão acontece dentro do serviço —
 uma leitura que junta cinco assuntos não tem um recurso dono, e exigir um recusaria a página a
 quem trabalha nos outros quatro. O desenho e as três regras que elas seguem estão na
 [§10.1 do documento da tela](modulopdca-frontend.md).
+
+**A do posto da medição atravessa assunto, e não obra**, e é o caso que mostra por que a régua não é
+formalidade: ela junta contrato e medição, que têm permissões diferentes. Exigir `pdca.contrato.view`
+no portão recusaria o posto inteiro a quem só ateste — que é justamente quem mais o usa. E ela
+existe como leitura única porque a alternativa é a tela pedir `contratos/` e depois `saldo/` **uma
+vez por contrato**: numa obra com doze empreiteiros, treze idas ao servidor para desenhar doze
+linhas, cada resposta de um instante diferente. O saldo de cada linha é o mesmo
+`saldo_do_contrato` que `GET contratos/{id}/saldo/` devolve — não há segunda soma, e o E2E cobra a
+igualdade campo a campo.
 
 **A frente do canteiro casa por nome, e não por FK**, porque `responsavel`, `quem` e `inspetor` são
 rótulo durável em todo o módulo — a decisão é anterior a esta leitura e está nos próprios modelos:
@@ -631,7 +643,7 @@ necessária — quem executa não aprova:
 
 > **O `pdca.ssma.*` que esta lista reservava não era realizável, e virou dois recursos.** O catálogo
 > cobra código com **exatamente dois pontos** (`modulo.recurso.acao`, conferido em
-> `iam/identity/tests.py`), então `pdca.ssma.dds.registrar` quebraria a suíte — e um recurso `ssma`
+> `testes/iam/identity/tests.py`), então `pdca.ssma.dds.registrar` quebraria a suíte — e um recurso `ssma`
 > único empilharia num só nome coisas com donos diferentes. A PDCA.8 fez o que a PDCA.7 fez com
 > `verificacao` e `nc`: dois recursos, porque são dois objetos com ciclos de vida distintos.
 >

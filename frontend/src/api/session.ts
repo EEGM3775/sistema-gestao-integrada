@@ -4,6 +4,7 @@
 import axios from 'axios'
 import { getAccessToken, setAccessToken } from './tokenStore'
 import { atualizarRelogio, limparRelogio } from './sessionClock'
+import type { DesafioSegundoFator } from './segundoFator'
 
 const iamBaseURL = (import.meta.env.VITE_IAM_BASE_URL as string | undefined) ?? '/auth'
 
@@ -24,15 +25,23 @@ export interface LoginData {
   session_warn_seconds?: number
 }
 
+/** A senha certa de quem tem (ou é obrigado a ter) segundo fator não abre
+ *  sessão: devolve o desafio da segunda etapa. */
+export function pedeSegundoFator(data: LoginData | DesafioSegundoFator): data is DesafioSegundoFator {
+  return 'desafio' in data && !('access' in data)
+}
+
 export async function loginSession(
   username: string,
   password: string,
   remember: boolean,
-): Promise<LoginData> {
+): Promise<LoginData | DesafioSegundoFator> {
   const r = await raw.post('login/', { username, password, remember })
-  setAccessToken(r.data.access as string)
-  atualizarRelogio(r.data)
-  return r.data as LoginData
+  const data = r.data as LoginData | DesafioSegundoFator
+  if (pedeSegundoFator(data)) return data
+  setAccessToken(data.access)
+  atualizarRelogio(data)
+  return data
 }
 
 // Renovação silenciosa. Single-flight: várias 401 concorrentes compartilham um

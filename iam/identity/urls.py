@@ -33,6 +33,35 @@ urlpatterns = [
         name="confirmar-troca-email",
     ),
     path("auth/me/", views.MeView.as_view(), name="me"),
+    # Remodelagem, fase 1 — segundo fator (acesso-e-permissoes.md §10.5). A
+    # segunda etapa do login mora sob `auth/login/` de propósito: o gateway a
+    # limita por IP como limita a senha.
+    path(
+        "auth/login/segundo-fator/",
+        views.LoginSegundoFatorView.as_view(),
+        name="login-segundo-fator",
+    ),
+    path(
+        "auth/segundo-fator/cadastro/",
+        views.CadastroSegundoFatorView.as_view(),
+        name="segundo-fator-cadastro",
+    ),
+    path(
+        "auth/segundo-fator/cadastro/confirmar/",
+        views.ConfirmarCadastroSegundoFatorView.as_view(),
+        name="segundo-fator-confirmar",
+    ),
+    path(
+        "auth/segundo-fator/desativar/",
+        views.DesativarSegundoFatorView.as_view(),
+        name="segundo-fator-desativar",
+    ),
+    path(
+        "auth/segundo-fator/codigos/",
+        views.CodigosSegundoFatorView.as_view(),
+        name="segundo-fator-codigos",
+    ),
+    path("auth/conta/seguranca/", views.SegurancaDaContaView.as_view(), name="conta-seguranca"),
     path("catalogo-permissoes/", views.CatalogoPermissoesView.as_view(), name="catalogo-permissoes"),
     path(".well-known/jwks.json", views.JwksView.as_view(), name="jwks"),
     path("", include(router.urls)),

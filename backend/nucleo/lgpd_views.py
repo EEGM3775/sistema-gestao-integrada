@@ -13,7 +13,7 @@ from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from . import lgpd
+from . import autorizacao, lgpd
 from .auditoria import registrar_auditoria
 from .models import IncidenteLGPD
 from .tenancy import TenantScopedAPIViewMixin, TenantScopedViewSetMixin
@@ -34,10 +34,7 @@ class RequirePermissionStrict(BasePermission):
         needed = getattr(view, "required_permission", None)
         if not needed:
             return True
-        if (getattr(u, "is_tenant_admin", False) or getattr(u, "is_superuser", False)
-                or getattr(u, "is_platform_admin", False)):
-            return True
-        return needed in (getattr(u, "iam_permissions", None) or [])
+        return autorizacao.supervisiona(u) or autorizacao.pode(u, needed)
 
 
 class IsPlatformOwner(BasePermission):
@@ -47,7 +44,7 @@ class IsPlatformOwner(BasePermission):
 
     def has_permission(self, request, view):
         u = getattr(request, "user", None)
-        return bool(u and u.is_authenticated and getattr(u, "is_platform_admin", False))
+        return bool(u and u.is_authenticated and autorizacao.supervisiona(u))
 
 
 def _get_titular(view, tipo, pk):

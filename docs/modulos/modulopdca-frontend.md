@@ -60,6 +60,20 @@ O rail é **fixo em seis** e não cresce com as fatias futuras: apropriação (P
 `MEDIÇÃO`, riscos e marcos (PDCA.10) em `PLANO`, pós-obra (PDCA.11) em `QUALIDADE`. Um sétimo item só
 se justificaria por uma **cadência nova** — e não há.
 
+**O que o posto está mostrando mora no endereço, e não num `useState`.** A obra vem da rota
+(`/app/pdca/o/:obraId/<posto>`) e o recorte de dentro vem da query string — no `MEDIÇÃO`, o contrato,
+o boletim e a vista (`?contrato=&boletim=&v=`). É o que faz todo link colável e a aba nova cair onde
+estava. Guardar isso na memória do componente quebra a promessa em silêncio: um link com `?boletim=`
+abria noutra vista e o boletim pedido ficava invisível ([D201](../historico-correcoes.md)), que é a
+forma de falha que não parece falha — a pessoa conclui que o documento não existe.
+
+Vale para os cinco postos que têm documento: `?contrato=&boletim=` na medição, `?nc=`, `?ficha=` e
+`?modelo=` na qualidade, `?ocorrencia=` e `?dds=` na segurança. **E quem aponta para um documento
+leva a ele, e não ao posto**: a linha da fila do dia, a paleta ⌘K e os links de integração (a NC que
+veio de uma ficha, a ocorrência que virou investigação) montam o endereço por uma função só,
+`enderecoDoDocumento` (`postos.ts`) — mandar à porta do posto para procurar de novo é o que faz a
+fila virar lembrete.
+
 ### 3.2 Duas superfícies de verdade, não uma que encolhe
 
 O escritório e o canteiro não são o mesmo software em larguras diferentes. Têm identidade única e
@@ -249,14 +263,36 @@ A hierarquia de locais e a biblioteca de planos modelo moram **aqui dentro**, co
 
 É o posto de maior consequência: o número vai para o cliente e para o pagamento do empreiteiro.
 
-- **Contratos da obra** com saldo, retenção acumulada e aditivos — a leitura de cima.
+**A porta é a fila, e a fila é documento parado.** Quatro blocos, na ordem do caminho que o dinheiro
+percorre: boletim apurado e não enviado · boletim esperando atesto (com o degrau e de quem se
+espera) · retenção pedida de volta · aditivo sem decisão. Cada um traz o verbo que o fecha, e clicar
+abre o documento **no próprio posto**, ao lado da grade que explica o número — quem ateste está
+olhando a medição, e mandá-lo a outra tela separaria a decisão da evidência.
+
+**Não existe faixa de "contrato sem medir há N dias", e a ausência é desenho.** De quanto em quanto
+tempo se mede é cláusula combinada com cada empreiteiro; o contrato não guarda esse campo, e
+qualquer corte seria número inventado em código — acenderia todo dia para todo contrato vigente, que
+é o aviso que ensina a ignorar a fila. O período que a próxima medição cobriria viaja **no
+contrato**, como informação ao lado dele.
+
+- **Contratos da obra** com saldo, retenção acumulada e aditivos — a leitura de cima. O contrato
+  também **nasce aqui**: sem isso o estado vazio pediria uma ação sem caminho. O formulário só
+  aparece para quem tem `pdca.contrato.edit` — a diretoria ateste e não monta contrato, e o verbo
+  some em vez de aparecer e recusar.
 - **Planilha contratual** — a grade de itens, e ela **fecha** quando o contrato não permite mais
   editar. A trava vem do backend (`planilha_editavel`, `planilha_fechada_porque`) e a tela **lê a
   resposta**, nunca reimplementa a condição ([convenções §11](../frontend-convencoes.md)).
 - **Apurar** — a medição nasce do avanço apontado, não da digitação. A proposta vem pronta do
   servidor e a grade mostra a **memória de cálculo** de cada linha: de onde veio o número.
 - **Prévia** — somente leitura por desenho, e a tela **diz isso**: número é texto, não `input`
-  desabilitado ([convenções §10](../frontend-convencoes.md)).
+  desabilitado ([convenções §10](../frontend-convencoes.md)). A mesma grade desenha a prévia e o
+  boletim aberto; duas grades para as mesmas dez colunas divergiriam na primeira coluna nova.
+- **A grade grava sozinha, e não tem botão de salvar.** Selo permanente de estado, aviso do
+  navegador ao fechar a aba com gravação pendente, e **enviar grava antes de enviar** — desistindo
+  do envio se a gravação falhar. Botão de salvar separado do enviar é o D137, e a F.4 o reconstruiu
+  sem querer ([D202](../historico-correcoes.md)): o servidor congela o que está *gravado*, não o que
+  está na tela. Passar do saldo acende a trava **na linha, na digitação**, com o saldo do servidor
+  ao lado.
 - **Escada de atesto** — submeter, atestar, cancelar; cada degrau com a sua permissão. Cancelar
   medição aprovada cancela o título no ERP, e o aviso sai do mesmo lugar da trava.
 - **Aditivo** e **deduções** como painéis do posto, porque só existem em função do contrato.
@@ -271,9 +307,18 @@ acabou mesmo?*
 - **Painel de conformidade** — o que mais reprova, cumulativo, cada linha partida em *em tratamento*,
   *sem NC aberta* e *já resolvida*.
 - **A NC no lugar** — quando tem pino da Prancheta ou local, a tela mostra **onde**, não só o texto.
-- **Plano de ação 5W2H** e **verificação de eficácia** no inspetor da NC, porque são passos do mesmo
-  laço e não assuntos separados. Só a eficácia fecha a NC — a tela nunca oferece outro caminho.
-- **Biblioteca de modelos de ficha** como painel do posto (§8).
+- **Plano de ação 5W2H** e **verificação de eficácia** no documento da NC, um embaixo do outro,
+  porque são passos do mesmo laço e não assuntos separados. Só a eficácia fecha a NC — a tela nunca
+  oferece outro caminho, e diz que quem montou o plano não assina que ele funcionou. O documento é
+  página do posto, e não o inspetor lateral: são quatro blocos com formulário, e o inspetor é para
+  ver o que algo é sem trocar de rota.
+- **A ficha no escritório** é a mesma do campo em lista: cada resposta grava sozinha, e a conclusão
+  mostra os reprovados **com o peso que cada um recebeu** antes de abrir os defeitos de uma vez.
+- **Biblioteca de modelos de ficha** como vista do posto (§8), gravando campo a campo.
+
+Quatro vistas, e o endereço decide qual: **o laço aberto** (a fila do posto ao lado do painel),
+**defeitos**, **fichas** e **modelos de ficha**. A fila é a do degrau de retrabalho da fila do dia,
+recortada (B8) — as duas não podem discordar sobre o mesmo defeito.
 
 ### 5.6 SEGURANÇA — o prazo legal e o fato que ninguém queria
 
@@ -292,6 +337,13 @@ permissão própria, e não pode entrar numa fila atrás de um defeito de pintur
   própria — a foto da cena e o atestado não saem pelo mesmo gate.
 - **EPI vencido** lido do SIL sob `sil.epi.view`; sem o módulo contratado, a indisponibilidade é
   **declarada**, não escondida.
+- **Taxa de frequência e de gravidade** aparecem como *sem apuração*, com a frase do servidor —
+  dividem por homem-hora, que o sistema não apropria.
+- **Frentes interditadas** à parte, e não como faixa: liberar é remover a restrição, na semana; aqui
+  elas são o que impede encerrar a ocorrência que as abriu.
+
+Três vistas: **o que pede ação** (a fila, com a CAT no topo, ao lado dos números), **ocorrências** e
+**diálogos de segurança**. A fila é a das faixas de prazo legal e segurança da fila do dia (B9).
 
 ## 6. A carteira — fora da obra
 
@@ -346,6 +398,17 @@ Quatro atos, e cada um cabe num polegar:
 A lição do Fieldwire/Dalux aplicada ao que já existe no backend: `NaoConformidade` tem `local` e pino
 da Prancheta — o campo abre **no lugar**, e o formulário é consequência do toque.
 
+**As rotas.** A home ganha um bloco *Registrar* com os três atos que nascem no canteiro, cada um
+sumindo para quem não tem a permissão: `/campo/defeito` (abre pela câmera), `/campo/ocorrencia` e
+`/campo/dds` → `/campo/dds/:id` (a roda, um nome por vez, e o encerramento que escreve no diário).
+Obra, local e serviço chegam preenchidos pela query string quando se vem da frente. A ficha
+pendente no nome da pessoa vira link para `/campo/ficha/:id` — uma pergunta por tela, *conforme*
+grava no toque, o desvio pede o texto e o peso antes de gravar, e a foto sobe na mesma requisição da
+resposta. No fim, concluir e abrir o defeito do que reprovou, dali mesmo.
+
+Grupo de botões de escolha é `fieldset`, nunca `label`: tocar no texto de um rótulo aciona o
+primeiro controle dentro dele, e aqui isso escolheria a primeira opção sem a pessoa pedir.
+
 ## 8. Onde mora a configuração — e por que ela não tem menu
 
 Locais da obra, calendário de trabalho, planos modelo, modelos de ficha e catálogo de causas são
@@ -378,6 +441,14 @@ conformidade como string (é assim que o DRF serializa `Decimal`, e é assim que
 dízima): renderizados crus, a mesma linha da carteira mostrava `77,6%` ao lado de `21.7%`. Régua da
 identidade §6 — colunas são réguas, e régua com duas marcações não mede nada.
 
+**As peças do módulo que a F.5 promoveu**, porque os dois postos novos e o campo as repetiriam:
+`Formulario.tsx` (`Campo` — o rótulo **envolve** o campo, senão o leitor de tela não diz qual é —,
+`Grupo`, `Escolhas`, `FaixaDeErro`), `VistasDoPosto` (cabeçalho com abas `role="tab"`),
+`FotoProtegida` (a foto pela porta única, nunca por `<img src>` cru, que chegaria sem token) e
+`SeletorDeLugar` (local e serviço, só as folhas do plano). Constantes de domínio moram em
+`vocabulario.ts` e estilos em `estilos.ts`: arquivo de componente só exporta componente, senão o
+fast refresh do Vite deixa de funcionar.
+
 Bibliotecas — **só licença permissiva**, pela mesma disciplina do
 [THIRD-PARTY-LICENSES.md](../../THIRD-PARTY-LICENSES.md):
 
@@ -397,21 +468,25 @@ daria outro resultado.
 ## 10. O que este desenho cobra do backend
 
 Levantado contra o código: **todo agregado exigia `obra_id`** e as filas eram duas, sem nada que as
-una. Cinco dos sete já existem; os dois que faltam nascem com a fatia que os consome.
+una. Oito dos nove existem; o que falta nasce com a fatia que o consome. B8 e B9 não calculam nada:
+montam as faixas pelas mesmas funções da fila do dia (`faixas_da_qualidade`,
+`faixas_da_seguranca`), e há teste cobrando que as duas leituras dão o mesmo.
 
 | # | O que | Para quê | Onde |
 |---|---|---|---|
 | B1 | Agregado **multi-obra** (`GET carteira/`) | §6 e o diretor | `services.carteira` |
 | B2 | **Fila unificada** da obra juntando qualidade, SSMA, medição a atestar, restrição a vencer e semana a encerrar | §4.5, §5.1 | `services.fila_do_dia`, em `GET hoje/` |
-| B3 | **Fila de medição** — as que esperam apuração e atesto, com o que é preciso para decidir | §5.4 | ❌ nasce com a F.4 |
+| B3 | **Fila de medição** — os documentos parados no caminho do dinheiro, com o que é preciso para decidir | §5.4 | `services.fila_da_medicao` + `services.carteira_de_contratos`, em `GET medicao/` |
 | B4 | **Busca única** (`GET busca/?q=`) sobre atividade, local, contrato, medição, ficha, NC e ocorrência | §4.4 | `services.busca_unica` |
 | B5 | **Minhas frentes** — o que está atribuído a quem pede, na semana corrente | §7 | `services.minhas_frentes`, em `GET minhas-frentes/` |
 | B6 | **Pulso da obra** — avanço × base, PPC, conformidade e segurança num só retorno | §5.1 | `services.pulso_da_obra`, em `GET hoje/` |
 | B7 | Agregados de **obra** (não de cronograma) para ritmo e curva S | §5.1, §5.3 | ❌ a obra com mais de um cronograma não soma |
+| B8 | **Posto da qualidade** — a fila do laço (as faixas de retrabalho da fila do dia) e o painel de conformidade | §5.5 | `services.posto_da_qualidade`, em `GET qualidade/` |
+| B9 | **Posto da segurança** — as faixas de prazo legal e segurança, os indicadores e as frentes interditadas | §5.6 | `services.posto_da_seguranca`, em `GET seguranca/` |
 
 ### 10.1 As três regras que as leituras que atravessam seguem
 
-Valem para B3, B5 e B7 quando nascerem, e para qualquer agregado novo que cruze assunto ou obra.
+Valem para o B7 quando nascer, e para qualquer agregado novo que cruze assunto ou obra.
 
 **Nenhuma delas calcula nada de novo.** Cada número vem da função que já o produzia
 (`avanco_do_cronograma`, `serie_ppc`, `fila_da_qualidade`, `fila_da_ssma`). Uma segunda

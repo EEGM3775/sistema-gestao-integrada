@@ -113,7 +113,7 @@ no endpoint** (módulo + permissão-base) **+ máscara fina no campo**. Resultad
 funcionário **para de "chover" 403**. **Cobertura:** RH (`Funcionario` CPF/salário, `DadoMedico`,
 `DadoBancario`, `Pagamento`, `Folha`), clientes (`Cliente` CPF via `cadastro.cliente_doc.view`,
 `DadoBancarioCliente`) e fornecedores (só `DadoBancarioFornecedor` — **CNPJ não é mascarado**, é dado
-público de PJ). Testes: `rh/test_field_masking.py` (11) verde sobre Postgres.
+público de PJ). Testes: `testes/backend/rh/test_field_masking.py` (11) verde sobre Postgres.
 
 ## 3. O que passa a viajar no JWT
 
@@ -240,7 +240,7 @@ qualquer módulo novo **entram no controle de acesso por aqui**, sem tocar enfor
 4. **Enforcement** (fatias B/C): `RequirePermission("scm.recurso.acao")` no ViewSet e, se houver campo
    sensível, entrada no mapa de sensibilidade do `FieldMaskingSerializerMixin`.
 
-O **teste de conformidade** ([iam/identity/tests.py](../../iam/identity/tests.py)) garante que todo
+O **teste de conformidade** ([testes/iam/identity/tests.py](../../testes/iam/identity/tests.py)) garante que todo
 template ⊆ catálogo e o formato `modulo.recurso.acao` — um código órfão falha o CI, não passa silencioso.
 Assim, quando um módulo da v01 é portado, ele **já nasce contemplado**: permissões no catálogo, papéis
 compostos, e o admin do tenant podendo delegá-lo a personas sem intervenção de plataforma.

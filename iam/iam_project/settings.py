@@ -235,6 +235,16 @@ SESSION_REVOKE_PREFIX = "sess:revoked_after:"
 SESSION_REVOKE_MARGIN_SECONDS = 120
 SESSION_REVOKE_TTL_SECONDS = JWT_ACCESS_MINUTES * 60 + SESSION_REVOKE_MARGIN_SECONDS
 
+# --- PDP (remodelagem da segurança, fase 2 — identity/pdp.py) -----------------
+# A IAM grava cada troca de papel, acesso e assinatura no SpiceDB. Sem URL, não
+# grava (a suíte de testes roda assim; o teste de integração usa a sua própria).
+SPICEDB_URL = os.getenv("SPICEDB_URL", "")
+SPICEDB_CHAVE = os.getenv("SPICEDB_CHAVE", "")
+if SPICEDB_URL and not SPICEDB_CHAVE and not DEBUG:
+    raise ImproperlyConfigured("SPICEDB_CHAVE é obrigatória fora de DEBUG.")
+# DB 5 do Redis: ZedToken e versão por tenant, lidos pelo backend.
+AUTORIZACAO_REDIS_URL = os.getenv("AUTORIZACAO_REDIS_URL", "redis://localhost:6379/5")
+
 # --- Token serviço→serviço (Fase 10.8) ----------------------------------------
 # A IAM é a única que assina o JWT da plataforma (RS256 em produção). Um serviço
 # (ex.: o backend, ao excluir obra/empreendimento) que precise chamar outro
@@ -287,6 +297,14 @@ PASSWORD_RESET_COOLDOWN_TROCA_EMAIL_HORAS = int(
 )
 # Validade do link de confirmação de troca de e-mail (enviado ao endereço ANTIGO).
 EMAIL_CHANGE_TTL_HORAS = int(os.getenv("EMAIL_CHANGE_TTL_HORAS", "48"))
+
+# --- Segundo fator (remodelagem, fase 1) -----------------------------------------
+# Chave Fernet que cifra o segredo TOTP de cada pessoa no banco. Fora do banco de
+# propósito: um dump da tabela não pode dar o segundo fator de ninguém. Sem ela,
+# `identity.segundo_fator` deriva uma da SECRET_KEY — serve ao dev, e em produção
+# amarra os cadastros à SECRET_KEY (trocá-la obrigaria todos a cadastrar de novo).
+# Gerar: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+SEGUNDO_FATOR_CHAVE = _config("IAM_SEGUNDO_FATOR_CHAVE", "")
 
 # Proxies CONFIÁVEIS entre o cliente e este serviço (hoje: só o gateway nginx).
 # Setting de topo porque tem DOIS consumidores que precisam concordar: o throttle
@@ -359,6 +377,8 @@ CACHES = {
 # entre runs) — foi exatamente o que aconteceu ao introduzir o S8.
 # Quem exercita o throttle de propósito reativa a taxa com @override_settings.
 TESTING = "test" in sys.argv
+# Os testes moram em testes/iam/ (raiz do repositório); o runner os encontra.
+TEST_RUNNER = "iam_project.runner_testes.TestesDaIamRunner"
 if TESTING:
     CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
     REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {

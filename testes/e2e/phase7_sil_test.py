@@ -5,7 +5,7 @@ Prova ponta a ponta que os dois sentidos da integração funcionam com um token 
 da IAM — o que a suíte unitária não cobre (entitlement `sil`, permissões `sil.*` e a
 persona `almoxarife` só existem depois do rebuild da imagem da IAM + re-seed).
 
-Seed: iam/seed_demo.py (tenant demo) + backend/seed_demo_data.py
+Seed: testes/seeds/seed_demo.py (tenant demo) + testes/seeds/seed_demo_data.py
 
   demo     / demo123     -> módulos scm+sil, papéis `suprimentos` + `almoxarife`
   semdrone / semdrone123 -> só erp_financeiro, papel `operacional` — SEM o módulo `sil`
@@ -87,7 +87,7 @@ def check(label, cond):
 
 def fatal(msg):
     print(f"\n  !! {msg}")
-    print("     O seed do backend (backend/seed_demo_data.py) precisa ter rodado.")
+    print("     O seed do backend (testes/seeds/seed_demo_data.py) precisa ter rodado.")
     sys.exit(2)
 
 

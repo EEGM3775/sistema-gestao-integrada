@@ -10,6 +10,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.db.models import Q
 from django.core.cache import cache
 
+from nucleo import autorizacao
 from nucleo.tenancy import TenantScopedViewSetMixin
 from nucleo.permissions import RequirePermission
 from nucleo import geo
@@ -493,7 +494,7 @@ class FeriadosStatusView(APIView):
 
     def get(self, request):
         user = request.user
-        if not (getattr(user, 'is_platform_admin', False) or getattr(user, 'is_superuser', False)):
+        if not (autorizacao.supervisiona(user) or getattr(user, 'is_superuser', False)):
             return Response({'detail': 'Restrito ao superuser.'}, status=status.HTTP_403_FORBIDDEN)
         sync = FeriadoSync.objects.first()
         if sync is None:

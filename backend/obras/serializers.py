@@ -5,6 +5,7 @@ from decimal import Decimal
 from datetime import date
 
 from funcoesimpexp.entrega import ArquivoGateadoSerializerMixin
+from nucleo import autorizacao
 from nucleo.upload_validation import UploadValidationMixin
 
 from .impexp import (
@@ -175,11 +176,7 @@ def _pode_digitar_percentual(usuario) -> bool:
     demais precisam do código exato na claim do token."""
     if usuario is None or not getattr(usuario, "is_authenticated", False):
         return False
-    if getattr(usuario, "is_tenant_admin", False) or getattr(usuario, "is_superuser", False):
-        return True
-    return "obra.etapa.percentual_manual" in (
-        getattr(usuario, "iam_permissions", None) or []
-    )
+    return autorizacao.pode(usuario, "obra.etapa.percentual_manual")
 
 
 class EtapaObraSerializer(serializers.ModelSerializer):

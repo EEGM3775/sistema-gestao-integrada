@@ -6,7 +6,7 @@ só existem depois do rebuild da imagem da IAM + re-seed. E, sobretudo, prova a
 **integração visível** — que o orçamento aprovado passa a valer como régua nos
 outros módulos, não só dentro do seu.
 
-Seed: iam/seed_demo.py (tenant demo) + backend/seed_demo_data.py
+Seed: testes/seeds/seed_demo.py (tenant demo) + testes/seeds/seed_demo_data.py
 
   demo     / demo123     -> módulos scm+sil+orcamento, papéis inclusive `orcamentista`
   semdrone / semdrone123 -> só erp_financeiro, papel `operacional` — SEM `orcamento`
@@ -102,7 +102,7 @@ def check(label, cond):
 
 def fatal(msg):
     print(f"\n  !! {msg}")
-    print("     O seed do backend (backend/seed_demo_data.py) precisa ter rodado.")
+    print("     O seed do backend (testes/seeds/seed_demo_data.py) precisa ter rodado.")
     print(f"     Parcial: {sum(1 for p in passed if p)}/{len(passed)}")
     sys.exit(2)
 

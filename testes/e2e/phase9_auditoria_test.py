@@ -1,7 +1,7 @@
 """Fase 9.E — trilha de auditoria imutável (`AuditLog`), via gateway (8090).
 
 Prova ponta a ponta que operações sensíveis alimentam a trilha, que a leitura é
-restrita e que a trilha é imutável na API. Seed: iam/seed_demo.py (tenant demo).
+restrita e que a trilha é imutável na API. Seed: testes/seeds/seed_demo.py (tenant demo).
 
   demo     / demo123     -> power-user RH (rh_gestor/rh_medico/rh_financeiro) — GERA eventos
   admin    / admin123    -> admin do tenant (usuário principal) — LÊ a trilha
@@ -17,6 +17,8 @@ restrita e que a trilha é imutável na API. Seed: iam/seed_demo.py (tenant demo
 Rodar (stack de pé):  python testes/e2e/phase9_auditoria_test.py
 """
 import json, random, sys, urllib.request, urllib.error
+
+from _segundo_fator import completar_login
 
 # Console do Windows costuma ser cp1252 e quebra em emoji/acentos ao redirecionar.
 try:
@@ -49,7 +51,7 @@ def login(u, p):
     r = urllib.request.Request(GW + "/auth/login/", data=data, method="POST",
                                headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(r, timeout=30) as resp:
-        return json.load(resp)["access"]
+        return completar_login(GW, json.load(resp))["access"]
 
 
 def linhas(payload):

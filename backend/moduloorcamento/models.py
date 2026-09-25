@@ -530,10 +530,17 @@ class Orcamento(TenantScopedModel, Excluivel):
        marca a anterior como `SUPERADO` (`RevisaoOrcamento` guarda o porquê).
        É como Sienge trata reprogramação e como o TCU exige em obra pública:
        aditivo precisa de rastro.
-    2. **Data-base é do orçamento, não da base.** `data_base` é copiada da
-       publicação escolhida e fica aqui mesmo que a `BaseReferencial` seja
-       desativada depois. Comparar orçado com realizado sem saber de que mês é
-       o preço é comparar coisas diferentes.
+    2. **A data-base do cabeçalho é o rótulo do documento; o preço é da
+       linha.** `data_base` é copiada da publicação escolhida e fica aqui mesmo
+       que a `BaseReferencial` seja desativada depois — comparar orçado com
+       realizado sem saber de que mês é o preço é comparar coisas diferentes.
+       Mas ela **não** governa de onde o preço sai: desde a ORC.10a cada
+       `ItemOrcado` guarda a publicação de onde foi pescado em
+       `fonte_referencia`/`codigo_referencia`/`data_base_preco`, e planilha com
+       linhas de fontes diferentes é caso legítimo — é como Arquimedes e os
+       bancos de preço do setor trabalham. `base_referencial` aqui é o padrão
+       do seletor e a data-base que a peça anuncia; a honestidade de uma linha
+       fora dela é dita pela coluna Data-base da grade, que a marca em vermelho.
     3. **BDI e encargos moram no cabeçalho.** O custo direto vive nas linhas; o
        que transforma custo em **preço** é do orçamento inteiro. ORC.2 detalha a
        composição do BDI (`ComposicaoBDI`); aqui fica o percentual resultante,
@@ -638,6 +645,13 @@ class ItemOrcado(TenantScopedModel):
 
     `etapa` é o que faz o orçado casar com o **aplicado** do SIL, que apropria
     movimentação por `obras.EtapaObra` — mesma dimensão, comparação direta.
+
+    **A linha carrega a sua procedência (ORC.10a).** `fonte_referencia`,
+    `codigo_referencia` e `data_base_preco` descrevem a publicação de onde o
+    preço veio — a que estava aberta no seletor na hora de inserir, não a do
+    cabeçalho. Vazios, a linha é de preço digitado. É o que permite misturar
+    SINAPI, ORSE e cotação própria na mesma planilha sem que nenhuma delas
+    precise mentir sobre o próprio mês.
     """
 
     class TipoLinha(models.TextChoices):
@@ -700,6 +714,33 @@ class ItemOrcado(TenantScopedModel):
         max_digits=18, decimal_places=2, default=Decimal("0"), verbose_name=_("Total (com BDI)"),
     )
     observacao = models.CharField(max_length=255, blank=True, verbose_name=_("Observação"))
+    # --- ORC.10e: o que o orçamentista pedia para poder mexer ---------------
+    # `codigo_eap` é derivado da árvore desde a ORC.1, e isso está certo por
+    # padrão — planilha renumerada à mão é planilha que sai errada na primeira
+    # inserção no meio. Mas edital, projeto e contrato às vezes chegam com uma
+    # numeração própria que a planilha precisa espelhar (o item 4.2.7 do termo
+    # de referência é 4.2.7, não "o sétimo filho do segundo filho do quarto").
+    # Com esta marca, o recálculo pula a renumeração **daquela linha** e da
+    # posição dela para baixo — quem assume o código assume a consistência.
+    eap_manual = models.BooleanField(
+        default=False, verbose_name=_("Código EAP digitado à mão"),
+        help_text=_("Marcado, o recálculo não renumera esta linha."),
+    )
+    # A linha cujo preço é cotação fechada, e não referência. Reprecificação e
+    # os verbos de lote a pulam: o travamento é a declaração de que aquele
+    # número já foi negociado, e um lote que o sobrescrevesse em silêncio
+    # desfaria a negociação sem ninguém ver.
+    preco_travado = models.BooleanField(
+        default=False, verbose_name=_("Preço travado"),
+        help_text=_("Protege o custo unitário de reprecificação e de edição em lote."),
+    )
+    # O "pliego de condiciones" do Arquimedes, a "discriminação" do edital: o
+    # texto que descreve o serviço além do nome da linha. `observacao` tem 255
+    # caracteres e é bilhete; isto é peça do documento e vai para a exportação.
+    texto_longo = models.TextField(
+        blank=True, verbose_name=_("Descrição detalhada"),
+        help_text=_("Especificação do serviço — vai para as peças exportadas."),
+    )
 
     class Meta:
         verbose_name = _("Item orçado")

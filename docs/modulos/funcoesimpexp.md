@@ -424,7 +424,7 @@ trilha (R12) e a checagem de tenant — via `entregar_campo` e `buscar_do_tenant
 [entrega.py](../../backend/funcoesimpexp/entrega.py) neste mesmo lote.
 
 **A garantia é cobrada por teste, não por lista:**
-[test_d70_portas_de_midia.py](../../backend/funcoesimpexp/test_d70_portas_de_midia.py) varre todos os
+[test_d70_portas_de_midia.py](../../testes/backend/funcoesimpexp/test_d70_portas_de_midia.py) varre todos os
 `FileField` instalados e falha quando um `upload_to` novo aparece sem porta. `/media/` é 404 no
 gateway, sem exceção nomeada.
 

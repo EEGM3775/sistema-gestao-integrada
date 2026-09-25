@@ -6,7 +6,7 @@ alcança. Lá o CPM é chamado direto e o usuário é empurrado com
 entitlement de módulo, permissão de campo e RLS — que é onde um plano de obra
 quebra de verdade.
 
-Seed: iam/seed_demo.py + backend/seed_demo_data.py
+Seed: testes/seeds/seed_demo.py + testes/seeds/seed_demo_data.py
 
   demo     / demo123     -> tem o módulo `pdca` e o papel `planejador`
                             (`pdca.cronograma.*`, os quatro verbos)

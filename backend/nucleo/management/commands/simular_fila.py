@@ -1,6 +1,6 @@
 """Bancada da fila da frota (D98/PRA.11) — exercita a política com MUITOS arquivos.
 
-Não é teste automatizado (esses estão em `nucleo/test_frota.py`): é a bancada que
+Não é teste automatizado (esses estão em `testes/backend/nucleo/test_frota.py`): é a bancada que
 roda contra o **banco de verdade**, com dezenas de arquivos de várias empresas e
 planos ao mesmo tempo, para o comportamento agregado poder ser medido em vez de
 inferido dos casos unitários.

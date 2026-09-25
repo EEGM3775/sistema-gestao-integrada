@@ -26,6 +26,9 @@ from .views import (
     NaoConformidadeViewSet,
     PdcaStatusView,
     PlanoAcaoViewSet,
+    PostoDaMedicaoView,
+    PostoDaQualidadeView,
+    PostoDaSegurancaView,
     PrecedenciaViewSet,
     ProgramacaoSemanalViewSet,
     RestricaoViewSet,
@@ -90,6 +93,18 @@ urlpatterns = [
     path("carteira/", CarteiraView.as_view(), name="pdca-carteira"),
     path("hoje/", HojeView.as_view(), name="pdca-hoje"),
     path("busca/", BuscaView.as_view(), name="pdca-busca"),
+    # A quarta, e ela atravessa **assunto** em vez de obra: o posto da medição
+    # junta contrato e medição, que têm permissões diferentes. Mora aqui, e não
+    # como ação de `medicoes/`, porque não é recurso da medição — a carteira de
+    # contratos não é medição nenhuma, e pendurá-la ali obrigaria o portão a
+    # exigir `pdca.medicao.view` de quem só lê contrato.
+    path("medicao/", PostoDaMedicaoView.as_view(), name="pdca-posto-medicao"),
+    path(
+        "qualidade/", PostoDaQualidadeView.as_view(), name="pdca-posto-qualidade",
+    ),
+    path(
+        "seguranca/", PostoDaSegurancaView.as_view(), name="pdca-posto-seguranca",
+    ),
     # E a quinta, que é a porta da superfície de campo: o que está atribuído a
     # quem pede. Atravessa obras, então mora aqui pelo mesmo motivo que a
     # carteira — não é recurso de router nenhum.

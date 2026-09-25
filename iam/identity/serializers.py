@@ -137,6 +137,9 @@ class AcessoUsuarioModuloSerializer(serializers.ModelSerializer):
 class UsuarioSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=False, allow_blank=False)
     modules = serializers.SerializerMethodField(read_only=True)
+    # Fase 1 — a lista de usuários do admin mostra quem tem segundo fator, para
+    # ele saber a quem cobrar e quando o "redefinir" faz sentido.
+    segundo_fator_ativo = serializers.SerializerMethodField(read_only=True)
     # D11 — e-mail obrigatório na CRIAÇÃO. Uma conta nasce hoje e o dono esquece
     # a senha daqui a três meses: sem endereço não há como devolvê-la a ele. Na
     # ATUALIZAÇÃO o campo é descartado no `update()` — trocar e-mail exige a ação
@@ -171,11 +174,20 @@ class UsuarioSerializer(serializers.ModelSerializer):
             "perfis",
             "password",
             "modules",
+            "segundo_fator_ativo",
         ]
         read_only_fields = ["id"]
 
     def get_modules(self, obj):
         return obj.modulos_efetivos()
+
+    def get_segundo_fator_ativo(self, obj):
+        from django.core.exceptions import ObjectDoesNotExist
+
+        try:
+            return obj.segundo_fator.ativo
+        except ObjectDoesNotExist:
+            return False
 
     def create(self, validated_data):
         password = validated_data.pop("password", None)

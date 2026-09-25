@@ -24,6 +24,8 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 
+import funcoesautorizacao
+
 from .aprovacao import (
     cancelar, decidir, pendentes_para, reordenar_niveis, validar_fluxo,
 )
@@ -38,6 +40,21 @@ class NivelAprovacaoSerializer(TenantScopedModelSerializer):
         model = NivelAprovacao
         fields = "__all__"
         read_only_fields = ["tenant"]
+
+    def validate_permissao_exigida(self, valor: str) -> str:
+        """O degrau só exige código do catálogo (acesso-e-permissoes.md §10.7).
+
+        Guardado como texto, o degrau aceitava qualquer string — e um código que
+        não existe não é concedido a ninguém, exceto ao admin, que passa em
+        tudo: o degrau "só o admin" nascia por erro de digitação. No PDP, a
+        pergunta por um código fora do schema é negada; aqui ela nem nasce.
+        """
+        if valor not in funcoesautorizacao.catalogo()["codigos"]:
+            raise ValidationError(
+                f"'{valor}' não é uma permissão do catálogo. Use o código exato "
+                "(modulo.recurso.acao), como aparece na tela de papéis."
+            )
+        return valor
 
 
 class FluxoAprovacaoSerializer(TenantScopedModelSerializer):

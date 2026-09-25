@@ -76,7 +76,7 @@ O `Produto` já é o embrião do mestre (supplier-agnostic, `codigo_interno` ún
    por valor.
 3. Repontar as **3 FKs** do SCM (`OfertaFornecedor.produto`, `ItemDemanda.produto`,
    `ItemPedido.produto`) para `catalogo.Item`; ajustar imports em views/serializers/tests do SCM.
-4. Remover `moduloscm.Produto`; rodar `moduloscm/tests.py` (deve seguir verde) + re-seed.
+4. Remover `moduloscm.Produto`; rodar `testes/backend/moduloscm/tests.py` (deve seguir verde) + re-seed.
 
 Greenfield-safe (sem dado real de cliente — [migração v01→v02 §3](../arquitetura/migracao-v01.md)).
 

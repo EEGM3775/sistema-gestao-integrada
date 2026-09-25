@@ -61,6 +61,7 @@ from payment.planos import (
     PDCA_TETO_LINHAS_POR_FRENTE,
     PDCA_TETO_OBRAS_NA_CARTEIRA,
     PDCA_TETO_RESULTADOS_POR_ESPECIE,
+    PDCA_TETO_CONTRATOS_NO_POSTO,
 )
 
 from .models import (
@@ -6392,7 +6393,7 @@ def gerar_restricao_da_nc(*, nc: "NaoConformidade", prazo: date | None = None,
     if not nc.atividade_id:
         raise ValidationError(
             "Esta não-conformidade não aponta para uma atividade, e restrição "
-            "sem alvo não trava nada (é a regra da PDCA.5). Vincule a NC ao "
+            "sem alvo não trava nada. Vincule a NC ao "
             "serviço em que o defeito está antes de parar a frente."
         )
     if not nc.esta_aberta:
@@ -7577,8 +7578,9 @@ def epi_vencido_da_obra(*, obra_id, tenant_id) -> dict:
         "total": len(vencidos),
         "grao": "obra",
         "observacao": (
-            "A leitura é por obra. Dizer quem está com EPI vencido *numa frente* "
-            "exige saber quem está em qual frente, e isso é a PDCA.9."
+            "A leitura é por obra. Dizer quem está com EPI vencido numa frente "
+            "exige saber quem trabalha em cada frente, e isso o sistema ainda "
+            "não registra."
         ),
     }
 
@@ -7707,6 +7709,331 @@ def _prazo(vence_em: date | None, *, imediata: bool = False,
     }
 
 
+def _escadas_de(modelo, objetos, *, tenant_id) -> dict:
+    """Em que degrau cada documento parou, e **desde quando** — numa consulta.
+
+    Quando um documento começou a esperar não é quando ele foi montado: é
+    quando alguém o submeteu, e quem guarda isso é a escada do `nucleo`. Uma
+    consulta por documento repetiria o N+1 que o resto desta seção existe para
+    não ter — numa fila de 40 medições seriam 40 idas ao banco para escrever 40
+    nomes de degrau.
+
+    Serve as três espécies que sobem escada neste módulo (medição, liberação de
+    retenção e aditivo) porque a pergunta é a mesma para as três. Escrevê-la de
+    novo em cada fila seria a segunda implementação que a §10.1 do desenho
+    proíbe — e a que divergiria no dia em que o motor mudasse de campo.
+    """
+    if not objetos:
+        return {}
+
+    from django.contrib.contenttypes.models import ContentType
+
+    from nucleo.models import PedidoAprovacao
+
+    ct = ContentType.objects.get_for_model(modelo)
+    por_alvo: dict[int, dict] = {}
+    for pedido in (
+        PedidoAprovacao.objects.filter(
+            tenant_id=tenant_id, alvo_tipo=ct,
+            alvo_id__in=[o.pk for o in objetos],
+            estado=PedidoAprovacao.Estado.EM_APROVACAO,
+        ).select_related("nivel_atual")
+    ):
+        por_alvo[pedido.alvo_id] = {
+            "desde": pedido.solicitado_em,
+            "degrau": getattr(pedido.nivel_atual, "nome", ""),
+            # **A permissão do degrau, e não a do portão.** É o que permite à
+            # tela dizer de quem se espera a assinatura, em vez de oferecer um
+            # botão de atestar a quem o motor vai recusar.
+            "permissao_do_degrau": getattr(
+                pedido.nivel_atual, "permissao_exigida", "",
+            ),
+        }
+    return por_alvo
+
+
+# --- B3: o posto da medição — a carteira de contratos e a fila do dinheiro ---
+
+def carteira_de_contratos(*, obra_id, tenant_id, pode=_pode_tudo) -> dict:
+    """**Os contratos da obra com o saldo resolvido** — a leitura de cima do
+    posto da medição.
+
+    Uma linha por contrato, com contratado, medido nas três faixas, saldo,
+    retenção e o período que a próxima medição cobriria. Existe como leitura
+    única porque a alternativa é a tela pedir `contratos/` e depois `saldo/`
+    **uma vez por contrato**: numa obra com doze empreiteiros são treze idas ao
+    servidor para desenhar doze linhas, e as doze respostas chegam em momentos
+    diferentes — o total da tela nunca é o total de um instante.
+
+    **Não soma nada de novo.** Cada linha é `saldo_do_contrato`, que já é a
+    resposta de `GET contratos/{id}/saldo/`; esta função só a repete pelos
+    contratos da obra e corta no teto. Uma segunda implementação do saldo seria
+    o D138 em escala de carteira — a tela do contrato diria um número e a do
+    posto diria outro.
+
+    **Os encerrados e cancelados ficam de fora por padrão.** Eles não esperam
+    decisão nenhuma e ocupariam as linhas de quem espera; `incluir_fechados`
+    existe para a vista de histórico, que é outra pergunta.
+    """
+    if not pode("pdca.contrato.view"):
+        return {
+            "linhas": [],
+            "total": 0,
+            "truncada": False,
+            "teto": PDCA_TETO_CONTRATOS_NO_POSTO,
+            "sem_permissao": [_sem_permissao(
+                "contrato", "os contratos desta obra", "pdca.contrato.view",
+            )],
+        }
+
+    vivos = ContratoObra.objects.filter(
+        tenant_id=tenant_id, obra_id=obra_id,
+    ).exclude(status__in=(
+        ContratoObra.Status.ENCERRADO, ContratoObra.Status.CANCELADO,
+    ))
+    total = vivos.count()
+    contratos = list(
+        vivos.select_related("fornecedor")
+        .prefetch_related("itens", "medicoes", "medicoes__itens", "aditivos")
+        .order_by("numero")[:PDCA_TETO_CONTRATOS_NO_POSTO]
+    )
+
+    linhas = []
+    for contrato in contratos:
+        saldo = saldo_do_contrato(contrato)
+        aberta, motivo = planilha_editavel(contrato)
+        linhas.append({
+            "contrato": contrato.pk,
+            "numero": contrato.numero,
+            "objeto": contrato.objeto[:200],
+            "fornecedor": contrato.fornecedor_id,
+            "fornecedor_nome": contrato.fornecedor.razao_social,
+            "regime": contrato.regime,
+            "regime_rotulo": contrato.get_regime_display(),
+            "status": contrato.status,
+            "status_rotulo": contrato.get_status_display(),
+            "data_inicio": contrato.data_inicio,
+            "data_fim": contrato.data_fim,
+            "regime_publico": contrato.regime_publico,
+            # A trava da planilha viaja aqui pelo mesmo motivo que viaja no
+            # serializer do contrato (convenções §11): a tela lê a resposta em
+            # vez de reimplementar a condição, e a frase que ela mostra é a
+            # mesma que a API devolveria ao recusar.
+            "planilha_editavel": aberta,
+            "planilha_fechada_porque": motivo,
+            "saldo": saldo,
+        })
+
+    return {
+        "linhas": linhas,
+        "total": total,
+        "truncada": total > len(linhas),
+        "teto": PDCA_TETO_CONTRATOS_NO_POSTO,
+        "sem_permissao": [],
+    }
+
+
+def fila_da_medicao(*, obra_id, tenant_id, pode=_pode_tudo) -> dict:
+    """**O que espera alguém no caminho do dinheiro desta obra** (B3).
+
+    Quatro filas, e a ordem é a do caminho que o dinheiro percorre: o boletim
+    que alguém apurou e não mandou, o que subiu a escada e espera assinatura, a
+    caução pedida de volta e o aditivo que ainda não foi decidido. **Todas as
+    quatro são documentos que existem e estão parados** — nenhuma é contagem, e
+    nenhuma inventa uma cobrança.
+
+    **Por que o contrato "sem medir no mês" não é uma delas.** Seria a fila
+    óbvia, e seria ruído: o sistema não conhece a periodicidade combinada com
+    cada empreiteiro — não existe esse campo no contrato, e ela é cláusula
+    comercial, não decisão de engenharia. Sem ela, qualquer corte ("30 dias sem
+    medir") seria um número inventado aqui, e a faixa apareceria todo dia para
+    todo contrato vigente — que é a definição de aviso que ensina a ignorar a
+    faixa. O período em aberto de cada contrato **já viaja** no
+    `periodo_sugerido` do `saldo_do_contrato`, que é a leitura que abre a
+    carteira do posto: lá ele é informação ao lado do contrato, e não alarme.
+
+    **Nada aqui é calculado de novo** (§10.1 do desenho): o líquido sai de
+    `totais_da_medicao`, o degrau de `_escadas_de`, o valor do aditivo do
+    próprio documento.
+
+    **A permissão é por bloco, e a leitura nunca recusa a página inteira.** O
+    posto junta dois assuntos com permissões diferentes — a medição e o
+    contrato —, e exigir as duas fecharia a porta para quem só ateste. O bloco
+    que a pessoa não pode ver vem vazio, e a permissão que falta vem nomeada em
+    `sem_permissao`.
+    """
+    negados: list[dict] = []
+    teto = PDCA_TETO_LINHAS_POR_FAIXA_DA_FILA
+
+    rascunhos: list[dict] = []
+    a_atestar: list[dict] = []
+    total_rascunhos = total_a_atestar = 0
+
+    if pode("pdca.medicao.view"):
+        paradas = Medicao.objects.filter(
+            tenant_id=tenant_id, contrato__obra_id=obra_id,
+            status=Medicao.Status.RASCUNHO,
+        )
+        total_rascunhos = paradas.count()
+        for m in (
+            paradas.select_related("contrato", "contrato__fornecedor")
+            .order_by("periodo_fim", "numero")[:teto]
+        ):
+            totais = totais_da_medicao(m)
+            rascunhos.append(_linha(
+                tipo="medicao", id_=m.pk,
+                titulo=f"Medição {m.numero} · contrato {m.contrato.numero}",
+                detalhe=(
+                    f"Período de {m.periodo_inicio:%d/%m/%Y} a "
+                    f"{m.periodo_fim:%d/%m/%Y}"
+                ),
+                onde=m.contrato.fornecedor.razao_social,
+                desde=m.apurada_em,
+                extra={
+                    "contrato": m.contrato_id,
+                    "numero": m.numero,
+                    "liquido": totais["liquido"],
+                    "bruto": totais["bruto"],
+                    "apurada_por": m.apurada_por,
+                    # O boletim aberto e **sem nenhuma linha** não é o mesmo
+                    # problema de um pronto que ninguém submeteu: um pede para
+                    # ser preenchido, o outro para ser conferido. A tela
+                    # precisa distinguir para escolher o verbo que oferece.
+                    "linhas": m.itens.count(),
+                },
+            ))
+
+        em_atesto = Medicao.objects.filter(
+            tenant_id=tenant_id, contrato__obra_id=obra_id,
+            status=Medicao.Status.EM_APROVACAO,
+        )
+        total_a_atestar = em_atesto.count()
+        esperando = list(
+            em_atesto.select_related("contrato", "contrato__fornecedor")
+            .order_by("periodo_fim", "numero")[:teto]
+        )
+        escadas = _escadas_de(Medicao, esperando, tenant_id=tenant_id)
+        for m in esperando:
+            escada = escadas.get(m.pk, {})
+            totais = totais_da_medicao(m)
+            a_atestar.append(_linha(
+                tipo="medicao", id_=m.pk,
+                titulo=f"Medição {m.numero} · contrato {m.contrato.numero}",
+                detalhe=(
+                    f"Período de {m.periodo_inicio:%d/%m/%Y} a "
+                    f"{m.periodo_fim:%d/%m/%Y}"
+                ),
+                onde=m.contrato.fornecedor.razao_social,
+                desde=escada.get("desde") or m.apurada_em,
+                extra={
+                    "contrato": m.contrato_id,
+                    "numero": m.numero,
+                    "liquido": totais["liquido"],
+                    "bruto": totais["bruto"],
+                    "degrau": escada.get("degrau", ""),
+                    "permissao_do_degrau": escada.get("permissao_do_degrau", ""),
+                },
+            ))
+    else:
+        negados.append(_sem_permissao(
+            "medicao", "as medições desta obra", "pdca.medicao.view",
+        ))
+
+    retencoes: list[dict] = []
+    aditivos: list[dict] = []
+    total_retencoes = total_aditivos = 0
+
+    # Aditivo e liberação de retenção são documentos do **contrato** — quem os
+    # lê é quem lê o contrato, e é por isso que os dois blocos estão atrás da
+    # mesma permissão, e não da de medição.
+    if pode("pdca.contrato.view"):
+        pedidas = LiberacaoRetencao.objects.filter(
+            tenant_id=tenant_id, contrato__obra_id=obra_id,
+            status=LiberacaoRetencao.Status.EM_APROVACAO,
+        )
+        total_retencoes = pedidas.count()
+        lista_retencoes = list(
+            pedidas.select_related("contrato", "contrato__fornecedor")
+            .order_by("data")[:teto]
+        )
+        escadas = _escadas_de(
+            LiberacaoRetencao, lista_retencoes, tenant_id=tenant_id,
+        )
+        for lib in lista_retencoes:
+            escada = escadas.get(lib.pk, {})
+            retencoes.append(_linha(
+                tipo="liberacao", id_=lib.pk,
+                titulo=f"Retenção do contrato {lib.contrato.numero}",
+                detalhe=lib.condicao_atendida[:160],
+                onde=lib.contrato.fornecedor.razao_social,
+                desde=escada.get("desde") or lib.criado_em,
+                extra={
+                    "contrato": lib.contrato_id,
+                    "liquido": lib.valor,
+                    "degrau": escada.get("degrau", ""),
+                    "permissao_do_degrau": escada.get("permissao_do_degrau", ""),
+                },
+            ))
+
+        abertos = AditivoContrato.objects.filter(
+            tenant_id=tenant_id, contrato__obra_id=obra_id,
+            status__in=(
+                AditivoContrato.Status.RASCUNHO,
+                AditivoContrato.Status.EM_APROVACAO,
+            ),
+        )
+        total_aditivos = abertos.count()
+        lista_aditivos = list(
+            abertos.select_related("contrato", "contrato__fornecedor")
+            .order_by("criado_em")[:teto]
+        )
+        escadas = _escadas_de(
+            AditivoContrato, lista_aditivos, tenant_id=tenant_id,
+        )
+        for ad in lista_aditivos:
+            escada = escadas.get(ad.pk, {})
+            aditivos.append(_linha(
+                tipo="aditivo", id_=ad.pk,
+                titulo=f"Aditivo {ad.numero} · contrato {ad.contrato.numero}",
+                detalhe=ad.justificativa[:160],
+                onde=ad.contrato.fornecedor.razao_social,
+                desde=escada.get("desde") or ad.criado_em,
+                extra={
+                    "contrato": ad.contrato_id,
+                    "numero": ad.numero,
+                    "status": ad.status,
+                    "degrau": escada.get("degrau", ""),
+                    "permissao_do_degrau": escada.get("permissao_do_degrau", ""),
+                },
+            ))
+    else:
+        negados.append(_sem_permissao(
+            "contrato", "os contratos desta obra", "pdca.contrato.view",
+        ))
+
+    return {
+        "obra": obra_id,
+        "medicoes_em_rascunho": rascunhos,
+        "medicoes_a_atestar": a_atestar,
+        "retencoes_a_liberar": retencoes,
+        "aditivos_a_decidir": aditivos,
+        # Os totais vêm ao lado das listas porque **elas são cortadas pelo
+        # teto**: uma tela que contasse `linhas.length` diria "40" numa obra
+        # com 300 medições paradas, e número errado numa fila de dinheiro é
+        # pior do que número nenhum.
+        "totais": {
+            "medicoes_em_rascunho": total_rascunhos,
+            "medicoes_a_atestar": total_a_atestar,
+            "retencoes_a_liberar": total_retencoes,
+            "aditivos_a_decidir": total_aditivos,
+        },
+        "total": (
+            total_rascunhos + total_a_atestar + total_retencoes + total_aditivos
+        ),
+        "sem_permissao": negados,
+    }
+
+
 # --- B2: a fila única da obra ----------------------------------------------
 
 def fila_do_dia(*, obra_id, tenant_id, pode=_pode_tudo) -> dict:
@@ -7731,55 +8058,11 @@ def fila_do_dia(*, obra_id, tenant_id, pode=_pode_tudo) -> dict:
     negados: list[dict] = []
 
     # --- prazo legal e segurança --------------------------------------------
-    if pode("pdca.ocorrencia.view"):
-        ssma = fila_da_ssma(obra_id=obra_id, tenant_id=tenant_id)
-
-        def _rotulo_do_tipo(valor: str) -> str:
-            try:
-                return TipoOcorrencia(valor).label
-            except ValueError:
-                return valor
-
-        def _linha_da_ocorrencia(bruta: dict, prazo: dict | None = None) -> dict:
-            return _linha(
-                tipo="ocorrencia", id_=bruta["ocorrencia"],
-                titulo=_rotulo_do_tipo(bruta["tipo"]),
-                detalhe=bruta["descricao"],
-                desde=bruta["ocorrido_em"],
-                prazo=prazo,
-                extra={"local": bruta["local"], "atividade": bruta["atividade"]},
-            )
-
-        faixas.append(_faixa(
-            "cat_por_comunicar", "CAT por comunicar", "prazo_legal",
-            "Emitir a CAT e guardar o protocolo.", "seguranca",
-            [
-                _linha_da_ocorrencia(bruta, _prazo(
-                    bruta["prazo"].get("vence_em"),
-                    imediata=bruta["prazo"].get("imediata", False),
-                    base_legal=bruta["prazo"].get("base_legal", ""),
-                ))
-                for bruta in ssma["cat_por_comunicar"]
-            ],
-        ))
-        faixas.append(_faixa(
-            "ocorrencias_sem_classificacao", "Ocorrência por classificar",
-            "seguranca",
-            "Classificar a ocorrência — tipo, afastamento e dias perdidos.",
-            "seguranca",
-            [_linha_da_ocorrencia(b) for b in ssma["sem_classificacao"]],
-        ))
-        faixas.append(_faixa(
-            "ocorrencias_sem_tratamento", "Ocorrência sem tratamento aberto",
-            "seguranca",
-            "Abrir a não-conformidade que investiga a causa.", "seguranca",
-            [_linha_da_ocorrencia(b) for b in ssma["sem_tratamento"]],
-        ))
-    else:
-        negados.append(_sem_permissao(
-            "seguranca", "as ocorrências de segurança desta obra",
-            "pdca.ocorrencia.view",
-        ))
+    ssma, sem_ssma = faixas_da_seguranca(
+        obra_id=obra_id, tenant_id=tenant_id, pode=pode,
+    )
+    faixas.extend(ssma)
+    negados.extend(sem_ssma)
 
     # --- dinheiro -------------------------------------------------------------
     if pode("pdca.medicao.view"):
@@ -7795,25 +8078,7 @@ def fila_do_dia(*, obra_id, tenant_id, pode=_pode_tudo) -> dict:
         #: é quando alguém a submeteu, e quem guarda isso é a escada do
         #: `nucleo`. Vem numa consulta para todas — uma por medição repetiria o
         #: N+1 que o `_apontado_por_codigo` existe para não ter.
-        desde_de: dict[int, object] = {}
-        degrau_de: dict[int, str] = {}
-        if esperando:
-            from django.contrib.contenttypes.models import ContentType
-
-            from nucleo.models import PedidoAprovacao
-
-            ct = ContentType.objects.get_for_model(Medicao)
-            for pedido in (
-                PedidoAprovacao.objects.filter(
-                    tenant_id=tenant_id, alvo_tipo=ct,
-                    alvo_id__in=[m.pk for m in esperando],
-                    estado=PedidoAprovacao.Estado.EM_APROVACAO,
-                ).select_related("nivel_atual")
-            ):
-                desde_de[pedido.alvo_id] = pedido.solicitado_em
-                degrau_de[pedido.alvo_id] = getattr(
-                    pedido.nivel_atual, "nome", "",
-                )
+        escadas = _escadas_de(Medicao, esperando, tenant_id=tenant_id)
         faixas.append(_faixa(
             "medicoes_a_atestar", "Medição esperando atesto", "dinheiro",
             "Atestar ou devolver a medição — o pagamento sai daqui.", "medicao",
@@ -7825,10 +8090,10 @@ def fila_do_dia(*, obra_id, tenant_id, pode=_pode_tudo) -> dict:
                         f"Período de {m.periodo_inicio:%d/%m/%Y} a "
                         f"{m.periodo_fim:%d/%m/%Y}"
                     ),
-                    desde=desde_de.get(m.pk) or m.apurada_em,
+                    desde=escadas.get(m.pk, {}).get("desde") or m.apurada_em,
                     extra={
                         "contrato": m.contrato_id,
-                        "degrau": degrau_de.get(m.pk, ""),
+                        "degrau": escadas.get(m.pk, {}).get("degrau", ""),
                         "liquido": totais_da_medicao(m)["liquido"],
                     },
                 )
@@ -7926,6 +8191,110 @@ def fila_do_dia(*, obra_id, tenant_id, pode=_pode_tudo) -> dict:
         ))
 
     # --- retrabalho -----------------------------------------------------------
+    retrabalho, sem_qualidade = faixas_da_qualidade(
+        obra_id=obra_id, tenant_id=tenant_id, pode=pode,
+    )
+    faixas.extend(retrabalho)
+    negados.extend(sem_qualidade)
+
+    return _fila_de(faixas, negados, obra_id=obra_id, hoje=hoje)
+
+
+def _fila_de(faixas: list[dict], negados: list[dict], *, obra_id,
+             hoje: date) -> dict:
+    """A forma da fila que a tela desenha — a do dia e a de cada posto.
+
+    É uma só para que o componente que a desenha seja um só: a fila do posto é
+    a fila do dia recortada por assunto, e duas formas para a mesma linha
+    divergiriam na primeira coluna nova.
+    """
+    com_gente_esperando = [f for f in faixas if f["total"]]
+    return {
+        "obra": obra_id,
+        "hoje": hoje,
+        #: **Só as faixas que têm alguém esperando.** Faixa vazia no cockpit é
+        #: ruído que ensina a ignorar a tela (convenções §9); a tela mostra o
+        #: estado vazio uma vez, no lugar da fila inteira, quando não há nada.
+        "faixas": com_gente_esperando,
+        #: Quantas a leitura varreu — a tela diz "nenhuma das 11 filas tem
+        #: alguém esperando" em vez de abrir uma página em branco.
+        "faixas_varridas": len(faixas),
+        "total": sum(f["total"] for f in com_gente_esperando),
+        "sem_permissao": negados,
+    }
+
+
+def faixas_da_seguranca(*, obra_id, tenant_id,
+                        pode=_pode_tudo) -> tuple[list[dict], list[dict]]:
+    """As faixas de prazo legal e de segurança — **as da fila do dia**.
+
+    Função própria porque duas leituras as servem: a fila do dia, que as põe
+    no topo de tudo, e o posto da segurança, que abre por elas. Montá-las duas
+    vezes daria duas frases para a mesma CAT.
+    """
+    if not pode("pdca.ocorrencia.view"):
+        return [], [_sem_permissao(
+            "seguranca", "as ocorrências de segurança desta obra",
+            "pdca.ocorrencia.view",
+        )]
+
+    ssma = fila_da_ssma(obra_id=obra_id, tenant_id=tenant_id)
+
+    def _rotulo_do_tipo(valor: str) -> str:
+        try:
+            return TipoOcorrencia(valor).label
+        except ValueError:
+            return valor
+
+    def _linha_da_ocorrencia(bruta: dict, prazo: dict | None = None) -> dict:
+        return _linha(
+            tipo="ocorrencia", id_=bruta["ocorrencia"],
+            titulo=_rotulo_do_tipo(bruta["tipo"]),
+            detalhe=bruta["descricao"],
+            desde=bruta["ocorrido_em"],
+            prazo=prazo,
+            extra={"local": bruta["local"], "atividade": bruta["atividade"]},
+        )
+
+    return [
+        _faixa(
+            "cat_por_comunicar", "CAT por comunicar", "prazo_legal",
+            "Emitir a CAT e guardar o protocolo.", "seguranca",
+            [
+                _linha_da_ocorrencia(bruta, _prazo(
+                    bruta["prazo"].get("vence_em"),
+                    imediata=bruta["prazo"].get("imediata", False),
+                    base_legal=bruta["prazo"].get("base_legal", ""),
+                ))
+                for bruta in ssma["cat_por_comunicar"]
+            ],
+        ),
+        _faixa(
+            "ocorrencias_sem_classificacao", "Ocorrência por classificar",
+            "seguranca",
+            "Classificar a ocorrência — tipo, afastamento e dias perdidos.",
+            "seguranca",
+            [_linha_da_ocorrencia(b) for b in ssma["sem_classificacao"]],
+        ),
+        _faixa(
+            "ocorrencias_sem_tratamento", "Ocorrência sem tratamento aberto",
+            "seguranca",
+            "Abrir a não-conformidade que investiga a causa.", "seguranca",
+            [_linha_da_ocorrencia(b) for b in ssma["sem_tratamento"]],
+        ),
+    ], []
+
+
+def faixas_da_qualidade(*, obra_id, tenant_id,
+                        pode=_pode_tudo) -> tuple[list[dict], list[dict]]:
+    """As quatro faixas do retrabalho — **as da fila do dia**, e as do posto.
+
+    A mesma razão do `faixas_da_seguranca`: o posto da qualidade abre pela
+    fila do laço aberto, e ela é exatamente o degrau de retrabalho da fila do
+    dia. Duas montagens seriam dois textos para o mesmo defeito parado.
+    """
+    faixas: list[dict] = []
+    negados: list[dict] = []
     pode_nc = pode("pdca.nc.view")
     pode_ficha = pode("pdca.verificacao.view")
     qualidade = (
@@ -8000,18 +8369,83 @@ def fila_do_dia(*, obra_id, tenant_id, pode=_pode_tudo) -> dict:
             "pdca.verificacao.view",
         ))
 
-    com_gente_esperando = [f for f in faixas if f["total"]]
+    return faixas, negados
+
+
+# --- B8 e B9: os postos da qualidade e da segurança -------------------------
+
+def posto_da_qualidade(*, obra_id, tenant_id, pode=_pode_tudo,
+                       desde: date | None = None,
+                       ate: date | None = None) -> dict:
+    """**O laço aberto e o que mais reprova**, numa leitura (B8).
+
+    A fila é a do degrau de retrabalho da fila do dia, recortada — e por isso
+    as duas não podem discordar. O painel é o `painel_de_conformidade`, que já
+    existia e continua sendo o único lugar onde a conta é feita; vem nulo, com
+    a permissão nomeada, para quem não vê não-conformidade.
+    """
+    faixas, negados = faixas_da_qualidade(
+        obra_id=obra_id, tenant_id=tenant_id, pode=pode,
+    )
+    painel = None
+    if pode("pdca.nc.view"):
+        painel = painel_de_conformidade(
+            obra_id=obra_id, tenant_id=tenant_id, desde=desde, ate=ate,
+        )
     return {
-        "obra": obra_id,
-        "hoje": hoje,
-        #: **Só as faixas que têm alguém esperando.** Faixa vazia no cockpit é
-        #: ruído que ensina a ignorar a tela (convenções §9); a tela mostra o
-        #: estado vazio uma vez, no lugar da fila inteira, quando não há nada.
-        "faixas": com_gente_esperando,
-        #: Quantas a leitura varreu — a tela diz "nenhuma das 11 filas tem
-        #: alguém esperando" em vez de abrir uma página em branco.
-        "faixas_varridas": len(faixas),
-        "total": sum(f["total"] for f in com_gente_esperando),
+        "fila": _fila_de(
+            faixas, negados, obra_id=obra_id, hoje=timezone.localdate(),
+        ),
+        "painel": painel,
+        "sem_permissao": negados,
+    }
+
+
+def posto_da_seguranca(*, obra_id, tenant_id, pode=_pode_tudo,
+                       desde: date | None = None,
+                       ate: date | None = None) -> dict:
+    """**A CAT no topo, e os números que o sistema sabe e os que não** (B9).
+
+    Mesma construção do posto da qualidade: a fila é a da fila do dia, e os
+    indicadores são o `indicadores_de_ssma` — com as duas taxas nulas e o
+    motivo, que é o que impede a tela de desenhar "0,00" onde ninguém mediu.
+
+    **As frentes interditadas vêm à parte**, e não como faixa: não são uma
+    decisão parada nesta tela — liberar a frente é remover a restrição, ato de
+    quem responde pela obra, na semana. Aqui elas são o que o técnico precisa
+    saber antes de encerrar a ocorrência que as abriu.
+    """
+    faixas, negados = faixas_da_seguranca(
+        obra_id=obra_id, tenant_id=tenant_id, pode=pode,
+    )
+    indicadores = None
+    interditadas: list[dict] = []
+    if pode("pdca.ocorrencia.view"):
+        indicadores = indicadores_de_ssma(
+            obra_id=obra_id, tenant_id=tenant_id, desde=desde, ate=ate,
+        )
+        interditadas = [
+            {
+                "ocorrencia": o.pk,
+                "restricao": o.restricao_id,
+                "tipo_rotulo": o.get_tipo_display(),
+                "descricao": o.descricao[:160],
+                "atividade_nome": o.atividade.nome if o.atividade_id else "",
+                "local_rotulo": o.local.nome if o.local_id else "",
+                "desde": _dia_de(o.restricao.criada_em),
+            }
+            for o in Ocorrencia.objects.filter(
+                tenant_id=tenant_id, obra_id=obra_id,
+                restricao__status=Restricao.Status.ABERTA,
+            ).select_related("restricao", "atividade", "local")
+            .order_by("restricao__criada_em")[:PDCA_TETO_OCORRENCIAS_NA_FILA]
+        ]
+    return {
+        "fila": _fila_de(
+            faixas, negados, obra_id=obra_id, hoje=timezone.localdate(),
+        ),
+        "indicadores": indicadores,
+        "frentes_interditadas": interditadas,
         "sem_permissao": negados,
     }
 

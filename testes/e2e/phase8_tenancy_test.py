@@ -6,7 +6,7 @@ Um usuário de outra empresa que passasse o projectId alheio lia/gravava as filh
 daquele projeto. A Fase 8.5 fecha isso na borda (ProjectTenantInterceptor): o
 projeto da URL precisa pertencer ao tenant do token, senão 404.
 
-Prova (precisa do seed com DOIS tenants drone — iam/seed_demo.py):
+Prova (precisa do seed com DOIS tenants drone — testes/seeds/seed_demo.py):
   demo / demo123  -> tenant demo | módulo drone
   acme / acme123  -> tenant acme | módulo drone
 

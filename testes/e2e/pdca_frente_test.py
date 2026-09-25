@@ -22,7 +22,7 @@ Quatro tokens reais, e a divisão é o teste:
   acme     / acme123     -> outro tenant, **sem o módulo contratado**: para na
                             primeira das duas barreiras (entitlement, não RLS).
 
-Seed: iam/seed_demo.py + backend/seed_demo_data.py + semear_pdca_demo
+Seed: testes/seeds/seed_demo.py + testes/seeds/seed_demo_data.py + semear_pdca_demo
       + semear_pdca_execucao
 
   1. O que existe   -> `status/` declara a capacidade e o teto, e declara que

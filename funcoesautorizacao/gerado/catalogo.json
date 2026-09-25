@@ -1,0 +1,933 @@
+{
+ "codigos": {
+  "cadastro.cliente.edit": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "cadastro.cliente.view": {
+   "classe": "A",
+   "modulo": "base"
+  },
+  "cadastro.cliente_banco.edit": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "cadastro.cliente_banco.view": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "cadastro.cliente_doc.view": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "cadastro.fornecedor.edit": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "cadastro.fornecedor.view": {
+   "classe": "A",
+   "modulo": "base"
+  },
+  "cadastro.fornecedor_banco.edit": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "cadastro.fornecedor_banco.view": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "cadastro.item.edit": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "cadastro.item.view": {
+   "classe": "A",
+   "modulo": "base"
+  },
+  "cadastro.tipo_item.edit": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "cadastro.tipo_item.view": {
+   "classe": "A",
+   "modulo": "base"
+  },
+  "cadastro.venda.edit": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "cadastro.venda.gerar_carne": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "cadastro.venda.view": {
+   "classe": "A",
+   "modulo": "base"
+  },
+  "calendario.evento.create": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "calendario.evento.delete": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "calendario.evento.edit": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "calendario.evento.view": {
+   "classe": "A",
+   "modulo": "base"
+  },
+  "crm.campanha.edit": {
+   "classe": "B",
+   "modulo": "crm"
+  },
+  "crm.campanha.view": {
+   "classe": "A",
+   "modulo": "crm"
+  },
+  "crm.conta.edit": {
+   "classe": "B",
+   "modulo": "crm"
+  },
+  "crm.conta.view": {
+   "classe": "A",
+   "modulo": "crm"
+  },
+  "crm.contato.edit": {
+   "classe": "B",
+   "modulo": "crm"
+  },
+  "crm.contato.view": {
+   "classe": "B",
+   "modulo": "crm"
+  },
+  "crm.interacao.create": {
+   "classe": "B",
+   "modulo": "crm"
+  },
+  "crm.interacao.view": {
+   "classe": "A",
+   "modulo": "crm"
+  },
+  "crm.lead.create": {
+   "classe": "B",
+   "modulo": "crm"
+  },
+  "crm.lead.delete": {
+   "classe": "B",
+   "modulo": "crm"
+  },
+  "crm.lead.edit": {
+   "classe": "B",
+   "modulo": "crm"
+  },
+  "crm.lead.view": {
+   "classe": "B",
+   "modulo": "crm"
+  },
+  "crm.oportunidade.create": {
+   "classe": "B",
+   "modulo": "crm"
+  },
+  "crm.oportunidade.delete": {
+   "classe": "B",
+   "modulo": "crm"
+  },
+  "crm.oportunidade.edit": {
+   "classe": "B",
+   "modulo": "crm"
+  },
+  "crm.oportunidade.view": {
+   "classe": "A",
+   "modulo": "crm"
+  },
+  "crm.oportunidade_produto.edit": {
+   "classe": "B",
+   "modulo": "crm"
+  },
+  "crm.oportunidade_produto.view": {
+   "classe": "A",
+   "modulo": "crm"
+  },
+  "drone.imagem.upload": {
+   "classe": "B",
+   "modulo": "drone"
+  },
+  "drone.medicao.edit": {
+   "classe": "B",
+   "modulo": "drone"
+  },
+  "drone.medicao.view": {
+   "classe": "A",
+   "modulo": "drone"
+  },
+  "drone.processamento.executar": {
+   "classe": "B",
+   "modulo": "drone"
+  },
+  "drone.projeto.create": {
+   "classe": "B",
+   "modulo": "drone"
+  },
+  "drone.projeto.delete": {
+   "classe": "B",
+   "modulo": "drone"
+  },
+  "drone.projeto.edit": {
+   "classe": "B",
+   "modulo": "drone"
+  },
+  "drone.projeto.view": {
+   "classe": "A",
+   "modulo": "drone"
+  },
+  "erp.centro_custo.edit": {
+   "classe": "B",
+   "modulo": "erp_financeiro"
+  },
+  "erp.centro_custo.view": {
+   "classe": "A",
+   "modulo": "erp_financeiro"
+  },
+  "erp.cobranca.conciliar": {
+   "classe": "B",
+   "modulo": "erp_financeiro"
+  },
+  "erp.cobranca.emitir": {
+   "classe": "B",
+   "modulo": "erp_financeiro"
+  },
+  "erp.cobranca.view": {
+   "classe": "B",
+   "modulo": "erp_financeiro"
+  },
+  "erp.conta_pagar.baixar": {
+   "classe": "C",
+   "modulo": "erp_financeiro"
+  },
+  "erp.conta_pagar.create": {
+   "classe": "B",
+   "modulo": "erp_financeiro"
+  },
+  "erp.conta_pagar.delete": {
+   "classe": "B",
+   "modulo": "erp_financeiro"
+  },
+  "erp.conta_pagar.edit": {
+   "classe": "B",
+   "modulo": "erp_financeiro"
+  },
+  "erp.conta_pagar.view": {
+   "classe": "B",
+   "modulo": "erp_financeiro"
+  },
+  "erp.conta_receber.baixar": {
+   "classe": "B",
+   "modulo": "erp_financeiro"
+  },
+  "erp.conta_receber.create": {
+   "classe": "B",
+   "modulo": "erp_financeiro"
+  },
+  "erp.conta_receber.delete": {
+   "classe": "B",
+   "modulo": "erp_financeiro"
+  },
+  "erp.conta_receber.edit": {
+   "classe": "B",
+   "modulo": "erp_financeiro"
+  },
+  "erp.conta_receber.view": {
+   "classe": "B",
+   "modulo": "erp_financeiro"
+  },
+  "erp.lote_remessa.create": {
+   "classe": "C",
+   "modulo": "erp_financeiro"
+  },
+  "erp.lote_remessa.view": {
+   "classe": "B",
+   "modulo": "erp_financeiro"
+  },
+  "erp.nf.cancelar": {
+   "classe": "B",
+   "modulo": "erp_financeiro"
+  },
+  "erp.nf.edit": {
+   "classe": "B",
+   "modulo": "erp_financeiro"
+  },
+  "erp.nf.emitir": {
+   "classe": "B",
+   "modulo": "erp_financeiro"
+  },
+  "erp.nf.view": {
+   "classe": "B",
+   "modulo": "erp_financeiro"
+  },
+  "erp.relatorio.view": {
+   "classe": "B",
+   "modulo": "erp_financeiro"
+  },
+  "erp.revisao_baixa.resolver": {
+   "classe": "B",
+   "modulo": "erp_financeiro"
+  },
+  "erp.revisao_baixa.view": {
+   "classe": "B",
+   "modulo": "erp_financeiro"
+  },
+  "erp.transacao.view": {
+   "classe": "B",
+   "modulo": "erp_financeiro"
+  },
+  "ia.analise.executar": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "ia.analise.view": {
+   "classe": "A",
+   "modulo": "base"
+  },
+  "mapa.feicao.edit": {
+   "classe": "B",
+   "modulo": "maps"
+  },
+  "mapa.feicao.view": {
+   "classe": "A",
+   "modulo": "maps"
+  },
+  "mapa.geofence.edit": {
+   "classe": "B",
+   "modulo": "maps"
+  },
+  "mapa.geofence.view": {
+   "classe": "A",
+   "modulo": "maps"
+  },
+  "mapa.local.edit": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "mapa.local.view": {
+   "classe": "A",
+   "modulo": "base"
+  },
+  "mapa.ortofoto.edit": {
+   "classe": "B",
+   "modulo": "maps"
+  },
+  "mapa.ortofoto.view": {
+   "classe": "A",
+   "modulo": "maps"
+  },
+  "mapa.plano_voo.edit": {
+   "classe": "B",
+   "modulo": "maps"
+  },
+  "mapa.plano_voo.view": {
+   "classe": "A",
+   "modulo": "maps"
+  },
+  "mapa.rota.edit": {
+   "classe": "B",
+   "modulo": "maps"
+  },
+  "mapa.rota.view": {
+   "classe": "A",
+   "modulo": "maps"
+  },
+  "obra.diario.create": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "obra.diario.edit": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "obra.diario.view": {
+   "classe": "A",
+   "modulo": "base"
+  },
+  "obra.empreend_conta.edit": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "obra.empreend_conta.view": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "obra.empreend_custo.edit": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "obra.empreend_custo.view": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "obra.empreendimento.edit": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "obra.empreendimento.view": {
+   "classe": "A",
+   "modulo": "base"
+  },
+  "obra.etapa.percentual_manual": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "obra.obra.edit": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "obra.obra.view": {
+   "classe": "A",
+   "modulo": "base"
+  },
+  "orcamento.banco.edit": {
+   "classe": "B",
+   "modulo": "orcamento"
+  },
+  "orcamento.banco.view": {
+   "classe": "A",
+   "modulo": "orcamento"
+  },
+  "orcamento.base.adotar": {
+   "classe": "B",
+   "modulo": "orcamento"
+  },
+  "orcamento.base.view": {
+   "classe": "A",
+   "modulo": "orcamento"
+  },
+  "orcamento.item.edit": {
+   "classe": "B",
+   "modulo": "orcamento"
+  },
+  "orcamento.item.view": {
+   "classe": "A",
+   "modulo": "orcamento"
+  },
+  "orcamento.orcamento.aprovar": {
+   "classe": "B",
+   "modulo": "orcamento"
+  },
+  "orcamento.orcamento.destravar": {
+   "classe": "B",
+   "modulo": "orcamento"
+  },
+  "orcamento.orcamento.edit": {
+   "classe": "B",
+   "modulo": "orcamento"
+  },
+  "orcamento.orcamento.revisar": {
+   "classe": "B",
+   "modulo": "orcamento"
+  },
+  "orcamento.orcamento.view": {
+   "classe": "A",
+   "modulo": "orcamento"
+  },
+  "orcamento.relatorio.view": {
+   "classe": "A",
+   "modulo": "orcamento"
+  },
+  "pdca.aditivo.aprovar": {
+   "classe": "C",
+   "modulo": "pdca"
+  },
+  "pdca.aditivo.edit": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.avanco.apontar": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.avanco.view": {
+   "classe": "A",
+   "modulo": "pdca"
+  },
+  "pdca.calendario.edit": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.calendario.view": {
+   "classe": "A",
+   "modulo": "pdca"
+  },
+  "pdca.contrato.edit": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.contrato.view": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.cronograma.edit": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.cronograma.publicar": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.cronograma.replanejar": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.cronograma.view": {
+   "classe": "A",
+   "modulo": "pdca"
+  },
+  "pdca.dds.registrar": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.dds.view": {
+   "classe": "A",
+   "modulo": "pdca"
+  },
+  "pdca.local.delete": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.local.edit": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.local.view": {
+   "classe": "A",
+   "modulo": "pdca"
+  },
+  "pdca.medicao.apurar": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.medicao.atestar": {
+   "classe": "C",
+   "modulo": "pdca"
+  },
+  "pdca.medicao.view": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.nc.abrir": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.nc.tratar": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.nc.verificar_eficacia": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.nc.view": {
+   "classe": "A",
+   "modulo": "pdca"
+  },
+  "pdca.ocorrencia.classificar": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.ocorrencia.dado_medico": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.ocorrencia.emitir_cat": {
+   "classe": "C",
+   "modulo": "pdca"
+  },
+  "pdca.ocorrencia.registrar": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.ocorrencia.view": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.programacao.comprometer": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.programacao.encerrar": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.programacao.encerrar_antecipado": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.programacao.view": {
+   "classe": "A",
+   "modulo": "pdca"
+  },
+  "pdca.restricao.edit": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.restricao.remover": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.restricao.view": {
+   "classe": "A",
+   "modulo": "pdca"
+  },
+  "pdca.verificacao.aplicar": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.verificacao.modelo_edit": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
+  "pdca.verificacao.view": {
+   "classe": "A",
+   "modulo": "pdca"
+  },
+  "plataforma.auditoria.view": {
+   "classe": "B",
+   "modulo": "plataforma"
+  },
+  "plataforma.config.edit": {
+   "classe": "B",
+   "modulo": "plataforma"
+  },
+  "plataforma.config.view": {
+   "classe": "A",
+   "modulo": "plataforma"
+  },
+  "plataforma.fluxo_aprovacao.edit": {
+   "classe": "C",
+   "modulo": "plataforma"
+  },
+  "plataforma.fluxo_aprovacao.view": {
+   "classe": "A",
+   "modulo": "plataforma"
+  },
+  "plataforma.integracao.edit": {
+   "classe": "B",
+   "modulo": "plataforma"
+  },
+  "plataforma.integracao.view": {
+   "classe": "A",
+   "modulo": "plataforma"
+  },
+  "plataforma.lgpd.excluir": {
+   "classe": "C",
+   "modulo": "plataforma"
+  },
+  "plataforma.lgpd.exportar": {
+   "classe": "C",
+   "modulo": "plataforma"
+  },
+  "plataforma.lixo.purgar": {
+   "classe": "C",
+   "modulo": "plataforma"
+  },
+  "plataforma.lixo.restaurar": {
+   "classe": "B",
+   "modulo": "plataforma"
+  },
+  "plataforma.lixo.view": {
+   "classe": "A",
+   "modulo": "plataforma"
+  },
+  "plataforma.papel.gerir": {
+   "classe": "C",
+   "modulo": "plataforma"
+  },
+  "prancheta.conversao.reprocessar": {
+   "classe": "B",
+   "modulo": "prancheta"
+  },
+  "prancheta.documento.edit": {
+   "classe": "B",
+   "modulo": "prancheta"
+  },
+  "prancheta.documento.view": {
+   "classe": "A",
+   "modulo": "prancheta"
+  },
+  "prancheta.marcacao.edit": {
+   "classe": "B",
+   "modulo": "prancheta"
+  },
+  "prancheta.marcacao.resolver": {
+   "classe": "B",
+   "modulo": "prancheta"
+  },
+  "prancheta.marcacao.view": {
+   "classe": "A",
+   "modulo": "prancheta"
+  },
+  "prancheta.revisao.publicar": {
+   "classe": "B",
+   "modulo": "prancheta"
+  },
+  "rh.cargo.edit": {
+   "classe": "B",
+   "modulo": "rh"
+  },
+  "rh.cargo.view": {
+   "classe": "A",
+   "modulo": "rh"
+  },
+  "rh.cpf.view": {
+   "classe": "B",
+   "modulo": "rh"
+  },
+  "rh.dado_bancario.edit": {
+   "classe": "B",
+   "modulo": "rh"
+  },
+  "rh.dado_bancario.view": {
+   "classe": "B",
+   "modulo": "rh"
+  },
+  "rh.dado_medico.edit": {
+   "classe": "B",
+   "modulo": "rh"
+  },
+  "rh.dado_medico.view": {
+   "classe": "B",
+   "modulo": "rh"
+  },
+  "rh.documento.edit": {
+   "classe": "B",
+   "modulo": "rh"
+  },
+  "rh.documento.view": {
+   "classe": "B",
+   "modulo": "rh"
+  },
+  "rh.folha.edit": {
+   "classe": "B",
+   "modulo": "rh"
+  },
+  "rh.folha.view": {
+   "classe": "B",
+   "modulo": "rh"
+  },
+  "rh.funcionario.create": {
+   "classe": "B",
+   "modulo": "rh"
+  },
+  "rh.funcionario.delete": {
+   "classe": "B",
+   "modulo": "rh"
+  },
+  "rh.funcionario.edit": {
+   "classe": "B",
+   "modulo": "rh"
+  },
+  "rh.funcionario.view": {
+   "classe": "B",
+   "modulo": "rh"
+  },
+  "scm.avaliacao.edit": {
+   "classe": "B",
+   "modulo": "scm"
+  },
+  "scm.avaliacao.view": {
+   "classe": "A",
+   "modulo": "scm"
+  },
+  "scm.centro_custo.edit": {
+   "classe": "B",
+   "modulo": "scm"
+  },
+  "scm.centro_custo.view": {
+   "classe": "A",
+   "modulo": "scm"
+  },
+  "scm.cotacao.adjudicar": {
+   "classe": "B",
+   "modulo": "scm"
+  },
+  "scm.cotacao.edit": {
+   "classe": "B",
+   "modulo": "scm"
+  },
+  "scm.cotacao.view": {
+   "classe": "A",
+   "modulo": "scm"
+  },
+  "scm.demanda.edit": {
+   "classe": "B",
+   "modulo": "scm"
+  },
+  "scm.demanda.publicar": {
+   "classe": "B",
+   "modulo": "scm"
+  },
+  "scm.demanda.view": {
+   "classe": "A",
+   "modulo": "scm"
+  },
+  "scm.oferta.edit": {
+   "classe": "B",
+   "modulo": "scm"
+  },
+  "scm.oferta.view": {
+   "classe": "A",
+   "modulo": "scm"
+  },
+  "scm.pedido.criar": {
+   "classe": "B",
+   "modulo": "scm"
+  },
+  "scm.pedido.edit": {
+   "classe": "B",
+   "modulo": "scm"
+  },
+  "scm.pedido.view": {
+   "classe": "A",
+   "modulo": "scm"
+  },
+  "scm.produto.edit": {
+   "classe": "B",
+   "modulo": "scm"
+  },
+  "scm.produto.view": {
+   "classe": "A",
+   "modulo": "scm"
+  },
+  "scm.recebimento.edit": {
+   "classe": "B",
+   "modulo": "scm"
+  },
+  "scm.recebimento.view": {
+   "classe": "A",
+   "modulo": "scm"
+  },
+  "sil.devolucao.edit": {
+   "classe": "B",
+   "modulo": "sil"
+  },
+  "sil.devolucao.executar": {
+   "classe": "B",
+   "modulo": "sil"
+  },
+  "sil.devolucao.view": {
+   "classe": "A",
+   "modulo": "sil"
+  },
+  "sil.epi.edit": {
+   "classe": "B",
+   "modulo": "sil"
+  },
+  "sil.epi.view": {
+   "classe": "A",
+   "modulo": "sil"
+  },
+  "sil.ferramenta.edit": {
+   "classe": "B",
+   "modulo": "sil"
+  },
+  "sil.ferramenta.view": {
+   "classe": "A",
+   "modulo": "sil"
+  },
+  "sil.inventario.edit": {
+   "classe": "B",
+   "modulo": "sil"
+  },
+  "sil.inventario.fechar": {
+   "classe": "B",
+   "modulo": "sil"
+  },
+  "sil.inventario.view": {
+   "classe": "A",
+   "modulo": "sil"
+  },
+  "sil.local.edit": {
+   "classe": "B",
+   "modulo": "sil"
+  },
+  "sil.local.view": {
+   "classe": "A",
+   "modulo": "sil"
+  },
+  "sil.lote.edit": {
+   "classe": "B",
+   "modulo": "sil"
+  },
+  "sil.lote.view": {
+   "classe": "A",
+   "modulo": "sil"
+  },
+  "sil.movimentacao.edit": {
+   "classe": "B",
+   "modulo": "sil"
+  },
+  "sil.movimentacao.view": {
+   "classe": "A",
+   "modulo": "sil"
+  },
+  "sil.relatorio.view": {
+   "classe": "A",
+   "modulo": "sil"
+  },
+  "sil.requisicao.aprovar": {
+   "classe": "B",
+   "modulo": "sil"
+  },
+  "sil.requisicao.atender": {
+   "classe": "B",
+   "modulo": "sil"
+  },
+  "sil.requisicao.edit": {
+   "classe": "B",
+   "modulo": "sil"
+  },
+  "sil.requisicao.view": {
+   "classe": "A",
+   "modulo": "sil"
+  },
+  "sil.saldo.edit": {
+   "classe": "B",
+   "modulo": "sil"
+  },
+  "sil.saldo.view": {
+   "classe": "A",
+   "modulo": "sil"
+  },
+  "sil.transferencia.edit": {
+   "classe": "B",
+   "modulo": "sil"
+  },
+  "sil.transferencia.executar": {
+   "classe": "B",
+   "modulo": "sil"
+  },
+  "sil.transferencia.view": {
+   "classe": "A",
+   "modulo": "sil"
+  }
+ },
+ "modulos_de_fundacao": [
+  "base",
+  "plataforma"
+ ],
+ "modulos_vendaveis": [
+  "crm",
+  "dms",
+  "drone",
+  "erp_financeiro",
+  "maps",
+  "orcamento",
+  "pdca",
+  "prancheta",
+  "rh",
+  "scm",
+  "sil"
+ ]
+}

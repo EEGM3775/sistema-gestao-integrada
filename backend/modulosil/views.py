@@ -12,6 +12,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from catalogo.models import Item
+from nucleo import autorizacao
 from nucleo.permissions import RequireModule, RequirePermission
 from nucleo.tenancy import TenantScopedViewSetMixin
 
@@ -526,7 +527,7 @@ class AplicadoView(views.APIView):
         Tardio para o SIL não depender do Orçamento em tempo de import (os dois
         módulos são vendidos separados); tolerante porque um tenant que não
         assina `orcamento` simplesmente não tem régua, e isso não é erro."""
-        if "orcamento" not in (getattr(request.user, "iam_modules", None) or []):
+        if not autorizacao.usa_modulo(request.user, "orcamento"):
             return {}
         from moduloorcamento.planilha import orcado_por_etapa
 

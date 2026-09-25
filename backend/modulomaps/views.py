@@ -24,6 +24,7 @@ from rest_framework import filters, permissions, status, views, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from nucleo import autorizacao
 from nucleo.permissions import RequireModule, RequirePermission
 from nucleo.tenancy import TenantScopedAPIViewMixin, TenantScopedViewSetMixin
 
@@ -605,7 +606,7 @@ class MapaDaEmpresaView(TenantScopedAPIViewMixin, views.APIView):
                 },
             },
             "requer_decisao": self._fila(request, locais, tenant_id),
-            "camadas_contratadas": "maps" in (getattr(request.user, "iam_modules", []) or []),
+            "camadas_contratadas": autorizacao.usa_modulo(request.user, "maps"),
         }
         return Response(payload)
 
@@ -679,7 +680,7 @@ class MapaDaEmpresaView(TenantScopedAPIViewMixin, views.APIView):
                 "acao": "refinar",
             })
 
-        if "maps" not in (getattr(request.user, "iam_modules", []) or []):
+        if not autorizacao.usa_modulo(request.user, "maps"):
             return fila
 
         corte = timezone.localdate() - timedelta(days=DIAS_ORTOFOTO_VENCIDA)

@@ -181,7 +181,7 @@ Os *seams de rede* (`visibilidade`, `origem_tenant`, `ref_externa`) **não têm 
 ## Status / pendências
 
 Backend **completo (fatias 1–3)** + agregação de reputação e endpoint `dashboard/`, testado
-(`moduloscm/tests.py`, 34/34 sobre Postgres). **Mudança planejada (Fase 7, SIL.0):** o `Produto` do
+(`testes/backend/moduloscm/tests.py`, 34/34 sobre Postgres). **Mudança planejada (Fase 7, SIL.0):** o `Produto` do
 SCM é **extraído** para o app-fundação [`catalogo`](catalogo.md) (`catalogo.Item`) — o SCM passa a
 referenciá-lo; ver a migração em [catalogo.md](catalogo.md#migração-moduloscmproduto--catalogoitem).
 **Frontend S.1–S.4 reconstruído sobre o protótipo Malha**

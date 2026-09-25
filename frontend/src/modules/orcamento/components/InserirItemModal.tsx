@@ -127,7 +127,14 @@ function LinhaCesta({ codigo, nome, doCatalogo, onTirar }: {
   )
 }
 
-export interface Escolha { itemCatalogoId: number; descricao: string }
+export interface Escolha {
+  itemCatalogoId: number
+  descricao: string
+  /** ORC.10a — a publicação de onde este item saiu, que é de onde o preço da
+   *  linha vem. Nula nas outras duas abas: item do catálogo da empresa e item
+   *  recém-criado não têm publicação de origem, e aí o preço é digitado. */
+  baseId?: number | null
+}
 
 /** As três origens que todo software de orçamento oferece no "inserir item":
  *  a base oficial, o catálogo da própria empresa e a criação de um item novo. */
@@ -227,7 +234,13 @@ export default function InserirItemModal({ onFechar, onInserir, inserindo, baseD
         // do catálogo, então não há pareamento por índice para sair errado.
         const resultado = await api.adotarLote([...marcados.keys()])
         for (const item of resultado.itens ?? []) {
-          escolhas.push({ itemCatalogoId: item.item_id, descricao: item.descricao })
+          // `baseId` é a publicação que está aberta na lista — a mesma de onde
+          // a linha foi marcada. É o que faz o preço vir junto mesmo quando ela
+          // difere da publicação do cabeçalho (ORC.10a).
+          escolhas.push({
+            itemCatalogoId: item.item_id, descricao: item.descricao,
+            baseId: baseId === '' ? null : baseId,
+          })
         }
         // D110 — o que não conferiu não foi adotado, e portanto não vai virar
         // linha. Sair daqui em silêncio faria o orçamentista marcar cinco itens,
@@ -330,31 +343,31 @@ export default function InserirItemModal({ onFechar, onInserir, inserindo, baseD
             </Aviso>
           ) : (
             <>
-              {/* **Duas "bases" diferentes, e só uma estava à vista.** A caixa
-                  ao lado escolhe onde PROCURAR o item; o preço que a linha
-                  recebe vem da publicação DO ORÇAMENTO, definida lá atrás na
-                  criação — onde a primeira opção é "Sem base — preço digitado à
-                  mão". Quem não reparou inseria tudo a custo zero e só
-                  descobria na grade, sem nada na tela ligando uma coisa à
-                  outra. O aviso não muda a regra de preço (a data-base do
-                  orçamento é que manda, e misturar publicações quebraria isso):
-                  ele só para de esconder a consequência. */}
-              {baseDoOrcamento === null ? (
+              {/* **ORC.10a — o preço viaja com a linha.** Antes esta caixa
+                  escolhia só onde PROCURAR: o preço saía da publicação do
+                  cabeçalho, e quem pescasse daqui de outra publicação levava a
+                  linha a custo zero sem que nada na tela ligasse uma coisa à
+                  outra. Agora é a caixa que manda — o que se pesca vem com o
+                  preço, como no Arquimedes, onde a partida traz o preço do
+                  banco de onde foi arrastada. Sobrou um aviso, e ele mudou de
+                  assunto: não é mais "vai entrar zerado", é "a data-base desta
+                  linha não vai ser a que a planilha anuncia", que é um fato
+                  legítimo (e a coluna Data-base da grade já o marca). */}
+              {baseId !== '' && baseDoOrcamento !== null && baseId !== baseDoOrcamento ? (
                 <Aviso tom="amber">
                   <AlertTriangle size={15} style={{ flex: 'none', marginTop: 1 }} />
                   <span>
-                    Este orçamento está <b>sem base de preço</b>, então as linhas vão entrar com
-                    <b> custo zero</b> — escolher a publicação aqui só define onde procurar o item.
-                    Defina a base do orçamento (ou use <b>Reprecificar</b> depois) para os preços virem juntos.
+                    Publicação <b>diferente</b> da do cabeçalho. O preço vem daqui, e a linha entra
+                    com a <b>data-base desta publicação</b> — a grade marca em vermelho quem ficar
+                    para trás da data-base da planilha.
                   </span>
                 </Aviso>
-              ) : baseId !== '' && baseId !== baseDoOrcamento ? (
-                <Aviso tom="amber">
-                  <AlertTriangle size={15} style={{ flex: 'none', marginTop: 1 }} />
+              ) : baseId !== '' && baseDoOrcamento === null ? (
+                <Aviso>
+                  <Database size={15} style={{ flex: 'none', marginTop: 1 }} />
                   <span>
-                    Você está navegando uma publicação <b>diferente</b> da do orçamento. O preço da
-                    linha vem sempre da publicação do orçamento — e fica <b>zero</b> se o código não
-                    existir lá.
+                    Este orçamento não tem publicação no cabeçalho — tudo bem. O preço vem da
+                    publicação escolhida aqui, e cada linha guarda a sua data-base.
                   </span>
                 </Aviso>
               ) : null}

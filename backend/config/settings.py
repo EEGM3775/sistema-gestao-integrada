@@ -788,6 +788,19 @@ SESSION_REVOCATION_FAIL_OPEN = os.getenv('SESSION_REVOCATION_FAIL_OPEN', 'True')
 SESSION_REVOKE_REDIS_URL = os.getenv('SESSION_REVOKE_REDIS_URL', 'redis://localhost:6379/2')
 SESSION_REVOKE_PREFIX = 'sess:revoked_after:'
 
+# --- Autorização pelo PDP (remodelagem da segurança, fases 2 e 3) -------------
+# `nucleo/autorizacao.py` é o único lugar que responde "pode?". Com SPICEDB_URL,
+# cada decisão tomada pelo token é conferida com o PDP em segundo plano (a
+# sombra, fase 2) e a divergência vai para `DivergenciaAutorizacao`. Quem decide
+# por módulo — token ou PDP — é a tabela `ModoAutorizacao` (fase 3), trocada por
+# `manage.py modo_autorizacao`, sem deploy. Sem SPICEDB_URL, tudo pelo token.
+SPICEDB_URL = os.getenv('SPICEDB_URL', '')
+SPICEDB_CHAVE = os.getenv('SPICEDB_CHAVE', '')
+if SPICEDB_URL and not SPICEDB_CHAVE and not DEBUG:
+    raise ImproperlyConfigured('SPICEDB_CHAVE é obrigatória fora de DEBUG.')
+AUTORIZACAO_REDIS_URL = os.getenv('AUTORIZACAO_REDIS_URL', 'redis://localhost:6379/5')
+AUTORIZACAO_SOMBRA = bool(SPICEDB_URL) and os.getenv('AUTORIZACAO_SOMBRA', 'True') == 'True'
+
 
 # S7 — sem fallback público em produção: `_config` exige a variável quando
 # DEBUG=False (o valor de dev nunca vale como segredo real). Ainda usado como

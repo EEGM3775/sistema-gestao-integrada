@@ -34,6 +34,10 @@ services:
   postgres:
     image: postgis/postgis:16-3.4
     container_name: ${SGI_PREFIX:-sgi}-postgres
+    # `track_commit_timestamp` é exigência do SpiceDB (o PDP, fase 2): sem ela,
+    # ele desliga o Watch — e sem Watch não há invalidação por evento (§10.8).
+    # Custa ~10 bytes por transação e exige reiniciar o Postgres na primeira vez.
+    command: ["postgres", "-c", "track_commit_timestamp=on"]
     environment:
       POSTGRES_USER: ${POSTGRES_SUPERUSER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_SUPbackendASSWORD:-postgres}
@@ -72,6 +76,81 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks: [sgi]
+    restart: unless-stopped
+
+  # ---------- SpiceDB — o PDP da remodelagem da segurança (fases 2 e 3) ----------
+  # docs/acesso-e-permissoes.md §10.4: responde "o que você pode fazer?". Não
+  # autentica ninguém — quem sabe "quem é você" continua sendo a IAM, que é
+  # também a única a escrever relação aqui (`identity/pdp.py`).
+  #
+  # Guarda os dados no MESMO cluster Postgres, num banco próprio (`spicedb_db`),
+  # com role próprio. Três serviços, em ordem: cria o banco (uma volta), migra o
+  # datastore (uma volta) e serve. A API HTTP (8443) é a que a IAM e o backend
+  # usam; o gRPC (50051) fica para o `zed` de quem opera.
+  spicedb-banco:
+    image: postgis/postgis:16-3.4
+    profiles: ["full"]
+    entrypoint: ["sh", "/criar_banco.sh"]
+    environment:
+      POSTGRES_SUPERUSER: ${POSTGRES_SUPERUSER:-postgres}
+      # O nome da variável tem um erro antigo de busca-e-troca ("ERP" → "backend")
+      # que está igual em todo env-file, inclusive o de staging com o segredo
+      # real. Usa-se o mesmo nome até a troca ser feita em todos de uma vez.
+      POSTGRES_SUPERUSER_PASSWORD: ${POSTGRES_SUPbackendASSWORD:-postgres}
+      SPICEDB_DB: ${SPICEDB_DB:-spicedb_db}
+      SPICEDB_DB_USER: ${SPICEDB_DB_USER:-spicedb_app}
+      SPICEDB_DB_PASSWORD: ${SPICEDB_DB_PASSWORD:-spicedb_app_senha_dev}
+    volumes:
+      - ../../infra/spicedb/criar_banco.sh:/criar_banco.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [sgi]
+    restart: "no"
+
+  spicedb-migrar:
+    image: authzed/spicedb:v1.45.1
+    profiles: ["full"]
+    command:
+      - datastore
+      - migrate
+      - head
+      - --datastore-engine=postgres
+      - --datastore-conn-uri=postgres://${SPICEDB_DB_USER:-spicedb_app}:${SPICEDB_DB_PASSWORD:-spicedb_app_senha_dev}@postgres:5432/${SPICEDB_DB:-spicedb_db}?sslmode=${DB_SSLMODE:-disable}
+    depends_on:
+      spicedb-banco:
+        condition: service_completed_successfully
+    networks: [sgi]
+    restart: "no"
+
+  spicedb:
+    image: authzed/spicedb:v1.45.1
+    container_name: ${SGI_PREFIX:-sgi}-spicedb
+    profiles: ["full"]
+    command:
+      - serve
+      - --grpc-preshared-key=${SPICEDB_CHAVE:-spicedb-chave-dev}
+      # Sem telemetria: por padrão o SpiceDB manda métricas de uso para a
+      # authzed.com a cada hora, e consulta o GitHub atrás de versão nova a cada
+      # subida. Nada da autorização sai da plataforma.
+      - --telemetry-endpoint=
+      - --skip-release-check
+      - --http-enabled
+      - --http-addr=:8443
+      - --datastore-engine=postgres
+      - --datastore-conn-uri=postgres://${SPICEDB_DB_USER:-spicedb_app}:${SPICEDB_DB_PASSWORD:-spicedb_app_senha_dev}@postgres:5432/${SPICEDB_DB:-spicedb_db}?sslmode=${DB_SSLMODE:-disable}
+    # Sem porta publicada: só a IAM, o backend e o invalidador falam com ele,
+    # pela rede interna. Quem opera entra por `docker exec` ou pelo `zed`.
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=localhost:50051"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      spicedb-migrar:
+        condition: service_completed_successfully
     networks: [sgi]
     restart: unless-stopped
 
@@ -117,6 +196,9 @@ services:
       # a requisição. Os dois tetos sobem juntos ou o 431 só troca de porta.
       GUNICORN_CMD_ARGS: --limit-request-field_size 32768 --limit-request-line 8190
       IAM_SECRET_KEY: ${IAM_SECRET_KEY:-django-insecure-iam-dev}
+      # Cifra do segredo TOTP de cada pessoa (remodelagem, fase 1). Vazio em dev:
+      # a IAM deriva uma do IAM_SECRET_KEY. Fora de DEBUG é obrigatória.
+      IAM_SEGUNDO_FATOR_CHAVE: ${IAM_SEGUNDO_FATOR_CHAVE:-}
       IAM_DEBUG: ${IAM_DEBUG:-True}
       IAM_ALLOWED_HOSTS: ${IAM_ALLOWED_HOSTS:-localhost,127.0.0.1,iam,gateway}
       JWT_SECRET: ${JWT_SECRET}
@@ -154,6 +236,12 @@ services:
       # Fase 5: RS256. A IAM detém a chave privada (assina); a pública vira JWKS.
       JWT_PRIVATE_KEY_PATH: /keys/jwt_private.pem
       JWT_PUBLIC_KEY_PATH: /keys/jwt_public.pem
+      # Remodelagem, fase 2: a IAM grava no PDP, na mesma operação, cada troca de
+      # papel, acesso ou assinatura (`identity/pdp.py`). Sem SPICEDB_URL, não grava.
+      SPICEDB_URL: ${SPICEDB_URL:-http://spicedb:8443}
+      SPICEDB_CHAVE: ${SPICEDB_CHAVE:-spicedb-chave-dev}
+      # DB 5, da autorização: ZedToken e versão por tenant (funcoesautorizacao/chaves.py).
+      AUTORIZACAO_REDIS_URL: ${AUTORIZACAO_REDIS_URL:-redis://redis:6379/5}
     volumes:
       - ../../infra/keys:/keys:ro
     depends_on:
@@ -161,6 +249,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      # SEM `spicedb` aqui, de propósito: o PDP fora não pode derrubar o login.
+      # A escrita que falhar fica pendente e o `iam-pdp` a refaz.
     healthcheck:
       # Fase 10.1: readiness real (banco + Redis), não só "a porta responde".
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/readyz')"]
@@ -264,6 +354,14 @@ services:
       # Errado, o teto por IP fica contornável por X-Forwarded-For falso — ver
       # docs/arquitetura/rate-limiting.md §2.2.
       NUM_PROXIES: ${NUM_PROXIES:-1}
+      # Remodelagem, fases 2 e 3 (nucleo/autorizacao.py). Com SPICEDB_URL, toda
+      # decisão de acesso é comparada com o PDP em segundo plano (a sombra) e a
+      # divergência vai para `nucleo.DivergenciaAutorizacao`. Quem DECIDE continua
+      # sendo o token, módulo a módulo, até `manage.py modo_autorizacao <modulo> pdp`.
+      SPICEDB_URL: ${SPICEDB_URL:-http://spicedb:8443}
+      SPICEDB_CHAVE: ${SPICEDB_CHAVE:-spicedb-chave-dev}
+      AUTORIZACAO_REDIS_URL: ${AUTORIZACAO_REDIS_URL:-redis://redis:6379/5}
+      AUTORIZACAO_SOMBRA: ${AUTORIZACAO_SOMBRA:-True}
     volumes:
       - ../../infra/keys:/keys:ro
       # Mídia compartilhada: o worker grava (PDF/XML de NF baixados da NFE.io) e o
@@ -451,7 +549,7 @@ services:
       # NÃO é declarado aqui de propósito: o valor é do dono e vive em
       # `payment/planos.py`, de onde o `settings.py` já o lê. Declará-lo neste
       # arquivo criava dois defeitos silenciosos — o número voltava a existir em
-      # arquivo de deploy, e `nucleo/test_tetos_no_payment.py` pula a asserção
+      # arquivo de deploy, e `testes/backend/nucleo/test_tetos_no_payment.py` pula a asserção
       # quando a env existe, então o container ficaria com o valor antigo depois
       # de uma mudança em `payment/` sem nenhum teste reclamar. Para experimentar
       # um teto diferente, exporte a env no ambiente; o default correto vem do
@@ -568,6 +666,91 @@ services:
     networks: [sgi]
     restart: unless-stopped
 
+  # ---------- Remodelagem, fases 2 e 3: os dois processos do PDP ----------
+  # `iam-pdp` — a reconciliação contínua (IAM → SpiceDB). A escrita normal
+  # acontece na própria requisição que troca o papel; este processo existe para
+  # o que ela não cobre: grava o schema ao subir, refaz o tenant cuja escrita
+  # falhou (PDP fora na hora) e reconcilia tudo a cada
+  # `AUTORIZACAO_SINCRONIA_PERIODO_S` (payment/planos.py §5.5p) — é o que faz
+  # uma assinatura vencer no PDP sem ninguém clicar em nada.
+  iam-pdp:
+    build:
+      context: ../..
+      dockerfile: iam/Dockerfile
+    container_name: ${SGI_PREFIX:-sgi}-iam-pdp
+    profiles: ["full"]
+    command: ["python", "manage.py", "sincronizar_pdp", "--continuo"]
+    environment:
+      IAM_SECRET_KEY: ${IAM_SECRET_KEY:-django-insecure-iam-dev}
+      IAM_SEGUNDO_FATOR_CHAVE: ${IAM_SEGUNDO_FATOR_CHAVE:-}
+      IAM_DEBUG: ${IAM_DEBUG:-True}
+      IAM_ALLOWED_HOSTS: ${IAM_ALLOWED_HOSTS:-localhost,127.0.0.1,iam,gateway}
+      JWT_SECRET: ${JWT_SECRET}
+      IAM_POSTGRES_DB: ${IAM_POSTGRES_DB:-iam_db}
+      IAM_POSTGRES_USER: ${IAM_POSTGRES_USER:-iam_app}
+      IAM_POSTGRES_PASSWORD: ${IAM_POSTGRES_PASSWORD:-iam_app_senha_dev}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_SSLMODE: ${DB_SSLMODE:-disable}
+      DB_SSLROOTCERT: ${DB_SSLROOTCERT:-}
+      SESSION_REVOKE_REDIS_URL: ${SESSION_REVOKE_REDIS_URL:-redis://redis:6379/2}
+      IAM_CACHE_REDIS_URL: ${IAM_CACHE_REDIS_URL:-redis://redis:6379/3}
+      JWT_PRIVATE_KEY_PATH: /keys/jwt_private.pem
+      JWT_PUBLIC_KEY_PATH: /keys/jwt_public.pem
+      SPICEDB_URL: ${SPICEDB_URL:-http://spicedb:8443}
+      SPICEDB_CHAVE: ${SPICEDB_CHAVE:-spicedb-chave-dev}
+      AUTORIZACAO_REDIS_URL: ${AUTORIZACAO_REDIS_URL:-redis://redis:6379/5}
+    volumes:
+      - ../../infra/keys:/keys:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      spicedb:
+        condition: service_healthy
+    networks: [sgi]
+    restart: unless-stopped
+
+  # `pdp-invalidador` — lê o Watch do SpiceDB e sobe a versão da pessoa (ou do
+  # tenant) afetada no Redis; a decisão cacheada deixa de ser lida na hora
+  # (§10.8). É o que faz a revogação valer em segundos com cache de um minuto.
+  pdp-invalidador:
+    build:
+      context: ../..
+      dockerfile: backend/Dockerfile
+    container_name: ${SGI_PREFIX:-sgi}-pdp-invalidador
+    profiles: ["full"]
+    command: ["python", "manage.py", "vigiar_pdp"]
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-django-insecure-erp-dev}
+      DEBUG: ${DEBUG:-True}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1,erp,gateway}
+      JWT_SECRET: ${JWT_SECRET}
+      POSTGRES_DB: ${POSTGRES_DB:-erp_db}
+      POSTGRES_USER: ${POSTGRES_USER:-erp_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-erp_app_senha_dev}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_SSLMODE: ${DB_SSLMODE:-disable}
+      DB_SSLROOTCERT: ${DB_SSLROOTCERT:-}
+      REDIS_URL: redis://redis:6379/0
+      JWT_PUBLIC_KEY_PATH: /keys/jwt_public.pem
+      SPICEDB_URL: ${SPICEDB_URL:-http://spicedb:8443}
+      SPICEDB_CHAVE: ${SPICEDB_CHAVE:-spicedb-chave-dev}
+      AUTORIZACAO_REDIS_URL: ${AUTORIZACAO_REDIS_URL:-redis://redis:6379/5}
+    volumes:
+      - ../../infra/keys:/keys:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      spicedb:
+        condition: service_healthy
+    networks: [sgi]
+    restart: unless-stopped
+
   # ---------- Shell React (app UI) ----------
   react:
     build: ../../frontend
@@ -644,6 +827,11 @@ services:
       JWT_PUBLIC_KEY_PATH: /keys/jwt_public.pem
       # Fase 10.6.5: revogação imediata de sessão (mesmo Redis/DB2/chave do backend).
       SESSION_REVOKE_REDIS_URL: ${SESSION_REVOKE_REDIS_URL:-redis://redis:6379/2}
+      # D205: o drone pergunta "usa o módulo?" ao PDP (security/AutorizacaoService),
+      # com o mesmo cache (Redis DB 5) e as mesmas chaves do backend.
+      SPICEDB_URL: ${SPICEDB_URL:-http://spicedb:8443}
+      SPICEDB_CHAVE: ${SPICEDB_CHAVE:-spicedb-chave-dev}
+      AUTORIZACAO_REDIS_URL: ${AUTORIZACAO_REDIS_URL:-redis://redis:6379/5}
     depends_on:
       funcoesodm-db:
         condition: service_healthy

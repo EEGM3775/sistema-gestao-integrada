@@ -46,5 +46,16 @@ export function useUsuarios() {
     })
   }
 
-  return { usuarios, perfis, loading, error, setPerfisDoUsuario, resetSenha, refetch: fetchAll }
+  // Para quem perdeu o celular e os códigos de recuperação: apaga o segundo
+  // fator do usuário e encerra as sessões dele. O backend registra quem fez e
+  // avisa o usuário por e-mail.
+  const redefinirSegundoFator = async (id: string) => {
+    await iamAdminClient.post(`/usuarios/${id}/redefinir-segundo-fator/`, {})
+    setUsuarios(prev => prev.map(u => (u.id === id ? { ...u, segundo_fator_ativo: false } : u)))
+  }
+
+  return {
+    usuarios, perfis, loading, error, setPerfisDoUsuario, resetSenha, redefinirSegundoFator,
+    refetch: fetchAll,
+  }
 }

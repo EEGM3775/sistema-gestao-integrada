@@ -10,6 +10,125 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D208 — um rollback prendia o tenant na fila de escrita do PDP · ✅ corrigido 25/09/2026
+
+Achado pela suíte da IAM logo que o contêiner passou a ter `SPICEDB_URL`. `pdp.agendar` garantia "uma
+escrita por tenant por transação" com um conjunto por thread, esvaziado pelo próprio callback do
+`on_commit`. **Um rollback descarta o callback sem rodá-lo**: o tenant ficava no conjunto para
+sempre, e toda troca de papel seguinte daquele tenant, naquela thread do gunicorn, deixava de chegar
+ao PDP até a volta periódica (5 min). Em uso real, bastaria uma requisição falhar no meio.
+
+**Correção:** a deduplicação deixou de ter estado próprio — olha os callbacks que a transação atual
+já registrou (`connection.run_on_commit`), e o rollback leva tudo junto. Teste de regressão:
+`test_rollback_nao_deixa_o_tenant_preso`.
+
+---
+### D207 — a classe A do cache reaprendia a resposta de antes da revogação · ✅ corrigido 25/09/2026
+
+Achado pela E2E da virada (`seg2_pdp_sombra_test.py`, 17/19 na primeira volta): com o PDCA decidido
+pelo PDP, tirar o papel do campo não fechava o cronograma em 20 s — e devolver o papel também não o
+reabria. Cada troca só aparecia depois da troca seguinte.
+
+A planta (§10.8) dava à classe A a consistência **mais rápida** do SpiceDB, que pode responder com o
+estado de alguns segundos atrás. A revogação sobe a versão e aposenta a decisão cacheada — e a
+**primeira pergunta nova cai exatamente nessa janela**: recebe a resposta de antes da troca e a guarda
+por 60 s sob a chave nova. A invalidação por evento ficava anulada justamente para a classe que mais
+depende dela.
+
+**Correção:** A e B pedem "pelo menos tão nova quanto a última mudança do tenant" (o ZedToken que a
+IAM e o invalidador gravam); sem mudança conhecida, a rápida vale, porque não há o que esperar. A
+diferença entre A e B fica no tempo de cache, não na consistência. Os tempos e a lista de atos
+críticos — o que o dono fixou — não mudaram. Planta atualizada (§10.8); teste
+`test_classe_A_tambem_espera_a_ultima_mudanca`; E2E 19/19, com o acesso caindo na requisição seguinte.
+
+---
+### D203 — a data no futuro da ocorrência era recusada pelo serviço e aceita pela porta · ✅ corrigido 24/09/2026
+
+Achado ao montar o formulário de ocorrência da F.5, conferindo onde mora a única trava do registro.
+`registrar_ocorrencia` recusa ocorrência com data no futuro — "acidente que ainda não aconteceu é
+erro de digitação, e ele contaminaria a série do indicador" —, e há teste cobrando isso. Só que o
+`OcorrenciaViewSet.perform_create` gravava direto pelo serializer, sem chamar o serviço: **a regra
+valia na bancada e no teste do serviço, e não valia no HTTP**, que é por onde a tela registra. Um
+acidente datado de amanhã entrava pela API sem nenhuma recusa.
+
+É o cego que o README de `testes/e2e/` descreve em "teste de serviço não substitui teste de porta":
+o teste existente montava a ocorrência pelo serviço e nunca atravessava o viewset.
+
+**Correção:** o `perform_create` passou a chamar `services.registrar_ocorrencia` e devolve o que ele
+criou. Teste novo pela porta (`test_a_ocorrencia_no_futuro_e_recusada_PELA_PORTA`) e no E2E pelo
+gateway; a tela também limita o campo de data e hora ao instante atual.
+
+---
+### D202 — a grade da medição voltou a ter botão de salvar, e com ele o D137 inteiro · ✅ corrigido 23/09/2026
+
+Achado ao portar a régua dos dois roteiros de navegador que a F.4 revive: o cabeçalho do
+`pdca3_grade_browser_test.py` cita o D137 pelo nome, e a grade que eu tinha acabado de escrever
+tinha exatamente o botão que aquela correção removeu.
+
+**O defeito é o mesmo de 15/09/2026, reconstruído do zero.** "Gravar a grade" e "Enviar para
+atesto" como botões independentes, e submeter manda só o id: o servidor valida e congela **o que
+está gravado**, não o que está na tela. Quem digitasse duzentas linhas e clicasse direto em enviar
+veria o documento subir a escada com os números antigos — sem erro, sem aviso, e com um título a
+pagar no fim.
+
+**Por que reapareceu.** O frontend do módulo foi zerado em 20/09 e o
+[autosave.ts](../frontend/src/modules/pdca/autosave.ts) foi apagado junto com as dez páginas. A
+correção de um defeito morava num arquivo, o arquivo foi embora com o redesenho, e nada na planta
+guardava a lição — o histórico guardava, e foi ele que a devolveu.
+
+**Correção:** o módulo voltou do histórico do git, inteiro, e a grade passou a usá-lo. O botão de
+salvar sumiu de novo; no lugar dele há o selo permanente (`sem alterações / não salvo / salvando… /
+salvo às 14:32 / falhou`), o aviso do navegador ao fechar a aba com gravação pendente, e a ponte que
+faltava: **enviar grava antes de enviar**, e desiste do envio se a gravação falhar, dizendo que o
+que iria para atesto não é o que está na tela.
+
+**A trava do saldo voltou junto**, e é a outra metade da régua daquele roteiro: passar do saldo
+acende o aviso **na própria linha**, na digitação, com o saldo do servidor escrito ao lado. O
+servidor recusa o excesso de qualquer jeito — é ele que manda —, mas descobrir isso só na submissão
+faz o gestor conferir uma grade inteira de números impossíveis.
+
+Provado no navegador em `pdca_medicao_browser_test.py` §11c: digitar acende a trava, o selo vai a
+"não salvo", três segundos depois diz "salvo às", e o roteiro devolve o número original ao boletim.
+
+---
+### D201 — o endereço carregava o boletim e a tela abria noutra vista · ✅ corrigido 23/09/2026
+
+Achado dirigindo a tela nova: `/app/pdca/o/9/medicao?contrato=61&boletim=72` abria no *Apurar*, e o
+boletim pedido ficava invisível.
+
+A vista era `useState` na memória do componente, e o endereço não tinha como dizer qual delas
+mostrar. É a promessa da casca quebrada no primeiro posto que a usou: *todo link é colável e a aba
+nova cai onde estava* — o endereço dizia uma coisa e a tela mostrava outra, que é a forma de falha
+que não parece falha (a pessoa conclui que o boletim não existe).
+
+**Correção:** a vista virou `?v=` no endereço, e quem não a escreve cai na regra: com boletim no
+endereço abre em *Boletins*, sem ele abre em *Apurar*, que é a pergunta do mês. De quebra, cada
+vista do contrato passou a ser colável.
+
+**E um segundo defeito da mesma família, no mesmo arquivo:** trocar de contrato e escolher a vista
+eram duas escritas seguidas no endereço, as duas partindo do `params` do mesmo render — a segunda
+apagava o contrato que a primeira acabara de pôr. Virou uma escrita só.
+
+---
+### D200 — `?obra=abc` derrubava cinco leituras com 500 e página de depuração · ✅ corrigido 23/09/2026
+
+Achado pelo E2E do posto da medição, exercitando a entrada ruim que o D187 ensinou a cobrar.
+
+`_minha_obra` fazia `Obra.objects.filter(pk=obra_id)` com o texto cru da query string: qualquer
+coisa que não fosse número estourava um `ValueError` no driver e virava **500**. Em DEBUG, a página
+de depuração do Django inteira dentro da tela — exatamente o sintoma do D187, *"ninguém sabe o que é
+isso"*.
+
+Não é defeito da fatia nova: `_minha_obra` serve as cinco leituras que atravessam
+(`hoje/`, `medicao/`, `busca/`, `minhas-frentes/` e a programação), e todas herdavam a falha. A
+carteira escapava porque a lista de obras já tinha conversão própria — e é por isso que o teste do
+cockpit registrava "lista de obras com letra → 400" e passava, enquanto a obra única, que ninguém
+tinha exercitado, respondia 500.
+
+**Correção:** conversão explícita com recusa em português (*"Informe o número da obra."*), e o par
+de testes que cobra as duas portas em `ApiDoPostoDaMedicaoTests`.
+
+---
 ### D197 — a tela de bases escolhia por mural de cartõezinhos, e os preços nasciam meia tela abaixo · ✅ corrigido 22/09/2026
 
 Achado pelo dono: *"os bancos de orçamentos são pequenos blocos na tela, isso atrapalha procurar; e
@@ -43,7 +162,7 @@ Arquivos: [BasesPage.tsx](../frontend/src/modules/orcamento/pages/BasesPage.tsx)
 [ui.tsx](../frontend/src/modules/orcamento/ui.tsx).
 
 ---
-### D195 — a EMBASA entrou como fonte e nenhum banco dela entrou · ✅ corrigido 22/09/2026
+### D199 — a EMBASA entrou como fonte e nenhum banco dela entrou · ✅ corrigido 22/09/2026
 
 Achado pelo dono, e o enunciado dele é o resumo: *"os bancos da EMBASA não entraram"*. A ORC.8b
 fechou no mesmo dia e fechou de verdade — leitor de PDF, `Fonte.EMBASA`, `BaseReferencial.variante`,
@@ -85,7 +204,7 @@ leitor e declarar a fonte pronta deixa um estado que nenhum teste pega — a su�
 prateleira vazia não é falha de teste, é falha de quem leu o roadmap.
 
 ---
-### D194 — dois E2E do PDCA reprovavam pelo calendário, não pelo código · ✅ corrigido 21/09/2026
+### D198 — dois E2E do PDCA reprovavam pelo calendário, não pelo código · ✅ corrigido 21/09/2026
 
 Achado ao verificar a fatia do frontend da semana, rodando o roteiro que valida o backend em que ela
 se apoia. `pdca5_programacao_test.py` falhava com `TypeError: float() argument must be a string or a
@@ -1612,7 +1731,7 @@ propriedade do kit em vez de lembrança de quem escreve o próximo formulário.
 quem escreve E2E: `"80.000,00" in corpo` dá **verde sobre `80.000.000,00`** (substring), e
 `toLocaleString('pt-BR')` separa o `R$` do número com **espaço não-quebrável**, então
 `"R$ 80.000,00" in corpo` falha sobre uma tela que mostra exatamente isso. Os dois viraram helper e
-asserção exata em [pdca3_formulario_browser_test.py](../testes/e2e/pdca3_formulario_browser_test.py),
+asserção exata em `pdca3_formulario_browser_test.py`,
 que cobre os seis achados em janela de 620 px — a altura em que o defeito nº 4 aparece.
 
 ---
@@ -7241,3 +7360,41 @@ verdade — antes eles rodavam contra um lote em ERRO e mediam zero.
 | F5  | Código morto/duplicado no frontend (duas gerações de páginas, dois`ObraDetailPage`) → remover a geração antiga *(v01-F4)*. **Inventário confirmado 25/07/2026** (nada disto é alcançável a partir de [App.tsx](../frontend/src/App.tsx)): (a) **ilha de obras** — `modules/obras/ObraDetailPage.tsx` e `ObrasListPage.tsx` na raiz do módulo (duplicatas das versões em `pages/`, que são as roteadas) + os `.module.css` de ambas; elas são as **únicas** consumidoras de todo `components/obra/**` (blueprint · documentslist · finances · ganttchart · interactivemap · kpidashboard · obratimeline · storage, com CSS) e de `hooks/useObraData.ts` — ~18 arquivos que só se referenciam entre si; (b) **avulsos** — `pages/AppStubPage.tsx`, `pages/Clientes.tsx`, `pages/Login.tsx` (a viva é `LoginPage.tsx`), `components/layout/MainLayout.tsx` + `Sidebar.tsx` (+CSS, substituídos pelo `AppShell`), `components/clientes/ClienteForm.tsx` (a viva é `modules/clientes/components/ClienteForm.tsx`), `modules/empreendimentos/pages/EmpreendimentosPage.tsx`, `modules/drone/pages/MapeamentoDronePage.tsx`. Sintoma de que a ilha está mesmo morta: `GanttChart.tsx` importa **`frappe-gantt`, que não consta do `package.json`** — só não quebra porque o `types/frappe-gantt.d.ts` satisfaz o `tsc` e o Vite nunca chega a resolver o módulo (nada o alcança). Esse `.d.ts` sai junto. *(Este `F5` é o da tabela — não confundir com o `### F5` da seção Altas, do `.gitignore`; colisão de IDs herdada dos dois laudos.)* **Corrigido 26/07/2026:** os 24 arquivos do inventário removidos (ilha de obras + avulsos + o `types/frappe-gantt.d.ts`). Antes de apagar, a inalcançabilidade foi **provada** por um grafo de imports a partir de `main.tsx` — resolvendo o alias `@`→`src/` do `vite.config.ts`, sem o qual quase todo o código vivo aparece como morto — que apontou **50 dos 313 arquivos** de `src/` fora do grafo e confirmou o inventário item a item. Efeito colateral que era o objetivo: **11 dos 45 erros de tipo do D27** morreram junto. `npm run build` (tsc+vite) limpo e imagem `react` rebuildada e servindo. **Sobraram fora do inventário** (inalcançáveis pelo grafo, NÃO removidos por não terem sido vetados no laudo): `App.css`, `assets/react.svg`, `components/common/{Button,Input,Modal,Table}`, `hooks/useFileUpload.ts`+`utils/fileUpload.ts`, `modules/clientes/hooks/useClientes.ts`, `modules/crm/{api/endpoints/interactions.ts,hooks/useInteractions.ts}` e — este merece decisão, não deleção — `modules/erp/{api/endpoints/lotesRemessa.ts,hooks/useLotesRemessa.ts}`, que é **feature pronta e nunca ligada na UI** (o backend do lote de remessa existe e foi corrigido no L9). | ✅ corrigido 26/07/2026 |
 | C1  | **Calendário Fatia C (14/07):** lembretes de **série recorrente** só definidos na criação — editar "só esta"/"série" não os altera. **Corrigido 14/07/2026:** `update-recurrence` sincroniza `reminders` nos três escopos — `all` substitui os do mestre (valem p/ todas as ocorrências virtuais), `future` abastece o novo mestre e o truncado conserva os seus, `this` no override; ausência de `reminders` no payload **herda os do mestre** (novo `_reminders_for`), não perde aviso. Front parou de fazer `delete payload.reminders`. Testes `CalendarRecurrenceTests` (4 novos, suíte 25/25) + E2E vivo pelo gateway (all/this/future). Canal **WhatsApp** segue adiado (hoje in-app + e-mail).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | ✅ corrigido 14/07/2026 |
 | C2  | **Calendário Fatia C (14/07):** suíte DB-backed + E2E/typecheck do sino pendentes na entrega (Postgres/Docker fora). **Validado 14/07/2026:** suíte **27/27** sobre Postgres (role `erp_app`, RLS real) — `modulocalendar` (reminders CRUD + `LembreteDispatchTests`) + `nucleo.test_notificacoes`; **typecheck** `tsc -b` limpo nos arquivos da Fatia C (os 33 erros restantes são do shell legado, fora da fatia); **E2E vivo pelo gateway** — evento com lembrete `[0]` → beat@60s + worker `despachar_lembretes` → `Notificacao` in-app (badge, texto, `marcar-todas-lidas`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | ✅ validado 14/07/2026  |
+
+### D186 — `bases-resumo/` lia a classe do insumo **sem a fonte**, e acusava ilegível o que o sistema sabe ler · ✅ corrigido 23/09/2026
+
+Achado em 23/09/2026 ao rodar o [orc6_orcamento_test.py](../testes/e2e/orc6_orcamento_test.py)
+depois da ORC.10: **58/59**, com um vermelho em *"nenhuma classe ilegível nas publicações do seed"*
+listando `['EQ.AQ.', 'EQ.LOC', 'M.O.', 'MAT.', 'SER.MO', 'VERBA']` — exatamente as seis siglas que
+[`dados/classes/embasa.csv`](../backend/moduloorcamento/dados/classes/embasa.csv) traduz desde a
+ORC.9c. O de-para estava certo: chamado com a fonte, `classificacao_desconhecida("MAT.", "embasa")`
+responde `False` para todas as seis.
+
+Quem perguntava errado era o resumo. O `GROUP BY` de `BaseReferencialResumoView` trazia
+`("base_id", "grupo")` e chamava `services.classificacao_desconhecida(grupo)` — **sem o segundo
+argumento**. Sem fonte, só o `PREFIXOS_DE_CLASSE` embutido responde, e ele conhece o vocabulário por
+extenso da SINAPI (`materiais`, `mao de obra`), não a sigla com ponto da EMBASA. Toda publicação de
+vocabulário próprio com de-para declarado acendia vermelho.
+
+**É a mentira simétrica da que a ORC.9c fechou.** Lá o indicador acendia **verde** sobre base
+ilegível ("a coluna veio preenchida" ≠ "sabemos ler"); aqui acende **vermelho** sobre base
+inteiramente compreendida. As duas custam a mesma coisa — a confiança no indicador —, e a segunda
+custa mais um pouco, porque manda o superuser procurar um de-para que já existe.
+
+O conserto é o `base__fonte` entrando no `values()` e sendo repassado. Dois testes prendem os dois
+lados em [`test_embasa.py`](../backend/moduloorcamento/test_embasa.py): a sigla da EMBASA não volta
+como ilegível, e uma classe de fato inventada (`XPTO.INVENTADO`) **continua** voltando — o conserto
+não podia transformar o indicador num sim para tudo.
+
+### D187 — O E2E da ORC.8 assumia que a SINAPI era a única fonte cadastrada · ✅ corrigido 23/09/2026
+
+Achado na mesma corrida: [orc8_carga_base_test.py](../testes/e2e/orc8_carga_base_test.py) em
+**27/28**, falhando em *"a fonte fica cadastrada"*.
+
+O roteiro cadastra a `FonteOficial` da SINAPI e, quando ela já existe de uma corrida anterior (400
+por unicidade), relê a lista e pega `[0]`. Isso funcionou enquanto a SINAPI era a única fonte do
+banco. A **ORC.8b cadastrou a EMBASA**, que vem antes na ordenação, e a asserção seguinte passou a
+comparar `fonte == "sinapi"` contra a linha da EMBASA.
+
+Defeito do roteiro, não do produto — e por isso mesmo é o pior tipo de vermelho: um que ensina a
+suíte a ser ignorada. O fallback passou a procurar a SINAPI pelo nome em vez de confiar na posição.

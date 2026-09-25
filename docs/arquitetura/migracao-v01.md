@@ -46,7 +46,7 @@
 `tenant_id`, sem mapeamento para a IAM, com `unique` globais) — encaixá-lo no modelo multi-tenant
 seria um projeto à parte, não um "import".
 
-- Tenants e usuários são (re)criados **na IAM** ([iam/seed_demo.py](../../iam/seed_demo.py) é a referência).
+- Tenants e usuários são (re)criados **na IAM** ([testes/seeds/seed_demo.py](../../testes/seeds/seed_demo.py) é a referência).
 - Dado de produção da v01 é **recadastrado** ou **abandonado**; não há sincronização.
 - Se um dia a migração de dados for necessária, é trabalho dedicado (atribuir `tenant_id`, mapear
   usuários → IAM, resolver uniques) — registrar como item de roadmap se/quando surgir.
@@ -140,9 +140,9 @@ pipeline própria, Autodesk como um motor entre outros). Adaptações obrigatór
    `RequireModule` (e `RequireRole` se houver dado sensível); **remover** auth manual/token
    hardcoded/login da v01.
 3. **IAM:** registrar o `Modulo` + `AssinaturaTenant` + `AcessoUsuarioModulo`
-   (referência: [iam/seed_demo.py](../../iam/seed_demo.py)).
+   (referência: [testes/seeds/seed_demo.py](../../testes/seeds/seed_demo.py)).
 4. **Verificar:** teste de isolamento (espelhar
-   [test_tenant_isolation.py](../../backend/nucleo/test_tenant_isolation.py)) e de entitlement
+   [test_tenant_isolation.py](../../testes/backend/nucleo/test_tenant_isolation.py)) e de entitlement
    (sem módulo → 403; com → 200, espelhar `phase6_rbac_test.py`).
 
 ---

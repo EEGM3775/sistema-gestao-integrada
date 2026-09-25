@@ -1,11 +1,20 @@
 import apiClient from '@/api/apiClient'
 import type { Obra } from '@/types'
 import type {
-  ApontamentoAvanco, Atividade, CalendarioTrabalho, CandidatoDaSemana,
-  CausaNaoCumprimento, Cronograma, ItemProgramacao, JulgamentoDeItem, LocalObra,
-  PayloadBalanco, PayloadBusca, PayloadCarteira, PayloadGantt, PayloadHoje,
-  PayloadMinhasFrentes, ProgramacaoSemanal, RankingDeCausas, Restricao,
-  ResultadoDoArrasto, ResumoDoPpc, StatusModulo,
+  AditivoContrato, AnexoOcorrencia, ApontamentoAvanco, Atividade,
+  CalendarioTrabalho, CandidatoDaSemana, CausaNaoCumprimento,
+  ClassificacaoOcorrencia, ConclusaoDaVerificacao, ContextoDeMedicao,
+  ContratoObra, Cronograma, DialogoSeguranca, DominioVerificacao, EpiVencido,
+  EspecieAnexo, GravidadeNc, ItemContrato, ItemModeloVerificacao,
+  ItemProgramacao, ItemVerificacao, JulgamentoDeItem, LiberacaoRetencao,
+  LocalObra, Medicao, ModeloVerificacao, NaoConformidade, Ocorrencia,
+  OcorrenciaResumo, PayloadBalanco, PayloadBusca, PayloadCarteira,
+  PayloadGantt, PayloadHoje, PayloadMinhasFrentes, PayloadPostoMedicao,
+  PayloadPostoQualidade, PayloadPostoSeguranca, PeriodoSugerido, PlanoAcao,
+  ProgramacaoSemanal, PropostaDeMedicao, RankingDeCausas, Restricao,
+  ResultadoDoArrasto, ResultadoItem, ResumoDoPpc, RetencaoDoContrato,
+  SaldoDoContrato, StatusModulo, TipoCat, TipoOcorrencia, TipoPlanoAcao,
+  Verificacao,
 } from '../types'
 
 type Params = Record<string, unknown>
@@ -339,5 +348,554 @@ export const calendarios = {
       params: { para_obra: obraId },
     })
     return lista<CalendarioTrabalho>(data)
+  },
+}
+
+/* --------------------------------------------------------------------------
+ * MEDIÇÃO — o contrato, o boletim e o dinheiro (F.4)
+ * ------------------------------------------------------------------------ */
+
+/** B3 — a carteira de contratos **com saldo** e a fila do dinheiro, numa
+ *  leitura só.
+ *
+ *  A separada `contratos/{id}/saldo/` continua existindo e é a do documento
+ *  aberto; esta é a da tela que abre. Em chamadas separadas a carteira pediria
+ *  um saldo **por contrato** — numa obra com doze empreiteiros, treze idas ao
+ *  servidor para desenhar doze linhas, cada resposta de um instante diferente. */
+export const posto = {
+  async medicao(obraId: number): Promise<PayloadPostoMedicao> {
+    const { data } = await apiClient.get('/pdca/medicao/', {
+      params: { obra: obraId },
+    })
+    return data
+  },
+  /** B8 — a fila do laço aberto e o painel de conformidade, numa leitura. */
+  async qualidade(obraId: number): Promise<PayloadPostoQualidade> {
+    const { data } = await apiClient.get('/pdca/qualidade/', {
+      params: { obra: obraId },
+    })
+    return data
+  },
+  /** B9 — a fila da SSMA, os indicadores e as frentes interditadas. */
+  async seguranca(obraId: number): Promise<PayloadPostoSeguranca> {
+    const { data } = await apiClient.get('/pdca/seguranca/', {
+      params: { obra: obraId },
+    })
+    return data
+  },
+}
+
+/* --------------------------------------------------------------------------
+ * QUALIDADE — a ficha, o defeito e o laço que o fecha (F.5)
+ * ------------------------------------------------------------------------ */
+
+/** Monta `FormData` quando há arquivo e JSON quando não há — o `PATCH` da
+ *  resposta leva a foto **na mesma requisição**, que é o que evita o segundo
+ *  gesto no canteiro. */
+function corpoComArquivo(
+  campos: Record<string, unknown>, arquivo?: { campo: string; valor: File | null },
+): FormData | Record<string, unknown> {
+  if (!arquivo?.valor) return campos
+  const form = new FormData()
+  for (const [chave, valor] of Object.entries(campos)) {
+    if (valor === undefined || valor === null) continue
+    form.append(chave, String(valor))
+  }
+  form.append(arquivo.campo, arquivo.valor)
+  return form
+}
+
+export const modelos = {
+  async listar(params: Params = {}): Promise<ModeloVerificacao[]> {
+    const { data } = await apiClient.get('/pdca/modelos-verificacao/', {
+      params: { page_size: 200, ordering: 'codigo', ...params },
+    })
+    return lista<ModeloVerificacao>(data)
+  },
+  async obter(id: number): Promise<ModeloVerificacao> {
+    const { data } = await apiClient.get(`/pdca/modelos-verificacao/${id}/`)
+    return data
+  },
+  async criar(corpo: {
+    codigo: string; nome: string; dominio: DominioVerificacao; descricao?: string
+  }): Promise<ModeloVerificacao> {
+    const { data } = await apiClient.post('/pdca/modelos-verificacao/', corpo)
+    return data
+  },
+  async atualizar(
+    id: number, corpo: Partial<Pick<ModeloVerificacao, 'nome' | 'descricao' | 'ativo'>>,
+  ): Promise<ModeloVerificacao> {
+    const { data } = await apiClient.patch(`/pdca/modelos-verificacao/${id}/`, corpo)
+    return data
+  },
+  async excluir(id: number): Promise<void> {
+    await apiClient.delete(`/pdca/modelos-verificacao/${id}/`)
+  },
+  async duplicar(id: number, codigo: string, nome?: string): Promise<ModeloVerificacao> {
+    const { data } = await apiClient.post(
+      `/pdca/modelos-verificacao/${id}/duplicar/`, { codigo, nome },
+    )
+    return data
+  },
+  async criarItem(corpo: {
+    modelo: number; ordem: number; texto: string; criterio?: string
+    obrigatorio?: boolean; exige_foto?: boolean
+  }): Promise<ItemModeloVerificacao> {
+    const { data } = await apiClient.post('/pdca/itens-modelo-verificacao/', corpo)
+    return data
+  },
+  async atualizarItem(
+    id: number, corpo: Partial<Omit<ItemModeloVerificacao, 'item_modelo_id' | 'modelo'>>,
+  ): Promise<ItemModeloVerificacao> {
+    const { data } = await apiClient.patch(`/pdca/itens-modelo-verificacao/${id}/`, corpo)
+    return data
+  },
+  async excluirItem(id: number): Promise<void> {
+    await apiClient.delete(`/pdca/itens-modelo-verificacao/${id}/`)
+  },
+}
+
+export const verificacoes = {
+  async daObra(obraId: number, params: Params = {}): Promise<Verificacao[]> {
+    const { data } = await apiClient.get('/pdca/verificacoes/', {
+      params: { obra: obraId, page_size: 100, ordering: '-data', ...params },
+    })
+    return lista<Verificacao>(data)
+  },
+  async obter(id: number): Promise<Verificacao> {
+    const { data } = await apiClient.get(`/pdca/verificacoes/${id}/`)
+    return data
+  },
+  async itens(id: number): Promise<ItemVerificacao[]> {
+    const { data } = await apiClient.get('/pdca/itens-verificacao/', {
+      params: { verificacao: id, page_size: 500, ordering: 'ordem' },
+    })
+    return lista<ItemVerificacao>(data)
+  },
+  /** A ficha **não** se cria por `POST` cru: nasce copiando o modelo para
+   *  dentro dela, que é o congelamento da pergunta. */
+  async aplicar(corpo: {
+    modelo: number; obra: number; data: string
+    local?: number | null; atividade?: number | null; inspetor?: string
+  }): Promise<Verificacao> {
+    const { data } = await apiClient.post('/pdca/verificacoes/aplicar/', corpo)
+    return data
+  },
+  async responder(
+    itemId: number,
+    corpo: {
+      resultado: ResultadoItem; observacao?: string; gravidade?: GravidadeNc | null
+    },
+    foto?: File | null,
+  ): Promise<ItemVerificacao> {
+    const { data } = await apiClient.patch(
+      `/pdca/itens-verificacao/${itemId}/`,
+      corpoComArquivo(corpo, { campo: 'foto', valor: foto ?? null }),
+    )
+    return data
+  },
+  async concluir(id: number): Promise<ConclusaoDaVerificacao> {
+    const { data } = await apiClient.post(`/pdca/verificacoes/${id}/concluir/`, {})
+    return data
+  },
+  /** Uma NC por reprovado, cada uma com a gravidade do seu item — sem corpo. */
+  async abrirNcs(id: number): Promise<{ abertas: number; ncs: number[] }> {
+    const { data } = await apiClient.post(`/pdca/verificacoes/${id}/abrir-ncs/`, {})
+    return data
+  },
+}
+
+export const ncs = {
+  async daObra(obraId: number, params: Params = {}): Promise<NaoConformidade[]> {
+    const { data } = await apiClient.get('/pdca/ncs/', {
+      params: { obra: obraId, page_size: 200, ordering: '-aberta_em', ...params },
+    })
+    return lista<NaoConformidade>(data)
+  },
+  async obter(id: number): Promise<NaoConformidade> {
+    const { data } = await apiClient.get(`/pdca/ncs/${id}/`)
+    return data
+  },
+  async abrir(
+    corpo: {
+      obra: number; descricao: string; gravidade: GravidadeNc
+      local?: number | null; atividade?: number | null
+    },
+    foto?: File | null,
+  ): Promise<NaoConformidade> {
+    const { data } = await apiClient.post(
+      '/pdca/ncs/', corpoComArquivo(corpo, { campo: 'foto', valor: foto ?? null }),
+    )
+    return data
+  },
+  async eficacia(
+    id: number, corpo: { data: string; eficaz: boolean; evidencia: string },
+  ): Promise<{ nc: NaoConformidade }> {
+    const { data } = await apiClient.post(`/pdca/ncs/${id}/eficacia/`, corpo)
+    return data
+  },
+  async encerrar(id: number, nota: string): Promise<NaoConformidade> {
+    const { data } = await apiClient.post(`/pdca/ncs/${id}/encerrar/`, { nota })
+    return data
+  },
+  async cancelar(id: number, motivo: string): Promise<NaoConformidade> {
+    const { data } = await apiClient.post(`/pdca/ncs/${id}/cancelar/`, { motivo })
+    return data
+  },
+  async gerarRestricao(
+    id: number, corpo: { prazo?: string | null; responsavel?: string },
+  ): Promise<{ restricao: number; nc: NaoConformidade }> {
+    const { data } = await apiClient.post(`/pdca/ncs/${id}/gerar-restricao/`, corpo)
+    return data
+  },
+}
+
+export const planosAcao = {
+  async criar(corpo: {
+    nao_conformidade: number; tipo: TipoPlanoAcao; o_que: string
+    por_que?: string; onde?: string; quando?: string | null; quem?: string
+    como?: string; quanto?: string
+  }): Promise<PlanoAcao> {
+    const { data } = await apiClient.post('/pdca/planos-acao/', corpo)
+    return data
+  },
+  async concluir(id: number): Promise<PlanoAcao> {
+    const { data } = await apiClient.post(`/pdca/planos-acao/${id}/concluir/`, {})
+    return data
+  },
+}
+
+/* --------------------------------------------------------------------------
+ * SEGURANÇA — o diálogo antes do turno e o fato que ninguém queria (F.5)
+ * ------------------------------------------------------------------------ */
+
+export const dds = {
+  async daObra(obraId: number, params: Params = {}): Promise<DialogoSeguranca[]> {
+    const { data } = await apiClient.get('/pdca/dds/', {
+      params: { obra: obraId, page_size: 100, ordering: '-data', ...params },
+    })
+    return lista<DialogoSeguranca>(data)
+  },
+  async obter(id: number): Promise<DialogoSeguranca> {
+    const { data } = await apiClient.get(`/pdca/dds/${id}/`)
+    return data
+  },
+  async abrir(corpo: {
+    obra: number; data: string; tema: string; assunto?: string
+    duracao_min?: number | null; responsavel_nome?: string
+    local?: number | null; atividade?: number | null
+  }): Promise<DialogoSeguranca> {
+    const { data } = await apiClient.post('/pdca/dds/', corpo)
+    return data
+  },
+  /** A lista chega **em lote** — metade gravada sem ninguém saber onde parou
+   *  seria pior que nenhuma. */
+  async presenca(
+    id: number, participantes: { nome: string; presente?: boolean; assinou?: boolean }[],
+  ): Promise<{ registrados: number; total: number; dds: DialogoSeguranca }> {
+    const { data } = await apiClient.post(`/pdca/dds/${id}/presenca/`, { participantes })
+    return data
+  },
+  async encerrar(
+    id: number, publicar_no_diario: boolean,
+  ): Promise<{ presentes: number; publicado_no_diario: boolean; dds: DialogoSeguranca }> {
+    const { data } = await apiClient.post(`/pdca/dds/${id}/encerrar/`, { publicar_no_diario })
+    return data
+  },
+}
+
+export const ocorrencias = {
+  async daObra(obraId: number, params: Params = {}): Promise<OcorrenciaResumo[]> {
+    const { data } = await apiClient.get('/pdca/ocorrencias/', {
+      params: { obra: obraId, page_size: 200, ordering: '-ocorrido_em', ...params },
+    })
+    return lista<OcorrenciaResumo>(data)
+  },
+  async obter(id: number): Promise<Ocorrencia> {
+    const { data } = await apiClient.get(`/pdca/ocorrencias/${id}/`)
+    return data
+  },
+  /** A porta larga: tipo, hora e o que aconteceu. Todo campo a mais aqui é
+   *  subnotificação depois. */
+  async registrar(corpo: {
+    obra: number; tipo: TipoOcorrencia; ocorrido_em: string; descricao: string
+    local?: number | null; atividade?: number | null
+    acidentado_nome?: string; agente_causador?: string
+  }): Promise<Ocorrencia> {
+    const { data } = await apiClient.post('/pdca/ocorrencias/', corpo)
+    return data
+  },
+  async classificar(id: number, corpo: {
+    classificacao: Exclude<ClassificacaoOcorrencia, 'pendente'>
+    dias_perdidos?: number | null; dias_debitados?: number | null
+  }): Promise<Ocorrencia> {
+    const { data } = await apiClient.post(`/pdca/ocorrencias/${id}/classificar/`, corpo)
+    return data
+  },
+  async cat(id: number, corpo: {
+    tipo: TipoCat; emitida_em: string; protocolo?: string
+  }): Promise<{ dentro_do_prazo: boolean; ocorrencia: Ocorrencia }> {
+    const { data } = await apiClient.post(`/pdca/ocorrencias/${id}/cat/`, corpo)
+    return data
+  },
+  async interditar(id: number, prazo?: string | null): Promise<{ restricao: number }> {
+    const { data } = await apiClient.post(`/pdca/ocorrencias/${id}/interditar/`, { prazo })
+    return data
+  },
+  async investigar(id: number): Promise<{ nc: number }> {
+    const { data } = await apiClient.post(`/pdca/ocorrencias/${id}/investigar/`, {})
+    return data
+  },
+  async encerrar(id: number, nota: string): Promise<Ocorrencia> {
+    const { data } = await apiClient.post(`/pdca/ocorrencias/${id}/encerrar/`, { nota })
+    return data
+  },
+  async anexar(corpo: {
+    ocorrencia: number; especie: EspecieAnexo; descricao?: string; arquivo: File
+  }): Promise<AnexoOcorrencia> {
+    const form = new FormData()
+    form.append('ocorrencia', String(corpo.ocorrencia))
+    form.append('especie', corpo.especie)
+    if (corpo.descricao) form.append('descricao', corpo.descricao)
+    form.append('arquivo', corpo.arquivo)
+    const { data } = await apiClient.post('/pdca/anexos-ocorrencia/', form)
+    return data
+  },
+  /** O seam com o SIL — cobra `sil.epi.view`, que é permissão do outro
+   *  módulo; a tela só chama quem a tem. */
+  async epiVencido(obraId: number): Promise<EpiVencido> {
+    const { data } = await apiClient.get('/pdca/ocorrencias/epi-vencido/', {
+      params: { obra: obraId },
+    })
+    return data
+  },
+}
+
+export const contratos = {
+  async obter(id: number): Promise<ContratoObra> {
+    const { data } = await apiClient.get(`/pdca/contratos/${id}/`)
+    return data
+  },
+  /** O contrato é `ModelViewSet` — montar o contrato é um ato só, e por isso
+   *  ele não tem a escada de verbos da medição. A segregação que importa está
+   *  do outro lado: quem monta o contrato pode não ser quem ateste. */
+  async criar(corpo: Record<string, unknown>): Promise<ContratoObra> {
+    const { data } = await apiClient.post('/pdca/contratos/', corpo)
+    return data
+  },
+  async saldo(id: number): Promise<SaldoDoContrato> {
+    const { data } = await apiClient.get(`/pdca/contratos/${id}/saldo/`)
+    return data
+  },
+  async periodoSugerido(id: number): Promise<PeriodoSugerido> {
+    const { data } = await apiClient.get(`/pdca/contratos/${id}/periodo-sugerido/`)
+    return data
+  },
+  /** A prévia: o que se mediria neste período, **sem gravar nada**.
+   *
+   *  Separada de `abrir` porque o gesto do gestor é olhar antes de decidir —
+   *  abrir a medição só para ver a proposta encheria o contrato de rascunhos
+   *  que ele teria de apagar depois. */
+  async propostaDeMedicao(
+    id: number, inicio: string, fim: string,
+  ): Promise<PropostaDeMedicao> {
+    const { data } = await apiClient.get(
+      `/pdca/contratos/${id}/proposta-de-medicao/`, { params: { inicio, fim } },
+    )
+    return data
+  },
+  async retencao(id: number): Promise<RetencaoDoContrato> {
+    const { data } = await apiClient.get(`/pdca/contratos/${id}/retencao/`)
+    return data
+  },
+  /** Põe na escada o pedido de devolver o retido — **escada própria**, não a
+   *  da medição: quem ateste medição confere serviço executado; quem libera
+   *  caução confere condição contratual cumprida. */
+  async liberarRetencao(
+    id: number,
+    corpo: { valor: string; data: string; condicao_atendida: string },
+  ): Promise<{ estado: string; liberacao: LiberacaoRetencao }> {
+    const { data } = await apiClient.post(
+      `/pdca/contratos/${id}/liberar-retencao/`, corpo,
+    )
+    return data
+  },
+}
+
+export const itensDeContrato = {
+  async listar(contratoId: number): Promise<ItemContrato[]> {
+    const { data } = await apiClient.get('/pdca/itens-contrato/', {
+      params: { contrato: contratoId, page_size: 500, ordering: 'ordem' },
+    })
+    return lista<ItemContrato>(data)
+  },
+  async criar(corpo: Partial<ItemContrato>): Promise<ItemContrato> {
+    const { data } = await apiClient.post('/pdca/itens-contrato/', corpo)
+    return data
+  },
+  async atualizar(
+    id: number, corpo: Partial<ItemContrato>,
+  ): Promise<ItemContrato> {
+    const { data } = await apiClient.patch(`/pdca/itens-contrato/${id}/`, corpo)
+    return data
+  },
+  async remover(id: number): Promise<void> {
+    await apiClient.delete(`/pdca/itens-contrato/${id}/`)
+  },
+}
+
+/** O boletim — **abre, submete, retifica; não se edita por PUT**.
+ *
+ *  O documento tem ciclo de vida, e um `PATCH` genérico publicaria um caminho
+ *  que atravessa o congelamento. É a mesma forma do apontamento de avanço. */
+export const medicoes = {
+  /** A lista do contrato pede `?resumo=1`: quem lista quer o cabeçalho, e o
+   *  serializer completo mandava todos os itens de todas as medições. */
+  async doContrato(contratoId: number): Promise<Medicao[]> {
+    const { data } = await apiClient.get('/pdca/medicoes/', {
+      params: {
+        contrato: contratoId, resumo: 1, page_size: 100, ordering: '-numero',
+      },
+    })
+    return lista<Medicao>(data)
+  },
+  async obter(id: number): Promise<Medicao> {
+    const { data } = await apiClient.get(`/pdca/medicoes/${id}/`)
+    return data
+  },
+  /** A grade inteira, calculada no servidor: contratado, aditivos, acumulado
+   *  anterior, proposta do período, saldo e a **memória de cálculo** de cada
+   *  linha. Um endpoint, uma verdade — a tela não soma nada. */
+  async contexto(id: number): Promise<ContextoDeMedicao> {
+    const { data } = await apiClient.get(`/pdca/medicoes/${id}/contexto/`)
+    return data
+  },
+  async abrir(corpo: {
+    contrato: number
+    inicio: string
+    fim: string
+    linhas?: { item_contrato_id: number; quantidade: string }[]
+    custo_reembolsavel?: string | null
+    observacao?: string
+  }): Promise<Medicao> {
+    const { data } = await apiClient.post('/pdca/medicoes/abrir/', corpo)
+    return data
+  },
+  /** Reescreve a grade do rascunho — **substitui, não soma**: a grade da tela
+   *  é o documento inteiro, e um endpoint que acumulasse faria dois envios
+   *  acidentais dobrarem a medição. */
+  async linhas(
+    id: number,
+    linhas: {
+      item_contrato_id: number
+      quantidade?: string
+      quantidade_estocada?: string
+      observacao?: string
+    }[],
+  ): Promise<unknown> {
+    const { data } = await apiClient.post(`/pdca/medicoes/${id}/linhas/`, {
+      linhas,
+    })
+    return data
+  },
+  /** Os descontos que **não voltam** — imposto retido, amortização de
+   *  adiantamento, multa. Retenção contratual não entra aqui: ela é cláusula
+   *  do contrato e volta pela liberação. */
+  async deducoes(
+    id: number,
+    deducoes: {
+      tipo: string
+      descricao?: string
+      base_calculo?: string | null
+      percentual?: string | null
+      valor?: string | null
+    }[],
+  ): Promise<unknown> {
+    const { data } = await apiClient.post(`/pdca/medicoes/${id}/deducoes/`, {
+      deducoes,
+    })
+    return data
+  },
+  /** Custo reembolsável e observação — os dois campos do documento que não são
+   *  a grade. No regime de administração **não há linha nenhuma**: o que se
+   *  mede é o custo, e sem esta porta o regime inteiro ficava sem tela. */
+  async cabecalho(
+    id: number, corpo: { custo_reembolsavel?: string | null; observacao?: string },
+  ): Promise<Medicao> {
+    const { data } = await apiClient.post(`/pdca/medicoes/${id}/cabecalho/`, corpo)
+    return data
+  },
+  async submeter(
+    id: number, observacao = '',
+  ): Promise<{ estado: string; avisos: string[]; medicao: Medicao }> {
+    const { data } = await apiClient.post(`/pdca/medicoes/${id}/submeter/`, {
+      observacao,
+    })
+    return data
+  },
+  /** Um degrau da escada, decidido **de dentro da tela da medição**: quem
+   *  ateste está olhando a grade, e mandá-lo a outra tela para clicar em
+   *  "aprovar" separaria a decisão da evidência. */
+  async atestar(
+    id: number, corpo: { aprovar: boolean; observacao?: string },
+  ): Promise<{ estado_do_pedido: string; medicao: Medicao }> {
+    const { data } = await apiClient.post(`/pdca/medicoes/${id}/atestar/`, corpo)
+    return data
+  },
+  async cancelar(id: number, motivo: string): Promise<unknown> {
+    const { data } = await apiClient.post(`/pdca/medicoes/${id}/cancelar/`, {
+      motivo,
+    })
+    return data
+  },
+  /** Corrigir medição aprovada é abrir a que a retifica — o mesmo desenho do
+   *  estorno do apontamento: a original continua legível ao lado. */
+  async retificar(id: number, motivo: string): Promise<Medicao> {
+    const { data } = await apiClient.post(`/pdca/medicoes/${id}/retificar/`, {
+      motivo,
+    })
+    return data
+  },
+}
+
+export const aditivos = {
+  async doContrato(contratoId: number): Promise<AditivoContrato[]> {
+    const { data } = await apiClient.get('/pdca/aditivos/', {
+      params: { contrato: contratoId, page_size: 100, ordering: '-numero' },
+    })
+    return lista<AditivoContrato>(data)
+  },
+  async obter(id: number): Promise<AditivoContrato> {
+    const { data } = await apiClient.get(`/pdca/aditivos/${id}/`)
+    return data
+  },
+  async abrir(corpo: {
+    contrato: number
+    objeto: string
+    justificativa: string
+    data_assinatura?: string | null
+    nova_data_fim?: string | null
+  }): Promise<AditivoContrato> {
+    const { data } = await apiClient.post('/pdca/aditivos/abrir/', corpo)
+    return data
+  },
+  async submeter(id: number): Promise<unknown> {
+    const { data } = await apiClient.post(`/pdca/aditivos/${id}/submeter/`, {})
+    return data
+  },
+  async atestar(
+    id: number, corpo: { aprovar: boolean; observacao?: string },
+  ): Promise<unknown> {
+    const { data } = await apiClient.post(`/pdca/aditivos/${id}/atestar/`, corpo)
+    return data
+  },
+}
+
+export const liberacoes = {
+  async doContrato(contratoId: number): Promise<LiberacaoRetencao[]> {
+    const { data } = await apiClient.get('/pdca/liberacoes/', {
+      params: { contrato: contratoId, page_size: 100, ordering: '-data' },
+    })
+    return lista<LiberacaoRetencao>(data)
   },
 }

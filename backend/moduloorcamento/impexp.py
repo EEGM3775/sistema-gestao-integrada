@@ -32,6 +32,8 @@ from decimal import Decimal
 from funcoesimpexp.importacao import LimiteDoPlano
 from funcoesimpexp.registro import Coluna, ContextoInvalido, Recurso, registrar
 
+from nucleo import autorizacao
+
 from .bancos import BancoTravado, exigir_editavel, recontar
 from .models import (
     BancoPreco, BaseReferencial, InsumoReferencia, ItemBancoPreco, ItemOrcado, Orcamento,
@@ -243,7 +245,7 @@ class PublicacaoReferencial(TabelaDePreco):
     contexto_requerido = ("base",)
 
     def validar_contexto(self, contexto, user, tenant_id) -> dict:
-        if not getattr(user, "is_platform_admin", False):
+        if not autorizacao.supervisiona(user):
             raise ContextoInvalido(
                 "Só o dono da plataforma publica base-mãe — ela vale para todas as "
                 "empresas. Importe para um banco de preço da sua empresa."

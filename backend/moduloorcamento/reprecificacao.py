@@ -198,6 +198,11 @@ def gerar_previa(
 
     candidatas = ItemOrcado.objects.filter(
         orcamento=orcamento, tipo_linha=ItemOrcado.TipoLinha.ANALITICO,
+        # ORC.10e — linha com preço travado fica fora do lote inteiro, e não
+        # apenas desmarcada: travar é declarar que aquele número é cotação
+        # fechada, e uma prévia que a oferecesse marcável faria o desfazer ser
+        # a única defesa contra desfazer a negociação sem ninguém ver.
+        preco_travado=False,
     ).exclude(codigo_referencia="")
 
     # Os que o destino não tem — apurados antes do laço para a distinção entre

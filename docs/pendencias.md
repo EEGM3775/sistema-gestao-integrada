@@ -119,8 +119,7 @@ outbox local para não perder evento se o backend estiver fora.
 
 ## 🟠 Altas
 
-
-### D194 — o JWT passou de 8 KB e derruba a plataforma inteira para quem tem muitas permissões · 🔴 contornado 20/09/2026
+### D194 — o JWT passou de 8 KB e derruba a plataforma inteira para quem tem muitas permissões · 🔴 contornado 20/09/2026 · cura desenhada 24/09/2026 · fase 0 ✅ 25/09/2026
 
 Achado com o dono relatando *"quando atualizo a página, volta pra tela de login"* e *"erro ao
 carregar empreendimentos"*. O sintoma parecia sessão expirando; não era.
@@ -166,6 +165,52 @@ plataforma. As saídas, sem escolha feita:
 Enquanto a cura não vem, vale uma **guarda**: teste que falha quando o token de qualquer persona do
 seed passa de um teto declarado, para o estouro aparecer na esteira e não no navegador do dono.
 
+**24/09/2026 — a cura por curinga foi tentada e recusada.** A primeira tentativa compactou a lista
+no token com curinga (`pdca.*` quando a pessoa tinha o módulo inteiro). Resolvia o tamanho e abria
+concessão por padrão: todo código novo do catálogo durante a vida do token ou de uma defasagem de
+deploy, e qualquer código fora do catálogo — o degrau da escada de aprovação guarda o código exigido
+como texto livre, e quem tivesse `pdca.*` assinaria um degrau criado para ninguém. A compressão da
+lista exata também foi analisada: é segura, mas só adia (cabe até o catálogo quadruplicar).
+
+**A cura é a remodelagem** desenhada em [acesso-e-permissoes.md §10](acesso-e-permissoes.md): o
+token deixa de carregar permissão, e a decisão passa a um PDP (SpiceDB) com revogação em segundos.
+
+**25/09/2026 — fase 0 do §10.12 fechada (contenção).** O curinga saiu do backend
+(`ConjuntoDePermissoes` e `concedidas` removidos; `iam_permissions` volta a ser a lista crua) e a
+IAM voltou a emitir `permissions` exata — a lista comprimida (`permissions_z`) foi descartada,
+porque só adiava e a fase 4 tira a permissão do token. Guardas:
+[test_d194_token.py](../testes/iam/identity/test_d194_token.py) cobra nenhum `*` no token e a linha
+`Authorization` de toda persona abaixo da janela da borda (32 KB);
+`test_curinga_na_claim_nao_concede_nada` no PDCA cobra que `pdca.*` não abre nada. **Continua 🔴:** o
+token do admin segue acima dos 8 KB padrão, e a plataforma só funciona atrás de uma borda com o
+contorno — a cura é a fase 4.
+
+**25/09/2026 — fases 2 e 3 construídas.** O PDP está no ar em sombra (toda decisão conferida, zero
+divergência nas 5 pessoas da demo × 241 perguntas) e a virada por módulo existe, mas nenhum módulo
+virou: a fase 3 só liga depois de 14 dias de sombra sem divergência real (`manage.py relatorio_pdp`),
+e a fase 4 — a que tira a permissão do token e fecha este achado — vem depois dela.
+
+---
+### D204 — três ViewSets do ERP pedem código que não existe no catálogo, e só o admin escreve neles · 🟠 aberto 25/09/2026
+
+Achado pelo teste novo que confere cada código que uma view pode pedir contra o catálogo
+(`test_todo_codigo_que_uma_view_pode_pedir_esta_no_catalogo`). `BoletoViewSet` e
+`CobrancaClienteViewSet` pedem `erp.cobranca.edit` na escrita, e `TransacaoViewSet` pede
+`erp.transacao.edit` — nenhum dos dois existe. O comentário do `TransacaoViewSet` diz a intenção
+(*"ledger: só .view no catálogo (escrita bloqueada)"*), e para quem não é admin é o que acontece.
+
+**O furo:** o `RequirePermission` deixa o admin do tenant passar em qualquer código, inclusive no
+inexistente. Então o admin cria, edita e exclui transação do ledger e boleto pela API — o bloqueio
+vale para todos menos para quem tem mais poder. **E a remodelagem torna isso visível:** pelo PDP, código
+fora do schema é negado para todo mundo; virar o `erp_financeiro` para o PDP fecharia essas escritas
+também para o admin, e a sombra as registra como `fora_do_esquema`.
+
+**A escolha é de produto:** o ledger aceita escrita de alguém (então o código entra no catálogo e num
+papel), ou não aceita de ninguém (então os ViewSets viram somente leitura, ou ganham ação própria para
+o que precisa ser escrito). O teste lista os três em `_CODIGO_INEXISTENTE_CONHECIDO` e quebra quando
+aparece um quarto ou quando um deles é corrigido. **Bloqueia a virada do `erp_financeiro`.**
+
+---
 ### D189 — a ocorrência de segurança não entra na trilha de LGPD, e entrar do jeito de hoje apagaria prova legal · 🟠 aberto 20/09/2026
 
 Achado ao fechar a PDCA.8, que trouxe a **primeira PII do grupo `pdca`**: `Ocorrencia` guarda nome de
@@ -218,11 +263,12 @@ a escolha é do dono.
 nada tem a ver com cronograma, e quem rodar a suíte vai procurar o defeito no lugar errado.
 
 ---
-### D195 — cinco roteiros de navegador do PDCA dirigem a tela que foi apagada · 🟠 aberto 21/09/2026
+### D195 — dois roteiros de navegador do PDCA dirigem a tela que foi apagada · 🟠 parcial 24/09/2026
 
 Achado ao verificar a fatia da semana, rodando os roteiros vizinhos para conferir que nada quebrou.
-Cinco dos sete `pdca*_browser_test.py` falham com `TimeoutError` esperando um botão que não existe
-mais.
+Cinco dos sete `pdca*_browser_test.py` falhavam com `TimeoutError` esperando um botão que não existe
+mais; **dois deles fecharam com a F.4 em 23/09/2026 e o terceiro com a F.5 em 24/09/2026**, e
+restam dois — os dois que já têm tela nova cobrindo o mesmo assunto.
 
 Não é regressão: em 20/09/2026 o frontend do módulo foi **zerado e redesenhado do eixo**, e o
 endereço mudou de `/app/pdca/obra/{id}/<assunto>` para `/app/pdca/o/{id}/<posto>`. Os roteiros
@@ -232,32 +278,39 @@ a tela.
 
 | Roteiro | O que ele prova | Quando volta a ter tela |
 |---|---|---|
-| `pdca3_formulario_browser_test.py` | Os seis achados do formulário de contrato (D132) | F.4 — `MEDIÇÃO` |
-| `pdca3_grade_browser_test.py` | A grade de medição: prévia somente-leitura, memória de cálculo | F.4 — `MEDIÇÃO` |
+| ~~`pdca3_formulario_browser_test.py`~~ | Os seis achados do formulário de contrato (D132) | ✅ 23/09 — `pdca_medicao_browser_test.py` §11b, com a pessoa certa (só a engenharia monta contrato) |
+| ~~`pdca3_grade_browser_test.py`~~ | A grade de medição: prévia somente-leitura, memória de cálculo | ✅ 23/09 — `pdca_medicao_browser_test.py` §7, §10 e §11c; o autosave e a trava do saldo voltaram com ele ([D202](historico-correcoes.md)) |
 | `pdca5_quadro_browser_test.py` | O quadro da semana, o encerramento e o PPC | **já tem** — `pdca_semana_campo_browser_test.py` cobre o posto novo |
 | `pdca6_ritmo_browser_test.py` | A linha de balanço, o ritmo e o gargalo | **já tem** — a vista *Ritmo* do posto `PLANO` (F.3) |
-| `pdca7_ficha_browser_test.py` | Responder a ficha uma pergunta por vez, e a fila do laço | F.5 — `QUALIDADE` |
+| ~~`pdca7_ficha_browser_test.py`~~ | Responder a ficha uma pergunta por vez, e a fila do laço | ✅ 24/09 — `pdca_qualidade_seguranca_browser_test.py`, que porta a régua dele (critério junto da pergunta, desvio sem requisição, peso no item, F5, conclusão com o peso, "executada" que não encerra, 502 forjado) |
 
-**Por que fica aberto em vez de ser consertado agora.** Dois dos cinco (`pdca5_quadro`, `pdca6_ritmo`)
+**Os dois de medição saíram do repositório em 23/09/2026**, com a F.4, e o da ficha em 24/09/2026,
+com a F.5: cada sucessor nomeia o roteiro que substitui no cabeçalho e carrega a régua dele.
+Restam duas linhas.
+
+**Por que fica aberto em vez de ser consertado agora.** Dois dos três (`pdca5_quadro`, `pdca6_ritmo`)
 são reescrita sobre telas que já existem, e é trabalho de portar assertiva por assertiva — não de
 trocar a URL, porque a física mudou (o quadro deixou de ser uma página e virou um posto com esteira e
-julgamento no cartão). Os outros três esperam a fatia que reconstrói a tela deles, e reescrevê-los
-antes seria escrever teste contra um desenho que ainda não existe.
+julgamento no cartão).
 
 **O risco enquanto isso**: a régua que cada um guardava fica sem quem a cobre no navegador. O backend
-correspondente continua coberto — `pdca3_medicao_test.py`, `pdca5_programacao_test.py`,
-`pdca6_linha_de_balanco_test.py` e `pdca7_verificacao_test.py` passam —, então o que está descoberto
-é a **tela**, e só a das fatias que ainda não foram reconstruídas.
+correspondente continua coberto — `pdca5_programacao_test.py`, `pdca6_linha_de_balanco_test.py` e
+`pdca7_verificacao_test.py` passam —, então o que está descoberto é a **tela**, e só a das fatias que
+ainda não foram reconstruídas.
 
-**Gatilho de fechamento:** cada fatia do frontend fecha a linha dela. A F.4 revive os dois de
-medição, a F.5 revive o da ficha, e os dois já cobertos podem ser apagados ao portar a última
-assertiva que eles têm e os novos não.
+**E a F.4 mostrou por que isto não é burocracia:** ao portar a régua do `pdca3_grade`, apareceu que a
+grade nova tinha **reconstruído o D137** — o botão de salvar que aquela correção removeu, e com ele o
+caminho de aprovar os números antigos em silêncio ([D202](historico-correcoes.md)). O roteiro morto
+era o único lugar onde aquela lição ainda estava escrita como cobrança.
+
+**Gatilho de fechamento:** os dois restantes podem ser apagados ao portar a última assertiva que
+eles têm e os novos não.
 
 ---
 ### D190 — o teste que fia os tetos é cego em 47 dos 74, e o motivo é o cache de inteiros do CPython · 🟠 aberto 20/09/2026
 
 O `CLAUDE.md` diz que quem cobra a régua "todo teto vive em `payment/planos.py`" é
-[`backend/nucleo/test_tetos_no_payment.py`](../backend/nucleo/test_tetos_no_payment.py). Ele prende cada
+[`testes/backend/nucleo/test_tetos_no_payment.py`](../testes/backend/nucleo/test_tetos_no_payment.py). Ele prende cada
 constante ao consumidor com `assertIs(services.X, planos.X)` — 29 ocorrências.
 
 **`assertIs` compara identidade de objeto, e o CPython interna todo inteiro de −5 a 256.** Para qualquer
@@ -809,6 +862,16 @@ Decisão do dono, com o número novo na mão. Não trava nada hoje.
 
 ## 🟡 Médias
 
+### D205 — o drone não pergunta ao PDP: a virada do módulo `drone` não tem PEP · 🟡 aberto 25/09/2026
+
+O `pode()` único existe no backend (`nucleo/autorizacao.py`); o funcoesODM (Java) continua lendo a
+claim `modules`/`permissions` do token do jeito dele. A §10.3 prevê "o equivalente no drone". Enquanto
+ele não existir, `manage.py modo_autorizacao drone pdp` muda só o que o backend pergunta sobre o drone
+(quase nada) — a decisão de quem abre projeto e dispara processamento segue no token. Não quebra nada
+hoje; impede que o `drone` saia do token na fase 4. **Gatilho:** antes da fase 4, um cliente do PDP no
+Java com a mesma semântica (a equivalência da IAM é a régua).
+
+---
 ### D155 — a foto da verificação não carimba data nem coordenada · 🟡 aberto 16/09/2026
 
 Achado ao fechar a PDCA.7, conferindo a entrega contra a própria planta. A §5.2
@@ -992,7 +1055,25 @@ o que resolve na tela — mas deixa as duas trilhas contando histórias diferent
 
 ## 🟢 Baixas
 
-Nenhum em aberto. O **D147** (seis erros de `eslint` em três telas da PDCA.3/4, que desligavam o
+### D206 — o nome da senha do superusuário do Postgres está corrompido em todo env-file · 🟢 aberto 25/09/2026
+
+`POSTGRES_SUPbackendASSWORD` (em `deploy/compose/base.yml`, nos `.env.example` e no `staging.env` com o
+segredo real) é resto de uma busca-e-troca de "ERP" por "backend" — o nome pretendido era
+`POSTGRES_SUPERPASSWORD`/`POSTGRES_SUPERUSER_PASSWORD`. Funciona porque está igual em todo lugar; o
+serviço `spicedb-banco` o usa pelo mesmo nome. Trocar exige fazer em todos os arquivos **e** no
+`staging.env` de uma vez, senão o Postgres do staging sobe com a senha padrão.
+
+---
+### D209 — o `phase6_rbac_test.py` ainda confere `/api/erp/faturas/`, rota que saiu na versão 1.0 · 🟢 aberto 25/09/2026
+
+Visto ao rodar os vizinhos da remodelagem: a linha `financeiro /api/erp/faturas/` sai `404[XXX]` para
+`demo` e `semdrone`, e o roteiro termina com código 0 mesmo assim. É 404 (rota inexistente), não 403 —
+nada a ver com permissão. A rota foi retirada do ERP no commit "Versão 1.0". **Correção:** trocar a
+linha por uma rota viva do ERP com o mesmo papel (o `financeiro` lê, o `semdrone` não) — e fazer o
+roteiro sair com erro quando uma linha falha.
+
+---
+Fora o D206 e o D209, nenhum em aberto. O **D147** (seis erros de `eslint` em três telas da PDCA.3/4, que desligavam o
 fast refresh justamente na tela em que se passa o dia digitando) e o **D148** (o traceback `CRÍTICO`
 impresso a cada execução da suíte) foram corrigidos em 15/09/2026, junto do fechamento da PDCA.5;
 relatos em [historico-correcoes.md](historico-correcoes.md).

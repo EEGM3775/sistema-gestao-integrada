@@ -36,6 +36,7 @@ export interface UsuarioAdmin {
   username: string
   email: string
   is_tenant_admin: boolean
+  segundo_fator_ativo?: boolean
   perfis: number[]          // ids de Perfil atribuídos ao usuário
   modules: string[]         // entitlements efetivos (read-only)
 }

@@ -14,7 +14,7 @@ exatamente `mapa.local.*` — que vive no módulo `base`. Ele é o único ator d
 capaz de separar os dois eixos do gate: o `admin` **não serve**, porque
 `is_tenant_admin` herda todos os módulos do tenant.
 
-Seed: iam/seed_demo.py (tenants demo + acme) + backend/seed_demo_data.py
+Seed: testes/seeds/seed_demo.py (tenants demo + acme) + testes/seeds/seed_demo_data.py
 
   demo     / demo123     -> assina `maps`, papéis inclusive `topografo`
   acme     / acme123     -> tenant SEM `maps`, mas com `mapa.local.*` (fundação)
@@ -147,7 +147,7 @@ def check(label, cond):
 
 def fatal(msg):
     print(f"\n  !! {msg}")
-    print("     O seed do backend (backend/seed_demo_data.py) precisa ter rodado.")
+    print("     O seed do backend (testes/seeds/seed_demo_data.py) precisa ter rodado.")
     print(f"     Parcial: {sum(1 for p in passed if p)}/{len(passed)}")
     sys.exit(2)
 

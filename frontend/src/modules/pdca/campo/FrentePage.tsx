@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  AlertTriangle, ChevronRight, ClipboardList, Hammer, Lock, Unlock,
+  AlertTriangle, Camera, ChevronRight, ClipboardList, Hammer, HardHat, Lock,
+  MessagesSquare, Unlock,
 } from 'lucide-react'
 import { Loading, Pill } from '@/components/malha'
 import { useAuth } from '@/hooks/useAuth'
@@ -62,7 +63,62 @@ export default function FrentePage() {
       {dados.restricoes && <BlocoDeTravas bloco={dados.restricoes} />}
 
       <TambemNoSeuNome acoes={dados.acoes} fichas={dados.fichas} />
+
+      <Registrar obra={obraUnica(dados.compromissos?.linhas ?? [])} />
     </div>
+  )
+}
+
+/** A obra da frente, **quando é uma só** — é o que os três atos de registro
+ *  recebem preenchido. O mestre que cobre duas escolhe na própria tela. */
+function obraUnica(linhas: CompromissoDaFrente[]): number | null {
+  const obras = new Set(linhas.map((l) => l.obra))
+  return obras.size === 1 ? [...obras][0] : null
+}
+
+/** **Os três atos que nascem no campo** e que o escritório só lê: o defeito
+ *  (abre pela câmera), a ocorrência e o diálogo antes do turno. Cada um some
+ *  para quem não tem a permissão — um botão que leva a um cadeado é pior que
+ *  nenhum. */
+function Registrar({ obra }: { obra: number | null }) {
+  const { hasPermission } = useAuth()
+  const sufixo = obra ? `?obra=${obra}` : ''
+  const atos = [
+    { para: `/campo/defeito${sufixo}`, rotulo: 'Defeito com foto', icone: Camera, pode: hasPermission('pdca.nc.abrir') },
+    { para: `/campo/ocorrencia${sufixo}`, rotulo: 'Ocorrência de segurança', icone: HardHat, pode: hasPermission('pdca.ocorrencia.registrar') },
+    { para: `/campo/dds${sufixo}`, rotulo: 'Diálogo de segurança', icone: MessagesSquare, pode: hasPermission('pdca.dds.registrar') },
+  ].filter((a) => a.pode)
+  if (atos.length === 0) return null
+
+  return (
+    <section>
+      <div
+        style={{
+          fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase',
+          color: 'var(--ink-3)', fontWeight: 700, marginBottom: 9,
+        }}
+      >
+        Registrar
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 9 }}>
+        {atos.map(({ para, rotulo, icone: Icone }) => (
+          <Link
+            key={para}
+            to={para}
+            style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+              gap: 8, minHeight: 92, padding: 12, textAlign: 'center',
+              background: 'var(--surface)', border: '1px solid var(--line)',
+              borderRadius: 'var(--r-md)', boxShadow: 'var(--shadow-sm)',
+              color: 'var(--ink)', textDecoration: 'none', fontSize: 14.5, fontWeight: 650,
+            }}
+          >
+            <Icone size={24} style={{ color: 'var(--ink-2)' }} />
+            {rotulo}
+          </Link>
+        ))}
+      </div>
+    </section>
   )
 }
 
@@ -239,9 +295,11 @@ function BlocoDeTravas({ bloco }: { bloco: BlocoDaFrente<TravaDaFrente> }) {
   )
 }
 
-/** Os dois blocos que o campo ainda **não fecha** — e a tela diz onde eles se
- *  fecham em vez de pôr um botão que não leva a lugar nenhum. Some quando não
- *  há nada, porque aviso que aparece sempre ensina a ignorar a tela. */
+/** O que também está no nome da pessoa. **A ficha se responde daqui** — um
+ *  toque abre a primeira pergunta sem resposta. O conserto do plano de ação
+ *  continua sendo fechado no escritório, e a tela diz isso em vez de pôr um
+ *  botão que não leva a lugar nenhum. Some quando não há nada, porque aviso
+ *  que aparece sempre ensina a ignorar a tela. */
 function TambemNoSeuNome({
   acoes, fichas,
 }: {
@@ -280,19 +338,26 @@ function TambemNoSeuNome({
           />
         ))}
         {pendentes.map((ficha) => (
-          <Linha
+          <Link
             key={`f${ficha.verificacao}`}
-            titulo={ficha.modelo_nome}
-            detalhe={`${ficha.por_responder} pergunta${ficha.por_responder === 1 ? '' : 's'} sem resposta${ficha.onde ? ` · ${ficha.onde}` : ''}`}
-            prazo={null}
-            desde={ficha.dias}
-          />
+            to={`/campo/ficha/${ficha.verificacao}`}
+            style={{ display: 'block', textDecoration: 'none', color: 'inherit' }}
+          >
+            <Linha
+              titulo={ficha.modelo_nome}
+              detalhe={`${ficha.por_responder} pergunta${ficha.por_responder === 1 ? '' : 's'} sem resposta${ficha.onde ? ` · ${ficha.onde}` : ''} · tocar para responder`}
+              prazo={null}
+              desde={ficha.dias}
+            />
+          </Link>
         ))}
       </div>
 
-      <p style={{ fontSize: 12, color: 'var(--ink-3)', lineHeight: 1.55, margin: '9px 2px 0' }}>
-        Fale com o escritório para fechar estes.
-      </p>
+      {consertos.length > 0 && (
+        <p style={{ fontSize: 12, color: 'var(--ink-3)', lineHeight: 1.55, margin: '9px 2px 0' }}>
+          Quando um conserto estiver feito, avise o escritório — é lá que ele se dá por executado.
+        </p>
+      )}
     </section>
   )
 }

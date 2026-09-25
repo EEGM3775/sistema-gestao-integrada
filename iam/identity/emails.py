@@ -134,3 +134,36 @@ def enviar_aviso_privilegio_alterado(usuario, autor, resumo):
             "resumo": resumo,
         },
     )
+
+
+# Remodelagem, fase 1 — toda mudança no segundo fator é anunciada ao dono da
+# conta, pela mesma regra dos avisos acima: dizer quem fez, e o que fazer se não
+# foi a pessoa. Um admin que redefine o segundo fator de alguém abre caminho para
+# assumir a conta com a senha dela — e a vítima fica sabendo na hora.
+_SEGUNDO_FATOR = {
+    "ativado": ("ativado", "O segundo fator foi ativado"),
+    "desativado": ("desativado", "O segundo fator foi desativado"),
+    "codigos": ("códigos trocados", "Os códigos de recuperação foram trocados"),
+    "recuperacao": ("código de recuperação usado", "Um código de recuperação foi usado para entrar"),
+    "redefinido": ("redefinido", "O segundo fator foi redefinido {por_quem}"),
+}
+
+
+def enviar_aviso_segundo_fator(usuario, evento, *, por_quem=None, restantes=None):
+    assunto, frase = _SEGUNDO_FATOR[evento]
+    quem = (
+        f"pelo administrador {por_quem.get_full_name() or por_quem.username}"
+        if por_quem
+        else ""
+    )
+    return enviar(
+        "identidade.aviso_segundo_fator",
+        usuario.email,
+        {
+            "nome": _nome(usuario),
+            "conta": usuario.username,
+            "assunto": assunto,
+            "o_que": frase.format(por_quem=quem).strip(),
+            "restantes": restantes,
+        },
+    )

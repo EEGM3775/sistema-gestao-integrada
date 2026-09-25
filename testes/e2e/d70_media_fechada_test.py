@@ -7,7 +7,7 @@ Django não vê a segunda: ele fala com o Django direto, onde `DEBUG=True` e a
 `static()` do `config/urls.py` continuam de pé. É pelo gateway, e só por ele, que
 a frase "`/media/` é 404 para tudo" pode ser verificada.
 
-Atores do seed (iam/seed_demo.py):
+Atores do seed (testes/seeds/seed_demo.py):
 
   demo     / demo123     -> assina `rh`; personas rh_gestor + rh_medico + rh_financeiro
   semdrone / semdrone123 -> MESMO tenant, só `erp_financeiro`: prova o gate sem o módulo

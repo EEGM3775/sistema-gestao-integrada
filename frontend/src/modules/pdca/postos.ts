@@ -19,10 +19,52 @@ export const POSTOS: Posto[] = [
   { codigo: 'hoje', rotulo: 'Hoje', cadencia: 'todo dia', permissao: 'pdca.cronograma.view', noAr: true },
   { codigo: 'semana', rotulo: 'Semana', cadencia: 'semanal', permissao: 'pdca.programacao.view', noAr: true },
   { codigo: 'plano', rotulo: 'Plano', cadencia: 'por evento', permissao: 'pdca.cronograma.view', noAr: true },
-  { codigo: 'medicao', rotulo: 'Medição', cadencia: 'mensal', permissao: 'pdca.medicao.view', noAr: false },
-  { codigo: 'qualidade', rotulo: 'Qualidade', cadencia: 'contínua', permissao: 'pdca.verificacao.view', noAr: false },
-  { codigo: 'seguranca', rotulo: 'Segurança', cadencia: 'diária', permissao: 'pdca.ocorrencia.view', noAr: false },
+  { codigo: 'medicao', rotulo: 'Medição', cadencia: 'mensal', permissao: 'pdca.medicao.view', noAr: true },
+  { codigo: 'qualidade', rotulo: 'Qualidade', cadencia: 'contínua', permissao: 'pdca.verificacao.view', noAr: true },
+  { codigo: 'seguranca', rotulo: 'Segurança', cadencia: 'diária', permissao: 'pdca.ocorrencia.view', noAr: true },
 ]
+
+/** **O endereço do documento, e não só do posto.**
+ *
+ *  A mesma NC é linha na fila do dia, resultado da paleta e pino na ficha; em
+ *  todos eles, clicar abre **ela**, e não a porta do posto onde a pessoa teria
+ *  de procurá-la de novo. O recorte mora na query string porque é assim que
+ *  cada posto já lê o documento aberto — um link colado abre no mesmo lugar.
+ *
+ *  `extra` traz o que a linha sabe e o documento precisa: a ação do plano se
+ *  abre na NC dela, e o boletim, dentro do contrato. */
+export function enderecoDoDocumento(
+  obraId: number,
+  tipo: string,
+  id: number,
+  extra: { nc?: unknown; contrato?: unknown } = {},
+): string {
+  const raiz = `/app/pdca/o/${obraId}`
+  switch (tipo) {
+    case 'nc':
+      return `${raiz}/qualidade?nc=${id}`
+    case 'plano_acao':
+      return typeof extra.nc === 'number'
+        ? `${raiz}/qualidade?nc=${extra.nc}`
+        : `${raiz}/qualidade`
+    case 'verificacao':
+      return `${raiz}/qualidade?ficha=${id}`
+    case 'ocorrencia':
+      return `${raiz}/seguranca?ocorrencia=${id}`
+    case 'contrato':
+      return `${raiz}/medicao?contrato=${id}`
+    case 'medicao':
+      return typeof extra.contrato === 'number'
+        ? `${raiz}/medicao?contrato=${extra.contrato}&boletim=${id}`
+        : `${raiz}/medicao`
+    case 'programacao':
+      return `${raiz}/semana`
+    case 'restricao':
+      return `${raiz}/semana`
+    default:
+      return raiz
+  }
+}
 
 /** De que assunto a linha veio → **em que posto ela se resolve**.
  *

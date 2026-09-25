@@ -27,6 +27,8 @@ import ssl
 import sys
 import urllib.error
 import urllib.request
+
+from _segundo_fator import completar_login, responder_no_navegador
 import uuid
 
 try:
@@ -80,7 +82,7 @@ def login(u, p):
     r = urllib.request.Request(GW + "/auth/login/", data=data, method="POST",
                                headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(r, timeout=30, context=_CTX) as resp:
-        return json.load(resp)["access"]
+        return completar_login(GW, json.load(resp), _CTX)["access"]
 
 
 print(f"\n{'='*62}\nAdministração → Aprovações, no navegador (D130)\n{'='*62}")
@@ -139,6 +141,7 @@ with sync_playwright() as p:
     pagina.fill("input#username", "admin")
     pagina.fill("input#password", "admin123")
     pagina.click("button[type=submit]")
+    responder_no_navegador(pagina)
     pagina.wait_for_url("**/app/**", timeout=20000)
     pagina.wait_for_load_state("networkidle")
 

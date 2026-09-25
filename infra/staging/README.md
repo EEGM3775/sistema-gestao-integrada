@@ -36,7 +36,7 @@ bash infra/keys/generate.sh
 bash infra/staging/up.sh
 
 # 4. fixtures demo/acme (uma vez, após os containers ficarem healthy)
-bash infra/staging/seed.sh
+bash testes/seeds/seed_staging.sh
 ```
 
 Entrada: **https://localhost:8443/** (login `demo`/`demo123`). O browser vai alertar

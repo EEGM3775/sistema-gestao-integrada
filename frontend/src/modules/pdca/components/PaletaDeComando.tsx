@@ -9,7 +9,7 @@ import { contemSemAcento } from '@/utils/texto'
 import { useAuth } from '@/hooks/useAuth'
 import { usePdca } from '../contexto'
 import { useBusca, useObras } from '../hooks'
-import { POSTOS } from '../postos'
+import { POSTOS, enderecoDoDocumento } from '../postos'
 import { SemPermissaoAviso } from './SemPermissaoAviso'
 import type { CodigoPosto, EspecieDoPdca } from '../types'
 
@@ -132,9 +132,14 @@ export function PaletaDeComando() {
       return
     }
     const destinoObra = ('obra' in r && r.obra) || obraId
-    const posto = POSTO_DA_ESPECIE[r.tipo] ?? 'hoje'
     if (r.tipo === 'atividade') selecionar({ tipo: 'atividade', id: r.id })
     if (r.tipo === 'local') selecionar({ tipo: 'local', id: r.id })
+    if (r.tipo === 'nc' || r.tipo === 'verificacao' || r.tipo === 'ocorrencia'
+      || r.tipo === 'contrato') {
+      navigate(enderecoDoDocumento(destinoObra, r.tipo, r.id))
+      return
+    }
+    const posto = POSTO_DA_ESPECIE[r.tipo] ?? 'hoje'
     navigate(`/app/pdca/o/${destinoObra}/${posto}`)
   }
 

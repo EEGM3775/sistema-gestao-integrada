@@ -113,17 +113,11 @@ jobs:
           SQL
 
       - name: Rodar a suíte (manage.py test)
-        # `.` dispara a descoberta a partir de backend/ — é o que roda a suíte do
-        # backend inteira. Sem ela, um rótulo de app qualquer no lugar silencia o
-        # gate: era o defeito daqui, que rodava `identity` (app da IAM, inexistente
-        # neste serviço) e nenhum dos testes do backend.
-        #
-        # `funcoesemail.tests` é explícito por DUAS razões: o pacote mora na RAIZ do
-        # repositório (compartilhado com a IAM), fora do alcance da descoberta; e o
-        # rótulo precisa apontar o MÓDULO de teste — `funcoesemail` sozinho resolve
-        # para o pacote, que não declara testes, e roda 0 em silêncio.
-        # Ver funcoesemail/README.md.
-        run: python manage.py test . funcoesemail.tests --verbosity 2
+        # Os testes moram em testes/backend/ (raiz do repositório), não nos apps.
+        # Sem rótulo, o TEST_RUNNER (nucleo/test_runner.py) descobre essa árvore
+        # inteira — e FALHA se ela não existir, em vez de rodar 0 testes e dizer OK
+        # (o defeito antigo daqui, que rodava `identity` e nenhum teste do backend).
+        run: python manage.py test --verbosity 2
 
       # Gate de config segura (fecha o cabo solto de S3/S4): o backend tem de subir
       # em modo produção (DEBUG=False → exige SECRET_KEY/ALLOWED_HOSTS + RS256) e
@@ -146,9 +140,9 @@ jobs:
         run: python manage.py check --deploy --fail-level WARNING
 
   # -------------------------------------------------------------------------
-  # IAM — suíte própria (`identity`); roda no SQLite de dev (sem RLS/role
-  # dedicada). O `funcoesemail` da raiz é exercido no job do backend — rodar o
-  # pacote compartilhado uma vez basta.
+  # IAM — suíte própria (testes/iam/: `identity` + o pacote compartilhado
+  # `funcoesemail`, que é da IAM que ele serve hoje); roda no SQLite de dev (sem
+  # RLS/role dedicada).
   # -------------------------------------------------------------------------
   iam-tests:
     name: iam (Django)

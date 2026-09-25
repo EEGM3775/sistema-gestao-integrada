@@ -188,15 +188,32 @@ um alias global faria o campo certo ficar sem mapa num dos dois.
 | `ItemOrcadoInsumo` | **Memória de cálculo**: a composição explodida em folhas, com coeficiente acumulado, `categoria` (material/mão de obra/equipamento) e custo no serviço |
 | `ParcelaEtapa` | Célula do cronograma: etapa × mês × percentual → valor previsto, curva S e desembolso |
 | `ComposicaoEncargos` · `RubricaEncargos` | O **quadro de encargos analítico**: grupos A (obrigações sobre a folha), B (recebem a incidência de A), C (indenizatórios) e D (**reincidências, derivadas** — `A×B/100` e `FGTS×aviso/100`). Unicidade por `(orçamento, tipo, regime)`: horista e mensalista convivem, e a explosão escolhe pela unidade do insumo. No desonerado a rubrica A1 **sai** do quadro (a CPP virou CPRB, que é tributo e vive no BDI) |
+| `ItemOrcado` (ORC.10e) | Três campos que destravam a linha: `eap_manual` (o código deixa de ser renumerado pelo recálculo — edital e contrato às vezes trazem numeração própria que a planilha precisa espelhar, e digitar por cima **é** o ato de assumi-la), `preco_travado` (cotação fechada: reprecificação e verbos de lote pulam a linha) e `texto_longo` (a especificação que vai para as peças — o *pliego* do Arquimedes; `observacao` continua sendo o bilhete curto) |
 | `LinhaMedicao` | A **memória do quantitativo**: parciais `n × a × b × c` com sinal, ou `formula` livre. Dimensão nula é ausência, não zero. A linha com parciais tem quantidade **derivada** |
 | `FormulaReajuste` · `ParcelaFormulaReajuste` | A **fórmula paramétrica do contrato** — `R = V × [a + Σpᵢ × (Iᵢ,t/Iᵢ,0)]`, cesta de índices com pesos. Reajustar ≠ reprecificar (§12.5) |
 | `Reprecificacao` · `LinhaReprecificacao` | O **lote de troca de data-base**, com o preço anterior linha a linha — é o que torna o desfazer possível sem inventar versão. `descontinuado` marca a linha cujo código **sumiu da publicação de destino**: ela entra no lote para *aparecer*, com `custo_depois == custo_antes`, `selecionada=False` e nunca aplicável, nem que venha marcada no pedido. `linhas_afetadas` conta preço trocado; `linhas_descontinuadas` conta à parte, porque não são a mesma coisa |
 | `ParametroObra` | Orçamento **paramétrico**: `projeto_padrao` (R-1…GI), CUB da data-base, áreas real e equivalente, adicionais que o CUB não cobre |
 | `PavimentoObra` · `UnidadeAutonoma` · `MemorialNBR` | Base dos quadros da **NBR 12721** — áreas por pavimento, unidades autônomas (coeficiente de proporcionalidade **e** fração ideal, que não são a mesma coisa) e os memoriais descritivos dos quadros V–VIII |
 
+**O preço viaja com a linha; a base do cabeçalho é o rótulo do documento.** Quem manda no preço de
+uma linha é a publicação de onde ela foi **pescada** — a que estava aberta no seletor da janela de
+inserir —, e não a do cabeçalho. `POST /api/orcamento/itens/do-catalogo/` recebe `base` para dizer
+qual foi; omitir cai na do cabeçalho, que é o caminho dos chamadores internos. `ItemOrcado` já
+guardava a procedência por linha (`fonte_referencia`, `codigo_referencia`, `data_base_preco`), e é
+ela que passa a ser preenchida com a publicação de origem.
+
+É o desenho do Arquimedes e dos bancos de preço do setor: a partida arrastada traz o preço do banco
+de onde veio. O que a regra anterior — preço sempre da publicação do cabeçalho — produzia eram dois
+zeros que não avisavam: **orçamento sem base vinculada inseria a planilha inteira a custo zero**, e
+item de outra fonte (um ORSE numa planilha SINAPI) também, porque `custo_de_referencia` exige que
+fonte do item e fonte da publicação batam. Planilha com fontes misturadas é caso legítimo, e a
+honestidade dela é dita onde já era: a coluna **Data-base** da grade marca em vermelho a linha
+anterior à data-base que a peça anuncia.
+
 **A base de preço é escolhível depois, e trocar a publicação arrasta a data-base junto.**
 `base_referencial` é editável no cabeçalho (`PATCH` no orçamento, e o campo fica na tela "Base, BDI e
-encargos") — a escolha não morre na criação, onde o padrão é *"Sem base — preço digitado à mão"*.
+encargos") — a escolha não morre na criação, onde o padrão é *"Definir depois — escolho a publicação
+a cada item"*.
 Quando a publicação **muda**, `OrcamentoSerializer.update` copia `data_base` e `regime_encargos`
 dela, como o `create` já fazia: sem isso o cabeçalho ficaria dizendo um mês e apoiado no preço de
 outro, e data-base errada não avisa, só mente. Duas exceções deliberadas: `data_base` informada na
@@ -242,6 +259,26 @@ primeira reprecificação parcial. Por ser derivado ele também pega mais do que
 pega a linha que o operador **desmarcou** na prévia — e isso é desejado, porque para a auditoria as
 duas são o mesmo defeito. Na tela, a coluna **Data-base** da grade do Orçar mostra o mesmo fato linha
 a linha.
+
+**A composição da linha é editável, e o que se edita vira banco.** `ItemOrcadoInsumo` nasceu na
+ORC.2 como **saída** da explosão: o catálogo dizia a composição, o módulo a achatava em folhas e
+gravava. Ler de volta nunca fez falta porque não havia como escrever — e o efeito era que o preço de
+um serviço só podia ser aceito inteiro ou digitado por cima. Abrir a partida e ajustar o coeficiente
+que está errado é o núcleo do Arquimedes, e é o que a rota `/api/orcamento/insumos/` trouxe.
+
+Toda escrita **recompõe**: o custo unitário passa a ser a soma de `custo_no_item`, que já vem com o
+encargo social aplicado sobre a parcela de mão de obra pelo mesmo `ResolvedorEncargos` da explosão
+(horista × mensalista pela unidade). `custo_no_item` é read-only na API de propósito — aceitá-lo do
+cliente deixaria a soma da composição divergir do preço da linha sem nada apontar a divergência.
+
+**Onde a composição editada mora** é decisão do dono: *sempre no banco de preço da empresa*. Do jeito
+cru isso quebraria o snapshot — mexer num coeficiente para a Obra A mudaria o custo da Obra B que usa
+a mesma composição, e planilha aprovada deixaria de ser régua. `BancoPreco.obra` já existe
+exatamente para este caso, então a edição grava num **banco por obra**, criado sozinho na primeira
+vez (`edicao.banco_da_obra`), e a linha continua guardando o seu próprio `ItemOrcadoInsumo`. O reuso
+fica explícito: `promover-composicao/` copia para um banco sem obra, que é o acervo geral — o que se
+ajusta numa obra só vira régua da empresa quando alguém diz que vira. Banco travado recusa a
+gravação: a trava protege banco conferido e não pode ter porta dos fundos pela grade.
 
 ### 4.3 Organização dos serviços
 
@@ -443,6 +480,51 @@ formulário por linha: Tab/Enter/setas/F2, digitar-para-começar, **colar bloco 
 por uma janela com **três origens** (base oficial · catálogo da empresa · criar novo). Digitar 400
 quantidades num drawer é inviável, e é isso que o orçamentista faz o dia inteiro. A grade usa janela
 virtual — a planilha analítica passa de mil linhas com facilidade.
+
+**A planilha é um documento que se edita, não uma lista que se preenche.** É a régua do Arquimedes,
+e o que a ORC.10 fechou. A grade tem **seleção múltipla** (clique, Shift para faixa, Ctrl para somar,
+Ctrl+A para tudo), **arrastar e soltar** com três zonas de pouso por linha — borda de cima, meio,
+borda de baixo, que são "antes", "dentro" e "depois" —, **Alt+setas** para subir, descer, indentar e
+desindentar, **barra de lote** que aparece com a seleção (mover, duplicar, ±%, arredondar, excluir),
+**Ctrl+Z / Ctrl+Y**, **localizar e substituir** e o **banco de preço acoplado** ao lado, de onde se
+arrasta um serviço para o ponto exato da planilha.
+
+**A seleção tem de dizer o que vai acontecer.** Marcar uma linha na planilha não marca só
+aquela linha: todo verbo que age sobre a seleção — mover, duplicar, excluir — leva a **subárvore**
+junto, porque apagar uma etapa sem o conteúdo dela não é apagar, é desmontar. O servidor sempre fez
+isso; o que faltava era a tela dizer. Hoje os descendentes da seleção acendem com marca **mais
+fraca** que a dos escolhidos (eles não foram escolhidos, foram arrastados pela escolha), a barra de
+lote conta as duas coisas separadamente (*3 selecionadas · 12 vão junto*) e o diálogo de exclusão
+nomeia o que sai e **quanto sai do total**, somando só as raízes — somar raiz e descendente contaria
+o mesmo dinheiro duas vezes, pela mesma razão que o recálculo soma só as raízes.
+
+Três regras que a seleção segue, e que nasceram de defeitos concretos:
+
+1. **"Tudo" é o que está à vista.** O marcar-tudo do cabeçalho e o `Ctrl+A` agem sobre as linhas que
+   o filtro deixou na tela, não sobre a planilha inteira. O contrário — que era o comportamento —
+   faz quem procurou "alvenaria", viu três linhas e mandou marcar tudo levar quatrocentas, com o
+   botão Excluir ao lado.
+2. **A seleção não guarda fantasma.** Ids de linhas que não existem mais são podados a cada árvore
+   nova. Sem isso, excluir e desfazer (que **recria com ids novos**) deixavam a barra contando
+   linhas ausentes, e o verbo seguinte levava um id morto ao servidor.
+3. **A âncora do `Shift` se refaz quando aponta para fora da vista.** Linha excluída, recolhida ou
+   escondida pelo filtro deixava o `Shift`+clique virar clique simples em silêncio.
+
+**Exclusão pergunta.** `Delete`, o botão da barra e o *Excluir linha* do menu passam pelo mesmo
+diálogo e pela mesma pilha de desfazer — antes, o do menu apagava na hora e **fora** do `Ctrl+Z`, ou
+seja, o caminho mais usado era o único irrecuperável. Desfazer e refazer são simétricos: como
+`restaurar` recria com ids novos, o passo guarda os ids devolvidos e o refazer exclui *esses*, de
+modo que a pilha anda para os dois lados quantas vezes se quiser.
+
+Dois cuidados de desenho que não são detalhe. **`Alt`+setas, e não `Tab`**: Tab é a navegação entre
+células desde a ORC.5 e é o gesto mais frequente de quem orça — roubá-lo para indentar, como faz um
+editor de texto, trocaria o comum pelo raro. E **o desfazer é do cliente** (`historico.ts`), porque
+o gesto que se quer é o do Excel: `Ctrl+Z` logo depois do engano, na mesma tela, por quem errou.
+Cada operação empilha o par fazer/desfazer já com o estado capturado; exclusão só é reversível
+porque `excluir-lote` devolve o material para `restaurar` recriar as linhas — com **ids novos**, que
+é o preço declarado de recriar em vez de ressuscitar. Arredondar e substituir **não** entram na
+pilha: o inverso do primeiro não existe (a casa descartada se perdeu) e o segundo pode tocar mil
+linhas de uma vez.
 
 **Gráficos.** As cores da Malha reprovaram na validação de paleta categórica (croma baixa: teal e verde
 lidos como cinza; vermelho × âmbar indistinguíveis sob deuteranopia). Em vez de matizes fora da marca,
@@ -761,6 +843,22 @@ mesmo site) cabe inteira dentro do host que já está em `FonteOficial`.
 | A quarta caixa do seletor | [SeletorDeBase.tsx](../../frontend/src/modules/orcamento/components/SeletorDeBase.tsx) |
 | A caixa "Tabela" no painel de carga | [PainelCargaOficial.tsx](../../frontend/src/modules/orcamento/components/PainelCargaOficial.tsx) |
 
+### 12.9 Onde a ORC.10 mora no código
+
+| Arquivo | O que é dele |
+|---|---|
+| [`edicao.py`](../../backend/moduloorcamento/edicao.py) | Os verbos de edição estrutural: `mover` (com as quatro operações de bloco e o destino explícito do arrastar), `duplicar`, `excluir`/`restaurar`, `aplicar_percentual`, `arredondar`, `substituir_texto`, `recompor_linha`, `banco_da_obra`/`espelhar_no_banco`/`promover_para_banco` e `destravar_orcamento`. Três invariantes valem em todos: a árvore não fecha ciclo, a `ordem` entre irmãos fica densa e quem fecha a conta é `planilha.recalcular_orcamento` |
+| [`views.py`](../../backend/moduloorcamento/views.py) | As rotas `itens/mover`, `itens/duplicar`, `itens/excluir-lote`, `itens/restaurar`, `itens/aplicar-percentual`, `itens/arredondar`, `itens/substituir-texto`, `itens/{id}/recompor`, `itens/{id}/promover-composicao`, `orcamentos/{id}/destravar` e o `ItemOrcadoInsumoViewSet` (`/api/orcamento/insumos/`) |
+| [`historico.ts`](../../frontend/src/modules/orcamento/historico.ts) | A pilha de desfazer/refazer da planilha, com teto de 50 passos |
+| [`GradeOrcamento.tsx`](../../frontend/src/modules/orcamento/components/GradeOrcamento.tsx) | Seleção múltipla, arrastar com três zonas, Alt+setas, o código EAP como célula e a composição editável na própria grade |
+| [`PainelDeBanco.tsx`](../../frontend/src/modules/orcamento/components/PainelDeBanco.tsx) | O banco acoplado à direita da grade. Convive com a janela de inserir em vez de substituí-la: marcar quarenta itens arrastando um a um seria pior que o modal, e inserir no meio de um capítulo pelo modal obriga a inserir no fim e depois mover |
+
+**Onde a fronteira ficou.** `EdicaoInvalida` vira **400** (o pedido não faz sentido na árvore) e
+`OrcamentoNaoEditavel` vira **409** (o pedido faz sentido, o documento é que está fechado) — a mesma
+distinção que a ORC.1 já fazia. Os verbos de lote são `detail=False` e recebem os ids no corpo, então
+o escopo por tenant é pedido explicitamente (`_orcamento_do_pedido`): sem isso um id de outra empresa
+entraria pelo payload.
+
 ### 12.6 Onde o ORC.7 mora no código
 
 | Peça | Arquivo |
@@ -774,10 +872,10 @@ mesmo site) cabe inteira dentro do host que já está em `FonteOficial`.
 | Varredura de base/índice atrasados | [tasks.py](../../backend/moduloorcamento/tasks.py) (beat em `config/settings.py`) |
 | Série de índices por comando | [importar_indices.py](../../backend/moduloorcamento/management/commands/importar_indices.py) |
 | Seam da compra | [moduloscm/do_orcamento.py](../../backend/moduloscm/do_orcamento.py) |
-| Testes da fatia | [test_orc7.py](../../backend/moduloorcamento/test_orc7.py) |
+| Testes da fatia | [test_orc7.py](../../testes/backend/moduloorcamento/test_orc7.py) |
 
 **Tetos no `payment/`:** `ORCAMENTO_TETO_LINHAS_MEDICAO_POR_ITEM` e
-`ORCAMENTO_PROFUNDIDADE_MAXIMA_FORMULA`, cobrados por `nucleo/test_tetos_no_payment.py`.
+`ORCAMENTO_PROFUNDIDADE_MAXIMA_FORMULA`, cobrados por `testes/backend/nucleo/test_tetos_no_payment.py`.
 
 ### 12.3 Onde o ORC.5b mora no código
 
@@ -789,8 +887,8 @@ mesmo site) cabe inteira dentro do host que já está em `FonteOficial`.
 | Reprecificação: prévia, aplicar, desfazer | [reprecificacao.py](../../backend/moduloorcamento/reprecificacao.py) |
 | Duplicar orçamento e copiar linhas | [duplicacao.py](../../backend/moduloorcamento/duplicacao.py) |
 | Exportação de **documento** (XLSX/PDF) | [exportacao.py](../../backend/moduloorcamento/exportacao.py) + [planilha.html](../../backend/moduloorcamento/templates/moduloorcamento/planilha.html). O PDF é emitido pelo `html_para_pdf` do [funcoesimpexp §6.1b](funcoesimpexp.md) — aqui fica o HTML, não o `write_pdf()` |
-| Testes da fatia | [test_orc5b.py](../../backend/moduloorcamento/test_orc5b.py) |
-| Dado de demonstração | `seed_orcamento` em [seed_demo_data.py](../../backend/seed_demo_data.py) |
+| Testes da fatia | [test_orc5b.py](../../testes/backend/moduloorcamento/test_orc5b.py) |
+| Dado de demonstração | `seed_orcamento` em [seed_demo_data.py](../../testes/seeds/seed_demo_data.py) |
 
 ### 12.4 A importação saiu do módulo (IE.1)
 
@@ -871,6 +969,14 @@ de uma vez:
 | `orcamento.banco.edit` | `orcamento` | manter banco próprio: item, pasta, coeficiente, trava e a importação de tabela |
 | `cadastro.tipo_item.view` | `base` | ver os tipos próprios de item |
 | `cadastro.tipo_item.edit` | `base` | criar/editar tipo próprio (natureza + flags) |
+
+**A décima quarta, na ORC.10e:** `orcamento.orcamento.destravar` reabre planilha aprovada para
+rascunho, com motivo obrigatório e registro que acompanha o documento. Não é `edit`: reabrir o
+documento fechado é **alçada**, do mesmo tipo de `aprovar` — quem monta a planilha não herda o poder
+de descongelar a régua contra a qual o custo é medido. O congelamento continua sendo o padrão e
+`revisar` continua sendo o caminho quando o escopo muda, porque ele **versiona**; destravar é para o
+erro achado logo depois de aprovar, e não cria versão nenhuma. Entra no curinga
+`orcamento.orcamento.*` da persona `orcamentista` e é destacável tirando o curinga, como as outras.
 
 Trazer preço **para dentro do catálogo** continua em `orcamento.base.adotar`: é escrita no
 cadastro-mestre, não no banco, e quem pode uma coisa não precisa poder a outra. A persona

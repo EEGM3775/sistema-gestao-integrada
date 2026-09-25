@@ -1,0 +1,7 @@
+Olá, {{ nome }}.
+
+{{ o_que }} na conta {{ conta }}.
+{% if restantes is not None %}
+Restam {{ restantes }} códigos de recuperação sem uso. Quando acabarem, gere novos em Minha conta › Segurança.
+{% endif %}
+Se não foi você, sua conta pode ter sido comprometida: troque a senha imediatamente e avise o administrador da sua empresa.

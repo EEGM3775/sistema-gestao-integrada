@@ -26,7 +26,7 @@ segregação:
                             canteiro.
   acme     / acme123     -> outro tenant: é a fronteira.
 
-Seed: iam/seed_demo.py + backend/seed_demo_data.py
+Seed: testes/seeds/seed_demo.py + testes/seeds/seed_demo_data.py
 
   1. O que existe   -> `status/` declara restrição, programação, PPC e ranking.
   2. Cenário        -> obra, calendário, plano vigente com três folhas na semana.

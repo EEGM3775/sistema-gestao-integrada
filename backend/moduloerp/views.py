@@ -257,12 +257,16 @@ def _emitir_nf_para_conta_receber(request, conta, tipo_nf):
 
 # --- ViewSets ---
 
-class TransacaoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+class TransacaoViewSet(TenantScopedViewSetMixin, viewsets.ReadOnlyModelViewSet):
+    """O ledger é somente leitura pela API (D204): quem escreve transação são os
+    serviços que baixam título e conciliam retorno, nunca uma requisição direta.
+    Era `ModelViewSet` com a escrita "bloqueada" por um `.edit` fora do catálogo —
+    e o atalho do admin a deixava aberta justamente para quem tem mais poder."""
     queryset = Transacao.objects.all()
     serializer_class = TransacaoSerializer
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
-    required_resource = "erp.transacao"   # ledger: só .view no catálogo (escrita bloqueada)
+    required_resource = "erp.transacao"
     pagination_class = ErpPageNumberPagination
     filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_class = TransacaoFilter
@@ -901,9 +905,10 @@ class LoteRemessaViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     ordering_fields = ['data_geracao', 'valor_total']
     ordering = ['-data_geracao']
 
-class CobrancaClienteViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+class CobrancaClienteViewSet(TenantScopedViewSetMixin, viewsets.ReadOnlyModelViewSet):
     """
-    Endpoint da API para visualizar e editar cobranças de clientes.
+    Cobranças de clientes, somente leitura (D204). A cobrança nasce de
+    `ContaReceberViewSet.gerar_cobranca` e muda pelo retorno do Asaas.
     """
     queryset = CobrancaCliente.objects.all()
     serializer_class = CobrancaClienteSerializer
@@ -916,9 +921,10 @@ class CobrancaClienteViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     ordering_fields = ['data_vencimento', 'valor_nominal', 'status']
     ordering = ['-data_vencimento']
 
-class BoletoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+class BoletoViewSet(TenantScopedViewSetMixin, viewsets.ReadOnlyModelViewSet):
     """
-    Endpoint da API para visualizar e editar boletos.
+    Boletos, somente leitura (D204); o único ato de escrita é `cancelar`, com
+    verbo próprio no catálogo.
     """
     queryset = Boleto.objects.all()
     serializer_class = BoletoSerializer

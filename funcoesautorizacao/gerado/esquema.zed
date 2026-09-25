@@ -1,0 +1,574 @@
+// GERADO a partir de iam/identity/catalog.py — não editar à mão.
+// Regerar: python funcoesautorizacao/gerar.py  (a IAM cobra por teste).
+// Desenho: docs/acesso-e-permissoes.md §10.7.
+
+definition usuario {}
+
+definition plataforma {
+    relation supervisor: usuario
+    permission supervisiona = supervisor
+}
+
+definition empresa {
+    relation administrador: usuario
+    relation supervisor: usuario
+    relation membro: usuario
+    permission administra = administrador
+}
+
+definition papel {
+    relation empresa: empresa
+    relation portador: usuario
+}
+
+definition modulo_base {
+    relation empresa: empresa
+    relation concede_cadastro__cliente__edit: papel#portador
+    relation concede_cadastro__cliente__view: papel#portador
+    relation concede_cadastro__cliente_banco__edit: papel#portador
+    relation concede_cadastro__cliente_banco__view: papel#portador
+    relation concede_cadastro__cliente_doc__view: papel#portador
+    relation concede_cadastro__fornecedor__edit: papel#portador
+    relation concede_cadastro__fornecedor__view: papel#portador
+    relation concede_cadastro__fornecedor_banco__edit: papel#portador
+    relation concede_cadastro__fornecedor_banco__view: papel#portador
+    relation concede_cadastro__item__edit: papel#portador
+    relation concede_cadastro__item__view: papel#portador
+    relation concede_cadastro__tipo_item__edit: papel#portador
+    relation concede_cadastro__tipo_item__view: papel#portador
+    relation concede_cadastro__venda__edit: papel#portador
+    relation concede_cadastro__venda__gerar_carne: papel#portador
+    relation concede_cadastro__venda__view: papel#portador
+    relation concede_calendario__evento__create: papel#portador
+    relation concede_calendario__evento__delete: papel#portador
+    relation concede_calendario__evento__edit: papel#portador
+    relation concede_calendario__evento__view: papel#portador
+    relation concede_ia__analise__executar: papel#portador
+    relation concede_ia__analise__view: papel#portador
+    relation concede_mapa__local__edit: papel#portador
+    relation concede_mapa__local__view: papel#portador
+    relation concede_obra__diario__create: papel#portador
+    relation concede_obra__diario__edit: papel#portador
+    relation concede_obra__diario__view: papel#portador
+    relation concede_obra__empreend_conta__edit: papel#portador
+    relation concede_obra__empreend_conta__view: papel#portador
+    relation concede_obra__empreend_custo__edit: papel#portador
+    relation concede_obra__empreend_custo__view: papel#portador
+    relation concede_obra__empreendimento__edit: papel#portador
+    relation concede_obra__empreendimento__view: papel#portador
+    relation concede_obra__etapa__percentual_manual: papel#portador
+    relation concede_obra__obra__edit: papel#portador
+    relation concede_obra__obra__view: papel#portador
+    permission cadastro__cliente__edit = empresa->administrador + empresa->supervisor + concede_cadastro__cliente__edit
+    permission cadastro__cliente__view = empresa->administrador + empresa->supervisor + concede_cadastro__cliente__view
+    permission cadastro__cliente_banco__edit = empresa->administrador + empresa->supervisor + concede_cadastro__cliente_banco__edit
+    permission cadastro__cliente_banco__view = empresa->administrador + empresa->supervisor + concede_cadastro__cliente_banco__view
+    permission cadastro__cliente_doc__view = empresa->administrador + empresa->supervisor + concede_cadastro__cliente_doc__view
+    permission cadastro__fornecedor__edit = empresa->administrador + empresa->supervisor + concede_cadastro__fornecedor__edit
+    permission cadastro__fornecedor__view = empresa->administrador + empresa->supervisor + concede_cadastro__fornecedor__view
+    permission cadastro__fornecedor_banco__edit = empresa->administrador + empresa->supervisor + concede_cadastro__fornecedor_banco__edit
+    permission cadastro__fornecedor_banco__view = empresa->administrador + empresa->supervisor + concede_cadastro__fornecedor_banco__view
+    permission cadastro__item__edit = empresa->administrador + empresa->supervisor + concede_cadastro__item__edit
+    permission cadastro__item__view = empresa->administrador + empresa->supervisor + concede_cadastro__item__view
+    permission cadastro__tipo_item__edit = empresa->administrador + empresa->supervisor + concede_cadastro__tipo_item__edit
+    permission cadastro__tipo_item__view = empresa->administrador + empresa->supervisor + concede_cadastro__tipo_item__view
+    permission cadastro__venda__edit = empresa->administrador + empresa->supervisor + concede_cadastro__venda__edit
+    permission cadastro__venda__gerar_carne = empresa->administrador + empresa->supervisor + concede_cadastro__venda__gerar_carne
+    permission cadastro__venda__view = empresa->administrador + empresa->supervisor + concede_cadastro__venda__view
+    permission calendario__evento__create = empresa->administrador + empresa->supervisor + concede_calendario__evento__create
+    permission calendario__evento__delete = empresa->administrador + empresa->supervisor + concede_calendario__evento__delete
+    permission calendario__evento__edit = empresa->administrador + empresa->supervisor + concede_calendario__evento__edit
+    permission calendario__evento__view = empresa->administrador + empresa->supervisor + concede_calendario__evento__view
+    permission ia__analise__executar = empresa->administrador + empresa->supervisor + concede_ia__analise__executar
+    permission ia__analise__view = empresa->administrador + empresa->supervisor + concede_ia__analise__view
+    permission mapa__local__edit = empresa->administrador + empresa->supervisor + concede_mapa__local__edit
+    permission mapa__local__view = empresa->administrador + empresa->supervisor + concede_mapa__local__view
+    permission obra__diario__create = empresa->administrador + empresa->supervisor + concede_obra__diario__create
+    permission obra__diario__edit = empresa->administrador + empresa->supervisor + concede_obra__diario__edit
+    permission obra__diario__view = empresa->administrador + empresa->supervisor + concede_obra__diario__view
+    permission obra__empreend_conta__edit = empresa->administrador + empresa->supervisor + concede_obra__empreend_conta__edit
+    permission obra__empreend_conta__view = empresa->administrador + empresa->supervisor + concede_obra__empreend_conta__view
+    permission obra__empreend_custo__edit = empresa->administrador + empresa->supervisor + concede_obra__empreend_custo__edit
+    permission obra__empreend_custo__view = empresa->administrador + empresa->supervisor + concede_obra__empreend_custo__view
+    permission obra__empreendimento__edit = empresa->administrador + empresa->supervisor + concede_obra__empreendimento__edit
+    permission obra__empreendimento__view = empresa->administrador + empresa->supervisor + concede_obra__empreendimento__view
+    permission obra__etapa__percentual_manual = empresa->administrador + empresa->supervisor + concede_obra__etapa__percentual_manual
+    permission obra__obra__edit = empresa->administrador + empresa->supervisor + concede_obra__obra__edit
+    permission obra__obra__view = empresa->administrador + empresa->supervisor + concede_obra__obra__view
+}
+
+definition modulo_plataforma {
+    relation empresa: empresa
+    relation concede_plataforma__auditoria__view: papel#portador
+    relation concede_plataforma__config__edit: papel#portador
+    relation concede_plataforma__config__view: papel#portador
+    relation concede_plataforma__fluxo_aprovacao__edit: papel#portador
+    relation concede_plataforma__fluxo_aprovacao__view: papel#portador
+    relation concede_plataforma__integracao__edit: papel#portador
+    relation concede_plataforma__integracao__view: papel#portador
+    relation concede_plataforma__lgpd__excluir: papel#portador
+    relation concede_plataforma__lgpd__exportar: papel#portador
+    relation concede_plataforma__lixo__purgar: papel#portador
+    relation concede_plataforma__lixo__restaurar: papel#portador
+    relation concede_plataforma__lixo__view: papel#portador
+    relation concede_plataforma__papel__gerir: papel#portador
+    permission plataforma__auditoria__view = empresa->administrador + empresa->supervisor + concede_plataforma__auditoria__view
+    permission plataforma__config__edit = empresa->administrador + empresa->supervisor + concede_plataforma__config__edit
+    permission plataforma__config__view = empresa->administrador + empresa->supervisor + concede_plataforma__config__view
+    permission plataforma__fluxo_aprovacao__edit = empresa->administrador + empresa->supervisor + concede_plataforma__fluxo_aprovacao__edit
+    permission plataforma__fluxo_aprovacao__view = empresa->administrador + empresa->supervisor + concede_plataforma__fluxo_aprovacao__view
+    permission plataforma__integracao__edit = empresa->administrador + empresa->supervisor + concede_plataforma__integracao__edit
+    permission plataforma__integracao__view = empresa->administrador + empresa->supervisor + concede_plataforma__integracao__view
+    permission plataforma__lgpd__excluir = empresa->administrador + empresa->supervisor + concede_plataforma__lgpd__excluir
+    permission plataforma__lgpd__exportar = empresa->administrador + empresa->supervisor + concede_plataforma__lgpd__exportar
+    permission plataforma__lixo__purgar = empresa->administrador + empresa->supervisor + concede_plataforma__lixo__purgar
+    permission plataforma__lixo__restaurar = empresa->administrador + empresa->supervisor + concede_plataforma__lixo__restaurar
+    permission plataforma__lixo__view = empresa->administrador + empresa->supervisor + concede_plataforma__lixo__view
+    permission plataforma__papel__gerir = empresa->administrador + empresa->supervisor + concede_plataforma__papel__gerir
+}
+
+definition modulo_crm {
+    relation empresa: empresa
+    relation catalogado: empresa
+    relation assinatura: empresa
+    relation liberado: usuario
+    permission usa = catalogado->supervisor + assinatura->administrador + (liberado & assinatura->membro)
+    relation concede_crm__campanha__edit: papel#portador
+    relation concede_crm__campanha__view: papel#portador
+    relation concede_crm__conta__edit: papel#portador
+    relation concede_crm__conta__view: papel#portador
+    relation concede_crm__contato__edit: papel#portador
+    relation concede_crm__contato__view: papel#portador
+    relation concede_crm__interacao__create: papel#portador
+    relation concede_crm__interacao__view: papel#portador
+    relation concede_crm__lead__create: papel#portador
+    relation concede_crm__lead__delete: papel#portador
+    relation concede_crm__lead__edit: papel#portador
+    relation concede_crm__lead__view: papel#portador
+    relation concede_crm__oportunidade__create: papel#portador
+    relation concede_crm__oportunidade__delete: papel#portador
+    relation concede_crm__oportunidade__edit: papel#portador
+    relation concede_crm__oportunidade__view: papel#portador
+    relation concede_crm__oportunidade_produto__edit: papel#portador
+    relation concede_crm__oportunidade_produto__view: papel#portador
+    permission crm__campanha__edit = empresa->administrador + catalogado->supervisor + (usa & concede_crm__campanha__edit)
+    permission crm__campanha__view = empresa->administrador + catalogado->supervisor + (usa & concede_crm__campanha__view)
+    permission crm__conta__edit = empresa->administrador + catalogado->supervisor + (usa & concede_crm__conta__edit)
+    permission crm__conta__view = empresa->administrador + catalogado->supervisor + (usa & concede_crm__conta__view)
+    permission crm__contato__edit = empresa->administrador + catalogado->supervisor + (usa & concede_crm__contato__edit)
+    permission crm__contato__view = empresa->administrador + catalogado->supervisor + (usa & concede_crm__contato__view)
+    permission crm__interacao__create = empresa->administrador + catalogado->supervisor + (usa & concede_crm__interacao__create)
+    permission crm__interacao__view = empresa->administrador + catalogado->supervisor + (usa & concede_crm__interacao__view)
+    permission crm__lead__create = empresa->administrador + catalogado->supervisor + (usa & concede_crm__lead__create)
+    permission crm__lead__delete = empresa->administrador + catalogado->supervisor + (usa & concede_crm__lead__delete)
+    permission crm__lead__edit = empresa->administrador + catalogado->supervisor + (usa & concede_crm__lead__edit)
+    permission crm__lead__view = empresa->administrador + catalogado->supervisor + (usa & concede_crm__lead__view)
+    permission crm__oportunidade__create = empresa->administrador + catalogado->supervisor + (usa & concede_crm__oportunidade__create)
+    permission crm__oportunidade__delete = empresa->administrador + catalogado->supervisor + (usa & concede_crm__oportunidade__delete)
+    permission crm__oportunidade__edit = empresa->administrador + catalogado->supervisor + (usa & concede_crm__oportunidade__edit)
+    permission crm__oportunidade__view = empresa->administrador + catalogado->supervisor + (usa & concede_crm__oportunidade__view)
+    permission crm__oportunidade_produto__edit = empresa->administrador + catalogado->supervisor + (usa & concede_crm__oportunidade_produto__edit)
+    permission crm__oportunidade_produto__view = empresa->administrador + catalogado->supervisor + (usa & concede_crm__oportunidade_produto__view)
+}
+
+definition modulo_dms {
+    relation empresa: empresa
+    relation catalogado: empresa
+    relation assinatura: empresa
+    relation liberado: usuario
+    permission usa = catalogado->supervisor + assinatura->administrador + (liberado & assinatura->membro)
+}
+
+definition modulo_drone {
+    relation empresa: empresa
+    relation catalogado: empresa
+    relation assinatura: empresa
+    relation liberado: usuario
+    permission usa = catalogado->supervisor + assinatura->administrador + (liberado & assinatura->membro)
+    relation concede_drone__imagem__upload: papel#portador
+    relation concede_drone__medicao__edit: papel#portador
+    relation concede_drone__medicao__view: papel#portador
+    relation concede_drone__processamento__executar: papel#portador
+    relation concede_drone__projeto__create: papel#portador
+    relation concede_drone__projeto__delete: papel#portador
+    relation concede_drone__projeto__edit: papel#portador
+    relation concede_drone__projeto__view: papel#portador
+    permission drone__imagem__upload = empresa->administrador + catalogado->supervisor + (usa & concede_drone__imagem__upload)
+    permission drone__medicao__edit = empresa->administrador + catalogado->supervisor + (usa & concede_drone__medicao__edit)
+    permission drone__medicao__view = empresa->administrador + catalogado->supervisor + (usa & concede_drone__medicao__view)
+    permission drone__processamento__executar = empresa->administrador + catalogado->supervisor + (usa & concede_drone__processamento__executar)
+    permission drone__projeto__create = empresa->administrador + catalogado->supervisor + (usa & concede_drone__projeto__create)
+    permission drone__projeto__delete = empresa->administrador + catalogado->supervisor + (usa & concede_drone__projeto__delete)
+    permission drone__projeto__edit = empresa->administrador + catalogado->supervisor + (usa & concede_drone__projeto__edit)
+    permission drone__projeto__view = empresa->administrador + catalogado->supervisor + (usa & concede_drone__projeto__view)
+}
+
+definition modulo_erp_financeiro {
+    relation empresa: empresa
+    relation catalogado: empresa
+    relation assinatura: empresa
+    relation liberado: usuario
+    permission usa = catalogado->supervisor + assinatura->administrador + (liberado & assinatura->membro)
+    relation concede_erp__centro_custo__edit: papel#portador
+    relation concede_erp__centro_custo__view: papel#portador
+    relation concede_erp__cobranca__conciliar: papel#portador
+    relation concede_erp__cobranca__emitir: papel#portador
+    relation concede_erp__cobranca__view: papel#portador
+    relation concede_erp__conta_pagar__baixar: papel#portador
+    relation concede_erp__conta_pagar__create: papel#portador
+    relation concede_erp__conta_pagar__delete: papel#portador
+    relation concede_erp__conta_pagar__edit: papel#portador
+    relation concede_erp__conta_pagar__view: papel#portador
+    relation concede_erp__conta_receber__baixar: papel#portador
+    relation concede_erp__conta_receber__create: papel#portador
+    relation concede_erp__conta_receber__delete: papel#portador
+    relation concede_erp__conta_receber__edit: papel#portador
+    relation concede_erp__conta_receber__view: papel#portador
+    relation concede_erp__lote_remessa__create: papel#portador
+    relation concede_erp__lote_remessa__view: papel#portador
+    relation concede_erp__nf__cancelar: papel#portador
+    relation concede_erp__nf__edit: papel#portador
+    relation concede_erp__nf__emitir: papel#portador
+    relation concede_erp__nf__view: papel#portador
+    relation concede_erp__relatorio__view: papel#portador
+    relation concede_erp__revisao_baixa__resolver: papel#portador
+    relation concede_erp__revisao_baixa__view: papel#portador
+    relation concede_erp__transacao__view: papel#portador
+    permission erp__centro_custo__edit = empresa->administrador + catalogado->supervisor + (usa & concede_erp__centro_custo__edit)
+    permission erp__centro_custo__view = empresa->administrador + catalogado->supervisor + (usa & concede_erp__centro_custo__view)
+    permission erp__cobranca__conciliar = empresa->administrador + catalogado->supervisor + (usa & concede_erp__cobranca__conciliar)
+    permission erp__cobranca__emitir = empresa->administrador + catalogado->supervisor + (usa & concede_erp__cobranca__emitir)
+    permission erp__cobranca__view = empresa->administrador + catalogado->supervisor + (usa & concede_erp__cobranca__view)
+    permission erp__conta_pagar__baixar = empresa->administrador + catalogado->supervisor + (usa & concede_erp__conta_pagar__baixar)
+    permission erp__conta_pagar__create = empresa->administrador + catalogado->supervisor + (usa & concede_erp__conta_pagar__create)
+    permission erp__conta_pagar__delete = empresa->administrador + catalogado->supervisor + (usa & concede_erp__conta_pagar__delete)
+    permission erp__conta_pagar__edit = empresa->administrador + catalogado->supervisor + (usa & concede_erp__conta_pagar__edit)
+    permission erp__conta_pagar__view = empresa->administrador + catalogado->supervisor + (usa & concede_erp__conta_pagar__view)
+    permission erp__conta_receber__baixar = empresa->administrador + catalogado->supervisor + (usa & concede_erp__conta_receber__baixar)
+    permission erp__conta_receber__create = empresa->administrador + catalogado->supervisor + (usa & concede_erp__conta_receber__create)
+    permission erp__conta_receber__delete = empresa->administrador + catalogado->supervisor + (usa & concede_erp__conta_receber__delete)
+    permission erp__conta_receber__edit = empresa->administrador + catalogado->supervisor + (usa & concede_erp__conta_receber__edit)
+    permission erp__conta_receber__view = empresa->administrador + catalogado->supervisor + (usa & concede_erp__conta_receber__view)
+    permission erp__lote_remessa__create = empresa->administrador + catalogado->supervisor + (usa & concede_erp__lote_remessa__create)
+    permission erp__lote_remessa__view = empresa->administrador + catalogado->supervisor + (usa & concede_erp__lote_remessa__view)
+    permission erp__nf__cancelar = empresa->administrador + catalogado->supervisor + (usa & concede_erp__nf__cancelar)
+    permission erp__nf__edit = empresa->administrador + catalogado->supervisor + (usa & concede_erp__nf__edit)
+    permission erp__nf__emitir = empresa->administrador + catalogado->supervisor + (usa & concede_erp__nf__emitir)
+    permission erp__nf__view = empresa->administrador + catalogado->supervisor + (usa & concede_erp__nf__view)
+    permission erp__relatorio__view = empresa->administrador + catalogado->supervisor + (usa & concede_erp__relatorio__view)
+    permission erp__revisao_baixa__resolver = empresa->administrador + catalogado->supervisor + (usa & concede_erp__revisao_baixa__resolver)
+    permission erp__revisao_baixa__view = empresa->administrador + catalogado->supervisor + (usa & concede_erp__revisao_baixa__view)
+    permission erp__transacao__view = empresa->administrador + catalogado->supervisor + (usa & concede_erp__transacao__view)
+}
+
+definition modulo_maps {
+    relation empresa: empresa
+    relation catalogado: empresa
+    relation assinatura: empresa
+    relation liberado: usuario
+    permission usa = catalogado->supervisor + assinatura->administrador + (liberado & assinatura->membro)
+    relation concede_mapa__feicao__edit: papel#portador
+    relation concede_mapa__feicao__view: papel#portador
+    relation concede_mapa__geofence__edit: papel#portador
+    relation concede_mapa__geofence__view: papel#portador
+    relation concede_mapa__ortofoto__edit: papel#portador
+    relation concede_mapa__ortofoto__view: papel#portador
+    relation concede_mapa__plano_voo__edit: papel#portador
+    relation concede_mapa__plano_voo__view: papel#portador
+    relation concede_mapa__rota__edit: papel#portador
+    relation concede_mapa__rota__view: papel#portador
+    permission mapa__feicao__edit = empresa->administrador + catalogado->supervisor + (usa & concede_mapa__feicao__edit)
+    permission mapa__feicao__view = empresa->administrador + catalogado->supervisor + (usa & concede_mapa__feicao__view)
+    permission mapa__geofence__edit = empresa->administrador + catalogado->supervisor + (usa & concede_mapa__geofence__edit)
+    permission mapa__geofence__view = empresa->administrador + catalogado->supervisor + (usa & concede_mapa__geofence__view)
+    permission mapa__ortofoto__edit = empresa->administrador + catalogado->supervisor + (usa & concede_mapa__ortofoto__edit)
+    permission mapa__ortofoto__view = empresa->administrador + catalogado->supervisor + (usa & concede_mapa__ortofoto__view)
+    permission mapa__plano_voo__edit = empresa->administrador + catalogado->supervisor + (usa & concede_mapa__plano_voo__edit)
+    permission mapa__plano_voo__view = empresa->administrador + catalogado->supervisor + (usa & concede_mapa__plano_voo__view)
+    permission mapa__rota__edit = empresa->administrador + catalogado->supervisor + (usa & concede_mapa__rota__edit)
+    permission mapa__rota__view = empresa->administrador + catalogado->supervisor + (usa & concede_mapa__rota__view)
+}
+
+definition modulo_orcamento {
+    relation empresa: empresa
+    relation catalogado: empresa
+    relation assinatura: empresa
+    relation liberado: usuario
+    permission usa = catalogado->supervisor + assinatura->administrador + (liberado & assinatura->membro)
+    relation concede_orcamento__banco__edit: papel#portador
+    relation concede_orcamento__banco__view: papel#portador
+    relation concede_orcamento__base__adotar: papel#portador
+    relation concede_orcamento__base__view: papel#portador
+    relation concede_orcamento__item__edit: papel#portador
+    relation concede_orcamento__item__view: papel#portador
+    relation concede_orcamento__orcamento__aprovar: papel#portador
+    relation concede_orcamento__orcamento__destravar: papel#portador
+    relation concede_orcamento__orcamento__edit: papel#portador
+    relation concede_orcamento__orcamento__revisar: papel#portador
+    relation concede_orcamento__orcamento__view: papel#portador
+    relation concede_orcamento__relatorio__view: papel#portador
+    permission orcamento__banco__edit = empresa->administrador + catalogado->supervisor + (usa & concede_orcamento__banco__edit)
+    permission orcamento__banco__view = empresa->administrador + catalogado->supervisor + (usa & concede_orcamento__banco__view)
+    permission orcamento__base__adotar = empresa->administrador + catalogado->supervisor + (usa & concede_orcamento__base__adotar)
+    permission orcamento__base__view = empresa->administrador + catalogado->supervisor + (usa & concede_orcamento__base__view)
+    permission orcamento__item__edit = empresa->administrador + catalogado->supervisor + (usa & concede_orcamento__item__edit)
+    permission orcamento__item__view = empresa->administrador + catalogado->supervisor + (usa & concede_orcamento__item__view)
+    permission orcamento__orcamento__aprovar = empresa->administrador + catalogado->supervisor + (usa & concede_orcamento__orcamento__aprovar)
+    permission orcamento__orcamento__destravar = empresa->administrador + catalogado->supervisor + (usa & concede_orcamento__orcamento__destravar)
+    permission orcamento__orcamento__edit = empresa->administrador + catalogado->supervisor + (usa & concede_orcamento__orcamento__edit)
+    permission orcamento__orcamento__revisar = empresa->administrador + catalogado->supervisor + (usa & concede_orcamento__orcamento__revisar)
+    permission orcamento__orcamento__view = empresa->administrador + catalogado->supervisor + (usa & concede_orcamento__orcamento__view)
+    permission orcamento__relatorio__view = empresa->administrador + catalogado->supervisor + (usa & concede_orcamento__relatorio__view)
+}
+
+definition modulo_pdca {
+    relation empresa: empresa
+    relation catalogado: empresa
+    relation assinatura: empresa
+    relation liberado: usuario
+    permission usa = catalogado->supervisor + assinatura->administrador + (liberado & assinatura->membro)
+    relation concede_pdca__aditivo__aprovar: papel#portador
+    relation concede_pdca__aditivo__edit: papel#portador
+    relation concede_pdca__avanco__apontar: papel#portador
+    relation concede_pdca__avanco__view: papel#portador
+    relation concede_pdca__calendario__edit: papel#portador
+    relation concede_pdca__calendario__view: papel#portador
+    relation concede_pdca__contrato__edit: papel#portador
+    relation concede_pdca__contrato__view: papel#portador
+    relation concede_pdca__cronograma__edit: papel#portador
+    relation concede_pdca__cronograma__publicar: papel#portador
+    relation concede_pdca__cronograma__replanejar: papel#portador
+    relation concede_pdca__cronograma__view: papel#portador
+    relation concede_pdca__dds__registrar: papel#portador
+    relation concede_pdca__dds__view: papel#portador
+    relation concede_pdca__local__delete: papel#portador
+    relation concede_pdca__local__edit: papel#portador
+    relation concede_pdca__local__view: papel#portador
+    relation concede_pdca__medicao__apurar: papel#portador
+    relation concede_pdca__medicao__atestar: papel#portador
+    relation concede_pdca__medicao__view: papel#portador
+    relation concede_pdca__nc__abrir: papel#portador
+    relation concede_pdca__nc__tratar: papel#portador
+    relation concede_pdca__nc__verificar_eficacia: papel#portador
+    relation concede_pdca__nc__view: papel#portador
+    relation concede_pdca__ocorrencia__classificar: papel#portador
+    relation concede_pdca__ocorrencia__dado_medico: papel#portador
+    relation concede_pdca__ocorrencia__emitir_cat: papel#portador
+    relation concede_pdca__ocorrencia__registrar: papel#portador
+    relation concede_pdca__ocorrencia__view: papel#portador
+    relation concede_pdca__programacao__comprometer: papel#portador
+    relation concede_pdca__programacao__encerrar: papel#portador
+    relation concede_pdca__programacao__encerrar_antecipado: papel#portador
+    relation concede_pdca__programacao__view: papel#portador
+    relation concede_pdca__restricao__edit: papel#portador
+    relation concede_pdca__restricao__remover: papel#portador
+    relation concede_pdca__restricao__view: papel#portador
+    relation concede_pdca__verificacao__aplicar: papel#portador
+    relation concede_pdca__verificacao__modelo_edit: papel#portador
+    relation concede_pdca__verificacao__view: papel#portador
+    permission pdca__aditivo__aprovar = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__aditivo__aprovar)
+    permission pdca__aditivo__edit = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__aditivo__edit)
+    permission pdca__avanco__apontar = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__avanco__apontar)
+    permission pdca__avanco__view = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__avanco__view)
+    permission pdca__calendario__edit = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__calendario__edit)
+    permission pdca__calendario__view = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__calendario__view)
+    permission pdca__contrato__edit = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__contrato__edit)
+    permission pdca__contrato__view = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__contrato__view)
+    permission pdca__cronograma__edit = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__cronograma__edit)
+    permission pdca__cronograma__publicar = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__cronograma__publicar)
+    permission pdca__cronograma__replanejar = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__cronograma__replanejar)
+    permission pdca__cronograma__view = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__cronograma__view)
+    permission pdca__dds__registrar = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__dds__registrar)
+    permission pdca__dds__view = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__dds__view)
+    permission pdca__local__delete = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__local__delete)
+    permission pdca__local__edit = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__local__edit)
+    permission pdca__local__view = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__local__view)
+    permission pdca__medicao__apurar = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__medicao__apurar)
+    permission pdca__medicao__atestar = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__medicao__atestar)
+    permission pdca__medicao__view = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__medicao__view)
+    permission pdca__nc__abrir = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__nc__abrir)
+    permission pdca__nc__tratar = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__nc__tratar)
+    permission pdca__nc__verificar_eficacia = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__nc__verificar_eficacia)
+    permission pdca__nc__view = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__nc__view)
+    permission pdca__ocorrencia__classificar = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__ocorrencia__classificar)
+    permission pdca__ocorrencia__dado_medico = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__ocorrencia__dado_medico)
+    permission pdca__ocorrencia__emitir_cat = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__ocorrencia__emitir_cat)
+    permission pdca__ocorrencia__registrar = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__ocorrencia__registrar)
+    permission pdca__ocorrencia__view = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__ocorrencia__view)
+    permission pdca__programacao__comprometer = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__programacao__comprometer)
+    permission pdca__programacao__encerrar = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__programacao__encerrar)
+    permission pdca__programacao__encerrar_antecipado = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__programacao__encerrar_antecipado)
+    permission pdca__programacao__view = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__programacao__view)
+    permission pdca__restricao__edit = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__restricao__edit)
+    permission pdca__restricao__remover = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__restricao__remover)
+    permission pdca__restricao__view = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__restricao__view)
+    permission pdca__verificacao__aplicar = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__verificacao__aplicar)
+    permission pdca__verificacao__modelo_edit = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__verificacao__modelo_edit)
+    permission pdca__verificacao__view = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__verificacao__view)
+}
+
+definition modulo_prancheta {
+    relation empresa: empresa
+    relation catalogado: empresa
+    relation assinatura: empresa
+    relation liberado: usuario
+    permission usa = catalogado->supervisor + assinatura->administrador + (liberado & assinatura->membro)
+    relation concede_prancheta__conversao__reprocessar: papel#portador
+    relation concede_prancheta__documento__edit: papel#portador
+    relation concede_prancheta__documento__view: papel#portador
+    relation concede_prancheta__marcacao__edit: papel#portador
+    relation concede_prancheta__marcacao__resolver: papel#portador
+    relation concede_prancheta__marcacao__view: papel#portador
+    relation concede_prancheta__revisao__publicar: papel#portador
+    permission prancheta__conversao__reprocessar = empresa->administrador + catalogado->supervisor + (usa & concede_prancheta__conversao__reprocessar)
+    permission prancheta__documento__edit = empresa->administrador + catalogado->supervisor + (usa & concede_prancheta__documento__edit)
+    permission prancheta__documento__view = empresa->administrador + catalogado->supervisor + (usa & concede_prancheta__documento__view)
+    permission prancheta__marcacao__edit = empresa->administrador + catalogado->supervisor + (usa & concede_prancheta__marcacao__edit)
+    permission prancheta__marcacao__resolver = empresa->administrador + catalogado->supervisor + (usa & concede_prancheta__marcacao__resolver)
+    permission prancheta__marcacao__view = empresa->administrador + catalogado->supervisor + (usa & concede_prancheta__marcacao__view)
+    permission prancheta__revisao__publicar = empresa->administrador + catalogado->supervisor + (usa & concede_prancheta__revisao__publicar)
+}
+
+definition modulo_rh {
+    relation empresa: empresa
+    relation catalogado: empresa
+    relation assinatura: empresa
+    relation liberado: usuario
+    permission usa = catalogado->supervisor + assinatura->administrador + (liberado & assinatura->membro)
+    relation concede_rh__cargo__edit: papel#portador
+    relation concede_rh__cargo__view: papel#portador
+    relation concede_rh__cpf__view: papel#portador
+    relation concede_rh__dado_bancario__edit: papel#portador
+    relation concede_rh__dado_bancario__view: papel#portador
+    relation concede_rh__dado_medico__edit: papel#portador
+    relation concede_rh__dado_medico__view: papel#portador
+    relation concede_rh__documento__edit: papel#portador
+    relation concede_rh__documento__view: papel#portador
+    relation concede_rh__folha__edit: papel#portador
+    relation concede_rh__folha__view: papel#portador
+    relation concede_rh__funcionario__create: papel#portador
+    relation concede_rh__funcionario__delete: papel#portador
+    relation concede_rh__funcionario__edit: papel#portador
+    relation concede_rh__funcionario__view: papel#portador
+    permission rh__cargo__edit = empresa->administrador + catalogado->supervisor + (usa & concede_rh__cargo__edit)
+    permission rh__cargo__view = empresa->administrador + catalogado->supervisor + (usa & concede_rh__cargo__view)
+    permission rh__cpf__view = empresa->administrador + catalogado->supervisor + (usa & concede_rh__cpf__view)
+    permission rh__dado_bancario__edit = empresa->administrador + catalogado->supervisor + (usa & concede_rh__dado_bancario__edit)
+    permission rh__dado_bancario__view = empresa->administrador + catalogado->supervisor + (usa & concede_rh__dado_bancario__view)
+    permission rh__dado_medico__edit = empresa->administrador + catalogado->supervisor + (usa & concede_rh__dado_medico__edit)
+    permission rh__dado_medico__view = empresa->administrador + catalogado->supervisor + (usa & concede_rh__dado_medico__view)
+    permission rh__documento__edit = empresa->administrador + catalogado->supervisor + (usa & concede_rh__documento__edit)
+    permission rh__documento__view = empresa->administrador + catalogado->supervisor + (usa & concede_rh__documento__view)
+    permission rh__folha__edit = empresa->administrador + catalogado->supervisor + (usa & concede_rh__folha__edit)
+    permission rh__folha__view = empresa->administrador + catalogado->supervisor + (usa & concede_rh__folha__view)
+    permission rh__funcionario__create = empresa->administrador + catalogado->supervisor + (usa & concede_rh__funcionario__create)
+    permission rh__funcionario__delete = empresa->administrador + catalogado->supervisor + (usa & concede_rh__funcionario__delete)
+    permission rh__funcionario__edit = empresa->administrador + catalogado->supervisor + (usa & concede_rh__funcionario__edit)
+    permission rh__funcionario__view = empresa->administrador + catalogado->supervisor + (usa & concede_rh__funcionario__view)
+}
+
+definition modulo_scm {
+    relation empresa: empresa
+    relation catalogado: empresa
+    relation assinatura: empresa
+    relation liberado: usuario
+    permission usa = catalogado->supervisor + assinatura->administrador + (liberado & assinatura->membro)
+    relation concede_scm__avaliacao__edit: papel#portador
+    relation concede_scm__avaliacao__view: papel#portador
+    relation concede_scm__centro_custo__edit: papel#portador
+    relation concede_scm__centro_custo__view: papel#portador
+    relation concede_scm__cotacao__adjudicar: papel#portador
+    relation concede_scm__cotacao__edit: papel#portador
+    relation concede_scm__cotacao__view: papel#portador
+    relation concede_scm__demanda__edit: papel#portador
+    relation concede_scm__demanda__publicar: papel#portador
+    relation concede_scm__demanda__view: papel#portador
+    relation concede_scm__oferta__edit: papel#portador
+    relation concede_scm__oferta__view: papel#portador
+    relation concede_scm__pedido__criar: papel#portador
+    relation concede_scm__pedido__edit: papel#portador
+    relation concede_scm__pedido__view: papel#portador
+    relation concede_scm__produto__edit: papel#portador
+    relation concede_scm__produto__view: papel#portador
+    relation concede_scm__recebimento__edit: papel#portador
+    relation concede_scm__recebimento__view: papel#portador
+    permission scm__avaliacao__edit = empresa->administrador + catalogado->supervisor + (usa & concede_scm__avaliacao__edit)
+    permission scm__avaliacao__view = empresa->administrador + catalogado->supervisor + (usa & concede_scm__avaliacao__view)
+    permission scm__centro_custo__edit = empresa->administrador + catalogado->supervisor + (usa & concede_scm__centro_custo__edit)
+    permission scm__centro_custo__view = empresa->administrador + catalogado->supervisor + (usa & concede_scm__centro_custo__view)
+    permission scm__cotacao__adjudicar = empresa->administrador + catalogado->supervisor + (usa & concede_scm__cotacao__adjudicar)
+    permission scm__cotacao__edit = empresa->administrador + catalogado->supervisor + (usa & concede_scm__cotacao__edit)
+    permission scm__cotacao__view = empresa->administrador + catalogado->supervisor + (usa & concede_scm__cotacao__view)
+    permission scm__demanda__edit = empresa->administrador + catalogado->supervisor + (usa & concede_scm__demanda__edit)
+    permission scm__demanda__publicar = empresa->administrador + catalogado->supervisor + (usa & concede_scm__demanda__publicar)
+    permission scm__demanda__view = empresa->administrador + catalogado->supervisor + (usa & concede_scm__demanda__view)
+    permission scm__oferta__edit = empresa->administrador + catalogado->supervisor + (usa & concede_scm__oferta__edit)
+    permission scm__oferta__view = empresa->administrador + catalogado->supervisor + (usa & concede_scm__oferta__view)
+    permission scm__pedido__criar = empresa->administrador + catalogado->supervisor + (usa & concede_scm__pedido__criar)
+    permission scm__pedido__edit = empresa->administrador + catalogado->supervisor + (usa & concede_scm__pedido__edit)
+    permission scm__pedido__view = empresa->administrador + catalogado->supervisor + (usa & concede_scm__pedido__view)
+    permission scm__produto__edit = empresa->administrador + catalogado->supervisor + (usa & concede_scm__produto__edit)
+    permission scm__produto__view = empresa->administrador + catalogado->supervisor + (usa & concede_scm__produto__view)
+    permission scm__recebimento__edit = empresa->administrador + catalogado->supervisor + (usa & concede_scm__recebimento__edit)
+    permission scm__recebimento__view = empresa->administrador + catalogado->supervisor + (usa & concede_scm__recebimento__view)
+}
+
+definition modulo_sil {
+    relation empresa: empresa
+    relation catalogado: empresa
+    relation assinatura: empresa
+    relation liberado: usuario
+    permission usa = catalogado->supervisor + assinatura->administrador + (liberado & assinatura->membro)
+    relation concede_sil__devolucao__edit: papel#portador
+    relation concede_sil__devolucao__executar: papel#portador
+    relation concede_sil__devolucao__view: papel#portador
+    relation concede_sil__epi__edit: papel#portador
+    relation concede_sil__epi__view: papel#portador
+    relation concede_sil__ferramenta__edit: papel#portador
+    relation concede_sil__ferramenta__view: papel#portador
+    relation concede_sil__inventario__edit: papel#portador
+    relation concede_sil__inventario__fechar: papel#portador
+    relation concede_sil__inventario__view: papel#portador
+    relation concede_sil__local__edit: papel#portador
+    relation concede_sil__local__view: papel#portador
+    relation concede_sil__lote__edit: papel#portador
+    relation concede_sil__lote__view: papel#portador
+    relation concede_sil__movimentacao__edit: papel#portador
+    relation concede_sil__movimentacao__view: papel#portador
+    relation concede_sil__relatorio__view: papel#portador
+    relation concede_sil__requisicao__aprovar: papel#portador
+    relation concede_sil__requisicao__atender: papel#portador
+    relation concede_sil__requisicao__edit: papel#portador
+    relation concede_sil__requisicao__view: papel#portador
+    relation concede_sil__saldo__edit: papel#portador
+    relation concede_sil__saldo__view: papel#portador
+    relation concede_sil__transferencia__edit: papel#portador
+    relation concede_sil__transferencia__executar: papel#portador
+    relation concede_sil__transferencia__view: papel#portador
+    permission sil__devolucao__edit = empresa->administrador + catalogado->supervisor + (usa & concede_sil__devolucao__edit)
+    permission sil__devolucao__executar = empresa->administrador + catalogado->supervisor + (usa & concede_sil__devolucao__executar)
+    permission sil__devolucao__view = empresa->administrador + catalogado->supervisor + (usa & concede_sil__devolucao__view)
+    permission sil__epi__edit = empresa->administrador + catalogado->supervisor + (usa & concede_sil__epi__edit)
+    permission sil__epi__view = empresa->administrador + catalogado->supervisor + (usa & concede_sil__epi__view)
+    permission sil__ferramenta__edit = empresa->administrador + catalogado->supervisor + (usa & concede_sil__ferramenta__edit)
+    permission sil__ferramenta__view = empresa->administrador + catalogado->supervisor + (usa & concede_sil__ferramenta__view)
+    permission sil__inventario__edit = empresa->administrador + catalogado->supervisor + (usa & concede_sil__inventario__edit)
+    permission sil__inventario__fechar = empresa->administrador + catalogado->supervisor + (usa & concede_sil__inventario__fechar)
+    permission sil__inventario__view = empresa->administrador + catalogado->supervisor + (usa & concede_sil__inventario__view)
+    permission sil__local__edit = empresa->administrador + catalogado->supervisor + (usa & concede_sil__local__edit)
+    permission sil__local__view = empresa->administrador + catalogado->supervisor + (usa & concede_sil__local__view)
+    permission sil__lote__edit = empresa->administrador + catalogado->supervisor + (usa & concede_sil__lote__edit)
+    permission sil__lote__view = empresa->administrador + catalogado->supervisor + (usa & concede_sil__lote__view)
+    permission sil__movimentacao__edit = empresa->administrador + catalogado->supervisor + (usa & concede_sil__movimentacao__edit)
+    permission sil__movimentacao__view = empresa->administrador + catalogado->supervisor + (usa & concede_sil__movimentacao__view)
+    permission sil__relatorio__view = empresa->administrador + catalogado->supervisor + (usa & concede_sil__relatorio__view)
+    permission sil__requisicao__aprovar = empresa->administrador + catalogado->supervisor + (usa & concede_sil__requisicao__aprovar)
+    permission sil__requisicao__atender = empresa->administrador + catalogado->supervisor + (usa & concede_sil__requisicao__atender)
+    permission sil__requisicao__edit = empresa->administrador + catalogado->supervisor + (usa & concede_sil__requisicao__edit)
+    permission sil__requisicao__view = empresa->administrador + catalogado->supervisor + (usa & concede_sil__requisicao__view)
+    permission sil__saldo__edit = empresa->administrador + catalogado->supervisor + (usa & concede_sil__saldo__edit)
+    permission sil__saldo__view = empresa->administrador + catalogado->supervisor + (usa & concede_sil__saldo__view)
+    permission sil__transferencia__edit = empresa->administrador + catalogado->supervisor + (usa & concede_sil__transferencia__edit)
+    permission sil__transferencia__executar = empresa->administrador + catalogado->supervisor + (usa & concede_sil__transferencia__executar)
+    permission sil__transferencia__view = empresa->administrador + catalogado->supervisor + (usa & concede_sil__transferencia__view)
+}

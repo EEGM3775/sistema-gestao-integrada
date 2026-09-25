@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from rest_framework.permissions import SAFE_METHODS, BasePermission
 
+from . import autorizacao
+
 
 class IsDataAdminOrStaff(BasePermission):
     """Allows access only to authenticated staff/superusers/data-admins."""
@@ -38,8 +40,7 @@ class RequireModule(BasePermission):
         required = getattr(view, "required_module", None)
         if not required:
             return True
-        modules = getattr(user, "iam_modules", []) or []
-        return required in modules
+        return autorizacao.usa_modulo(user, required)
 
 
 class RequirePermission(BasePermission):
@@ -74,13 +75,10 @@ class RequirePermission(BasePermission):
         needed = self._needed(request, view)
         if not needed:
             return True
-        if getattr(user, "is_tenant_admin", False) or getattr(user, "is_superuser", False):
-            return True
-        # Fail-closed: a permissão exigida tem de estar no conjunto do token.
-        # (Fatia E: sem fallback por papel — todo token da IAM traz `permissions`
-        # desde a Fase 9.A; ausente/vazio → nega.)
-        perms = getattr(user, "iam_permissions", None) or []
-        return needed in perms
+        # Fail-closed: sem a permissão, nega. O admin do tenant e o superusuário
+        # local passam — a regra mora em `nucleo/autorizacao.py`, que decide pelo
+        # token ou pelo PDP conforme o módulo (remodelagem, fase 3).
+        return autorizacao.pode(user, needed)
 
     def _needed(self, request, view):
         # Verbo de domínio por ação (ex.: dar_baixa → erp.conta_receber.baixar) —

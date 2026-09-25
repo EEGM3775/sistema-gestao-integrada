@@ -62,7 +62,7 @@ primeira classe, não detalhe de deploy.
      │  IAM DB    │  │ backend DB │               │ funcoesODM  │
      │ (Postgres) │  │ (Postgres) │               │   DB (PG)   │
      └────────────┘  └────────────┘               └─────────────┘
-              Cluster PostgreSQL (iam_db + erp_db)  +  Redis
+              Cluster PostgreSQL (iam_db + erp_db + spicedb_db)  +  Redis
 ```
 
 **Quem é dono do quê:**
@@ -71,6 +71,10 @@ primeira classe, não detalhe de deploy.
   papéis/permissões e entitlements. Emite e assina os JWT.
 - **backend (Django)** ([backend/](../backend/)) — **resource server**: valida o JWT da IAM e aplica
   isolamento de tenant + RBAC + entitlement nas queries. Apps de negócio em [modulos/](modulos/README.md).
+  Toda pergunta "pode?" passa por um lugar só ([nucleo/autorizacao.py](../backend/nucleo/autorizacao.py)).
+- **PDP (SpiceDB)** — responde "o que esta pessoa pode fazer?" a partir de relações que **só a IAM
+  escreve**; não autentica ninguém. Decide módulo a módulo, com o token conferido em sombra até a
+  virada. Desenho em [acesso-e-permissoes.md §10](acesso-e-permissoes.md) (construído: §10.15).
 - **funcoesODM (Java/Angular)** ([ImgDrone/funcoesODM/](../ImgDrone/funcoesODM/)) — produto destacável;
   valida o JWT, exige o entitlement `drone`, escopa por tenant, faz **JIT provisioning**.
 - **Microsserviços Node** (`funcoesnf`, `funcoeswhatsapp` + o worker embutido em `funcoesia`) —

@@ -45,6 +45,8 @@ import urllib.request
 
 from playwright.sync_api import sync_playwright
 
+from _segundo_fator import completar_login, responder_no_navegador
+
 GW = "http://localhost:8090"
 OK, FALHA = [], []
 
@@ -90,7 +92,7 @@ def token_de(usuario, senha):
         headers={"Content-Type": "application/json"},
     )
     with urllib.request.urlopen(pedido, timeout=60) as resposta:
-        return json.loads(resposta.read().decode())["access"]
+        return completar_login(GW, json.loads(resposta.read().decode()))["access"]
 
 
 def rodar(pasta, obra, usuario, senha, esperados, nome_da_obra):
@@ -115,6 +117,7 @@ def rodar(pasta, obra, usuario, senha, esperados, nome_da_obra):
         pagina.fill("input#username", usuario)
         pagina.fill("input#password", senha)
         pagina.click("button[type=submit]")
+        responder_no_navegador(pagina)
         # Esperar a URL mudar, e não o `networkidle`: a rede fica ociosa antes de
         # o roteador navegar, e a asserção passaria a olhar a tela de login.
         pagina.wait_for_url(lambda u: "/login" not in u, timeout=60_000)

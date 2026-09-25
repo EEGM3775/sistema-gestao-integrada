@@ -17,15 +17,15 @@ IAM:
   cd iam && python manage.py test
 
 Seeds (populam dados de teste):
-  IAM:    Get-Content iam/seed_demo.py | docker compose exec -T iam python manage.py shell
-  backend: Get-Content backend/seed_demo_data.py | docker compose exec -T erp python manage.py shell
+  IAM:    Get-Content testes/seeds/seed_demo.py | docker compose exec -T iam python manage.py shell
+  backend: Get-Content testes/seeds/seed_demo_data.py | docker compose exec -T erp python manage.py shell
 
 
 =================================================================
 SEEDS E DEMOS
 =================================================================
 
-iam/seed_demo.py  — SEED DA IAM (identidade / SSO)
+testes/seeds/seed_demo.py  — SEED DA IAM (identidade / SSO)
 -----------------------------------------------------------------
 Popula tenants, módulos, papéis de fábrica e usuários de demonstração.
 Idempotente (get_or_create). Roda dentro do container IAM.
@@ -42,7 +42,7 @@ Usuários criados:
 
 Comando interno: sync_authz (sincroniza catálogo de permissões + papéis de fábrica).
 
-backend/seed_demo_data.py  — SEED DO backend (dados de negócio)
+testes/seeds/seed_demo_data.py  — SEED DO backend (dados de negócio)
 -----------------------------------------------------------------
 Popula dados de negócio no backend para o tenant "demo". Idempotente
 (get_or_create). Roda sob rls_bypass() para contornar a RLS do PostgreSQL.
@@ -67,7 +67,7 @@ Coluna "AVALIAÇÃO": ESSENCIAL = trava uma regressão de bug real já corrigido
 o isolamento multi-tenant; ÚTIL = cobre fluxo de negócio; REVER = candidato a
 corte se quiser enxugar.
 
-nucleo/test_tenant_isolation.py  — ISOLAMENTO ENTRE TENANTS (núcleo do SaaS)
+testes/backend/nucleo/test_tenant_isolation.py  — ISOLAMENTO ENTRE TENANTS (núcleo do SaaS)
 ---------------------------------------------------------------------------
 [ESSENCIAL] TenantIsolationTests.test_list_so_mostra_clientes_do_proprio_tenant
             Lista de clientes só traz o tenant do usuário.
@@ -82,7 +82,7 @@ nucleo/test_tenant_isolation.py  — ISOLAMENTO ENTRE TENANTS (núcleo do SaaS)
 [ESSENCIAL] PerTenantUniquenessTests.test_cpf_duplicado_no_mesmo_tenant_da_400
             Fase 8.3: duplicata dentro do tenant → 400 limpo (não 500).
 
-nucleo/test_rls_fail_closed.py  — RLS FAIL-CLOSED no PostgreSQL (S2/Fase 8.4)
+testes/backend/nucleo/test_rls_fail_closed.py  — RLS FAIL-CLOSED no PostgreSQL (S2/Fase 8.4)
 ---------------------------------------------------------------------------
 [ESSENCIAL] RLSFailClosedTests.test_sem_contexto_nao_enxerga_nada
             Sessão sem tenant nem bypass → 0 linhas (coração do fail-closed).
@@ -95,17 +95,17 @@ nucleo/test_rls_fail_closed.py  — RLS FAIL-CLOSED no PostgreSQL (S2/Fase 8.4)
 [ESSENCIAL] RLSFailClosedTests.test_nao_grava_em_outro_tenant
             Contexto do tenant A não insere linha do tenant B.
 
-nucleo/test_dlq.py  — Dead Letter Queue (L2)
+testes/backend/nucleo/test_dlq.py  — Dead Letter Queue (L2)
 --------------------------------------------
 [ESSENCIAL] DLQTests.test_falha_permanente_grava_failedtask
             Achado L2: task que esgota retries grava linha na DLQ (FailedTask).
 
-nucleo/test_legacy_token.py  — Token legado rejeitado (D1)
+testes/backend/nucleo/test_legacy_token.py  — Token legado rejeitado (D1)
 ---------------------------------------------------------
 [ESSENCIAL] TokenLegadoRejeitadoTests.test_callbacks_node_para_erp_recebem_401
             Achado D1: header "Token" legado → 401 nos endpoints-alvo.
 
-nucleo/test_lgpd.py  — LGPD: portabilidade, esquecimento e incidentes (Fase 9.D)
+testes/backend/nucleo/test_lgpd.py  — LGPD: portabilidade, esquecimento e incidentes (Fase 9.D)
 -------------------------------------------------------------------------------
 [ESSENCIAL] LgpdServiceTests.test_export_traz_a_pii_do_titular
             Exportação LGPD traz os dados pessoais do titular.
@@ -124,7 +124,7 @@ nucleo/test_lgpd.py  — LGPD: portabilidade, esquecimento e incidentes (Fase 9.
 [ESSENCIAL] IncidenteLGPDTests.test_dono_descarta_falso_positivo
             Dono descarta falso positivo sem notificar ANPD.
 
-nucleo/test_auditoria.py  — Trilha de auditoria imutável (Fase 9.E)
+testes/backend/nucleo/test_auditoria.py  — Trilha de auditoria imutável (Fase 9.E)
 -------------------------------------------------------------------
 [ESSENCIAL] AuditoriaHelperTests.test_registrar_grava_linha
             Helper registra linha de auditoria com tenant e detalhes.
@@ -135,7 +135,7 @@ nucleo/test_auditoria.py  — Trilha de auditoria imutável (Fase 9.E)
 [ESSENCIAL] AuditoriaImutabilidadeTests.test_delete_bloqueado
             AuditLog é append-only: DELETE é rejeitado.
 
-nucleo/test_geo.py  — Geocoding (parse de endereço + resolução ViaCEP/IBGE)
+testes/backend/nucleo/test_geo.py  — Geocoding (parse de endereço + resolução ViaCEP/IBGE)
 ---------------------------------------------------------------------------
 [ÚTIL]      GeoParseTests.test_parse_cidade_uf_formato_traco
             Parse "Cidade - UF" do fim do endereço.
@@ -180,7 +180,7 @@ nucleo/test_runner.py  — Test runner ciente da RLS (Fase 8.1)
             para que setUpTestData/setUp (fora de request) não seja barrado pelo
             WITH CHECK. Requests e testes de isolamento continuam fail-closed.
 
-moduloerp/tests.py  — NF + ISOLAMENTO EM APIView + Financeiro (S1, L3, L5, L6, L7, L8, D3, D7, Fase 11.1)
+testes/backend/moduloerp/tests.py  — NF + ISOLAMENTO EM APIView + Financeiro (S1, L3, L5, L6, L7, L8, D3, D7, Fase 11.1)
 ------------------------------------------------------------------------------------------
 [ESSENCIAL] EmitirNFSETests.test_nfse_herda_tenant_e_snapshot_completo_do_cliente
             L3: NF herda tenant + snapshot completo do cliente. 11.1: emissão enfileira
@@ -238,7 +238,7 @@ moduloerp/tests.py  — NF + ISOLAMENTO EM APIView + Financeiro (S1, L3, L5, L6,
 [ESSENCIAL] D7NfApiViewPermissionTests.test_atualizar_status_com_edit_grava
             D7: atualizar status com erp.nf.edit → grava.
 
-modulocalendar/tests.py  — Agenda/Calendário + Recorrência + Feriados (L1, Fatia B/C/F)
+testes/backend/modulocalendar/tests.py  — Agenda/Calendário + Recorrência + Feriados (L1, Fatia B/C/F)
 ---------------------------------------------------------------------------------------
 [ESSENCIAL] CalendarEventListTests.test_listagem_responde_200_com_id_nos_eventos_locais
             Achado L1: listagem não dá mais 500 e eventos locais têm id.
@@ -271,7 +271,7 @@ modulocalendar/tests.py  — Agenda/Calendário + Recorrência + Feriados (L1, F
 [ÚTIL]      FeriadosStatusTests.test_usuario_comum_recebe_403
             Usuário comum recebe 403 no status de feriados.
 
-modulocrm/tests.py  — CRM: conversão de lead, agenda e entitlement (L4/Fase 11.2/S5)
+testes/backend/modulocrm/tests.py  — CRM: conversão de lead, agenda e entitlement (L4/Fase 11.2/S5)
 -------------------------------------------------------------------------------------
 [ÚTIL]      ConvertLeadTests.test_convert_cria_account_contact_opportunity_e_marca_convertido
             Conversão de lead cria Account/Contact/Opportunity e marca convertido.
@@ -292,7 +292,7 @@ modulocrm/tests.py  — CRM: conversão de lead, agenda e entitlement (L4/Fase 1
 [ESSENCIAL] S5EntitlementCrmTests.test_sem_permissao_nega_fail_closed
             Fatia E: token com módulo mas sem permissions (vazio) → 403.
 
-funcoescobrancas/tests.py  — Cobrança Asaas / trava de identidade (D2)
+testes/backend/funcoescobrancas/tests.py  — Cobrança Asaas / trava de identidade (D2)
 ----------------------------------------------------------------------
 [ESSENCIAL] BuscarCustomerTests.test_documento_vazio_nao_lista_a_conta_inteira
             Achado D2: documento vazio não devolve a conta Asaas inteira.
@@ -329,7 +329,7 @@ funcoescobrancas/tests.py  — Cobrança Asaas / trava de identidade (D2)
 [ÚTIL]      GerarCobrancaEndpointTests.test_endpoint_enfileira_quando_ok
             Gerar-cobrança enfileira quando tudo bate.
 
-rh/tests.py  — RH: permissões de prontuário médico (Fase 9.C)
+testes/backend/rh/tests.py  — RH: permissões de prontuário médico (Fase 9.C)
 -------------------------------------------------------------
 [ESSENCIAL] RequirePermissionRHTests.test_permissao_de_leitura_concede_get
             Com rh.dado_medico.view → GET concedido.
@@ -342,7 +342,7 @@ rh/tests.py  — RH: permissões de prontuário médico (Fase 9.C)
 [ESSENCIAL] RequirePermissionRHTests.test_sem_o_modulo_nega_mesmo_com_permissao
             Camada 1 (entitlement) independe da camada 2 (RBAC).
 
-rh/test_field_masking.py  — RH: mascaramento de PII (Fase 9.C)
+testes/backend/rh/test_field_masking.py  — RH: mascaramento de PII (Fase 9.C)
 -------------------------------------------------------------
 [ESSENCIAL] FieldMaskingRHTests.test_sem_permissao_cpf_vem_mascarado_e_salario_null
             Sem permissão: CPF mascarado, salário null.
@@ -370,7 +370,7 @@ rh/test_field_masking.py  — RH: mascaramento de PII (Fase 9.C)
 TESTES DA IAM (identidade / SSO)
 =================================================================
 
-iam/identity/tests.py  — Catálogo, sync_authz, JWT, sessão e senhas
+testes/iam/identity/tests.py  — Catálogo, sync_authz, JWT, sessão e senhas
 -------------------------------------------------------------------
 [ESSENCIAL] CatalogoTests.test_codigos_unicos
             Todos os códigos de permissão do catálogo são únicos.
@@ -451,8 +451,8 @@ IAM:
   - Total: ~25 testes em 1 arquivo.
 
 Seeds/Demos:
-  - iam/seed_demo.py — usuários e tenants de demonstração.
-  - backend/seed_demo_data.py — dados de negócio (empreendimentos, obras, etc).
+  - testes/seeds/seed_demo.py — usuários e tenants de demonstração.
+  - testes/seeds/seed_demo_data.py — dados de negócio (empreendimentos, obras, etc).
   - backend/create_superuser.py — superuser local do backend.
 
 Frontend:

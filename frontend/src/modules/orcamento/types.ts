@@ -185,6 +185,13 @@ export interface ItemOrcado {
   total_custo_direto: string
   total_com_bdi: string
   observacao: string
+  // --- ORC.10e ---
+  /** Código EAP assumido à mão: o recálculo para de renumerar esta linha. */
+  eap_manual: boolean
+  /** Custo unitário é cotação fechada: reprecificação e lote não encostam. */
+  preco_travado: boolean
+  /** A especificação do serviço — o "pliego" do Arquimedes. Vai para as peças. */
+  texto_longo: string
 }
 
 export interface ArvoreResposta {
@@ -278,6 +285,32 @@ export interface ItemOrcadoInsumo {
   custo_unitario: string
   custo_no_item: string
   peso_pct: string
+}
+
+/** O que a grade manda ao criar ou alterar um insumo da composição (ORC.10c).
+ *
+ *  `custo_no_item` **não** entra: é derivado no servidor, com o encargo social
+ *  aplicado sobre a parcela de mão de obra. Mandá-lo daqui faria a soma da
+ *  composição divergir do preço da linha sem nada apontar a divergência. */
+export interface InsumoEscrita {
+  item_orcado: number
+  descricao: string
+  unidade: string
+  categoria: CategoriaInsumo
+  coeficiente: string
+  custo_unitario: string
+}
+
+/** O material que `excluir-lote` devolve e que `restaurar` aceita de volta.
+ *
+ *  É opaco de propósito — a pilha de desfazer da grade só o guarda e o devolve;
+ *  quem sabe lê-lo é o servidor. Tipar campo a campo aqui criaria uma segunda
+ *  definição do `ItemOrcado` para divergir da primeira. */
+export type LinhaParaRestaurar = Record<string, unknown>
+
+export interface ResultadoExclusao {
+  excluidas: number
+  desfazer: LinhaParaRestaurar[]
 }
 
 export interface MemoriaCalculo {

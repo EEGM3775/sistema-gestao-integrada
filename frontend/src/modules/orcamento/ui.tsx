@@ -1,7 +1,7 @@
 // Kit Malha do Orçamento. Mais denso que o dos outros módulos de propósito: o
 // orçamentista passa horas numa grade de centenas de linhas, e cada pixel de
 // chrome é linha de planilha que sai da tela.
-import { type ButtonHTMLAttributes, type CSSProperties, type HTMLAttributes, type MouseEvent, type ReactNode, type SelectHTMLAttributes } from 'react'
+import { useEffect, type ButtonHTMLAttributes, type CSSProperties, type HTMLAttributes, type MouseEvent, type ReactNode, type SelectHTMLAttributes } from 'react'
 import { ChevronDown, ChevronRight, Inbox, Lock, Search, X } from 'lucide-react'
 import type { Kind } from './lib'
 
@@ -297,9 +297,29 @@ export function LegendaLista({ comAnalitica = true, style }: {
   )
 }
 
+
+/** `Esc` fecha o diálogo.
+ *
+ *  Faltava nos dois — `Modal` e `Drawer` —, e portanto em **todos** os diálogos
+ *  do módulo: memória de cálculo, medição, preço real, novo orçamento, excluir,
+ *  substituir, destravar, novo insumo, descrição detalhada, reprecificar,
+ *  exportar, duplicar e revisar. Sair exigia achar o botão Fechar, que num
+ *  drawer fica lá em cima à direita. `Esc` é o gesto que todo mundo tenta
+ *  primeiro; um diálogo que o ignora parece travado.
+ *
+ *  Está escrito duas vezes (uma em cada componente) de propósito: extrair para
+ *  um hook exportado daqui acrescentaria mais uma exportação que não é
+ *  componente a um arquivo que já carrega essa dívida de lint.
+ */
 export function Modal({ titulo, onClose, children, rodape, largura = 520 }: {
   titulo: ReactNode; onClose: () => void; children: ReactNode; rodape?: ReactNode; largura?: number
 }) {
+  useEffect(() => {
+    const aoTeclar = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', aoTeclar)
+    return () => document.removeEventListener('keydown', aoTeclar)
+  }, [onClose])
+
   return (
     <div
       onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}
@@ -335,6 +355,13 @@ export function Modal({ titulo, onClose, children, rodape, largura = 520 }: {
 export function Drawer({ titulo, onClose, children, largura = 620 }: {
   titulo: ReactNode; onClose: () => void; children: ReactNode; largura?: number
 }) {
+  // Ver a nota do `Modal` acima: `Esc` é o gesto que todo mundo tenta primeiro.
+  useEffect(() => {
+    const aoTeclar = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', aoTeclar)
+    return () => document.removeEventListener('keydown', aoTeclar)
+  }, [onClose])
+
   return (
     <div
       onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}
@@ -422,6 +449,16 @@ export function OrcStyles() {
     .orc-lift{transition:transform .15s,box-shadow .15s,border-color .15s}
     .orc-lift:hover{transform:translateY(-2px);box-shadow:var(--shadow-md);border-color:color-mix(in srgb,var(--accent) 42%,var(--line))}
     .orc-linha:hover{background:var(--surface-2)}
+    /* Os verbos da linha (ORC.10h): apagados por padrão, acesos na linha sob o
+       cursor, na que tem foco de teclado e na que está marcada. O espaço deles
+       é reservado sempre — fosse display:none, a planilha inteira mudaria de
+       largura ao passar o mouse. O pointer-events desligado enquanto apagados
+       evita o clique às cegas em botão invisível. */
+    .orc-acoes{opacity:0;pointer-events:none;transition:opacity .12s ease}
+    .orc-linha:hover .orc-acoes,.orc-linha:focus-within .orc-acoes,.orc-acoes-fixas{opacity:1;pointer-events:auto}
+    .orc-acoes button:hover:not(:disabled){background:var(--inset);color:var(--ink)}
+    .orc-acoes button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+    @media(hover:none){.orc-acoes{opacity:1;pointer-events:auto}}
     .orc-cel{outline:none}
     .orc-cel:focus-visible{box-shadow:inset 0 0 0 2px var(--accent);border-radius:3px}
     .orc-grade::-webkit-scrollbar{width:11px;height:11px}

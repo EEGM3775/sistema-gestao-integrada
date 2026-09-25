@@ -9,6 +9,8 @@ sentido para quem planeja obra, e planejar obra é o produto.
 """
 from __future__ import annotations
 
+from datetime import date
+
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import F, Q
 from django.utils import timezone
@@ -21,6 +23,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 
 from nucleo.busca import BuscaSemAcento
+from nucleo import autorizacao
 from nucleo.permissions import RequireModule, RequirePermission
 from nucleo.quotas import checar_quota
 from nucleo.tenancy import TenantScopedAPIViewMixin, TenantScopedViewSetMixin
@@ -48,6 +51,7 @@ from payment.planos import (
     PDCA_TETO_OCORRENCIAS_NA_FILA,
     PDCA_TETO_PARTICIPANTES_POR_DDS,
     PDCA_TETO_LINHAS_POR_FAIXA_DA_FILA,
+    PDCA_TETO_CONTRATOS_NO_POSTO,
     PDCA_TETO_LINHAS_POR_FRENTE,
     PDCA_TETO_OBRAS_NA_CARTEIRA,
     PDCA_TETO_RESULTADOS_POR_ESPECIE,
@@ -242,6 +246,22 @@ class PdcaStatusView(views.APIView):
                 "pulso_da_obra": True,
                 "busca_unica": True,
                 "mudancas_recentes": True,
+                # A leitura do posto da medição: a carteira de contratos com
+                # saldo e a fila do dinheiro (B3), numa chamada. A separada
+                # `GET contratos/{id}/saldo/` continua existindo — é a do
+                # documento aberto; esta é a da tela que abre.
+                "posto_da_medicao": True,
+                # E o que ele **não** faz: a fila não cobra contrato "sem medir
+                # há N dias". De quanto em quanto tempo se mede é cláusula
+                # combinada com cada empreiteiro, e o contrato não guarda esse
+                # campo — inventar o prazo acenderia a faixa todo dia para todo
+                # contrato vigente.
+                "cobranca_por_periodicidade_de_medicao": False,
+                # Os postos da qualidade e da segurança (B8, B9): a fila do
+                # posto é a da fila do dia recortada por assunto, com o painel
+                # e os indicadores ao lado, numa chamada.
+                "posto_da_qualidade": True,
+                "posto_da_seguranca": True,
                 # A quinta, e a única que responde a quem está **dentro** da
                 # obra: o que é meu, agora. É a leitura da superfície de campo.
                 "minhas_frentes": True,
@@ -299,6 +319,7 @@ class PdcaStatusView(views.APIView):
                 "linhas_por_faixa_da_fila": PDCA_TETO_LINHAS_POR_FAIXA_DA_FILA,
                 "resultados_por_especie": PDCA_TETO_RESULTADOS_POR_ESPECIE,
                 "linhas_por_frente": PDCA_TETO_LINHAS_POR_FRENTE,
+                "contratos_no_posto": PDCA_TETO_CONTRATOS_NO_POSTO,
             },
         })
 
@@ -1177,6 +1198,16 @@ def _minha_obra(request, obra_id):
 
     if not obra_id:
         raise ValidationError({"obra": "Informe a obra."})
+    # **`?obra=abc` é erro de quem digitou, e erro de quem digitou responde
+    # 400 com frase.** Sem esta conversão o `filter(pk="abc")` estoura um
+    # `ValueError` no driver e a resposta é 500 — em DEBUG, a página de
+    # depuração inteira dentro da tela, que é exatamente o D187: quem está
+    # trabalhando não sabe de quem é o problema nem se o que escreveu se
+    # perdeu. Vale para as cinco leituras que passam por aqui.
+    try:
+        obra_id = int(obra_id)
+    except (TypeError, ValueError):
+        raise ValidationError({"obra": "Informe o número da obra."})
     obra = Obra.objects.filter(pk=obra_id).first()
     if obra is None:
         raise ValidationError({"obra": "Obra não encontrada."})
@@ -1195,12 +1226,7 @@ def _exige(request, permissao: str, motivo: str) -> None:
     escada — ali submeter aprova em um passo, e quem não tem a permissão de
     decidir não pode exercê-la por falta de configuração alheia.
     """
-    usuario = request.user
-    if getattr(usuario, "is_tenant_admin", False) or getattr(
-        usuario, "is_superuser", False
-    ):
-        return
-    if permissao not in (getattr(usuario, "iam_permissions", None) or []):
+    if not autorizacao.pode(request.user, permissao):
         raise PermissionDenied(motivo)
 
 
@@ -1213,12 +1239,7 @@ def _tem_permissao(request, permissao: str) -> bool:
     `services`, a claim mora aqui, e conferir a data nas duas pontas criaria
     duas regras que discordam no dia em que uma delas mudar.
     """
-    usuario = request.user
-    if getattr(usuario, "is_tenant_admin", False) or getattr(
-        usuario, "is_superuser", False
-    ):
-        return True
-    return permissao in (getattr(usuario, "iam_permissions", None) or [])
+    return autorizacao.pode(request.user, permissao)
 
 
 class ContratoObraViewSet(BasePdcaViewSet):
@@ -3066,10 +3087,28 @@ class OcorrenciaViewSet(BasePdcaViewSet):
         return OcorrenciaSerializer
 
     def perform_create(self, serializer):
-        serializer.save(
-            tenant_id=getattr(self.request.user, "tenant_id", None),
-            registrada_por=_quem_e(self.request),
-        )
+        """**Pelo serviço, e não pelo `save()`** (D203).
+
+        A única trava do registro — data no futuro — mora em
+        `registrar_ocorrencia`, e esta porta gravava direto pelo serializer:
+        a regra valia na bancada e no teste do serviço e não valia no HTTP, que
+        é por onde a tela registra. Um acidente datado de amanhã entrava na
+        série do indicador sem ninguém ver.
+        """
+        dados = dict(serializer.validated_data)
+        fixos = ("obra", "ocorrido_em", "tipo", "descricao", "local", "atividade")
+        try:
+            ocorrencia = services.registrar_ocorrencia(
+                obra=dados.get("obra"), ocorrido_em=dados.get("ocorrido_em"),
+                tipo=dados.get("tipo"), descricao=dados.get("descricao", ""),
+                local=dados.get("local"), atividade=dados.get("atividade"),
+                tenant_id=getattr(self.request.user, "tenant_id", None),
+                por=_quem_e(self.request),
+                **{k: v for k, v in dados.items() if k not in fixos},
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        serializer.instance = ocorrencia
 
     @action(detail=True, methods=["post"])
     def classificar(self, request, pk=None):
@@ -3274,12 +3313,7 @@ def _leitor(request):
     bancada e do teste sem forjar um token.
     """
     usuario = request.user
-    if getattr(usuario, "is_tenant_admin", False) or getattr(
-        usuario, "is_superuser", False
-    ):
-        return lambda _permissao: True
-    concedidas = frozenset(getattr(usuario, "iam_permissions", None) or [])
-    return lambda permissao: permissao in concedidas
+    return lambda permissao: autorizacao.pode(usuario, permissao)
 
 
 class LeituraDoCockpit(TenantScopedAPIViewMixin, views.APIView):
@@ -3408,6 +3442,96 @@ class BuscaView(LeituraDoCockpit):
             pode=_leitor(request),
             obra_id=obra_id,
         )))
+
+
+class PostoDaMedicaoView(LeituraDoCockpit):
+    """`GET /api/pdca/medicao/?obra=N` — **os contratos e a fila do dinheiro** (B3).
+
+    Os dois blocos numa leitura só, pelo mesmo motivo do `hoje/`: a tela do
+    posto abre com a carteira de contratos em cima e a fila embaixo, e em
+    chamadas separadas cada uma chegaria de um instante diferente — o saldo de
+    um contrato somando com uma fila montada dois segundos antes. Pior: a
+    carteira exigiria uma chamada de `saldo/` **por contrato**.
+
+    **`RequireModule` e nada mais no portão**, que é a régua das leituras que
+    atravessam assunto (§10.1 do desenho da tela). O posto junta medição e
+    contrato, que têm permissões diferentes: exigir as duas recusaria a página
+    a quem só ateste, e exigir a menor não recusaria nada. O recorte acontece
+    dentro dos serviços, por `pode(codigo)`, e o bloco que a pessoa não pode
+    ver vem vazio **com a permissão que falta nomeada** — a fila vazia em
+    silêncio é a pior das três saídas, porque não parece falha.
+    """
+
+    def get(self, request):
+        obra = _minha_obra(request, request.query_params.get("obra"))
+        pode = _leitor(request)
+        tenant_id = request.user.tenant_id
+        return Response(_str_decimais({
+            "obra": obra.pk,
+            "obra_nome": obra.nome_obra,
+            "contratos": services.carteira_de_contratos(
+                obra_id=obra.pk, tenant_id=tenant_id, pode=pode,
+            ),
+            "fila": services.fila_da_medicao(
+                obra_id=obra.pk, tenant_id=tenant_id, pode=pode,
+            ),
+        }))
+
+
+def _data_do_recorte(bruto, *, campo: str):
+    """`?desde=` / `?ate=` — e a recusa tem frase, pela régua do `_inteiro`."""
+    if not bruto:
+        return None
+    try:
+        return date.fromisoformat(bruto)
+    except (TypeError, ValueError):
+        raise ValidationError({campo: "Informe a data no formato AAAA-MM-DD."})
+
+
+class PostoDaQualidadeView(LeituraDoCockpit):
+    """`GET /api/pdca/qualidade/?obra=N` — **o laço aberto e o que mais reprova** (B8).
+
+    Fila e painel numa leitura, pelo motivo do `medicao/`: chegando de instantes
+    diferentes, a fila diria "3 defeitos sem plano" ao lado de um painel que já
+    contou o quarto. `RequireModule` e nada mais no portão — a fila junta NC e
+    ficha, que têm permissões diferentes, e o recorte é por bloco.
+    """
+
+    def get(self, request):
+        obra = _minha_obra(request, request.query_params.get("obra"))
+        return Response(_str_decimais({
+            "obra": obra.pk,
+            "obra_nome": obra.nome_obra,
+            **services.posto_da_qualidade(
+                obra_id=obra.pk, tenant_id=request.user.tenant_id,
+                pode=_leitor(request),
+                desde=_data_do_recorte(request.query_params.get("desde"), campo="desde"),
+                ate=_data_do_recorte(request.query_params.get("ate"), campo="ate"),
+            ),
+        }))
+
+
+class PostoDaSegurancaView(LeituraDoCockpit):
+    """`GET /api/pdca/seguranca/?obra=N` — **a CAT no topo e os números** (B9).
+
+    A mesma construção do posto da qualidade. O EPI vencido **não** vem aqui:
+    ele exige a permissão de outro módulo (`sil.epi.view`), e juntá-lo faria
+    esta leitura depender de um contrato que a obra pode não ter. A tela o pede
+    à parte, e diz quando não pode.
+    """
+
+    def get(self, request):
+        obra = _minha_obra(request, request.query_params.get("obra"))
+        return Response(_str_decimais({
+            "obra": obra.pk,
+            "obra_nome": obra.nome_obra,
+            **services.posto_da_seguranca(
+                obra_id=obra.pk, tenant_id=request.user.tenant_id,
+                pode=_leitor(request),
+                desde=_data_do_recorte(request.query_params.get("desde"), campo="desde"),
+                ate=_data_do_recorte(request.query_params.get("ate"), campo="ate"),
+            ),
+        }))
 
 
 def _inteiro(bruto, padrao: int, *, campo: str) -> int:

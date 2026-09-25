@@ -7,7 +7,7 @@
 
 ## 1. Por que existe uma bancada além dos testes
 
-Os 24 testes automatizados (`nucleo/test_frota.py` e `RetomadaDaConversaoTests`) provam a máquina de
+Os 24 testes automatizados (`testes/backend/nucleo/test_frota.py` e `RetomadaDaConversaoTests`) provam a máquina de
 estados **caso a caso** e ficam no repositório para falhar quando alguém quebrar a política sem
 perceber. Eles não respondem à pergunta que a fila realmente levanta, que é **agregada**: com
 duzentos arquivos de quatro empresas disputando oito vagas, a repartição sai como projetada ou o
@@ -24,7 +24,7 @@ boot do despachante tentaria enviar ao worker.
 
 | Camada | Onde | Itens | Resultado |
 | --- | --- | ---: | --- |
-| Testes da fila | `nucleo/test_frota.py` | 18 | OK |
+| Testes da fila | `testes/backend/nucleo/test_frota.py` | 18 | OK |
 | Testes da retomada | `moduloprancheta.tests.RetomadaDaConversaoTests` | 6 | OK |
 | Bancada com carga | `manage.py simular_fila` | 5 cenários · 261 arquivos | OK |
 | Suíte inteira do backend | `manage.py test` | 1.283 | OK exceto os 4 do [D50](../pendencias.md) |

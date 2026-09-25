@@ -4,7 +4,7 @@ import type {
   ComponenteBancoPreco, ComponenteReferencia, ComposicaoBDI, ComposicaoReferenciaResposta,
   ControleLinha, ControleResposta, Cronograma, CurvaABC, DivergenciaAdocao,
   CurvaS, CustoPorCategoria, EtapaOpt, InsumoReferencia, ItemAdotado,
-  ItemBancoPreco, ItemOrcado,
+  ItemBancoPreco, ItemOrcado, ItemOrcadoInsumo, InsumoEscrita, LinhaParaRestaurar, ResultadoExclusao,
   AnaliticaOrcamento, NaturezaComPadroes, TipoItemProprio,
   MemoriaCalculo, MemorialNBR, ObraOpt, Orcamento, Paginated, ParametroObra,
   ParcelaEtapa, PastaComposicao, PavimentoObra, PrecoReal, PreviaReprecificacao, Reprecificacao,
@@ -107,6 +107,9 @@ export const getCurvaS = async (orcamentoId: number) =>
 export const criarItemDoCatalogo = async (body: {
   orcamento: number; item: number; quantidade: string
   pai?: number | null; etapa?: number | null; ordem?: number
+  /** ORC.10a — a publicação de onde o item foi pescado. É dela que sai o preço
+   *  da linha; omitir cai na publicação do cabeçalho do orçamento. */
+  base?: number | null
 }) => (await apiClient.post<ItemOrcado>('orcamento/itens/do-catalogo/', body)).data
 
 export const explodirItem = async (itemOrcadoId: number) =>
@@ -415,3 +418,75 @@ export const enviarArquivoDaCarga = async (body: {
 export const repetirCarga = async (
   cargaId: number, body: { aceitar_sem_classe?: boolean; somente_resumo?: boolean } = {},
 ) => (await apiClient.post<CargaBase>(`orcamento/cargas/${cargaId}/repetir/`, body)).data
+
+// --- ORC.10 — os verbos de edição da planilha ------------------------------
+
+/** Mover, indentar, desindentar e reordenar — com a subárvore junto.
+ *
+ *  Duas formas de pedir, porque são dois gestos: `operacao` é o do teclado
+ *  (a seleção precisa ser de irmãos) e `pai` + `posicao` é o do arrastar. */
+export const moverItens = async (body: {
+  orcamento: number
+  itens: number[]
+  operacao?: 'indentar' | 'desindentar' | 'cima' | 'baixo'
+  pai?: number | null
+  posicao?: number | null
+}) => (await apiClient.post<{ movidas: number }>('orcamento/itens/mover/', body)).data
+
+export const duplicarItens = async (orcamento: number, itens: number[]) =>
+  (await apiClient.post<{ criadas: number; itens: number[] }>(
+    'orcamento/itens/duplicar/', { orcamento, itens },
+  )).data
+
+/** Exclui e devolve `desfazer` — sem esse retorno não haveria Ctrl+Z de exclusão. */
+export const excluirItens = async (orcamento: number, itens: number[]) =>
+  (await apiClient.post<ResultadoExclusao>(
+    'orcamento/itens/excluir-lote/', { orcamento, itens },
+  )).data
+
+export const restaurarItens = async (orcamento: number, linhas: LinhaParaRestaurar[]) =>
+  (await apiClient.post<{ restauradas: number; itens: number[] }>(
+    'orcamento/itens/restaurar/', { orcamento, linhas },
+  )).data
+
+export const aplicarPercentual = async (body: {
+  orcamento: number; itens: number[]; percentual: string
+  campo?: 'custo_unitario' | 'quantidade'
+}) => (await apiClient.post<{ afetadas: number }>('orcamento/itens/aplicar-percentual/', body)).data
+
+export const arredondarItens = async (body: {
+  orcamento: number; itens: number[]; casas: number
+  campo?: 'custo_unitario' | 'quantidade'
+}) => (await apiClient.post<{ afetadas: number }>('orcamento/itens/arredondar/', body)).data
+
+export const substituirTexto = async (body: {
+  orcamento: number; procurar: string; trocar_por: string; itens?: number[] | null
+}) => (await apiClient.post<{ afetadas: number }>('orcamento/itens/substituir-texto/', body)).data
+
+/** Refaz o custo unitário pela soma dos insumos que a linha tem agora. */
+export const recomporLinha = async (itemOrcadoId: number) =>
+  (await apiClient.post<MemoriaCalculo & { custo_unitario: string }>(
+    `orcamento/itens/${itemOrcadoId}/recompor/`,
+  )).data
+
+export const promoverComposicao = async (itemOrcadoId: number, banco?: number | null) =>
+  (await apiClient.post<{ banco: number; banco_nome: string; item_banco: number; codigo: string }>(
+    `orcamento/itens/${itemOrcadoId}/promover-composicao/`, { banco: banco ?? null },
+  )).data
+
+// --- ORC.10c — a composição da linha, agora escrita ------------------------
+
+export const criarInsumo = async (body: InsumoEscrita) =>
+  (await apiClient.post<ItemOrcadoInsumo>('orcamento/insumos/', body)).data
+
+export const editarInsumo = async (insumoId: number, body: Partial<InsumoEscrita>) =>
+  (await apiClient.patch<ItemOrcadoInsumo>(`orcamento/insumos/${insumoId}/`, body)).data
+
+export const removerInsumo = async (insumoId: number) => {
+  await apiClient.delete(`orcamento/insumos/${insumoId}/`)
+}
+
+// --- ORC.10e — reabrir o aprovado -----------------------------------------
+
+export const destravarOrcamento = async (orcamentoId: number, motivo: string) =>
+  (await apiClient.post<Orcamento>(`orcamento/orcamentos/${orcamentoId}/destravar/`, { motivo })).data

@@ -13,6 +13,10 @@ const SegurancaPage = lazy(() => import('./pages/SegurancaPage'))
 const CascaDeCampo = lazy(() => import('./campo/CascaDeCampo'))
 const FrentePage = lazy(() => import('./campo/FrentePage'))
 const ApontarPage = lazy(() => import('./campo/ApontarPage'))
+const ResponderFichaPage = lazy(() => import('./campo/ResponderFichaPage'))
+const NovoDefeitoPage = lazy(() => import('./campo/NovoDefeitoPage'))
+const NovaOcorrenciaPage = lazy(() => import('./campo/NovaOcorrenciaPage'))
+const DdsDeCampoPage = lazy(() => import('./campo/DdsDeCampoPage'))
 
 function w(element: ReactNode) {
   return (
@@ -39,9 +43,9 @@ export const pdcaRoutes = (
     <Route path="pdca/o/:obraId" element={w(<CascaPdca />)}>
       {/* **A obra abre em `HOJE`**, e não no plano: a pergunta do primeiro
           minuto do dia é o que exige decisão, não o que o cronograma diz.
-          A vista inicial por papel (o planejador cai em `PLANO`, o gestor de
-          contratos em `MEDIÇÃO`) entra quando os postos que faltam existirem —
-          mandar alguém para uma página em construção seria pior que o padrão. */}
+          A porta por papel (o planejador em `PLANO`, o técnico de segurança
+          em `SEGURANÇA` — §3.3 da planta) ainda não existe: com os seis
+          postos no ar ela passou a ser construível, e está no roadmap. */}
       <Route index element={<Navigate to="hoje" replace />} />
       <Route path="hoje" element={w(<HojePage />)} />
       <Route path="semana" element={w(<SemanaPage />)} />
@@ -67,6 +71,11 @@ export const campoRoutes = (
     <Route path="campo" element={w(<CascaDeCampo />)}>
       <Route index element={w(<FrentePage />)} />
       <Route path="apontar/:atividadeId" element={w(<ApontarPage />)} />
+      <Route path="ficha/:verificacaoId" element={w(<ResponderFichaPage />)} />
+      <Route path="defeito" element={w(<NovoDefeitoPage />)} />
+      <Route path="ocorrencia" element={w(<NovaOcorrenciaPage />)} />
+      <Route path="dds" element={w(<DdsDeCampoPage />)} />
+      <Route path="dds/:ddsId" element={w(<DdsDeCampoPage />)} />
       <Route path="*" element={<Navigate to="/campo" replace />} />
     </Route>
   </Route>

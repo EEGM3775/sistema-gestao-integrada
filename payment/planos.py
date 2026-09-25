@@ -299,7 +299,7 @@ ORDEM_PLANOS: tuple[str, ...] = (
 #     receita, e SILENCIOSO: nada quebra, nenhum erro aparece no log.
 #   - pôr um nome aqui sem que exista contador do outro lado = o oposto, e pior:
 #     o cliente é barrado por um limite que ninguém sabe medir. Há um teste que
-#     falha nesse caso (backend/nucleo/test_quotas.py), justamente para que essa
+#     falha nesse caso (testes/backend/nucleo/test_quotas.py), justamente para que essa
 #     divergência não chegue em produção.
 #
 # A separação abaixo não é organizacional, é a **regra de ouro** do
@@ -384,7 +384,7 @@ QUOTAS_APLICADAS: tuple[str, ...] = (
 #     NWD e o SKP, e a exclusão é automática: `formatos_do_plano` filtra por
 #     `formatos.SEM_ASSINATURA_CONHECIDA`, inclusive quando o plano diz `None`.
 #
-# `backend/moduloprancheta/tests.py::RegistryEPlanosTests` falha nos dois primeiros
+# `testes/backend/moduloprancheta/tests.py::RegistryEPlanosTests` falha nos dois primeiros
 # casos; o terceiro é garantido pelo filtro, não pela lista.
 #
 # **Quem APLICA esta lista mudou na PRA.5a**, e vale saber ao editá-la: era o
@@ -902,7 +902,7 @@ PRANCHETA_MEDICAO_TIMEOUT_RESGATE_SEGUNDOS: int = 180
 # máquina e não moram aqui. Por isso os valores abaixo param onde a escada ainda
 # é válida: prometer 4 GB num contêiner de 3 GB seria vender o worker morto sem
 # rastro, que é o D71/D76 ao contrário. Quem crescer a máquina sobe estes números
-# no mesmo commit — e `nucleo/test_tetos_no_payment.py` cobra a escada.
+# no mesmo commit — e `testes/backend/nucleo/test_tetos_no_payment.py` cobra a escada.
 #
 # Plano ausente do mapa cai no valor base acima, que é o comportamento de sempre.
 PRANCHETA_CONVERSAO_MEMORIA_MB_POR_PLANO: dict[str, int] = {
@@ -1014,6 +1014,18 @@ ORCAMENTO_TETO_LINHAS_MEDICAO_POR_ITEM: int = 500
 # (sem nome, sem chamada), então o risco não é execução — é uma expressão
 # aninhada de propósito para consumir pilha na hora de avaliar.
 ORCAMENTO_PROFUNDIDADE_MAXIMA_FORMULA: int = 8
+
+# Quantos passos de **desfazer** a planilha guarda (ORC.10d). Diz até onde o
+# cliente volta atrás, então é teto do dono e não da engenharia — mesmo que a
+# pilha viva no navegador.
+#
+# **Atenção ao ler este número:** a pilha é do cliente (`historico.ts`), e o
+# frontend não importa Python. O valor é espelhado lá com um comentário
+# apontando para cá, do mesmo jeito que o modal de inserir item espelha o
+# `PAGINA_MAXIMA["orcamento"]`. Mudar aqui exige mudar lá — enquanto o número
+# não for servido pela API, esta é a costura, e ela está declarada em vez de
+# escondida.
+ORCAMENTO_TETO_PASSOS_DESFAZER: int = 50
 
 # **Tamanho de página das listagens**, por módulo. É limite dos dois lados: o
 # `PADRAO` é quanto vem sem ninguém pedir e o `MAXIMA` é o teto do `?page_size=`
@@ -1686,6 +1698,17 @@ PDCA_TETO_OCORRENCIAS_NA_FILA: int = 200
 #     pela mesma razão da faixa da fila: cinquenta restrições vencidas não
 #     podem esconder a ficha que está parada esperando uma resposta.
 #
+#   - `PDCA_TETO_CONTRATOS_NO_POSTO` — quantos contratos o posto da medição
+#     resolve **com o saldo** numa leitura. É a irmã do teto da carteira, e é
+#     cara pela mesma razão: cada linha custa um `saldo_do_contrato`, que
+#     percorre todas as medições daquele contrato somando bruto, retenção e
+#     deduções. A alternativa que a tela usaria sem esta leitura é pior — uma
+#     chamada de saldo **por contrato**, que numa obra com quinze empreiteiros
+#     são quinze idas ao servidor para desenhar quinze linhas. **25** cobre a
+#     obra que toca vinte e cinco empreiteiros ao mesmo tempo, que já é uma
+#     obra grande de verdade; acima disso a leitura vem cortada e a tela diz
+#     quantos ficaram de fora.
+#
 # **NÃO existe teto de faixas na fila nem de espécies na busca**, e as duas
 # ausências são da família da §5.5m: quantas faixas a fila tem e quantas
 # espécies a busca varre é **o desenho do produto**, não o quanto o cliente
@@ -1700,6 +1723,76 @@ PDCA_TETO_OBRAS_NA_CARTEIRA: int = 40
 PDCA_TETO_LINHAS_POR_FAIXA_DA_FILA: int = 50
 PDCA_TETO_RESULTADOS_POR_ESPECIE: int = 8
 PDCA_TETO_LINHAS_POR_FRENTE: int = 40
+PDCA_TETO_CONTRATOS_NO_POSTO: int = 25
+
+# ---------------------------------------------------------------------------
+# 5.5o O segundo fator e a janela de confirmação (remodelagem, fase 1)
+# ---------------------------------------------------------------------------
+# docs/acesso-e-permissoes.md §10.5. Não são por plano: segurança da conta não é
+# upsell, e todo plano recebe o mesmo segundo fator.
+#
+# **A janela de confirmação** é quanto tempo depois de provar quem é a pessoa
+# pode fazer um ato grave (atestar pagamento, mudar papel, exportar dado
+# pessoal) sem provar de novo. Cada pessoa escolhe a sua na tela de perfil
+# *(decisão do dono, 24/09/2026)*: padrão de 15 minutos, de 1 minuto a 2 horas.
+# Sem o teto, quem escolhesse um dia inteiro desligaria a proteção sem perceber;
+# com ele, o pior caso é uma sessão aberta aprovando por até 2 horas. O servidor
+# aplica o teto — a caixa da tela é só a escolha.
+CONFIRMACAO_JANELA_PADRAO_MIN: int = 15
+CONFIRMACAO_JANELA_MIN_MIN: int = 1
+CONFIRMACAO_JANELA_MAX_MIN: int = 120
+#
+# **O desafio do login** — o passe que a senha certa dá para a segunda etapa.
+# Cinco minutos cobrem abrir o app autenticador (ou, no cadastro obrigatório do
+# admin, instalar um e ler o QR); depois disso, a senha é pedida de novo.
+SEGUNDO_FATOR_DESAFIO_VALIDADE_S: int = 300
+#
+# **Tentativas erradas por pessoa**, somadas entre login, desativação e troca
+# dos códigos: na quinta seguida, a conta recusa todo código por 15 minutos,
+# mesmo o certo. Com três códigos válidos a cada instante (o do passo e os dois
+# vizinhos), adivinhar tem chance de 15 em um milhão por janela. O preço é que
+# quem já tem a senha pode travar o segundo fator do dono por 15 minutos — que
+# é o preço de todo bloqueio por tentativa, e muito menor que o do acesso.
+SEGUNDO_FATOR_TENTATIVAS: int = 5
+SEGUNDO_FATOR_BLOQUEIO_S: int = 900
+#
+# **Códigos de recuperação** — de uso único, para quem perdeu o celular. Dez é o
+# que os provedores grandes entregam, e é o que cabe numa folha impressa.
+SEGUNDO_FATOR_CODIGOS_DE_RECUPERACAO: int = 10
+
+# ---------------------------------------------------------------------------
+# 5.5p O PDP — o relógio da pergunta e a sombra (remodelagem, fases 2 e 3)
+# ---------------------------------------------------------------------------
+# docs/acesso-e-permissoes.md §10.8 e §10.12. Não são por plano, pela mesma razão
+# da §5.5o: autorização certa não é upsell.
+#
+# **Quanto o backend espera o PDP numa decisão.** A meta de operação é p95 de
+# poucos milissegundos (§10.13); o teto existe para o dia em que o PDP fica
+# lento em vez de cair. Passado dele, a pergunta é tratada como PDP fora — que
+# na classe C nega e nas outras serve o cache ainda válido. Alto demais, um PDP
+# lento vira uma plataforma lenta; baixo demais, um soluço de rede vira 403.
+AUTORIZACAO_PDP_TIMEOUT_MS: int = 300
+#
+# **A fila da sombra (fase 2).** Cada decisão é conferida com o PDP em segundo
+# plano, sem atrasar a resposta. Se o PDP ficar lento, as conferências se
+# acumulam; passado este número, as novas são descartadas (e contadas, para o
+# relatório não dizer "zero divergência" sobre um dia que ele não viu inteiro).
+AUTORIZACAO_SOMBRA_FILA: int = 500
+#
+# **A reconciliação periódica.** Toda troca feita pela tela chega ao PDP na
+# mesma operação; este período cobre o que não passa por tela nenhuma — a
+# assinatura que vence à meia-noite, a escrita que falhou com o PDP fora. É o
+# pior atraso de uma assinatura vencida no PDP.
+AUTORIZACAO_SINCRONIA_PERIODO_S: int = 300
+#
+# **A mesma divergência entra uma vez por janela** — senão uma pessoa com o
+# token velho gravaria uma linha por requisição até o refresh.
+AUTORIZACAO_DIVERGENCIA_JANELA_S: int = 3600
+#
+# **O critério de saída da fase 2**, escrito na planta (§10.12): duas semanas de
+# uso real com a sombra ligada e nenhuma divergência real. É o número que o
+# `manage.py relatorio_pdp` confere antes de dizer "pode virar".
+AUTORIZACAO_SOMBRA_DIAS_SEM_DIVERGENCIA: int = 14
 
 # ---------------------------------------------------------------------------
 # 5.6 O que NÃO é limite — e por isso continua no código de engenharia
@@ -1715,13 +1808,23 @@ PDCA_TETO_LINHAS_POR_FRENTE: int = 40
 #     (`modulomaps/deteccao.py`): é a largura de contexto que o extrator lê, e
 #     mudá-la muda o *acerto*, não o quanto o cliente pode;
 #   - **janelas de protocolo de terceiro** — `SEEN_TTL` (`funcoeswhatsapp`) é a
-#     janela de reentrega **da Meta**; não somos nós que a escolhemos;
+#     janela de reentrega **da Meta**; não somos nós que a escolhemos. Da mesma
+#     família: o passo de 30 s, os 6 dígitos e a tolerância de um passo para cada
+#     lado do TOTP (`iam/identity/segundo_fator.py`) — são da RFC 6238 e do app
+#     autenticador do usuário, e mudá-los quebra o app, não muda o produto; e as
+#     1.000 atualizações por escrita do SpiceDB
+#     (`funcoesautorizacao/cliente.py`), que são o padrão do servidor dele;
 #   - **larguras de campo** — `LARGURA_CODIGO_INTERNO = 40` (`moduloorcamento`) é
 #     o `max_length` da coluna `catalogo.Item.codigo_interno`, não um teto de uso.
 #     Chamava-se `LIMITE_*` e por isso aparecia em toda varredura como falso
 #     positivo: o nome mentia, e foi ele que mudou;
 #   - **TTL de cache** — `CACHE_TTL` de CEP/município (`nucleo/geo.py`): é
-#     desempenho, e o dado que ele guarda é público e estável;
+#     desempenho, e o dado que ele guarda é público e estável. Da mesma família:
+#     os 60 s / 5 s / 0 s das classes A, B e C da autorização
+#     (`funcoesautorizacao/classes.py`) — quem garante a revogação em segundos é
+#     a invalidação por evento, e o TTL só diz quanto dura o pior caso com o
+#     invalidador fora. Mesmo assim, os três números são **do dono** pela planta
+#     (§10.8, "as classes ficam como estão"): mudam lá primeiro;
 #   - **limiar de conferência** — `LIMIAR_SEMELHANCA` (`moduloorcamento/
 #     identidade.py`, D110): a partir de qual semelhança duas descrições são
 #     tidas como o mesmo insumo. Mesma família do `JANELA` do extrator de CEP —

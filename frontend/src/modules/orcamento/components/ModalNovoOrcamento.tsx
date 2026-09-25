@@ -82,12 +82,21 @@ export default function ModalNovoOrcamento({ obras, bases, existentes, obraFixa,
         </Select>
       </Field>
       <Field label="Descrição"><input value={form.descricao} onChange={e => setForm(f => ({ ...f, descricao: e.target.value }))} placeholder="Ex.: Orçamento executivo — Residencial Alfa" style={inp} /></Field>
-      <Field label="Base de preço" dica="A data-base do orçamento é copiada da publicação e sobrevive a ela.">
+      {/* Deixou de ser a escolha que decide se a planilha nasce zerada: desde a
+          ORC.10a o preço de cada linha vem da publicação de onde ela foi
+          pescada. O que se escolhe aqui é a data-base que o **documento**
+          anuncia e a publicação em que a janela de inserir abre — útil, não
+          obrigatório, e a dica diz isso em vez de deixar o campo parecer uma
+          formalidade. */}
+      <Field
+        label="Base de preço padrão"
+        dica="Define a data-base que a planilha anuncia e onde a busca de itens abre. Cada linha guarda a publicação de onde veio, então dá para misturar fontes."
+      >
         <SeletorDeBase
           bases={bases}
           valor={form.base_referencial === '' ? '' : Number(form.base_referencial)}
           onChange={v => setForm(f => ({ ...f, base_referencial: v === '' ? '' : String(v) }))}
-          rotuloVazio="Sem base — preço digitado à mão"
+          rotuloVazio="Definir depois — escolho a publicação a cada item"
           style={{ width: '100%' }}
         />
       </Field>

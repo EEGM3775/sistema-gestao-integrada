@@ -2,7 +2,7 @@
 """D120 — `pdca_apontamento/` sai pela porta única.
 
 A foto que o encarregado tira ao apontar o avanço. Ela nasceu na PDCA.2 sem
-porta, e o [teste do D70](../funcoesimpexp/test_d70_portas_de_midia.py) —
+porta, e o [teste do D70](../../testes/backend/funcoesimpexp/test_d70_portas_de_midia.py) —
 escrito exatamente para que a lista não voltasse a crescer sozinha — apontou o
 campo pelo nome.
 

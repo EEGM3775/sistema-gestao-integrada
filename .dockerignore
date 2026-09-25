@@ -4,11 +4,14 @@
 # repositório inteiro: ImgDrone (drone + binários), node_modules e o .git.
 #
 # Regra prática ao mexer aqui: o contexto deve conter apenas backend/, iam/,
-# funcoesemail/ e payment/ (valores comerciais lidos pela IAM) — o resto é peso
+# funcoesemail/, payment/ (valores comerciais lidos pela IAM) e
+# funcoesautorizacao/ (o cliente do PDP e o schema gerado) — o resto é peso
 # morto que só faz o build demorar.
 
 # Nunca entram no contexto
 .git
+# Testes, seeds e E2E: rodam contra a imagem, não dentro dela.
+testes
 .github
 docs
 media

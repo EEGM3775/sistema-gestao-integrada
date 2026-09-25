@@ -47,7 +47,7 @@ Runbook + checklist de validação em [infra/staging/README.md](../infra/staging
 cp deploy/env/staging.env.example deploy/env/staging.env   # troque TODOS os TROQUE-* por segredos fortes
 bash infra/keys/generate.sh            # chaves RSA do JWT, se ainda não existirem
 bash infra/staging/up.sh               # gera o cert TLS, builda e sobe (https://localhost:8443/)
-bash infra/staging/seed.sh             # fixtures demo/acme (uma vez)
+bash testes/seeds/seed_staging.sh             # fixtures demo/acme (uma vez)
 bash infra/staging/validate.sh         # gate automático da leva 8→11 pelos E2E das fases
 ```
 
@@ -94,7 +94,14 @@ docker compose up -d postgres                                   # se ainda não 
 docker exec sgi-postgres psql -U postgres -c 'ALTER ROLE erp_app CREATEDB;'
 
 cd backend && ../.venv/bin/python manage.py test                # roda a suíte inteira no Postgres
+cd backend && ../.venv/bin/python manage.py test moduloorcamento  # só um app
 ```
+
+Os testes **não** moram dentro dos apps: ficam em [`testes/`](../testes/README.md) na raiz
+(`testes/backend/<app>/`, `testes/iam/`), junto das seeds e dos E2E. O `TEST_RUNNER` de cada serviço
+sabe disso — sem rótulo, descobre `testes/<serviço>/` inteiro; um rótulo de app (`moduloorcamento`,
+`nucleo.test_quotas`) vira `testes.backend.<...>`. Como a imagem não carrega `testes/`, rodar dentro de
+um contêiner exige copiar a pasta para `/app/testes` antes.
 
 > **MAP.0 — duas exigências novas.**
 >
@@ -128,23 +135,37 @@ cd backend && ../.venv/bin/python manage.py test                # roda a suíte 
 >    Sem privilégio de instalar, a alternativa é rodar a suíte dentro da imagem do backend (que já
 >    tem tudo), montando o repositório — foi assim que a leva do Maps foi validada.
 
+> **O PDP nos testes (remodelagem, fases 2 e 3).** Os testes de integração com o SpiceDB — a
+> equivalência token × PDP da IAM (`testes/iam/identity/test_pdp.py`) e a revogação do backend
+> (`testes/backend/nucleo/test_autorizacao.py`) — rodam contra o `spicedb-testes` do `dev.yml` (em
+> memória; cada classe de teste usa uma chave nova, que é um banco isolado). Eles só o procuram com a
+> variável definida, e sem ela são pulados **com o motivo escrito**:
+>
+> ```bash
+> docker exec -w /tmp/sgi -e SPICEDB_TESTES_URL=http://spicedb-testes:8443 sgi-erp python manage.py test --noinput
+> ```
+>
+> Na IAM, copie também o `funcoesautorizacao/` da raiz junto do `payment/` e do `funcoesemail/`. Mudou
+> o catálogo de permissões? Regere o schema: `python funcoesautorizacao/gerar.py` (a IAM reprova a
+> esteira se esquecer).
+
 Como o Postgres é o único banco, a RLS *fail-closed* vale de fato e **todos** os testes de isolamento
-(`nucleo/test_rls_fail_closed.py`, `test_tenant_isolation.py`) rodam — nenhum é pulado. A suíte roda
+(`testes/backend/nucleo/test_rls_fail_closed.py`, `test_tenant_isolation.py`) rodam — nenhum é pulado. A suíte roda
 como o role `erp_app` (não-superuser, não-BYPASSRLS), o cenário real de produção.
 
-O `TEST_RUNNER` do projeto ([nucleo/test_runner.py](../backend/nucleo/test_runner.py)) arma o bypass
+O `TEST_RUNNER` do projeto ([nucleo/test_runner.py](../backend/nucleo/test_runner.py)) também arma o bypass
 de plataforma **em nível de sessão** durante os testes, para o seed de fixtures (que roda fora de um
 request) não ser barrado pela política **fail-closed**; cada request e os testes de isolamento armam
 o tenant via `is_local`, que sobrepõe a sessão — então o escopo por tenant continua sendo provado.
 
 ## Dados demo
 
-A IAM tem um seed ([iam/seed_demo.py](../iam/seed_demo.py)) que cria os módulos, perfis e usuários de
+A IAM tem um seed ([testes/seeds/seed_demo.py](../testes/seeds/seed_demo.py)) que cria os módulos, perfis e usuários de
 exemplo. Atrás do gateway:
 
 ```bash
-docker compose exec -T iam python manage.py shell < iam/seed_demo.py
-# ou, rodando a IAM local:  cd iam && ../.venv/bin/python manage.py shell < seed_demo.py
+docker compose exec -T iam python manage.py shell < testes/seeds/seed_demo.py
+# ou, rodando a IAM local:  cd iam && ../.venv/bin/python manage.py shell < ../testes/seeds/seed_demo.py
 ```
 
 | Usuário | Senha | Para que serve |
@@ -159,7 +180,7 @@ docker compose exec -T iam python manage.py shell < iam/seed_demo.py
 Os dados de negócio vêm depois, no backend:
 
 ```bash
-docker compose exec -T erp python manage.py shell < backend/seed_demo_data.py   # cadastros base
+docker compose exec -T erp python manage.py shell < testes/seeds/seed_demo_data.py   # cadastros base
 docker compose exec erp python manage.py semear_carteira_demo --tenant demo     # carteira de clientes
 docker compose exec erp python manage.py semear_pdca_demo --tenant demo         # obra planejada E em execução
 ```

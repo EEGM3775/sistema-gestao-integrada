@@ -17,6 +17,9 @@ COPY funcoesemail/ ./funcoesemail/
 # Valores comerciais (planos, quotas, tetos). A IAM os lê para compor o claim do
 # teto de requisições (D23) — ver payment/README.md.
 COPY payment/ ./payment/
+# O cliente do PDP e o schema gerado do catálogo: a IAM é quem escreve as
+# relações no SpiceDB (remodelagem, fase 2 — identity/pdp.py).
+COPY funcoesautorizacao/ ./funcoesautorizacao/
 
 EXPOSE 8001
 

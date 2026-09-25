@@ -13,6 +13,8 @@ import type {
   TipoItemProprio,
   // ORC.8
   FonteOficial as FonteOficialTipo,
+  // ORC.10
+  InsumoEscrita, LinhaParaRestaurar,
 } from './types'
 
 type Params = Record<string, unknown>
@@ -622,3 +624,53 @@ export const useEnviarArquivoDaCarga = () =>
 export const useRepetirCarga = () =>
   useVerboDaCarga((v: { id: number; aceitar_sem_classe?: boolean; somente_resumo?: boolean }) =>
     api.repetirCarga(v.id, { aceitar_sem_classe: v.aceitar_sem_classe, somente_resumo: v.somente_resumo }))
+
+// --- ORC.10 — os verbos de edição da planilha ------------------------------
+//
+// Todos passam pelo `useVerbo`, que invalida a base inteira do módulo: mover
+// uma etapa muda a EAP de tudo que pende dela, o total de dois ancestrais e o
+// cabeçalho do orçamento — invalidar só a árvore deixaria o cockpit e o
+// controle exibindo o total antigo até alguém recarregar.
+
+export const useMoverItens = () =>
+  useVerbo((v: Parameters<typeof api.moverItens>[0]) => api.moverItens(v))
+
+export const useDuplicarItens = () =>
+  useVerbo((v: { orcamento: number; itens: number[] }) => api.duplicarItens(v.orcamento, v.itens))
+
+export const useExcluirItens = () =>
+  useVerbo((v: { orcamento: number; itens: number[] }) => api.excluirItens(v.orcamento, v.itens))
+
+export const useRestaurarItens = () =>
+  useVerbo((v: { orcamento: number; linhas: LinhaParaRestaurar[] }) =>
+    api.restaurarItens(v.orcamento, v.linhas))
+
+export const useAplicarPercentual = () =>
+  useVerbo((v: Parameters<typeof api.aplicarPercentual>[0]) => api.aplicarPercentual(v))
+
+export const useArredondarItens = () =>
+  useVerbo((v: Parameters<typeof api.arredondarItens>[0]) => api.arredondarItens(v))
+
+export const useSubstituirTexto = () =>
+  useVerbo((v: Parameters<typeof api.substituirTexto>[0]) => api.substituirTexto(v))
+
+export const useRecomporLinha = () => useVerbo((id: number) => api.recomporLinha(id))
+
+export const usePromoverComposicao = () =>
+  useVerbo((v: { item: number; banco?: number | null }) =>
+    api.promoverComposicao(v.item, v.banco ?? null))
+
+// --- ORC.10c — a composição da linha ---------------------------------------
+
+export const useCriarInsumo = () => useVerbo((v: InsumoEscrita) => api.criarInsumo(v))
+
+export const useEditarInsumo = () =>
+  useVerbo((v: { id: number; payload: Partial<InsumoEscrita> }) =>
+    api.editarInsumo(v.id, v.payload))
+
+export const useRemoverInsumo = () => useVerbo((id: number) => api.removerInsumo(id))
+
+// --- ORC.10e — reabrir o aprovado ------------------------------------------
+
+export const useDestravarOrcamento = () =>
+  useVerbo((v: { id: number; motivo: string }) => api.destravarOrcamento(v.id, v.motivo))

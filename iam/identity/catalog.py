@@ -180,6 +180,12 @@ CATALOGO: tuple[Perm, ...] = (
     Perm("orcamento.orcamento.edit", "Criar/editar orçamentos de obra", "orcamento"),
     Perm("orcamento.orcamento.aprovar", "Aprovar orçamento (congela a régua de custo)", "orcamento"),
     Perm("orcamento.orcamento.revisar", "Revisar orçamento aprovado (aditivo/supressão)", "orcamento"),
+    # ORC.10e — o meio-termo entre congelar e liberar. Aprovado continua
+    # somente-leitura por padrão e `revisar` continua sendo o caminho quando o
+    # escopo muda; isto aqui é para o erro achado logo depois de aprovar. É
+    # alçada, do mesmo tipo de `aprovar`: entra no curinga da persona
+    # `orcamentista` e é destacável tirando o curinga, como as outras.
+    Perm("orcamento.orcamento.destravar", "Reabrir orçamento aprovado para edição (com motivo)", "orcamento"),
     Perm("orcamento.item.view", "Ver as linhas da planilha orçamentária", "orcamento"),
     Perm("orcamento.item.edit", "Editar as linhas da planilha orçamentária", "orcamento"),
     Perm("orcamento.relatorio.view", "Ver curva ABC, curva S e orçado × realizado", "orcamento"),

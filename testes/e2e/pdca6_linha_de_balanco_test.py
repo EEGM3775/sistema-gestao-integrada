@@ -11,7 +11,7 @@ na ordem em que a obra sobe, o ritmo que é o pedido, o gargalo que é o mais
 lento, o conflito que é fato e não geometria, e o **que ficou de fora** dito em
 voz alta.
 
-Seed: iam/seed_demo.py + backend/seed_demo_data.py
+Seed: testes/seeds/seed_demo.py + testes/seeds/seed_demo_data.py
 
   demo     / demo123     -> `engenharia` + `planejador`: desenha e lê.
   campo    / campo123    -> `campo`: lê o plano e **não** o desenha — traçar a

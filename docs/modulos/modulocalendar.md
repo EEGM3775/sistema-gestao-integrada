@@ -200,7 +200,7 @@ endpoint, NF/relatórios — sem reimplementar), com endpoint fino `GET /api/geo
   em estado e cidade (fuzzy `difflib`, cutoff alto p/ não chutar), e **distingue rua de cidade/estado**
   ancorando a leitura no fim do endereço (o estado vem por último) — "Ba 026" (via) não vira "Bahia".
   Se a cidade não casar mas a UF sim, devolve só o estado. Testes em
-  [`nucleo/test_geo.py`](../../backend/nucleo/test_geo.py).
+  [`testes/backend/nucleo/test_geo.py`](../../testes/backend/nucleo/test_geo.py).
 - Recomendado ainda assim **persistir `cidade`/`estado`** em `Obra`/`Empreendimento` (espelhando
   `clientes`), preenchidos no cadastro — mais confiável que reparsear texto e útil p/ NF/ERP/relatórios.
 

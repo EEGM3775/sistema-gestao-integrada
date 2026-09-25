@@ -40,3 +40,15 @@ services:
   # ele a recuperação de senha não tem para onde entregar e o fluxo fica mudo.
   mailpit:
     profiles: ["full", "mail", "dev"]
+
+  # SpiceDB de TESTE — em memória, e cada chave (Bearer) é um banco isolado. É o
+  # que deixa os testes de integração da IAM e do backend conferirem o PDP de
+  # verdade sem tocar nas relações do `spicedb` de dev: cada classe de teste usa
+  # uma chave nova. Os testes só o procuram com SPICEDB_TESTES_URL definida.
+  spicedb-testes:
+    image: authzed/spicedb:v1.45.1
+    container_name: ${SGI_PREFIX:-sgi}-spicedb-testes
+    profiles: ["full", "dev"]
+    command: ["serve-testing", "--http-enabled", "--http-addr=:8443", "--skip-release-check"]
+    networks: [sgi]
+    restart: unless-stopped

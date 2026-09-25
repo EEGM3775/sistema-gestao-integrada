@@ -1,6 +1,38 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { LogOut, ChevronDown, ChevronRight, User, KeyRound, CalendarDays, DraftingCompass, Map as MapIcon } from 'lucide-react'
+import { LogOut, ChevronDown, ChevronRight, User, KeyRound, ShieldCheck, CalendarDays, DraftingCompass, Lightbulb, LightbulbOff, Map as MapIcon } from 'lucide-react'
+import { useAssistente } from '../assistente/contexto'
+
+/** Liga e desliga o assistente, mostrando em qual estado ele está.
+ *
+ *  Ícone que muda (aceso × apagado) e não só cor: distinguir ligado de desligado
+ *  por tonalidade sozinha falha em monocromacia, e é a informação inteira do
+ *  botão. O `title` conta as duas coisas — o estado atual e o que o clique faz.
+ */
+function ChaveDoAssistente() {
+  const { ativo, alternar, ajuda, abrirPainel } = useAssistente()
+  return (
+    <button
+      onClick={alternar}
+      onContextMenu={e => { e.preventDefault(); abrirPainel() }}
+      title={ativo
+        ? `Assistente ligado${ajuda ? ` — mostrando as dicas de ${ajuda.tela}` : ''}. Clique para desligar; tecla ? abre a lista inteira.`
+        : 'Assistente desligado. Clique para ligar; tecla ? abre a lista de atalhos.'}
+      aria-label={ativo ? 'Desligar o assistente' : 'Ligar o assistente'}
+      aria-pressed={ativo}
+      className="hidden sm:inline-flex items-center justify-center rounded-lg transition-colors duration-150"
+      style={{
+        width: 34, height: 34,
+        color: ativo ? 'var(--accent-ink)' : 'var(--ink-3)',
+        background: ativo ? 'var(--accent-soft)' : 'transparent',
+        border: '1px solid ' + (ativo ? 'var(--accent)' : 'transparent'),
+        cursor: 'pointer',
+      }}
+    >
+      {ativo ? <Lightbulb size={18} /> : <LightbulbOff size={18} />}
+    </button>
+  )
+}
 import { useAuth } from '@/hooks/useAuth'
 import { ChangePasswordModal } from '@/components/ChangePasswordModal'
 import { NotificationBell } from '@/components/notifications/NotificationBell'
@@ -38,6 +70,7 @@ const SEGMENT_LABELS: Record<string, string> = {
   admin: 'Administração',
   papeis: 'Papéis e Acessos',
   usuarios: 'Usuários',
+  conta: 'Minha conta',
 }
 
 function useBreadcrumb(): string[] {
@@ -151,6 +184,13 @@ export const AppTopbar: React.FC = () => {
           consultado de qualquer lugar dele — inclusive do celular no canteiro. */}
       <AtalhoTopbar to="/app/prancheta" rotulo="Prancheta — o projeto em campo"><DraftingCompass size={18} /></AtalhoTopbar>
       <AtalhoTopbar to="/app/calendario" rotulo="Calendário"><CalendarDays size={18} /></AtalhoTopbar>
+      {/* O assistente é da mesma família: acompanha a pessoa por todo o sistema
+          e se consulta sem sair de onde se está. A diferença é que ele não é um
+          lugar — é uma chave —, e por isso não navega: liga e desliga ali mesmo,
+          com o estado à vista. Foi o pedido do dono depois de descobrir que
+          metade dos verbos da planilha estava atrás de um ícone que ninguém
+          sabia que existia. */}
+      <ChaveDoAssistente />
 
       <ThemeToggle />
       <NotificationBell />
@@ -179,13 +219,22 @@ export const AppTopbar: React.FC = () => {
 
         {menuOpen && (
           <div
-            className="absolute right-0 top-full mt-2 w-48 py-1 z-50"
+            className="absolute right-0 top-full mt-2 w-56 py-1 z-50"
             style={{ background: 'var(--surface)', boxShadow: 'var(--shadow-lg)', border: '1px solid var(--line)', borderRadius: 'var(--r-md)' }}
           >
             <div className="px-4 py-2.5" style={{ borderBottom: '1px solid var(--line)' }}>
               <p className="text-xs font-semibold truncate" style={{ color: 'var(--ink)' }}>{user?.username}</p>
               <p className="text-xs truncate" style={{ color: 'var(--ink-3)' }}>{user?.email ?? ''}</p>
             </div>
+            <button
+              onClick={() => { setMenuOpen(false); navigate('/app/conta') }}
+              className="w-full flex items-center gap-2 px-4 py-2.5 text-sm transition-colors duration-150"
+              style={{ color: 'var(--ink-2)', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-2)')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+            >
+              <ShieldCheck size={14} /> Minha conta e segurança
+            </button>
             <button
               onClick={() => { setMenuOpen(false); setPwOpen(true) }}
               className="w-full flex items-center gap-2 px-4 py-2.5 text-sm transition-colors duration-150"

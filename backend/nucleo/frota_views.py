@@ -17,7 +17,7 @@ from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from . import frota
+from . import autorizacao, frota
 from .models import TarefaNaFila
 
 
@@ -71,8 +71,10 @@ class TarefaNaFilaViewSet(viewsets.ReadOnlyModelViewSet):
         o que a resposta devolve, com a posição nova, é a prova disso.
         """
         tarefa = self.get_object()
-        permissoes = getattr(request.user, "iam_permissions", None) or []
-        if "prancheta.documento.edit" not in permissoes:
+        # `tem_na_lista`, e não `pode`: esta view nunca deu passe ao admin fora
+        # do módulo — ela conferia a lista do token, que o admin só tem para o
+        # que a empresa assina.
+        if not autorizacao.tem_na_lista(request.user, "prancheta.documento.edit"):
             return Response(
                 {"detail": "Só quem governa o acervo pode reordenar a fila da empresa."},
                 status=status.HTTP_403_FORBIDDEN,

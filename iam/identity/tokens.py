@@ -73,7 +73,8 @@ def _aplicar_validade(token, remember: bool) -> None:
         token.payload["exp"] = cap_end
 
 
-def issue_refresh(user, *, remember: bool, sst: int | None = None) -> RefreshToken:
+def issue_refresh(user, *, remember: bool, sst: int | None = None,
+                  amr: list[str] | None = None) -> RefreshToken:
     """Emite um refresh token **mínimo**: só `user_id` (padrão do SimpleJWT) +
     metadados de sessão. As claims pesadas (`permissions`/`roles`/`modules`) NÃO
     entram aqui — senão o token (que vai num cookie) estouraria o limite de ~4KB
@@ -83,10 +84,16 @@ def issue_refresh(user, *, remember: bool, sst: int | None = None) -> RefreshTok
     `sst` (session start time) marca o início da sessão e é **preservado nas
     rotações** → serve ao teto absoluto. `rem` guarda se é sessão "lembrada"
     (define a validade deslizante em cada rotação).
+
+    `amr` (RFC 8176) diz **como** a sessão provou quem é: `["pwd"]` só senha,
+    `["pwd", "otp"]` senha e segundo fator. É preservado nas rotações, como o
+    `sst`, e o SimpleJWT o copia para o access. O refresh recusa a sessão sem
+    `otp` de quem tem ou é obrigado a ter segundo fator (`RefreshView`).
     """
     token = RefreshToken.for_user(user)
     token["sst"] = int(sst) if sst else int(timezone.now().timestamp())
     token["rem"] = bool(remember)
+    token["amr"] = list(amr) if amr else ["pwd"]
     _aplicar_validade(token, remember)
     return token
 

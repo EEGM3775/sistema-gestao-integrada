@@ -1,7 +1,10 @@
-import React, { useState } from 'react'
+import React, { useCallback, useState } from 'react'
 import { useNavigate, useLocation, Link } from 'react-router-dom'
 import { Eye, EyeOff, LogIn, HardHat, BarChart3, Brain, ArrowLeft, Loader2 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
+import type { DesafioSegundoFator, SessaoComCodigos } from '@/api/segundoFator'
+import { EntrarComCodigo } from '@/components/seguranca/EntrarComCodigo'
+import { CadastroSegundoFator } from '@/components/seguranca/CadastroSegundoFator'
 
 const features = [
   { icon: <HardHat size={18} />,    text: 'Obras e empreendimentos integrados' },
@@ -10,7 +13,7 @@ const features = [
 ]
 
 const LoginPage: React.FC = () => {
-  const { login } = useAuth()
+  const { login, concluirLogin } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -20,6 +23,7 @@ const LoginPage: React.FC = () => {
   const [remember, setRemember]     = useState(false)
   const [error, setError]           = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [desafio, setDesafio]       = useState<DesafioSegundoFator | null>(null)
 
   const from = (location.state as { from?: { pathname?: string } })?.from?.pathname || '/app/dashboard'
 
@@ -29,7 +33,11 @@ const LoginPage: React.FC = () => {
     setError(null)
     setSubmitting(true)
     try {
-      await login(username, password, remember)
+      const segundaEtapa = await login(username, password, remember)
+      if (segundaEtapa) {
+        setDesafio(segundaEtapa)
+        return
+      }
       navigate(from, { replace: true })
     } catch {
       setError('Usuário ou senha incorretos. Verifique seus dados e tente novamente.')
@@ -37,6 +45,17 @@ const LoginPage: React.FC = () => {
       setSubmitting(false)
     }
   }
+
+  const entrar = async (sessao: SessaoComCodigos, destino?: string) => {
+    await concluirLogin(sessao)
+    navigate(destino ?? from, { replace: true })
+  }
+
+  const recomecar = useCallback(() => {
+    setDesafio(null)
+    setPassword('')
+    setError('O tempo para confirmar passou. Entre com a senha de novo.')
+  }, [])
 
   return (
     <div className="min-h-screen flex">
@@ -110,6 +129,40 @@ const LoginPage: React.FC = () => {
           </Link>
         </div>
 
+        {desafio ? (
+          <div className="w-full max-w-sm">
+            <h1
+              className="text-2xl font-bold mb-1"
+              style={{ fontFamily: 'var(--font-heading)', color: 'var(--color-brand)' }}
+            >
+              {desafio.segundo_fator === 'codigo' ? 'Confirme que é você' : 'Ative o segundo fator'}
+            </h1>
+            <p className="text-sm mb-6" style={{ fontFamily: 'var(--font-body)', color: 'var(--color-text-muted)' }}>
+              {desafio.segundo_fator === 'codigo'
+                ? <>A senha de <b>{username}</b> está certa. Falta o código do celular.</>
+                : <>A conta <b>{username}</b> administra a empresa, e por isso só entra com senha e
+                  com um código do celular. A ativação leva um minuto e é feita uma vez só.</>}
+            </p>
+            {desafio.segundo_fator === 'codigo' ? (
+              <EntrarComCodigo desafio={desafio.desafio} aoEntrar={entrar} aoVencer={recomecar} />
+            ) : (
+              <CadastroSegundoFator
+                conta={username}
+                desafio={desafio.desafio}
+                aoConcluir={sessao => { void entrar(sessao) }}
+                aoVencer={recomecar}
+              />
+            )}
+            <button
+              type="button"
+              onClick={() => { setDesafio(null); setPassword('') }}
+              className="mt-6 flex items-center gap-1.5 text-sm"
+              style={{ fontFamily: 'var(--font-body)', color: 'var(--color-text-muted)', background: 'none', border: 'none', cursor: 'pointer' }}
+            >
+              <ArrowLeft size={14} /> Entrar com outra conta
+            </button>
+          </div>
+        ) : (
         <div className="w-full max-w-sm">
           <h1
             className="text-2xl font-bold mb-1"
@@ -277,6 +330,7 @@ const LoginPage: React.FC = () => {
             </Link>
           </div>
         </div>
+        )}
       </div>
 
     </div>

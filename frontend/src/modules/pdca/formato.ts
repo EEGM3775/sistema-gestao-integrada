@@ -1,3 +1,5 @@
+import { parseApiErrors } from '@/utils/formErrors'
+
 /** Percentual em português, venha `number` do JSON ou `string` do `Decimal`.
  *
  *  **Existe porque a mesma linha mostrava as duas coisas.** O avanço atravessa
@@ -24,4 +26,30 @@ export function emDias(quantos: number, zero = 'hoje'): string {
   if (quantos === 0) return zero
   const n = Math.abs(quantos)
   return `${n} ${n === 1 ? 'dia' : 'dias'}`
+}
+
+/** O "agora" no formato do `<input type="datetime-local">` — hora local, sem
+ *  fuso, porque é assim que o campo o lê. */
+export function agoraLocal(): string {
+  const d = new Date()
+  const doisDigitos = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${doisDigitos(d.getMonth() + 1)}-${doisDigitos(d.getDate())}`
+    + `T${doisDigitos(d.getHours())}:${doisDigitos(d.getMinutes())}`
+}
+
+/** Data e hora do servidor, legíveis: "24/09/2026 às 14:32". */
+export function dataHora(iso: string | null | undefined): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return `${d.toLocaleDateString('pt-BR')} às ${d.toLocaleTimeString('pt-BR', {
+    hour: '2-digit', minute: '2-digit',
+  })}`
+}
+
+/** A frase que o diálogo mostra quando o gesto falha — a do servidor quando
+ *  ele disse uma, e a tradução do `parseApiErrors` quando não (D187). */
+export function primeiraFrase(e: unknown): string {
+  const erros = parseApiErrors(e)
+  return erros._form ?? erros.detail ?? Object.values(erros)[0] ?? 'Não foi possível concluir.'
 }

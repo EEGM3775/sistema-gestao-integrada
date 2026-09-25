@@ -16,6 +16,7 @@ from .views import (
     IndiceEconomicoViewSet,
     InsumoReferenciaViewSet,
     ItemBancoPrecoViewSet,
+    ItemOrcadoInsumoViewSet,
     ItemOrcadoViewSet,
     LinhaMedicaoViewSet,
     MemorialNBRViewSet,
@@ -38,6 +39,8 @@ router.register(r"bases", BaseReferencialViewSet, basename="orcamento-base")
 router.register(r"referencias", InsumoReferenciaViewSet, basename="orcamento-referencia")
 router.register(r"orcamentos", OrcamentoViewSet, basename="orcamento-orcamento")
 router.register(r"itens", ItemOrcadoViewSet, basename="orcamento-item")
+# ORC.10c — a composição de uma linha deixou de ser só leitura
+router.register(r"insumos", ItemOrcadoInsumoViewSet, basename="orcamento-insumo")
 router.register(r"revisoes", RevisaoOrcamentoViewSet, basename="orcamento-revisao")
 router.register(r"bdi", ComposicaoBDIViewSet, basename="orcamento-bdi")
 router.register(r"parcelas", ParcelaEtapaViewSet, basename="orcamento-parcela")

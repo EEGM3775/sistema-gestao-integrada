@@ -48,7 +48,7 @@ nela mexe no faturamento, e nos dois sentidos:
 | **Pôr** um nome sem contador do outro lado | o cliente é barrado por um limite que ninguém sabe medir. |
 | **Mover** uma quota de COGS para a lista | troca "cobrar excedente" por "barrar o cliente" — ver a regra de ouro em [monetizacao.md §4](../docs/arquitetura/monetizacao.md). |
 
-O segundo e o terceiro casos não passam despercebidos: `backend/nucleo/test_quotas.py` **falha** se a
+O segundo e o terceiro casos não passam despercebidos: `testes/backend/nucleo/test_quotas.py` **falha** se a
 lista comercial e os contadores divergirem, e o CI barra o merge. O primeiro caso é decisão sua, e é
 por isso que a lista está à vista neste arquivo.
 
@@ -106,7 +106,7 @@ Nenhuma migration é necessária: `Tenant.plano` guarda só o **slug** do plano,
 >
 > A varredura que a aplicou achou limites em **quinze arquivos**, incluindo `config/settings.py` (que
 > é de deploy — quem opera a máquina lê, você não) e nove paginadores. Quem cobra que eles não voltem é
-> [`backend/nucleo/test_tetos_no_payment.py`](../backend/nucleo/test_tetos_no_payment.py); a fronteira
+> [`testes/backend/nucleo/test_tetos_no_payment.py`](../testes/backend/nucleo/test_tetos_no_payment.py); a fronteira
 > do que **não** é limite — constante física, largura de campo, TTL de cache, janela de protocolo de
 > terceiro — está escrita na §5.6 do `planos.py`, para a varredura não se repetir.
 

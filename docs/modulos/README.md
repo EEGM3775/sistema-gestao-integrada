@@ -30,6 +30,14 @@
 
 ¹ `modulodiario` usa `IsResponsavelTecnicoDaObra` (permissão por objeto), não `RequireModule`.
 
+## frontend — peças do shell (sem app Django)
+
+> Não têm entitlement nem rota de API: vivem no shell da aplicação e servem qualquer tela.
+
+| Peça | Doc | O que faz |
+|---|---|---|
+| `funcoesassistente` | [funcoesassistente.md](funcoesassistente.md) | **O sistema explicando a si mesmo**: chave na barra de cima, cartão de dicas por tela e painel de referência na tecla `?`. Nasceu da ORC.10, quando a planilha ganhou gestos que nada anunciava |
+
 ## Microsserviços Node (acionados pelo backend)
 
 > Stack em **descontinuação** (Fase 11 do [roadmap](../roadmap.md)): nenhuma feature nova nasce

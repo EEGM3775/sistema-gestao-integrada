@@ -2,7 +2,11 @@ import type { ReactNode } from 'react'
 import React, { createContext, useState, useEffect, useCallback } from 'react'
 import axios from 'axios'
 import { attachAuth } from '../api/attachAuth'
-import { changePassword as changePasswordApi, loginSession, logoutSession, refreshAccess } from '../api/session'
+import {
+  changePassword as changePasswordApi, loginSession, logoutSession, pedeSegundoFator, refreshAccess,
+} from '../api/session'
+import type { LoginData } from '../api/session'
+import type { DesafioSegundoFator } from '../api/segundoFator'
 import { getAccessToken, onAccessTokenChange } from '../api/tokenStore'
 import {
   getAvisoSegundos, getExpiraEm, getUltimaAtividade, marcarAtividade, onRelogioChange,
@@ -27,7 +31,9 @@ interface AuthContextType {
    *  aparece** para os demais, nem trancado. */
   isPlatformAdmin: boolean
   loading: boolean
-  login: (username: string, password: string, remember?: boolean) => Promise<void>
+  /** `null` quando a senha já abriu a sessão; o desafio quando falta o segundo fator. */
+  login: (username: string, password: string, remember?: boolean) => Promise<DesafioSegundoFator | null>
+  concluirLogin: (data: LoginData) => Promise<void>
   changePassword: (senhaAtual: string, novaSenha: string) => Promise<void>
   logout: () => void
   hasModule: (code: string) => boolean
@@ -172,8 +178,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, [logout])
 
-  const login = async (username: string, password: string, remember = false) => {
-    const data = await loginSession(username, password, remember)
+  const concluirLogin = async (data: LoginData) => {
     const u = data.user ?? ({} as NonNullable<typeof data.user>)
     setUser({ id: u.id, username: u.username, email: u.email })
     setModules(Array.isArray(data.modules) ? data.modules : [])
@@ -193,6 +198,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }
 
+  const login = async (username: string, password: string, remember = false) => {
+    const data = await loginSession(username, password, remember)
+    if (pedeSegundoFator(data)) return data
+    await concluirLogin(data)
+    return null
+  }
+
   const changePassword = (senhaAtual: string, novaSenha: string) =>
     changePasswordApi(senhaAtual, novaSenha)
 
@@ -202,7 +214,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   return (
     <AuthContext.Provider value={{
       isAuthenticated: !!user, user, modules, permissions, isTenantAdmin, isPlatformAdmin,
-      loading, login, changePassword, logout, hasModule, hasPermission,
+      loading, login, concluirLogin, changePassword, logout, hasModule, hasPermission,
     }}>
       {children}
       {/* Gated por `user`: no logout o modal some junto com a sessão. */}

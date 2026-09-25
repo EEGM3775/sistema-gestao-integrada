@@ -1,11 +1,11 @@
-import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useMemo, useState, type ReactNode } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { ArrowUpRight, CheckCircle2, ChevronDown, ChevronRight, Clock } from 'lucide-react'
 import { Card, Empty, Num, Pill, SectionHead } from '@/components/malha'
 import { dateToBR } from '@/utils/dates'
 import { apiDecimalToCents, formatBRL } from '@/utils/money'
 import { emDias } from '../formato'
-import { DEGRAUS, POSTO_DA_ORIGEM } from '../postos'
+import { DEGRAUS, POSTO_DA_ORIGEM, enderecoDoDocumento } from '../postos'
 import { SemPermissaoAviso } from './SemPermissaoAviso'
 import type { Consequencia, FaixaDaFila, FilaDoDia, LinhaDaFila } from '../types'
 
@@ -16,7 +16,18 @@ import type { Consequencia, FaixaDaFila, FilaDoDia, LinhaDaFila } from '../types
  *  agrupadas por degrau de consequência, na ordem em que doem, em vez de virar
  *  um "12 pendências" que mistura uma comunicação com prazo em lei e um defeito
  *  de pintura. */
-export function FilaDeDecisao({ fila, obraId }: { fila: FilaDoDia; obraId: number }) {
+export function FilaDeDecisao({
+  fila, obraId, titulo = 'O que exige a sua decisão', vazio, noPosto,
+}: {
+  fila: FilaDoDia
+  obraId: number
+  titulo?: string
+  /** O estado vazio do posto nomeia as filas **dele**; o do dia, as onze. */
+  vazio?: ReactNode
+  /** Dentro do posto a faixa não tem "Resolver": ela já está onde se resolve,
+   *  e a linha abre o documento. */
+  noPosto?: boolean
+}) {
   const porDegrau = useMemo(() => {
     return DEGRAUS
       .map((degrau) => ({
@@ -42,7 +53,7 @@ export function FilaDeDecisao({ fila, obraId }: { fila: FilaDoDia; obraId: numbe
           ) : undefined
         }
       >
-        O que exige a sua decisão
+        {titulo}
       </SectionHead>
 
       {fila.sem_permissao.length > 0 && (
@@ -53,10 +64,14 @@ export function FilaDeDecisao({ fila, obraId }: { fila: FilaDoDia; obraId: numbe
 
       {fila.total === 0 ? (
         <Empty>
-          <strong style={{ color: 'var(--ink-2)' }}>Nada esperando você nesta obra.</strong>
-          <br />
-          Nenhuma das {fila.faixas_varridas} filas — comunicação de acidente,
-          medição, semana, restrição, defeito e ficha — tem alguém parado.
+          {vazio ?? (
+            <>
+              <strong style={{ color: 'var(--ink-2)' }}>Nada esperando você nesta obra.</strong>
+              <br />
+              Nenhuma das {fila.faixas_varridas} filas — comunicação de acidente,
+              medição, semana, restrição, defeito e ficha — tem alguém parado.
+            </>
+          )}
         </Empty>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -80,6 +95,7 @@ export function FilaDeDecisao({ fila, obraId }: { fila: FilaDoDia; obraId: numbe
                     faixa={faixa}
                     obraId={obraId}
                     tom={degrau.codigo}
+                    noPosto={noPosto}
                   />
                 ))}
               </div>
@@ -92,9 +108,11 @@ export function FilaDeDecisao({ fila, obraId }: { fila: FilaDoDia; obraId: numbe
 }
 
 function Faixa({
-  faixa, obraId, tom,
-}: { faixa: FaixaDaFila; obraId: number; tom: Consequencia }) {
-  const [aberta, setAberta] = useState(tom === 'prazo_legal' || tom === 'dinheiro')
+  faixa, obraId, tom, noPosto,
+}: { faixa: FaixaDaFila; obraId: number; tom: Consequencia; noPosto?: boolean }) {
+  const [aberta, setAberta] = useState(
+    noPosto || tom === 'prazo_legal' || tom === 'dinheiro',
+  )
   const navigate = useNavigate()
   const destino = `/app/pdca/o/${obraId}/${POSTO_DA_ORIGEM[faixa.origem]}`
 
@@ -137,7 +155,7 @@ function Faixa({
           </span>
         </button>
 
-        <button
+        {!noPosto && <button
           type="button"
           onClick={() => navigate(destino)}
           style={{
@@ -149,13 +167,13 @@ function Faixa({
         >
           Resolver
           <ArrowUpRight size={13} />
-        </button>
+        </button>}
       </div>
 
       {aberta && (
         <div style={{ borderTop: '1px solid var(--line-2)' }}>
           {faixa.linhas.map((linha) => (
-            <Linha key={linha.chave} linha={linha} />
+            <Linha key={linha.chave} linha={linha} obraId={obraId} />
           ))}
           {faixa.truncada && (
             <div
@@ -174,7 +192,10 @@ function Faixa({
   )
 }
 
-function Linha({ linha }: { linha: LinhaDaFila }) {
+/** A linha **abre o documento**, e não só o posto: quem clicou numa NC quer
+ *  aquela NC, e mandá-lo à porta do posto para procurá-la de novo é o que faz
+ *  a fila virar só um lembrete. */
+function Linha({ linha, obraId }: { linha: LinhaDaFila; obraId: number }) {
   const prazo = linha.prazo
   /** **O valor aparece na fila da medição, e não só lá dentro.** Quem vai
    *  atestar decide pelo tamanho do que está assinando — uma fila de dinheiro
@@ -182,10 +203,14 @@ function Linha({ linha }: { linha: LinhaDaFila }) {
   const liquido = typeof linha.liquido === 'string' ? linha.liquido : null
 
   return (
-    <div
+    <Link
+      to={enderecoDoDocumento(obraId, linha.tipo, linha.id, {
+        nc: linha.nc, contrato: linha.contrato,
+      })}
       style={{
         display: 'flex', alignItems: 'flex-start', gap: 11,
         padding: '9px 14px 9px 46px', borderTop: '1px solid var(--line-2)',
+        textDecoration: 'none', color: 'inherit',
       }}
     >
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -227,7 +252,7 @@ function Linha({ linha }: { linha: LinhaDaFila }) {
           {linha.dias === 0 ? 'hoje' : `há ${emDias(linha.dias)}`}
         </span>
       )}
-    </div>
+    </Link>
   )
 }
 

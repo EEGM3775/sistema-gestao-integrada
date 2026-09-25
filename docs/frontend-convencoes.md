@@ -337,6 +337,31 @@ Na grade de medição isso virou uma prop (`acaoVazia`) que a página preenche c
 noutros lugares é um link. A régua: ninguém deveria precisar adivinhar onde fica o que a tela
 acabou de mandar fazer.
 
+## 13. Grade de documento grava sozinha — e "enviar" grava antes de enviar
+
+Regra de 15/09/2026, **reaprendida em 23/09/2026** porque o redesenho do módulo levou o arquivo que
+a implementava e nada na planta a guardava.
+
+"Salvar grade" e "Submeter" como botões independentes produzem a pior classe de defeito de software
+de dinheiro: submeter manda só o id, o servidor valida e congela **o que está gravado** — não o que
+está na tela. Quem digita duzentas linhas e clica direto em enviar vê o documento ser aprovado com
+os números antigos, sem erro, sem aviso, e com um título a pagar no fim
+([D137](historico-correcoes.md) · [D202](historico-correcoes.md)).
+
+**O padrão, e ele mora no kit:** [`autosave.ts`](../frontend/src/modules/pdca/autosave.ts).
+
+1. **Autosave com debounce**, nunca a cada tecla — quem opera planilha digita em rajada.
+2. **A assinatura nasce do que veio do servidor**, senão a montagem do componente conta como edição
+   e regrava linhas que ninguém tocou.
+3. **Selo permanente de estado** (`sem alterações / não salvo / salvando… / salvo às 14:32 /
+   falhou`). Uma tela que só fala no erro deixa quem digitou sem saber se o silêncio é bom.
+4. **`beforeunload`** com gravação pendente — é a última rede.
+5. **O verbo que conclui grava antes de concluir**, e desiste se a gravação falhar, dizendo que o
+   que iria adiante não é o que está na tela.
+
+**Se há botão de salvar numa grade de documento, quase sempre é porque o sistema não sabe gravar
+sozinho** — e é essa a coisa a consertar, não o botão a melhorar.
+
 ## Visibilidade: omitir × trancar
 
 Regra de 22/08/2026, com a fronteira escrita para não virar caso a caso:

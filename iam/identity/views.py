@@ -15,7 +15,7 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
-from . import emails, quotas, recuperacao
+from . import emails, quotas, recuperacao, segundo_fator
 from .models import (
     AcessoUsuarioModulo,
     AssinaturaTenant,
@@ -38,6 +38,12 @@ from .serializers import (
     TenantSerializer,
     UsuarioSerializer,
 )
+from payment.planos import (
+    CONFIRMACAO_JANELA_MAX_MIN,
+    CONFIRMACAO_JANELA_MIN_MIN,
+    CONFIRMACAO_JANELA_PADRAO_MIN,
+)
+
 from .revocation import bump_session_epoch
 from .tokens import (
     access_with_claims,
@@ -101,7 +107,25 @@ def _corpo_sessao(user, access, refresh) -> dict:
     }
 
 
+def _abrir_sessao(user, *, remember: bool, amr: list[str], extra: dict | None = None):
+    """Emite a sessão (access no corpo, refresh no cookie). Único ponto por onde
+    o login — com ou sem segundo fator — entrega uma sessão nova."""
+    refresh = issue_refresh(user, remember=remember, amr=amr)
+    resp = Response({**_corpo_sessao(user, access_with_claims(refresh, user), refresh), **(extra or {})})
+    # Sem "manter conectado" → cookie de sessão (some ao fechar o navegador/
+    # desligar o PC → novo login). Com → persistente (sobrevive ao reboot).
+    set_refresh_cookie(resp, str(refresh), cookie_max_age(refresh), persistent=remember)
+    return resp
+
+
+_AMR_COM_SEGUNDO_FATOR = ["pwd", "otp"]
+
+
 class LoginView(TokenObtainPairView):
+    """Primeira etapa: a senha. Para quem tem segundo fator — ou é obrigado a
+    ter e ainda não cadastrou — a senha certa **não** abre sessão: devolve o
+    desafio da segunda etapa (`segundo_fator.emitir_desafio`)."""
+
     serializer_class = IamTokenObtainPairSerializer
 
     def post(self, request, *args, **kwargs):
@@ -110,12 +134,58 @@ class LoginView(TokenObtainPairView):
         user = serializer.user
         remember = bool(request.data.get("remember"))
 
-        refresh = issue_refresh(user, remember=remember)
-        resp = Response(_corpo_sessao(user, access_with_claims(refresh, user), refresh))
-        # Sem "manter conectado" → cookie de sessão (some ao fechar o navegador/
-        # desligar o PC → novo login). Com → persistente (sobrevive ao reboot).
-        set_refresh_cookie(resp, str(refresh), cookie_max_age(refresh), persistent=remember)
-        return resp
+        if segundo_fator.ativo(user) is not None:
+            return Response({
+                "segundo_fator": "codigo",
+                "desafio": segundo_fator.emitir_desafio(user, remember=remember, etapa="codigo"),
+            })
+        if segundo_fator.obrigatorio(user):
+            return Response({
+                "segundo_fator": "cadastro",
+                "desafio": segundo_fator.emitir_desafio(user, remember=remember, etapa="cadastro"),
+            })
+        return _abrir_sessao(user, remember=remember, amr=["pwd"])
+
+
+def _resposta_recusa(erro: "segundo_fator.CodigoRecusado"):
+    if erro.motivo == "bloqueado":
+        return Response(
+            {
+                "detail": (
+                    "Muitos códigos errados seguidos. Por segurança, o segundo fator "
+                    "desta conta está travado por alguns minutos."
+                ),
+                "bloqueado": True,
+            },
+            status=429,
+        )
+    return Response({"detail": "Código incorreto ou já usado."}, status=400)
+
+
+_DESAFIO_VENCIDO = {"detail": "O tempo para confirmar passou. Entre com a senha de novo."}
+
+
+class LoginSegundoFatorView(APIView):
+    """Segunda etapa: o código do app (ou um de recuperação) troca o desafio
+    por uma sessão com `amr` = senha + segundo fator."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        aberto = segundo_fator.abrir_desafio(request.data.get("desafio"), "codigo")
+        if aberto is None:
+            return Response(_DESAFIO_VENCIDO, status=401)
+        user, remember, nonce = aberto
+        try:
+            modo = segundo_fator.verificar(user, request.data.get("codigo"), request=request)
+        except segundo_fator.CodigoRecusado as erro:
+            return _resposta_recusa(erro)
+        segundo_fator.gastar_desafio(nonce)
+        extra = {}
+        if modo == "recuperacao":
+            extra["codigos_restantes"] = segundo_fator.codigos_restantes(user)
+        return _abrir_sessao(user, remember=remember, amr=_AMR_COM_SEGUNDO_FATOR, extra=extra)
 
 
 class RefreshView(APIView):
@@ -161,12 +231,22 @@ class RefreshView(APIView):
         if not user.is_active:
             return falha("Usuário inativo.", token=old)
 
+        # Fase 1 — a sessão aberta só com senha não sobrevive a quem tem (ou
+        # passou a ser obrigado a ter) segundo fator. É o que faz a regra valer
+        # no dia do deploy, e não 30 dias depois, quando a última sessão
+        # "lembrada" do admin expirar.
+        amr = list(old.get("amr") or ["pwd"])
+        if "otp" not in amr and (
+            segundo_fator.obrigatorio(user) or segundo_fator.ativo(user) is not None
+        ):
+            return falha("Esta conta passou a exigir o segundo fator. Entre de novo.", token=old)
+
         # Rotação: invalida o antigo e emite um novo preservando o início da sessão.
         try:
             old.blacklist()
         except (AttributeError, TokenError):
             pass
-        novo = issue_refresh(user, remember=remember, sst=sst)
+        novo = issue_refresh(user, remember=remember, sst=sst, amr=amr)
         resp = Response({
             "access": str(access_with_claims(novo, user)),
             # Cada rotação estende a janela deslizante: o front reagenda o aviso de
@@ -249,12 +329,16 @@ class ChangePasswordView(APIView):
         if nova == atual:
             return Response({"detail": "A nova senha deve ser diferente da atual."}, status=400)
 
-        # Preserva o "lembrar" da sessão atual para a nova sessão deste dispositivo.
+        # Preserva o "lembrar" e o `amr` da sessão atual para a nova sessão deste
+        # dispositivo — trocar a senha não desfaz o segundo fator já provado.
         remember = False
+        amr = ["pwd"]
         raw = request.COOKIES.get(settings.REFRESH_COOKIE_NAME)
         if raw:
             try:
-                remember = bool(RefreshToken(raw).get("rem"))
+                atual_refresh = RefreshToken(raw)
+                remember = bool(atual_refresh.get("rem"))
+                amr = list(atual_refresh.get("amr") or ["pwd"])
             except TokenError:
                 pass
 
@@ -266,7 +350,7 @@ class ChangePasswordView(APIView):
         bump_session_epoch(user.id)
 
         # Reemite uma sessão nova só para quem trocou a senha (não é deslogado).
-        refresh = issue_refresh(user, remember=remember)
+        refresh = issue_refresh(user, remember=remember, amr=amr)
         resp = Response({
             "detail": "Senha alterada. As outras sessões foram encerradas.",
             "access": str(access_with_claims(refresh, user)),
@@ -286,6 +370,175 @@ class MeView(APIView):
         return Response(
             {"id": str(u.id), "username": u.username, "email": u.email, **build_claims(u)}
         )
+
+
+# ---------------------------------------------------------------------------
+# Remodelagem, fase 1 — segundo fator e janela de confirmação (§10.5)
+# ---------------------------------------------------------------------------
+
+
+def _lembrar_da_sessao(request) -> bool:
+    raw = request.COOKIES.get(settings.REFRESH_COOKIE_NAME)
+    if not raw:
+        return False
+    try:
+        return bool(RefreshToken(raw).get("rem"))
+    except TokenError:
+        return False
+
+
+def _quem_cadastra(request):
+    """O cadastro tem duas portas: a tela de perfil (sessão aberta) e o login do
+    admin que ainda não tem segundo fator (desafio da etapa `cadastro`).
+    Devolve `(usuario, desafio_aberto)`; `(None, None)` se nenhuma abriu."""
+    if request.user and request.user.is_authenticated:
+        return request.user, None
+    aberto = segundo_fator.abrir_desafio(request.data.get("desafio"), "cadastro")
+    if aberto is None:
+        return None, None
+    return aberto[0], aberto
+
+
+class CadastroSegundoFatorView(APIView):
+    """Começa (ou recomeça) o cadastro: segredo novo, QR e a URI `otpauth://`.
+    Nada muda no login até a confirmação."""
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        _bloqueia_origem_estranha(request)
+        user, _aberto = _quem_cadastra(request)
+        if user is None:
+            return Response(_DESAFIO_VENCIDO, status=401)
+        try:
+            segredo, uri = segundo_fator.iniciar_cadastro(user)
+        except ValueError as erro:
+            return Response({"detail": str(erro)}, status=409)
+        return Response({"segredo": segredo, "uri": uri, "qr": segundo_fator.qr_svg(uri)})
+
+
+class ConfirmarCadastroSegundoFatorView(APIView):
+    """O primeiro código certo liga o segundo fator. Devolve os códigos de
+    recuperação — a única vez em que aparecem — e uma sessão nova com `otp`.
+
+    Pela tela de perfil, as **outras** sessões caem: foram abertas só com senha,
+    e o refresh já as recusaria na próxima volta; derrubar aqui fecha a janela
+    do access que ainda estiver vivo."""
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        _bloqueia_origem_estranha(request)
+        user, aberto = _quem_cadastra(request)
+        if user is None:
+            return Response(_DESAFIO_VENCIDO, status=401)
+        try:
+            codigos = segundo_fator.confirmar_cadastro(
+                user, request.data.get("codigo"), request=request,
+            )
+        except segundo_fator.CodigoRecusado as erro:
+            return _resposta_recusa(erro)
+        if aberto is not None:
+            _usuario, remember, nonce = aberto
+            segundo_fator.gastar_desafio(nonce)
+        else:
+            remember = _lembrar_da_sessao(request)
+            revoke_all_sessions(user)
+            bump_session_epoch(user.id)  # antes de reemitir: o access novo sobrevive
+        return _abrir_sessao(
+            user, remember=remember, amr=_AMR_COM_SEGUNDO_FATOR, extra={"codigos": codigos},
+        )
+
+
+class DesativarSegundoFatorView(APIView):
+    """Tira o segundo fator. Pede **os dois**: a senha e um código — quem tem os
+    dois já é dono da conta, então exigi-los não enfraquece nada.
+
+    Vale também para o obrigado a ter: é o "trocar de celular". A sessão atual
+    segue (ela provou os dois fatores), e o próximo login pede o cadastro de
+    novo; a tela leva direto a ele."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        _bloqueia_origem_estranha(request)
+        user = request.user
+        if not user.check_password(request.data.get("senha") or ""):
+            return Response({"detail": "Senha incorreta."}, status=400)
+        try:
+            segundo_fator.verificar(user, request.data.get("codigo"), request=request)
+        except segundo_fator.CodigoRecusado as erro:
+            return _resposta_recusa(erro)
+        segundo_fator.remover(user)
+        recuperacao.registrar_evento(
+            EventoSeguranca.Tipo.SEGUNDO_FATOR_DESATIVADO, alvo=user, autor=user, request=request,
+        )
+        emails.enviar_aviso_segundo_fator(user, "desativado")
+        return Response({"detail": "Segundo fator desativado.", **segundo_fator.estado(user)})
+
+
+class CodigosSegundoFatorView(APIView):
+    """Troca os códigos de recuperação. Só com o código do app — um código de
+    recuperação não gera outros dez."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        _bloqueia_origem_estranha(request)
+        user = request.user
+        try:
+            segundo_fator.verificar(
+                user, request.data.get("codigo"), request=request, aceita_recuperacao=False,
+            )
+        except segundo_fator.CodigoRecusado as erro:
+            return _resposta_recusa(erro)
+        codigos = segundo_fator.gerar_codigos(user)
+        recuperacao.registrar_evento(
+            EventoSeguranca.Tipo.SEGUNDO_FATOR_CODIGOS, alvo=user, autor=user, request=request,
+        )
+        emails.enviar_aviso_segundo_fator(user, "codigos")
+        return Response({"codigos": codigos})
+
+
+class SegurancaDaContaView(APIView):
+    """A tela Minha conta › Segurança: estado do segundo fator e a janela de
+    confirmação que a pessoa escolheu (e os limites dela, que são do dono)."""
+
+    permission_classes = [IsAuthenticated]
+
+    def _corpo(self, user):
+        return {
+            "segundo_fator": segundo_fator.estado(user),
+            "janela_confirmacao": {
+                "minutos": user.janela_confirmacao_min,
+                "padrao": CONFIRMACAO_JANELA_PADRAO_MIN,
+                "minimo": CONFIRMACAO_JANELA_MIN_MIN,
+                "maximo": CONFIRMACAO_JANELA_MAX_MIN,
+            },
+        }
+
+    def get(self, request):
+        return Response(self._corpo(request.user))
+
+    def patch(self, request):
+        _bloqueia_origem_estranha(request)
+        user = request.user
+        valor = request.data.get("janela_confirmacao_min")
+        try:
+            minutos = int(valor)
+        except (TypeError, ValueError):
+            return Response({"janela_confirmacao_min": ["Informe um número de minutos."]}, status=400)
+        if not CONFIRMACAO_JANELA_MIN_MIN <= minutos <= CONFIRMACAO_JANELA_MAX_MIN:
+            return Response(
+                {"janela_confirmacao_min": [
+                    f"Escolha entre {CONFIRMACAO_JANELA_MIN_MIN} e "
+                    f"{CONFIRMACAO_JANELA_MAX_MIN} minutos."
+                ]},
+                status=400,
+            )
+        user.janela_confirmacao_min = minutos
+        user.save(update_fields=["janela_confirmacao_min"])
+        return Response(self._corpo(user))
 
 
 # ---------------------------------------------------------------------------
@@ -543,7 +796,7 @@ class CatalogoPermissoesView(APIView):
 
 
 class UsuarioViewSet(viewsets.ModelViewSet):
-    queryset = Usuario.objects.select_related("tenant").all()
+    queryset = Usuario.objects.select_related("tenant", "segundo_fator").all()
     serializer_class = UsuarioSerializer
     permission_classes = [IsTenantAdmin]
 
@@ -606,6 +859,46 @@ class UsuarioViewSet(viewsets.ModelViewSet):
         )
         emails.enviar_aviso_senha_alterada(alvo, por_quem=request.user)
         return Response({"detail": "Senha redefinida. As sessões do usuário foram encerradas."})
+
+    @action(detail=True, methods=["post"], url_path="redefinir-segundo-fator")
+    def redefinir_segundo_fator(self, request, pk=None):
+        """Para quem perdeu o celular **e** os códigos de recuperação.
+
+        Apaga o segundo fator do alvo e derruba todas as sessões dele; no
+        próximo login, ele entra só com a senha (ou, se for obrigado a ter,
+        cadastra de novo ali mesmo). É poder de verdade — um admin que redefine
+        o segundo fator de alguém fica a uma senha da conta —, e por isso nunca
+        é silencioso: evento na trilha com o nome de quem fez e e-mail ao alvo.
+
+        O admin do tenant não alcança o supervisor da plataforma (que mora num
+        tenant, mas não é dele), e ninguém redefine a própria conta por aqui: o
+        caminho para si é o código de recuperação.
+        """
+        alvo = self.get_object()
+        if alvo.pk == request.user.pk:
+            return Response(
+                {"detail": "Para a própria conta, use Minha conta › Segurança."}, status=400,
+            )
+        if alvo.is_superuser and not request.user.is_superuser:
+            return Response(
+                {"detail": "Só o supervisor da plataforma redefine o segundo fator de outro supervisor."},
+                status=403,
+            )
+        if not segundo_fator.remover(alvo):
+            return Response({"detail": "Esta conta não tem segundo fator ativo."}, status=400)
+        revoke_all_sessions(alvo)
+        bump_session_epoch(alvo.id)
+        recuperacao.registrar_evento(
+            EventoSeguranca.Tipo.SEGUNDO_FATOR_REDEFINIDO,
+            alvo=alvo, autor=request.user, request=request,
+        )
+        emails.enviar_aviso_segundo_fator(alvo, "redefinido", por_quem=request.user)
+        return Response({
+            "detail": (
+                f"Segundo fator de {alvo.username} redefinido. As sessões dele foram "
+                "encerradas, e ele foi avisado por e-mail."
+            )
+        })
 
     @action(detail=True, methods=["post"], url_path="trocar-email")
     def trocar_email(self, request, pk=None):

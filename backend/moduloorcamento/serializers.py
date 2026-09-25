@@ -9,6 +9,8 @@ Duas famílias, pela mesma fronteira que divide `models.py`:
 - **Planilha (ORC.1+)** — `TenantScopedModelSerializer`, com `tenant` read-only
   sistêmico (D3) e unicidade por-tenant (Fase 8.3).
 """
+from decimal import ROUND_HALF_UP, Decimal
+
 from django.db import IntegrityError, transaction
 from rest_framework import serializers
 
@@ -183,7 +185,11 @@ class ItemOrcadoSerializer(TenantScopedModelSerializer):
 
     total_custo_direto = serializers.DecimalField(max_digits=18, decimal_places=2, read_only=True)
     total_com_bdi = serializers.DecimalField(max_digits=18, decimal_places=2, read_only=True)
-    codigo_eap = serializers.CharField(read_only=True)
+    # ORC.10e — deixou de ser read-only, mas **só** aceita valor quando a linha
+    # declara `eap_manual`. Aberto sem essa marca, o próximo recálculo
+    # sobrescreveria o que foi digitado e o campo passaria a mentir: aceitaria a
+    # escrita e descartaria o valor, que é pior que recusar.
+    codigo_eap = serializers.CharField(required=False, allow_blank=True)
     etapa_nome = serializers.CharField(source="etapa.nome_etapa", read_only=True, default=None)
     item_codigo = serializers.CharField(source="item.codigo_interno", read_only=True, default=None)
     tipo_linha_nome = serializers.CharField(source="get_tipo_linha_display", read_only=True)
@@ -205,6 +211,34 @@ class ItemOrcadoSerializer(TenantScopedModelSerializer):
             raise serializers.ValidationError(
                 {"etapa": "A etapa precisa pertencer à obra do orçamento."}
             )
+
+        manual = attrs.get("eap_manual")
+        if manual is None:
+            manual = getattr(self.instance, "eap_manual", False)
+        if attrs.get("codigo_eap") and not manual:
+            raise serializers.ValidationError({
+                "codigo_eap": (
+                    "O código EAP é derivado da árvore. Marque `eap_manual` na mesma "
+                    "requisição para assumi-lo à mão."
+                )
+            })
+
+        # Sintético é soma dos filhos (ver `ItemOrcado.custa`). Deixar a linha
+        # virar analítica com filhos pendurados faria o custo dela ser contado
+        # duas vezes — uma no próprio número, outra nos filhos.
+        tipo = attrs.get("tipo_linha") or getattr(self.instance, "tipo_linha", None)
+        if (
+            tipo == ItemOrcado.TipoLinha.ANALITICO
+            and self.instance is not None
+            and self.instance.tipo_linha != tipo
+            and self.instance.filhos.exists()
+        ):
+            raise serializers.ValidationError({
+                "tipo_linha": (
+                    "Esta linha tem sub-itens. Mova-os para fora antes de transformá-la "
+                    "em linha que custa, senão o valor dela seria somado duas vezes."
+                )
+            })
         return attrs
 
 
@@ -345,7 +379,19 @@ class ComposicaoBDISerializer(TenantScopedModelSerializer):
 
 
 class ItemOrcadoInsumoSerializer(TenantScopedModelSerializer):
-    """Linha da memória de cálculo."""
+    """Linha da memória de cálculo — **editável** desde a ORC.10c.
+
+    Era só leitura: a explosão gerava a composição a partir do catálogo e nada
+    sabia lê-la de volta. Editar a decomposição é o núcleo do Arquimedes, e a
+    assimetria era grande — o preço de um serviço só podia ser aceito inteiro ou
+    digitado por cima, nunca ajustado no coeficiente que estava errado.
+
+    `custo_no_item` continua **derivado**, e é aqui que ele é derivado: é
+    `coeficiente × custo_unitario` com o **encargo social** aplicado quando o
+    insumo é mão de obra, pelo mesmo resolvedor que a explosão usa
+    (horista × mensalista pela unidade). Aceitá-lo do cliente deixaria a soma da
+    composição divergir do preço da linha sem nada apontar a divergência.
+    """
 
     categoria_nome = serializers.CharField(source="get_categoria_display", read_only=True)
     custo_no_item = serializers.DecimalField(max_digits=16, decimal_places=4, read_only=True)
@@ -353,6 +399,44 @@ class ItemOrcadoInsumoSerializer(TenantScopedModelSerializer):
     class Meta:
         model = ItemOrcadoInsumo
         fields = "__all__"
+
+    def validate_item_orcado(self, linha):
+        """Composição pendurada em agrupador contaria o mesmo insumo duas vezes."""
+        if linha.tipo_linha == ItemOrcado.TipoLinha.SINTETICO:
+            raise serializers.ValidationError(
+                "Linha sintética é agrupador: o custo dela é a soma dos filhos, e ela "
+                "não tem composição própria."
+            )
+        return linha
+
+    def _com_encargo(self, instance, validated_data):
+        from . import encargos as encargos_mod
+
+        linha = validated_data.get("item_orcado") or getattr(instance, "item_orcado", None)
+        coeficiente = validated_data.get(
+            "coeficiente", getattr(instance, "coeficiente", Decimal("0")),
+        )
+        custo = validated_data.get(
+            "custo_unitario", getattr(instance, "custo_unitario", Decimal("0")),
+        )
+        categoria = validated_data.get(
+            "categoria", getattr(instance, "categoria", ItemOrcadoInsumo.Categoria.MATERIAL),
+        )
+        unidade = validated_data.get("unidade", getattr(instance, "unidade", ""))
+
+        bruto = Decimal(coeficiente) * Decimal(custo)
+        if categoria == ItemOrcadoInsumo.Categoria.MAO_DE_OBRA:
+            bruto *= encargos_mod.ResolvedorEncargos(linha.orcamento).fator(unidade)
+        validated_data["custo_no_item"] = bruto.quantize(
+            Decimal("0.0001"), rounding=ROUND_HALF_UP,
+        )
+        return validated_data
+
+    def create(self, validated_data):
+        return super().create(self._com_encargo(None, validated_data))
+
+    def update(self, instance, validated_data):
+        return super().update(instance, self._com_encargo(instance, validated_data))
 
 
 # ---------------------------------------------------------------------------

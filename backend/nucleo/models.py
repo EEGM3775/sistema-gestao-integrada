@@ -916,3 +916,95 @@ class Lixo(TenantScopedModel):
     def ativo(self) -> bool:
         """Está na lixeira agora — nem restaurado, nem purgado."""
         return self.restaurado_em is None and self.purgado_em is None
+
+
+# ---------------------------------------------------------------------------
+# Remodelagem da segurança, fases 2 e 3 — docs/acesso-e-permissoes.md §10.12
+# ---------------------------------------------------------------------------
+# Os dois modelos abaixo são **da plataforma**, não do cliente, e por isso não
+# herdam `TenantScopedModel`: a flag de um módulo vale para toda empresa, e a
+# divergência é gravada pela sombra numa thread de fundo, sem o contexto de RLS
+# da requisição (com RLS fail-closed, a linha não entraria). Nenhum dos dois
+# guarda conteúdo de cliente — só ids, códigos do catálogo e booleanos.
+
+
+class ModoAutorizacao(models.Model):
+    """Quem decide "pode?" num módulo: o token (hoje) ou o PDP (fase 3).
+
+    É a **volta atrás** da fase 3: `manage.py modo_autorizacao pdca token`
+    devolve o módulo ao token na hora, sem deploy nem restart. Módulo sem linha
+    aqui decide pelo token — a virada é sempre explícita, módulo a módulo, e só
+    depois de a sombra mostrar o módulo sem divergência.
+
+    Os "módulos" são os do catálogo, mais `base` e `plataforma` (os códigos sem
+    entitlement). As perguntas "é admin?" e "é o supervisor?" seguem
+    `plataforma`.
+    """
+
+    class Modo(models.TextChoices):
+        TOKEN = "token", _("Token (como sempre foi)")
+        PDP = "pdp", _("PDP (SpiceDB)")
+
+    modulo = models.CharField(max_length=40, primary_key=True, verbose_name=_("Módulo"))
+    modo = models.CharField(max_length=10, choices=Modo.choices, default=Modo.TOKEN)
+    alterado_em = models.DateTimeField(auto_now=True)
+    alterado_por = models.CharField(max_length=150, blank=True)
+
+    class Meta:
+        verbose_name = _("Modo de autorização")
+        verbose_name_plural = _("Modos de autorização")
+        ordering = ["modulo"]
+
+    def __str__(self):
+        return f"{self.modulo}: {self.modo}"
+
+
+class DivergenciaAutorizacao(models.Model):
+    """Uma pergunta em que token e PDP responderam diferente — *append-only*.
+
+    É a régua da saída da fase 2 (§10.12: "zero divergência por duas semanas em
+    uso real"), e por isso guarda o **tipo**: só a `real` conta contra o
+    critério. As outras são o sistema funcionando como desenhado — o token
+    emitido antes de uma troca de papel ainda diz o que era verdade
+    (`token_defasado`), ou o PDP não respondeu (`pdp_indisponivel`).
+
+    Campos fixos e nenhum texto livre (§10.9): quem, que pergunta, o que cada
+    lado disse. Nunca o conteúdo que a pessoa estava vendo.
+    """
+
+    class Tipo(models.TextChoices):
+        REAL = "real", _("Real — defeito a investigar")
+        TOKEN_DEFASADO = "token_defasado", _("Token emitido antes da última troca de acesso")
+        PDP_INDISPONIVEL = "pdp_indisponivel", _("PDP não respondeu")
+        FORA_DO_ESQUEMA = "fora_do_esquema", _("Pergunta que o PDP não conhece")
+
+    id = models.BigAutoField(primary_key=True)
+    criado_em = models.DateTimeField(auto_now_add=True, db_index=True)
+    tenant_id = models.UUIDField(null=True)
+    usuario_id = models.CharField(max_length=64)
+    pergunta = models.CharField(max_length=100)
+    modulo = models.CharField(max_length=40)
+    classe = models.CharField(max_length=1)
+    #: Quem decidiu a requisição naquele momento — "token" ou "pdp".
+    modo = models.CharField(max_length=10)
+    decisao_token = models.BooleanField()
+    decisao_pdp = models.BooleanField(null=True)
+    tipo = models.CharField(max_length=20, choices=Tipo.choices)
+    idade_do_token_s = models.IntegerField(null=True)
+
+    class Meta:
+        verbose_name = _("Divergência de autorização")
+        verbose_name_plural = _("Divergências de autorização")
+        ordering = ["-criado_em"]
+        indexes = [models.Index(fields=["tipo", "-criado_em"], name="authz_div_tipo_idx")]
+
+    def __str__(self):
+        return f"{self.criado_em:%d/%m %H:%M} {self.tipo} {self.pergunta}"
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValueError("DivergenciaAutorizacao é append-only: alteração não é permitida.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError("DivergenciaAutorizacao é append-only: exclusão não é permitida.")

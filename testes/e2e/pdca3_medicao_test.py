@@ -12,7 +12,7 @@ seam inerte desde 07/2026 e nunca foi preenchido por ninguém; um teste de
 unidade prova que a função cria o título, não que ele atravessa a fronteira de
 tenant, o entitlement do ERP e a RLS com o token de quem apertou o botão.
 
-Seed: iam/seed_demo.py + backend/seed_demo_data.py
+Seed: testes/seeds/seed_demo.py + testes/seeds/seed_demo_data.py
 
   demo     / demo123     -> `gestor_contratos`: monta contrato e APURA medição.
                             **Não ateste** — é o lado de cá da segregação §8.
@@ -42,6 +42,8 @@ import ssl
 import sys
 import urllib.error
 import urllib.request
+
+from _segundo_fator import completar_login
 import uuid
 from datetime import date, timedelta
 
@@ -94,7 +96,7 @@ def login(u, p):
     r = urllib.request.Request(GW + "/auth/login/", data=data, method="POST",
                                headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(r, timeout=30, context=_CTX) as resp:
-        return json.load(resp)["access"]
+        return completar_login(GW, json.load(resp), _CTX)["access"]
 
 
 def texto(resposta) -> str:

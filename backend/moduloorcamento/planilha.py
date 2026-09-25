@@ -98,6 +98,13 @@ def recalcular_orcamento(orcamento: Orcamento) -> Orcamento:
         visitados.add(item.item_orcado_id)
 
         codigo = f"{prefixo}{posicao}" if not prefixo else f"{prefixo}.{posicao}"
+        # ORC.10e — código assumido à mão não é renumerado, mas continua sendo o
+        # prefixo dos filhos: se "4.2.7" foi digitado, o sub-item dele é
+        # "4.2.7.1" e não volta para a contagem automática do galho. Renumerar
+        # por baixo de um código manual daria dois códigos diferentes para a
+        # mesma linha em telas diferentes.
+        if item.eap_manual and item.codigo_eap:
+            codigo = item.codigo_eap
         meus_filhos = filhos.get(item.item_orcado_id, [])
 
         if item.custa and not meus_filhos:

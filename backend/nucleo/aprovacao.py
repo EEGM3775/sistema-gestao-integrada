@@ -39,6 +39,7 @@ from django.utils import timezone
 
 from payment.planos import PDCA_TETO_NIVEIS_APROVACAO
 
+from . import autorizacao
 from .models import Atesto, FluxoAprovacao, NivelAprovacao, PedidoAprovacao
 
 logger = logging.getLogger(__name__)
@@ -63,9 +64,7 @@ def pode_atestar(usuario, nivel: NivelAprovacao) -> bool:
     fatia E da Fase 9 tirou o fallback por papel de toda a casa)."""
     if usuario is None or not getattr(usuario, "is_authenticated", False):
         return False
-    if getattr(usuario, "is_tenant_admin", False) or getattr(usuario, "is_superuser", False):
-        return True
-    return nivel.permissao_exigida in (getattr(usuario, "iam_permissions", None) or [])
+    return autorizacao.pode(usuario, nivel.permissao_exigida)
 
 
 def validar_fluxo(fluxo: FluxoAprovacao) -> None:
@@ -299,9 +298,7 @@ def cancelar(*, pedido: PedidoAprovacao, usuario, motivo: str = "") -> PedidoApr
     if pedido.estado != PedidoAprovacao.Estado.EM_APROVACAO:
         raise ValidationError("Só um pedido em aprovação pode ser cancelado.")
     dono = pedido.solicitado_por_id == getattr(usuario, "pk", None)
-    if not dono and not (
-        getattr(usuario, "is_tenant_admin", False) or getattr(usuario, "is_superuser", False)
-    ):
+    if not dono and not autorizacao.administra(usuario):
         raise PermissionDenied(
             "Só quem solicitou (ou um administrador) pode cancelar o pedido."
         )
@@ -345,12 +342,12 @@ def pendentes_para(usuario, *, tenant_id: int | None = None):
         )
         .select_related("fluxo", "nivel_atual", "alvo_tipo")
     )
-    manda_em_tudo = getattr(usuario, "is_tenant_admin", False) or getattr(
-        usuario, "is_superuser", False
-    )
+    manda_em_tudo = autorizacao.administra(usuario)
     if not manda_em_tudo:
-        perms = list(getattr(usuario, "iam_permissions", None) or [])
-        qs = qs.filter(nivel_atual__permissao_exigida__in=perms)
+        # Pergunta-se só pelos códigos que a fila de fato exige — poucos, e cada
+        # um uma vez por requisição (`nucleo/autorizacao.py`).
+        exigidos = qs.values_list("nivel_atual__permissao_exigida", flat=True).distinct()
+        qs = qs.filter(nivel_atual__permissao_exigida__in=autorizacao.permitidos(usuario, exigidos))
         # Quem executa não aprova — a fila não mostra o que a pessoa não pode
         # decidir. Fluxo com autoatesto ligado é a exceção, e ela vale aqui
         # também, senão a fila esconderia trabalho que a pessoa pode fazer.

@@ -10,3 +10,5 @@ class IdentityConfig(AppConfig):
         # D12: registra os signals que revogam a sessão em QUALQUER caminho de
         # desativação/exclusão (admin, shell, script), não só pelo serializer.
         from . import signals  # noqa: F401
+        # Remodelagem, fase 2: toda troca de papel/acesso/assinatura chega ao PDP.
+        from . import pdp_sinais  # noqa: F401
