@@ -244,6 +244,11 @@ if SPICEDB_URL and not SPICEDB_CHAVE and not DEBUG:
     raise ImproperlyConfigured("SPICEDB_CHAVE é obrigatória fora de DEBUG.")
 # DB 5 do Redis: ZedToken e versão por tenant, lidos pelo backend.
 AUTORIZACAO_REDIS_URL = os.getenv("AUTORIZACAO_REDIS_URL", "redis://localhost:6379/5")
+# Fase 4 — o token prova quem é, não o que pode (`identity/tokens.build_claims`).
+# A volta atrás da §10.12 é reemitir as listas antigas: `True` aqui e os
+# serviços voltam a poder decidir pela claim (`manage.py modo_autorizacao ...
+# token` no backend; o drone lê o mesmo modo). Só para incidente com o PDP.
+AUTORIZACAO_TOKEN_COM_LISTAS = os.getenv("AUTORIZACAO_TOKEN_COM_LISTAS", "False") == "True"
 
 # --- Token serviço→serviço (Fase 10.8) ----------------------------------------
 # A IAM é a única que assina o JWT da plataforma (RS256 em produção). Um serviço

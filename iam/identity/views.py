@@ -15,7 +15,7 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
-from . import emails, quotas, recuperacao, segundo_fator
+from . import emails, quotas, recuperacao, segundo_fator, sessoes
 from .models import (
     AcessoUsuarioModulo,
     AssinaturaTenant,
@@ -47,7 +47,7 @@ from payment.planos import (
 from .revocation import bump_session_epoch
 from .tokens import (
     access_with_claims,
-    build_claims,
+    claims_de_acesso,
     cookie_max_age,
     issue_refresh,
     issue_service_token,
@@ -231,6 +231,12 @@ class RefreshView(APIView):
         if not user.is_active:
             return falha("Usuário inativo.", token=old)
 
+        # Fase 4 — a sessão é que se revoga (logout, troca de senha, "encerrar
+        # todas"). Refresh de antes da fase 4 não tem `sid`: renova e ganha uma.
+        sid = old.get("sid")
+        if sid and not sessoes.ativa(sid):
+            return falha("Sessão encerrada.", token=old)
+
         # Fase 1 — a sessão aberta só com senha não sobrevive a quem tem (ou
         # passou a ser obrigado a ter) segundo fator. É o que faz a regra valer
         # no dia do deploy, e não 30 dias depois, quando a última sessão
@@ -246,7 +252,8 @@ class RefreshView(APIView):
             old.blacklist()
         except (AttributeError, TokenError):
             pass
-        novo = issue_refresh(user, remember=remember, sst=sst, amr=amr)
+        novo = issue_refresh(user, remember=remember, sst=sst, amr=amr,
+                             sid=sid, auth_time=old.get("auth_time"))
         resp = Response({
             "access": str(access_with_claims(novo, user)),
             # Cada rotação estende a janela deslizante: o front reagenda o aviso de
@@ -272,7 +279,12 @@ class LogoutView(APIView):
         clear_refresh_cookie(resp)
         if raw:
             try:
-                RefreshToken(raw).blacklist()
+                refresh = RefreshToken(raw)
+                refresh.blacklist()
+                # Fase 4: o access desta sessão deixa de valer em todo serviço
+                # na requisição seguinte, e não quando expira.
+                if refresh.get("sid"):
+                    sessoes.revogar(refresh["sid"], "logout")
             except TokenError:
                 pass
         return resp
@@ -344,7 +356,7 @@ class ChangePasswordView(APIView):
 
         user.set_password(nova)
         user.save(update_fields=["password"])
-        revoke_all_sessions(user)  # derruba TODAS as sessões (inclui a atual)
+        revoke_all_sessions(user, motivo="troca_de_senha")  # TODAS, inclui a atual
         # Corta na hora o access residual das outras sessões (stateless, ≤ TTL).
         # Antes de reemitir: o novo access abaixo tem iat >= carimbo → sobrevive.
         bump_session_epoch(user.id)
@@ -367,9 +379,26 @@ class MeView(APIView):
 
     def get(self, request):
         u = request.user
+        # O que a tela precisa para esconder o que a pessoa não pode — lido das
+        # tabelas, e não do token, que desde a fase 4 não carrega listas.
         return Response(
-            {"id": str(u.id), "username": u.username, "email": u.email, **build_claims(u)}
+            {"id": str(u.id), "username": u.username, "email": u.email, **claims_de_acesso(u)}
         )
+
+
+class SessaoInternaView(APIView):
+    """A sessão ainda vale? — para o PEP que não alcança o Redis (fase 4, §10.8).
+
+    Responde só sim ou não sobre um `sid` (UUID aleatório, que só quem tem o
+    token conhece). É **interna**: o gateway devolve 404 para `/auth/interno/`,
+    como faz com o `service-token`; só a rede dos serviços a alcança.
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request, sid):
+        return Response({"ativa": sessoes.ativa(sid)})
 
 
 # ---------------------------------------------------------------------------
@@ -443,7 +472,7 @@ class ConfirmarCadastroSegundoFatorView(APIView):
             segundo_fator.gastar_desafio(nonce)
         else:
             remember = _lembrar_da_sessao(request)
-            revoke_all_sessions(user)
+            revoke_all_sessions(user, motivo="segundo_fator")
             bump_session_epoch(user.id)  # antes de reemitir: o access novo sobrevive
         return _abrir_sessao(
             user, remember=remember, amr=_AMR_COM_SEGUNDO_FATOR, extra={"codigos": codigos},
@@ -851,7 +880,7 @@ class UsuarioViewSet(viewsets.ModelViewSet):
             return Response({"detail": "A nova senha deve ser diferente da atual."}, status=400)
         alvo.set_password(nova)
         alvo.save(update_fields=["password"])
-        revoke_all_sessions(alvo)
+        revoke_all_sessions(alvo, motivo="senha_redefinida")
         bump_session_epoch(alvo.id)  # corta o access residual do alvo na hora
         recuperacao.registrar_evento(
             EventoSeguranca.Tipo.SENHA_ALTERADA,
@@ -886,7 +915,7 @@ class UsuarioViewSet(viewsets.ModelViewSet):
             )
         if not segundo_fator.remover(alvo):
             return Response({"detail": "Esta conta não tem segundo fator ativo."}, status=400)
-        revoke_all_sessions(alvo)
+        revoke_all_sessions(alvo, motivo="segundo_fator_redefinido")
         bump_session_epoch(alvo.id)
         recuperacao.registrar_evento(
             EventoSeguranca.Tipo.SEGUNDO_FATOR_REDEFINIDO,

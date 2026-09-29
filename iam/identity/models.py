@@ -570,3 +570,41 @@ class CodigoRecuperacao(models.Model):
 
     def __str__(self):
         return f"{self.usuario_id}: {'usado' if self.usado_em else 'livre'}"
+
+
+# ---------------------------------------------------------------------------
+# Remodelagem da segurança, fase 4 — a sessão tem identidade própria (§10.5)
+# ---------------------------------------------------------------------------
+
+
+class Sessao(models.Model):
+    """Uma sessão aberta por login — o `sid` que viaja no token.
+
+    O refresh token rotaciona a cada renovação (um `jti` novo por vez); a
+    sessão é o que fica igual do login ao logout. É ela que se revoga: logout,
+    troca de senha, desativação, reset do segundo fator e "encerrar todas" marcam
+    `revogada_em` e publicam o `sid` no Redis (`sessoes.publicar_revogacao`), e
+    cada serviço (PEP) confere o `sid` a cada requisição — o access já emitido
+    deixa de valer em segundos, e não quando expira.
+
+    A IAM é a autoridade: quando o Redis falta, o PEP pergunta aqui
+    (`/auth/interno/sessao/<sid>/`), e só nega se nem a IAM responder.
+    """
+
+    sid = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    usuario = models.ForeignKey(Usuario, on_delete=models.CASCADE, related_name="sessoes")
+    criada_em = models.DateTimeField(auto_now_add=True)
+    revogada_em = models.DateTimeField(null=True, blank=True)
+    motivo = models.CharField(max_length=40, blank=True)
+
+    class Meta:
+        verbose_name = _("Sessão")
+        verbose_name_plural = _("Sessões")
+        indexes = [models.Index(fields=["usuario", "revogada_em"])]
+
+    def __str__(self):
+        return f"{self.sid} ({self.usuario_id}{', revogada' if self.revogada_em else ''})"
+
+    @property
+    def ativa(self) -> bool:
+        return self.revogada_em is None

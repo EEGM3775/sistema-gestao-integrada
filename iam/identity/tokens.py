@@ -15,24 +15,21 @@ from payment.regras import (
 )
 
 
-def build_claims(user):
-    """Claims customizadas que viajam no access/refresh token.
+def claims_de_acesso(user):
+    """O que o token carregava até a fase 4: listas de acesso, papéis e plano.
 
-    `sub`=username é lido pelo funcoesODM (Java) para buscar/provisionar o
-    usuário; `tenant_id` dá o isolamento; `modules` carrega os entitlements.
+    Continua existindo por dois motivos: é o corpo do `/auth/me/` (a tela
+    esconde o que a pessoa não pode, e lê isto uma vez — não a cada requisição)
+    e é a **volta atrás** da fase 4 (§10.12, "reemitir claims antigas por
+    flag"): com `AUTORIZACAO_TOKEN_COM_LISTAS`, `build_claims` as põe de novo no
+    token, e os serviços voltam a poder decidir por elas.
 
-    D23 — `rate_hora` e `plano`: o teto de requisições do tenant viaja como claim
-    pelo mesmo motivo que `permissions` viaja. A IAM é a única que sabe quantos
-    seats a empresa contratou (o `Usuario` do backend é espelho JIT: só existe
-    quem já logou, então contar lá daria um número menor e crescente durante a
-    implantação). Propagação: vale no próximo refresh (≤ TTL do access), igual à
-    mudança de permissão.
+    `rate_hora`, `plano` e `quotas` são da empresa, não da pessoa: fora do token
+    eles chegam ao backend pela ficha da empresa (`identity/fichas.py`).
     """
     tenant = user.tenant
     claims = {
-        "sub": user.username,
         "email": user.email,
-        "tenant_id": str(tenant.id) if tenant else None,
         "tenant_slug": tenant.slug if tenant else None,
         "roles": user.nomes_perfis(),
         "permissions": user.permissoes_efetivas(),
@@ -41,15 +38,38 @@ def build_claims(user):
         "is_platform_admin": user.is_superuser,
     }
     if tenant:
-        contratados = tenant.limites_contratados()
-        claims["plano"] = plano_valido(tenant.plano)
-        claims[CLAIM_REQUISICOES_HORA] = teto_requisicoes_hora(tenant.plano, contratados)
-        # D24 — quotas de objeto: viajam pelo mesmo motivo que `rate_hora`. Os
-        # objetos (obra, cliente…) são contados no backend, mas quem sabe o que
-        # foi CONTRATADO é a IAM. Mandar o teto junto do token evita que o
-        # backend precise consultar a IAM a cada criação — um hop de rede no
-        # caminho de escrita, que cairia junto com ela.
-        claims[CLAIM_QUOTAS] = quotas_efetivas(tenant.plano, contratados)
+        claims.update(dados_do_plano(tenant))
+    return claims
+
+
+def dados_do_plano(tenant) -> dict:
+    """Plano, teto de requisições (D23) e quotas de objeto (D24) do tenant —
+    quem sabe o que foi CONTRATADO é a IAM; o backend conta o que foi usado."""
+    contratados = tenant.limites_contratados()
+    return {
+        "plano": plano_valido(tenant.plano),
+        CLAIM_REQUISICOES_HORA: teto_requisicoes_hora(tenant.plano, contratados),
+        CLAIM_QUOTAS: quotas_efetivas(tenant.plano, contratados),
+    }
+
+
+def build_claims(user):
+    """As claims que a IAM acrescenta ao token — **quem é, e mais nada** (§10.6).
+
+    Fase 4 da remodelagem: o token prova quem é, não o que pode. Fica `sub`
+    (lido pelo drone para o espelho local) e `tenant_id` (a empresa da sessão,
+    que confere com a RLS e com a relação no PDP). A sessão (`sid`), o início
+    dela (`sst`), a força (`amr`) e a idade da autenticação (`auth_time`) vêm do
+    refresh (`issue_refresh`). O "pode?" é do PDP; o tamanho do token não
+    depende mais do catálogo (D194).
+    """
+    tenant = user.tenant
+    claims = {
+        "sub": user.username,
+        "tenant_id": str(tenant.id) if tenant else None,
+    }
+    if getattr(settings, "AUTORIZACAO_TOKEN_COM_LISTAS", False):
+        claims.update(claims_de_acesso(user))
     return claims
 
 
@@ -74,12 +94,12 @@ def _aplicar_validade(token, remember: bool) -> None:
 
 
 def issue_refresh(user, *, remember: bool, sst: int | None = None,
-                  amr: list[str] | None = None) -> RefreshToken:
+                  amr: list[str] | None = None, sid=None,
+                  auth_time: int | None = None) -> RefreshToken:
     """Emite um refresh token **mínimo**: só `user_id` (padrão do SimpleJWT) +
-    metadados de sessão. As claims pesadas (`permissions`/`roles`/`modules`) NÃO
-    entram aqui — senão o token (que vai num cookie) estouraria o limite de ~4KB
-    de cookie do browser e o buffer de header do nginx. Elas ficam só no access
-    token (ver `access_with_claims`), que trafega no corpo/`Authorization`.
+    metadados de sessão. O SimpleJWT copia estes metadados para o access
+    (`refresh.access_token`), e é por isso que o access leva `sid`, `amr` e
+    `auth_time` sem que `build_claims` os repita.
 
     `sst` (session start time) marca o início da sessão e é **preservado nas
     rotações** → serve ao teto absoluto. `rem` guarda se é sessão "lembrada"
@@ -89,18 +109,28 @@ def issue_refresh(user, *, remember: bool, sst: int | None = None,
     `["pwd", "otp"]` senha e segundo fator. É preservado nas rotações, como o
     `sst`, e o SimpleJWT o copia para o access. O refresh recusa a sessão sem
     `otp` de quem tem ou é obrigado a ter segundo fator (`RefreshView`).
+
+    `sid` é a sessão (`identity.sessoes`): sem ele, é login — abre uma sessão
+    nova; na rotação, o chamador passa o da sessão que continua. `auth_time`
+    (RFC 9470) é quando a pessoa provou quem é pela última vez: nasce no login,
+    atravessa as rotações, e só a confirmação (step-up) o renova.
     """
+    from . import sessoes
+
+    agora = int(timezone.now().timestamp())
     token = RefreshToken.for_user(user)
-    token["sst"] = int(sst) if sst else int(timezone.now().timestamp())
+    token["sst"] = int(sst) if sst else agora
     token["rem"] = bool(remember)
     token["amr"] = list(amr) if amr else ["pwd"]
+    token["sid"] = str(sid) if sid else str(sessoes.abrir(user).sid)
+    token["auth_time"] = int(auth_time) if auth_time else agora
     _aplicar_validade(token, remember)
     return token
 
 
 def access_with_claims(refresh: RefreshToken, user):
     """Access token derivado do refresh + claims da plataforma. É o que os
-    resource servers (backend, drone) consomem; vale `ACCESS_TOKEN_LIFETIME` (15 min)."""
+    resource servers (backend, drone) consomem; vale `ACCESS_TOKEN_LIFETIME` (5 min)."""
     access = refresh.access_token
     for chave, valor in build_claims(user).items():
         access[chave] = valor
@@ -129,13 +159,10 @@ def issue_service_token(*, caller: str, tenant_id: str, audience: str = "drone",
     token["sub"] = f"svc-{caller}"
     token["svc"] = True  # marcador: é um token de serviço, não de usuário
     token["tenant_id"] = str(tenant_id) if tenant_id else None
-    token["tenant_slug"] = None
-    token["email"] = None
-    token["roles"] = []
-    token["permissions"] = []
+    # O entitlement do produto-alvo, e só ele: token de serviço não tem pessoa
+    # para o PDP responder, então decide pela claim (a separação por tipo e
+    # audiência é a fase 5).
     token["modules"] = [audience]
-    token["is_tenant_admin"] = False
-    token["is_platform_admin"] = False
     return str(token)
 
 
@@ -144,19 +171,20 @@ def cookie_max_age(token) -> int:
     return max(0, int(token.payload["exp"]) - int(timezone.now().timestamp()))
 
 
-def revoke_all_sessions(user, *, exceto_jti: str | None = None) -> int:
+def revoke_all_sessions(user, *, motivo: str = "encerrar_todas") -> int:
     """Encerra TODAS as sessões do usuário: blacklista cada refresh token vivo
-    (rotacionável) dele. `exceto_jti` preserva uma sessão (ex.: o dispositivo que
-    está trocando a própria senha). Os access tokens curtos (15 min) não são
-    revogáveis, mas expiram logo — os outros dispositivos caem em ≤15 min ao não
-    conseguir renovar. Retorna quantas sessões foram revogadas."""
+    (rotacionável) dele e revoga cada `sid` (fase 4) — o access já emitido cai
+    na requisição seguinte em todo serviço, e não quando expira. Quem troca a
+    própria senha recebe uma sessão nova logo depois. Retorna quantos refresh
+    foram revogados."""
+    from . import sessoes
+
+    sessoes.revogar_todas(user, motivo)
     # Import tardio: os modelos do blacklist exigem apps carregados.
     from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 
     n = 0
     for ot in OutstandingToken.objects.filter(user_id=user.id):
-        if exceto_jti and ot.jti == exceto_jti:
-            continue
         _, criado = BlacklistedToken.objects.get_or_create(token=ot)
         n += int(criado)
     return n

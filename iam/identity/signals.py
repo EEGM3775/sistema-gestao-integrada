@@ -98,7 +98,7 @@ def _revogar(user_id, *, motivo: str, blacklist: bool = True) -> None:
         try:
             # `revoke_all_sessions` espera um objeto com `.id`; um stub evita
             # recarregar o usuário só para isso.
-            revoke_all_sessions(type("_U", (), {"id": user_id})())
+            revoke_all_sessions(type("_U", (), {"id": user_id})(), motivo=motivo)
         except Exception:  # noqa: BLE001 — blacklist é o reforço, não a trava principal
             logger.exception("D12: falha ao blacklistar refresh de user=%s", user_id)
 

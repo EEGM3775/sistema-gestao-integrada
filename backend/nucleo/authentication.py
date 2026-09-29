@@ -12,8 +12,9 @@ from django.contrib.auth import get_user_model
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken
 
+from . import fichas
 from .models import Tenant
-from .revocation import is_session_revoked
+from .revocation import is_session_revoked, is_sid_revoked
 from .tenancy import arm_rls_for_request
 
 logger = logging.getLogger(__name__)
@@ -46,13 +47,25 @@ class IamJWTAuthentication(JWTAuthentication):
         # ≤ access TTL. Fail-open por padrão (ver nucleo/revocation.py).
         if is_session_revoked(validated_token.get("user_id"), validated_token.get("iat")):
             raise InvalidToken("Sessão revogada (senha alterada ou usuário desativado).")
+        # Fase 4: a sessão tem identidade (`sid`). Logout e "encerrar todas"
+        # derrubam o access já emitido na requisição seguinte.
+        if is_sid_revoked(validated_token.get("sid")):
+            raise InvalidToken("Sessão encerrada.")
 
-        tenant = self._sync_tenant(validated_token)
+        # Fase 4: o que era da empresa e o e-mail saíram do token (§10.6) e
+        # chegam pelas fichas que a IAM publica. Token com as claims antigas (a
+        # volta atrás, ou emitido antes da fase 4) continua valendo por elas.
+        empresa = None if "plano" in validated_token else fichas.da_empresa(validated_token.get("tenant_id"))
+        email = validated_token.get("email")
+        if email is None and validated_token.get("user_id"):
+            email = (fichas.da_pessoa(validated_token.get("user_id")) or {}).get("email")
+
+        tenant = self._sync_tenant(validated_token, empresa)
 
         user, created = User.objects.get_or_create(
             username=username,
             defaults={
-                "email": validated_token.get("email") or "",
+                "email": email or "",
                 "tenant": tenant,
                 "is_tenant_admin": bool(validated_token.get("is_tenant_admin")),
             },
@@ -69,7 +82,7 @@ class IamJWTAuthentication(JWTAuthentication):
         if not user.is_active:
             raise InvalidToken("Usuário inativo neste produto.")
 
-        self._sync_user(user, validated_token, tenant)
+        self._sync_user(user, validated_token, tenant, email)
 
         # Quem é a pessoa para o PDP (`usuario:<id da IAM>`), de qual empresa é
         # esta sessão e quando o token nasceu — é o que a sombra usa para dizer
@@ -77,14 +90,17 @@ class IamJWTAuthentication(JWTAuthentication):
         user.iam_user_id = validated_token.get("user_id")
         user.iam_tenant_id = validated_token.get("tenant_id")
         user.iam_token_iat = validated_token.get("iat")
+        user.iam_sid = validated_token.get("sid")
 
-        # Claims voláteis. **Só `nucleo/autorizacao.py` as lê** (cobrado por
-        # teste): toda pergunta "pode?" passa por lá.
+        # As listas de acesso. **Só `nucleo/autorizacao.py` as lê** (cobrado por
+        # teste): toda pergunta "pode?" passa por lá. Desde a fase 4 o token não
+        # as traz, e quem responde é o PDP; elas voltam só com a flag de volta
+        # atrás da IAM (`AUTORIZACAO_TOKEN_COM_LISTAS`).
+        user.iam_lista_no_token = "permissions" in validated_token or "modules" in validated_token
         user.iam_modules = validated_token.get("modules", []) or []
         user.iam_roles = validated_token.get("roles", []) or []
-        # `permissions` (Fase 9.B): conjunto efetivo p/ RequirePermission. Desde a
-        # fatia E não há mais fallback por papel — todo token da IAM traz a claim;
-        # ausente/vazia → conjunto vazio → RequirePermission nega (fail-closed).
+        # `permissions` (Fase 9.B): só decide quando o token traz a lista (a
+        # volta atrás); ausente → conjunto vazio, e o PDP responde.
         user.iam_permissions = list(validated_token.get("permissions") or [])
         # Dono da plataforma (superuser da IAM) — confirma incidente LGPD (Fase 9.D).
         user.is_platform_admin = bool(validated_token.get("is_platform_admin"))
@@ -93,20 +109,26 @@ class IamJWTAuthentication(JWTAuthentication):
         # JIT (só quem já logou), então contar localmente daria um teto menor que o
         # contratado e crescente durante a implantação do cliente. Ausente (token de
         # serviço, token legado) → o throttle cai no default do settings.
-        user.iam_rate_hora = validated_token.get("rate_hora")
-        user.iam_plano = validated_token.get("plano")
+        user.iam_rate_hora = validated_token.get("rate_hora", (empresa or {}).get("rate_hora"))
+        user.iam_plano = validated_token.get("plano", (empresa or {}).get("plano"))
         # D24 — quotas de objeto do plano contratado (`{"obras": 8, ...}`), pela
         # mesma razão do `rate_hora`: a IAM é quem sabe o que foi contratado, o
         # backend é quem sabe quanto já foi usado. Ausente → `nucleo/quotas.py`
         # não trava nada (fail-open ruidoso; ver o módulo).
-        user.iam_quotas = validated_token.get("quotas")
+        user.iam_quotas = validated_token.get("quotas", (empresa or {}).get("quotas"))
         return user
 
-    def _sync_tenant(self, validated_token):
+    def _sync_tenant(self, validated_token, empresa=None):
         tid = validated_token.get("tenant_id")
         if not tid:
             return None
-        slug = validated_token.get("tenant_slug") or str(tid)
+        slug = validated_token.get("tenant_slug") or (empresa or {}).get("slug")
+        if not slug:
+            # Nem claim nem ficha: o espelho que existe fica como está.
+            tenant = Tenant.objects.filter(id=tid).first()
+            if tenant is not None:
+                return tenant
+            slug = str(tid)
         tenant, _created = Tenant.objects.get_or_create(
             id=tid, defaults={"slug": slug, "nome": slug}
         )
@@ -115,18 +137,20 @@ class IamJWTAuthentication(JWTAuthentication):
             tenant.save(update_fields=["slug", "data_sincronizacao"])
         return tenant
 
-    def _sync_user(self, user, validated_token, tenant):
+    def _sync_user(self, user, validated_token, tenant, email=None):
         campos = []
-        email = validated_token.get("email")
         if email and user.email != email:
             user.email = email
             campos.append("email")
         if tenant and user.tenant_id != tenant.id:
             user.tenant = tenant
             campos.append("tenant")
-        is_admin = bool(validated_token.get("is_tenant_admin"))
-        if user.is_tenant_admin != is_admin:
-            user.is_tenant_admin = is_admin
-            campos.append("is_tenant_admin")
+        # O papel de admin só é espelhado quando o token o traz (a volta atrás);
+        # sem ele, "é admin?" é pergunta ao PDP, e o espelho não é zerado.
+        if "is_tenant_admin" in validated_token:
+            is_admin = bool(validated_token.get("is_tenant_admin"))
+            if user.is_tenant_admin != is_admin:
+                user.is_tenant_admin = is_admin
+                campos.append("is_tenant_admin")
         if campos:
             user.save(update_fields=campos)

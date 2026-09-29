@@ -3,8 +3,8 @@
 Irmão do [pdca_medicao_posto_test.py](pdca_medicao_posto_test.py). A suíte do
 Django chama o serviço e empurra o usuário com `force_authenticate`; aqui cada
 leitura atravessa login, assinatura RS256, gateway, entitlement, permissão e
-RLS — e o D194: o token do admin leva a **lista exata**, sem curinga, e cabe
-na janela de cabeçalho que a borda tem configurada.
+RLS — e o D194, fechado pela fase 4: o token do admin não leva lista nenhuma,
+cabe folgado em qualquer borda, e a tela recebe a lista exata pelo `/auth/me/`.
 
 Tokens reais, e a divisão é o teste:
 
@@ -16,7 +16,7 @@ Tokens reais, e a divisão é o teste:
   gerente  / gerente123  -> `diretoria`: assina a eficácia e encerra.
   acme     / acme123     -> outro tenant, sem o módulo: para no entitlement.
 
-  1. O D194         -> lista exata, sem curinga, e cabe na janela da borda.
+  1. O D194         -> token sem lista e pequeno; a lista exata vem do `/auth/me/`.
   2. O que existe   -> `status/` declara os dois postos.
   3. A qualidade    -> a fila do posto é a do dia recortada; o laço inteiro
                        (sem plano -> executado -> eficácia -> encerrada) anda
@@ -140,22 +140,21 @@ OBRA = lista_obras[0]["obra_id"]
 print(f"Obra: {OBRA} — {lista_obras[0].get('nome_obra')}")
 
 # ---------------------------------------------------------------------------
-print("\n1. D194 — lista exata, sem curinga, e cabe na janela da borda")
+print("\n1. D194 — token sem lista; a lista exata vem do /auth/me/")
 # ---------------------------------------------------------------------------
 linha_admin = len("Authorization: Bearer ") + len(admin)
 check(f"a linha Authorization do admin tem {linha_admin} B, abaixo de {JANELA_DA_BORDA}",
       linha_admin < JANELA_DA_BORDA)
-perms_admin = claims(admin).get("permissions", [])
-check(f"o token do admin leva a lista exata ({len(perms_admin)} códigos), sem curinga",
-      "pdca.nc.view" in perms_admin and not any("*" in p for p in perms_admin))
+check("o token do admin não leva lista de permissões (fase 4)", "permissions" not in claims(admin))
 codigo, corpo = req("GET", f"/api/pdca/qualidade/?obra={OBRA}", admin)
 check("o admin abre o posto da qualidade (200)", codigo == 200)
 check("e nenhum bloco vem negado", corpo is not None and corpo.get("sem_permissao") == [])
 codigo, _ = req("GET", f"/api/pdca/ncs/?obra={OBRA}", admin)
 check("e passa no portão por permissão (ncs/ → 200)", codigo == 200)
 codigo, me = req("GET", "/auth/me/", admin)
-check("`/auth/me/` diz a mesma lista do token",
-      codigo == 200 and sorted(me.get("permissions", [])) == sorted(perms_admin))
+perms_admin = (me or {}).get("permissions", [])
+check(f"`/auth/me/` dá à tela a lista exata ({len(perms_admin)} códigos), sem curinga",
+      codigo == 200 and "pdca.nc.view" in perms_admin and not any("*" in p for p in perms_admin))
 
 # ---------------------------------------------------------------------------
 print("\n2. O que o módulo declara")

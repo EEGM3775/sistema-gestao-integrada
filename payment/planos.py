@@ -45,6 +45,16 @@ RATE_BASE_HORA = 6_000
 # branco.
 RATE_TETO_INFRA_HORA = 60_000
 
+# **O piso da auditoria de decisão** (docs/acesso-e-permissoes.md §10.9): o
+# Marco Civil da Internet (art. 15) obriga o provedor de aplicação a guardar os
+# registros de acesso por 6 meses. É o mínimo de TODO plano, inclusive o
+# gratuito, e nenhuma janela de `auditoria_decisao_retencao_dias` pode ficar
+# abaixo dele (`payment/regras.py` cobra). Acima do piso a janela é paywall —
+# até 5 anos no plano mais alto —, com os números fixados pela medida da fase 2
+# (`manage.py relatorio_pdp`): **decisão do dono ainda em aberto** (§10.14);
+# enquanto ela não vem, todo plano fica no piso.
+AUDITORIA_DECISAO_PISO_DIAS = 180
+
 # ---------------------------------------------------------------------------
 # 3. Planos
 # ---------------------------------------------------------------------------
@@ -63,6 +73,7 @@ PLANOS: dict[str, dict] = {
         "obras": 2,
         "planos_modelo": 0,
         "lixo_retencao_dias": 3,
+        "auditoria_decisao_retencao_dias": AUDITORIA_DECISAO_PISO_DIAS,
         "clientes": 20,
         "fornecedores": 20,
         "armazenamento_gb": 1,
@@ -107,6 +118,7 @@ PLANOS: dict[str, dict] = {
         "obras": 8,
         "planos_modelo": 0,
         "lixo_retencao_dias": 15,
+        "auditoria_decisao_retencao_dias": AUDITORIA_DECISAO_PISO_DIAS,
         "clientes": 100,
         "fornecedores": 100,
         "armazenamento_gb": 5,
@@ -145,6 +157,7 @@ PLANOS: dict[str, dict] = {
         "obras": 40,
         "planos_modelo": 0,
         "lixo_retencao_dias": 15,
+        "auditoria_decisao_retencao_dias": AUDITORIA_DECISAO_PISO_DIAS,
         "clientes": 1_000,
         "fornecedores": 1_000,
         "armazenamento_gb": 100,
@@ -191,6 +204,7 @@ PLANOS: dict[str, dict] = {
         "obras": 200,
         "planos_modelo": 25,
         "lixo_retencao_dias": 15,
+        "auditoria_decisao_retencao_dias": AUDITORIA_DECISAO_PISO_DIAS,
         "clientes": 10_000,
         "fornecedores": 10_000,
         "armazenamento_gb": 500,
@@ -243,6 +257,7 @@ PLANOS: dict[str, dict] = {
         "obras": None,
         "planos_modelo": None,
         "lixo_retencao_dias": 30,
+        "auditoria_decisao_retencao_dias": AUDITORIA_DECISAO_PISO_DIAS,
         "clientes": None,
         "fornecedores": None,
         "armazenamento_gb": None,
@@ -353,7 +368,7 @@ QUOTAS_POR_OPERACAO: tuple[str, ...] = ("importacao_linhas",)
 # contar (`QUOTAS_DE_OBJETO`) nem teto de uma chamada (`QUOTAS_POR_OPERACAO`).
 # Viaja na claim porque quem congela o prazo é o backend, no instante em que o
 # usuário exclui — ver §5.8.
-QUOTAS_DE_JANELA: tuple[str, ...] = ("lixo_retencao_dias",)
+QUOTAS_DE_JANELA: tuple[str, ...] = ("lixo_retencao_dias", "auditoria_decisao_retencao_dias")
 
 # Tudo que morde hoje. O que não está aqui está declarado e inerte.
 QUOTAS_APLICADAS: tuple[str, ...] = (

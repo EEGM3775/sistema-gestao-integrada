@@ -17,6 +17,8 @@ urlpatterns = [
     path("auth/refresh/", views.RefreshView.as_view(), name="refresh"),
     path("auth/logout/", views.LogoutView.as_view(), name="logout"),
     path("auth/service-token/", views.ServiceTokenView.as_view(), name="service-token"),
+    # Interna (o gateway devolve 404): o PEP sem Redis pergunta se a sessão vale.
+    path("auth/interno/sessao/<uuid:sid>/", views.SessaoInternaView.as_view(), name="sessao-interna"),
     path("auth/senha/", views.ChangePasswordView.as_view(), name="change-password"),
     # D11 — recuperação de senha. Públicas (sem autenticação): quem esqueceu a
     # senha, por definição, não consegue se autenticar. O gateway aplica rate

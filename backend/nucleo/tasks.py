@@ -113,3 +113,14 @@ def purgar_lixo_vencido():
     from . import lixo
 
     return lixo.purgar_vencidos()
+
+
+@shared_task(name="nucleo.purgar_auditoria_de_decisao")
+def purgar_auditoria_de_decisao():
+    """Fase 4 (§10.9) — apaga a auditoria de decisão que passou da janela do
+    plano de cada empresa, nunca abaixo do piso legal de 6 meses. De hora em
+    hora pelo mesmo motivo da lixeira: o prazo é em dias, e a volta seguinte
+    conserta a que falhou."""
+    from . import auditoria_decisao
+
+    return auditoria_decisao.purgar()

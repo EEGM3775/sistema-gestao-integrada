@@ -80,6 +80,10 @@ class RLSAwareTestRunner(DiscoverRunner):
     def setup_test_environment(self, **kwargs):
         super().setup_test_environment(**kwargs)
         connection_created.connect(_arm_session_bypass)
+        # A auditoria de decisão grava por uma conexão própria (settings); no
+        # teste, pela do próprio teste — senão a linha escaparia da transação
+        # que o TestCase desfaz, e o Django recusaria o banco não declarado.
+        settings.AUTORIZACAO_AUDITORIA_BANCO = "default"
 
     def teardown_test_environment(self, **kwargs):
         connection_created.disconnect(_arm_session_bypass)

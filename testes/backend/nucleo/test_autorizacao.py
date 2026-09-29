@@ -400,7 +400,9 @@ class ViradaPorModuloTests(TestCase):
     def setUp(self):
         autorizacao.esquecer_modos()
         self.addCleanup(autorizacao.esquecer_modos)
-        self.decidir = mock.patch.object(autorizacao_pdp, "decidir", return_value=(False, "pdp"))
+        self.decidir = mock.patch.object(
+            autorizacao_pdp, "decidir_com_rastro", return_value=autorizacao_pdp.Resposta(False, "pdp")
+        )
         self.pdp = self.decidir.start()
         self.addCleanup(self.decidir.stop)
 

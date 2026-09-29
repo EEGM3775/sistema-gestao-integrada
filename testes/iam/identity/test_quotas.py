@@ -18,7 +18,7 @@ from identity.models import AssinaturaTenant, Modulo, Tenant, Usuario
 from payment.planos import QUOTAS_APLICADAS
 from payment.regras import quotas_efetivas
 from identity.quotas import QuotaExcedida, checar_seats
-from identity.tokens import build_claims
+from identity.tokens import claims_de_acesso
 from payment.planos import PLANOS
 
 
@@ -137,7 +137,7 @@ class ClaimDeQuotasTests(TestCase):
         )
 
     def test_claim_traz_as_quotas_do_plano(self):
-        quotas = build_claims(self.user)["quotas"]
+        quotas = claims_de_acesso(self.user)["quotas"]
         self.assertEqual(quotas["obras"], PLANOS["profissional"]["obras"])
         self.assertEqual(quotas["seats"], PLANOS["profissional"]["seats"])
 
@@ -145,7 +145,7 @@ class ClaimDeQuotasTests(TestCase):
         """Publicar quota inerte no token convida alguém a aplicá-la mais adiante
         sem que o contador exista — e engorda um claim que viaja em toda
         requisição. Quota nova entra aqui JUNTO com o medidor dela."""
-        quotas = build_claims(self.user)["quotas"]
+        quotas = claims_de_acesso(self.user)["quotas"]
         self.assertEqual(set(quotas), set(QUOTAS_APLICADAS))
         self.assertNotIn("notas_fiscais_mes", quotas)
         self.assertNotIn("armazenamento_gb", quotas)

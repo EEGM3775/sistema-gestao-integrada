@@ -92,3 +92,69 @@ def is_session_revoked(user_id, token_iat) -> bool:
     except (TypeError, ValueError):
         return False
     return int(token_iat) < revoked_after
+
+
+# --- A sessão (`sid`) — fase 4 da remodelagem (§10.5 e §10.8, classe B) -------
+
+#: Por quanto tempo a resposta sobre um `sid` vale quando o Redis some — o TTL
+#: da classe B (`funcoesautorizacao/classes.py`). TTL de cache (§5.6), não teto.
+_SID_TTL_S = 5.0
+_sids: dict[str, tuple[float, bool]] = {}
+# O que é lembrado por processo só serve à queda do Redis; esvaziar de vez em
+# quando custa uma ida ao Redis. Tamanho do motor, não teto de cliente (§5.6).
+_SIDS_LEMBRADOS = 10_000
+
+
+def _perguntar_a_iam(sid: str) -> bool | None:
+    """A IAM é a autoridade das sessões. ``True``/``False`` (ativa?), ou ``None``
+    quando nem ela responde."""
+    import json
+    import urllib.error
+    import urllib.request
+
+    url = f"{settings.IAM_INTERNAL_URL.rstrip('/')}/auth/interno/sessao/{sid}/"
+    try:
+        with urllib.request.urlopen(url, timeout=1.0) as resp:
+            return bool(json.loads(resp.read().decode() or "{}").get("ativa"))
+    except urllib.error.HTTPError as exc:
+        # 404 é o `<uuid:sid>` recusado: um sid que não é UUID não é sessão nenhuma.
+        return False if exc.code == 404 else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def is_sid_revoked(sid) -> bool:
+    """A sessão deste access foi encerrada? True → o caller nega (401).
+
+    A regra da classe B, e não o fail-open do carimbo por época: Redis de pé
+    responde na hora; Redis fora serve o que foi visto há até `_SID_TTL_S` e
+    depois pergunta à IAM; IAM também fora → **nega**. Token sem `sid` (emitido
+    antes da fase 4, ou de serviço) não tem sessão a conferir.
+    """
+    if not getattr(settings, "SESSION_REVOCATION_ENABLED", True) or not sid:
+        return False
+    from funcoesautorizacao import chaves
+
+    sid = str(sid)
+    agora = time.monotonic()
+    global _breaker_until
+    if agora >= _breaker_until:
+        try:
+            revogada = _redis().get(chaves.sessao_revogada(sid)) is not None
+            if len(_sids) >= _SIDS_LEMBRADOS:
+                _sids.clear()
+            _sids[sid] = (agora, revogada)
+            return revogada
+        except Exception:  # noqa: BLE001
+            _breaker_until = agora + _BREAKER_COOLDOWN
+            logger.warning("Redis indisponível na checagem do sid; cache de %.0fs, depois a IAM.",
+                           _SID_TTL_S)
+    visto = _sids.get(sid)
+    if visto is not None and agora - visto[0] < _SID_TTL_S:
+        return visto[1]
+    ativa = _perguntar_a_iam(sid)
+    if ativa is None:
+        logger.warning("Nem o Redis nem a IAM responderam sobre o sid — nega.")
+        return True
+    _sids[sid] = (agora, not ativa)
+    return not ativa

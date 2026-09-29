@@ -211,8 +211,21 @@ def _anotar_mudanca(tenant_id: str, zedtoken: str) -> None:
         logger.warning("pdp.anotacao_falhou tenant=%s", tenant_id, exc_info=True)
 
 
+def _publicar_fichas(tenant_id) -> None:
+    """Fase 4: a ficha da empresa e das pessoas vai ao Redis no mesmo ciclo
+    (`identity/fichas.py`). Falha aqui não impede a escrita no PDP."""
+    from . import fichas
+
+    try:
+        fichas.publicar(tenant_id, _redis())
+    except Exception:  # noqa: BLE001 - a volta periódica publica de novo
+        logger.warning("fichas.publicacao_falhou tenant=%s", tenant_id, exc_info=True)
+
+
 def reconciliar_tenant(tenant_id, cli: ClienteSpiceDB | None = None) -> dict:
-    """Deixa o PDP igual às tabelas para uma empresa. Devolve o que mudou."""
+    """Deixa o PDP igual às tabelas para uma empresa, e publica as fichas dela.
+    Devolve o que mudou no PDP."""
+    _publicar_fichas(tenant_id)
     cli = cli or cliente()
     tid = str(tenant_id)
     desejadas = relacoes_do_tenant(tenant_id)
@@ -245,6 +258,12 @@ def reconciliar_plataforma(cli: ClienteSpiceDB | None = None) -> dict:
 def remover_tenant(tenant_id: str, cli: ClienteSpiceDB | None = None) -> int:
     """Apaga do PDP tudo de uma empresa que não existe mais na IAM."""
     cli = cli or cliente()
+    try:
+        from . import fichas
+
+        fichas.apagar_empresa(tenant_id, _redis())
+    except Exception:  # noqa: BLE001
+        logger.warning("fichas.remocao_falhou tenant=%s", tenant_id, exc_info=True)
     atuais = _relacoes_no_pdp(cli, tenant_id)
     if atuais:
         token = cli.escrever(remover=sorted(atuais))
@@ -270,6 +289,12 @@ def reconciliar_tudo(cli: ClienteSpiceDB | None = None) -> dict:
     for orfao in sorted(no_pdp - ids):
         resumo["removidas"] += remover_tenant(orfao, cli)
         resumo["orfaos"] += 1
+    try:
+        from . import fichas
+
+        resumo["fichas_orfas"] = fichas.limpar_orfas(_redis())
+    except Exception:  # noqa: BLE001 - a próxima volta tenta de novo
+        logger.warning("fichas.limpeza_falhou", exc_info=True)
     plataforma = reconciliar_plataforma(cli)
     resumo["tocadas"] += plataforma["tocadas"]
     resumo["removidas"] += plataforma["removidas"]

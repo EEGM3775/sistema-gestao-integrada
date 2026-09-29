@@ -20,12 +20,15 @@ eles perguntam a este módulo, e ler `iam_permissions`, `iam_modules`,
 O superusuário **local** do Django (`is_superuser` do espelho, não uma claim)
 passa em `pode` e `administra` nos dois modos, como sempre passou.
 
-**Quem decide** é a tabela `ModoAutorizacao`, módulo a módulo (fase 3): o token,
-como sempre, ou o PDP (`autorizacao_pdp.py`). Com a sombra ligada (fase 2), a
-resposta que **não** decidiu é conferida em segundo plano
-(`autorizacao_sombra.py`) e a divergência fica registrada. Token de serviço (sem
-`user_id`) decide sempre pelo token — é outro tipo de token, e a separação dele
-é a fase 5.
+**Quem decide.** Desde a fase 4 o token não traz lista nenhuma, e o PDP
+(`autorizacao_pdp.py`) decide em todo módulo. Só quando o token as traz — a volta
+atrás da §10.12, ou o usuário forjado em teste — vale a tabela `ModoAutorizacao`,
+módulo a módulo (fase 3), e a sombra confere em segundo plano a resposta que não
+decidiu (`autorizacao_sombra.py`, fase 2). Token de serviço (sem `user_id`)
+decide sempre pela claim — é outro tipo de token, e a separação dele é a fase 5.
+
+**Toda decisão de pessoa é registrada** (`auditoria_decisao.py`, §10.9): no log
+sempre; na tabela `DecisaoAcesso`, as da classe C e as negações.
 
 **Uma resposta por requisição.** A máscara de campo pergunta a mesma coisa para
 cada linha de uma lista; a primeira resposta fica guardada no próprio `user` da
@@ -43,7 +46,7 @@ import funcoesautorizacao
 from funcoesautorizacao import classes
 from funcoesautorizacao.esquema import MODULOS_DE_FUNDACAO, permissao_do_codigo, tipo_do_modulo
 
-from . import autorizacao_pdp, autorizacao_sombra, observability
+from . import auditoria_decisao, autorizacao_pdp, autorizacao_sombra, observability
 from .autorizacao_pdp import Pergunta, Quem
 
 logger = logging.getLogger(__name__)
@@ -123,6 +126,13 @@ def _pelo_token(user, p: Pergunta) -> bool:
 # --- Quem decide ------------------------------------------------------------
 
 
+def _lista_no_token(user) -> bool:
+    """O token trouxe as listas de acesso? Só o de antes da fase 4 e o da volta
+    atrás (`AUTORIZACAO_TOKEN_COM_LISTAS` na IAM). O usuário forjado em teste,
+    sem o atributo, as carrega no próprio objeto e conta como "trouxe"."""
+    return bool(getattr(user, "iam_lista_no_token", True))
+
+
 def _pdp_configurado() -> bool:
     return bool(getattr(settings, "SPICEDB_URL", ""))
 
@@ -186,16 +196,34 @@ def _decidir(user, p: Pergunta) -> bool:
 
     pelo_token = _pelo_token(user, p)
     quem = _quem(user) if _pdp_configurado() else None
-    modo = modo_do_modulo(p.modulo) if quem else TOKEN
+    # Fase 4: o token enxuto não traz lista nenhuma — não há o que o token
+    # decidir, e o PDP decide em todo módulo. Com a lista (a volta atrás da
+    # §10.12, ou o usuário forjado em teste), vale o modo de cada módulo.
+    lista = _lista_no_token(user)
+    if quem is None:
+        modo = TOKEN
+    elif not lista:
+        modo = PDP
+    else:
+        modo = modo_do_modulo(p.modulo)
 
+    recurso, zedtoken = "", ""
     if modo == PDP:
-        pelo_pdp, origem = autorizacao_pdp.decidir(quem, p)
+        r = autorizacao_pdp.decidir_com_rastro(quem, p)
+        pelo_pdp, origem, recurso, zedtoken = r.permitido, r.origem, r.recurso, r.zedtoken
         final = pelo_pdp
     else:
         pelo_pdp, origem = None, "token"
         final = pelo_token
 
-    if quem is not None and getattr(settings, "AUTORIZACAO_SOMBRA", False):
+    if quem is not None:
+        auditoria_decisao.registrar(
+            quem=quem, sid=getattr(user, "iam_sid", None), pergunta=p, recurso=recurso,
+            decisao=final, origem=origem, zedtoken=zedtoken,
+        )
+
+    # A sombra compara token e PDP; sem lista no token, não há o que comparar.
+    if quem is not None and lista and getattr(settings, "AUTORIZACAO_SOMBRA", False):
         autorizacao_sombra.submeter(autorizacao_sombra.Comparacao(
             quem=quem, iat=getattr(user, "iam_token_iat", None), pergunta=p, modo=modo,
             decisao_token=pelo_token, decisao_pdp=pelo_pdp, origem_pdp=origem if pelo_pdp is not None else None,

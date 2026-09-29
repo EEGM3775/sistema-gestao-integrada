@@ -27,6 +27,13 @@ def versao_do_usuario(tenant_id: str, usuario_id: str) -> str:
     return f"{PREFIXO}:v:u:{tenant_id}:{usuario_id}"
 
 
+def modo_do_modulo(modulo: str) -> str:
+    """Quem decide no módulo (``token``/``pdp``) — o espelho, no Redis, da tabela
+    `ModoAutorizacao` do backend. É daqui que o drone (Java) lê a virada: ele não
+    enxerga o banco do backend. Quem grava é o `manage.py modo_autorizacao`."""
+    return f"{PREFIXO}:modo:{modulo}"
+
+
 def zedtoken_do_tenant(tenant_id: str) -> str:
     """O ZedToken da última mudança de relação do tenant — a régua da classe B."""
     return f"{PREFIXO}:zed:{tenant_id}"
@@ -48,6 +55,25 @@ def decisao(tenant_id: str, usuario_id: str, versoes: tuple, pergunta: str) -> s
         raise ValueError("Chave de decisão sem pessoa é recusada.")
     v = ".".join(str(x or 0) for x in versoes)
     return f"{PREFIXO}:d:{tenant_id}:{usuario_id}:{v}:{pergunta}"
+
+
+def sessao_revogada(sid: str) -> str:
+    """A sessão `sid` foi revogada (fase 4). **Mora no Redis da revogação (DB 2)**,
+    ao lado do carimbo por época (`sess:revoked_after:<user_id>`), e não no da
+    autorização: é a mesma família de fato — "este token ainda vale?"."""
+    return f"sess:sid:{sid}"
+
+
+def ficha_da_empresa(tenant_id: str) -> str:
+    """O que era da empresa no token até a fase 4 — slug, nome, plano, teto de
+    requisições e quotas —, publicado pela IAM e lido pelo backend (DB 5)."""
+    return f"{PREFIXO}:ficha:empresa:{tenant_id}"
+
+
+def ficha_da_pessoa(usuario_id: str) -> str:
+    """O e-mail da pessoa, que saiu do token (minimização, §10.6) e que o
+    espelho do backend ainda precisa."""
+    return f"{PREFIXO}:ficha:pessoa:{usuario_id}"
 
 
 def volume_do_dia(dia: str) -> str:

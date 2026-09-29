@@ -30,6 +30,7 @@ Precedência das quotas, do mais forte para o mais fraco (fail-closed no fim):
 from __future__ import annotations
 
 from payment.planos import (
+    AUDITORIA_DECISAO_PISO_DIAS,
     ORDEM_PLANOS,
     PLANO_PADRAO,
     PLANOS,
@@ -74,12 +75,17 @@ def quota_efetiva(
     tem de distinguir os dois casos explicitamente.
     """
     contratados = limites_contratados or {}
+    valor = PLANOS[plano_valido(slug)].get(nome)
     if nome in contratados:
-        valor = contratados[nome]
+        contratado = contratados[nome]
         # Contrato com lixo (string, negativo) não pode virar quota: cai no plano.
-        if valor is None or (isinstance(valor, int) and valor >= 0):
-            return valor
-    return PLANOS[plano_valido(slug)].get(nome)
+        if contratado is None or (isinstance(contratado, int) and contratado >= 0):
+            valor = contratado
+    # A retenção da auditoria de decisão tem piso legal (Marco Civil, art. 15):
+    # nem plano nem contrato ficam abaixo dele. `None` (guardar sem prazo) passa.
+    if nome == "auditoria_decisao_retencao_dias" and valor is not None:
+        valor = max(valor, AUDITORIA_DECISAO_PISO_DIAS)
+    return valor
 
 
 def quotas_efetivas(slug: str | None, limites_contratados: dict | None = None) -> dict:

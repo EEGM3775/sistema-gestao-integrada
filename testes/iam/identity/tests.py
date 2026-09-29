@@ -13,7 +13,7 @@ from identity.models import (
 )
 from identity.models import EventoSeguranca, TokenRecuperacaoSenha
 from identity.recuperacao import hash_token
-from identity.tokens import build_claims, issue_refresh
+from identity.tokens import claims_de_acesso, issue_refresh
 
 
 class CatalogoConformidadeTests(TestCase):
@@ -108,7 +108,7 @@ class PermissoesEfetivasTests(TestCase):
 
     def test_jwt_carrega_permissions(self):
         u = self._user("medico2", ["rh_medico"], modulos=["rh"])
-        claims = build_claims(u)
+        claims = claims_de_acesso(u)
         self.assertIn("permissions", claims)
         self.assertIn("rh.dado_medico.view", claims["permissions"])
         self.assertIn("rh_medico", claims["roles"])  # nome mantido p/ transição (fatia B)
@@ -157,7 +157,7 @@ class PermissoesEfetivasTests(TestCase):
         ele governa.
         """
         supervisor = self._supervisor()
-        claims = build_claims(supervisor)
+        claims = claims_de_acesso(supervisor)
         self.assertTrue(claims["is_platform_admin"])
         self.assertFalse(claims["is_tenant_admin"], "supervisor não é admin de tenant")
         self.assertIn("rh", claims["modules"])

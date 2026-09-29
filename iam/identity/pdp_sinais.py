@@ -113,8 +113,9 @@ def _modulo_do_catalogo(sender, instance, **kwargs):
 
 @receiver(post_save, sender=Tenant)
 def _empresa(sender, instance, created, **kwargs):
-    if created:
-        pdp.agendar(instance.id)
+    # Toda gravação, e não só a criação: o plano e o slug estão na ficha da
+    # empresa (fase 4, `identity/fichas.py`), que sai no mesmo ciclo.
+    pdp.agendar(instance.id)
 
 
 @receiver(post_delete, sender=Tenant)

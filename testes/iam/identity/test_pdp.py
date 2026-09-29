@@ -284,6 +284,8 @@ class PdpRespondeOQueOTokenRespondeTests(TestCase):
             mock.patch.object(pdp, "ativo", return_value=True),
             mock.patch.object(pdp, "cliente", return_value=self.cli),
             mock.patch.object(pdp, "_anotar_mudanca"),
+            # As fichas iriam ao Redis de verdade (o do ambiente), não ao de teste.
+            mock.patch.object(pdp, "_publicar_fichas"),
         ]
         for p in self._patches:
             p.start()

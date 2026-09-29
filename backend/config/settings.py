@@ -226,6 +226,19 @@ DATABASES = {
     }
 }
 
+# Remodelagem, fase 4 (§10.9): a auditoria de decisão grava por uma conexão
+# própria, no mesmo banco e fora da transação da requisição. Sem isto, a linha da
+# negação morria junto com ela: o DRF marca rollback em toda resposta de erro
+# (403 inclusive), e o `ATOMIC_REQUESTS` desfazia justamente o que mais importa
+# registrar. Nos testes é espelho do `default` (e o runner aponta a auditoria
+# para o próprio `default`, para a linha ficar na transação do teste).
+DATABASES['auditoria'] = {
+    **DATABASES['default'],
+    'ATOMIC_REQUESTS': False,
+    'TEST': {'MIRROR': 'default'},
+}
+AUTORIZACAO_AUDITORIA_BANCO = 'auditoria'
+
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
 
@@ -605,6 +618,12 @@ CELERY_BEAT_SCHEDULE = {
     # plano é apagado de verdade. De hora em hora (o prazo é em dias; ver a task).
     'lixo-purgar-vencido': {
         'task': 'nucleo.purgar_lixo_vencido',
+        'schedule': 3600.0,
+    },
+    # Remodelagem, fase 4 (§10.9): a auditoria de decisão que passou da janela
+    # do plano sai do banco — nunca abaixo do piso legal de 6 meses.
+    'auditoria-decisao-purgar': {
+        'task': 'nucleo.purgar_auditoria_de_decisao',
         'schedule': 3600.0,
     },
     'crm-notificar-tarefas-a-vencer': {

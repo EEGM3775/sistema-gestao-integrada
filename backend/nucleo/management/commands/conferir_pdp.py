@@ -7,6 +7,11 @@
 de quem investiga uma divergência: valida o JWT como o backend valida, monta a
 pessoa como a requisição monta, e faz as mesmas perguntas pelo mesmo código
 (`nucleo/autorizacao.py`), sem passar por view nenhuma. Sai em JSON.
+
+**Depois da fase 4** o token não traz lista nenhuma, e não há o que comparar: o
+comando só compara quando o token as traz (a volta atrás da §10.12) e, sem
+elas, devolve o que o PDP responde a cada pergunta. A prova de equivalência
+passou a ser a da IAM contra as tabelas (`manage.py conferir_equivalencia`).
 """
 from __future__ import annotations
 
@@ -52,12 +57,16 @@ class Command(BaseCommand):
             if not perguntas:
                 raise CommandError(f"Pergunta desconhecida: {opts['pergunta']}")
 
+        lista = autorizacao._lista_no_token(user)
         divergencias, indisponivel = [], 0
         respostas = {}
         for p in perguntas:
-            pelo_token = autorizacao._pelo_token(user, p)
+            pelo_token = autorizacao._pelo_token(user, p) if lista else None
             pelo_pdp, origem = autorizacao_pdp.decidir(quem, p)
             respostas[p.chave] = {"token": pelo_token, "pdp": pelo_pdp, "origem": origem}
+            if not lista:
+                indisponivel += origem == autorizacao_pdp.FALHA
+                continue
             c = autorizacao_sombra.Comparacao(
                 quem=quem, iat=getattr(user, "iam_token_iat", None), pergunta=p,
                 modo="conferencia", decisao_token=pelo_token,
@@ -73,6 +82,7 @@ class Command(BaseCommand):
             "usuario": user.username,
             "tenant": quem.tenant_id,
             "perguntas": len(perguntas),
+            "token_com_listas": lista,
             "divergencias": divergencias,
             "pdp_indisponivel": indisponivel,
             "respostas": respostas if opts["pergunta"] else None,

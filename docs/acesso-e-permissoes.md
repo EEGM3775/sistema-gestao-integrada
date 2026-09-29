@@ -518,7 +518,8 @@ existir.
 ## 10. Desenho-alvo — a remodelagem da segurança
 
 > **Natureza: desenho aprovado, construído em fases.** As seções 1 a 9 descrevem o sistema como ele
-> é; esta descreve para onde ele vai e por quê. Faseamento em §10.12; o que já está construído e como,
+> era antes da remodelagem; esta descreve para onde ele vai e por quê. Onde as duas discordam sobre o
+> token e a decisão de acesso, vale esta. Faseamento em §10.12; o que já está construído e como,
 > em §10.15; o estado de cada fase, no [roadmap](roadmap.md); o que o dono ainda precisa decidir, em
 > §10.14.
 
@@ -861,10 +862,14 @@ não de desenho.
 7. **Retenção da auditoria vira paywall**: piso legal de 6 meses em todo plano (Marco Civil, art.
    15), até 5 anos no plano mais alto, com as janelas fixadas pela medida da fase 2 (§10.9).
 
-**Em aberto, para o dono:** as janelas de retenção de cada plano, quando a fase 2 trouxer o volume
-medido.
+**Em aberto, para o dono:**
+- As janelas de retenção de cada plano acima do piso. Hoje todo plano está no piso legal de 180 dias
+  (`payment/planos.py`); a medida da sombra de 25/09/2026 deu entre 9 e 828 decisões por dia por
+  empresa na demo — pouco uso para fixar número.
+- A fonte das relações: a fase 4 manteve as tabelas da IAM como fonte, com reconciliação (§10.15). Se
+  a fonte única no SpiceDB continuar sendo o alvo, ela é uma fase própria.
 
-### 10.15 Como as fases 2 e 3 estão construídas
+### 10.15 Como as fases 2, 3 e 4 estão construídas
 
 **Os serviços.** O SpiceDB (`spicedb` no compose) guarda os dados num banco próprio (`spicedb_db`) do
 mesmo cluster Postgres, que roda com `track_commit_timestamp=on` — sem isso o SpiceDB desliga o
@@ -893,7 +898,7 @@ de relações que as tabelas implicam para uma empresa e grava só a diferença.
 (papel, acesso a módulo, assinatura, usuário, módulo, empresa) a disparam no fim da transação, uma
 vez por empresa; PDP fora deixa a empresa numa fila no Redis; o `iam-pdp` refaz a fila na hora e
 reconcilia tudo a cada `AUTORIZACAO_SINCRONIA_PERIODO_S` (é o que faz uma assinatura vencer no PDP).
-Durante a sombra as tabelas continuam a fonte — a troca de fonte vem com a fase 4.
+**As tabelas continuam a fonte depois da fase 4** — ver "A fonte das relações", abaixo.
 
 **O backend pergunta num lugar só** ([`nucleo/autorizacao.py`](../backend/nucleo/autorizacao.py)):
 `pode`, `usa_modulo`, `tem_na_lista`, `administra`, `supervisiona`, `permitidos`. Ler claim de acesso
@@ -917,4 +922,70 @@ de serviço decide sempre pelo token.
 
 **Os tetos** (relógio do PDP, fila da sombra, período da reconciliação, janela de repetição da
 divergência e os dias do critério) estão na §5.5p do [`payment/planos.py`](../payment/planos.py).
+
+**A saída da fase 2 fora de produção.** O critério de calendário (duas semanas de uso real sem
+divergência real) só tem sentido onde há uso real. No desenvolvimento, a prova é a **equivalência
+exaustiva** da IAM ([`identity/equivalencia.py`](../iam/identity/equivalencia.py),
+`manage.py conferir_equivalencia --papeis-de-fabrica`): toda pessoa ativa, mais uma empresa
+descartável com uma pessoa por papel de fábrica, com e sem liberação de módulo, e metade dos módulos
+sem assinatura — cada uma com todas as perguntas, tabelas × PDP, com consistência total. A virada é
+então feita com `modo_autorizacao --todos pdp --forcar`, que fica registrado em `alterado_por`.
+
+**O drone pergunta ao PDP** ([`security/AutorizacaoService`](../ImgDrone/funcoesODM/backend/java-service/src/main/java/com/funcoesodm/javaservice/security/AutorizacaoService.java)):
+a mesma pergunta `m:drone` do backend, pelas mesmas chaves de cache e com o modo de falha da classe
+A. Ele não enxerga a tabela `ModoAutorizacao`: o `modo_autorizacao` a espelha no Redis
+(`authz:modo:<módulo>`). O relógio da pergunta chega a ele pelo arquivo gerado
+`funcoesautorizacao/gerado/limites-drone.properties`, que o `gerar.py` tira do `planos.py` e o
+compose monta em `/authz`.
+
+#### A fase 4 — o token enxuto
+
+**O token** leva `sub`, `tenant_id`, `user_id`, `sid`, `sst`, `amr` e `auth_time`, além das claims
+padrão — cerca de 870 B na linha `Authorization` para qualquer persona, com o catálogo inteiro
+([`identity/tokens.py`](../iam/identity/tokens.py) `build_claims`). As listas, os papéis, as flags
+de admin, o plano e o e-mail saíram. O `/auth/me/` continua dando à tela a lista exata, lida das
+tabelas (`claims_de_acesso`). O token de serviço leva só `svc`, `tenant_id` e o `modules` do produto
+alvo, e decide pela claim até a fase 5 separá-lo por tipo e audiência.
+
+**Quem decide.** Sem lista no token, o backend pergunta ao PDP em todo módulo, qualquer que seja o
+modo da tabela, e o drone faz o mesmo. A sombra não roda, porque não há o que comparar. O modo por
+módulo volta a valer só com a **volta atrás** (`AUTORIZACAO_TOKEN_COM_LISTAS=True` na IAM, que
+reemite as listas; depois `modo_autorizacao <módulo> token` no backend, que o drone lê pelo Redis).
+
+**A sessão (`sid`).** Cada login abre uma `Sessao` na IAM; a rotação do refresh a preserva, junto do
+`auth_time`. Logout, troca de senha, desativação, reset do segundo fator e "encerrar todas" a
+revogam e publicam `sess:sid:<sid>` no Redis da revogação (DB 2), com a vida de um access mais a
+margem. Backend e drone conferem o `sid` a cada requisição pela regra da classe B: Redis de pé
+responde na hora; Redis fora serve o que foi visto há até 5 s e depois pergunta à IAM
+(`/auth/interno/sessao/<sid>/`, que o gateway não expõe); nem Redis nem IAM → **nega**. O carimbo
+por época do usuário (§5.1) continua, como reforço.
+
+**As fichas.** O que era da empresa no token (slug, nome, plano, `rate_hora`, quotas) e o e-mail da
+pessoa são publicados pela IAM no Redis da autorização (`authz:ficha:empresa:<id>`,
+`authz:ficha:pessoa:<id>`) no mesmo ciclo da reconciliação do PDP
+([`identity/fichas.py`](../iam/identity/fichas.py)). A volta periódica reescreve todas e apaga as
+órfãs. O backend as lê com cache de 30 s ([`nucleo/fichas.py`](../backend/nucleo/fichas.py)); ficha
+ausente tem o comportamento de antes para a claim ausente (throttle padrão, quotas sem trava, plano
+padrão).
+
+**A auditoria de decisão** (§10.9, [`nucleo/auditoria_decisao.py`](../backend/nucleo/auditoria_decisao.py)).
+Toda decisão de pessoa vai ao log `sgi.authz.decisao`, em JSON de campos fixos. As da classe C e
+todas as negações vão também para `DecisaoAcesso`, gravadas por uma conexão própria (o alias
+`auditoria`): na transação da requisição, a linha da negação morreria com o rollback que o DRF marca
+em toda resposta de erro. A tabela é append-only no modelo e num gatilho do banco; só a purga de
+hora em hora apaga, e só o que passou da janela `auditoria_decisao_retencao_dias` do plano, nunca
+abaixo do piso legal de 180 dias (`AUDITORIA_DECISAO_PISO_DIAS`, que vale também contra contrato).
+O drone registra as decisões dele só no log. "A relação que concedeu", que a §10.9 lista, não é
+gravada: o SpiceDB só a devolve em modo de depuração, caro demais para toda decisão.
+
+**A fonte das relações.** A §10.4 pede uma fonte só, com a IAM gravando direto no SpiceDB. A fase 4
+**manteve as tabelas da IAM como fonte** e a reconciliação como escritora, pela mesma operação (fim
+da transação) e com a volta periódica cobrindo o resto. A cópia existe, mas não diverge por mais que
+uma volta, e a equivalência exaustiva mede exatamente isso. Trocar a fonte levaria a tela de papéis,
+o `/me`, os seeds e o `sync_authz` a ler do SpiceDB, e tiraria da operação o conserto que a
+reconciliação dá depois de uma queda do PDP. *(Decisão de engenharia de 25/09/2026, a confirmar pelo
+dono — ver §10.14.)*
+
+**O que da §10.6 fica para depois:** `sub` como UUID estável (hoje é o `username`, chave do espelho no
+backend e no drone), `acr`, `typ: at+jwt` e `aud` por serviço. Os dois últimos são a fase 5.
 

@@ -149,98 +149,6 @@ outbox local para não perder evento se o backend estiver fora.
 
 ## 🟠 Altas
 
-### D194 — o JWT passou de 8 KB e derruba a plataforma inteira para quem tem muitas permissões · 🔴 contornado 20/09/2026 · cura desenhada 24/09/2026 · fase 0 ✅ 25/09/2026
-
-Achado com o dono relatando *"quando atualizo a página, volta pra tela de login"* e *"erro ao
-carregar empreendimentos"*. O sintoma parecia sessão expirando; não era.
-
-O JWT da IAM leva o **catálogo de permissões do usuário dentro do token**, e ele cresceu com o
-catálogo — a PDCA.8 acrescentou `pdca.dds.*`, `pdca.ocorrencia.*` e uma persona. Medido no stack:
-
-| Usuário | Token | Linha `Authorization: Bearer …` | Gateway | Django direto |
-| --- | --- | --- | --- | --- |
-| `demo` | 8.055 B | 8.077 B | 200 | — |
-| `admin` | 8.311 B | 8.333 B | **400** | **431** |
-| `dono` | 8.308 B | 8.330 B | **400** | **431** |
-
-O limite padrão de uma linha de cabeçalho é **8.192 B** no nginx
-(`large_client_header_buffers 4 8k`) e **8.190 B** no gunicorn
-(`--limit-request-field_size`). Quem passa disso perde **toda** chamada autenticada, em todos os
-módulos — só `/auth/login/` e `/auth/refresh/` seguiam funcionando, por não levarem o cabeçalho.
-
-**Três coisas tornaram o diagnóstico caro, e valem como lição:**
-
-- o nginx registra "client sent too long header line" em nível **`info`**, e o `error_log` roda em
-  `error` — o 400 aparecia no access log **sem upstream e com `ua` vazio**, e nada no error log;
-- o sintoma imita expiração de sessão, porque o que sobrevive é exatamente o par login/refresh;
-- `demo` passava raspando (22 B de folga), então metade dos testes dizia que estava tudo bem.
-
-**Contornado**, não resolvido: `large_client_header_buffers 8 32k` no
-[nginx.unified.conf](../infra/gateway/nginx.unified.conf) e `GUNICORN_CMD_ARGS` com
-`--limit-request-field_size 32768` no `erp` e na `iam`
-([base.yml](../deploy/compose/base.yml)). Os dois tetos têm de subir **juntos**, ou o 431 só troca
-de porta. São **janela de protocolo de terceiro** (§5.6 do `planos.py`) e por isso não vão para
-`payment/planos.py`.
-
-**A cura é outra, e é decisão de arquitetura:** token que carrega o catálogo cresce com o catálogo,
-e volta a estourar na próxima leva de permissões — além de pagar ~8 KB em **toda** requisição da
-plataforma. As saídas, sem escolha feita:
-
-- **claim de versão em vez da lista** — o token leva um hash/versão do conjunto de permissões, e a
-  tela busca a lista uma vez em `/auth/me/`, revalidando quando o hash muda;
-- **agrupar por papel** — o token leva os papéis, e a resolução papel → permissões acontece no
-  resource server, que já tem o catálogo em código;
-- **comprimir** (JWE/deflate) — mais barato de implementar e o que menos ataca a causa.
-
-Enquanto a cura não vem, vale uma **guarda**: teste que falha quando o token de qualquer persona do
-seed passa de um teto declarado, para o estouro aparecer na esteira e não no navegador do dono.
-
-**24/09/2026 — a cura por curinga foi tentada e recusada.** A primeira tentativa compactou a lista
-no token com curinga (`pdca.*` quando a pessoa tinha o módulo inteiro). Resolvia o tamanho e abria
-concessão por padrão: todo código novo do catálogo durante a vida do token ou de uma defasagem de
-deploy, e qualquer código fora do catálogo — o degrau da escada de aprovação guarda o código exigido
-como texto livre, e quem tivesse `pdca.*` assinaria um degrau criado para ninguém. A compressão da
-lista exata também foi analisada: é segura, mas só adia (cabe até o catálogo quadruplicar).
-
-**A cura é a remodelagem** desenhada em [acesso-e-permissoes.md §10](acesso-e-permissoes.md): o
-token deixa de carregar permissão, e a decisão passa a um PDP (SpiceDB) com revogação em segundos.
-
-**25/09/2026 — fase 0 do §10.12 fechada (contenção).** O curinga saiu do backend
-(`ConjuntoDePermissoes` e `concedidas` removidos; `iam_permissions` volta a ser a lista crua) e a
-IAM voltou a emitir `permissions` exata — a lista comprimida (`permissions_z`) foi descartada,
-porque só adiava e a fase 4 tira a permissão do token. Guardas:
-[test_d194_token.py](../testes/iam/identity/test_d194_token.py) cobra nenhum `*` no token e a linha
-`Authorization` de toda persona abaixo da janela da borda (32 KB);
-`test_curinga_na_claim_nao_concede_nada` no PDCA cobra que `pdca.*` não abre nada. **Continua 🔴:** o
-token do admin segue acima dos 8 KB padrão, e a plataforma só funciona atrás de uma borda com o
-contorno — a cura é a fase 4.
-
-**25/09/2026 — fases 2 e 3 construídas.** O PDP está no ar em sombra (toda decisão conferida, zero
-divergência nas 5 pessoas da demo × 241 perguntas) e a virada por módulo existe, mas nenhum módulo
-virou: a fase 3 só liga depois de 14 dias de sombra sem divergência real (`manage.py relatorio_pdp`),
-e a fase 4 — a que tira a permissão do token e fecha este achado — vem depois dela.
-
----
-### D204 — três ViewSets do ERP pedem código que não existe no catálogo, e só o admin escreve neles · 🟠 aberto 25/09/2026
-
-Achado pelo teste novo que confere cada código que uma view pode pedir contra o catálogo
-(`test_todo_codigo_que_uma_view_pode_pedir_esta_no_catalogo`). `BoletoViewSet` e
-`CobrancaClienteViewSet` pedem `erp.cobranca.edit` na escrita, e `TransacaoViewSet` pede
-`erp.transacao.edit` — nenhum dos dois existe. O comentário do `TransacaoViewSet` diz a intenção
-(*"ledger: só .view no catálogo (escrita bloqueada)"*), e para quem não é admin é o que acontece.
-
-**O furo:** o `RequirePermission` deixa o admin do tenant passar em qualquer código, inclusive no
-inexistente. Então o admin cria, edita e exclui transação do ledger e boleto pela API — o bloqueio
-vale para todos menos para quem tem mais poder. **E a remodelagem torna isso visível:** pelo PDP, código
-fora do schema é negado para todo mundo; virar o `erp_financeiro` para o PDP fecharia essas escritas
-também para o admin, e a sombra as registra como `fora_do_esquema`.
-
-**A escolha é de produto:** o ledger aceita escrita de alguém (então o código entra no catálogo e num
-papel), ou não aceita de ninguém (então os ViewSets viram somente leitura, ou ganham ação própria para
-o que precisa ser escrito). O teste lista os três em `_CODIGO_INEXISTENTE_CONHECIDO` e quebra quando
-aparece um quarto ou quando um deles é corrigido. **Bloqueia a virada do `erp_financeiro`.**
-
----
 ### D189 — a ocorrência de segurança não entra na trilha de LGPD, e entrar do jeito de hoje apagaria prova legal · 🟠 aberto 20/09/2026
 
 Achado ao fechar a PDCA.8, que trouxe a **primeira PII do grupo `pdca`**: `Ocorrencia` guarda nome de
@@ -872,16 +780,6 @@ Decisão do dono, com o número novo na mão. Não trava nada hoje.
 
 ## 🟡 Médias
 
-### D205 — o drone não pergunta ao PDP: a virada do módulo `drone` não tem PEP · 🟡 aberto 25/09/2026
-
-O `pode()` único existe no backend (`nucleo/autorizacao.py`); o funcoesODM (Java) continua lendo a
-claim `modules`/`permissions` do token do jeito dele. A §10.3 prevê "o equivalente no drone". Enquanto
-ele não existir, `manage.py modo_autorizacao drone pdp` muda só o que o backend pergunta sobre o drone
-(quase nada) — a decisão de quem abre projeto e dispara processamento segue no token. Não quebra nada
-hoje; impede que o `drone` saia do token na fase 4. **Gatilho:** antes da fase 4, um cliente do PDP no
-Java com a mesma semântica (a equivalência da IAM é a régua).
-
----
 ### D155 — a foto da verificação não carimba data nem coordenada · 🟡 aberto 16/09/2026
 
 Achado ao fechar a PDCA.7, conferindo a entrega contra a própria planta. A §5.2
@@ -1074,16 +972,7 @@ serviço `spicedb-banco` o usa pelo mesmo nome. Trocar exige fazer em todos os a
 `staging.env` de uma vez, senão o Postgres do staging sobe com a senha padrão.
 
 ---
-### D209 — o `phase6_rbac_test.py` ainda confere `/api/erp/faturas/`, rota que saiu na versão 1.0 · 🟢 aberto 25/09/2026
-
-Visto ao rodar os vizinhos da remodelagem: a linha `financeiro /api/erp/faturas/` sai `404[XXX]` para
-`demo` e `semdrone`, e o roteiro termina com código 0 mesmo assim. É 404 (rota inexistente), não 403 —
-nada a ver com permissão. A rota foi retirada do ERP no commit "Versão 1.0". **Correção:** trocar a
-linha por uma rota viva do ERP com o mesmo papel (o `financeiro` lê, o `semdrone` não) — e fazer o
-roteiro sair com erro quando uma linha falha.
-
----
-Fora o D206 e o D209, nenhum em aberto. O **D147** (seis erros de `eslint` em três telas da PDCA.3/4, que desligavam o
+Fora o D206, nenhum em aberto. O **D147** (seis erros de `eslint` em três telas da PDCA.3/4, que desligavam o
 fast refresh justamente na tela em que se passa o dia digitando) e o **D148** (o traceback `CRÍTICO`
 impresso a cada execução da suíte) foram corrigidos em 15/09/2026, junto do fechamento da PDCA.5;
 relatos em [historico-correcoes.md](historico-correcoes.md).

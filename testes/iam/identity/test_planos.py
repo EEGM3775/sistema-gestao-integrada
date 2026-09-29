@@ -11,7 +11,7 @@ O que estes testes protegem, em ordem de importância:
 from django.test import TestCase
 
 from identity.models import AssinaturaTenant, Modulo, Tenant
-from identity.tokens import build_claims
+from identity.tokens import claims_de_acesso
 from payment.planos import (
     PLANO_PADRAO,
     PLANOS,
@@ -116,15 +116,15 @@ class ClaimDoTetoTests(TestCase):
         )
 
     def test_token_carrega_o_teto_e_o_plano(self):
-        claims = build_claims(self.user)
+        claims = claims_de_acesso(self.user)
         self.assertEqual(claims["plano"], PLANO_PADRAO)
         self.assertEqual(claims["rate_hora"], teto_requisicoes_hora(PLANO_PADRAO))
 
     def test_upgrade_de_plano_muda_o_teto_do_token(self):
-        antes = build_claims(self.user)["rate_hora"]
+        antes = claims_de_acesso(self.user)["rate_hora"]
         self.tenant.plano = "empresarial"
         self.tenant.save(update_fields=["plano"])
-        depois = build_claims(self.user)["rate_hora"]
+        depois = claims_de_acesso(self.user)["rate_hora"]
         self.assertGreater(depois, antes)
 
     def test_limites_da_assinatura_vencem_o_plano(self):
@@ -132,7 +132,7 @@ class ClaimDoTetoTests(TestCase):
         AssinaturaTenant.objects.create(
             tenant=self.tenant, modulo=modulo, limites={"requisicoes_hora": 33_000}
         )
-        self.assertEqual(build_claims(self.user)["rate_hora"], 33_000)
+        self.assertEqual(claims_de_acesso(self.user)["rate_hora"], 33_000)
 
     def test_usuario_sem_tenant_nao_recebe_teto(self):
         """Dono da plataforma: sem empresa, o eixo não se aplica (o backend cai
@@ -142,7 +142,7 @@ class ClaimDoTetoTests(TestCase):
         sozinho = get_user_model().objects.create_user(
             username="d23_semtenant", email="sem@exemplo.com", password="x"
         )
-        self.assertNotIn("rate_hora", build_claims(sozinho))
+        self.assertNotIn("rate_hora", claims_de_acesso(sozinho))
 
 
 class FusaoDeLimitesTests(TestCase):

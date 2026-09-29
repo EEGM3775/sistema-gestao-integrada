@@ -1008,3 +1008,54 @@ class DivergenciaAutorizacao(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValueError("DivergenciaAutorizacao é append-only: exclusão não é permitida.")
+
+
+class DecisaoAcesso(models.Model):
+    """Uma decisão de acesso registrada — a auditoria de decisão (§10.9, fase 4).
+
+    Toda decisão vai ao log estruturado (`sgi.authz.decisao`); **as da classe C
+    e todas as negações** ficam também aqui, onde ninguém edita: é o que
+    responde "quem abriu o bloco clínico do acidente de ontem" e o que acende o
+    alerta de abuso (muitas negações seguidas, tentativa entre empresas).
+
+    **Só o básico, nunca o conteúdo** (decisão do dono, 24/09/2026, pela LGPD):
+    quem, quando, qual ação, sobre que objeto, e a decisão. Campos fixos, sem
+    texto livre onde um dado pudesse escapar.
+
+    Append-only no modelo e no banco (gatilho da migration 0028): UPDATE nunca;
+    DELETE só pela purga da janela do plano (`nucleo.auditoria_decisao.purgar`),
+    que se identifica à transação.
+    """
+
+    id = models.BigAutoField(primary_key=True)
+    instante = models.DateTimeField(auto_now_add=True, db_index=True)
+    requisicao = models.CharField(max_length=64, blank=True)
+    tenant_id = models.UUIDField(null=True)
+    usuario_id = models.CharField(max_length=64)
+    sid = models.CharField(max_length=64, blank=True)
+    #: A pergunta (``c:<código>``, ``m:<módulo>``, ``administra``, ``supervisiona``).
+    acao = models.CharField(max_length=100)
+    #: O objeto do PDP que respondeu (``modulo_pdca:<tenant>``).
+    recurso = models.CharField(max_length=140)
+    decisao = models.BooleanField()
+    classe = models.CharField(max_length=1)
+    #: De onde veio a resposta: ``pdp``, ``cache``, ``falha``, ``fora_do_esquema`` ou ``token``.
+    origem = models.CharField(max_length=20)
+    zedtoken = models.CharField(max_length=160, blank=True)
+
+    class Meta:
+        verbose_name = _("Decisão de acesso")
+        verbose_name_plural = _("Decisões de acesso")
+        ordering = ["-instante"]
+        indexes = [models.Index(fields=["tenant_id", "-instante"], name="authz_dec_tenant_idx")]
+
+    def __str__(self):
+        return f"{self.instante:%d/%m %H:%M} {'ok' if self.decisao else 'nega'} {self.acao}"
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValueError("DecisaoAcesso é append-only: alteração não é permitida.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError("DecisaoAcesso é append-only: só a purga da janela do plano apaga.")

@@ -2,9 +2,11 @@
 """E2E do D23 — o teto de requisições vem do PLANO e chega ao backend.
 
 Roda contra o stack vivo, pelo gateway. Prova a cadeia inteira, que os testes de
-unidade não cobrem: IAM lê o plano do tenant -> calcula o teto -> assina no claim
-`rate_hora` -> backend lê o claim -> usa como teto do eixo por tenant -> devolve
-`X-RateLimit-*`.
+unidade não cobrem: IAM lê o plano do tenant -> calcula o teto -> publica na ficha
+da empresa (desde a fase 4 da remodelagem o teto não viaja mais no token) ->
+backend lê a ficha -> usa como teto do eixo por tenant -> devolve
+`X-RateLimit-*`. O teto esperado vem do `/auth/me/`, que a tela também lê; a
+ficha chega ao backend em até `ESPERA_S` (o cache dela é de 30 s por processo).
 
 Uso:  python3 d23_teto_por_plano_test.py
 Env:  SGI_GW (default http://localhost:8090), SGI_IAM_CONTAINER (default sgi-iam)
@@ -13,17 +15,18 @@ Restaura o plano original do tenant no fim, inclusive se algo falhar.
 """
 from __future__ import annotations
 
-import base64
 import json
 import os
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 
 GW = os.getenv("SGI_GW", "http://localhost:8090").rstrip("/")
 IAM_CONTAINER = os.getenv("SGI_IAM_CONTAINER", "sgi-iam")
 USUARIO, SENHA = "demo", "demo123"
+ESPERA_S = 40
 
 falhas: list[str] = []
 
@@ -61,10 +64,20 @@ def _get(caminho: str, token: str) -> tuple[int, dict]:
 
 
 def claims(token: str) -> dict:
-    """Decodifica o payload do JWT (sem validar — o backend é quem valida)."""
-    payload = token.split(".")[1]
-    payload += "=" * (-len(payload) % 4)
-    return json.loads(base64.urlsafe_b64decode(payload))
+    """O plano e o teto como a IAM os calcula — o corpo do `/auth/me/`."""
+    req = urllib.request.Request(f"{GW}/auth/me/", headers={"Authorization": f"Bearer {token}"})
+    with urllib.request.urlopen(req) as r:
+        return json.loads(r.read())
+
+
+def teto_no_backend(token: str, esperado: int) -> tuple[int, dict]:
+    """Espera a ficha nova chegar ao backend; devolve a última resposta."""
+    fim = time.monotonic() + ESPERA_S
+    while True:
+        status, headers = _get("/api/notificacoes/", token)
+        if headers.get("X-RateLimit-Limit") == str(esperado) or time.monotonic() > fim:
+            return status, headers
+        time.sleep(2)
 
 
 def login() -> str:
@@ -77,10 +90,13 @@ def login() -> str:
 
 def definir_plano(slug: str | None) -> None:
     """Muda o plano do tenant demo direto no shell da IAM (não há endpoint —
-    o provisionamento por plano é o D24)."""
+    o provisionamento por plano é o D24). Por `save()`, como a tela e o admin:
+    é o sinal que publica a ficha na hora; um `update()` só chegaria ao backend
+    na volta periódica do `iam-pdp`."""
     codigo = (
         "from identity.models import Tenant; "
-        f"Tenant.objects.filter(slug='demo').update(plano={slug!r})"
+        "t = Tenant.objects.get(slug='demo'); "
+        f"t.plano = {slug!r}; t.save()"
     )
     subprocess.run(
         ["docker", "exec", IAM_CONTAINER, "python", "manage.py", "shell", "-c", codigo],
@@ -112,7 +128,7 @@ def main() -> int:
         checar("tenant sem assinatura cai no plano free", c.get("plano") == "free",
                f"plano={c.get('plano')}")
         teto_free = c.get("rate_hora")
-        checar("token carrega o teto (claim rate_hora)", isinstance(teto_free, int),
+        checar("a IAM calcula o teto do plano (rate_hora)", isinstance(teto_free, int),
                f"rate_hora={teto_free}")
 
         # 2. Upgrade de plano -> teto maior no MESMO tenant.
@@ -125,7 +141,7 @@ def main() -> int:
 
         # 3. O backend USA o teto: os headers refletem o do plano vigente.
         token = login()
-        status, headers = _get("/api/notificacoes/", token)
+        status, headers = teto_no_backend(token, teto_emp)
         checar("backend responde 200 com o token do plano", status == 200, f"status={status}")
         checar("X-RateLimit-Limit reflete o teto do plano",
                headers.get("X-RateLimit-Limit") == str(teto_emp),
@@ -141,9 +157,13 @@ def main() -> int:
         # 4. Downgrade volta a valer no token seguinte (propagação por refresh).
         definir_plano("essencial")
         teto_ess = claims(login()).get("rate_hora")
-        checar("downgrade reduz o teto no token seguinte",
+        checar("downgrade reduz o teto calculado",
                isinstance(teto_ess, int) and teto_ess < teto_emp,
                f"essencial={teto_ess} < empresarial={teto_emp}")
+        _, headers = teto_no_backend(token, teto_ess)
+        checar("o MESMO token passa a ter o teto menor no backend (a ficha, não o token)",
+               headers.get("X-RateLimit-Limit") == str(teto_ess),
+               f"header={headers.get('X-RateLimit-Limit')} teto={teto_ess}")
     finally:
         definir_plano(original or None)
         print(f"\n  (plano do tenant demo restaurado para {original or 'None'})")

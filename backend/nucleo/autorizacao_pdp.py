@@ -139,10 +139,34 @@ def _consistencia(classe: str, zedtoken: str | None) -> dict:
     return consistencia_ao_menos(zedtoken)
 
 
+@dataclass(frozen=True)
+class Resposta:
+    """A decisão e o rastro que a auditoria (§10.9) guarda dela."""
+
+    permitido: bool
+    origem: str
+    recurso: str = ""
+    zedtoken: str = ""
+
+
+def recurso_da_pergunta(quem: Quem, p: Pergunta) -> str:
+    """O objeto do PDP que responde (``modulo_pdca:<tenant>``) — vazio fora do schema."""
+    if not p.tipo:
+        return ""
+    return f"{p.tipo}:{ID_PLATAFORMA if p.na_plataforma else quem.tenant_id}"
+
+
 def decidir(quem: Quem, p: Pergunta) -> tuple[bool, str]:
     """``(permitido, origem)``. Nunca levanta: sem resposta utilizável, nega."""
+    r = decidir_com_rastro(quem, p)
+    return r.permitido, r.origem
+
+
+def decidir_com_rastro(quem: Quem, p: Pergunta) -> Resposta:
+    """A decisão com o objeto consultado e o ZedToken — o que a auditoria grava."""
     if not p.tipo:
-        return False, FORA_DO_ESQUEMA
+        return Resposta(False, FORA_DO_ESQUEMA)
+    alvo = recurso_da_pergunta(quem, p)
 
     r = redis()
     chave = None
@@ -159,7 +183,7 @@ def decidir(quem: Quem, p: Pergunta) -> tuple[bool, str]:
                 chave = chaves.decisao(quem.tenant_id, quem.usuario_id, (vg, vt, vu), p.chave)
                 guardada = r.get(chave)
                 if guardada is not None:
-                    return guardada == "1", CACHE
+                    return Resposta(guardada == "1", CACHE, alvo, zedtoken or "")
         except Exception:  # noqa: BLE001 - Redis fora: pergunta direto ao PDP
             logger.warning("authz.redis_indisponivel", exc_info=True)
             redis_caiu()
@@ -168,15 +192,15 @@ def decidir(quem: Quem, p: Pergunta) -> tuple[bool, str]:
     recurso = ID_PLATAFORMA if p.na_plataforma else quem.tenant_id
     inicio = time.monotonic()
     try:
-        ok, _ = cliente().checar(
+        ok, respondido_em = cliente().checar(
             p.tipo, recurso, p.permissao, quem.usuario_id, _consistencia(p.classe, zedtoken)
         )
     except PerguntaInvalida:
         logger.warning("authz.fora_do_esquema pergunta=%s", p.chave)
-        return False, FORA_DO_ESQUEMA
+        return Resposta(False, FORA_DO_ESQUEMA, alvo)
     except PdpIndisponivel:
         logger.warning("authz.pdp_indisponivel pergunta=%s classe=%s", p.chave, p.classe)
-        return False, FALHA
+        return Resposta(False, FALHA, alvo)
     finally:
         if PDP_LATENCIA is not None:
             PDP_LATENCIA.labels(classe=p.classe).observe(time.monotonic() - inicio)
@@ -186,4 +210,4 @@ def decidir(quem: Quem, p: Pergunta) -> tuple[bool, str]:
             r.setex(chave, classes.TTL_S[p.classe], "1" if ok else "0")
         except Exception:  # noqa: BLE001
             redis_caiu()
-    return ok, PDP
+    return Resposta(ok, PDP, alvo, respondido_em or "")

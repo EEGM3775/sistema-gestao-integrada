@@ -93,6 +93,180 @@ build`) limpo, e `manage.py test clientes modulocalendar modulomaps empreendimen
 que reescreveu os testes do motor de proposta.
 
 ---
+### D216 — a suíte da IAM gravava fichas de empresas de teste no Redis de desenvolvimento · ✅ corrigido 25/09/2026
+
+Visto ao conferir a primeira publicação das fichas da fase 4: o Redis de dev tinha a ficha de uma
+"Construtora" `c-1394ff` que não existe. Os testes de equivalência da IAM reconciliam empresas de
+teste contra o SpiceDB de teste — e a reconciliação passou a publicar as fichas no Redis **do
+ambiente**, que o teste não substituía.
+
+**Correção:** o teste substitui `_publicar_fichas`, e a volta periódica do `iam-pdp` apaga toda ficha
+de empresa que não existe e de pessoa que não está ativa (`fichas.limpar_orfas`). Depois da volta, o
+Redis de dev ficou com as 2 fichas das 2 empresas reais.
+---
+### D215 — a negação sumia da auditoria de decisão · ✅ corrigido 25/09/2026
+
+Achado pela E2E da fase 4 (`seg4_token_enxuto_test.py`, 21/22 na primeira volta): o log
+`sgi.authz.decisao` mostrava a negação do `semdrone` no RH, e a tabela `DecisaoAcesso` estava vazia —
+sem erro nenhum. A gravação acontecia dentro da transação da requisição (`ATOMIC_REQUESTS`), e o DRF
+marca **rollback em toda resposta de erro**, 403 inclusive. A linha que a §10.9 mais quer guardar era
+exatamente a que morria. A suíte não via: o `TestCase` não tem requisição com rollback de erro.
+
+**Correção:** a auditoria grava por uma conexão própria (alias `auditoria` no settings, mesmo banco,
+sem `ATOMIC_REQUESTS`), que confirma na hora; nos testes, o runner a aponta para o `default`. Ver a
+nota no próprio `nucleo/auditoria_decisao.py`.
+---
+### D209 — o `phase6_rbac_test.py` ainda confere `/api/erp/faturas/`, rota que saiu na versão 1.0 · ✅ corrigido 25/09/2026
+
+Visto ao rodar os vizinhos da remodelagem: a linha `financeiro /api/erp/faturas/` sai `404[XXX]` para
+`demo` e `semdrone`, e o roteiro termina com código 0 mesmo assim. É 404 (rota inexistente), não 403 —
+nada a ver com permissão. A rota foi retirada do ERP no commit "Versão 1.0". **Correção:** trocar a
+linha por uma rota viva do ERP com o mesmo papel (o `financeiro` lê, o `semdrone` não) — e fazer o
+roteiro sair com erro quando uma linha falha.
+
+
+**Correção (25/09/2026):** a linha passou a conferir `/api/erp/transacoes/` (o ledger, que o
+`financeiro` lê e o `operacional` não), e o roteiro passou a sair com código 1 quando qualquer linha
+falha.
+---
+### D205 — o drone não pergunta ao PDP: a virada do módulo `drone` não tem PEP · ✅ corrigido 25/09/2026
+
+O `pode()` único existe no backend (`nucleo/autorizacao.py`); o funcoesODM (Java) continua lendo a
+claim `modules`/`permissions` do token do jeito dele. A §10.3 prevê "o equivalente no drone". Enquanto
+ele não existir, `manage.py modo_autorizacao drone pdp` muda só o que o backend pergunta sobre o drone
+(quase nada) — a decisão de quem abre projeto e dispara processamento segue no token. Não quebra nada
+hoje; impede que o `drone` saia do token na fase 4. **Gatilho:** antes da fase 4, um cliente do PDP no
+Java com a mesma semântica (a equivalência da IAM é a régua).
+
+
+**Correção (25/09/2026):** o drone ganhou o PEP
+([`AutorizacaoService`](../ImgDrone/funcoesODM/backend/java-service/src/main/java/com/funcoesodm/javaservice/security/AutorizacaoService.java)),
+usado pelo filtro REST e pelo CONNECT do WebSocket: a mesma pergunta `m:drone` do backend, as mesmas
+chaves de cache no Redis DB 5 e o modo de falha da classe A. O modo do módulo chega a ele pelo espelho
+no Redis que o `modo_autorizacao` grava, e o relógio do PDP pelo arquivo gerado do `planos.py`
+(`funcoesautorizacao/gerado/limites-drone.properties`), para o número não ter uma segunda casa. Na
+fase 4 ele também passou a conferir o `sid`. Testes Java: `AutorizacaoServiceTest` (9) e os casos de
+`sid` no `SessionRevocationServiceTest`.
+---
+### D204 — três ViewSets do ERP pedem código que não existe no catálogo, e só o admin escreve neles · ✅ corrigido 25/09/2026
+
+Achado pelo teste novo que confere cada código que uma view pode pedir contra o catálogo
+(`test_todo_codigo_que_uma_view_pode_pedir_esta_no_catalogo`). `BoletoViewSet` e
+`CobrancaClienteViewSet` pedem `erp.cobranca.edit` na escrita, e `TransacaoViewSet` pede
+`erp.transacao.edit` — nenhum dos dois existe. O comentário do `TransacaoViewSet` diz a intenção
+(*"ledger: só .view no catálogo (escrita bloqueada)"*), e para quem não é admin é o que acontece.
+
+**O furo:** o `RequirePermission` deixa o admin do tenant passar em qualquer código, inclusive no
+inexistente. Então o admin cria, edita e exclui transação do ledger e boleto pela API — o bloqueio
+vale para todos menos para quem tem mais poder. **E a remodelagem torna isso visível:** pelo PDP, código
+fora do schema é negado para todo mundo; virar o `erp_financeiro` para o PDP fecharia essas escritas
+também para o admin, e a sombra as registra como `fora_do_esquema`.
+
+**A escolha é de produto:** o ledger aceita escrita de alguém (então o código entra no catálogo e num
+papel), ou não aceita de ninguém (então os ViewSets viram somente leitura, ou ganham ação própria para
+o que precisa ser escrito). O teste lista os três em `_CODIGO_INEXISTENTE_CONHECIDO` e quebra quando
+aparece um quarto ou quando um deles é corrigido. **Bloqueia a virada do `erp_financeiro`.**
+
+
+**Correção (25/09/2026):** a segunda opção, que era a intenção escrita no próprio código. Os três
+ViewSets viraram `ReadOnlyModelViewSet` — o ledger e as cobranças mudam pelos serviços (baixa de
+título, retorno do Asaas, `ContaReceberViewSet.gerar_cobranca`), nunca por escrita genérica; o boleto
+mantém a ação `cancelar`, com o verbo próprio `erp.cobranca.emitir`. O frontend só lia esses
+endpoints. `_CODIGO_INEXISTENTE_CONHECIDO` ficou vazio e o `erp_financeiro` virou para o PDP com os
+demais.
+---
+### D194 — o JWT passou de 8 KB e derruba a plataforma inteira para quem tem muitas permissões · ✅ corrigido 25/09/2026 (fase 4 da remodelagem)
+
+Achado com o dono relatando *"quando atualizo a página, volta pra tela de login"* e *"erro ao
+carregar empreendimentos"*. O sintoma parecia sessão expirando; não era.
+
+O JWT da IAM leva o **catálogo de permissões do usuário dentro do token**, e ele cresceu com o
+catálogo — a PDCA.8 acrescentou `pdca.dds.*`, `pdca.ocorrencia.*` e uma persona. Medido no stack:
+
+| Usuário | Token | Linha `Authorization: Bearer …` | Gateway | Django direto |
+| --- | --- | --- | --- | --- |
+| `demo` | 8.055 B | 8.077 B | 200 | — |
+| `admin` | 8.311 B | 8.333 B | **400** | **431** |
+| `dono` | 8.308 B | 8.330 B | **400** | **431** |
+
+O limite padrão de uma linha de cabeçalho é **8.192 B** no nginx
+(`large_client_header_buffers 4 8k`) e **8.190 B** no gunicorn
+(`--limit-request-field_size`). Quem passa disso perde **toda** chamada autenticada, em todos os
+módulos — só `/auth/login/` e `/auth/refresh/` seguiam funcionando, por não levarem o cabeçalho.
+
+**Três coisas tornaram o diagnóstico caro, e valem como lição:**
+
+- o nginx registra "client sent too long header line" em nível **`info`**, e o `error_log` roda em
+  `error` — o 400 aparecia no access log **sem upstream e com `ua` vazio**, e nada no error log;
+- o sintoma imita expiração de sessão, porque o que sobrevive é exatamente o par login/refresh;
+- `demo` passava raspando (22 B de folga), então metade dos testes dizia que estava tudo bem.
+
+**Contornado**, não resolvido: `large_client_header_buffers 8 32k` no
+[nginx.unified.conf](../infra/gateway/nginx.unified.conf) e `GUNICORN_CMD_ARGS` com
+`--limit-request-field_size 32768` no `erp` e na `iam`
+([base.yml](../deploy/compose/base.yml)). Os dois tetos têm de subir **juntos**, ou o 431 só troca
+de porta. São **janela de protocolo de terceiro** (§5.6 do `planos.py`) e por isso não vão para
+`payment/planos.py`.
+
+**A cura é outra, e é decisão de arquitetura:** token que carrega o catálogo cresce com o catálogo,
+e volta a estourar na próxima leva de permissões — além de pagar ~8 KB em **toda** requisição da
+plataforma. As saídas, sem escolha feita:
+
+- **claim de versão em vez da lista** — o token leva um hash/versão do conjunto de permissões, e a
+  tela busca a lista uma vez em `/auth/me/`, revalidando quando o hash muda;
+- **agrupar por papel** — o token leva os papéis, e a resolução papel → permissões acontece no
+  resource server, que já tem o catálogo em código;
+- **comprimir** (JWE/deflate) — mais barato de implementar e o que menos ataca a causa.
+
+Enquanto a cura não vem, vale uma **guarda**: teste que falha quando o token de qualquer persona do
+seed passa de um teto declarado, para o estouro aparecer na esteira e não no navegador do dono.
+
+**24/09/2026 — a cura por curinga foi tentada e recusada.** A primeira tentativa compactou a lista
+no token com curinga (`pdca.*` quando a pessoa tinha o módulo inteiro). Resolvia o tamanho e abria
+concessão por padrão: todo código novo do catálogo durante a vida do token ou de uma defasagem de
+deploy, e qualquer código fora do catálogo — o degrau da escada de aprovação guarda o código exigido
+como texto livre, e quem tivesse `pdca.*` assinaria um degrau criado para ninguém. A compressão da
+lista exata também foi analisada: é segura, mas só adia (cabe até o catálogo quadruplicar).
+
+**A cura é a remodelagem** desenhada em [acesso-e-permissoes.md §10](acesso-e-permissoes.md): o
+token deixa de carregar permissão, e a decisão passa a um PDP (SpiceDB) com revogação em segundos.
+
+**25/09/2026 — fase 0 do §10.12 fechada (contenção).** O curinga saiu do backend
+(`ConjuntoDePermissoes` e `concedidas` removidos; `iam_permissions` volta a ser a lista crua) e a
+IAM voltou a emitir `permissions` exata — a lista comprimida (`permissions_z`) foi descartada,
+porque só adiava e a fase 4 tira a permissão do token. Guardas:
+[test_d194_token.py](../testes/iam/identity/test_d194_token.py) cobra nenhum `*` no token e a linha
+`Authorization` de toda persona abaixo da janela da borda (32 KB);
+`test_curinga_na_claim_nao_concede_nada` no PDCA cobra que `pdca.*` não abre nada. **Continua 🔴:** o
+token do admin segue acima dos 8 KB padrão, e a plataforma só funciona atrás de uma borda com o
+contorno — a cura é a fase 4.
+
+**25/09/2026 — fases 2 e 3 construídas.** O PDP está no ar em sombra (toda decisão conferida, zero
+divergência nas 5 pessoas da demo × 241 perguntas) e a virada por módulo existe, mas nenhum módulo
+virou: a fase 3 só liga depois de 14 dias de sombra sem divergência real (`manage.py relatorio_pdp`),
+e a fase 4 — a que tira a permissão do token e fecha este achado — vem depois dela.
+
+
+**25/09/2026 — fechado pela fase 4.** O token deixou de carregar o que não é identidade: leva `sub`,
+`tenant_id`, `user_id`, `sid`, `sst`, `amr` e `auth_time`, e a linha `Authorization` ficou em cerca de
+**870 B para toda persona** — admin com o catálogo inteiro, supervisor, quem acumula todas as
+personas —, contra 8.333 B do admin antes. O tamanho não depende mais do catálogo nem dos papéis; o
+"pode?" é do PDP (fase 3, todos os módulos virados). O contorno da borda (`large_client_header_buffers
+8 32k`, `--limit-request-field_size 32768`) pode ficar como folga, mas nenhuma persona depende dele.
+
+**O estouro também derrubava o drone, e ninguém tinha visto:** com todos os módulos no PDP, a E2E
+`phase4_e2e.py` mostrou `demo` recebendo **400** em `/odm-api/projects` — o Tomcat do funcoesODM tem
+limite de 8 KB de cabeçalho e respondia "Request header is too large". O contorno de 20/09 alargou só
+o nginx e o gunicorn. Com o token enxuto, o drone abriu (200) sem mexer no Tomcat.
+
+Guardas: [test_d194_token.py](../testes/iam/identity/test_d194_token.py) cobra que nenhuma claim que
+saiu volte ao token, o `sid` presente, e **toda persona de fábrica abaixo de 1 KB** com o catálogo
+inteiro assinado; a volta atrás (`AUTORIZACAO_TOKEN_COM_LISTAS`) reemite a lista exata e sem
+curinga. E2E [seg4_token_enxuto_test.py](../testes/e2e/seg4_token_enxuto_test.py) 22/22: as cinco
+pessoas da demo entre 869 e 878 B, backend e drone respondendo pelo PDP, revogação de papel e logout
+valendo na requisição seguinte com o mesmo token.
+
+---
 ### D208 — um rollback prendia o tenant na fila de escrita do PDP · ✅ corrigido 25/09/2026
 
 Achado pela suíte da IAM logo que o contêiner passou a ter `SPICEDB_URL`. `pdp.agendar` garantia "uma

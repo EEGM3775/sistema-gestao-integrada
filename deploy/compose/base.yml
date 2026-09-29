@@ -832,6 +832,8 @@ services:
       SPICEDB_URL: ${SPICEDB_URL:-http://spicedb:8443}
       SPICEDB_CHAVE: ${SPICEDB_CHAVE:-spicedb-chave-dev}
       AUTORIZACAO_REDIS_URL: ${AUTORIZACAO_REDIS_URL:-redis://redis:6379/5}
+      # Fase 4: sem Redis, a sessão (sid) é perguntada à IAM (classe B).
+      IAM_INTERNAL_URL: ${IAM_INTERNAL_URL:-http://iam:8001}
     depends_on:
       funcoesodm-db:
         condition: service_healthy
@@ -846,6 +848,8 @@ services:
       - nodeodm_data:/nodeodm/data
       - potree_data:/potree/data:ro
       - ../../infra/keys:/keys:ro
+      # O relógio do PDP, gerado do payment/planos.py (D205).
+      - ../../funcoesautorizacao/gerado:/authz:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
       interval: 30s
