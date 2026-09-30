@@ -64,7 +64,8 @@ Reusa os E2E das fases apontados ao gateway HTTPS de staging (confiando no cert 
 | `seg5_bff_test.py` | BFF: nenhum token no navegador, `aud` por serviço, anti-CSRF | remodelagem 5 |
 | `seg6_step_up_test.py` | step-up na classe C | remodelagem 6 |
 
-Os roteiros moram em `testes/e2e/`. Ficam fora do gate o `seg6_caos_test.py` (derruba SpiceDB,
+Os roteiros moram em `testes/e2e/`; o gate usa o `.venv` (seg5 e seg6 abrem o navegador) e aceita
+nomes para repetir só alguns: `bash infra/staging/validate.sh seg5_bff_test.py`. Ficam fora do gate o `seg6_caos_test.py` (derruba SpiceDB,
 Redis e IAM — é do dev) e o `seg2_pdp_sombra_test.py` (fase 2, aposentada pela 4). Antes do gate, o
 PDP precisa estar populado e virado: `sincronizar_pdp` na IAM e `modo_autorizacao --todos pdp
 --forcar` no backend.

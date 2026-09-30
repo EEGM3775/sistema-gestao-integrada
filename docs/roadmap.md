@@ -34,7 +34,7 @@ Cada fase concluída foi validada por um script E2E em [testes/e2e/](../testes/e
 ### Mudanças de 30/09/2026
 
 - **D206 · D222 · D223 · D226 ✅ 30/09/2026** — nome da senha do superusuário do Postgres corrigido; `pdca1_cronograma` 102/102, `pdca_cockpit_browser` 29/29, `browser_smoke` 8/8; gate do staging com os roteiros da remodelagem. Relatos em [historico-correcoes.md](historico-correcoes.md).
-- **Staging para o pentest 🚧** — env e gate prontos, backup feito; falta subir (troca da imagem do Postgres, decisão do dono). → [D185](pendencias.md)
+- **Staging para o pentest ✅ 30/09/2026** — recriado do zero com a imagem de hoje (PostGIS, SpiceDB, PDP em todo módulo); gate `infra/staging/validate.sh` **10/10**, com a remodelagem (seg1, seg4, seg5, seg6_step_up). D227 · D228 ✅ achados na subida. Resta a SINAPI no staging (decisão do dono) → [D185](pendencias.md)
 
 ### Mudanças de 29/09/2026
 

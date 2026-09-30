@@ -21,13 +21,21 @@ PORT="$(grep -E '^GATEWAY_HTTPS_PORT=' deploy/env/staging.env 2>/dev/null | cut 
 export SGI_GW="https://localhost:${PORT}"
 export SSL_CERT_FILE="$CERT"        # urllib/ssl confiam no cert self-signed
 export REQUESTS_CA_BUNDLE="$CERT"   # idem, caso algum script use requests
+export SGI_ACEITAR_CERT_LOCAL=1     # o Chromium do Playwright não lê o SSL_CERT_FILE
+# seg5 e seg6 abrem o navegador (Playwright): o .venv do projeto o tem, o
+# python3 do sistema não. O Chromium do Playwright pede libs que o WSL não traz.
+if [[ -z "${PY:-}" && -x "$ROOT/.venv/bin/python" ]]; then PY="$ROOT/.venv/bin/python"; fi
 PY="${PY:-python3}"
+[[ -d "$HOME/.local/chromium-libs" ]] && export LD_LIBRARY_PATH="$HOME/.local/chromium-libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 # phaseC faz `docker exec` no backend para checar o efeito colateral (Lead) no ORM;
 # deriva o container de staging do SGI_PREFIX (senão o teste checaria o banco de DEV).
 PREFIX="$(grep -E '^SGI_PREFIX=' deploy/env/staging.env 2>/dev/null | cut -d= -f2 | awk '{print $1}')"; PREFIX="${PREFIX:-sgi-stg}"
 export SGI_ERP_CONTAINER="${PREFIX}-erp"
-export SGI_IAM_CONTAINER="${PREFIX}-iam"   # seg6_step_up lê a sessão na IAM
+export SGI_IAM_CONTAINER="${PREFIX}-iam"   # seg6_step_up e o access_do_bff leem a IAM
+# Com Secure, o cookie da sessão leva o prefixo `__Host-` (iam settings) — sem
+# isto os roteiros não acham a sessão e tudo vira 401 (D228).
+export SGI_SESSAO_COOKIE="__Host-sgi_sessao"
 
 # Gate automático: scripts que falam HTTP(S) puro (rodam limpo sob TLS via urllib).
 # Fora de propósito: seg6_caos (derruba SpiceDB/Redis/IAM — é do dev) e
@@ -55,12 +63,14 @@ echo
 pass=0; fail=0; failed=()
 first=1
 for entry in "${SCRIPTS[@]}"; do
+  script="${entry%%|*}"; desc="${entry##*|}"
+  # Com argumentos, roda só os roteiros nomeados (ex.: `validate.sh seg5_bff_test.py`).
+  if (( $# > 0 )) && [[ " $* " != *" $script "* ]]; then continue; fi
   # Espaça as corridas: o gateway limita /auth/login a 10r/m (burst 5) e cada script
   # reloga; sem pausa, os últimos scripts tomariam 429. Pausa só ENTRE scripts.
   # 12 s não bastavam: os roteiros entram várias vezes cada (e com segundo fator).
   [[ -n "$first" ]] || sleep "${ESPACO:-50}"
   first=""
-  script="${entry%%|*}"; desc="${entry##*|}"
   echo "── $script"
   echo "   $desc"
   if "$PY" "testes/e2e/$script"; then

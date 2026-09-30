@@ -350,37 +350,20 @@ depende do download:
 manage.py carregar_base_oficial --fonte sinapi --mes 2026-01 --arquivo /tmp/SINAPI-2026-01.zip
 ```
 
-### D185 — o staging não tem o módulo de orçamento, e a SINAPI só existe na máquina de quem desenvolve · 🟠 aberto 16/09/2026
+### D185 — a SINAPI só existe na máquina de quem desenvolve · 🟠 parcial 30/09/2026
 
-O `erp_db` do staging tem **77 tabelas e 33 MB**; o de desenvolvimento tem **5.647 MB**. Nenhuma
-tabela de `moduloorcamento` existe lá, e `django_migrations` não registra **nenhuma** migration do
-app — a última aplicada em qualquer app é de 18/07/2026. A imagem do ERP de staging é tão antiga que
-o `manage.py` responde `No installed app with label 'moduloorcamento'`.
+**Metade fechada em 30/09/2026:** o staging foi recriado do zero com a imagem de hoje — Postgres com
+PostGIS, `unaccent` e `track_commit_timestamp`, todas as migrations (inclusive as 15 do orçamento),
+SpiceDB e os dois processos do PDP, os 13 módulos decididos pelo PDP — e o gate passa **10/10**
+([D226](historico-correcoes.md), [D227](historico-correcoes.md), [D228](historico-correcoes.md)).
+Backup do banco antigo em `~/backups/staging_pre_atualizacao_20260930.sql.gz` (WSL).
 
-Some junto o que o D169–D178 já apontou por outro caminho: o staging deixou de acompanhar o
-desenvolvimento e não valida mais o que se entrega.
-
-**O lado que é decisão, não esquecimento:** as 1.460 publicações ocupam 5,6 GB, e **não são
+**O que resta é decisão do dono:** as 1.460 publicações da base referencial ocupam 5,6 GB e **não são
 reprodutíveis a partir do repositório** — chegaram ao banco de dev por 20 cargas manuais em
-15/09/2026 e vivem só no volume `02sistema_gestao_integrada_pg_data`. Subir o stack do zero dá um
-banco vazio. Então há duas perguntas separadas: (1) atualizar a imagem e as migrations do staging —
-que é manutenção devida; (2) **se** a base referencial deve existir em staging, e por qual caminho
-(dump restaurado, subconjunto de UFs/meses, ou carga rodada lá). A (2) é do dono: 5,6 GB por ambiente
-é custo, e testar com uma UF e três meses pode bastar.
-
-**Andamento 30/09/2026 — preparado, não subido.** O `staging.env` ganhou o que a remodelagem exige
-(`SPICEDB_*` com segredo novo, `AUTORIZACAO_*`, `JWT_SESSION_*`; saiu o `JWT_REFRESH_DAYS` morto),
-o gate voltou a apontar para roteiros que existem ([D226](historico-correcoes.md)) e o banco tem
-backup em `~/backups/staging_pre_atualizacao_20260930.sql.gz` (WSL). **O nó que ficou:** o
-Postgres de staging roda `postgres:16-alpine`, sem `postgis`, sem `unaccent` e com
-`track_commit_timestamp=off`, e o compose de hoje pede `postgis/postgis:16-3.4`. Trocar a imagem
-sobre o volume antigo muda a colação de musl para glibc (índices de texto precisam de `REINDEX`) e
-não cria as extensões (o init não reroda). Dois caminhos, ambos exigem a mão do dono: **(1)**
-recriar o volume (`down.sh -v`, `up.sh`, `seed_staging.sh`) — os dados são só fixture e é o
-caminho que a produção vai percorrer; **(2)** no lugar: subir só `postgres` com a imagem nova,
-`CREATE EXTENSION postgis, unaccent` em `template1` e `erp_db`, `REINDEX DATABASE` em `erp_db` e
-`iam_db`, e só então o resto. Depois de qualquer um: `sincronizar_pdp` (IAM),
-`modo_autorizacao --todos pdp --forcar` (backend) e `bash infra/staging/validate.sh`.
+15/09/2026 e vivem só no volume `02sistema_gestao_integrada_pg_data`; o staging tem só as 2 bases de
+fixture do seed. **Se** a base deve existir em staging, e por qual caminho (dump restaurado,
+subconjunto de UFs/meses, ou carga rodada lá): 5,6 GB por ambiente é custo, e uma UF com três meses
+pode bastar.
 
 ### D179 — o ajuste de vencimento só conhece feriado onde a base foi sincronizada e o lote foi geocodificado · 🟠 aberto 16/09/2026
 

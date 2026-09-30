@@ -553,6 +553,11 @@ services:
       RATE_LIMIT_REDIS_URL: ${RATE_LIMIT_REDIS_URL:-redis://redis:6379/4}
       CELERY_TASK_ALWAYS_EAGER: "False"
       JWT_PUBLIC_KEY_PATH: /keys/jwt_public.pem
+      # O settings faz a fail-fast de produção no import (S4): fora de DEBUG ele
+      # recusa subir sem estes dois, mesmo num processo que não os use. O dev
+      # nunca viu a falta porque DEBUG=True aceita o padrão (D227).
+      IA_SERVICE_SECRET_TOKEN: ${IA_SERVICE_SECRET_TOKEN:-}
+      SERVICE_TOKEN_SECRET: ${SERVICE_TOKEN_SECRET:-service-token-dev-secret}
       # O orçamento por conversão (`PRANCHETA_CONVERSAO_MEMORIA_MB`/`_SEGUNDOS`)
       # NÃO é declarado aqui de propósito: o valor é do dono e vive em
       # `payment/planos.py`, de onde o `settings.py` já o lê. Declará-lo neste
@@ -708,6 +713,14 @@ services:
       SPICEDB_URL: ${SPICEDB_URL:-http://spicedb:8443}
       SPICEDB_CHAVE: ${SPICEDB_CHAVE:-spicedb-chave-dev}
       AUTORIZACAO_REDIS_URL: ${AUTORIZACAO_REDIS_URL:-redis://redis:6379/5}
+      # Fail-fast de produção da IAM no import (S4 e o host de e-mail): sem estes,
+      # fora de IAM_DEBUG o processo nem sobe (D227).
+      SERVICE_TOKEN_SECRET: ${SERVICE_TOKEN_SECRET:-service-token-dev-secret}
+      MAIL_HOST: ${MAIL_HOST:-mailpit}
+      MAIL_PORT: ${MAIL_PORT:-1025}
+      MAIL_USER: ${MAIL_USER:-}
+      MAIL_PASS: ${MAIL_PASS:-}
+      MAIL_FROM: ${MAIL_FROM:-Sistema de Gestão <noreply@sistemagestao.com>}
     volumes:
       - ../../infra/keys:/keys:ro
     depends_on:
@@ -747,6 +760,9 @@ services:
       SPICEDB_URL: ${SPICEDB_URL:-http://spicedb:8443}
       SPICEDB_CHAVE: ${SPICEDB_CHAVE:-spicedb-chave-dev}
       AUTORIZACAO_REDIS_URL: ${AUTORIZACAO_REDIS_URL:-redis://redis:6379/5}
+      # Fail-fast de produção do settings no import (S4) — ver o worker-conversao (D227).
+      IA_SERVICE_SECRET_TOKEN: ${IA_SERVICE_SECRET_TOKEN:-}
+      SERVICE_TOKEN_SECRET: ${SERVICE_TOKEN_SECRET:-service-token-dev-secret}
     volumes:
       - ../../infra/keys:/keys:ro
     depends_on:

@@ -138,7 +138,8 @@ try:
 
     with sync_playwright() as p:
         nav = p.chromium.launch()
-        contexto = nav.new_context()
+        # Certificado autoassinado do staging — ver o seg5_bff_test.py.
+        contexto = nav.new_context(ignore_https_errors=os.getenv("SGI_ACEITAR_CERT_LOCAL") == "1")
         pagina = contexto.new_page()
         pagina.goto(f"{GW}/login")
         pagina.fill("input#username", "admin")

@@ -10,6 +10,34 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D228 — os roteiros não enxergavam a sessão no staging, e dois atalhos olhavam o dev · ✅ corrigido 30/09/2026
+
+Achado no primeiro gate do staging recriado: 2 de 10, quase tudo 401. O helper
+`testes/e2e/_sessao.py` já lia o nome do cookie de `SGI_SESSAO_COOKIE`, mas o `validate.sh` não o
+exportava — e com `Secure` a IAM chama o cookie de `__Host-sgi_sessao`. O mesmo helper tinha um
+defeito pior: `access_do_bff` e `direto` perguntavam **sempre** aos contêineres `sgi-iam`/`sgi-erp`,
+os do dev, e um roteiro apontado ao staging conferia o token no ambiente errado sem avisar. E os dois
+roteiros de navegador (`seg5`, `seg6_step_up`) caíam no `python3` do sistema, sem Playwright, e depois
+no certificado autoassinado, que o Chromium não aceita pelo `SSL_CERT_FILE`. **Correção:** o
+`validate.sh` exporta `SGI_SESSAO_COOKIE` e `SGI_ACEITAR_CERT_LOCAL`, usa o `.venv` e as libs do
+Chromium, e aceita nomes de roteiro para repetir só esses; o helper lê os contêineres de
+`SGI_IAM_CONTAINER`/`SGI_ERP_CONTAINER`; os dois roteiros de navegador aceitam o certificado só quando
+o gate pede. **Gate do staging 10/10** — phase4, phase5 (RS256), phase6 (RBAC), phase8 (isolamento),
+phase9 (auditoria), phaseC, seg1, seg4, seg5 e seg6_step_up.
+
+### D227 — `iam-pdp`, `pdp-invalidador` e `worker-conversao` não sobem fora de DEBUG · ✅ corrigido 30/09/2026
+
+Achado na primeira subida do staging do zero. Os três ficavam em laço de reinício com
+`ImproperlyConfigured`: o `settings.py` do backend e o da IAM fazem a fail-fast de produção (S4) **no
+import**, em todo processo, e o compose lista o ambiente de cada serviço à mão — os três nasceram de
+listas menores que as do `erp` e da `iam`. Faltavam `IA_SERVICE_SECRET_TOKEN` e
+`SERVICE_TOKEN_SECRET` no `pdp-invalidador` e no `worker-conversao`, e `SERVICE_TOKEN_SECRET` e
+`MAIL_*` no `iam-pdp`. O dev nunca viu, porque `DEBUG=True` aceita o padrão de cada um. Em produção
+seria o PDP sem reconciliação nem invalidação por evento (revogação só no fim do cache) e a
+conversão da Prancheta parada. **Correção:** as variáveis nos três blocos de
+`deploy/compose/base.yml`, conferidas contra **todos** os `_config(...)` e as recusas de produção dos
+dois `settings.py`. No staging, os três sobem e o `iam-pdp` reconcilia 2 tenants e 1.115 relações.
+
 ### D226 — o gate do staging rodava roteiros que não existem mais · ✅ corrigido 30/09/2026
 
 Achado ao preparar o staging para o pentest. `infra/staging/validate.sh` chamava
