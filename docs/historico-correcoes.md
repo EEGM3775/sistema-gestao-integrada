@@ -10,6 +10,42 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D212 — o `security-scan` do CI não roda: `trivy-action@0.28.0` não existe mais · ✅ corrigido 29/09/2026
+
+Visto no PR #26. O job parava em "Prepare all required actions", antes de qualquer passo:
+`Unable to resolve action aquasecurity/trivy-action@0.28.0, unable to find version 0.28.0`.
+Vermelho na `main` desde pelo menos a 1.0.21 — **nenhuma varredura de CVE e segredo rodava**.
+Causa: depois de um ataque de cadeia de suprimentos, a Aqua migrou todas as tags do `trivy-action`
+para o prefixo `v` (`v0.28.0`, não `0.28.0`); a tag que o workflow citava deixou de existir.
+
+**Correção:** a action fixada pelo SHA do commit da release atual —
+`aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0`, conferido em
+`git ls-remote --tags` (a tag anotada desreferenciada) e na página de releases. Pelo SHA, uma tag
+reescrita não muda o que o CI executa; subir de versão é trocar o SHA conscientemente
+(`.github/workflows/ci.yml`, comentário no passo).
+
+### D213 — o CI do backend não cria a extensão `unaccent` no `template1` · ✅ corrigido 29/09/2026
+
+27 erros `function unaccent(text) does not exist` na suíte do backend (busca do Orçamento,
+`minhas-frentes` e busca única do PDCA). O passo `Habilitar PostGIS no template1` do
+`.github/workflows/ci.yml` dizia espelhar [01-init-databases.sh](../infra/postgres/init/01-init-databases.sh),
+mas criava só o `postgis` — o init cria também o `unaccent` (ver `backend/nucleo/busca.py`).
+
+**Correção:** `CREATE EXTENSION IF NOT EXISTS unaccent;` no mesmo bloco SQL, pelo superuser, no
+`template1` — o `test_erp_db` do runner é copiado dele. Passo renomeado para "Habilitar PostGIS e
+unaccent no template1".
+
+### D214 — `test_dwg_sem_derivada_nenhuma_diz_que_nao_foi_agendada` depende do LibreDWG instalado · ✅ corrigido 29/09/2026
+
+Falhava no CI com `'sem_motor' != 'nao_agendada'`. `pipeline.planejar()` só planeja o DWG se o
+adaptador estiver `disponivel()` (`shutil.which` do `dwg2dxf`), e o runner do GitHub não tem o
+binário — o teste passava só onde o LibreDWG existe.
+
+**Correção:** o teste força o motor com `mock.patch.object(ADAPTADORES["libredwg"], "disponivel",
+return_value=True)` — o caso do D81 é "plano com o motor e zero derivadas", e o motor estar na imagem
+faz parte da premissa. Conferido no `sgi-erp` com `/usr/local/bin` fora do `PATH` (sem `dwg2dxf`): a
+versão antiga reproduz o erro do CI e a nova passa, 3/3 na `ConversaoNaoAgendadaTests`.
+
 ### D221 — com o Redis fora, a plataforma parava em vez de ficar mais lenta · ✅ corrigido 29/09/2026
 
 Achado pelo teste de caos da fase 6 (`seg6_caos_test.py`, 14/24 na primeira volta). A §10.8 diz
