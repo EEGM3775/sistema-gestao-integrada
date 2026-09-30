@@ -21,11 +21,10 @@ import { ProjectUI } from '../../models/dashboard.model';
  * - Exibir loading placeholder em caso de erro de imagem
  */
 @Component({
-  selector: 'app-project-grid',
-  standalone: true,
-  imports: [CommonModule, RouterLink],
-  templateUrl: './project-grid.component.html',
-  styleUrls: ['./project-grid.component.scss']
+    selector: 'app-project-grid',
+    imports: [CommonModule, RouterLink],
+    templateUrl: './project-grid.component.html',
+    styleUrls: ['./project-grid.component.scss']
 })
 export class ProjectGridComponent {
   /**

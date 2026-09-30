@@ -20,11 +20,10 @@ import { CardComponent } from '../../../../../shared/components/card/card.compon
  * - Navegar para detalhes via routerLink
  */
 @Component({
-  selector: 'app-project-card-item',
-  standalone: true,
-  imports: [CommonModule, RouterLink, CardComponent],
-  templateUrl: './project-card-item.component.html',
-  styleUrls: ['./project-card-item.component.scss']
+    selector: 'app-project-card-item',
+    imports: [CommonModule, RouterLink, CardComponent],
+    templateUrl: './project-card-item.component.html',
+    styleUrls: ['./project-card-item.component.scss']
 })
 export class ProjectCardItemComponent {
   @Input({ required: true }) project!: Project;

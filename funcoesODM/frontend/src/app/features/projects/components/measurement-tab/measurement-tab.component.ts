@@ -59,22 +59,21 @@ export type { MeasurementData, ActiveTool };
 // ============================================================================
 
 @Component({
-  selector: 'app-measurement-tab',
-  standalone: true,
-  imports: [
-    CommonModule,
-    FormsModule,
-    OrthophotoViewerComponent,
-    DemViewerComponent,
-    PointcloudViewerComponent,
-    MeasurementExportModalComponent,
-    MeasDrawingToolbarComponent,
-    MeasListComponent,
-    AnnotationsPanelComponent
-  ],
-  providers: [MeasurementService, MapDrawingService, DsmElevationService],
-  templateUrl: './measurement-tab.component.html',
-  styleUrls: ['./measurement-tab.component.scss']
+    selector: 'app-measurement-tab',
+    imports: [
+        CommonModule,
+        FormsModule,
+        OrthophotoViewerComponent,
+        DemViewerComponent,
+        PointcloudViewerComponent,
+        MeasurementExportModalComponent,
+        MeasDrawingToolbarComponent,
+        MeasListComponent,
+        AnnotationsPanelComponent
+    ],
+    providers: [MeasurementService, MapDrawingService, DsmElevationService],
+    templateUrl: './measurement-tab.component.html',
+    styleUrls: ['./measurement-tab.component.scss']
 })
 export class MeasurementTabComponent implements OnInit, OnChanges, OnDestroy {
 

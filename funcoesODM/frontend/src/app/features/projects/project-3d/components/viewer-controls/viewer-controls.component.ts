@@ -17,11 +17,10 @@ import { ViewMode } from '../../models/project-3d.model';
  * - Indicar modo ativo
  */
 @Component({
-  selector: 'app-viewer-controls',
-  standalone: true,
-  imports: [CommonModule],
-  templateUrl: './viewer-controls.component.html',
-  styleUrls: ['./viewer-controls.component.scss']
+    selector: 'app-viewer-controls',
+    imports: [CommonModule],
+    templateUrl: './viewer-controls.component.html',
+    styleUrls: ['./viewer-controls.component.scss']
 })
 export class ViewerControlsComponent {
   @Input() viewMode: ViewMode = 'orbit';

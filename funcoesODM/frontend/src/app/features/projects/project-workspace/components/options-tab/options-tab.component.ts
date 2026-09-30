@@ -14,11 +14,10 @@ export interface ChunkOptions {
 }
 
 @Component({
-  selector: 'app-options-tab',
-  standalone: true,
-  imports: [CommonModule, FormsModule],
-  changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `
+    selector: 'app-options-tab',
+    imports: [CommonModule, FormsModule],
+    changeDetection: ChangeDetectionStrategy.OnPush,
+    template: `
     <div class="options-tab">
       <div class="options-section">
         <h4>Informações do Chunk</h4>
@@ -57,7 +56,7 @@ export interface ChunkOptions {
       </div>
     </div>
   `,
-  styles: [`
+    styles: [`
     .options-tab {
       max-width: 600px;
     }

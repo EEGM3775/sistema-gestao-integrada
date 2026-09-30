@@ -16,11 +16,10 @@ import { ViewerStats } from '../../models/project-3d.model';
  * - Atualizar estatísticas dinamicamente
  */
 @Component({
-  selector: 'app-viewer-stats',
-  standalone: true,
-  imports: [CommonModule],
-  templateUrl: './viewer-stats.component.html',
-  styleUrls: ['./viewer-stats.component.scss']
+    selector: 'app-viewer-stats',
+    imports: [CommonModule],
+    templateUrl: './viewer-stats.component.html',
+    styleUrls: ['./viewer-stats.component.scss']
 })
 export class ViewerStatsComponent {
   @Input() stats: ViewerStats = {

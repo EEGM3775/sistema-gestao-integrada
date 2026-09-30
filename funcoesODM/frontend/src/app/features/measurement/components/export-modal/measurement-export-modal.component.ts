@@ -24,12 +24,11 @@ import {
 import { UtmZoneAnalyzerService, ZoneAnalysis } from '../../services/export/utm-zone-analyzer.service';
 
 @Component({
-  selector: 'app-measurement-export-modal',
-  standalone: true,
-  imports: [CommonModule],
-  templateUrl: './measurement-export-modal.component.html',
-  styleUrls: ['./measurement-export-modal.component.scss'],
-  changeDetection: ChangeDetectionStrategy.OnPush
+    selector: 'app-measurement-export-modal',
+    imports: [CommonModule],
+    templateUrl: './measurement-export-modal.component.html',
+    styleUrls: ['./measurement-export-modal.component.scss'],
+    changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class MeasurementExportModalComponent implements OnInit {
 

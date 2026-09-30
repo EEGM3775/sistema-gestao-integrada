@@ -7,10 +7,9 @@ type ButtonSize = 'sm' | 'md' | 'lg';
 type ButtonIcon = 'plus';
 
 @Component({
-  selector: 'app-button',
-  standalone: true,
-  imports: [CommonModule, RouterLink],
-  template: `
+    selector: 'app-button',
+    imports: [CommonModule, RouterLink],
+    template: `
     <a
       *ngIf="routerLink; else buttonTpl"
       [class]="getButtonClasses()"
@@ -44,7 +43,7 @@ type ButtonIcon = 'plus';
       </button>
     </ng-template>
   `,
-  styles: [`
+    styles: [`
     .btn {
       display: inline-flex;
       align-items: center;

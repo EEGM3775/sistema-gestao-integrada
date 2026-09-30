@@ -17,11 +17,10 @@ import { BasemapType, MeasurementMode } from '../../models/map-viewer.model';
  * - Indicar estado ativo
  */
 @Component({
-  selector: 'app-map-controls',
-  standalone: true,
-  imports: [CommonModule],
-  templateUrl: './map-controls.component.html',
-  styleUrls: ['./map-controls.component.scss']
+    selector: 'app-map-controls',
+    imports: [CommonModule],
+    templateUrl: './map-controls.component.html',
+    styleUrls: ['./map-controls.component.scss']
 })
 export class MapControlsComponent {
   @Input() currentBasemap: BasemapType = 'satellite';

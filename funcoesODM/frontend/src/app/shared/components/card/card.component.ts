@@ -2,10 +2,9 @@ import { Component, Input } from '@angular/core';
 import { CommonModule } from '@angular/common';
 
 @Component({
-  selector: 'app-card',
-  standalone: true,
-  imports: [CommonModule],
-  template: `
+    selector: 'app-card',
+    imports: [CommonModule],
+    template: `
     <div class="card" [class.clickable]="clickable" [class.elevated]="elevated">
       <div class="card-header" *ngIf="title || subtitle">
         <h3 class="card-title" *ngIf="title">{{ title }}</h3>
@@ -19,7 +18,7 @@ import { CommonModule } from '@angular/common';
       </div>
     </div>
   `,
-  styles: [`
+    styles: [`
     .card {
       background: var(--color-bg-white);
       border-radius: var(--radius-lg);

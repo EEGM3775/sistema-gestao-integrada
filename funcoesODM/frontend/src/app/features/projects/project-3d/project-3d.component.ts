@@ -38,18 +38,17 @@ interface ProjectApiResponse {
 }
 
 @Component({
-  selector: 'app-project-3d',
-  standalone: true,
-  imports: [
-    CommonModule,
-    RouterLink,
-    ViewerControlsComponent,
-    ViewerOptionsComponent,
-    ViewerStatsComponent
-  ],
-  providers: [Viewer3DService, PotreeLoaderService],
-  templateUrl: './project-3d.component.html',
-  styleUrls: ['./project-3d.component.scss']
+    selector: 'app-project-3d',
+    imports: [
+        CommonModule,
+        RouterLink,
+        ViewerControlsComponent,
+        ViewerOptionsComponent,
+        ViewerStatsComponent
+    ],
+    providers: [Viewer3DService, PotreeLoaderService],
+    templateUrl: './project-3d.component.html',
+    styleUrls: ['./project-3d.component.scss']
 })
 export class Project3DComponent implements OnInit, AfterViewInit, OnDestroy {
   @ViewChild('viewerContainer') viewerContainer!: ElementRef;

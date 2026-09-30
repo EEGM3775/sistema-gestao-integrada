@@ -31,12 +31,11 @@ import { ExportBaseService } from '../../services/export/export-base.service';
 import { ElevationProfileChartComponent } from '../elevation-profile-chart/elevation-profile-chart.component';
 
 @Component({
-  selector: 'app-meas-item',
-  standalone: true,
-  imports: [CommonModule, ElevationProfileChartComponent],
-  templateUrl: './meas-item.component.html',
-  styleUrls: ['./meas-item.component.scss'],
-  changeDetection: ChangeDetectionStrategy.OnPush
+    selector: 'app-meas-item',
+    imports: [CommonModule, ElevationProfileChartComponent],
+    templateUrl: './meas-item.component.html',
+    styleUrls: ['./meas-item.component.scss'],
+    changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class MeasItemComponent {
 

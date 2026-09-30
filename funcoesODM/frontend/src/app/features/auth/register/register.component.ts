@@ -7,10 +7,9 @@ import { ButtonComponent } from '../../../shared/components/button/button.compon
 import { CardComponent } from '../../../shared/components/card/card.component';
 
 @Component({
-  selector: 'app-register',
-  standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterLink, ButtonComponent, CardComponent],
-  template: `
+    selector: 'app-register',
+    imports: [CommonModule, ReactiveFormsModule, RouterLink, ButtonComponent, CardComponent],
+    template: `
     <div class="auth-container">
       <app-card title="Criar Conta" subtitle="Junte-se ao Projeto Phoenix">
         <form [formGroup]="registerForm" (ngSubmit)="onSubmit()">
@@ -94,7 +93,7 @@ import { CardComponent } from '../../../shared/components/card/card.component';
       </app-card>
     </div>
   `,
-  styles: [`
+    styles: [`
     .auth-container {
       min-height: 100vh;
       display: flex;

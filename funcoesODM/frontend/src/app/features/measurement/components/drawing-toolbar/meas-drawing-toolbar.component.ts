@@ -28,12 +28,11 @@ import { CommonModule } from '@angular/common';
 import { ActiveTool } from '../../models/measurement-data';
 
 @Component({
-  selector: 'app-meas-drawing-toolbar',
-  standalone: true,
-  imports: [CommonModule],
-  templateUrl: './meas-drawing-toolbar.component.html',
-  styleUrls: ['./meas-drawing-toolbar.component.scss'],
-  changeDetection: ChangeDetectionStrategy.OnPush
+    selector: 'app-meas-drawing-toolbar',
+    imports: [CommonModule],
+    templateUrl: './meas-drawing-toolbar.component.html',
+    styleUrls: ['./meas-drawing-toolbar.component.scss'],
+    changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class MeasDrawingToolbarComponent {
   @Input() activeTool: ActiveTool = null;

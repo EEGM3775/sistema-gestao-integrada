@@ -21,17 +21,16 @@ type ExtendedTabType = TabType | 'pointcloud' | 'model3d' | 'measurements' | 've
  * Interface estilo Metashape/DroneDeploy
  */
 @Component({
-  selector: 'app-results-viewer',
-  standalone: true,
-  imports: [
-    CommonModule,
-    DownloadsTabComponent,
-    WarningsTabComponent,
-    MeasurementTabComponent,
-    VegetationTabComponent
-  ],
-  templateUrl: './results-viewer.component.html',
-  styleUrls: ['./results-viewer.component.scss']
+    selector: 'app-results-viewer',
+    imports: [
+        CommonModule,
+        DownloadsTabComponent,
+        WarningsTabComponent,
+        MeasurementTabComponent,
+        VegetationTabComponent
+    ],
+    templateUrl: './results-viewer.component.html',
+    styleUrls: ['./results-viewer.component.scss']
 })
 export class ResultsViewerComponent implements OnInit, OnChanges {
   @Input() projectId!: number;

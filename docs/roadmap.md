@@ -35,6 +35,7 @@ Cada fase concluída foi validada por um script E2E em [testes/e2e/](../testes/e
 
 - **D206 · D222 · D223 · D226 ✅ 30/09/2026** — nome da senha do superusuário do Postgres corrigido; `pdca1_cronograma` 102/102, `pdca_cockpit_browser` 29/29, `browser_smoke` 8/8; gate do staging com os roteiros da remodelagem. Relatos em [historico-correcoes.md](historico-correcoes.md).
 - **Staging para o pentest ✅ 30/09/2026** — recriado do zero com a imagem de hoje (PostGIS, SpiceDB, PDP em todo módulo); gate `infra/staging/validate.sh` **10/10**, com a remodelagem (seg1, seg4, seg5, seg6_step_up). D227 · D228 ✅ achados na subida; D185 ✅ fechado.
+- **D229 ✅ 30/09/2026** — `security-scan` do CI de 71 vulnerabilidades para 0: Angular do drone 18 → 20, MapLibre 5 → 6, driver Postgres do drone 42.7.12, `weasyprint` 70 (trava de PDF reescrita para a API nova), `package.json` solto da raiz removido. Aberto na leva: D230.
 - **Base referencial fora do dev (SINAPI/ORSE/EMBASA em staging e produção) ❌ dependência do `modulodms`** — decisão do dono. → [modulos-planejados.md](modulos/modulos-planejados.md)
 
 ### Mudanças de 29/09/2026

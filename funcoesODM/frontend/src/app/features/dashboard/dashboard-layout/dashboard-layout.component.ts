@@ -5,10 +5,9 @@ import { AuthService } from '../../../core/services/auth.service';
 import { ChunkService } from '../../projects/services/chunk.service';
 
 @Component({
-  selector: 'app-dashboard-layout',
-  standalone: true,
-  imports: [CommonModule, RouterOutlet],
-  template: `
+    selector: 'app-dashboard-layout',
+    imports: [CommonModule, RouterOutlet],
+    template: `
     <div class="app-layout">
 
       <!-- Main Content -->
@@ -93,7 +92,7 @@ import { ChunkService } from '../../projects/services/chunk.service';
       </div>
     </div>
   `,
-  styles: [`
+    styles: [`
     .app-layout {
       display: flex;
       min-height: 100vh;

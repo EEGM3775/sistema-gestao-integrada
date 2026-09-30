@@ -35,19 +35,18 @@ import { ProjectFilters, SortConfig } from './models/project-list.model';
  * Redução de tamanho: 1041 linhas → ~220 linhas (79% de redução)
  */
 @Component({
-  selector: 'app-project-list',
-  standalone: true,
-  imports: [
-    CommonModule,
-    ButtonComponent,
-    LoadingSpinnerComponent,
-    PaginationComponent,
-    ProjectFiltersComponent,
-    ProjectCardItemComponent,
-    ProjectsEmptyStateComponent
-  ],
-  templateUrl: './project-list.component.html',
-  styleUrls: ['./project-list.component.scss']
+    selector: 'app-project-list',
+    imports: [
+        CommonModule,
+        ButtonComponent,
+        LoadingSpinnerComponent,
+        PaginationComponent,
+        ProjectFiltersComponent,
+        ProjectCardItemComponent,
+        ProjectsEmptyStateComponent
+    ],
+    templateUrl: './project-list.component.html',
+    styleUrls: ['./project-list.component.scss']
 })
 export class ProjectListComponent implements OnInit {
   // Injeção de dependências

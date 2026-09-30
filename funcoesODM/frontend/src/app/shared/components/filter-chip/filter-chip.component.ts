@@ -2,10 +2,9 @@ import { Component, Input, Output, EventEmitter } from '@angular/core';
 import { CommonModule } from '@angular/common';
 
 @Component({
-  selector: 'app-filter-chip',
-  standalone: true,
-  imports: [CommonModule],
-  template: `
+    selector: 'app-filter-chip',
+    imports: [CommonModule],
+    template: `
     <span class="filter-chip" [class.removable]="removable">
       <span class="chip-label">{{ label }}:</span>
       <span class="chip-value">{{ value }}</span>
@@ -19,7 +18,7 @@ import { CommonModule } from '@angular/common';
       </button>
     </span>
   `,
-  styles: [`
+    styles: [`
     .filter-chip {
       display: inline-flex;
       align-items: center;

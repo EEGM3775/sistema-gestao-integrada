@@ -25,12 +25,11 @@ import GeoRasterLayer from 'georaster-layer-for-leaflet';
 type RenderMode = 'geotiff' | 'tiles' | 'fallback';
 
 @Component({
-  selector: 'app-orthophoto-viewer',
-  standalone: true,
-  imports: [
-    CommonModule
-  ],
-  template: `
+    selector: 'app-orthophoto-viewer',
+    imports: [
+        CommonModule
+    ],
+    template: `
     <div class="orthophoto-viewer">
       <!-- Mapa Leaflet -->
       <div #mapContainer class="map-canvas"></div>
@@ -102,7 +101,7 @@ type RenderMode = 'geotiff' | 'tiles' | 'fallback';
       }
     </div>
   `,
-  styles: [`
+    styles: [`
     .orthophoto-viewer {
       position: relative;
       width: 100%;

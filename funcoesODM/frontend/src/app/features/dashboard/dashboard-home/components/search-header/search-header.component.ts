@@ -19,11 +19,10 @@ import { ViewMode } from '../../models/dashboard.model';
  * - Fornecer navegação para criação de projeto
  */
 @Component({
-  selector: 'app-search-header',
-  standalone: true,
-  imports: [CommonModule, ButtonComponent],
-  templateUrl: './search-header.component.html',
-  styleUrls: ['./search-header.component.scss']
+    selector: 'app-search-header',
+    imports: [CommonModule, ButtonComponent],
+    templateUrl: './search-header.component.html',
+    styleUrls: ['./search-header.component.scss']
 })
 export class SearchHeaderComponent {
   /**

@@ -31,10 +31,9 @@ const ELEVATION_ASSET_DEFS: Array<{ name: string; displayName: string; icon: str
 ];
 
 @Component({
-  selector: 'app-dem-viewer',
-  standalone: true,
-  imports: [CommonModule, DsmTabComponent],
-  template: `
+    selector: 'app-dem-viewer',
+    imports: [CommonModule, DsmTabComponent],
+    template: `
     <div class="dem-viewer-wrapper">
       <app-dsm-tab
         [assets]="assets"
@@ -44,7 +43,7 @@ const ELEVATION_ASSET_DEFS: Array<{ name: string; displayName: string; icon: str
       </app-dsm-tab>
     </div>
   `,
-  styles: [`
+    styles: [`
     .dem-viewer-wrapper {
       width: 100%;
       height: 100%;

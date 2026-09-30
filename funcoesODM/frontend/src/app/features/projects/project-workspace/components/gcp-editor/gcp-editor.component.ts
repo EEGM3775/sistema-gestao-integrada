@@ -28,18 +28,17 @@ import { GcpListComponent } from './components/gcp-list/gcp-list.component';
 import { GcpImageViewerComponent } from './components/gcp-image-viewer/gcp-image-viewer.component';
 
 @Component({
-  selector: 'app-gcp-editor',
-  standalone: true,
-  imports: [
-    CommonModule,
-    GcpImportPanelComponent,
-    GcpMapPickerComponent,
-    GcpListComponent,
-    GcpImageViewerComponent,
-  ],
-  changeDetection: ChangeDetectionStrategy.OnPush,
-  templateUrl: './gcp-editor.component.html',
-  styleUrl:    './gcp-editor.component.scss',
+    selector: 'app-gcp-editor',
+    imports: [
+        CommonModule,
+        GcpImportPanelComponent,
+        GcpMapPickerComponent,
+        GcpListComponent,
+        GcpImageViewerComponent,
+    ],
+    changeDetection: ChangeDetectionStrategy.OnPush,
+    templateUrl: './gcp-editor.component.html',
+    styleUrl: './gcp-editor.component.scss'
 })
 export class GcpEditorComponent {
 

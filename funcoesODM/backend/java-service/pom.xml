@@ -15,6 +15,10 @@
     <description>Backend Java para FuncaoODM</description>
     <properties>
         <java.version>17</java.version>
+        <!-- O driver que o Spring Boot 3.2.0 traz (42.6.0) tem CVE-2024-1597 (CRITICAL,
+             injeção de SQL), CVE-2026-42198 e CVE-2026-54291; a propriedade do BOM sobe
+             só o driver. -->
+        <postgresql.version>42.7.12</postgresql.version>
     </properties>
     <dependencies>
         <dependency>

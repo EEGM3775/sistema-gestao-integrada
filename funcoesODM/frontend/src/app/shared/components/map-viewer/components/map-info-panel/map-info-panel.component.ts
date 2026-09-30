@@ -16,11 +16,10 @@ import { SelectedInfo } from '../../models/map-viewer.model';
  * - Formatar dados para exibição
  */
 @Component({
-  selector: 'app-map-info-panel',
-  standalone: true,
-  imports: [CommonModule],
-  templateUrl: './map-info-panel.component.html',
-  styleUrls: ['./map-info-panel.component.scss']
+    selector: 'app-map-info-panel',
+    imports: [CommonModule],
+    templateUrl: './map-info-panel.component.html',
+    styleUrls: ['./map-info-panel.component.scss']
 })
 export class MapInfoPanelComponent {
   @Input() info: SelectedInfo | null = null;

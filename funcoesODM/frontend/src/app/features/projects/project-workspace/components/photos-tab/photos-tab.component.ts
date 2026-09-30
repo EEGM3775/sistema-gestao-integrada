@@ -4,11 +4,10 @@ import { FormsModule } from '@angular/forms';
 import { ProjectImage, UploadProgress } from '../../../models/project.model';
 
 @Component({
-  selector: 'app-photos-tab',
-  standalone: true,
-  imports: [CommonModule, FormsModule],
-  changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `
+    selector: 'app-photos-tab',
+    imports: [CommonModule, FormsModule],
+    changeDetection: ChangeDetectionStrategy.OnPush,
+    template: `
     <div class="photos-tab">
       <!-- Upload Zone -->
       <div 
@@ -180,7 +179,7 @@ import { ProjectImage, UploadProgress } from '../../../models/project.model';
       </div>
     </div>
   `,
-  styles: [`
+    styles: [`
     .photos-tab {
       display: flex;
       flex-direction: column;

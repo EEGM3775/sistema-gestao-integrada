@@ -16,12 +16,11 @@ import { ProjectImage } from '../../../../../models/project.model';
 import { GcpPoint, GcpMark } from '../../models/gcp-mark.model';
 
 @Component({
-  selector: 'app-gcp-image-viewer',
-  standalone: true,
-  imports: [CommonModule],
-  changeDetection: ChangeDetectionStrategy.OnPush,
-  styleUrl: './gcp-image-viewer.component.scss',
-  template: `
+    selector: 'app-gcp-image-viewer',
+    imports: [CommonModule],
+    changeDetection: ChangeDetectionStrategy.OnPush,
+    styleUrl: './gcp-image-viewer.component.scss',
+    template: `
 @if (images().length === 0) {
       <div class="viewer-empty">
         Nenhuma imagem no chunk. Adicione fotos antes de marcar GCPs.
@@ -118,7 +117,7 @@ import { GcpPoint, GcpMark } from '../../models/gcp-mark.model';
       }
 
     }
-  `,
+  `
 })
 export class GcpImageViewerComponent {
 

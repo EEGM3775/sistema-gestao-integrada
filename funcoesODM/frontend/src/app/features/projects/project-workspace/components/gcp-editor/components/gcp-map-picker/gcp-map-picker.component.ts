@@ -20,11 +20,10 @@ import * as L from 'leaflet';
 import { GcpPoint } from '../../models/gcp-mark.model';
 
 @Component({
-  selector: 'app-gcp-map-picker',
-  standalone: true,
-  imports: [CommonModule, FormsModule],
-  changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `
+    selector: 'app-gcp-map-picker',
+    imports: [CommonModule, FormsModule],
+    changeDetection: ChangeDetectionStrategy.OnPush,
+    template: `
     <div class="map-picker-panel">
 
       <div class="map-picker-header">
@@ -83,7 +82,7 @@ import { GcpPoint } from '../../models/gcp-mark.model';
 
     </div>
   `,
-  styles: [`
+    styles: [`
     .map-picker-panel {
       display: flex;
       flex-direction: column;

@@ -17,11 +17,10 @@ import { DisplayType, ColorMode } from '../../models/project-3d.model';
  * - Validar valores de entrada
  */
 @Component({
-  selector: 'app-viewer-options',
-  standalone: true,
-  imports: [CommonModule],
-  templateUrl: './viewer-options.component.html',
-  styleUrls: ['./viewer-options.component.scss']
+    selector: 'app-viewer-options',
+    imports: [CommonModule],
+    templateUrl: './viewer-options.component.html',
+    styleUrls: ['./viewer-options.component.scss']
 })
 export class ViewerOptionsComponent {
   @Input() displayType: DisplayType = 'pointcloud';

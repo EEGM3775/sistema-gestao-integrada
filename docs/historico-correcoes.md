@@ -10,6 +10,38 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D229 — o `security-scan` do CI acusava 71 vulnerabilidades com correção, e ninguém via · ✅ corrigido 30/09/2026
+
+Visto no PR do drone (`drone-no-repositorio`). O job ficou sem rodar até o [D212](#) (29/09), e o
+código do drone só entrou na varredura com o [D225](#) — o que se acumulou apareceu de uma vez:
+**71 HIGH/CRITICAL com correção** no trivy e **1** no pip-audit. Reproduzido localmente com as mesmas
+ferramentas sobre a árvore do commit (o repositório é privado; o log do Actions não é legível sem
+login). Por alvo, e o que cada um pediu:
+
+- **`package.json`/`package-lock.json` da raiz (21)** — sobra de julho (`npm init` com `axios` e
+  `react-router-dom` instalados por engano na raiz); nada os usa, a tela tem os próprios. **Removidos.**
+- **`frontend/` (5)** — `axios` 1.20, `react-router-dom` 7.18 (e `form-data` 4.0.6 junto) e
+  `maplibre-gl` 5 → **6** (CVE-2026-85061, CRITICAL, só corrigida na 6). O MapLibre 6 deixou de ter
+  export default: `Mapa.tsx` importa o namespace. `npm run build` (`tsc -b` + `vite build`) limpo e
+  `npm audit --omit=dev --audit-level=high` com 0.
+- **App do drone, `funcoesODM/frontend/` (43)** — o Angular 18 saiu de suporte e as correções só
+  existem da **20** em diante. `ng update` em dois degraus (18 → 19 → 20): a migração oficial tirou o
+  `standalone: true` (padrão desde a 19) de 50 componentes e subiu o TypeScript para 5.9, que acusou
+  um erro real de tipo — `new Blob([Uint8Array<ArrayBufferLike>])` na exportação de Shapefile, agora
+  `new Uint8Array(...)`. `npm audit fix` levou o resto; o `Dockerfile` passou de Node 18 para 22 (o
+  Angular 20 não roda no 18). Build de produção limpo.
+- **Servidor do drone, `pom.xml` (2 → 3)** — o driver do Postgres que o Spring Boot 3.2.0 traz (42.6.0)
+  tinha a CVE-2024-1597 (CRITICAL, injeção de SQL); a propriedade `postgresql.version` do BOM sobe só o
+  driver, para **42.7.12** (na 42.7.11 a varredura ainda achou a CVE-2026-54291).
+- **`weasyprint` 69 → 70 (pip-audit, PYSEC-2026-3940)** — e aqui a troca de número **quebraria o
+  PDF**: a 70 removeu o `default_url_fetcher` e passou a exigir que o `url_fetcher` seja um objeto
+  `URLFetcher` (lê atributos dele justamente no caminho da recusa). A trava do [D73](#) foi reescrita
+  como subclasse de `URLFetcher`, com `allowed_protocols={"data"}` como segunda trava, a da própria
+  biblioteca; `_buscador_sem_rede` mantém o contrato que os testes cobram. `funcoesimpexp` +
+  `moduloorcamento` 663/663 com a 70.
+
+Resultado sobre a árvore do commit: trivy **0** em todos os alvos, pip-audit backend e IAM **0**.
+
 ### D185 — o staging não tinha o módulo de orçamento, e a SINAPI só existe na máquina de quem desenvolve · ✅ fechado 30/09/2026
 
 Aberto em 16/09/2026: o `erp_db` do staging tinha 77 tabelas e 33 MB contra 5.647 MB do dev, nenhuma

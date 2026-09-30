@@ -6,12 +6,11 @@ import { Annotation } from '../../models/annotation.model';
 import { AuthService } from '../../../../core/services/auth.service';
 
 @Component({
-  selector: 'app-annotations-panel',
-  standalone: true,
-  imports: [CommonModule, FormsModule],
-  changeDetection: ChangeDetectionStrategy.OnPush,
-  templateUrl: './annotations-panel.component.html',
-  styleUrls: ['./annotations-panel.component.scss']
+    selector: 'app-annotations-panel',
+    imports: [CommonModule, FormsModule],
+    changeDetection: ChangeDetectionStrategy.OnPush,
+    templateUrl: './annotations-panel.component.html',
+    styleUrls: ['./annotations-panel.component.scss']
 })
 export class AnnotationsPanelComponent {
   @Input() projectId!: number;

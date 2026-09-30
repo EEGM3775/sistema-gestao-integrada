@@ -81,11 +81,10 @@ const HISTOGRAM_BUCKETS = 30;
 const SAMPLE_STRIDE = 50;
 
 @Component({
-  selector: 'app-vegetation-tab',
-  standalone: true,
-  imports: [CommonModule, FormsModule, AnnotationsPanelComponent],
-  templateUrl: './vegetation-tab.component.html',
-  styleUrls: ['./vegetation-tab.component.scss']
+    selector: 'app-vegetation-tab',
+    imports: [CommonModule, FormsModule, AnnotationsPanelComponent],
+    templateUrl: './vegetation-tab.component.html',
+    styleUrls: ['./vegetation-tab.component.scss']
 })
 export class VegetationTabComponent implements AfterViewInit, OnDestroy, OnChanges {
 

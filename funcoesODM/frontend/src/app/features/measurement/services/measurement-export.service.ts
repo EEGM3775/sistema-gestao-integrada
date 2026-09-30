@@ -131,7 +131,9 @@ export class MeasurementExportService {
   exportToShapefile(entries: RawMeasurementEntry[], coordFormat: CoordFormat = 'wgs84', projectId: number | string = 0, targetEpsg: number | null = null): void {
     const zipBytes = this.shapefile.buildShapefileZip(entries, coordFormat, targetEpsg);
     this.base.downloadBlob(
-      new Blob([zipBytes], { type: 'application/zip' }),
+      // `new Uint8Array(...)` copia para um ArrayBuffer comum: desde o TS 5.9 o
+      // Blob recusa o `Uint8Array<ArrayBufferLike>`, que pode ser memória compartilhada.
+      new Blob([new Uint8Array(zipBytes)], { type: 'application/zip' }),
       this.base.buildFilename(projectId, 'shapefile', 'zip', coordFormat)
     );
   }

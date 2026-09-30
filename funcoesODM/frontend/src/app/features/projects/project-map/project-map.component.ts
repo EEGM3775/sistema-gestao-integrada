@@ -14,10 +14,9 @@ interface ProjectInfo {
 }
 
 @Component({
-  selector: 'app-project-map',
-  standalone: true,
-  imports: [CommonModule, RouterLink, MapViewerComponent],
-  template: `
+    selector: 'app-project-map',
+    imports: [CommonModule, RouterLink, MapViewerComponent],
+    template: `
     <div class="map-page">
       <!-- Top Bar -->
       <div class="top-bar">
@@ -220,7 +219,7 @@ interface ProjectInfo {
       </button>
     </div>
   `,
-  styles: [`
+    styles: [`
     .map-page {
       height: 100vh;
       display: flex;

@@ -64,11 +64,10 @@ function terrainColor(t: number, opacity = 0.88): string {
 }
 
 @Component({
-  selector: 'app-dsm-tab',
-  standalone: true,
-  imports: [CommonModule, FormsModule],
-  templateUrl: './dsm-tab.component.html',
-  styleUrls: ['./dsm-tab.component.scss']
+    selector: 'app-dsm-tab',
+    imports: [CommonModule, FormsModule],
+    templateUrl: './dsm-tab.component.html',
+    styleUrls: ['./dsm-tab.component.scss']
 })
 export class DsmTabComponent implements AfterViewInit, OnDestroy {
   @Input() set assets(val: AssetInfo[]) {

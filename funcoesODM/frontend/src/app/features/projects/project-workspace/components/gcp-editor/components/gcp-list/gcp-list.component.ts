@@ -13,11 +13,10 @@ import { CommonModule } from '@angular/common';
 import { GcpPoint, GcpMark } from '../../models/gcp-mark.model';
 
 @Component({
-  selector: 'app-gcp-list',
-  standalone: true,
-  imports: [CommonModule],
-  changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `
+    selector: 'app-gcp-list',
+    imports: [CommonModule],
+    changeDetection: ChangeDetectionStrategy.OnPush,
+    template: `
     <!-- Cabecalho da lista -->
     <div class="gcp-list-header">
       <span>{{ gcpPoints.length }} pontos GCP</span>
@@ -68,7 +67,7 @@ import { GcpPoint, GcpMark } from '../../models/gcp-mark.model';
       </div>
     }
   `,
-  styles: [`
+    styles: [`
     .gcp-list-header {
       display: flex;
       align-items: center;

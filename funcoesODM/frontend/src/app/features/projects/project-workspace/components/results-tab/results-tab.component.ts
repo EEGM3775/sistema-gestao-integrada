@@ -4,11 +4,10 @@ import { Chunk } from '../../../models/project.model';
 import { ResultsViewerComponent } from '../../../components/results-viewer/results-viewer.component';
 
 @Component({
-  selector: 'app-results-tab',
-  standalone: true,
-  imports: [CommonModule, ResultsViewerComponent],
-  changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `
+    selector: 'app-results-tab',
+    imports: [CommonModule, ResultsViewerComponent],
+    changeDetection: ChangeDetectionStrategy.OnPush,
+    template: `
     <div class="results-tab">
       @if (chunk.status === 'COMPLETED') {
         <app-results-viewer
@@ -43,7 +42,7 @@ import { ResultsViewerComponent } from '../../../components/results-viewer/resul
       }
     </div>
   `,
-  styles: [`
+    styles: [`
     .results-tab {
       height: 100%;
     }

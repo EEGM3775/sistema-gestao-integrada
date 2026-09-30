@@ -18,6 +18,7 @@ recorte, emitido por quem e quando. Peça sem procedência não é conferível.
 from __future__ import annotations
 
 import csv
+import functools
 import io
 from decimal import Decimal
 
@@ -30,6 +31,33 @@ class EscritaIndisponivel(Exception):
 
 class RecursoExternoRecusado(Exception):
     """O PDF pediu um recurso de fora; o buscador não busca fora (D73)."""
+
+
+@functools.cache
+def _classe_do_buscador():
+    """A subclasse de `URLFetcher` — criada só quando o WeasyPrint é importado.
+
+    Desde a 70 o `url_fetcher` é um **objeto** `URLFetcher`, não uma função: o
+    WeasyPrint lê atributos dele (`_fail_on_errors`) justamente no caminho da
+    recusa, e o `default_url_fetcher` deixou de existir. Uma função solta
+    quebraria o PDF na importação e de novo ao recusar a primeira URL.
+    """
+    from weasyprint.urls import URLFetcher
+
+    class BuscadorSemRede(URLFetcher):
+        def fetch(self, url, headers=None):
+            if not url.startswith("data:"):
+                raise RecursoExternoRecusado(url)
+            return super().fetch(url, headers)
+
+    return BuscadorSemRede
+
+
+def _novo_buscador():
+    # `allowed_protocols` é a segunda trava, a da própria biblioteca: mesmo que o
+    # `fetch` acima mude, nada além de `data:` é aberto. Sem redirecionamento
+    # porque `data:` não redireciona, e um redirecionamento seria rede.
+    return _classe_do_buscador()(allowed_protocols={"data"}, allow_redirects=False)
 
 
 def _buscador_sem_rede(url: str):
@@ -49,11 +77,7 @@ def _buscador_sem_rede(url: str):
     embutido for pedido de verdade, o caminho é o `data:` URI, que este
     buscador já aceita.
     """
-    if url.startswith("data:"):
-        from weasyprint.urls import default_url_fetcher
-
-        return default_url_fetcher(url)
-    raise RecursoExternoRecusado(url)
+    return _novo_buscador()(url)
 
 
 def html_para_pdf(html: str) -> bytes:
@@ -70,7 +94,7 @@ def html_para_pdf(html: str) -> bytes:
             "WeasyPrint não instalado — necessário para exportar PDF."
         ) from exc
 
-    return HTML(string=html, url_fetcher=_buscador_sem_rede).write_pdf()
+    return HTML(string=html, url_fetcher=_novo_buscador()).write_pdf()
 
 
 def escrever(formato: str, *, colunas, linhas, procedencia: dict) -> tuple[bytes, str]:

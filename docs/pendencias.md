@@ -925,8 +925,16 @@ o que resolve na tela — mas deixa as duas trilhas contando histórias diferent
 
 ## 🟢 Baixas
 
+### D230 — a imagem do backend não tem HarfBuzz-Subset, que o WeasyPrint vai passar a exigir · 🟢 aberto 30/09/2026
+
+A 70 avisa a cada PDF: *"Using fontTools instead of HarfBuzz-Subset … will be unsupported in future
+versions"*. Hoje funciona (o `fontTools` cobre), mas a próxima subida do `weasyprint` pode quebrar a
+exportação em PDF se a biblioteca de sistema não estiver na imagem. **Correção:** instalar a
+HarfBuzz-Subset ≥ 4.1 no `backend/Dockerfile` (pacote do sistema, ao lado do Pango) e conferir que o
+aviso some — antes de subir o `weasyprint` de novo.
+
 ---
-Nenhum em aberto (D206, D222 e D223 fechados em 30/09/2026 — [histórico](historico-correcoes.md)). O **D147** (seis erros de `eslint` em três telas da PDCA.3/4, que desligavam o
+Fora o D230, nenhum em aberto (D206, D222 e D223 fechados em 30/09/2026 — [histórico](historico-correcoes.md)). O **D147** (seis erros de `eslint` em três telas da PDCA.3/4, que desligavam o
 fast refresh justamente na tela em que se passa o dia digitando) e o **D148** (o traceback `CRÍTICO`
 impresso a cada execução da suíte) foram corrigidos em 15/09/2026, junto do fechamento da PDCA.5;
 relatos em [historico-correcoes.md](historico-correcoes.md).

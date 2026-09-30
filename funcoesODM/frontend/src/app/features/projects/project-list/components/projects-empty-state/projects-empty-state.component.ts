@@ -17,11 +17,10 @@ import { ButtonComponent } from '../../../../../shared/components/button/button.
  * - Emitir evento para limpar filtros
  */
 @Component({
-  selector: 'app-projects-empty-state',
-  standalone: true,
-  imports: [CommonModule, RouterLink, ButtonComponent],
-  templateUrl: './projects-empty-state.component.html',
-  styleUrls: ['./projects-empty-state.component.scss']
+    selector: 'app-projects-empty-state',
+    imports: [CommonModule, RouterLink, ButtonComponent],
+    templateUrl: './projects-empty-state.component.html',
+    styleUrls: ['./projects-empty-state.component.scss']
 })
 export class ProjectsEmptyStateComponent {
   @Input() hasActiveFilters: boolean = false;

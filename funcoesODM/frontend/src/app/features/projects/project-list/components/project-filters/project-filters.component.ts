@@ -22,11 +22,10 @@ import { ProjectFilters, SortConfig, SortField, SortDirection } from '../../mode
  * - Toggle entre visualizações
  */
 @Component({
-  selector: 'app-project-filters',
-  standalone: true,
-  imports: [CommonModule, FormsModule, FilterChipComponent],
-  templateUrl: './project-filters.component.html',
-  styleUrls: ['./project-filters.component.scss']
+    selector: 'app-project-filters',
+    imports: [CommonModule, FormsModule, FilterChipComponent],
+    templateUrl: './project-filters.component.html',
+    styleUrls: ['./project-filters.component.scss']
 })
 export class ProjectFiltersComponent {
   @Input({ required: true }) filters!: ProjectFilters;

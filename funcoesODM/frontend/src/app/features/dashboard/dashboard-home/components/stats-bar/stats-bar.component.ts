@@ -16,11 +16,10 @@ import { DashboardStats } from '../../models/dashboard.model';
  * - Fornecer indicadores visuais com ícones SVG
  */
 @Component({
-  selector: 'app-stats-bar',
-  standalone: true,
-  imports: [CommonModule],
-  templateUrl: './stats-bar.component.html',
-  styleUrls: ['./stats-bar.component.scss']
+    selector: 'app-stats-bar',
+    imports: [CommonModule],
+    templateUrl: './stats-bar.component.html',
+    styleUrls: ['./stats-bar.component.scss']
 })
 export class StatsBarComponent {
   /**

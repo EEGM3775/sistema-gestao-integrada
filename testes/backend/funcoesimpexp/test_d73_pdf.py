@@ -52,7 +52,7 @@ class BuscadorSemRedeTests(SimpleTestCase):
                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8"
                "z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
         resposta = _buscador_sem_rede(uri)
-        # A 69 devolve um `URLFetcherResponse` (a 5x devolvia dict) — o que
+        # Desde a 69 volta um `URLFetcherResponse` (a 5x devolvia dict) — o que
         # importa é que os bytes vieram do próprio documento.
         self.assertEqual(resposta.content_type, "image/png")
         self.assertTrue(resposta.read())

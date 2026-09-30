@@ -15,11 +15,10 @@ export interface ChunkOptions {
 }
 
 @Component({
-  selector: 'app-process-tab',
-  standalone: true,
-  imports: [CommonModule, FormsModule],
-  changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `
+    selector: 'app-process-tab',
+    imports: [CommonModule, FormsModule],
+    changeDetection: ChangeDetectionStrategy.OnPush,
+    template: `
     <div class="process-tab">
       <div class="process-section">
         <h4>Produtos de Saída</h4>
@@ -222,7 +221,7 @@ export interface ChunkOptions {
       </div>
     </div>
   `,
-  styles: [`
+    styles: [`
     .process-tab {
       max-width: 700px;
     }

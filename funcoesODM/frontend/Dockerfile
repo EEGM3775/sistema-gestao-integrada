@@ -1,5 +1,6 @@
 # Stage 1: Build Angular application
-FROM node:18-alpine AS build
+# Node 22: o Angular 20 exige ^20.19 || ^22.12 || ^24 (o 18 saiu de suporte).
+FROM node:22-alpine AS build
 WORKDIR /app
 
 # Copy package files

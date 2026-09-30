@@ -42,10 +42,9 @@ interface PendingImport {
 }
 
 @Component({
-  selector: 'app-gcp-import-panel',
-  standalone: true,
-  imports: [CommonModule, FormsModule],
-  template: `
+    selector: 'app-gcp-import-panel',
+    imports: [CommonModule, FormsModule],
+    template: `
     <div class="import-panel">
 
       @if (!pendingReport()) {
@@ -134,7 +133,7 @@ interface PendingImport {
 
     </div>
   `,
-  styles: [`
+    styles: [`
     .import-panel {
       display: flex;
       flex-direction: column;

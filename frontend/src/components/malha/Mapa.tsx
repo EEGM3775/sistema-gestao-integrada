@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import maplibregl, { type Map as MapLibreMap, type StyleSpecification } from 'maplibre-gl'
+// O MapLibre 6 deixou de ter export default: o namespace inteiro, e os tipos à parte.
+import * as maplibregl from 'maplibre-gl'
+import type { Map as MapLibreMap, StyleSpecification } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { useTheme } from '@/hooks/useTheme'
 

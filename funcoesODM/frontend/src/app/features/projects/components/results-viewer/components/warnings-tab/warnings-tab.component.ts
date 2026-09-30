@@ -7,11 +7,10 @@ import { TaskWarnings, WarningSummary } from '../../../../services/results.servi
  * Mostra categorias de avisos e log completo
  */
 @Component({
-  selector: 'app-warnings-tab',
-  standalone: true,
-  imports: [CommonModule],
-  templateUrl: './warnings-tab.component.html',
-  styleUrls: ['./warnings-tab.component.scss']
+    selector: 'app-warnings-tab',
+    imports: [CommonModule],
+    templateUrl: './warnings-tab.component.html',
+    styleUrls: ['./warnings-tab.component.scss']
 })
 export class WarningsTabComponent {
   @Input() set warnings(value: TaskWarnings | null) {

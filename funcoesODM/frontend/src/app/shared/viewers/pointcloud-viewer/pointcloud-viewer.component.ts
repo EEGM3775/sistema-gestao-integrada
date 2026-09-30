@@ -9,11 +9,10 @@ import { Viewer3DService } from '../../../features/projects/project-3d/services/
 import { PotreeLoaderService } from '../../../features/projects/project-3d/services/potree-loader.service';
 
 @Component({
-  selector: 'app-pointcloud-viewer',
-  standalone: true,
-  imports: [CommonModule],
-  providers: [Viewer3DService, PotreeLoaderService],
-  template: `
+    selector: 'app-pointcloud-viewer',
+    imports: [CommonModule],
+    providers: [Viewer3DService, PotreeLoaderService],
+    template: `
     <div class="pcv-wrapper">
 
       <!-- Loading -->
@@ -51,7 +50,7 @@ import { PotreeLoaderService } from '../../../features/projects/project-3d/servi
       }
     </div>
   `,
-  styles: [`
+    styles: [`
     :host { display: block; width: 100%; height: 100%; }
 
     .pcv-wrapper {

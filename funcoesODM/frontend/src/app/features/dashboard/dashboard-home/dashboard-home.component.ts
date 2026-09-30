@@ -37,18 +37,17 @@ import { ProjectUI, ViewMode } from './models/dashboard.model';
  * Redução de tamanho: 1161 linhas → ~250 linhas (78% de redução)
  */
 @Component({
-  selector: 'app-dashboard-home',
-  standalone: true,
-  imports: [
-    CommonModule,
-    RouterLink,
-    StatsBarComponent,
-    SearchHeaderComponent,
-    ProjectGridComponent,
-    ProjectListComponent
-  ],
-  templateUrl: './dashboard-home.component.html',
-  styleUrls: ['./dashboard-home.component.scss']
+    selector: 'app-dashboard-home',
+    imports: [
+        CommonModule,
+        RouterLink,
+        StatsBarComponent,
+        SearchHeaderComponent,
+        ProjectGridComponent,
+        ProjectListComponent
+    ],
+    templateUrl: './dashboard-home.component.html',
+    styleUrls: ['./dashboard-home.component.scss']
 })
 export class DashboardHomeComponent implements OnInit {
   // Injeção de dependências

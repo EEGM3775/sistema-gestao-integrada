@@ -22,11 +22,10 @@ import { ProjectUI } from '../../models/dashboard.model';
  * - Exibir loading placeholder em caso de erro de imagem
  */
 @Component({
-  selector: 'app-project-list',
-  standalone: true,
-  imports: [CommonModule, RouterLink],
-  templateUrl: './project-list.component.html',
-  styleUrls: ['./project-list.component.scss']
+    selector: 'app-project-list',
+    imports: [CommonModule, RouterLink],
+    templateUrl: './project-list.component.html',
+    styleUrls: ['./project-list.component.scss']
 })
 export class ProjectListComponent {
   /**

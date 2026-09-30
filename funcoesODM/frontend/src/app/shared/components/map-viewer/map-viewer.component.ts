@@ -46,17 +46,16 @@ import {
  * - leaflet-map.service: Lógica de mapa e cálculos
  */
 @Component({
-  selector: 'app-map-viewer',
-  standalone: true,
-  imports: [
-    CommonModule,
-    MapControlsComponent,
-    LayerPanelComponent,
-    MapInfoPanelComponent
-  ],
-  providers: [LeafletMapService],
-  templateUrl: './map-viewer.component.html',
-  styleUrls: ['./map-viewer.component.scss']
+    selector: 'app-map-viewer',
+    imports: [
+        CommonModule,
+        MapControlsComponent,
+        LayerPanelComponent,
+        MapInfoPanelComponent
+    ],
+    providers: [LeafletMapService],
+    templateUrl: './map-viewer.component.html',
+    styleUrls: ['./map-viewer.component.scss']
 })
 export class MapViewerComponent implements OnInit, AfterViewInit, OnDestroy {
   @ViewChild('mapElement', { static: true }) mapElement!: ElementRef<HTMLElement>;

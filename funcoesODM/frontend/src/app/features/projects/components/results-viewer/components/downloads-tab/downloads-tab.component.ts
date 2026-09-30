@@ -8,11 +8,10 @@ import { SelectableAsset } from '../../models/results-viewer.model';
  * Suporta seleção múltipla e download em lote
  */
 @Component({
-  selector: 'app-downloads-tab',
-  standalone: true,
-  imports: [CommonModule, FormsModule],
-  templateUrl: './downloads-tab.component.html',
-  styleUrls: ['./downloads-tab.component.scss']
+    selector: 'app-downloads-tab',
+    imports: [CommonModule, FormsModule],
+    templateUrl: './downloads-tab.component.html',
+    styleUrls: ['./downloads-tab.component.scss']
 })
 export class DownloadsTabComponent {
   @Input() set assets(value: SelectableAsset[]) {

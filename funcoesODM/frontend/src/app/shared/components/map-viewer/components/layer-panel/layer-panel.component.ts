@@ -16,11 +16,10 @@ import { MapLayer } from '../../models/map-viewer.model';
  * - Indicar estado de cada layer
  */
 @Component({
-  selector: 'app-layer-panel',
-  standalone: true,
-  imports: [CommonModule],
-  templateUrl: './layer-panel.component.html',
-  styleUrls: ['./layer-panel.component.scss']
+    selector: 'app-layer-panel',
+    imports: [CommonModule],
+    templateUrl: './layer-panel.component.html',
+    styleUrls: ['./layer-panel.component.scss']
 })
 export class LayerPanelComponent {
   @Input() layers: MapLayer[] = [];

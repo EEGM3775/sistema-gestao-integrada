@@ -25,23 +25,22 @@ import { GcpEditorComponent } from './components/gcp-editor/gcp-editor.component
 import { ODM_DEFAULT_OPTIONS, ODM_OPTION_CATEGORIES, QUALITY_LEVELS } from './constants/odm-options.const';
 
 @Component({
-  selector: 'app-project-workspace',
-  standalone: true,
-  imports: [
-    CommonModule,
-    FormsModule,
-    RouterLink,
-    ButtonComponent,
-    LoadingSpinnerComponent,
-    ResultsViewerComponent,
-    PhotosTabComponent,
-    OptionsTabComponent,
-    ProcessTabComponent,
-    ResultsTabComponent,
-    GcpEditorComponent
-  ],
-  templateUrl: './project-workspace.component.html',
-  styleUrls: ['./project-workspace.component.scss']
+    selector: 'app-project-workspace',
+    imports: [
+        CommonModule,
+        FormsModule,
+        RouterLink,
+        ButtonComponent,
+        LoadingSpinnerComponent,
+        ResultsViewerComponent,
+        PhotosTabComponent,
+        OptionsTabComponent,
+        ProcessTabComponent,
+        ResultsTabComponent,
+        GcpEditorComponent
+    ],
+    templateUrl: './project-workspace.component.html',
+    styleUrls: ['./project-workspace.component.scss']
 })
 export class ProjectWorkspaceComponent implements OnInit, OnDestroy {
   private readonly router = inject(Router);

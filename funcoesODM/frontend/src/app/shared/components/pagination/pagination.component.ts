@@ -8,10 +8,9 @@ export interface PageEvent {
 }
 
 @Component({
-  selector: 'app-pagination',
-  standalone: true,
-  imports: [CommonModule],
-  template: `
+    selector: 'app-pagination',
+    imports: [CommonModule],
+    template: `
     <div class="pagination-container" *ngIf="totalItems() > 0">
       <div class="pagination-info">
         <span>
@@ -76,7 +75,7 @@ export interface PageEvent {
       </div>
     </div>
   `,
-  styles: [`
+    styles: [`
     .pagination-container {
       display: flex;
       justify-content: space-between;

@@ -28,12 +28,11 @@ import { MeasurementApiService } from '../../services/measurement-api.service';
 import { MeasItemComponent } from '../measurement-item/meas-item.component';
 
 @Component({
-  selector: 'app-meas-list',
-  standalone: true,
-  imports: [CommonModule, MeasItemComponent],
-  templateUrl: './meas-list.component.html',
-  styleUrls: ['./meas-list.component.scss'],
-  changeDetection: ChangeDetectionStrategy.OnPush
+    selector: 'app-meas-list',
+    imports: [CommonModule, MeasItemComponent],
+    templateUrl: './meas-list.component.html',
+    styleUrls: ['./meas-list.component.scss'],
+    changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class MeasListComponent {
   @Input() measurements: MeasurementData[] = [];
