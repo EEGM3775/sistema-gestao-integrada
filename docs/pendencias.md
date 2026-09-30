@@ -212,7 +212,8 @@ caminho de aprovar os números antigos em silêncio ([D202](historico-correcoes.
 era o único lugar onde aquela lição ainda estava escrita como cobrança.
 
 **Gatilho de fechamento:** os dois restantes podem ser apagados ao portar a última assertiva que
-eles têm e os novos não.
+eles têm e os novos não. O `pdca6_ritmo` ainda não tem sucessor escrito: o posto `PLANO` não tem
+roteiro de navegador próprio. *(O D223 os tinha listado como troca de URL — não é; 30/09/2026.)*
 
 ---
 ### D190 — o teste que fia os tetos é cego em 47 dos 74, e o motivo é o cache de inteiros do CPython · 🟠 aberto 20/09/2026
@@ -366,6 +367,20 @@ banco vazio. Então há duas perguntas separadas: (1) atualizar a imagem e as mi
 que é manutenção devida; (2) **se** a base referencial deve existir em staging, e por qual caminho
 (dump restaurado, subconjunto de UFs/meses, ou carga rodada lá). A (2) é do dono: 5,6 GB por ambiente
 é custo, e testar com uma UF e três meses pode bastar.
+
+**Andamento 30/09/2026 — preparado, não subido.** O `staging.env` ganhou o que a remodelagem exige
+(`SPICEDB_*` com segredo novo, `AUTORIZACAO_*`, `JWT_SESSION_*`; saiu o `JWT_REFRESH_DAYS` morto),
+o gate voltou a apontar para roteiros que existem ([D226](historico-correcoes.md)) e o banco tem
+backup em `~/backups/staging_pre_atualizacao_20260930.sql.gz` (WSL). **O nó que ficou:** o
+Postgres de staging roda `postgres:16-alpine`, sem `postgis`, sem `unaccent` e com
+`track_commit_timestamp=off`, e o compose de hoje pede `postgis/postgis:16-3.4`. Trocar a imagem
+sobre o volume antigo muda a colação de musl para glibc (índices de texto precisam de `REINDEX`) e
+não cria as extensões (o init não reroda). Dois caminhos, ambos exigem a mão do dono: **(1)**
+recriar o volume (`down.sh -v`, `up.sh`, `seed_staging.sh`) — os dados são só fixture e é o
+caminho que a produção vai percorrer; **(2)** no lugar: subir só `postgres` com a imagem nova,
+`CREATE EXTENSION postgis, unaccent` em `template1` e `erp_db`, `REINDEX DATABASE` em `erp_db` e
+`iam_db`, e só então o resto. Depois de qualquer um: `sincronizar_pdp` (IAM),
+`modo_autorizacao --todos pdp --forcar` (backend) e `bash infra/staging/validate.sh`.
 
 ### D179 — o ajuste de vencimento só conhece feriado onde a base foi sincronizada e o lote foi geocodificado · 🟠 aberto 16/09/2026
 
@@ -941,37 +956,8 @@ o que resolve na tela — mas deixa as duas trilhas contando histórias diferent
 
 ## 🟢 Baixas
 
-### D222 — `pdca1_cronograma_test.py` falha por causa da data e do plano do demo · 🟢 aberto 29/09/2026
-
-Dois checks, nenhum de código de produção: **(a)** "o sucessor pula o fim de semana" monta o plano a
-partir da segunda-feira da semana corrente e espera o sucessor na segunda seguinte — rodado em
-29/09/2026, essa segunda é 12/10, feriado, e o calendário empurra (certo) para a terça; **(b)** o bloco
-"plano modelo" espera poder marcar um modelo, e o tenant demo está no plano `profissional`, que tem
-`planos_modelo: 0` — o 402 `quota_excedida` é a regra funcionando. **Correção:** datar o cenário longe
-de feriado (ou num calendário sem feriados) e subir o demo de plano durante o bloco do modelo, como o
-`d23_teto_por_plano_test.py` faz.
-
-### D223 — quatro roteiros de navegador que falham por conta própria · 🟢 aberto 29/09/2026
-
-Da volta inteira das E2E de 29/09/2026, sem relação com a remodelagem:
-`pdca5_quadro_browser_test.py` e `pdca6_ritmo_browser_test.py` navegam para
-`/app/pdca/obra/<id>/cronograma/<id>`, rota que saiu na reorganização do PDCA
-(`/app/pdca/o/:obraId/<posto>`); `pdca_cockpit_browser_test.py` procura `pdca.` no texto da tela e
-acha o **nome de uma obra** criada por outro roteiro ("E2E PDCA.5 …"); `browser_smoke_test.py` aponta
-para o Vite (`:5173`), que o stack não sobe. **Correção:** as rotas novas, um padrão que não case com
-nome de obra, e o gateway (`:8090`) no smoke. `pdca_frente_test.py` e `pdca_semana_campo_browser_test.py`
-só pedem o seed da semana (`semear_pdca_execucao --tenant demo`), como eles mesmos dizem.
-
-### D206 — o nome da senha do superusuário do Postgres está corrompido em todo env-file · 🟢 aberto 25/09/2026
-
-`POSTGRES_SUPbackendASSWORD` (em `deploy/compose/base.yml`, nos `.env.example` e no `staging.env` com o
-segredo real) é resto de uma busca-e-troca de "ERP" por "backend" — o nome pretendido era
-`POSTGRES_SUPERPASSWORD`/`POSTGRES_SUPERUSER_PASSWORD`. Funciona porque está igual em todo lugar; o
-serviço `spicedb-banco` o usa pelo mesmo nome. Trocar exige fazer em todos os arquivos **e** no
-`staging.env` de uma vez, senão o Postgres do staging sobe com a senha padrão.
-
 ---
-Fora o D206, o D222 e o D223, nenhum em aberto. O **D147** (seis erros de `eslint` em três telas da PDCA.3/4, que desligavam o
+Nenhum em aberto (D206, D222 e D223 fechados em 30/09/2026 — [histórico](historico-correcoes.md)). O **D147** (seis erros de `eslint` em três telas da PDCA.3/4, que desligavam o
 fast refresh justamente na tela em que se passa o dia digitando) e o **D148** (o traceback `CRÍTICO`
 impresso a cada execução da suíte) foram corrigidos em 15/09/2026, junto do fechamento da PDCA.5;
 relatos em [historico-correcoes.md](historico-correcoes.md).

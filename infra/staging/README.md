@@ -59,6 +59,15 @@ Reusa os E2E das fases apontados ao gateway HTTPS de staging (confiando no cert 
 | `phase8_tenancy_test.py` | isolamento multi-tenant: RLS, `tenant` NOT NULL, uniques por-tenant | 8 |
 | `phase9_auditoria_test.py` | trilha de auditoria imutável (`AuditLog`) | 9.E |
 | `phaseC_whatsapp_test.py` | WhatsApp in-process (webhook HMAC + Celery) | 11.3 / C |
+| `seg1_segundo_fator_test.py` | segundo fator (TOTP) para admin e supervisor | remodelagem 1 |
+| `seg4_token_enxuto_test.py` | token enxuto, `sid`, PDP decidindo em todo módulo | remodelagem 4 |
+| `seg5_bff_test.py` | BFF: nenhum token no navegador, `aud` por serviço, anti-CSRF | remodelagem 5 |
+| `seg6_step_up_test.py` | step-up na classe C | remodelagem 6 |
+
+Os roteiros moram em `testes/e2e/`. Ficam fora do gate o `seg6_caos_test.py` (derruba SpiceDB,
+Redis e IAM — é do dev) e o `seg2_pdp_sombra_test.py` (fase 2, aposentada pela 4). Antes do gate, o
+PDP precisa estar populado e virado: `sincronizar_pdp` na IAM e `modo_autorizacao --todos pdp
+--forcar` no backend.
 
 ## Checagens manuais (fora do gate)
 

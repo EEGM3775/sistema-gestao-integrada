@@ -10,6 +10,54 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D226 — o gate do staging rodava roteiros que não existem mais · ✅ corrigido 30/09/2026
+
+Achado ao preparar o staging para o pentest. `infra/staging/validate.sh` chamava
+`infra/gateway/<roteiro>.py`, e os roteiros moram em `testes/e2e/` desde 16/08/2026 ([D95](#)): os
+seis falhariam com "arquivo não encontrado" — o gate estava morto havia seis semanas sem ninguém
+ver, porque o staging também não era subido. E não cobria nada da remodelagem da segurança, que é
+justamente o escopo do pentest. **Correção:** caminho `testes/e2e/`; entram `seg1_segundo_fator`,
+`seg4_token_enxuto`, `seg5_bff` e `seg6_step_up` (ficam fora o `seg6_caos`, que derruba serviços do
+dev, e o `seg2_pdp_sombra`, da fase 2 aposentada); `SGI_IAM_CONTAINER` exportado para o
+`seg6_step_up` ler a IAM de staging e não a do dev; espaço entre roteiros de 12 s para 50 s, que é o
+que o limite de login pede com várias entradas por roteiro.
+
+### D223 — quatro roteiros de navegador que falham por conta própria · ✅ corrigido 30/09/2026
+
+Dois consertados e dois que eram outro achado. `pdca_cockpit_browser_test.py` procurava `pdca.` no
+texto da tela e achava o **nome de uma obra** criada por outro roteiro ("E2E PDCA.5 …"): a busca
+passou a ser `(?<!e2e )pdca\.` — o nome de obra fica de fora, a citação de fatia continua cobrada
+(29/29). `browser_smoke_test.py` apontava para o Vite (`:5173`) e para telas de antes da carteira de
+clientes (`/clientes`, `.modal-content`, "Adicionar Cliente"): reescrito para o gateway (`:8090`), a
+carteira, o formulário "Novo cliente" e a barra lateral, com checks e código de saída (8/8).
+`pdca5_quadro_browser_test.py` e `pdca6_ritmo_browser_test.py` **não** são troca de URL: são as duas
+linhas que restam do [D195](pendencias.md) — a tela foi redesenhada e a régua deles precisa ser
+portada, não redirecionada. Seguem lá.
+
+### D222 — `pdca1_cronograma_test.py` falha por causa da data e do plano do demo · ✅ corrigido 30/09/2026
+
+**(a)** o calendário do teste passou a nascer com `considera_feriados: False` — a seção prova o fim
+de semana, e com feriado na conta o resultado dependia do dia em que se rodava (em 29/09/2026 a
+"segunda seguinte" era 12/10); feriado no CPM segue coberto na suíte do módulo, com data fixa.
+**(b)** o bloco do plano modelo sobe o demo para o `empresarial` e devolve o plano de antes, também
+por `atexit` se o roteiro morrer no meio — o helper novo `testes/e2e/_plano.py` (ler e trocar o
+plano pelo shell da IAM, com a espera do cache de 30 s da ficha). Rodando, apareceram mais dois, que
+a falha anterior escondia: a listagem de cronogramas do demo acumulou 117 planos de execuções
+antigas e o do teste caía fora da primeira página (a listagem passou a ser `?obra=`); e a seção 14
+cobrava o **409** ao excluir obra com plano vigente — que a lixeira de 13/09/2026 aposentou de
+propósito ([lixo.md §2](arquitetura/lixo.md)). A seção agora cobra a lápide: as duas obras do teste
+vão para a lixeira, saem da vista e o admin as acha lá. As 13 obras "E2E PDCA.1" que as execuções
+antigas deixaram no demo de dev foram para a lixeira (o demo estava no teto de 40 obras do
+`profissional`). 102/102.
+
+### D206 — o nome da senha do superusuário do Postgres estava corrompido em todo env-file · ✅ corrigido 30/09/2026
+
+`POSTGRES_SUPbackendASSWORD` virou `POSTGRES_SUPERUSER_PASSWORD` — o mesmo nome que o
+`spicedb-banco` já usava por dentro — de uma vez em `deploy/compose/base.yml`, nos dois
+`.env.example` e no `staging.env` real (fora do git). Só o nome mudou: o valor é o mesmo, então o
+Postgres do staging, cujo superusuário foi criado com ele, segue entrando. O `.env` de dev não o
+define e continua no padrão.
+
 ### D225 — o código do drone que as fases 4, 5 e 6 exigem não estava versionado em lugar nenhum · ✅ corrigido 29/09/2026
 
 `ImgDrone/` está no `.gitignore` do repositório, e o repositório próprio dele não tinha **nenhum

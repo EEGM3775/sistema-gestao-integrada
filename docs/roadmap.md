@@ -31,6 +31,11 @@ Cada fase concluída foi validada por um script E2E em [testes/e2e/](../testes/e
 `orc8_carga_base_test.py`, `pdca_cockpit_test.py`, `pdca_frente_test.py`).
 *(Moraram em `infra/gateway/` até 16/08/2026 — [D95](historico-correcoes.md).)*
 
+### Mudanças de 30/09/2026
+
+- **D206 · D222 · D223 · D226 ✅ 30/09/2026** — nome da senha do superusuário do Postgres corrigido; `pdca1_cronograma` 102/102, `pdca_cockpit_browser` 29/29, `browser_smoke` 8/8; gate do staging com os roteiros da remodelagem. Relatos em [historico-correcoes.md](historico-correcoes.md).
+- **Staging para o pentest 🚧** — env e gate prontos, backup feito; falta subir (troca da imagem do Postgres, decisão do dono). → [D185](pendencias.md)
+
 ### Mudanças de 29/09/2026
 
 - **Remodelagem fase 5 — BFF ✅ 29/09/2026**: nenhum token no navegador (cookies HttpOnly; o gateway troca o da sessão pelo access de cada serviço, `auth_request`); anti-CSRF em toda escrita; `aud` por serviço (`sgi-api`, `sgi-drone`, `sgi-iam`) e `typ` (`at+jwt` / `svc+jwt`); token de serviço com escopo; o app do drone sem `localStorage`. E2E `seg5_bff_test.py` 21/21. → [acesso-e-permissoes.md §10.16](acesso-e-permissoes.md)

@@ -195,9 +195,12 @@ with sync_playwright() as p:
         "a ausência das taxas de segurança é declarada em português de obra",
         "homem-hora" in baixo,
     )
+    #: O `(?<!e2e )` não é folga na régua: os roteiros vizinhos criam obras
+    #: chamadas "E2E PDCA.5 …", e o nome de obra aparece na tela por direito —
+    #: sem ele o check acusava o nome, não uma citação de fatia (D223).
     check(
         "e sem citar documento interno nem número de fatia",
-        "pdca." not in baixo and "§" not in corpo,
+        not re.search(r"(?<!e2e )pdca\.", baixo) and "§" not in corpo,
     )
     ligacoes = [
         pagina.locator(f"a[href='/app/pdca/o/{obra_id}/{posto}']").count()

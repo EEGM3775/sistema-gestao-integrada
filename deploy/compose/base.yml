@@ -40,7 +40,7 @@ services:
     command: ["postgres", "-c", "track_commit_timestamp=on"]
     environment:
       POSTGRES_USER: ${POSTGRES_SUPERUSER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_SUPbackendASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:-postgres}
       POSTGRES_DB: postgres
       backend_DB: ${POSTGRES_DB:-erp_db}
       backend_USER: ${POSTGRES_USER:-erp_app}
@@ -94,10 +94,7 @@ services:
     entrypoint: ["sh", "/criar_banco.sh"]
     environment:
       POSTGRES_SUPERUSER: ${POSTGRES_SUPERUSER:-postgres}
-      # O nome da variável tem um erro antigo de busca-e-troca ("ERP" → "backend")
-      # que está igual em todo env-file, inclusive o de staging com o segredo
-      # real. Usa-se o mesmo nome até a troca ser feita em todos de uma vez.
-      POSTGRES_SUPERUSER_PASSWORD: ${POSTGRES_SUPbackendASSWORD:-postgres}
+      POSTGRES_SUPERUSER_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:-postgres}
       SPICEDB_DB: ${SPICEDB_DB:-spicedb_db}
       SPICEDB_DB_USER: ${SPICEDB_DB_USER:-spicedb_app}
       SPICEDB_DB_PASSWORD: ${SPICEDB_DB_PASSWORD:-spicedb_app_senha_dev}
