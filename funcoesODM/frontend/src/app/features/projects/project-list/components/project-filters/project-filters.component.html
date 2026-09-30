@@ -1,0 +1,130 @@
+<div class="filters-section">
+  <!-- Barra de Filtros -->
+  <div class="filters-row">
+    <!-- Busca -->
+    <div class="search-box">
+      <span class="search-icon">🔍</span>
+      <input
+        type="text"
+        placeholder="Buscar por nome ou descrição..."
+        [value]="filters.search"
+        (input)="onSearch($event)"
+      />
+      <button
+        *ngIf="filters.search"
+        class="clear-btn"
+        (click)="clearSearch()"
+        title="Limpar busca"
+      >
+        ×
+      </button>
+    </div>
+
+    <!-- Filtro por Status -->
+    <div class="filter-group">
+      <label>Status:</label>
+      <select [value]="filters.status" (change)="onStatusChange($event)">
+        <option value="all">Todos</option>
+        <option *ngFor="let s of statusOptions" [value]="s.value">
+          {{ s.label }}
+        </option>
+      </select>
+    </div>
+
+    <!-- Filtro por Data -->
+    <div class="filter-group">
+      <label>De:</label>
+      <input
+        type="date"
+        [value]="filters.dateFrom"
+        (change)="onDateFromChange($event)"
+      />
+    </div>
+    <div class="filter-group">
+      <label>Até:</label>
+      <input
+        type="date"
+        [value]="filters.dateTo"
+        (change)="onDateToChange($event)"
+      />
+    </div>
+
+    <!-- Ordenação -->
+    <div class="filter-group">
+      <label>Ordenar por:</label>
+      <select [value]="sortConfig.field" (change)="onSortFieldChange($event)">
+        <option *ngFor="let opt of sortOptions" [value]="opt.value">
+          {{ opt.label }}
+        </option>
+      </select>
+    </div>
+
+    <!-- Direção da Ordenação -->
+    <button
+      class="sort-direction-btn"
+      (click)="toggleSortDirection()"
+      [title]="sortConfig.direction === 'asc' ? 'Ordem crescente' : 'Ordem decrescente'"
+    >
+      {{ sortConfig.direction === 'asc' ? '↑' : '↓' }}
+    </button>
+
+    <!-- Toggle de Visualização -->
+    <div class="view-toggle">
+      <button
+        class="toggle-btn"
+        [class.active]="viewMode === 'grid'"
+        (click)="setViewMode('grid')"
+        title="Visualização em grade"
+      >
+        ⊞
+      </button>
+      <button
+        class="toggle-btn"
+        [class.active]="viewMode === 'list'"
+        (click)="setViewMode('list')"
+        title="Visualização em lista"
+      >
+        ☰
+      </button>
+    </div>
+  </div>
+
+  <!-- Filtros Ativos -->
+  <div *ngIf="hasActiveFilters()" class="active-filters">
+    <span class="active-filters-label">Filtros ativos:</span>
+    
+    <app-filter-chip
+      *ngIf="filters.status !== 'all'"
+      [label]="'Status: ' + getStatusLabel(filters.status)"
+      (remove)="removeFilter('status')"
+    />
+    
+    <app-filter-chip
+      *ngIf="filters.search"
+      [label]="'Busca: ' + filters.search"
+      (remove)="removeFilter('search')"
+    />
+    
+    <app-filter-chip
+      *ngIf="filters.dateFrom"
+      [label]="'De: ' + filters.dateFrom"
+      (remove)="removeFilter('dateFrom')"
+    />
+    
+    <app-filter-chip
+      *ngIf="filters.dateTo"
+      [label]="'Até: ' + filters.dateTo"
+      (remove)="removeFilter('dateTo')"
+    />
+    
+    <button class="clear-all-btn" (click)="clearAllFilters()">
+      Limpar todos
+    </button>
+  </div>
+
+  <!-- Resumo de Resultados -->
+  <div class="results-summary">
+    <span class="count">{{ resultsCount }}</span>
+    <span class="total">de {{ totalCount }} projeto{{ totalCount !== 1 ? 's' : '' }}</span>
+  </div>
+</div>

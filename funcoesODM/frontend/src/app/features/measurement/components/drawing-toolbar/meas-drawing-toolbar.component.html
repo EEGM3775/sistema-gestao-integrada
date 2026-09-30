@@ -1,0 +1,98 @@
+<!-- MeasDrawingToolbarComponent - barra de ferramentas de desenho -->
+<div class="measurement-toolbar">
+
+  <!-- Botões de ativação de ferramenta -->
+  <div class="toolbar-group">
+    <button
+      class="tool-btn"
+      [class.active]="activeTool === 'distance'"
+      [disabled]="!hasDataSource"
+      (click)="toolActivated.emit('distance')"
+      title="Medir distância entre pontos">
+      <span>📏</span>
+      <span>Distância</span>
+    </button>
+
+    <button
+      class="tool-btn"
+      [class.active]="activeTool === 'area'"
+      [disabled]="!hasDataSource"
+      (click)="toolActivated.emit('area')"
+      title="Medir área de polígono">
+      <span>⬜</span>
+      <span>Área</span>
+    </button>
+
+    <button
+      class="tool-btn"
+      [class.active]="activeTool === 'volume'"
+      [disabled]="!hasDSM"
+      (click)="toolActivated.emit('volume')"
+      [title]="hasDSM ? 'Calcular volume acima do ponto mais baixo (DSM)' : 'Volume requer DSM processado'">
+      <span>📦</span>
+      <span>Volume</span>
+    </button>
+
+    <button
+      class="tool-btn"
+      [class.active]="activeTool === 'height'"
+      [disabled]="!hasDSM"
+      (click)="toolActivated.emit('height')"
+      [title]="hasDSM ? 'Medir diferença de altura entre dois pontos (DSM)' : 'Altura requer DSM processado'">
+      <span>↕️</span>
+      <span>Altura</span>
+    </button>
+
+    <button
+      class="tool-btn"
+      [class.active]="activeTool === 'elevation_profile'"
+      [disabled]="!hasDSM"
+      (click)="toolActivated.emit('elevation_profile')"
+      [title]="hasDSM ? 'Tracar perfil de elevacao ao longo de uma linha (DSM)' : 'Perfil de elevacao requer DSM processado'">
+      <span>📈</span>
+      <span>Perfil</span>
+    </button>
+  </div>
+
+  <!-- Ações contextuais: durante desenho ou em repouso -->
+  <div class="toolbar-actions">
+    @if (isDrawing) {
+      @if (activeTool !== 'height' && !isQuerying) {
+        <button
+          class="action-btn"
+          (click)="undoRequest.emit()"
+          [disabled]="drawingPointsCount === 0"
+          title="Desfazer último ponto">
+          <span>↩️</span>
+          <span>Desfazer</span>
+        </button>
+        <button
+          class="action-btn success"
+          (click)="completeRequest.emit()"
+          [disabled]="!canComplete"
+          title="Finalizar medição">
+          <span>✓</span>
+          <span>Finalizar</span>
+        </button>
+      }
+      @if (!isQuerying) {
+        <button
+          class="action-btn danger"
+          (click)="cancelRequest.emit()"
+          title="Cancelar medição">
+          <span>✕</span>
+          <span>Cancelar</span>
+        </button>
+      }
+    } @else {
+      <button
+        class="action-btn danger"
+        (click)="clearAllRequest.emit()"
+        title="Limpar todas as medições">
+        <span>🗑️</span>
+        <span>Limpar tudo</span>
+      </button>
+    }
+  </div>
+
+</div>

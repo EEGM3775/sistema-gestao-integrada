@@ -1,0 +1,55 @@
+:host {
+  display: block;
+}
+
+.controls-panel {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  z-index: 100;
+}
+
+.control-group {
+  display: flex;
+  flex-direction: column;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+  backdrop-filter: blur(10px);
+}
+
+.control-btn {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: #475569;
+  transition: all 0.2s;
+
+  svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  &:hover {
+    background: #f1f5f9;
+    color: #3b82f6;
+  }
+
+  &.active {
+    background: #3b82f6;
+    color: white;
+  }
+
+  &:not(:last-child) {
+    border-bottom: 1px solid #e2e8f0;
+  }
+}

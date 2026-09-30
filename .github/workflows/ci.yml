@@ -100,16 +100,18 @@ jobs:
           CREATE ROLE erp_app WITH LOGIN PASSWORD 'erp_app_ci' CREATEDB;
           SQL
 
-      # MAP.0 — a extensão espacial vai no TEMPLATE, pelo superuser. `erp_app` é
+      # MAP.0 — as extensões vão no TEMPLATE, pelo superuser. `erp_app` é
       # role comum (é o que faz a RLS FORCE valer) e não pode criar extensão; o
       # `test_erp_db` que o runner cria a cada execução é copiado de `template1`,
-      # então é lá que a extensão precisa estar. Espelha infra/postgres/init/.
-      - name: Habilitar PostGIS no template1 (superuser)
+      # então é lá que elas precisam estar. Espelha infra/postgres/init/ — o
+      # `unaccent` é o da busca (nucleo/busca.py); sem ele, D213.
+      - name: Habilitar PostGIS e unaccent no template1 (superuser)
         env:
           PGPASSWORD: postgres
         run: |
           psql -h localhost -U postgres -d template1 -v ON_ERROR_STOP=1 <<'SQL'
           CREATE EXTENSION IF NOT EXISTS postgis;
+          CREATE EXTENSION IF NOT EXISTS unaccent;
           SQL
 
       - name: Rodar a suíte (manage.py test)
@@ -281,10 +283,15 @@ jobs:
 
       # Varredura de filesystem: vuln (só com correção) + SEGREDOS vazados.
       # node_modules já existe (npm ci acima) — pulado para não escanear deps
-      # de terceiros duas vezes. ImgDrone é gitignored (fora do checkout).
+      # de terceiros duas vezes. O drone (funcoesODM/: pom.xml e package-lock
+      # do Angular) entra na varredura desde o D225; ImgDrone segue fora do checkout.
+      # Fixada pelo SHA do commit, não pela tag (D212): depois de um ataque de
+      # cadeia de suprimentos a Aqua reescreveu as tags para o prefixo `v`, e a
+      # `0.28.0` sumiu. Tag muda; SHA não. Subir de versão = trocar o SHA
+      # conferido em github.com/aquasecurity/trivy-action/releases.
       - name: Trivy — vuln (fixáveis) + segredos
         if: ${{ !cancelled() }}
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           scan-type: fs
           scan-ref: .

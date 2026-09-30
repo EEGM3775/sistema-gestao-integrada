@@ -1,0 +1,16 @@
+<div class="empty-state">
+  <div class="empty-icon">📂</div>
+  <h3>{{ hasActiveFilters ? 'Nenhum projeto encontrado' : 'Você ainda não tem projetos' }}</h3>
+  <p>{{ hasActiveFilters ? 'Tente ajustar ou limpar os filtros' : 'Crie seu primeiro projeto de fotogrametria para começar' }}</p>
+  
+  <div class="empty-actions">
+    <app-button
+      *ngIf="hasActiveFilters"
+      variant="outline"
+      (click)="onClearFilters()"
+    >
+      Limpar Filtros
+    </app-button>
+    <app-button routerLink="/projects/new" variant="primary" icon="plus" label="Criar Projeto" [cta]="true"></app-button>
+  </div>
+</div>

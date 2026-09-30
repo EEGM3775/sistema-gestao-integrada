@@ -1,0 +1,74 @@
+<div class="projects-list">
+  <!-- List Header -->
+  <div class="list-header">
+    <span class="col-name">Nome</span>
+    <span class="col-status">Status</span>
+    <span class="col-images">Imagens</span>
+    <span class="col-area">Área</span>
+    <span class="col-date">Data</span>
+    <span class="col-actions">Ações</span>
+  </div>
+
+  <!-- List Items -->
+  <div
+    *ngFor="let project of projects"
+    class="list-item"
+    [routerLink]="['/projects', project.id]"
+  >
+    <!-- Nome + Thumbnail -->
+    <div class="col-name">
+      <img
+        [src]="project.thumbnail"
+        [alt]="project.name"
+        class="list-thumbnail"
+        (error)="onImageError($event)"
+      />
+      <div class="project-info">
+        <span class="project-name">{{ project.name }}</span>
+        <span class="project-desc">{{ project.description }}</span>
+      </div>
+    </div>
+
+    <!-- Status -->
+    <div class="col-status">
+      <span class="status-pill" [class]="project.status.toLowerCase()">
+        {{ getStatusLabel(project.status) }}
+      </span>
+      <div *ngIf="project.status === 'PROCESSING'" class="mini-progress">
+        <div class="mini-progress-fill" [style.width.%]="project.progress"></div>
+      </div>
+    </div>
+
+    <!-- Imagens -->
+    <div class="col-images">{{ project.imageCount }}</div>
+
+    <!-- Área -->
+    <div class="col-area">{{ project.area }}</div>
+
+    <!-- Data -->
+    <div class="col-date">{{ project.createdAt | date:'dd/MM/yyyy' }}</div>
+
+    <!-- Ações -->
+    <div class="col-actions">
+      <button class="icon-btn" (click)="onMapClick($event, project)" title="Ver Mapa">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/>
+        </svg>
+      </button>
+      <button class="icon-btn" (click)="onDownloadClick($event, project)" title="Download">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+      </button>
+      <button class="icon-btn" (click)="onMenuClick($event, project)" title="Mais">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="1"/>
+          <circle cx="12" cy="5" r="1"/>
+          <circle cx="12" cy="19" r="1"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+</div>

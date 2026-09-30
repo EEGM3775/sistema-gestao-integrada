@@ -1,0 +1,314 @@
+<div class="workspace">
+  <!-- Loading Overlay -->
+  <div class="loading-overlay" *ngIf="initialLoading()">
+    <div class="loader">
+      <div class="spinner"></div>
+      <p>{{ isNewProject ? 'Criando projeto...' : 'Carregando projeto...' }}</p>
+    </div>
+  </div>
+
+  <!-- Main Workspace -->
+  <ng-container *ngIf="!initialLoading()">
+    <!-- Top Header Bar -->
+    <header class="workspace-header">
+      <div class="header-left">
+        <a routerLink="/projects" class="back-btn" title="Voltar para Projetos">←</a>
+        <div class="project-title">
+          <input
+            #nameInput
+            type="text"
+            class="name-input"
+            [value]="projectName()"
+            (input)="onNameChange($event)"
+            (blur)="onNameBlur()"
+            (keydown.enter)="nameInput.blur()"
+            placeholder="Nome do Projeto"
+          />
+          <span class="save-status" [class]="saveStatus()">
+            {{ saveStatus() === 'saving' ? '● Salvando...' : saveStatus() === 'saved' ? '✓ Salvo' : '' }}
+          </span>
+        </div>
+      </div>
+      <div class="header-right">
+        <button class="btn-process" [disabled]="!canProcessAll()" (click)="processAllChunks()">
+          ▶ Processar Tudo
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Body - Split View -->
+    <div class="workspace-body">
+      
+      <!-- LEFT SIDEBAR: Project + Chunks List -->
+      <aside class="sidebar-left">
+        <!-- Project Info Section -->
+        <div class="sidebar-section">
+          <div class="section-title">
+            <span>🏗️ PROJETO</span>
+          </div>
+          <div class="project-info">
+            <div class="info-row">
+              <span class="label">Imagens:</span>
+              <span class="value">{{ totalImages() }}</span>
+            </div>
+            <div class="info-row">
+              <span class="label">Chunks:</span>
+              <span class="value">{{ chunks().length }}</span>
+            </div>
+            <div class="info-row">
+              <span class="label">Status:</span>
+              <span class="value status-badge" [class]="projectStatus()">{{ getProjectStatusLabel() }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Chunks List Section -->
+        <div class="sidebar-section chunks-section">
+          <div class="section-title">
+            <span>📦 CHUNKS</span>
+            <button class="btn-icon" (click)="createNewChunk()" title="Novo Chunk">+</button>
+          </div>
+          
+          <div class="chunks-list">
+            @for (chunk of chunks(); track chunk.id) {
+              <div 
+                class="chunk-item"
+                [class.selected]="selectedChunk()?.id === chunk.id"
+                [class.empty]="chunk.status === 'EMPTY'"
+                [class.ready]="chunk.status === 'READY'"
+                [class.running]="chunk.status === 'RUNNING'"
+                [class.completed]="chunk.status === 'COMPLETED'"
+                [class.failed]="chunk.status === 'FAILED'"
+                (click)="selectChunk(chunk)"
+              >
+                <div class="chunk-status-icon">{{ getChunkIcon(chunk.status) }}</div>
+                <div class="chunk-details">
+                  <span class="chunk-name">{{ chunk.name }}</span>
+                  <span class="chunk-meta">
+                    📷 {{ chunk.imageCount }}
+                    @if (chunk.status === 'RUNNING') {
+                      <span class="progress-mini">{{ chunk.progress }}%</span>
+                    }
+                    @if (chunk.status === 'COMPLETED' && chunk.processingTime) {
+                      <span class="time-mini">🕐 {{ formatTime(chunk.processingTime) }}</span>
+                    }
+                  </span>
+                  @if (chunk.status === 'FAILED' && chunk.errorMessage) {
+                    <span class="chunk-error-msg" [title]="chunk.errorMessage">{{ chunk.errorMessage }}</span>
+                  }
+                </div>
+                <div class="chunk-actions">
+                  @if (chunk.status === 'FAILED') {
+                    <button
+                      class="btn-retry-chunk"
+                      [disabled]="isRetrying(chunk.id)"
+                      (click)="$event.stopPropagation(); retryChunk(chunk)"
+                      title="Tentar novamente"
+                    >{{ isRetrying(chunk.id) ? '...' : '↺' }}</button>
+                  }
+                  <button class="btn-chunk-menu" (click)="openChunkMenu($event, chunk)" title="Opções">⋮</button>
+                </div>
+              </div>
+            }
+
+            @if (chunks().length === 0) {
+              <div class="empty-chunks">
+                <p>Nenhum chunk ainda</p>
+                <button class="btn-secondary" (click)="createNewChunk()">+ Criar Primeiro Chunk</button>
+              </div>
+            }
+          </div>
+        </div>
+      </aside>
+
+      <!-- RIGHT PANEL: Chunk Detail -->
+      <main class="main-panel">
+        @if (selectedChunk()) {
+          <!-- Chunk Header -->
+          <div class="chunk-header">
+            <div class="chunk-header-left">
+              <input
+                type="text"
+                class="chunk-name-input"
+                [value]="selectedChunk()!.name"
+                (input)="onChunkNameChange($event)"
+                (blur)="saveChunkName()"
+              />
+              <span class="chunk-status-label" [class]="selectedChunk()!.status.toLowerCase()">
+                {{ getChunkStatusLabel(selectedChunk()!.status) }}
+              </span>
+            </div>
+            <div class="chunk-header-right">
+              <span class="chunk-info">{{ selectedChunk()!.imageCount }} fotos</span>
+              @if (selectedChunk()!.processingTime) {
+                <span class="chunk-info">🕐 {{ formatTime(selectedChunk()!.processingTime) }}</span>
+              }
+              <button 
+                class="btn-process-chunk" 
+                [disabled]="!canProcessChunk(selectedChunk()!)"
+                (click)="processChunk(selectedChunk()!)"
+              >
+                ▶ Processar
+              </button>
+              <button class="btn-delete-chunk" (click)="deleteCurrentChunk()" title="Excluir Chunk">🗑️</button>
+            </div>
+          </div>
+
+          <!-- Chunk Tabs -->
+          <div class="chunk-tabs">
+            <button 
+              class="tab" 
+              [class.active]="activeTab() === 'photos'"
+              (click)="setActiveTab('photos')"
+            >
+              📷 Fotos
+              <span class="tab-badge">{{ chunkImages().length }}</span>
+            </button>
+            <button 
+              class="tab" 
+              [class.active]="activeTab() === 'options'"
+              (click)="setActiveTab('options')"
+            >
+              ⚙️ Opções
+            </button>
+            <button 
+              class="tab" 
+              [class.active]="activeTab() === 'process'"
+              (click)="setActiveTab('process')"
+            >
+              🚀 Processar
+            </button>
+            <button 
+              class="tab" 
+              [class.active]="activeTab() === 'results'"
+              (click)="setActiveTab('results')"
+              [disabled]="selectedChunk()!.status !== 'COMPLETED'"
+            >
+              📊 Resultados
+            </button>
+          </div>
+
+          <!-- Tab Content -->
+          <div class="tab-content">
+            
+            <!-- PHOTOS TAB -->
+            @if (activeTab() === 'photos') {
+              <app-photos-tab
+                [projectId]="project()?.id || 0"
+                [projectImages]="projectImagesNotInChunk()"
+                [chunkImages]="chunkImages()"
+                [selectedChunkImages]="selectedChunkImages()"
+                [selectedProjectImages]="selectedProjectImages()"
+                [isUploading]="isUploading()"
+                [isDragOver]="isDragOver()"
+                [uploadProgress]="uploadProgress()"
+                [uploadingFiles]="uploadingFiles()"
+                [maxFileSizeMb]="maxFileSizeMb()"
+                [maxRequestSizeMb]="maxRequestSizeMb()"
+                [hardMaxFileSizeMb]="hardMaxFileSizeMb()"
+                [hardMaxRequestSizeMb]="hardMaxRequestSizeMb()"
+                (filesSelected)="onFilesSelected($event)"
+                (dragOver)="onDragOver($event)"
+                (dragLeave)="onDragLeave($event)"
+                (drop)="onDrop($event)"
+                (addImage)="addImageToChunk($event)"
+                (addAllImages)="addAllImagesToChunk()"
+                (addSelectedToChunk)="addSelectedImagesToChunk()"
+                (removeSelectedImages)="removeSelectedFromChunk()"
+                (toggleImageSelection)="toggleChunkImageSelection($event)"
+                (toggleProjectImageSelection)="toggleProjectImageSelection($event)"
+                (selectAllProjectImages)="selectAllProjectImages()"
+                (deselectAllProjectImages)="deselectAllProjectImages()"
+                (saveLimits)="handleSaveLimits($event)"
+              />
+            }
+
+            <!-- OPTIONS TAB -->
+            @if (activeTab() === 'options') {
+              <app-options-tab
+                [chunk]="selectedChunk()!"
+                [chunkOptions]="chunkOptions"
+                (chunkNameChange)="onChunkNameChange($event)"
+                (chunkNameSave)="saveChunkName()"
+                (chunkDescriptionChange)="onChunkDescriptionChange($event)"
+                (chunkDescriptionSave)="saveChunkDescription()"
+              />
+            }
+
+            <!-- PROCESS TAB -->
+            @if (activeTab() === 'process') {
+              <app-process-tab
+                [chunk]="selectedChunk()!"
+                [chunkOptions]="chunkOptions"
+                [chunkAdvancedOptions]="chunkAdvancedOptions"
+                [qualityLevels]="qualityLevels"
+                [advancedOptionCategories]="advancedOptionCategories"
+                [showAdvancedOptions]="showAdvancedOptions()"
+                [gcpFileFromEditor]="gcpFile()"
+                (toggleAdvancedOptions)="showAdvancedOptions.set($event)"
+                (resetAdvancedOptions)="resetAdvancedOptions()"
+                (startProcess)="processChunk(selectedChunk()!)"
+                (gcpFileSelected)="onGcpFileSelected($event)"
+                (openGcpEditor)="openGcpEditor()"
+              />
+            }
+
+            <!-- RESULTS TAB -->
+            @if (activeTab() === 'results') {
+              <app-results-tab
+                [chunk]="selectedChunk()!"
+                [projectId]="project()!.id"
+                [chunkOutputs]="chunkOutputs()"
+                (retryProcess)="processChunk(selectedChunk()!)"
+                (goToProcess)="setActiveTab('process')"
+              />
+            }
+          </div>
+        } @else {
+          <!-- No Chunk Selected -->
+          <div class="no-chunk-selected">
+            <div class="placeholder">
+              <span class="icon">👈</span>
+              <h3>Selecione um Chunk</h3>
+              <p>Selecione um chunk na barra lateral ou crie um novo</p>
+              <button class="btn-primary" (click)="createNewChunk()">+ Criar Novo Chunk</button>
+            </div>
+          </div>
+        }
+      </main>
+    </div>
+
+    <!-- Status Bar -->
+    <footer class="status-bar">
+      <span>{{ project()?.name }}</span>
+      <span>•</span>
+      <span>{{ chunks().length }} chunks</span>
+      <span>•</span>
+      <span>{{ totalImages() }} imagens</span>
+      <span class="spacer"></span>
+      <span>{{ formatTotalSize() }}</span>
+    </footer>
+  </ng-container>
+
+  <!-- Chunk Context Menu -->
+  @if (showChunkMenu()) {
+    <div class="context-menu" [style.top.px]="menuPosition.y" [style.left.px]="menuPosition.x">
+      <button (click)="renameChunk()">✏️ Renomear</button>
+      <button (click)="duplicateChunk()">📋 Duplicar</button>
+      <button (click)="processChunk(menuChunk()!)">▶ Processar</button>
+      <div class="menu-divider"></div>
+      <button class="danger" (click)="deleteChunk(menuChunk()!)">🗑️ Excluir</button>
+    </div>
+    <div class="menu-backdrop" (click)="closeChunkMenu()"></div>
+  }
+
+  <!-- Editor visual de GCP -->
+  @if (showGcpEditor()) {
+    <app-gcp-editor
+      [projectId]="project()!.id"
+      [images]="chunkImages()"
+      (gcpFileReady)="onGcpEditorReady($event)"
+      (closeEditor)="showGcpEditor.set(false)"
+    />
+  }
+</div>

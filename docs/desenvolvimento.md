@@ -22,6 +22,12 @@ O compose ([deploy/compose/base.yml](../deploy/compose/base.yml), ver [deploy/RE
 React, funcoesODM (java-service, drone-nginx, nodeodm, potree-converter, funcoesodm-db) e o gateway,
 todos numa rede `sgi`. O gateway só sobe quando IAM/backend/Java estão *healthy*.
 
+O **drone** é versionado neste repositório, em [funcoesODM/](../funcoesODM/) (Java em
+`backend/java-service`, Angular em `frontend`, `init-db`, imagens NodeODM/Potree em `docker/`); o
+compose builda de lá. Mudou o drone → `docker compose ... build java-service drone-nginx`. O
+`ImgDrone/` (fora do git) guarda só os fontes do ODM de terceiros e uma cópia antiga do drone que
+**não** é mais usada.
+
 ## Portas
 
 | Serviço | Porta | Observação |

@@ -1,0 +1,51 @@
+<app-card [clickable]="true" class="project-card" [routerLink]="['/projects', project.id]">
+  <div class="project-header">
+    <h3>{{ project.name }}</h3>
+    <span class="status-badge" [class]="project.status.toLowerCase()">
+      {{ getStatusLabel(project.status) }}
+    </span>
+  </div>
+
+  <p class="project-description">{{ project.description || 'Sem descrição' }}</p>
+
+  <div class="project-stats">
+    <div class="stat">
+      <span class="stat-value">{{ project.imageCount }}</span>
+      <span class="stat-label">Imagens</span>
+    </div>
+    <div class="stat">
+      <span class="stat-value">{{ project.taskCount }}</span>
+      <span class="stat-label">Tarefas</span>
+    </div>
+  </div>
+
+  <div class="project-footer">
+    <span class="date">
+      <span class="date-icon">📅</span>
+      {{ project.createdAt | date:'dd/MM/yyyy' }}
+    </span>
+    <div class="actions">
+      <button
+        class="action-btn"
+        title="Visualizar Mapa"
+        (click)="onMapClick($event)"
+      >
+        🗺️
+      </button>
+      <button
+        class="action-btn"
+        title="Visualizar 3D"
+        (click)="on3DClick($event)"
+      >
+        🧊
+      </button>
+      <button
+        class="action-btn danger"
+        title="Excluir"
+        (click)="onDeleteClick($event)"
+      >
+        🗑️
+      </button>
+    </div>
+  </div>
+</app-card>

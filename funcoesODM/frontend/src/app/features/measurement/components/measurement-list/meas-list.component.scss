@@ -1,0 +1,106 @@
+// MeasListComponent — estilos do painel de resultados extraídos do tab
+
+:host {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.measurement-results {
+  background: white;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+
+  .results-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1.5rem;
+    border-bottom: 1px solid #e2e8f0;
+    flex-shrink: 0;
+
+    h4 {
+      margin: 0;
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: #1e293b;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .results-count {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 24px;
+      height: 24px;
+      padding: 0 0.5rem;
+      background: #3b82f6;
+      color: white;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+  }
+
+  .results-empty {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    text-align: center;
+    color: #94a3b8;
+
+    p {
+      margin: 0.25rem 0;
+      font-size: 0.875rem;
+    }
+
+    .hint {
+      margin-top: 0.5rem;
+      color: #64748b;
+      font-size: 0.75rem;
+    }
+  }
+
+  .results-list {
+    flex: 1;
+    overflow-y: auto;
+
+    &::-webkit-scrollbar { width: 8px; }
+    &::-webkit-scrollbar-track { background: #f1f5f9; }
+    &::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 4px;
+      &:hover { background: #94a3b8; }
+    }
+  }
+}
+
+// Botão trigger de exportação no results-header
+.export-trigger-btn {
+  margin-left: auto;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #f8fafc;
+  color: #475569;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+
+  &:hover {
+    background: #3b82f6;
+    border-color: #3b82f6;
+    color: #fff;
+  }
+}

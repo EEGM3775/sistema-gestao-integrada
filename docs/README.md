@@ -64,7 +64,7 @@ Propostas — sem status nem compromisso; quando aprovadas, **graduam** para o
 | **IAM** ([iam/](../iam/)) | Django | Autoridade única de identidade; emite/assina os JWT |
 | **backend** ([backend/](../backend/)) | Django + DRF | Resource server; módulos de negócio |
 | **Shell** ([frontend/](../frontend/)) | React + Vite | UI do app; login na IAM e injeção de token |
-| **funcoesODM** ([ImgDrone/funcoesODM/](../ImgDrone/funcoesODM/)) | Spring + Angular | Drone/fotogrametria; produto destacável vendável sozinho |
+| **funcoesODM** ([funcoesODM/](../funcoesODM/)) | Spring + Angular | Drone/fotogrametria; produto destacável vendável sozinho |
 | **Node** | Node.js | `funcoesnf`, `funcoeswhatsapp` + worker de `funcoesia` (em descontinuação — Fase 11; `funcoeslead` já absorvido) |
 | **Gateway** ([infra/gateway/](../infra/gateway/)) | Nginx | Domínio único (:8090) |
 
@@ -110,7 +110,7 @@ Setup completo (venvs, portas, seed) em [desenvolvimento.md](desenvolvimento.md)
   módulo. Limite consciente e decisão de desenho nunca nascem em pendências — nascem na planta; e
   trabalho planejado nasce no [roadmap.md](roadmap.md).
 - **O que é de plataforma** (arquitetura, domínio, acesso, módulos do backend) fica em `docs/`.
-- **O drone** mantém a sua própria `docs/` ([ImgDrone/funcoesODM/docs/](../ImgDrone/funcoesODM/docs/)) —
+- **O drone** mantém a sua própria `docs/` ([funcoesODM/docs/](../funcoesODM/docs/)) —
   é produto separado e autossuficiente; aqui só o referenciamos.
 - Arquivos **curtos** (alvo ~400 linhas), um assunto por arquivo, para leitura barata (humanos e LLMs).
 

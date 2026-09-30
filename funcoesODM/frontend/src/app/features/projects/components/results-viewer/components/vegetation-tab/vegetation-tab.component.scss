@@ -1,0 +1,378 @@
+// ─── Layout principal ──────────────────────────────────────────────────────
+
+.vegetation-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  font-family: var(--font-family, 'Inter', sans-serif);
+  font-size: 13px;
+}
+
+// ─── Toolbar ──────────────────────────────────────────────────────────────
+
+.veg-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  background: #16213e;
+  border-bottom: 1px solid #2a2a4a;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.type-toggle {
+  display: flex;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid #2a2a4a;
+}
+
+.toggle-btn {
+  padding: 5px 18px;
+  background: transparent;
+  border: none;
+  color: #9a9ab0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+
+  &.active {
+    background: #2e6b3e;
+    color: #fff;
+  }
+
+  &:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+
+  &:not(.active):not(:disabled):hover {
+    background: #22223a;
+    color: #ccc;
+  }
+}
+
+.btn-compute {
+  background: #2e6b3e;
+  border: 1px solid #3d8b52;
+  color: #fff;
+  padding: 5px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  transition: background 0.15s;
+
+  &:hover:not(:disabled) { background: #3d8b52; }
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+}
+
+.opacity-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.control-label {
+  color: #7c7ca0;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.opacity-slider {
+  width: 90px;
+  height: 4px;
+  accent-color: #3d8b52;
+  cursor: pointer;
+}
+
+.opacity-value {
+  min-width: 30px;
+  text-align: right;
+  color: #a0aec0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.stats-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 11px;
+  color: #7c7ca0;
+}
+
+.stat-item strong {
+  color: #e0e0e0;
+  font-variant-numeric: tabular-nums;
+}
+
+// ─── Controles de anotação na toolbar ──────────────────────────────────────
+
+.veg-annotation-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.veg-btn-annotate,
+.veg-btn-panel {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid #3b5bdb;
+  background: transparent;
+  color: #7b9fe8;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+
+  &:hover { background: #1e2a5e; color: #fff; }
+  &.active { background: #3b5bdb; border-color: #3b5bdb; color: #fff; }
+}
+
+.veg-btn-cancel {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid #e63946;
+  background: transparent;
+  color: #e63946;
+  cursor: pointer;
+  white-space: nowrap;
+  &:hover { background: #e63946; color: #fff; }
+}
+
+.veg-btn-complete {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: none;
+  background: #3b5bdb;
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+  &:hover { background: #2f4ac0; }
+}
+
+.veg-annotate-status {
+  font-size: 11px;
+  color: #7b9fe8;
+  white-space: nowrap;
+}
+
+// ─── Overlay de hint sobre o mapa ──────────────────────────────────────────
+
+.annotate-hint-overlay {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(59, 91, 219, 0.9);
+  color: #fff;
+  font-size: 12px;
+  padding: 5px 14px;
+  border-radius: 20px;
+  pointer-events: none;
+  z-index: 1000;
+  white-space: nowrap;
+}
+
+// ─── Painel de anotações ────────────────────────────────────────────────────
+
+.veg-annotations-panel {
+  flex-shrink: 0;
+  max-height: 280px;
+  overflow-y: auto;
+  border-top: 1px solid #2d3142;
+}
+
+.stat-sep {
+  color: #3a3a5a;
+}
+
+.ndvi-hint {
+  font-size: 10px;
+  color: #7c7ca0;
+  font-style: italic;
+  white-space: nowrap;
+}
+
+// ─── Mapa ─────────────────────────────────────────────────────────────────
+
+.map-wrapper {
+  position: relative;
+  flex: 1;
+  min-height: 300px;  // garante altura minima se o flex nao resolver
+}
+
+.veg-map {
+  width: 100%;
+  height: 100%;
+  min-height: 300px;
+}
+
+// ─── Overlays (loading / error / empty / idle) ────────────────────────────
+
+.loading-overlay,
+.error-overlay,
+.empty-overlay,
+.idle-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: rgba(20, 20, 40, 0.85);
+  z-index: 600;
+
+  p {
+    margin: 0;
+    font-size: 13px;
+    color: #a0aec0;
+    text-align: center;
+    max-width: 340px;
+    line-height: 1.5;
+  }
+}
+
+.spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid #2a2a4a;
+  border-top-color: #3d8b52;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.progress-track {
+  width: 220px;
+  height: 5px;
+  background: #2a2a4a;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #2e6b3e, #3d8b52);
+  border-radius: 3px;
+  transition: width 0.2s ease;
+}
+
+.progress-pct {
+  font-size: 11px;
+  color: #7c7ca0;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.error-icon,
+.empty-icon,
+.idle-icon {
+  font-size: 12px;
+  font-weight: 700;
+  font-family: monospace;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.error-icon {
+  color: #fc8181;
+  border: 1px solid #fc8181;
+}
+
+.empty-icon {
+  color: #4a5568;
+  border: 1px solid #4a5568;
+}
+
+.idle-icon {
+  color: #3d8b52;
+  border: 1px solid #3d8b52;
+}
+
+.btn-compute-overlay {
+  background: #2e6b3e;
+  border: 1px solid #3d8b52;
+  color: #fff;
+  padding: 8px 20px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: background 0.15s;
+  pointer-events: all;
+
+  &:hover { background: #3d8b52; }
+}
+
+// ─── Legenda ──────────────────────────────────────────────────────────────
+
+.veg-legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  background: #16213e;
+  border-top: 1px solid #2a2a4a;
+  flex-shrink: 0;
+}
+
+.legend-label {
+  font-size: 11px;
+  color: #a0aec0;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.legend-bar {
+  flex: 1;
+  height: 14px;
+  border-radius: 3px;
+  min-width: 80px;
+}
+
+.legend-unit {
+  font-size: 11px;
+  color: #4a5568;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+// ─── Histograma ───────────────────────────────────────────────────────────
+
+.histogram-section {
+  flex-shrink: 0;
+  background: #16213e;
+  border-top: 1px solid #2a2a4a;
+  padding: 8px 16px 10px;
+}
+
+.histogram-title {
+  margin: 0 0 6px;
+  font-size: 10px;
+  color: #7c7ca0;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.histogram-canvas-wrapper {
+  height: 90px;
+}

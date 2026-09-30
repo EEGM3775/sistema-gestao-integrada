@@ -1,0 +1,59 @@
+<div class="project-list-page">
+  <!-- Header -->
+  <header class="page-header">
+    <div>
+      <h1>Projetos</h1>
+      <p>Gerencie seus projetos de fotogrametria</p>
+    </div>
+    <app-button routerLink="/projects/new" icon="plus" label="Criar Projeto" [cta]="true"></app-button>
+  </header>
+
+  <!-- Filtros -->
+  <app-project-filters
+    [filters]="filters()"
+    [sortConfig]="sortConfig()"
+    [viewMode]="viewMode()"
+    [resultsCount]="filteredAndSortedProjects().length"
+    [totalCount]="projects().length"
+    (filtersChange)="onFiltersChange($event)"
+    (sortChange)="onSortChange($event)"
+    (viewModeChange)="onViewModeChange($event)"
+    (clearAll)="clearAllFilters()"
+  />
+
+  <!-- Loading -->
+  <app-loading-spinner *ngIf="isLoading()" />
+
+  <!-- Empty State -->
+  <app-projects-empty-state
+    *ngIf="!isLoading() && paginatedProjects().length === 0"
+    [hasActiveFilters]="hasActiveFilters()"
+    (clearFilters)="clearAllFilters()"
+  />
+
+  <!-- Grid/List de Projetos -->
+  <div
+    *ngIf="!isLoading() && paginatedProjects().length > 0"
+    class="projects-container"
+    [class.grid-view]="viewMode() === 'grid'"
+    [class.list-view]="viewMode() === 'list'"
+  >
+    <app-project-card-item
+      *ngFor="let project of paginatedProjects(); trackBy: trackByProjectId"
+      [project]="project"
+      (mapClick)="openMap($event)"
+      (view3D)="open3D($event)"
+      (deleteClick)="deleteProject($event)"
+    />
+  </div>
+
+  <!-- Paginação -->
+  <app-pagination
+    *ngIf="!isLoading() && filteredAndSortedProjects().length > 0"
+    [length]="filteredAndSortedProjects().length"
+    [pageSizeInput]="pageSize()"
+    [pageIndexInput]="pageIndex()"
+    [pageSizeOptions]="[6, 12, 24, 48]"
+    (page)="onPageChange($event)"
+  />
+</div>

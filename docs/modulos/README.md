@@ -57,7 +57,7 @@
 
 | Produto | Entitlement | Doc |
 |---|---|---|
-| **funcoesODM** (drone, Spring + Angular) | **`drone`** | [../../ImgDrone/funcoesODM/docs/](../../ImgDrone/funcoesODM/docs/) |
+| **funcoesODM** (drone, Spring + Angular) | **`drone`** | [../../funcoesODM/docs/](../../funcoesODM/docs/) |
 
 ## Planejados (placeholders vazios)
 

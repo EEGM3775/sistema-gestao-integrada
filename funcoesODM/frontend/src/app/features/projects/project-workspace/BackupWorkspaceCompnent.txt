@@ -1,0 +1,2893 @@
+import { Component, OnInit, OnDestroy, signal, computed, ViewChild, inject, DestroyRef } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
+import { Router, ActivatedRoute, RouterLink } from '@angular/router';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Subject, debounceTime, distinctUntilChanged, switchMap, tap, catchError, of, interval, forkJoin } from 'rxjs';
+
+import { ProjectService } from '../services/project.service';
+import { TaskService, ProcessingTask, TaskStatus } from '../services/task.service';
+import { ImageUploadService } from '../services/image-upload.service';
+import { ChunkService } from '../services/chunk.service';
+import { Project, ProjectImage, ImageUploadResponse, UploadProgress, Chunk, ChunkStatus } from '../models/project.model';
+
+import { ButtonComponent } from '../../../shared/components/button/button.component';
+import { LoadingSpinnerComponent } from '../../../shared/components/loading-spinner/loading-spinner.component';
+import { ResultsViewerComponent } from '../components/results-viewer/results-viewer.component';
+
+@Component({
+  selector: 'app-project-workspace',
+  standalone: true,
+  imports: [
+    CommonModule,
+    FormsModule,
+    RouterLink,
+    ButtonComponent,
+    LoadingSpinnerComponent,
+    ResultsViewerComponent
+  ],
+  template: `
+    <div class="workspace">
+      <!-- Loading Overlay -->
+      <div class="loading-overlay" *ngIf="initialLoading()">
+        <div class="loader">
+          <div class="spinner"></div>
+          <p>{{ isNewProject ? 'Criando projeto...' : 'Carregando projeto...' }}</p>
+        </div>
+      </div>
+
+      <!-- Main Workspace -->
+      <ng-container *ngIf="!initialLoading()">
+        <!-- Top Header Bar -->
+        <header class="workspace-header">
+          <div class="header-left">
+            <a routerLink="/projects" class="back-btn" title="Voltar para Projetos">←</a>
+            <div class="project-title">
+              <input
+                #nameInput
+                type="text"
+                class="name-input"
+                [value]="projectName()"
+                (input)="onNameChange($event)"
+                (blur)="onNameBlur()"
+                (keydown.enter)="nameInput.blur()"
+                placeholder="Nome do Projeto"
+              />
+              <span class="save-status" [class]="saveStatus()">
+                {{ saveStatus() === 'saving' ? '● Salvando...' : saveStatus() === 'saved' ? '✓ Salvo' : '' }}
+              </span>
+            </div>
+          </div>
+          <div class="header-right">
+            <button class="btn-process" [disabled]="!canProcessAll()" (click)="processAllChunks()">
+              ▶ Processar Tudo
+            </button>
+          </div>
+        </header>
+
+        <!-- Main Body - Split View -->
+        <div class="workspace-body">
+          
+          <!-- LEFT SIDEBAR: Project + Chunks List -->
+          <aside class="sidebar-left">
+            <!-- Project Info Section -->
+            <div class="sidebar-section">
+              <div class="section-title">
+                <span>🏗️ PROJETO</span>
+              </div>
+              <div class="project-info">
+                <div class="info-row">
+                  <span class="label">Imagens:</span>
+                  <span class="value">{{ totalImages() }}</span>
+                </div>
+                <div class="info-row">
+                  <span class="label">Chunks:</span>
+                  <span class="value">{{ chunks().length }}</span>
+                </div>
+                <div class="info-row">
+                  <span class="label">Status:</span>
+                  <span class="value status-badge" [class]="projectStatus()">{{ getProjectStatusLabel() }}</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Chunks List Section -->
+            <div class="sidebar-section chunks-section">
+              <div class="section-title">
+                <span>📦 CHUNKS</span>
+                <button class="btn-icon" (click)="createNewChunk()" title="Novo Chunk">+</button>
+              </div>
+              
+              <div class="chunks-list">
+                @for (chunk of chunks(); track chunk.id) {
+                  <div 
+                    class="chunk-item"
+                    [class.selected]="selectedChunk()?.id === chunk.id"
+                    [class.empty]="chunk.status === 'EMPTY'"
+                    [class.ready]="chunk.status === 'READY'"
+                    [class.running]="chunk.status === 'RUNNING'"
+                    [class.completed]="chunk.status === 'COMPLETED'"
+                    [class.failed]="chunk.status === 'FAILED'"
+                    (click)="selectChunk(chunk)"
+                  >
+                    <div class="chunk-status-icon">{{ getChunkIcon(chunk.status) }}</div>
+                    <div class="chunk-details">
+                      <span class="chunk-name">{{ chunk.name }}</span>
+                      <span class="chunk-meta">
+                        📷 {{ chunk.imageCount }}
+                        @if (chunk.status === 'RUNNING') {
+                          <span class="progress-mini">{{ chunk.progress }}%</span>
+                        }
+                        @if (chunk.status === 'COMPLETED' && chunk.processingTime) {
+                          <span class="time-mini">🕐 {{ formatTime(chunk.processingTime) }}</span>
+                        }
+                      </span>
+                    </div>
+                    <button class="btn-chunk-menu" (click)="openChunkMenu($event, chunk)" title="Opções">⋮</button>
+                  </div>
+                }
+
+                @if (chunks().length === 0) {
+                  <div class="empty-chunks">
+                    <p>Nenhum chunk ainda</p>
+                    <button class="btn-secondary" (click)="createNewChunk()">+ Criar Primeiro Chunk</button>
+                  </div>
+                }
+              </div>
+            </div>
+          </aside>
+
+          <!-- RIGHT PANEL: Chunk Detail -->
+          <main class="main-panel">
+            @if (selectedChunk()) {
+              <!-- Chunk Header -->
+              <div class="chunk-header">
+                <div class="chunk-header-left">
+                  <input
+                    type="text"
+                    class="chunk-name-input"
+                    [value]="selectedChunk()!.name"
+                    (input)="onChunkNameChange($event)"
+                    (blur)="saveChunkName()"
+                  />
+                  <span class="chunk-status-label" [class]="selectedChunk()!.status.toLowerCase()">
+                    {{ getChunkStatusLabel(selectedChunk()!.status) }}
+                  </span>
+                </div>
+                <div class="chunk-header-right">
+                  <span class="chunk-info">{{ selectedChunk()!.imageCount }} fotos</span>
+                  @if (selectedChunk()!.processingTime) {
+                    <span class="chunk-info">🕐 {{ formatTime(selectedChunk()!.processingTime) }}</span>
+                  }
+                  <button 
+                    class="btn-process-chunk" 
+                    [disabled]="!canProcessChunk(selectedChunk()!)"
+                    (click)="processChunk(selectedChunk()!)"
+                  >
+                    ▶ Processar
+                  </button>
+                  <button class="btn-delete-chunk" (click)="deleteCurrentChunk()" title="Excluir Chunk">🗑️</button>
+                </div>
+              </div>
+
+              <!-- Chunk Tabs -->
+              <div class="chunk-tabs">
+                <button 
+                  class="tab" 
+                  [class.active]="activeTab() === 'photos'"
+                  (click)="setActiveTab('photos')"
+                >
+                  📷 Fotos
+                  <span class="tab-badge">{{ chunkImages().length }}</span>
+                </button>
+                <button 
+                  class="tab" 
+                  [class.active]="activeTab() === 'options'"
+                  (click)="setActiveTab('options')"
+                >
+                  ⚙️ Opções
+                </button>
+                <button 
+                  class="tab" 
+                  [class.active]="activeTab() === 'process'"
+                  (click)="setActiveTab('process')"
+                >
+                  🚀 Processar
+                </button>
+                <button 
+                  class="tab" 
+                  [class.active]="activeTab() === 'results'"
+                  (click)="setActiveTab('results')"
+                  [disabled]="selectedChunk()!.status !== 'COMPLETED'"
+                >
+                  📊 Resultados
+                </button>
+              </div>
+
+              <!-- Tab Content -->
+              <div class="tab-content">
+                
+                <!-- PHOTOS TAB -->
+                @if (activeTab() === 'photos') {
+                  <div class="photos-tab">
+                    <!-- Upload Zone -->
+                    <div 
+                      class="upload-zone"
+                      [class.dragover]="isDragOver()"
+                      [class.uploading]="isUploading()"
+                      (dragover)="onDragOver($event)"
+                      (dragleave)="onDragLeave($event)"
+                      (drop)="onDrop($event)"
+                    >
+                      <input
+                        type="file"
+                        #fileInput
+                        multiple
+                        accept="image/jpeg,image/jpg,image/png,image/tiff"
+                        (change)="onFilesSelected($event)"
+                        hidden
+                      />
+                      
+                      @if (!isUploading()) {
+                        <div class="upload-content">
+                          <div class="upload-icon">📤</div>
+                          <p>Arraste fotos aqui ou <button class="link-btn" (click)="fileInput.click()">selecione arquivos</button></p>
+                          <span class="upload-hint">JPG, PNG, TIFF • Máx. {{ maxFileSizeMb }}MB por arquivo</span>
+                        </div>
+                      } @else {
+                        <div class="upload-progress-container">
+                          <div class="progress-spinner"></div>
+                          <p>Enviando {{ uploadingFiles().length }} arquivo(s)...</p>
+                          <div class="progress-bar">
+                            <div class="progress-fill" [style.width.%]="uploadProgress()?.percentage || 0"></div>
+                          </div>
+                          <span>{{ uploadProgress()?.percentage || 0 }}%</span>
+                        </div>
+                      }
+                    </div>
+
+                    <!-- Images from project (to add to chunk) -->
+                    @if (projectImagesNotInChunk().length > 0) {
+                      <div class="available-images">
+                        <div class="section-header">
+                          <h4>Imagens do Projeto ({{ projectImagesNotInChunk().length }} disponíveis)</h4>
+                          <button class="btn-add-all" (click)="addAllImagesToChunk()">+ Adicionar Todas</button>
+                        </div>
+                        <div class="images-mini-grid">
+                          @for (img of projectImagesNotInChunk(); track img.id) {
+                            <div class="image-mini" (click)="addImageToChunk(img.id)" title="Clique para adicionar">
+                              <span class="img-name">{{ img.originalFilename }}</span>
+                              <span class="add-icon">+</span>
+                            </div>
+                          }
+                        </div>
+                      </div>
+                    }
+
+                    <!-- Chunk Images Grid -->
+                    <div class="chunk-images">
+                      <div class="section-header">
+                        <h4>Imagens neste Chunk ({{ chunkImages().length }})</h4>
+                        @if (selectedChunkImages().length > 0) {
+                          <button class="btn-remove" (click)="removeSelectedFromChunk()">
+                            Remover Selecionadas ({{ selectedChunkImages().length }})
+                          </button>
+                        }
+                      </div>
+                      
+                      @if (chunkImages().length > 0) {
+                        <div class="images-grid">
+                          @for (img of chunkImages(); track img.id) {
+                            <div 
+                              class="image-card"
+                              [class.selected]="isChunkImageSelected(img.id)"
+                              (click)="toggleChunkImageSelection(img.id)"
+                            >
+                              <div class="image-thumb">
+                                <img [src]="getImageThumbnail(img)" [alt]="img.originalFilename" loading="lazy" />
+                              </div>
+                              <div class="image-info">
+                                <span class="img-name">{{ img.originalFilename }}</span>
+                                <span class="img-size">{{ formatFileSize(img.fileSize) }}</span>
+                              </div>
+                              <div class="image-checkbox">
+                                <input type="checkbox" [checked]="isChunkImageSelected(img.id)" />
+                              </div>
+                            </div>
+                          }
+                        </div>
+                      } @else {
+                        <div class="empty-state">
+                          <p>Nenhuma imagem neste chunk</p>
+                          <p class="hint">Faça upload ou adicione imagens do projeto acima</p>
+                        </div>
+                      }
+                    </div>
+                  </div>
+                }
+
+                <!-- OPTIONS TAB -->
+                @if (activeTab() === 'options') {
+                  <div class="options-tab">
+                    <div class="options-section">
+                      <h4>Informações do Chunk</h4>
+                      <div class="form-group">
+                        <label>Nome</label>
+                        <input 
+                          type="text" 
+                          [value]="selectedChunk()!.name"
+                          (input)="onChunkNameChange($event)"
+                          (blur)="saveChunkName()"
+                        />
+                      </div>
+                      <div class="form-group">
+                        <label>Descrição</label>
+                        <textarea 
+                          rows="3"
+                          [value]="selectedChunk()!.description || ''"
+                          (input)="onChunkDescriptionChange($event)"
+                          (blur)="saveChunkDescription()"
+                          placeholder="Descrição opcional..."
+                        ></textarea>
+                      </div>
+                    </div>
+
+                    <div class="options-section">
+                      <h4>Sistema de Coordenadas</h4>
+                      <div class="form-group">
+                        <label>CRS de Saída</label>
+                        <select [(ngModel)]="chunkOptions.crs">
+                          <option value="EPSG:4326">WGS 84 (EPSG:4326)</option>
+                          <option value="EPSG:32723">WGS 84 / UTM zone 23S</option>
+                          <option value="EPSG:32722">WGS 84 / UTM zone 22S</option>
+                          <option value="EPSG:31983">SIRGAS 2000 / UTM zone 23S</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                }
+
+                <!-- PROCESS TAB -->
+                @if (activeTab() === 'process') {
+                  <div class="process-tab">
+                    <div class="process-section">
+                      <h4>Produtos de Saída</h4>
+                      <div class="output-options">
+                        <label class="output-option">
+                          <input type="checkbox" [(ngModel)]="chunkOptions.orthophoto" />
+                          <div class="option-content">
+                            <span class="option-icon">🗺️</span>
+                            <div>
+                              <span class="option-name">Ortofoto</span>
+                              <span class="option-desc">Imagem aérea georreferenciada</span>
+                            </div>
+                          </div>
+                        </label>
+                        <label class="output-option">
+                          <input type="checkbox" [(ngModel)]="chunkOptions.dsm" />
+                          <div class="option-content">
+                            <span class="option-icon">🏔️</span>
+                            <div>
+                              <span class="option-name">DSM</span>
+                              <span class="option-desc">Modelo Digital de Superfície</span>
+                            </div>
+                          </div>
+                        </label>
+                        <label class="output-option">
+                          <input type="checkbox" [(ngModel)]="chunkOptions.dtm" />
+                          <div class="option-content">
+                            <span class="option-icon">🌍</span>
+                            <div>
+                              <span class="option-name">DTM</span>
+                              <span class="option-desc">Modelo Digital de Terreno</span>
+                            </div>
+                          </div>
+                        </label>
+                        <label class="output-option">
+                          <input type="checkbox" [(ngModel)]="chunkOptions.pointCloud" />
+                          <div class="option-content">
+                            <span class="option-icon">✨</span>
+                            <div>
+                              <span class="option-name">Nuvem de Pontos</span>
+                              <span class="option-desc">Pontos 3D coloridos (LAZ)</span>
+                            </div>
+                          </div>
+                        </label>
+                        <label class="output-option">
+                          <input type="checkbox" [(ngModel)]="chunkOptions.mesh" />
+                          <div class="option-content">
+                            <span class="option-icon">🎮</span>
+                            <div>
+                              <span class="option-name">Modelo 3D</span>
+                              <span class="option-desc">Malha texturizada (OBJ/GLB)</span>
+                            </div>
+                          </div>
+                        </label>
+                      </div>
+                    </div>
+
+                    <div class="process-section">
+                      <h4>Qualidade</h4>
+                      <div class="quality-options">
+                        @for (q of qualityLevels; track q.value) {
+                          <label class="quality-option" [class.selected]="chunkOptions.quality === q.value">
+                            <input type="radio" name="quality" [value]="q.value" [(ngModel)]="chunkOptions.quality" />
+                            <div class="quality-content">
+                              <span class="quality-name">{{ q.name }}</span>
+                              <span class="quality-desc">{{ q.description }}</span>
+                              <span class="quality-time">~{{ q.time }}</span>
+                            </div>
+                          </label>
+                        }
+                      </div>
+                    </div>
+
+                    <!-- Advanced Options -->
+                    <div class="process-section">
+                      <button class="btn-toggle-advanced" (click)="showAdvancedOptions.set(!showAdvancedOptions())">
+                        {{ showAdvancedOptions() ? '▼' : '▶' }} Opções Avançadas do NodeODM
+                      </button>
+                      
+                      @if (showAdvancedOptions()) {
+                        <div class="advanced-options">
+                          <p class="advanced-hint">⚡ Configurações avançadas do processamento. Altere apenas se souber o que está fazendo.</p>
+                          
+                          @for (category of advancedOptionCategories; track category.name) {
+                            <div class="option-category">
+                              <button class="category-header" (click)="category.expanded = !category.expanded">
+                                <span class="category-icon">{{ category.icon }}</span>
+                                <span class="category-name">{{ category.name }}</span>
+                                <span class="category-toggle">{{ category.expanded ? '▼' : '▶' }}</span>
+                              </button>
+                              
+                              @if (category.expanded) {
+                                <div class="category-options">
+                                  @for (opt of category.options; track opt.key) {
+                                    <div class="advanced-option">
+                                      <div class="option-header">
+                                        <label [for]="opt.key">{{ opt.label }}</label>
+                                        <span class="option-help" [title]="opt.help">❓</span>
+                                      </div>
+                                      
+                                      @if (opt.type === 'boolean') {
+                                        <label class="toggle-switch">
+                                          <input 
+                                            type="checkbox" 
+                                            [id]="opt.key"
+                                            [(ngModel)]="chunkAdvancedOptions[opt.key]"
+                                          />
+                                          <span class="toggle-slider"></span>
+                                        </label>
+                                      } @else if (opt.type === 'select') {
+                                        <select [id]="opt.key" [(ngModel)]="chunkAdvancedOptions[opt.key]">
+                                          @for (option of $any(opt).options; track option) {
+                                            <option [value]="option">{{ option }}</option>
+                                          }
+                                        </select>
+                                      } @else if (opt.type === 'number') {
+                                        <input 
+                                          type="number" 
+                                          [id]="opt.key"
+                                          [(ngModel)]="chunkAdvancedOptions[opt.key]"
+                                          [min]="$any(opt).min"
+                                          [max]="$any(opt).max"
+                                          [step]="$any(opt).step || 1"
+                                        />
+                                      } @else {
+                                        <input 
+                                          type="text" 
+                                          [id]="opt.key"
+                                          [(ngModel)]="chunkAdvancedOptions[opt.key]"
+                                          [placeholder]="opt.help"
+                                        />
+                                      }
+                                    </div>
+                                  }
+                                </div>
+                              }
+                            </div>
+                          }
+                          
+                          <div class="advanced-actions">
+                            <button class="btn-reset-options" (click)="resetAdvancedOptions()">
+                              🔄 Restaurar Padrões
+                            </button>
+                          </div>
+                        </div>
+                      }
+                    </div>
+
+                    <div class="process-actions">
+                      <div class="process-summary">
+                        {{ selectedChunk()!.imageCount }} imagens • {{ getSelectedOutputsCount() }} produtos
+                      </div>
+                      <button 
+                        class="btn-start-process"
+                        [disabled]="!canProcessChunk(selectedChunk()!)"
+                        (click)="processChunk(selectedChunk()!)"
+                      >
+                        ▶ Iniciar Processamento
+                      </button>
+                    </div>
+                  </div>
+                }
+
+                <!-- RESULTS TAB -->
+                @if (activeTab() === 'results') {
+                  <div class="results-tab">
+                    @if (selectedChunk()!.status === 'COMPLETED') {
+                      <app-results-viewer
+                        [projectId]="project()!.id"
+                        [taskId]="selectedChunk()!.id"
+                        [nodeodmTaskId]="selectedChunk()!.nodeodmTaskId || ''"
+                        [outputs]="chunkOutputs()"
+                      />
+                    } @else if (selectedChunk()!.status === 'RUNNING') {
+                      <div class="processing-status">
+                        <div class="spinner-large"></div>
+                        <h3>Processando...</h3>
+                        <div class="progress-bar-large">
+                          <div class="progress-fill" [style.width.%]="selectedChunk()!.progress"></div>
+                        </div>
+                        <span>{{ selectedChunk()!.progress }}%</span>
+                      </div>
+                    } @else if (selectedChunk()!.status === 'FAILED') {
+                      <div class="error-status">
+                        <span class="error-icon">❌</span>
+                        <h3>Processamento Falhou</h3>
+                        <p class="error-message">{{ selectedChunk()!.errorMessage }}</p>
+                        <button class="btn-retry" (click)="processChunk(selectedChunk()!)">Tentar Novamente</button>
+                      </div>
+                    } @else {
+                      <div class="no-results">
+                        <span class="icon">📊</span>
+                        <h3>Sem resultados ainda</h3>
+                        <p>Processe este chunk para ver os resultados</p>
+                        <button class="btn-secondary" (click)="setActiveTab('process')">Ir para Processamento</button>
+                      </div>
+                    }
+                  </div>
+                }
+              </div>
+            } @else {
+              <!-- No Chunk Selected -->
+              <div class="no-chunk-selected">
+                <div class="placeholder">
+                  <span class="icon">👈</span>
+                  <h3>Selecione um Chunk</h3>
+                  <p>Selecione um chunk na barra lateral ou crie um novo</p>
+                  <button class="btn-primary" (click)="createNewChunk()">+ Criar Novo Chunk</button>
+                </div>
+              </div>
+            }
+          </main>
+        </div>
+
+        <!-- Status Bar -->
+        <footer class="status-bar">
+          <span>{{ project()?.name }}</span>
+          <span>•</span>
+          <span>{{ chunks().length }} chunks</span>
+          <span>•</span>
+          <span>{{ totalImages() }} imagens</span>
+          <span class="spacer"></span>
+          <span>{{ formatTotalSize() }}</span>
+        </footer>
+      </ng-container>
+
+      <!-- Chunk Context Menu -->
+      @if (showChunkMenu()) {
+        <div class="context-menu" [style.top.px]="menuPosition.y" [style.left.px]="menuPosition.x">
+          <button (click)="renameChunk()">✏️ Renomear</button>
+          <button (click)="duplicateChunk()">📋 Duplicar</button>
+          <button (click)="processChunk(menuChunk()!)">▶ Processar</button>
+          <div class="menu-divider"></div>
+          <button class="danger" (click)="deleteChunk(menuChunk()!)">🗑️ Excluir</button>
+        </div>
+        <div class="menu-backdrop" (click)="closeChunkMenu()"></div>
+      }
+    </div>
+  `,
+  styles: [`
+    /* ==================== BASE ==================== */
+    .workspace {
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background: #0d1117;
+      color: #c9d1d9;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 13px;
+    }
+
+    /* ==================== LOADING ==================== */
+    .loading-overlay {
+      position: fixed;
+      inset: 0;
+      background: #0d1117;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+
+    .loader { text-align: center; }
+
+    .spinner, .progress-spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid #30363d;
+      border-top-color: #58a6ff;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 12px;
+    }
+
+    .spinner-large {
+      width: 60px;
+      height: 60px;
+      border: 4px solid #30363d;
+      border-top-color: #58a6ff;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-bottom: 16px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ==================== HEADER ==================== */
+    .workspace-header {
+      height: 48px;
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      flex-shrink: 0;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .back-btn {
+      color: #8b949e;
+      text-decoration: none;
+      font-size: 18px;
+      padding: 4px 8px;
+      border-radius: 4px;
+    }
+
+    .back-btn:hover { background: #21262d; color: #c9d1d9; }
+
+    .project-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .name-input {
+      background: transparent;
+      border: 1px solid transparent;
+      color: #c9d1d9;
+      font-size: 16px;
+      font-weight: 600;
+      padding: 4px 8px;
+      border-radius: 4px;
+      min-width: 200px;
+    }
+
+    .name-input:hover { background: #21262d; }
+    .name-input:focus { outline: none; background: #21262d; border-color: #58a6ff; }
+
+    .save-status {
+      font-size: 11px;
+      color: #8b949e;
+    }
+
+    .save-status.saving { color: #d29922; }
+    .save-status.saved { color: #3fb950; }
+
+    .btn-process {
+      background: #238636;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+
+    .btn-process:hover:not(:disabled) { background: #2ea043; }
+    .btn-process:disabled { background: #21262d; color: #484f58; cursor: not-allowed; }
+
+    /* ==================== BODY ==================== */
+    .workspace-body {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* ==================== LEFT SIDEBAR ==================== */
+    .sidebar-left {
+      width: 260px;
+      background: #161b22;
+      border-right: 1px solid #30363d;
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+
+    .sidebar-section {
+      border-bottom: 1px solid #30363d;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: #0d1117;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      color: #8b949e;
+    }
+
+    .btn-icon {
+      background: transparent;
+      border: none;
+      color: #8b949e;
+      font-size: 16px;
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .btn-icon:hover { background: #30363d; color: #c9d1d9; }
+
+    .project-info {
+      padding: 12px;
+    }
+
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 0;
+    }
+
+    .info-row .label { color: #8b949e; }
+    .info-row .value { color: #c9d1d9; font-weight: 500; }
+
+    .status-badge {
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+    }
+
+    .status-badge.pending { background: #30363d; }
+    .status-badge.processing { background: #634d1a; color: #d29922; }
+    .status-badge.completed { background: #1a4d23; color: #3fb950; }
+
+    /* ==================== CHUNKS LIST ==================== */
+    .chunks-section {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .chunks-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+
+    .chunk-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      margin-bottom: 4px;
+      border: 1px solid transparent;
+    }
+
+    .chunk-item:hover { background: #21262d; }
+    .chunk-item.selected { background: #1f6feb22; border-color: #1f6feb; }
+
+    .chunk-status-icon { font-size: 16px; }
+
+    .chunk-details {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .chunk-name {
+      display: block;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .chunk-meta {
+      font-size: 11px;
+      color: #8b949e;
+      display: flex;
+      gap: 8px;
+    }
+
+    .progress-mini { color: #d29922; }
+    .time-mini { color: #8b949e; }
+
+    .btn-chunk-menu {
+      background: transparent;
+      border: none;
+      color: #8b949e;
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 4px;
+      opacity: 0;
+    }
+
+    .chunk-item:hover .btn-chunk-menu { opacity: 1; }
+    .btn-chunk-menu:hover { background: #30363d; }
+
+    .empty-chunks {
+      text-align: center;
+      padding: 20px;
+      color: #8b949e;
+    }
+
+    /* ==================== MAIN PANEL ==================== */
+    .main-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: #0d1117;
+      overflow: hidden;
+    }
+
+    .chunk-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+    }
+
+    .chunk-header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .chunk-name-input {
+      background: transparent;
+      border: 1px solid transparent;
+      color: #c9d1d9;
+      font-size: 18px;
+      font-weight: 600;
+      padding: 4px 8px;
+      border-radius: 4px;
+    }
+
+    .chunk-name-input:hover { background: #21262d; }
+    .chunk-name-input:focus { outline: none; background: #21262d; border-color: #58a6ff; }
+
+    .chunk-status-label {
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 500;
+      text-transform: uppercase;
+    }
+
+    .chunk-status-label.empty { background: #30363d; color: #8b949e; }
+    .chunk-status-label.ready { background: #1f6feb33; color: #58a6ff; }
+    .chunk-status-label.queued { background: #634d1a; color: #d29922; }
+    .chunk-status-label.running { background: #634d1a; color: #d29922; }
+    .chunk-status-label.completed { background: #1a4d23; color: #3fb950; }
+    .chunk-status-label.failed { background: #4d1a1a; color: #f85149; }
+
+    .chunk-header-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .chunk-info { color: #8b949e; font-size: 12px; }
+
+    .btn-process-chunk {
+      background: #238636;
+      color: white;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .btn-process-chunk:disabled { background: #21262d; color: #484f58; cursor: not-allowed; }
+
+    .btn-delete-chunk {
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      padding: 6px;
+      border-radius: 4px;
+    }
+
+    .btn-delete-chunk:hover { background: #f8514922; }
+
+    /* ==================== TABS ==================== */
+    .chunk-tabs {
+      display: flex;
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+      padding: 0 12px;
+    }
+
+    .tab {
+      background: transparent;
+      border: none;
+      color: #8b949e;
+      padding: 12px 16px;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .tab:hover { color: #c9d1d9; }
+    .tab.active { color: #c9d1d9; border-bottom-color: #f78166; }
+    .tab:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .tab-badge {
+      background: #30363d;
+      padding: 2px 6px;
+      border-radius: 10px;
+      font-size: 11px;
+    }
+
+    .tab-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+    }
+
+    /* ==================== PHOTOS TAB ==================== */
+    .photos-tab {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .upload-zone {
+      border: 2px dashed #30363d;
+      border-radius: 8px;
+      padding: 24px;
+      text-align: center;
+      transition: all 0.2s;
+    }
+
+    .upload-zone.dragover {
+      border-color: #58a6ff;
+      background: #1f6feb11;
+    }
+
+    .upload-content { color: #8b949e; }
+    .upload-icon { font-size: 32px; margin-bottom: 8px; }
+
+    .link-btn {
+      background: none;
+      border: none;
+      color: #58a6ff;
+      cursor: pointer;
+      text-decoration: underline;
+    }
+
+    .upload-hint { font-size: 11px; color: #6e7681; margin-top: 8px; display: block; }
+
+    .progress-bar, .progress-bar-large {
+      height: 4px;
+      background: #30363d;
+      border-radius: 2px;
+      overflow: hidden;
+      margin: 8px 0;
+    }
+
+    .progress-bar-large { height: 8px; width: 200px; }
+
+    .progress-fill {
+      height: 100%;
+      background: #58a6ff;
+      transition: width 0.2s;
+    }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .section-header h4 { margin: 0; font-size: 13px; }
+
+    .btn-add-all, .btn-remove {
+      background: transparent;
+      border: 1px solid #30363d;
+      color: #c9d1d9;
+      padding: 4px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .btn-add-all:hover { border-color: #58a6ff; color: #58a6ff; }
+    .btn-remove { border-color: #f85149; color: #f85149; }
+    .btn-remove:hover { background: #f8514922; }
+
+    .available-images {
+      background: #161b22;
+      border-radius: 8px;
+      padding: 12px;
+    }
+
+    .images-mini-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      max-height: 100px;
+      overflow-y: auto;
+    }
+
+    .image-mini {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      background: #21262d;
+      padding: 4px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11px;
+    }
+
+    .image-mini:hover { background: #30363d; }
+    .image-mini .add-icon { color: #3fb950; }
+
+    .chunk-images { flex: 1; }
+
+    .images-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 12px;
+    }
+
+    .image-card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      overflow: hidden;
+      cursor: pointer;
+      position: relative;
+    }
+
+    .image-card:hover { border-color: #8b949e; }
+    .image-card.selected { border-color: #58a6ff; background: #1f6feb11; }
+
+    .image-thumb {
+      height: 100px;
+      background: #21262d;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .image-thumb img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: cover;
+    }
+
+    .image-info {
+      padding: 8px;
+    }
+
+    .img-name {
+      display: block;
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .img-size { font-size: 11px; color: #8b949e; }
+
+    .image-checkbox {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px;
+      color: #8b949e;
+    }
+
+    .empty-state .hint { font-size: 12px; }
+
+    /* ==================== OPTIONS TAB ==================== */
+    .options-tab {
+      max-width: 600px;
+    }
+
+    .options-section {
+      margin-bottom: 24px;
+    }
+
+    .options-section h4 {
+      margin: 0 0 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #30363d;
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    .form-group label {
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 500;
+      color: #8b949e;
+    }
+
+    .form-group input,
+    .form-group textarea,
+    .form-group select {
+      width: 100%;
+      background: #0d1117;
+      border: 1px solid #30363d;
+      color: #c9d1d9;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+
+    .form-group input:focus,
+    .form-group textarea:focus,
+    .form-group select:focus {
+      outline: none;
+      border-color: #58a6ff;
+    }
+
+    /* ==================== PROCESS TAB ==================== */
+    .process-tab {
+      max-width: 700px;
+    }
+
+    .process-section {
+      margin-bottom: 24px;
+    }
+
+    .process-section h4 {
+      margin: 0 0 12px;
+    }
+
+    .output-options {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .output-option {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    .output-option:hover { border-color: #8b949e; }
+
+    .output-option input { width: 18px; height: 18px; }
+
+    .option-content {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .option-icon { font-size: 20px; }
+    .option-name { font-weight: 500; display: block; }
+    .option-desc { font-size: 11px; color: #8b949e; }
+
+    .quality-options {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+
+    .quality-option {
+      cursor: pointer;
+    }
+
+    .quality-option input { display: none; }
+
+    .quality-content {
+      padding: 12px;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      text-align: center;
+    }
+
+    .quality-option:hover .quality-content { border-color: #8b949e; }
+    .quality-option.selected .quality-content,
+    .quality-option input:checked + .quality-content {
+      border-color: #58a6ff;
+      background: #1f6feb11;
+    }
+
+    .quality-name { display: block; font-weight: 600; margin-bottom: 4px; }
+    .quality-desc { display: block; font-size: 11px; color: #8b949e; }
+    .quality-time { display: block; font-size: 10px; color: #6e7681; margin-top: 4px; }
+
+    .process-actions {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-top: 16px;
+      border-top: 1px solid #30363d;
+    }
+
+    .process-summary { color: #8b949e; }
+
+    .btn-start-process {
+      background: #238636;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .btn-start-process:hover:not(:disabled) { background: #2ea043; }
+    .btn-start-process:disabled { background: #21262d; color: #484f58; cursor: not-allowed; }
+
+    /* Advanced Options */
+    .btn-toggle-advanced {
+      background: transparent;
+      border: none;
+      color: #8b949e;
+      cursor: pointer;
+      padding: 8px 0;
+      font-size: 13px;
+    }
+    .btn-toggle-advanced:hover { color: #c9d1d9; }
+
+    .advanced-options {
+      margin-top: 12px;
+      padding: 16px;
+      background: #161b22;
+      border-radius: 8px;
+      border: 1px solid #30363d;
+      max-height: 60vh;
+      overflow-y: auto;
+    }
+    
+    .advanced-hint {
+      color: #8b949e;
+      font-size: 12px;
+      margin-bottom: 16px;
+      padding: 8px 12px;
+      background: #21262d;
+      border-radius: 6px;
+      border-left: 3px solid #f0883e;
+    }
+    
+    .option-category {
+      margin-bottom: 8px;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    
+    .category-header {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      background: #21262d;
+      border: none;
+      color: #c9d1d9;
+      cursor: pointer;
+      text-align: left;
+      font-size: 13px;
+      transition: background 0.15s;
+    }
+    
+    .category-header:hover {
+      background: #30363d;
+    }
+    
+    .category-icon {
+      font-size: 16px;
+    }
+    
+    .category-name {
+      flex: 1;
+      font-weight: 500;
+    }
+    
+    .category-toggle {
+      color: #8b949e;
+      font-size: 10px;
+    }
+    
+    .category-options {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 12px;
+      padding: 12px;
+      background: #0d1117;
+    }
+    
+    .advanced-option {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    
+    .option-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    
+    .option-header label {
+      font-size: 11px;
+      color: #8b949e;
+    }
+    
+    .option-help {
+      font-size: 10px;
+      cursor: help;
+      opacity: 0.6;
+    }
+    
+    .option-help:hover {
+      opacity: 1;
+    }
+    
+    .advanced-option input[type="number"],
+    .advanced-option input[type="text"],
+    .advanced-option select {
+      padding: 6px 8px;
+      font-size: 12px;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 4px;
+      color: #c9d1d9;
+    }
+    
+    .advanced-option input:focus,
+    .advanced-option select:focus {
+      border-color: #58a6ff;
+      outline: none;
+    }
+    
+    /* Toggle Switch */
+    .toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 40px;
+      height: 20px;
+    }
+    
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #30363d;
+      transition: 0.2s;
+      border-radius: 20px;
+    }
+    
+    .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 14px;
+      width: 14px;
+      left: 3px;
+      bottom: 3px;
+      background-color: #8b949e;
+      transition: 0.2s;
+      border-radius: 50%;
+    }
+    
+    .toggle-switch input:checked + .toggle-slider {
+      background-color: #238636;
+    }
+    
+    .toggle-switch input:checked + .toggle-slider:before {
+      transform: translateX(20px);
+      background-color: white;
+    }
+    
+    .advanced-actions {
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px solid #30363d;
+      display: flex;
+      justify-content: flex-end;
+    }
+    
+    .btn-reset-options {
+      background: transparent;
+      border: 1px solid #30363d;
+      color: #8b949e;
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.15s;
+    }
+    
+    .btn-reset-options:hover {
+      background: #21262d;
+      color: #c9d1d9;
+      border-color: #8b949e;
+    }
+
+    .advanced-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+    }
+
+    .advanced-options .form-group label {
+      font-size: 12px;
+    }
+
+    .advanced-options .form-group input,
+    .advanced-options .form-group select {
+      padding: 6px 10px;
+      font-size: 12px;
+    }
+
+    /* ==================== RESULTS TAB ==================== */
+    .results-tab {
+      height: 100%;
+    }
+
+    .processing-status, .error-status, .no-results {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      text-align: center;
+      color: #8b949e;
+    }
+
+    .error-icon { font-size: 48px; margin-bottom: 16px; }
+    .error-message { color: #f85149; margin: 12px 0; }
+
+    .btn-retry {
+      background: #f85149;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    .no-results .icon { font-size: 48px; opacity: 0.5; margin-bottom: 16px; }
+
+    /* ==================== NO CHUNK SELECTED ==================== */
+    .no-chunk-selected {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .placeholder {
+      text-align: center;
+      color: #8b949e;
+    }
+
+    .placeholder .icon { font-size: 48px; opacity: 0.5; }
+
+    .btn-primary {
+      background: #238636;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 6px;
+      cursor: pointer;
+      margin-top: 16px;
+    }
+
+    .btn-secondary {
+      background: #21262d;
+      color: #c9d1d9;
+      border: 1px solid #30363d;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    .btn-secondary:hover { background: #30363d; }
+
+    /* ==================== STATUS BAR ==================== */
+    .status-bar {
+      height: 22px;
+      background: #161b22;
+      border-top: 1px solid #30363d;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      font-size: 11px;
+      color: #8b949e;
+      gap: 8px;
+    }
+
+    .spacer { flex: 1; }
+
+    /* ==================== CONTEXT MENU ==================== */
+    .context-menu {
+      position: fixed;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 4px;
+      min-width: 160px;
+      z-index: 1000;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    }
+
+    .context-menu button {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      background: transparent;
+      border: none;
+      color: #c9d1d9;
+      padding: 8px 12px;
+      text-align: left;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+
+    .context-menu button:hover { background: #21262d; }
+    .context-menu button.danger { color: #f85149; }
+    .context-menu button.danger:hover { background: #f8514922; }
+
+    .menu-divider {
+      height: 1px;
+      background: #30363d;
+      margin: 4px 0;
+    }
+
+    .menu-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 999;
+    }
+
+    /* ==================== SCROLLBAR ==================== */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: #0d1117; }
+    ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #484f58; }
+  `]
+})
+export class ProjectWorkspaceComponent implements OnInit, OnDestroy {
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly router = inject(Router);
+  private readonly route = inject(ActivatedRoute);
+  private readonly projectService = inject(ProjectService);
+  private readonly taskService = inject(TaskService);
+  private readonly uploadService = inject(ImageUploadService);
+  private readonly chunkService = inject(ChunkService);
+
+  // Project State
+  project = signal<Project | null>(null);
+  projectName = signal('');
+  projectImages = signal<ProjectImage[]>([]);
+  chunks = signal<Chunk[]>([]);
+
+  // Chunk State
+  selectedChunk = signal<Chunk | null>(null);
+  chunkImages = signal<ProjectImage[]>([]);
+  selectedChunkImages = signal<number[]>([]);
+  chunkNameEdit = '';
+  chunkDescriptionEdit = '';
+
+  // UI State
+  initialLoading = signal(true);
+  isNewProject = false;
+  activeTab = signal<'photos' | 'options' | 'process' | 'results'>('photos');
+  
+  // Upload State
+  isDragOver = signal(false);
+  isUploading = signal(false);
+  uploadingFiles = signal<File[]>([]);
+  uploadProgress = signal<UploadProgress | null>(null);
+  maxFileSizeMb = 100;
+
+  // Save State
+  saveStatus = signal<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  private saveSubject = new Subject<{ name: string; description?: string }>();
+
+  // Context Menu
+  showChunkMenu = signal(false);
+  menuChunk = signal<Chunk | null>(null);
+  menuPosition = { x: 0, y: 0 };
+
+  // Chunk Options
+  chunkOptions = {
+    crs: 'EPSG:4326',
+    orthophoto: true,
+    dsm: true,
+    dtm: false,
+    pointCloud: true,
+    mesh: false,
+    quality: 'medium'
+  };
+
+  // Advanced NodeODM Options - All options from NodeODM API
+  chunkAdvancedOptions: Record<string, any> = {
+    // === FEATURE EXTRACTION ===
+    'min-num-features': 10000,
+    'feature-type': 'dspsift',
+    'feature-quality': 'high',
+    
+    // === MATCHING ===
+    'matcher-type': 'flann',
+    'matcher-neighbors': 0,
+    'matcher-order': 0,
+    
+    // === CAMERA ===
+    'use-fixed-camera-params': false,
+    'camera-lens': 'auto',
+    'cameras': '',
+    
+    // === RADIOMETRIC ===
+    'radiometric-calibration': 'none',
+    
+    // === SFM ===
+    'sfm-algorithm': 'incremental',
+    'sfm-no-partial': false,
+    'use-hybrid-bundle-adjustment': false,
+    
+    // === AI/MASKS ===
+    'sky-removal': false,
+    'bg-removal': false,
+    
+    // === 3D MODEL ===
+    'use-3dmesh': false,
+    'skip-3dmodel': false,
+    'mesh-size': 200000,
+    'mesh-octree-depth': 11,
+    'texturing-data-term': 'gmi',
+    'texturing-skip-global-seam-leveling': false,
+    'texturing-skip-local-seam-leveling': false,
+    'texturing-skip-hole-filling': false,
+    'texturing-keep-unseen-faces': false,
+    'texturing-single-material': false,
+    'texturing-outlier-removal-type': 'gauss_clamping',
+    'gltf': false,
+    
+    // === POINT CLOUD ===
+    'pc-quality': 'medium',
+    'pc-classify': false,
+    'pc-csv': false,
+    'pc-las': false,
+    'pc-ept': false,
+    'pc-copc': false,
+    'pc-tile': false,
+    'pc-filter': 5,
+    'pc-sample': 0,
+    'pc-skip-geometric': false,
+    'pc-rectify': false,
+    
+    // === DEM ===
+    'dsm': true,
+    'dtm': false,
+    'dem-gapfill-steps': 3,
+    'dem-resolution': 5,
+    'dem-decimation': 1,
+    'dem-euclidean-map': false,
+    
+    // === SMRF (DTM FILTER) ===
+    'smrf-scalar': 1.25,
+    'smrf-slope': 0.15,
+    'smrf-threshold': 0.5,
+    'smrf-window': 18,
+    
+    // === ORTHOPHOTO ===
+    'orthophoto-resolution': 5,
+    'orthophoto-no-tiled': false,
+    'orthophoto-png': false,
+    'orthophoto-kmz': false,
+    'orthophoto-compression': 'DEFLATE',
+    'orthophoto-bigtiff': 'IF_SAFER',
+    'orthophoto-cutline': false,
+    'skip-orthophoto': false,
+    'fast-orthophoto': false,
+    
+    // === TILES ===
+    'tiles': false,
+    '3d-tiles': false,
+    'cog': false,
+    'build-overviews': false,
+    
+    // === GPS ===
+    'gps-accuracy': 3,
+    'gps-z-offset': 0,
+    'use-exif': false,
+    'force-gps': false,
+    
+    // === GCP ===
+    'gcp': '',
+    'geo': '',
+    
+    // === BOUNDARIES ===
+    'crop': 3,
+    'boundary': '',
+    'auto-boundary': false,
+    'auto-boundary-distance': 0,
+    'ignore-gsd': false,
+    
+    // === ROLLING SHUTTER ===
+    'rolling-shutter': false,
+    'rolling-shutter-readout': 0,
+    
+    // === PROCESSING ===
+    'max-concurrency': 0,
+    'no-gpu': false,
+    'optimize-disk-space': false,
+    'resize-to': 0,
+    'skip-report': false,
+    
+    // === DEBUG ===
+    'verbose': false,
+    'time': false,
+    'debug': false,
+    
+    // === SPLIT/MERGE ===
+    'split': 999999,
+    'split-overlap': 150,
+    'sm-no-align': false,
+    'sm-cluster': '',
+    'merge': 'all',
+    'merge-skip-blending': false,
+    
+    // === VIDEO ===
+    'video-limit': 500,
+    'video-resolution': 4000,
+    
+    // === MULTISPECTRAL ===
+    'primary-band': 'auto',
+    'skip-band-alignment': false,
+    
+    // === WORKFLOW ===
+    'rerun-from': '',
+    'end-with': 'odm_postprocess',
+    'copy-to': ''
+  };
+  
+  // Categories for organized display
+  advancedOptionCategories = [
+    {
+      name: 'Extração de Features',
+      icon: '🔍',
+      expanded: false,
+      options: [
+        { key: 'min-num-features', label: 'Mínimo de Features', type: 'number', min: 1000, max: 50000, help: 'Número mínimo de features a extrair por imagem' },
+        { key: 'feature-type', label: 'Tipo de Feature', type: 'select', options: ['akaze', 'dspsift', 'hahog', 'orb', 'sift'], help: 'Algoritmo para extração de keypoints' },
+        { key: 'feature-quality', label: 'Qualidade de Features', type: 'select', options: ['ultra', 'high', 'medium', 'low', 'lowest'], help: 'Qualidade da extração de features' }
+      ]
+    },
+    {
+      name: 'Matching de Imagens',
+      icon: '🔗',
+      expanded: false,
+      options: [
+        { key: 'matcher-type', label: 'Tipo de Matcher', type: 'select', options: ['bow', 'bruteforce', 'flann'], help: 'Algoritmo de matching' },
+        { key: 'matcher-neighbors', label: 'Vizinhos por GPS', type: 'number', min: 0, max: 100, help: 'Match com N imagens mais próximas por GPS. 0=triangulação' },
+        { key: 'matcher-order', label: 'Ordem Sequencial', type: 'number', min: 0, max: 100, help: 'Match com N imagens próximas por nome. Útil para vídeo. 0=desativado' }
+      ]
+    },
+    {
+      name: 'Câmera',
+      icon: '📷',
+      expanded: false,
+      options: [
+        { key: 'camera-lens', label: 'Tipo de Lente', type: 'select', options: ['auto', 'perspective', 'brown', 'fisheye', 'fisheye_opencv', 'spherical', 'equirectangular', 'dual'], help: 'Tipo de projeção da câmera' },
+        { key: 'cameras', label: 'Arquivo de Câmeras', type: 'text', help: 'Caminho para arquivo cameras.json personalizado' },
+        { key: 'use-fixed-camera-params', label: 'Parâmetros Fixos', type: 'boolean', help: 'Desativa otimização de parâmetros de câmera' },
+        { key: 'rolling-shutter', label: 'Rolling Shutter', type: 'boolean', help: 'Ativa correção de rolling shutter' },
+        { key: 'rolling-shutter-readout', label: 'Tempo de Readout (ms)', type: 'number', min: 0, max: 100, help: 'Override do tempo de readout em ms. 0=usar banco de dados' }
+      ]
+    },
+    {
+      name: 'SFM (Structure from Motion)',
+      icon: '🏗️',
+      expanded: false,
+      options: [
+        { key: 'sfm-algorithm', label: 'Algoritmo SFM', type: 'select', options: ['incremental', 'triangulation', 'planar'], help: 'Algoritmo de reconstrução. triangulation=melhor com GPS preciso' },
+        { key: 'sfm-no-partial', label: 'Sem Reconstruções Parciais', type: 'boolean', help: 'Não tenta unir reconstruções parciais' },
+        { key: 'use-hybrid-bundle-adjustment', label: 'Bundle Adjustment Híbrido', type: 'boolean', help: 'Acelera reconstrução em datasets muito grandes' }
+      ]
+    },
+    {
+      name: 'Nuvem de Pontos',
+      icon: '✨',
+      expanded: false,
+      options: [
+        { key: 'pc-quality', label: 'Qualidade', type: 'select', options: ['ultra', 'high', 'medium', 'low', 'lowest'], help: 'Qualidade da nuvem de pontos. Cada nível aumenta ~4x o tempo' },
+        { key: 'pc-filter', label: 'Filtro de Outliers (σ)', type: 'number', min: 0, max: 10, step: 0.5, help: 'Remove pontos > N desvios padrão. 0=desativado' },
+        { key: 'pc-sample', label: 'Amostragem (m)', type: 'number', min: 0, max: 10, step: 0.1, help: 'Mantém 1 ponto por raio N metros. 0=desativado' },
+        { key: 'pc-classify', label: 'Classificar Pontos', type: 'boolean', help: 'Classifica a nuvem de pontos (solo, vegetação, etc.)' },
+        { key: 'pc-rectify', label: 'Retificar Solo', type: 'boolean', help: 'Reclassifica e preenche lacunas no solo' },
+        { key: 'pc-skip-geometric', label: 'Pular Geometric', type: 'boolean', help: 'Pula estimativas geométricas (mais rápido, menos preciso)' }
+      ]
+    },
+    {
+      name: 'Exportação de Nuvem',
+      icon: '💾',
+      expanded: false,
+      options: [
+        { key: 'pc-las', label: 'Exportar LAS', type: 'boolean', help: 'Exporta nuvem em formato LAS' },
+        { key: 'pc-ept', label: 'Exportar EPT', type: 'boolean', help: 'Exporta em Entwine Point Tile para visualização web' },
+        { key: 'pc-copc', label: 'Exportar COPC', type: 'boolean', help: 'Exporta em Cloud Optimized Point Cloud' },
+        { key: 'pc-tile', label: 'Gerar Tiles 3D', type: 'boolean', help: 'Gera tiles 3D da nuvem de pontos' },
+        { key: 'pc-csv', label: 'Exportar CSV', type: 'boolean', help: 'Exporta nuvem em formato CSV' }
+      ]
+    },
+    {
+      name: 'Modelo 3D / Mesh',
+      icon: '🎮',
+      expanded: false,
+      options: [
+        { key: 'skip-3dmodel', label: 'Pular Modelo 3D', type: 'boolean', help: 'Pula geração do modelo 3D completo' },
+        { key: 'use-3dmesh', label: 'Usar Mesh 3D', type: 'boolean', help: 'Usa mesh 3D completo ao invés de 2.5D para ortofoto' },
+        { key: 'mesh-size', label: 'Tamanho do Mesh', type: 'number', min: 50000, max: 1000000, step: 50000, help: 'Número máximo de vértices' },
+        { key: 'mesh-octree-depth', label: 'Profundidade Octree', type: 'number', min: 1, max: 14, help: 'Profundidade da octree. 8-12 recomendado' },
+        { key: 'gltf', label: 'Exportar GLTF', type: 'boolean', help: 'Gera modelo texturizado em GLTF/GLB' }
+      ]
+    },
+    {
+      name: 'Texturização',
+      icon: '🎨',
+      expanded: false,
+      options: [
+        { key: 'texturing-data-term', label: 'Algoritmo de Dados', type: 'select', options: ['gmi', 'area'], help: 'Termo de dados para otimização de textura' },
+        { key: 'texturing-outlier-removal-type', label: 'Remoção de Outliers', type: 'select', options: ['none', 'gauss_clamping', 'gauss_damping'], help: 'Tipo de remoção de outliers na texturização' },
+        { key: 'texturing-skip-global-seam-leveling', label: 'Pular Normalização Global', type: 'boolean', help: 'Pula normalização global de cores' },
+        { key: 'texturing-skip-local-seam-leveling', label: 'Pular Normalização Local', type: 'boolean', help: 'Pula normalização local de cores nas costuras' },
+        { key: 'texturing-skip-hole-filling', label: 'Pular Preenchimento de Buracos', type: 'boolean', help: 'Pula preenchimento automático de buracos na textura' },
+        { key: 'texturing-keep-unseen-faces', label: 'Manter Faces Não Vistas', type: 'boolean', help: 'Mantém faces não vistas em nenhuma câmera' },
+        { key: 'texturing-single-material', label: 'Material Único', type: 'boolean', help: 'Gera OBJ com material e textura únicos' }
+      ]
+    },
+    {
+      name: 'DEM (Modelos de Elevação)',
+      icon: '🏔️',
+      expanded: false,
+      options: [
+        { key: 'dsm', label: 'Gerar DSM', type: 'boolean', help: 'Gera Modelo Digital de Superfície' },
+        { key: 'dtm', label: 'Gerar DTM', type: 'boolean', help: 'Gera Modelo Digital de Terreno (apenas solo)' },
+        { key: 'dem-resolution', label: 'Resolução (cm/pixel)', type: 'number', min: 1, max: 100, help: 'Resolução do DEM em cm/pixel' },
+        { key: 'dem-gapfill-steps', label: 'Passos de Preenchimento', type: 'number', min: 0, max: 10, help: 'Passos para preencher lacunas. 0=desativado' },
+        { key: 'dem-decimation', label: 'Decimação', type: 'number', min: 1, max: 100, help: 'Decima pontos antes do DEM. 1=sem decimação, 100=~99%' },
+        { key: 'dem-euclidean-map', label: 'Mapa Euclidiano', type: 'boolean', help: 'Gera mapa de distância até NODATA' }
+      ]
+    },
+    {
+      name: 'Filtro SMRF (DTM)',
+      icon: '⛰️',
+      expanded: false,
+      options: [
+        { key: 'smrf-scalar', label: 'Escalar', type: 'number', min: 0.1, max: 5, step: 0.05, help: 'Parâmetro escalar do filtro SMRF' },
+        { key: 'smrf-slope', label: 'Inclinação', type: 'number', min: 0.01, max: 1, step: 0.01, help: 'Parâmetro de inclinação (rise/run)' },
+        { key: 'smrf-threshold', label: 'Limiar (m)', type: 'number', min: 0.1, max: 5, step: 0.1, help: 'Limiar de elevação em metros' },
+        { key: 'smrf-window', label: 'Janela (m)', type: 'number', min: 1, max: 100, help: 'Raio da janela em metros' }
+      ]
+    },
+    {
+      name: 'Ortofoto',
+      icon: '🗺️',
+      expanded: false,
+      options: [
+        { key: 'skip-orthophoto', label: 'Pular Ortofoto', type: 'boolean', help: 'Pula geração do ortofoto' },
+        { key: 'fast-orthophoto', label: 'Ortofoto Rápido', type: 'boolean', help: 'Gera ortofoto direto da reconstrução esparsa' },
+        { key: 'orthophoto-resolution', label: 'Resolução (cm/pixel)', type: 'number', min: 1, max: 100, help: 'Resolução em cm/pixel' },
+        { key: 'orthophoto-compression', label: 'Compressão', type: 'select', options: ['JPEG', 'LZW', 'PACKBITS', 'DEFLATE', 'LZMA', 'NONE'], help: 'Tipo de compressão do GeoTIFF' },
+        { key: 'orthophoto-bigtiff', label: 'BigTIFF', type: 'select', options: ['YES', 'NO', 'IF_NEEDED', 'IF_SAFER'], help: 'Forçar BigTIFF para arquivos grandes (>4GB)' },
+        { key: 'orthophoto-png', label: 'Exportar PNG', type: 'boolean', help: 'Gera renderização PNG' },
+        { key: 'orthophoto-kmz', label: 'Exportar KMZ', type: 'boolean', help: 'Gera arquivo para Google Earth' },
+        { key: 'orthophoto-no-tiled', label: 'GeoTIFF Striped', type: 'boolean', help: 'Gera GeoTIFF striped ao invés de tiled' },
+        { key: 'orthophoto-cutline', label: 'Gerar Cutline', type: 'boolean', help: 'Gera polígono de corte para mosaicos' }
+      ]
+    },
+    {
+      name: 'Tiles e Otimização',
+      icon: '🧱',
+      expanded: false,
+      options: [
+        { key: 'tiles', label: 'Gerar Tiles 2D', type: 'boolean', help: 'Gera tiles estáticos para Leaflet/OpenLayers' },
+        { key: '3d-tiles', label: 'Gerar 3D Tiles', type: 'boolean', help: 'Gera OGC 3D Tiles' },
+        { key: 'cog', label: 'Cloud Optimized GeoTIFF', type: 'boolean', help: 'Cria COG ao invés de GeoTIFF normal' },
+        { key: 'build-overviews', label: 'Construir Overviews', type: 'boolean', help: 'Gera overviews para visualização rápida no QGIS' }
+      ]
+    },
+    {
+      name: 'GPS e Georreferenciamento',
+      icon: '📍',
+      expanded: false,
+      options: [
+        { key: 'gps-accuracy', label: 'Precisão GPS (m)', type: 'number', min: 0.01, max: 100, step: 0.1, help: 'DOP do GPS em metros. Menor = mais preciso' },
+        { key: 'gps-z-offset', label: 'Offset Z (m)', type: 'number', min: -1000, max: 1000, help: 'Offset vertical para correção elipsoidal/ortométrica' },
+        { key: 'use-exif', label: 'Usar EXIF', type: 'boolean', help: 'Usa EXIF ao invés de GCP para georreferenciamento' },
+        { key: 'force-gps', label: 'Forçar GPS', type: 'boolean', help: 'Usa GPS mesmo com GCPs presentes' }
+      ]
+    },
+    {
+      name: 'Pontos de Controle (GCP)',
+      icon: '🎯',
+      expanded: false,
+      options: [
+        { key: 'gcp', label: 'Arquivo GCP', type: 'text', help: 'Caminho para arquivo txt com Ground Control Points (formato: geo_x geo_y geo_z im_x im_y image_name)' },
+        { key: 'geo', label: 'Arquivo de Projeção', type: 'text', help: 'Caminho para arquivo txt com definição da projeção (PROJ, WKT, ou EPSG)' }
+      ]
+    },
+    {
+      name: 'Limites e Recorte',
+      icon: '✂️',
+      expanded: false,
+      options: [
+        { key: 'crop', label: 'Margem de Recorte (m)', type: 'number', min: 0, max: 100, help: 'Buffer de recorte em metros. 0=desativado' },
+        { key: 'boundary', label: 'Polígono Limite (GeoJSON)', type: 'text', help: 'GeoJSON ou caminho para arquivo com polígono de limite' },
+        { key: 'auto-boundary', label: 'Limite Automático', type: 'boolean', help: 'Define limite automaticamente pelas posições das câmeras' },
+        { key: 'auto-boundary-distance', label: 'Distância do Limite (m)', type: 'number', min: 0, max: 1000, help: 'Distância entre câmeras e borda. 0=automático' },
+        { key: 'ignore-gsd', label: 'Ignorar GSD', type: 'boolean', help: 'Ignora estimativa de GSD. CUIDADO: usa muita memória!' }
+      ]
+    },
+    {
+      name: 'Calibração Radiométrica',
+      icon: '☀️',
+      expanded: false,
+      options: [
+        { key: 'radiometric-calibration', label: 'Calibração', type: 'select', options: ['none', 'camera', 'camera+sun'], help: 'Calibração para imagens multiespectrais/térmicas' }
+      ]
+    },
+    {
+      name: 'IA / Máscaras',
+      icon: '🤖',
+      expanded: false,
+      options: [
+        { key: 'sky-removal', label: 'Remover Céu (IA)', type: 'boolean', help: 'Remove céu automaticamente com IA. Experimental' },
+        { key: 'bg-removal', label: 'Remover Fundo (IA)', type: 'boolean', help: 'Remove fundo automaticamente com IA. Experimental' }
+      ]
+    },
+    {
+      name: 'Split/Merge (Grandes Datasets)',
+      icon: '🔀',
+      expanded: false,
+      options: [
+        { key: 'split', label: 'Imagens por Submodelo', type: 'number', min: 50, max: 999999, help: 'Média de imagens por submodelo' },
+        { key: 'split-overlap', label: 'Overlap (m)', type: 'number', min: 0, max: 500, help: 'Raio de overlap entre submodelos' },
+        { key: 'sm-cluster', label: 'Arquivo de Cluster', type: 'text', help: 'Caminho para arquivo JSON com definição de clusters' },
+        { key: 'merge', label: 'O que Mesclar', type: 'select', options: ['all', 'pointcloud', 'orthophoto', 'dem'], help: 'Outputs a mesclar' },
+        { key: 'sm-no-align', label: 'Pular Alinhamento', type: 'boolean', help: 'Pula alinhamento de submodelos (se GPS é bom)' },
+        { key: 'merge-skip-blending', label: 'Pular Blending', type: 'boolean', help: 'Pula operação cara de blending na mesclagem' }
+      ]
+    },
+    {
+      name: 'Vídeo',
+      icon: '🎬',
+      expanded: false,
+      options: [
+        { key: 'video-limit', label: 'Limite de Frames', type: 'number', min: 0, max: 10000, help: 'Máximo de frames a extrair. 0=sem limite' },
+        { key: 'video-resolution', label: 'Resolução (pixels)', type: 'number', min: 500, max: 8000, help: 'Resolução máxima dos frames extraídos' }
+      ]
+    },
+    {
+      name: 'Multiespectral',
+      icon: '🌈',
+      expanded: false,
+      options: [
+        { key: 'primary-band', label: 'Banda Primária', type: 'text', help: 'Nome da banda primária para reconstrução. auto=automático' },
+        { key: 'skip-band-alignment', label: 'Pular Alinhamento', type: 'boolean', help: 'Pula alinhamento de bandas (se já alinhadas)' }
+      ]
+    },
+    {
+      name: 'Performance',
+      icon: '⚡',
+      expanded: false,
+      options: [
+        { key: 'max-concurrency', label: 'Threads (0=auto)', type: 'number', min: 0, max: 64, help: 'Número máximo de processos paralelos' },
+        { key: 'resize-to', label: 'Redimensionar Imagens (px)', type: 'number', min: 0, max: 8000, help: 'Redimensiona imagens para largura máxima em pixels. 0=sem redimensionamento. Útil para testes rápidos' },
+        { key: 'no-gpu', label: 'Desativar GPU', type: 'boolean', help: 'Não usa aceleração GPU' },
+        { key: 'optimize-disk-space', label: 'Otimizar Disco', type: 'boolean', help: 'Deleta arquivos intermediários. Impede reinício' }
+      ]
+    },
+    {
+      name: 'Debug & Monitoramento',
+      icon: '🐛',
+      expanded: false,
+      options: [
+        { key: 'verbose', label: 'Modo Verbose', type: 'boolean', help: 'Saída detalhada de logs no console' },
+        { key: 'time', label: 'Mostrar Tempos', type: 'boolean', help: 'Exibe tempo de execução de cada etapa' },
+        { key: 'debug', label: 'Modo Debug', type: 'boolean', help: 'Salva TODOS os arquivos intermediários para análise. Usa muito espaço!' }
+      ]
+    },
+    {
+      name: 'Relatório',
+      icon: '📄',
+      expanded: false,
+      options: [
+        { key: 'skip-report', label: 'Pular Relatório', type: 'boolean', help: 'Pula geração do relatório PDF' }
+      ]
+    },
+    {
+      name: 'Workflow Avançado',
+      icon: '🔄',
+      expanded: false,
+      options: [
+        { key: 'rerun-from', label: 'Reiniciar de', type: 'select', options: ['', 'dataset', 'split', 'merge', 'opensfm', 'openmvs', 'odm_filterpoints', 'odm_meshing', 'mvs_texturing', 'odm_georeferencing', 'odm_dem', 'odm_orthophoto', 'odm_postprocess'], help: 'Estágio para reiniciar o processamento' },
+        { key: 'end-with', label: 'Terminar em', type: 'select', options: ['odm_postprocess', 'dataset', 'split', 'merge', 'opensfm', 'openmvs', 'odm_filterpoints', 'odm_meshing', 'mvs_texturing', 'odm_georeferencing', 'odm_dem', 'odm_orthophoto'], help: 'Estágio onde terminar o processamento' },
+        { key: 'copy-to', label: 'Copiar Resultados Para', type: 'text', help: 'Caminho de rede/nuvem para copiar resultados automaticamente após processamento' }
+      ]
+    }
+  ];
+
+  showAdvancedOptions = signal(false);
+
+  qualityLevels = [
+    { value: 'fast', name: 'Rápido', description: 'Prévia', time: '5-15min' },
+    { value: 'medium', name: 'Médio', description: 'Balanceado', time: '30-60min' },
+    { value: 'high', name: 'Alto', description: 'Precisão', time: '2-4h' },
+    { value: 'ultra', name: 'Ultra', description: 'Máximo', time: '6h+' }
+  ];
+
+  // Computed
+  totalImages = computed(() => this.projectImages().length);
+  
+  projectStatus = computed(() => {
+    const chs = this.chunks();
+    if (chs.some(c => c.status === 'RUNNING')) return 'processing';
+    if (chs.every(c => c.status === 'COMPLETED') && chs.length > 0) return 'completed';
+    return 'pending';
+  });
+
+  projectImagesNotInChunk = computed(() => {
+    const chunkImgIds = new Set(this.chunkImages().map(i => i.id));
+    return this.projectImages().filter(img => !chunkImgIds.has(img.id));
+  });
+
+  // Parse chunk outputs if they come as string
+  chunkOutputs = computed(() => {
+    const chunk = this.selectedChunk();
+    if (!chunk || !chunk.outputs) return {};
+    
+    // If outputs is a string, parse it
+    if (typeof chunk.outputs === 'string') {
+      try {
+        return JSON.parse(chunk.outputs);
+      } catch (e) {
+        console.error('Failed to parse chunk outputs:', e);
+        return {};
+      }
+    }
+    
+    return chunk.outputs;
+  });
+
+  constructor() {
+    // Setup auto-save
+    this.saveSubject.pipe(
+      debounceTime(1000),
+      distinctUntilChanged((prev, curr) => prev.name === curr.name),
+      tap(() => this.saveStatus.set('saving')),
+      switchMap(data => {
+        const project = this.project();
+        if (!project) return of(null);
+        return this.projectService.updateProject(project.id, data).pipe(
+          catchError(err => {
+            console.error('Auto-save failed:', err);
+            this.saveStatus.set('error');
+            return of(null);
+          })
+        );
+      }),
+      takeUntilDestroyed(this.destroyRef)
+    ).subscribe(result => {
+      if (result) {
+        this.saveStatus.set('saved');
+        setTimeout(() => {
+          if (this.saveStatus() === 'saved') this.saveStatus.set('idle');
+        }, 2000);
+      }
+    });
+
+    // Subscribe to upload progress
+    this.uploadService.uploadProgress$.pipe(
+      takeUntilDestroyed(this.destroyRef)
+    ).subscribe(progress => this.uploadProgress.set(progress));
+
+    this.uploadService.uploading$.pipe(
+      takeUntilDestroyed(this.destroyRef)
+    ).subscribe(uploading => this.isUploading.set(uploading));
+  }
+
+  ngOnInit(): void {
+    const id = this.route.snapshot.paramMap.get('id');
+    
+    if (id === 'new') {
+      this.isNewProject = true;
+      this.createNewProject();
+    } else if (id) {
+      this.loadProject(parseInt(id, 10));
+    }
+  }
+
+  ngOnDestroy(): void {}
+
+  // ==================== PROJECT ====================
+
+  private createNewProject(): void {
+    this.projectService.createProject({
+      name: 'Novo Projeto',
+      description: ''
+    }).subscribe({
+      next: (project) => {
+        this.project.set(project);
+        this.projectName.set(project.name);
+        this.initialLoading.set(false);
+        this.router.navigate(['/projects', project.id], { replaceUrl: true });
+        // Create default chunk
+        this.createNewChunk();
+      },
+      error: (err) => {
+        console.error('Failed to create project:', err);
+        this.initialLoading.set(false);
+        this.router.navigate(['/projects']);
+      }
+    });
+  }
+
+  private loadProject(id: number): void {
+    this.projectService.loadProjects().pipe(
+      switchMap(() => this.projectService.getProject(id)),
+      takeUntilDestroyed(this.destroyRef)
+    ).subscribe({
+      next: (project) => {
+        if (project) {
+          this.project.set(project);
+          this.projectName.set(project.name);
+          this.loadProjectData(id);
+        } else {
+          this.router.navigate(['/projects']);
+        }
+        this.initialLoading.set(false);
+      },
+      error: () => {
+        this.initialLoading.set(false);
+        this.router.navigate(['/projects']);
+      }
+    });
+  }
+
+  private loadProjectData(projectId: number): void {
+    forkJoin({
+      images: this.uploadService.getProjectImages(projectId),
+      chunks: this.chunkService.getChunks(projectId)
+    }).subscribe({
+      next: ({ images, chunks }) => {
+        this.projectImages.set(images);
+        
+        // Auto-migrate: if project has images but no chunks, ensure chunks exist
+        if (chunks.length === 0 && images.length > 0) {
+          this.ensureProjectHasChunks(projectId, images);
+        } else {
+          this.chunks.set(chunks);
+          // Select first chunk if available
+          if (chunks.length > 0) {
+            this.selectChunk(chunks[0]);
+          }
+        }
+      },
+      error: (err) => console.error('Failed to load project data:', err)
+    });
+  }
+
+  private ensureProjectHasChunks(projectId: number, images: ProjectImage[]): void {
+    // Call backend to create default chunk with all images
+    this.chunkService.ensureProjectHasChunks(projectId).subscribe({
+      next: (chunks) => {
+        this.chunks.set(chunks);
+        if (chunks.length > 0) {
+          this.selectChunk(chunks[0]);
+        }
+      },
+      error: (err) => {
+        console.error('Failed to ensure chunks:', err);
+        // Fallback: just show empty chunks list
+        this.chunks.set([]);
+      }
+    });
+  }
+
+  onNameChange(event: Event): void {
+    const value = (event.target as HTMLInputElement).value;
+    this.projectName.set(value);
+    this.saveSubject.next({ name: value });
+  }
+
+  onNameBlur(): void {
+    this.saveSubject.next({ name: this.projectName() });
+  }
+
+  getProjectStatusLabel(): string {
+    const status = this.projectStatus();
+    return status === 'processing' ? 'Processando' : 
+           status === 'completed' ? 'Concluído' : 'Pendente';
+  }
+
+  // ==================== CHUNKS ====================
+
+  createNewChunk(): void {
+    const project = this.project();
+    if (!project) return;
+
+    const chunkNumber = this.chunks().length + 1;
+    this.chunkService.createChunk(project.id, {
+      name: `Chunk ${chunkNumber}`,
+      description: ''
+    }).subscribe({
+      next: (chunk) => {
+        this.chunks.update(list => [...list, chunk]);
+        this.selectChunk(chunk);
+      },
+      error: (err) => console.error('Failed to create chunk:', err)
+    });
+  }
+
+  selectChunk(chunk: Chunk): void {
+    this.selectedChunk.set(chunk);
+    this.selectedChunkImages.set([]);
+    this.chunkNameEdit = chunk.name;
+    this.chunkDescriptionEdit = chunk.description || '';
+    this.setActiveTab('photos');
+    this.loadChunkImages(chunk);
+  }
+
+  private loadChunkImages(chunk: Chunk): void {
+    const project = this.project();
+    if (!project) return;
+
+    this.chunkService.getChunkImages(project.id, chunk.id).subscribe({
+      next: (images) => this.chunkImages.set(images),
+      error: (err) => console.error('Failed to load chunk images:', err)
+    });
+  }
+
+  onChunkNameChange(event: Event): void {
+    this.chunkNameEdit = (event.target as HTMLInputElement).value;
+  }
+
+  onChunkDescriptionChange(event: Event): void {
+    this.chunkDescriptionEdit = (event.target as HTMLTextAreaElement).value;
+  }
+
+  saveChunkName(): void {
+    const chunk = this.selectedChunk();
+    const project = this.project();
+    if (!chunk || !project || chunk.name === this.chunkNameEdit) return;
+
+    this.chunkService.updateChunk(project.id, chunk.id, { name: this.chunkNameEdit }).subscribe({
+      next: (updated) => {
+        this.selectedChunk.set(updated);
+        this.chunks.update(list => list.map(c => c.id === updated.id ? updated : c));
+      }
+    });
+  }
+
+  saveChunkDescription(): void {
+    const chunk = this.selectedChunk();
+    const project = this.project();
+    if (!chunk || !project) return;
+
+    this.chunkService.updateChunk(project.id, chunk.id, { description: this.chunkDescriptionEdit }).subscribe({
+      next: (updated) => {
+        this.selectedChunk.set(updated);
+        this.chunks.update(list => list.map(c => c.id === updated.id ? updated : c));
+      }
+    });
+  }
+
+  deleteCurrentChunk(): void {
+    const chunk = this.selectedChunk();
+    if (chunk) this.deleteChunk(chunk);
+  }
+
+  deleteChunk(chunk: Chunk): void {
+    const project = this.project();
+    if (!project) return;
+
+    if (!confirm(`Excluir chunk "${chunk.name}"?`)) return;
+
+    this.chunkService.deleteChunk(project.id, chunk.id).subscribe({
+      next: () => {
+        this.chunks.update(list => list.filter(c => c.id !== chunk.id));
+        if (this.selectedChunk()?.id === chunk.id) {
+          const remaining = this.chunks();
+          this.selectedChunk.set(remaining.length > 0 ? remaining[0] : null);
+          if (remaining.length > 0) this.loadChunkImages(remaining[0]);
+        }
+        this.closeChunkMenu();
+      }
+    });
+  }
+
+  getChunkIcon(status: ChunkStatus): string {
+    const icons: Record<ChunkStatus, string> = {
+      'EMPTY': '⚪',
+      'READY': '🔵',
+      'QUEUED': '🟡',
+      'RUNNING': '🟠',
+      'COMPLETED': '🟢',
+      'FAILED': '🔴',
+      'CANCELED': '⚫'
+    };
+    return icons[status] || '⚪';
+  }
+
+  getChunkStatusLabel(status: ChunkStatus): string {
+    const labels: Record<ChunkStatus, string> = {
+      'EMPTY': 'Vazio',
+      'READY': 'Pronto',
+      'QUEUED': 'Na Fila',
+      'RUNNING': 'Processando',
+      'COMPLETED': 'Concluído',
+      'FAILED': 'Falhou',
+      'CANCELED': 'Cancelado'
+    };
+    return labels[status] || status;
+  }
+
+  // ==================== CHUNK CONTEXT MENU ====================
+
+  openChunkMenu(event: MouseEvent, chunk: Chunk): void {
+    event.stopPropagation();
+    this.menuChunk.set(chunk);
+    this.menuPosition = { x: event.clientX, y: event.clientY };
+    this.showChunkMenu.set(true);
+  }
+
+  closeChunkMenu(): void {
+    this.showChunkMenu.set(false);
+    this.menuChunk.set(null);
+  }
+
+  renameChunk(): void {
+    const chunk = this.menuChunk();
+    if (chunk) {
+      this.selectChunk(chunk);
+      this.setActiveTab('options');
+    }
+    this.closeChunkMenu();
+  }
+
+  duplicateChunk(): void {
+    // TODO: Implement chunk duplication
+    this.closeChunkMenu();
+  }
+
+  // ==================== IMAGES ====================
+
+  addImageToChunk(imageId: number): void {
+    const chunk = this.selectedChunk();
+    const project = this.project();
+    if (!chunk || !project) return;
+
+    this.chunkService.addImagesToChunk(project.id, chunk.id, [imageId]).subscribe({
+      next: (updated) => {
+        this.selectedChunk.set(updated);
+        this.chunks.update(list => list.map(c => c.id === updated.id ? updated : c));
+        this.loadChunkImages(updated);
+      }
+    });
+  }
+
+  addAllImagesToChunk(): void {
+    const chunk = this.selectedChunk();
+    const project = this.project();
+    const images = this.projectImagesNotInChunk();
+    if (!chunk || !project || images.length === 0) return;
+
+    const imageIds = images.map(img => img.id);
+    this.chunkService.addImagesToChunk(project.id, chunk.id, imageIds).subscribe({
+      next: (updated) => {
+        this.selectedChunk.set(updated);
+        this.chunks.update(list => list.map(c => c.id === updated.id ? updated : c));
+        this.loadChunkImages(updated);
+      }
+    });
+  }
+
+  removeSelectedFromChunk(): void {
+    const chunk = this.selectedChunk();
+    const project = this.project();
+    const selected = this.selectedChunkImages();
+    if (!chunk || !project || selected.length === 0) return;
+
+    this.chunkService.removeImagesFromChunk(project.id, chunk.id, selected).subscribe({
+      next: (updated) => {
+        this.selectedChunk.set(updated);
+        this.chunks.update(list => list.map(c => c.id === updated.id ? updated : c));
+        this.selectedChunkImages.set([]);
+        this.loadChunkImages(updated);
+      }
+    });
+  }
+
+  isChunkImageSelected(imageId: number): boolean {
+    return this.selectedChunkImages().includes(imageId);
+  }
+
+  toggleChunkImageSelection(imageId: number): void {
+    this.selectedChunkImages.update(list => {
+      if (list.includes(imageId)) {
+        return list.filter(id => id !== imageId);
+      }
+      return [...list, imageId];
+    });
+  }
+
+  getImageThumbnail(image: ProjectImage): string {
+    const project = this.project();
+    if (!project) return '';
+    return `/api/v1/projects/${project.id}/images/${image.id}/thumbnail`;
+  }
+
+  // ==================== UPLOAD ====================
+
+  onDragOver(event: DragEvent): void {
+    event.preventDefault();
+    this.isDragOver.set(true);
+  }
+
+  onDragLeave(event: DragEvent): void {
+    event.preventDefault();
+    this.isDragOver.set(false);
+  }
+
+  onDrop(event: DragEvent): void {
+    event.preventDefault();
+    this.isDragOver.set(false);
+    const files = event.dataTransfer?.files;
+    if (files) this.uploadFiles(Array.from(files));
+  }
+
+  onFilesSelected(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    if (input.files) {
+      this.uploadFiles(Array.from(input.files));
+      input.value = '';
+    }
+  }
+
+  private uploadFiles(files: File[]): void {
+    const project = this.project();
+    const chunk = this.selectedChunk();
+    if (!project) return;
+
+    const imageFiles = files.filter(f => 
+      f.type.startsWith('image/') || 
+      f.name.toLowerCase().match(/\.(jpg|jpeg|png|tiff|tif)$/)
+    );
+
+    if (imageFiles.length === 0) return;
+
+    this.uploadingFiles.set(imageFiles);
+
+    this.uploadService.uploadImages(project.id, imageFiles).subscribe({
+      next: (response) => {
+        this.projectImages.update(list => [...list, ...response.images]);
+        this.uploadingFiles.set([]);
+        
+        // Auto-add to current chunk if one is selected
+        if (chunk && response.images.length > 0) {
+          const newIds = response.images.map(img => img.id);
+          this.chunkService.addImagesToChunk(project.id, chunk.id, newIds).subscribe({
+            next: (updated) => {
+              this.selectedChunk.set(updated);
+              this.chunks.update(list => list.map(c => c.id === updated.id ? updated : c));
+              this.loadChunkImages(updated);
+            }
+          });
+        }
+      },
+      error: (err) => {
+        console.error('Upload failed:', err);
+        this.uploadingFiles.set([]);
+      }
+    });
+  }
+
+  // ==================== PROCESSING ====================
+
+  canProcessChunk(chunk: Chunk): boolean {
+    return chunk.imageCount >= 3 && (chunk.status === 'READY' || chunk.status === 'FAILED');
+  }
+
+  canProcessAll(): boolean {
+    return this.chunks().some(c => this.canProcessChunk(c));
+  }
+
+  processChunk(chunk: Chunk): void {
+    const project = this.project();
+    if (!project || !this.canProcessChunk(chunk)) return;
+
+    // Build NodeODM options based on quality and outputs
+    const options: Record<string, any> = this.buildProcessingOptions();
+
+    console.log('Processing chunk:', chunk.id, 'with options:', options);
+
+    // Call the actual processing API
+    this.chunkService.processChunk(project.id, chunk.id, options).subscribe({
+      next: (updated) => {
+        console.log('Chunk processing started:', updated);
+        this.selectedChunk.set(updated);
+        this.chunks.update(list => list.map(c => c.id === updated.id ? updated : c));
+        // Switch to results tab to see progress
+        this.setActiveTab('results');
+        // Start polling for updates
+        this.pollChunkStatus(chunk.id);
+      },
+      error: (err) => {
+        console.error('Failed to start processing:', err);
+        alert('Erro ao iniciar processamento: ' + (err.error?.message || err.message));
+      }
+    });
+
+    this.closeChunkMenu();
+  }
+
+  resetAdvancedOptions(): void {
+    this.chunkAdvancedOptions = {
+      // === FEATURE EXTRACTION ===
+      'min-num-features': 10000,
+      'feature-type': 'dspsift',
+      'feature-quality': 'high',
+      
+      // === MATCHING ===
+      'matcher-type': 'flann',
+      'matcher-neighbors': 0,
+      'matcher-order': 0,
+      
+      // === CAMERA ===
+      'use-fixed-camera-params': false,
+      'camera-lens': 'auto',
+      'cameras': '',
+      
+      // === RADIOMETRIC ===
+      'radiometric-calibration': 'none',
+      
+      // === SFM ===
+      'sfm-algorithm': 'incremental',
+      'sfm-no-partial': false,
+      'use-hybrid-bundle-adjustment': false,
+      
+      // === AI/MASKS ===
+      'sky-removal': false,
+      'bg-removal': false,
+      
+      // === 3D MODEL ===
+      'use-3dmesh': false,
+      'skip-3dmodel': false,
+      'mesh-size': 200000,
+      'mesh-octree-depth': 11,
+      'texturing-skip-global-seam-leveling': false,
+      'texturing-keep-unseen-faces': false,
+      'texturing-single-material': false,
+      'gltf': false,
+      
+      // === POINT CLOUD ===
+      'pc-quality': 'medium',
+      'pc-classify': false,
+      'pc-csv': false,
+      'pc-las': false,
+      'pc-ept': false,
+      'pc-copc': false,
+      'pc-filter': 5,
+      'pc-sample': 0,
+      'pc-skip-geometric': false,
+      'pc-rectify': false,
+      
+      // === DEM ===
+      'dsm': true,
+      'dtm': false,
+      'dem-gapfill-steps': 3,
+      'dem-resolution': 5,
+      'dem-decimation': 1,
+      'dem-euclidean-map': false,
+      
+      // === SMRF ===
+      'smrf-scalar': 1.25,
+      'smrf-slope': 0.15,
+      'smrf-threshold': 0.5,
+      'smrf-window': 18,
+      
+      // === ORTHOPHOTO ===
+      'orthophoto-resolution': 5,
+      'orthophoto-no-tiled': false,
+      'orthophoto-png': false,
+      'orthophoto-kmz': false,
+      'orthophoto-compression': 'DEFLATE',
+      'orthophoto-cutline': false,
+      'skip-orthophoto': false,
+      'fast-orthophoto': false,
+      
+      // === TILES ===
+      'tiles': false,
+      '3d-tiles': false,
+      'cog': false,
+      'build-overviews': false,
+      
+      // === GPS ===
+      'gps-accuracy': 3,
+      'gps-z-offset': 0,
+      'use-exif': false,
+      'force-gps': false,
+      
+      // === BOUNDARIES ===
+      'crop': 3,
+      'boundary': '',
+      'auto-boundary': false,
+      'auto-boundary-distance': 0,
+      'ignore-gsd': false,
+      
+      // === ROLLING SHUTTER ===
+      'rolling-shutter': false,
+      'rolling-shutter-readout': 0,
+      
+      // === PROCESSING ===
+      'max-concurrency': 0,
+      'no-gpu': false,
+      'optimize-disk-space': false,
+      'skip-report': false,
+      
+      // === SPLIT/MERGE ===
+      'split': 999999,
+      'split-overlap': 150,
+      'sm-no-align': false,
+      'sm-cluster': '',
+      'merge': 'all',
+      'merge-skip-blending': false,
+      
+      // === VIDEO ===
+      'video-limit': 500,
+      'video-resolution': 4000,
+      
+      // === MULTISPECTRAL ===
+      'primary-band': 'auto',
+      'skip-band-alignment': false,
+      
+      // === WORKFLOW ===
+      'rerun-from': '',
+      'end-with': 'odm_postprocess'
+    };
+    
+    // Collapse all categories
+    this.advancedOptionCategories.forEach(cat => cat.expanded = false);
+  }
+
+  private buildProcessingOptions(): Record<string, any> {
+    const opts: Record<string, any> = {};
+    
+    // Quality mapping to NodeODM options (overrides advanced options)
+    switch (this.chunkOptions.quality) {
+      case 'fast':
+        opts['pc-quality'] = 'lowest';
+        opts['feature-quality'] = 'low';
+        opts['min-num-features'] = 4000;
+        opts['mesh-octree-depth'] = 8;
+        break;
+      case 'medium':
+        opts['pc-quality'] = 'low';
+        opts['feature-quality'] = 'medium';
+        opts['min-num-features'] = 8000;
+        opts['mesh-octree-depth'] = 10;
+        break;
+      case 'high':
+        opts['pc-quality'] = 'medium';
+        opts['feature-quality'] = 'high';
+        opts['min-num-features'] = 12000;
+        opts['mesh-octree-depth'] = 11;
+        break;
+      case 'ultra':
+        opts['pc-quality'] = 'high';
+        opts['feature-quality'] = 'ultra';
+        opts['min-num-features'] = 20000;
+        opts['mesh-octree-depth'] = 12;
+        break;
+    }
+    
+    // Basic output options from chunkOptions
+    opts['dsm'] = this.chunkOptions.dsm;
+    opts['dtm'] = this.chunkOptions.dtm;
+    opts['pc-las'] = this.chunkOptions.pointCloud;
+    opts['use-3dmesh'] = this.chunkOptions.mesh;
+    
+    // Merge all advanced options (excluding defaults and empty strings)
+    for (const [key, value] of Object.entries(this.chunkAdvancedOptions)) {
+      // Skip empty strings
+      if (value === '' || value === null || value === undefined) {
+        continue;
+      }
+      
+      // Skip options that are already set by quality preset
+      if (['pc-quality', 'feature-quality', 'min-num-features', 'mesh-octree-depth'].includes(key)) {
+        continue;
+      }
+      
+      // Skip boolean false values (NodeODM uses defaults)
+      if (typeof value === 'boolean' && !value) {
+        continue;
+      }
+      
+      // Skip numeric defaults that match NodeODM defaults
+      const defaults: Record<string, any> = {
+        'matcher-neighbors': 0,
+        'matcher-order': 0,
+        'pc-filter': 5,
+        'pc-sample': 0,
+        'dem-gapfill-steps': 3,
+        'dem-resolution': 5,
+        'dem-decimation': 1,
+        'smrf-scalar': 1.25,
+        'smrf-slope': 0.15,
+        'smrf-threshold': 0.5,
+        'smrf-window': 18,
+        'orthophoto-resolution': 5,
+        'gps-accuracy': 3,
+        'gps-z-offset': 0,
+        'crop': 3,
+        'auto-boundary-distance': 0,
+        'rolling-shutter-readout': 0,
+        'max-concurrency': 0,
+        'split': 999999,
+        'split-overlap': 150,
+        'video-limit': 500,
+        'video-resolution': 4000,
+        'mesh-size': 200000
+      };
+      
+      if (key in defaults && value === defaults[key]) {
+        continue;
+      }
+      
+      // Skip string defaults
+      const stringDefaults: Record<string, string> = {
+        'feature-type': 'dspsift',
+        'matcher-type': 'flann',
+        'camera-lens': 'auto',
+        'radiometric-calibration': 'none',
+        'sfm-algorithm': 'incremental',
+        'orthophoto-compression': 'DEFLATE',
+        'merge': 'all',
+        'primary-band': 'auto',
+        'end-with': 'odm_postprocess'
+      };
+      
+      if (key in stringDefaults && value === stringDefaults[key]) {
+        continue;
+      }
+      
+      opts[key] = value;
+    }
+    
+    return opts;
+  }
+
+  private pollChunkStatus(chunkId: number): void {
+    const project = this.project();
+    if (!project) return;
+
+    const pollInterval = interval(5000).pipe(
+      takeUntilDestroyed(this.destroyRef),
+      switchMap(() => this.chunkService.getChunk(project.id, chunkId)),
+      tap(chunk => {
+        this.chunks.update(list => list.map(c => c.id === chunk.id ? chunk : c));
+        if (this.selectedChunk()?.id === chunk.id) {
+          this.selectedChunk.set(chunk);
+        }
+      })
+    ).subscribe({
+      next: (chunk) => {
+        if (chunk.status === 'COMPLETED' || chunk.status === 'FAILED' || chunk.status === 'CANCELED') {
+          pollInterval.unsubscribe();
+          if (chunk.status === 'COMPLETED') {
+            this.setActiveTab('results');
+          }
+        }
+      }
+    });
+  }
+
+  processAllChunks(): void {
+    const processable = this.chunks().filter(c => this.canProcessChunk(c));
+    processable.forEach(chunk => this.processChunk(chunk));
+  }
+
+  getSelectedOutputsCount(): number {
+    let count = 0;
+    if (this.chunkOptions.orthophoto) count++;
+    if (this.chunkOptions.dsm) count++;
+    if (this.chunkOptions.dtm) count++;
+    if (this.chunkOptions.pointCloud) count++;
+    if (this.chunkOptions.mesh) count++;
+    return count;
+  }
+
+  // ==================== UI ====================
+
+  setActiveTab(tab: 'photos' | 'options' | 'process' | 'results'): void {
+    this.activeTab.set(tab);
+  }
+
+  // ==================== HELPERS ====================
+
+  formatFileSize(bytes: number): string {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  }
+
+  formatTotalSize(): string {
+    const total = this.projectImages().reduce((sum, img) => sum + img.fileSize, 0);
+    return this.formatFileSize(total);
+  }
+
+  formatTime(seconds: number | undefined): string {
+    if (!seconds) return '-';
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+  }
+}

@@ -1,0 +1,18 @@
+<div class="info-panel" *ngIf="visible && info">
+  <div class="panel-header">
+    <h3>{{ info.title }}</h3>
+    <button class="close-btn" (click)="onClose()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="18" y1="6" x2="6" y2="18"/>
+        <line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+  </div>
+
+  <div class="panel-content">
+    <div class="info-item" *ngFor="let item of info.items">
+      <div class="info-label">{{ item.label }}</div>
+      <div class="info-value">{{ item.value }}</div>
+    </div>
+  </div>
+</div>

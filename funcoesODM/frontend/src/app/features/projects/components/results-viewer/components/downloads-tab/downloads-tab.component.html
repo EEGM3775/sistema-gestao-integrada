@@ -1,0 +1,95 @@
+<div class="downloads-section">
+  <div class="download-actions-bar">
+    <div class="select-actions">
+      <label class="select-all-checkbox">
+        <input 
+          type="checkbox" 
+          [checked]="allSelected()"
+          [indeterminate]="someSelected() && !allSelected()"
+          (change)="toggleSelectAll()">
+        <span>Selecionar Todos</span>
+      </label>
+      <span class="selected-count" *ngIf="selectedCount() > 0">
+        {{ selectedCount() }} selecionado(s)
+      </span>
+    </div>
+    <div class="bulk-actions">
+      <button 
+        class="action-btn download-all-btn"
+        (click)="onDownloadAllZip()"
+        title="Baixar pacote completo">
+        📦 Baixar Tudo (ZIP)
+      </button>
+      <button 
+        class="action-btn download-selected-btn"
+        [disabled]="selectedCount() === 0"
+        (click)="onDownloadSelected()"
+        title="Baixar selecionados">
+        📥 Baixar Selecionados
+      </button>
+    </div>
+  </div>
+
+  <div class="downloads-list">
+    <div 
+      class="download-item" 
+      *ngFor="let asset of selectableAssets()"
+      [class.selected]="asset.selected">
+      <label class="asset-checkbox">
+        <input 
+          type="checkbox" 
+          [(ngModel)]="asset.selected"
+          (ngModelChange)="onAssetSelectionChange()">
+      </label>
+      <div class="asset-icon">{{ asset.icon }}</div>
+      <div class="asset-info">
+        <h4>{{ asset.displayName }}</h4>
+        <p>{{ asset.description }}</p>
+        <span class="asset-meta" *ngIf="asset.size">
+          <span class="file-size">{{ asset.size }}</span>
+          <span class="file-ext">{{ asset.extension }}</span>
+        </span>
+      </div>
+      <div class="asset-actions">
+        <button 
+          class="preview-btn"
+          *ngIf="canPreview(asset)"
+          (click)="onPreviewAsset(asset)"
+          title="Visualizar">
+          👁️
+        </button>
+        <button 
+          class="download-btn"
+          (click)="onDownloadAsset(asset)"
+          title="Download">
+          📥
+        </button>
+      </div>
+    </div>
+    
+    <div class="download-item all-zip-item">
+      <div class="asset-icon">📦</div>
+      <div class="asset-info">
+        <h4>Pacote Completo</h4>
+        <p>Todos os resultados em um único arquivo ZIP</p>
+        <span class="asset-meta">
+          <span class="file-ext">.zip</span>
+        </span>
+      </div>
+      <div class="asset-actions">
+        <button 
+          class="download-btn primary"
+          (click)="onDownloadAllZip()"
+          title="Download all.zip">
+          📥 Download
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="no-assets" *ngIf="selectableAssets().length === 0">
+    <div class="no-assets-icon">📭</div>
+    <p>Nenhum resultado disponível</p>
+    <small>Os resultados estarão disponíveis após o processamento</small>
+  </div>
+</div>

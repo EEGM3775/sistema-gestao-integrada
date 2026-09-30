@@ -1,0 +1,235 @@
+<!-- MeasItemComponent — item de medição + painel de detalhes -->
+<div class="measurement-entry">
+
+  <!-- ── Linha principal ────────────────────────────────────────────────── -->
+  <div class="measurement-item"
+       (click)="focusRequested.emit()"
+       [title]="isVisible ? 'Clique para centralizar no mapa' : 'Marque para exibir no mapa'">
+
+    <!-- Checkbox de visibilidade (olho) -->
+    <label class="item-checkbox"
+           (click)="$event.stopPropagation()"
+           [title]="isVisible ? 'Ocultar no mapa' : 'Mostrar no mapa'">
+      <input
+        type="checkbox"
+        class="vis-check"
+        [checked]="isVisible"
+        (change)="toggleVisibilityChange.emit($any($event.target).checked)">
+      <span class="vis-check-box">
+        @if (isVisible) {
+          <svg width="11" height="11" viewBox="0 0 16 16" fill="none">
+            <path d="M8 3C4 3 1 8 1 8s3 5 7 5 7-5 7-5-3-5-7-5z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+            <circle cx="8" cy="8" r="2.5" fill="currentColor"/>
+          </svg>
+        } @else {
+          <svg width="11" height="11" viewBox="0 0 16 16" fill="none">
+            <path d="M2 2l12 12M6.5 6.7A2.5 2.5 0 0 0 9.3 9.5M4.2 4.4C2.8 5.4 1.5 7 1 8c1.2 2.5 4 5 7 5a7 7 0 0 0 3.6-1M6.5 3.2A7 7 0 0 1 8 3c3 0 5.8 2.5 7 5-.4.9-1 1.8-1.8 2.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          </svg>
+        }
+      </span>
+    </label>
+
+    <!-- Ícone do tipo -->
+    <div class="item-icon">{{ getMeasurementIcon(measurement.type) }}</div>
+
+    <!-- Nome + valor -->
+    <div class="item-content">
+      @if (isEditing) {
+        <div class="item-name-edit" (click)="$event.stopPropagation()">
+          <input
+            class="name-input"
+            type="text"
+            [value]="editingName"
+            (keydown)="onKeydown($event)"
+            (blur)="onBlur($event)"
+            autofocus>
+        </div>
+      } @else {
+        <div
+          class="item-name"
+          (dblclick)="startEditRequested.emit(); $event.stopPropagation()"
+          title="Duplo clique para renomear">
+          {{ measurement.name || 'Sem nome' }}
+        </div>
+      }
+      <div class="item-value">{{ measurement.value.toFixed(2) }} {{ measurement.unit }}</div>
+    </div>
+
+    <!-- Ações rápidas -->
+    <div class="item-actions">
+      <button
+        class="item-action"
+        [class.active]="isExpanded"
+        (click)="toggleDetailRequested.emit(); $event.stopPropagation()"
+        title="Ver detalhes">
+        📋
+      </button>
+      <button
+        class="item-action"
+        (click)="startEditRequested.emit(); $event.stopPropagation()"
+        title="Renomear">
+        ✏️
+      </button>
+      <button
+        class="item-action"
+        (click)="deleteRequested.emit(); $event.stopPropagation()"
+        title="Deletar">
+        🗑️
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Painel de detalhes (acordeão) ─────────────────────────────────── -->
+  @if (isExpanded) {
+    <div class="detail-panel" (click)="$event.stopPropagation()">
+
+      @if (measurement.type === 'elevation_profile') {
+
+        <!-- Perfil de Elevacao: grafico interativo + estatísticas -->
+        <div class="detail-section">
+          <div class="detail-section-title">📈 Perfil de Elevação</div>
+          <app-elevation-profile-chart
+            [coordinates]="measurement.coordinates"
+            [measurementId]="measurement.id">
+          </app-elevation-profile-chart>
+
+          <table class="detail-table" style="margin-top: 10px">
+            <tbody>
+              <tr>
+                <td>Distância total</td>
+                <td class="val-cell">{{ formatProfileDist(measurement.value) }}</td>
+              </tr>
+              <tr>
+                <td>Elevação mínima</td>
+                <td class="val-cell">{{ getProfileStats(measurement.coordinates).min.toFixed(2) }} m</td>
+              </tr>
+              <tr>
+                <td>Elevação máxima</td>
+                <td class="val-cell">{{ getProfileStats(measurement.coordinates).max.toFixed(2) }} m</td>
+              </tr>
+              <tr>
+                <td>Ganho de elevação</td>
+                <td class="val-cell">+{{ getProfileStats(measurement.coordinates).gain.toFixed(2) }} m</td>
+              </tr>
+              <tr>
+                <td>Queda de elevação</td>
+                <td class="val-cell">-{{ getProfileStats(measurement.coordinates).loss.toFixed(2) }} m</td>
+              </tr>
+              <tr>
+                <td>Pontos amostrados</td>
+                <td class="val-cell">{{ measurement.coordinates.length }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Metadados -->
+        <div class="detail-section">
+          <div class="detail-section-title">ℹ️ Informações</div>
+          <table class="detail-table">
+            <tbody>
+              <tr><td>Fonte de dados</td><td>{{ measurement.dataSource || '—' }}</td></tr>
+              <tr><td>Criado em</td><td>{{ measurement.createdAt | date:'dd/MM/yyyy HH:mm' }}</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+      } @else {
+
+        <!-- Tipos normais: coordenadas, segmentos, area, info -->
+
+        <!-- Coordenadas dos pontos -->
+        <div class="detail-section">
+          <div class="detail-section-title">📍 Coordenadas dos Pontos</div>
+          <table class="detail-table">
+            <thead>
+              <tr>
+                <th>Pt</th>
+                <th>Latitude (°)</th>
+                <th>Longitude (°)</th>
+                <th>UTM (WGS84)</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (coord of measurement.coordinates; track $index) {
+                <tr>
+                  <td class="pt-num">{{ $index + 1 }}</td>
+                  <td class="mono">{{ coord[0].toFixed(7) }}</td>
+                  <td class="mono">{{ coord[1].toFixed(7) }}</td>
+                  <td class="mono utm">{{ toUtmStr(coord[0], coord[1]) }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Segmentos parciais -->
+        @if (measurement.coordinates.length >= 2) {
+          <div class="detail-section">
+            <div class="detail-section-title">📏 Trechos Parciais</div>
+            <table class="detail-table">
+              <tbody>
+                @for (seg of getSegments(measurement); track $index) {
+                  <tr>
+                    <td>{{ seg.label }}</td>
+                    <td class="val-cell">{{ fmtDist(seg.distM) }}</td>
+                  </tr>
+                }
+                @if (measurement.type === 'distance') {
+                  <tr class="sum-row">
+                    <td>Distância total</td>
+                    <td class="val-cell">{{ measurement.value.toFixed(2) }} {{ measurement.unit }}</td>
+                  </tr>
+                }
+                @if (measurement.type === 'area') {
+                  <tr class="sum-row">
+                    <td>Perímetro</td>
+                    <td class="val-cell">{{ fmtDist(getPerimeterM(measurement)) }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+
+        <!-- Área (somente tipo area) -->
+        @if (measurement.type === 'area') {
+          <div class="detail-section">
+            <div class="detail-section-title">🔲 Área</div>
+            <table class="detail-table">
+              <tbody>
+                <tr>
+                  <td>m²</td>
+                  <td class="val-cell">{{ measurement.value.toFixed(2) }} m²</td>
+                </tr>
+                <tr>
+                  <td>Hectares</td>
+                  <td class="val-cell">{{ (measurement.value / 10000).toFixed(4) }} ha</td>
+                </tr>
+                <tr>
+                  <td>Alqueires paulistas</td>
+                  <td class="val-cell">{{ (measurement.value / 24200).toFixed(5) }} alq</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        }
+
+        <!-- Metadados -->
+        <div class="detail-section">
+          <div class="detail-section-title">ℹ️ Informações</div>
+          <table class="detail-table">
+            <tbody>
+              <tr><td>Fonte de dados</td><td>{{ measurement.dataSource || '—' }}</td></tr>
+              <tr><td>Número de pontos</td><td>{{ measurement.coordinates.length }}</td></tr>
+              <tr><td>Criado em</td><td>{{ measurement.createdAt | date:'dd/MM/yyyy HH:mm' }}</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+      }
+
+    </div>
+  }
+
+</div>

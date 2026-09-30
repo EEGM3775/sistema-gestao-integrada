@@ -1,0 +1,61 @@
+<div class="measurement-toolbar">
+  <!-- Ferramentas de Medição -->
+  <div class="tools-section">
+    <div class="tools-grid">
+      @for (tool of tools; track tool.type) {
+        <button
+          class="tool-button"
+          [class.active]="isActive(tool.type)"
+          [class.disabled]="!isAvailable(tool.type) || isDrawing"
+          [disabled]="!isAvailable(tool.type) || isDrawing"
+          [title]="tool.tooltip + (tool.shortcut ? ' (' + tool.shortcut + ')' : '')"
+          (click)="selectTool(tool.type)">
+          <span class="tool-icon">{{ tool.icon }}</span>
+          <span class="tool-label">{{ tool.label }}</span>
+          @if (tool.shortcut) {
+            <span class="tool-shortcut">{{ tool.shortcut }}</span>
+          }
+        </button>
+      }
+    </div>
+  </div>
+
+  <!-- Controles de Desenho -->
+  @if (isDrawing) {
+    <div class="drawing-controls">
+      <button
+        class="control-button undo"
+        [disabled]="!canComplete"
+        (click)="onUndo()"
+        title="Desfazer último ponto (Ctrl+Z)">
+        ↶ Desfazer
+      </button>
+      
+      <button
+        class="control-button complete"
+        [disabled]="!canComplete"
+        (click)="onComplete()"
+        title="Finalizar medição (Enter)">
+        ✓ Finalizar
+      </button>
+      
+      <button
+        class="control-button cancel"
+        (click)="onCancel()"
+        title="Cancelar medição (Esc)">
+        ✕ Cancelar
+      </button>
+    </div>
+  }
+
+  <!-- Ações Globais -->
+  <div class="global-actions">
+    <button
+      class="action-button"
+      [disabled]="isDrawing"
+      (click)="onClear()"
+      title="Limpar todas as medições">
+      🗑️ Limpar
+    </button>
+  </div>
+</div>

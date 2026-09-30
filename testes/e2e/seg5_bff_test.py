@@ -111,7 +111,9 @@ except ImportError:
 vistos, com_jwt = [], []
 with sync_playwright() as p:
     nav = p.chromium.launch()
-    pagina = nav.new_page()
+    # O certificado do staging é autoassinado (o README manda aceitar o aviso); o
+    # Chromium não lê o SSL_CERT_FILE. Só o validate.sh liga isto.
+    pagina = nav.new_page(ignore_https_errors=os.getenv("SGI_ACEITAR_CERT_LOCAL") == "1")
 
     def olhar(resposta):
         if not resposta.url.startswith(GW):

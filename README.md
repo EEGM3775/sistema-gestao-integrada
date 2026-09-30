@@ -30,7 +30,7 @@ Setup local (venvs, portas, seed) em [docs/desenvolvimento.md](docs/desenvolvime
 | [iam/](iam/) | Serviço de identidade (autoridade única; emite os JWT) |
 | [backend/](backend/) | backend em Django/DRF (resource server) — apps de negócio |
 | [frontend/](frontend/) | Shell React (UI do app) |
-| [ImgDrone/funcoesODM/](ImgDrone/funcoesODM/) | Módulo de drone (produto destacável; docs próprias) |
+| [funcoesODM/](funcoesODM/) | Módulo de drone (produto destacável; docs próprias) |
 | [infra/](infra/) | Gateway Nginx, chaves do JWT, init do Postgres |
 | [docs/](docs/README.md) | Documentação da plataforma |
 

@@ -1,0 +1,46 @@
+<div class="map-container">
+  <!-- Map Element -->
+  <div #mapElement class="map-element"></div>
+
+  <!-- Loading Overlay -->
+  <div class="loading-overlay" *ngIf="isLoading()">
+    <div class="spinner"></div>
+    <p>Carregando mapa...</p>
+  </div>
+
+  <!-- Map Controls -->
+  <app-map-controls
+    [currentBasemap]="currentBasemap()"
+    [measurementMode]="measurementMode()"
+    [showLayers]="showLayerPanel()"
+    (zoomIn)="onZoomIn()"
+    (zoomOut)="onZoomOut()"
+    (fitBounds)="onFitBounds()"
+    (basemapChange)="onBasemapChange($event)"
+    (measurementModeChange)="onMeasurementModeChange($event)"
+    (toggleLayers)="onToggleLayers()"
+  />
+
+  <!-- Layer Panel -->
+  <app-layer-panel
+    [layers]="layers"
+    [visible]="showLayerPanel()"
+    (layerToggle)="onLayerToggle($event)"
+    (opacityChange)="onOpacityChange($event)"
+    (close)="onCloseLayerPanel()"
+  />
+
+  <!-- Info Panel -->
+  <app-map-info-panel
+    [info]="selectedInfo()"
+    [visible]="showInfoPanel()"
+    (close)="onCloseInfoPanel()"
+  />
+
+  <!-- Coordinates Display -->
+  <div class="coordinates-display" *ngIf="currentCoordinates()">
+    <span>Lat: {{ currentCoordinates()!.lat.toFixed(6) }}</span>
+    <span>Lng: {{ currentCoordinates()!.lng.toFixed(6) }}</span>
+    <span>Zoom: {{ currentZoom() }}</span>
+  </div>
+</div>

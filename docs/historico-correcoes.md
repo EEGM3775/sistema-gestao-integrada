@@ -10,6 +10,182 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D229 — o `security-scan` do CI acusava 71 vulnerabilidades com correção, e ninguém via · ✅ corrigido 30/09/2026
+
+Visto no PR do drone (`drone-no-repositorio`). O job ficou sem rodar até o [D212](#) (29/09), e o
+código do drone só entrou na varredura com o [D225](#) — o que se acumulou apareceu de uma vez:
+**71 HIGH/CRITICAL com correção** no trivy e **1** no pip-audit. Reproduzido localmente com as mesmas
+ferramentas sobre a árvore do commit (o repositório é privado; o log do Actions não é legível sem
+login). Por alvo, e o que cada um pediu:
+
+- **`package.json`/`package-lock.json` da raiz (21)** — sobra de julho (`npm init` com `axios` e
+  `react-router-dom` instalados por engano na raiz); nada os usa, a tela tem os próprios. **Removidos.**
+- **`frontend/` (5)** — `axios` 1.20, `react-router-dom` 7.18 (e `form-data` 4.0.6 junto) e
+  `maplibre-gl` 5 → **6** (CVE-2026-85061, CRITICAL, só corrigida na 6). O MapLibre 6 deixou de ter
+  export default: `Mapa.tsx` importa o namespace. `npm run build` (`tsc -b` + `vite build`) limpo e
+  `npm audit --omit=dev --audit-level=high` com 0.
+- **App do drone, `funcoesODM/frontend/` (43)** — o Angular 18 saiu de suporte e as correções só
+  existem da **20** em diante. `ng update` em dois degraus (18 → 19 → 20): a migração oficial tirou o
+  `standalone: true` (padrão desde a 19) de 50 componentes e subiu o TypeScript para 5.9, que acusou
+  um erro real de tipo — `new Blob([Uint8Array<ArrayBufferLike>])` na exportação de Shapefile, agora
+  `new Uint8Array(...)`. `npm audit fix` levou o resto; o `Dockerfile` passou de Node 18 para 22 (o
+  Angular 20 não roda no 18). Build de produção limpo.
+- **Servidor do drone, `pom.xml` (2 → 3)** — o driver do Postgres que o Spring Boot 3.2.0 traz (42.6.0)
+  tinha a CVE-2024-1597 (CRITICAL, injeção de SQL); a propriedade `postgresql.version` do BOM sobe só o
+  driver, para **42.7.12** (na 42.7.11 a varredura ainda achou a CVE-2026-54291).
+- **`weasyprint` 69 → 70 (pip-audit, PYSEC-2026-3940)** — e aqui a troca de número **quebraria o
+  PDF**: a 70 removeu o `default_url_fetcher` e passou a exigir que o `url_fetcher` seja um objeto
+  `URLFetcher` (lê atributos dele justamente no caminho da recusa). A trava do [D73](#) foi reescrita
+  como subclasse de `URLFetcher`, com `allowed_protocols={"data"}` como segunda trava, a da própria
+  biblioteca; `_buscador_sem_rede` mantém o contrato que os testes cobram. `funcoesimpexp` +
+  `moduloorcamento` 663/663 com a 70.
+
+Resultado sobre a árvore do commit: trivy **0** em todos os alvos, pip-audit backend e IAM **0**.
+
+### D185 — o staging não tinha o módulo de orçamento, e a SINAPI só existe na máquina de quem desenvolve · ✅ fechado 30/09/2026
+
+Aberto em 16/09/2026: o `erp_db` do staging tinha 77 tabelas e 33 MB contra 5.647 MB do dev, nenhuma
+migration do `moduloorcamento`, e a imagem era de julho. Duas perguntas separadas, fechadas de dois
+jeitos. **(1) Staging atualizado — corrigido:** recriado do zero em 30/09/2026 (Postgres com PostGIS,
+`unaccent` e `track_commit_timestamp`, todas as migrations, SpiceDB e o PDP em todo módulo); gate
+10/10; a subida achou o [D226](#), o [D227](#) e o [D228](#). Backup do banco antigo em
+`~/backups/staging_pre_atualizacao_20260930.sql.gz` (WSL). **(2) A base referencial fora do dev —
+decisão do dono:** as 1.460 publicações (5,6 GB) não são reprodutíveis do repositório; levá-las a
+staging e produção virou **dependência do `modulodms`**, registrada em
+[modulos-planejados.md](modulos/modulos-planejados.md).
+
+### D228 — os roteiros não enxergavam a sessão no staging, e dois atalhos olhavam o dev · ✅ corrigido 30/09/2026
+
+Achado no primeiro gate do staging recriado: 2 de 10, quase tudo 401. O helper
+`testes/e2e/_sessao.py` já lia o nome do cookie de `SGI_SESSAO_COOKIE`, mas o `validate.sh` não o
+exportava — e com `Secure` a IAM chama o cookie de `__Host-sgi_sessao`. O mesmo helper tinha um
+defeito pior: `access_do_bff` e `direto` perguntavam **sempre** aos contêineres `sgi-iam`/`sgi-erp`,
+os do dev, e um roteiro apontado ao staging conferia o token no ambiente errado sem avisar. E os dois
+roteiros de navegador (`seg5`, `seg6_step_up`) caíam no `python3` do sistema, sem Playwright, e depois
+no certificado autoassinado, que o Chromium não aceita pelo `SSL_CERT_FILE`. **Correção:** o
+`validate.sh` exporta `SGI_SESSAO_COOKIE` e `SGI_ACEITAR_CERT_LOCAL`, usa o `.venv` e as libs do
+Chromium, e aceita nomes de roteiro para repetir só esses; o helper lê os contêineres de
+`SGI_IAM_CONTAINER`/`SGI_ERP_CONTAINER`; os dois roteiros de navegador aceitam o certificado só quando
+o gate pede. **Gate do staging 10/10** — phase4, phase5 (RS256), phase6 (RBAC), phase8 (isolamento),
+phase9 (auditoria), phaseC, seg1, seg4, seg5 e seg6_step_up.
+
+### D227 — `iam-pdp`, `pdp-invalidador` e `worker-conversao` não sobem fora de DEBUG · ✅ corrigido 30/09/2026
+
+Achado na primeira subida do staging do zero. Os três ficavam em laço de reinício com
+`ImproperlyConfigured`: o `settings.py` do backend e o da IAM fazem a fail-fast de produção (S4) **no
+import**, em todo processo, e o compose lista o ambiente de cada serviço à mão — os três nasceram de
+listas menores que as do `erp` e da `iam`. Faltavam `IA_SERVICE_SECRET_TOKEN` e
+`SERVICE_TOKEN_SECRET` no `pdp-invalidador` e no `worker-conversao`, e `SERVICE_TOKEN_SECRET` e
+`MAIL_*` no `iam-pdp`. O dev nunca viu, porque `DEBUG=True` aceita o padrão de cada um. Em produção
+seria o PDP sem reconciliação nem invalidação por evento (revogação só no fim do cache) e a
+conversão da Prancheta parada. **Correção:** as variáveis nos três blocos de
+`deploy/compose/base.yml`, conferidas contra **todos** os `_config(...)` e as recusas de produção dos
+dois `settings.py`. No staging, os três sobem e o `iam-pdp` reconcilia 2 tenants e 1.115 relações.
+
+### D226 — o gate do staging rodava roteiros que não existem mais · ✅ corrigido 30/09/2026
+
+Achado ao preparar o staging para o pentest. `infra/staging/validate.sh` chamava
+`infra/gateway/<roteiro>.py`, e os roteiros moram em `testes/e2e/` desde 16/08/2026 ([D95](#)): os
+seis falhariam com "arquivo não encontrado" — o gate estava morto havia seis semanas sem ninguém
+ver, porque o staging também não era subido. E não cobria nada da remodelagem da segurança, que é
+justamente o escopo do pentest. **Correção:** caminho `testes/e2e/`; entram `seg1_segundo_fator`,
+`seg4_token_enxuto`, `seg5_bff` e `seg6_step_up` (ficam fora o `seg6_caos`, que derruba serviços do
+dev, e o `seg2_pdp_sombra`, da fase 2 aposentada); `SGI_IAM_CONTAINER` exportado para o
+`seg6_step_up` ler a IAM de staging e não a do dev; espaço entre roteiros de 12 s para 50 s, que é o
+que o limite de login pede com várias entradas por roteiro.
+
+### D223 — quatro roteiros de navegador que falham por conta própria · ✅ corrigido 30/09/2026
+
+Dois consertados e dois que eram outro achado. `pdca_cockpit_browser_test.py` procurava `pdca.` no
+texto da tela e achava o **nome de uma obra** criada por outro roteiro ("E2E PDCA.5 …"): a busca
+passou a ser `(?<!e2e )pdca\.` — o nome de obra fica de fora, a citação de fatia continua cobrada
+(29/29). `browser_smoke_test.py` apontava para o Vite (`:5173`) e para telas de antes da carteira de
+clientes (`/clientes`, `.modal-content`, "Adicionar Cliente"): reescrito para o gateway (`:8090`), a
+carteira, o formulário "Novo cliente" e a barra lateral, com checks e código de saída (8/8).
+`pdca5_quadro_browser_test.py` e `pdca6_ritmo_browser_test.py` **não** são troca de URL: são as duas
+linhas que restam do [D195](pendencias.md) — a tela foi redesenhada e a régua deles precisa ser
+portada, não redirecionada. Seguem lá.
+
+### D222 — `pdca1_cronograma_test.py` falha por causa da data e do plano do demo · ✅ corrigido 30/09/2026
+
+**(a)** o calendário do teste passou a nascer com `considera_feriados: False` — a seção prova o fim
+de semana, e com feriado na conta o resultado dependia do dia em que se rodava (em 29/09/2026 a
+"segunda seguinte" era 12/10); feriado no CPM segue coberto na suíte do módulo, com data fixa.
+**(b)** o bloco do plano modelo sobe o demo para o `empresarial` e devolve o plano de antes, também
+por `atexit` se o roteiro morrer no meio — o helper novo `testes/e2e/_plano.py` (ler e trocar o
+plano pelo shell da IAM, com a espera do cache de 30 s da ficha). Rodando, apareceram mais dois, que
+a falha anterior escondia: a listagem de cronogramas do demo acumulou 117 planos de execuções
+antigas e o do teste caía fora da primeira página (a listagem passou a ser `?obra=`); e a seção 14
+cobrava o **409** ao excluir obra com plano vigente — que a lixeira de 13/09/2026 aposentou de
+propósito ([lixo.md §2](arquitetura/lixo.md)). A seção agora cobra a lápide: as duas obras do teste
+vão para a lixeira, saem da vista e o admin as acha lá. As 13 obras "E2E PDCA.1" que as execuções
+antigas deixaram no demo de dev foram para a lixeira (o demo estava no teto de 40 obras do
+`profissional`). 102/102.
+
+### D206 — o nome da senha do superusuário do Postgres estava corrompido em todo env-file · ✅ corrigido 30/09/2026
+
+`POSTGRES_SUPbackendASSWORD` virou `POSTGRES_SUPERUSER_PASSWORD` — o mesmo nome que o
+`spicedb-banco` já usava por dentro — de uma vez em `deploy/compose/base.yml`, nos dois
+`.env.example` e no `staging.env` real (fora do git). Só o nome mudou: o valor é o mesmo, então o
+Postgres do staging, cujo superusuário foi criado com ele, segue entrando. O `.env` de dev não o
+define e continua no padrão.
+
+### D225 — o código do drone que as fases 4, 5 e 6 exigem não estava versionado em lugar nenhum · ✅ corrigido 29/09/2026
+
+`ImgDrone/` está no `.gitignore` do repositório, e o repositório próprio dele não tinha **nenhum
+commit**. Moravam só ali o PEP do drone (D205: `AutorizacaoService`, a conferência do `sid`), a
+validação de `iss`/`aud`/`typ` da fase 5 (D220), o handshake do WebSocket pelo BFF e o `/ws` sem
+origem aberta (D219), e o app Angular sem token no `localStorage`. Os docs e os testes da IAM já
+cobravam esse código, mas um clone novo não tinha como construir o drone: o compose apontava cinco
+caminhos para `ImgDrone/funcoesODM/`.
+
+**Decisão do dono:** o drone passa a ser versionado **dentro deste repositório**. **Correção:** as
+cinco entradas do compose e a `docs/` do drone copiadas para `funcoesODM/` na raiz, com a mesma
+estrutura (`backend/java-service`, `frontend`, `init-db`, `docker/nodeodm`,
+`docker/potree-converter`, `docs`) — 348 arquivos, sem `target/`, `.angular/`, `dist/`,
+`node_modules` nem `.env`. `deploy/compose/base.yml` aponta para lá; o `ImgDrone/` segue ignorado,
+com os fontes do ODM de terceiros. O `.dockerignore` da raiz exclui `funcoesODM` (o drone builda do
+próprio diretório), e o trivy do CI passa a varrer o `pom.xml` e o `package-lock` do drone.
+`test_as_audiencias_do_drone_batem_com_as_do_java` agora lê `funcoesODM/` e deixa de ser pulado no
+CI. Conferido: `compose config` resolve os cinco caminhos; as imagens do `java-service` e do Angular
+constroem de `funcoesODM/`; `test_bff` 28/28 com o teste de audiências executado. A cópia antiga em `ImgDrone/funcoesODM/` ficou para trás e não deve mais ser editada.
+
+### D212 — o `security-scan` do CI não roda: `trivy-action@0.28.0` não existe mais · ✅ corrigido 29/09/2026
+
+Visto no PR #26. O job parava em "Prepare all required actions", antes de qualquer passo:
+`Unable to resolve action aquasecurity/trivy-action@0.28.0, unable to find version 0.28.0`.
+Vermelho na `main` desde pelo menos a 1.0.21 — **nenhuma varredura de CVE e segredo rodava**.
+Causa: depois de um ataque de cadeia de suprimentos, a Aqua migrou todas as tags do `trivy-action`
+para o prefixo `v` (`v0.28.0`, não `0.28.0`); a tag que o workflow citava deixou de existir.
+
+**Correção:** a action fixada pelo SHA do commit da release atual —
+`aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0`, conferido em
+`git ls-remote --tags` (a tag anotada desreferenciada) e na página de releases. Pelo SHA, uma tag
+reescrita não muda o que o CI executa; subir de versão é trocar o SHA conscientemente
+(`.github/workflows/ci.yml`, comentário no passo).
+
+### D213 — o CI do backend não cria a extensão `unaccent` no `template1` · ✅ corrigido 29/09/2026
+
+27 erros `function unaccent(text) does not exist` na suíte do backend (busca do Orçamento,
+`minhas-frentes` e busca única do PDCA). O passo `Habilitar PostGIS no template1` do
+`.github/workflows/ci.yml` dizia espelhar [01-init-databases.sh](../infra/postgres/init/01-init-databases.sh),
+mas criava só o `postgis` — o init cria também o `unaccent` (ver `backend/nucleo/busca.py`).
+
+**Correção:** `CREATE EXTENSION IF NOT EXISTS unaccent;` no mesmo bloco SQL, pelo superuser, no
+`template1` — o `test_erp_db` do runner é copiado dele. Passo renomeado para "Habilitar PostGIS e
+unaccent no template1".
+
+### D214 — `test_dwg_sem_derivada_nenhuma_diz_que_nao_foi_agendada` depende do LibreDWG instalado · ✅ corrigido 29/09/2026
+
+Falhava no CI com `'sem_motor' != 'nao_agendada'`. `pipeline.planejar()` só planeja o DWG se o
+adaptador estiver `disponivel()` (`shutil.which` do `dwg2dxf`), e o runner do GitHub não tem o
+binário — o teste passava só onde o LibreDWG existe.
+
+**Correção:** o teste força o motor com `mock.patch.object(ADAPTADORES["libredwg"], "disponivel",
+return_value=True)` — o caso do D81 é "plano com o motor e zero derivadas", e o motor estar na imagem
+faz parte da premissa. Conferido no `sgi-erp` com `/usr/local/bin` fora do `PATH` (sem `dwg2dxf`): a
+versão antiga reproduz o erro do CI e a nova passa, 3/3 na `ConversaoNaoAgendadaTests`.
+
 ### D221 — com o Redis fora, a plataforma parava em vez de ficar mais lenta · ✅ corrigido 29/09/2026
 
 Achado pelo teste de caos da fase 6 (`seg6_caos_test.py`, 14/24 na primeira volta). A §10.8 diz

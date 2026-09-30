@@ -1,0 +1,50 @@
+<div class="layer-panel" *ngIf="visible">
+  <div class="panel-header">
+    <h3>Camadas</h3>
+    <button class="close-btn" (click)="onClose()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="18" y1="6" x2="6" y2="18"/>
+        <line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+  </div>
+
+  <div class="panel-content">
+    <div class="layer-item" *ngFor="let layer of layers">
+      <div class="layer-info">
+        <label class="layer-checkbox">
+          <input
+            type="checkbox"
+            [checked]="layer.visible"
+            (change)="onToggleLayer(layer.id)"
+          />
+          <span class="layer-name">{{ layer.name }}</span>
+        </label>
+
+        <span class="layer-type">{{ layer.type }}</span>
+      </div>
+
+      <div class="layer-controls" *ngIf="layer.visible">
+        <label class="opacity-label">
+          <span>Opacidade</span>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.1"
+            [value]="layer.opacity"
+            (input)="onOpacityChange(layer.id, $event)"
+          />
+          <span class="opacity-value">{{ (layer.opacity * 100).toFixed(0) }}%</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="no-layers" *ngIf="layers.length === 0">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/>
+      </svg>
+      <p>Nenhuma camada disponível</p>
+    </div>
+  </div>
+</div>

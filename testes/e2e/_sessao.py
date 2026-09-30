@@ -21,6 +21,11 @@ from http.cookies import SimpleCookie
 
 NOME = os.getenv("SGI_SESSAO_COOKIE", "sgi_sessao")
 ANTI_CSRF = {"X-SGI-CSRF": "1"}
+#: Os contêineres de quem se pergunta por dentro. Pelas variáveis que o
+#: `infra/staging/validate.sh` exporta — fixos em `sgi-*`, um roteiro rodado
+#: contra o staging conferia o token no IAM e no backend de DEV (D228).
+IAM = os.getenv("SGI_IAM_CONTAINER", "sgi-iam")
+ERP = os.getenv("SGI_ERP_CONTAINER", "sgi-erp")
 
 
 def _set_cookies(resp) -> list[str]:
@@ -56,7 +61,7 @@ def cabecalhos(sessao: str | None, **extra) -> dict:
     return h
 
 
-def access_do_bff(sessao: str, servico: str = "api", conteiner: str = "sgi-iam") -> str | None:
+def access_do_bff(sessao: str, servico: str = "api", conteiner: str = IAM) -> str | None:
     """O access que o gateway injetaria em `/api/` (`api`) ou `/odm-api/` (`drone`).
 
     Pergunta à IAM por dentro do contêiner, como o `auth_request` do gateway.
@@ -75,7 +80,7 @@ def access_do_bff(sessao: str, servico: str = "api", conteiner: str = "sgi-iam")
     return valor.removeprefix("Bearer ") or None
 
 
-def direto(url: str, token: str, conteiner: str = "sgi-erp") -> int:
+def direto(url: str, token: str, conteiner: str = ERP) -> int:
     """Chama um serviço **sem passar pelo gateway**, com o token na mão — o
     status HTTP. É o jeito de provar que o serviço (e não só a borda) recusa um
     access revogado: pelo gateway, o cliente nem consegue mandar token.

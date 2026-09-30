@@ -1,0 +1,168 @@
+<div class="vegetation-viewer">
+
+  <!-- ── Toolbar ── -->
+  <div class="veg-toolbar">
+
+    <div class="type-toggle">
+      <button
+        class="toggle-btn"
+        [class.active]="indexType() === 'vari'"
+        [disabled]="loading()"
+        (click)="setIndexType('vari')">
+        VARI
+      </button>
+      <button
+        class="toggle-btn"
+        [class.active]="indexType() === 'ndvi'"
+        [disabled]="loading() || !hasNdvi()"
+        [title]="!hasNdvi() ? 'NDVI requer camera multiespectral com banda NIR' : 'Normalized Difference Vegetation Index'"
+        (click)="setIndexType('ndvi')">
+        NDVI
+      </button>
+    </div>
+
+    @if (!indexReady() && !loading()) {
+      <button
+        class="btn-compute"
+        [disabled]="!hasOrthophoto()"
+        (click)="computeIndex()">
+        Calcular indice
+      </button>
+    }
+
+    @if (indexReady() && !loading()) {
+      <div class="opacity-control">
+        <span class="control-label">Opacidade</span>
+        <input
+          type="range"
+          min="0"
+          max="100"
+          [value]="opacityValue()"
+          (input)="onOpacityChange($event)"
+          class="opacity-slider"
+          title="Ajustar opacidade da camada">
+        <span class="opacity-value">{{ opacityValue() }}%</span>
+      </div>
+    }
+
+    @if (stats()) {
+      <div class="stats-row">
+        <span class="stat-item">Min: <strong>{{ formatIndex(stats()?.min) }}</strong></span>
+        <span class="stat-sep">|</span>
+        <span class="stat-item">Max: <strong>{{ formatIndex(stats()?.max) }}</strong></span>
+        <span class="stat-sep">|</span>
+        <span class="stat-item">Media: <strong>{{ formatIndex(stats()?.mean) }}</strong></span>
+      </div>
+    }
+
+    @if (!hasNdvi() && indexReady()) {
+      <span class="ndvi-hint">NDVI indisponivel: ortofoto RGB nao possui banda NIR</span>
+    }
+
+    <div class="veg-annotation-controls">
+      @if (!annotateMode()) {
+        <button class="veg-btn-annotate" (click)="startAnnotating('MARKER')" title="Adicionar marcador de ponto">+ Marcador</button>
+        <button class="veg-btn-annotate" (click)="startAnnotating('POLYGON')" title="Desenhar poligono">+ Poligono</button>
+      }
+      @if (annotateMode() && annotationType() === 'MARKER') {
+        <span class="veg-annotate-status">Clique no mapa</span>
+        <button class="veg-btn-cancel" (click)="cancelAnnotation()">Cancelar</button>
+      }
+      @if (annotateMode() && annotationType() === 'POLYGON') {
+        <span class="veg-annotate-status">{{ polygonPoints().length }} ponto(s)</span>
+        @if (polygonPoints().length >= 3) {
+          <button class="veg-btn-complete" (click)="completePolygon()">Concluir</button>
+        }
+        <button class="veg-btn-cancel" (click)="cancelAnnotation()">Cancelar</button>
+      }
+      <button
+        class="veg-btn-panel"
+        [class.active]="showAnnotationsPanel()"
+        (click)="toggleAnnotationsPanel()">
+        Anotacoes ({{ annotationService.annotations().length }})
+      </button>
+    </div>
+
+  </div>
+
+  <!-- ── Mapa ── -->
+  <div class="map-wrapper">
+    <div #vegMapContainer class="veg-map"></div>
+
+    @if (annotateMode()) {
+      <div class="annotate-hint-overlay">
+        @if (annotationType() === 'MARKER') { Clique no mapa para posicionar um marcador }
+        @if (annotationType() === 'POLYGON') { Clique para adicionar pontos ao poligono }
+      </div>
+    }
+
+    @if (loading()) {
+      <div class="loading-overlay">
+        <div class="spinner"></div>
+        @if (downloadProgress() < 100 && downloadProgress() > 0) {
+          <p>Baixando ortofoto... {{ downloadLabel() }}</p>
+          <div class="progress-track">
+            <div class="progress-fill" [style.width.%]="downloadProgress()"></div>
+          </div>
+          <span class="progress-pct">{{ downloadProgress() }}%</span>
+        } @else if (downloadProgress() === 100) {
+          <p>Calculando {{ indexType().toUpperCase() }}...</p>
+        } @else {
+          <p>Iniciando...</p>
+        }
+      </div>
+    }
+
+    @if (error() && !loading()) {
+      <div class="error-overlay">
+        <div class="error-icon">[!]</div>
+        <p>{{ error() }}</p>
+      </div>
+    }
+
+    @if (!hasOrthophoto() && !loading()) {
+      <div class="empty-overlay">
+        <div class="empty-icon">[VEG]</div>
+        <p>Nenhuma ortofoto disponivel para calculo de indice de vegetacao.</p>
+      </div>
+    }
+
+    @if (hasOrthophoto() && !indexReady() && !loading() && !error()) {
+      <div class="idle-overlay">
+        <div class="idle-icon">[{{ indexType().toUpperCase() }}]</div>
+        <p>Selecione o indice e clique em "Calcular indice" para visualizar a distribuicao de vegetacao sobre a ortofoto.</p>
+        <button class="btn-compute-overlay" (click)="computeIndex()">
+          Calcular {{ indexType().toUpperCase() }}
+        </button>
+      </div>
+    }
+  </div>
+
+  <!-- ── Legenda ── -->
+  @if (indexReady()) {
+    <div class="veg-legend">
+      <span class="legend-label">-1</span>
+      <div class="legend-bar" [style.background]="legendGradient()"></div>
+      <span class="legend-label">+1</span>
+      <span class="legend-unit">{{ indexType().toUpperCase() }}</span>
+    </div>
+  }
+
+  <!-- ── Histograma ── -->
+  @if (showHistogram()) {
+    <div class="histogram-section">
+      <p class="histogram-title">Distribuicao do {{ indexType().toUpperCase() }}</p>
+      <div class="histogram-canvas-wrapper">
+        <canvas #histogramCanvas></canvas>
+      </div>
+    </div>
+  }
+
+  <!-- ── Painel de Anotações ── -->
+  @if (showAnnotationsPanel()) {
+    <div class="veg-annotations-panel">
+      <app-annotations-panel [projectId]="projectId"></app-annotations-panel>
+    </div>
+  }
+
+</div>

@@ -275,12 +275,12 @@ class AudienciaDaIamTests(BaseBff):
 
         props = None
         for raiz in (Path(settings.BASE_DIR).parent, Path(settings.BASE_DIR)):
-            candidato = raiz / "ImgDrone/funcoesODM/backend/java-service/src/main/resources/application.properties"
+            candidato = raiz / "funcoesODM/backend/java-service/src/main/resources/application.properties"
             if candidato.is_file():
                 props = candidato.read_text(encoding="utf-8")
                 break
         if props is None:
-            self.skipTest("o fonte do drone não está nesta árvore (ImgDrone fica fora do git)")
+            self.skipTest("o fonte do drone (funcoesODM/) não foi copiado para esta árvore")
         self.assertIn(f"jwt.audience=${{JWT_AUDIENCE_DRONE:{audiencias.DRONE}}}", props)
         self.assertIn(f"jwt.issuer=${{JWT_ISSUER:{audiencias.EMISSOR}}}", props)
         self.assertEqual(chaves.token_da_sessao("h", audiencias.API), "sess:bff:h:sgi-api")

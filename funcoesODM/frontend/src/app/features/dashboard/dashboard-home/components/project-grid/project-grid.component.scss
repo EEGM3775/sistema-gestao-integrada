@@ -1,0 +1,219 @@
+:host {
+  display: block;
+  width: 100%;
+}
+
+/* Projects Grid */
+.projects-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1.5rem;
+}
+
+.project-card {
+  background: var(--color-bg-white);
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  flex-direction: column;
+
+  &:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-lg);
+    border-color: var(--color-primary);
+
+    .card-thumbnail img {
+      transform: scale(1.05);
+    }
+  }
+}
+
+/* Card Thumbnail */
+.card-thumbnail {
+  position: relative;
+  height: 180px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #1e40af 0%, #7c3aed 100%);
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 0.3s ease;
+  }
+}
+
+.card-overlay {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 0.75rem;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.6));
+}
+
+.image-count {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  color: white;
+  font-size: 0.8rem;
+
+  svg {
+    width: 14px;
+    height: 14px;
+  }
+}
+
+.status-badge {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  padding: 0.375rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+
+  &.completed {
+    background: var(--color-success);
+    color: white;
+  }
+
+  &.processing {
+    background: var(--color-warning);
+    color: white;
+    animation: pulse 2s infinite;
+  }
+
+  &.pending {
+    background: var(--color-bg-active);
+    color: white;
+  }
+
+  &.error {
+    background: var(--color-danger);
+    color: white;
+  }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+/* Card Content */
+.card-content {
+  padding: 1rem;
+  flex: 1;
+}
+
+.project-name {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-text);
+  line-height: 1.3;
+}
+
+.project-description {
+  margin: 0 0 0.75rem;
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Progress Section */
+.progress-section {
+  margin-bottom: 0.75rem;
+}
+
+.progress-info {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin-bottom: 0.375rem;
+}
+
+.progress-bar {
+  height: 4px;
+  background: var(--color-border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--color-warning), #fbbf24);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+/* Card Meta */
+.card-meta {
+  display: flex;
+  gap: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.meta-item {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+
+  svg {
+    width: 14px;
+    height: 14px;
+  }
+}
+
+/* Card Actions */
+.card-actions {
+  display: flex;
+  border-top: 1px solid var(--color-border);
+  padding: 0.75rem;
+  gap: 0.5rem;
+}
+
+.action-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  transition: all 0.2s;
+
+  &:hover {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: white;
+  }
+
+  svg {
+    width: 18px;
+    height: 18px;
+  }
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .projects-grid {
+    grid-template-columns: 1fr;
+  }
+}

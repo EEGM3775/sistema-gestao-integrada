@@ -936,7 +936,7 @@ descartável com uma pessoa por papel de fábrica, com e sem liberação de mód
 sem assinatura — cada uma com todas as perguntas, tabelas × PDP, com consistência total. A virada é
 então feita com `modo_autorizacao --todos pdp --forcar`, que fica registrado em `alterado_por`.
 
-**O drone pergunta ao PDP** ([`security/AutorizacaoService`](../ImgDrone/funcoesODM/backend/java-service/src/main/java/com/funcoesodm/javaservice/security/AutorizacaoService.java)):
+**O drone pergunta ao PDP** ([`security/AutorizacaoService`](../funcoesODM/backend/java-service/src/main/java/com/funcoesodm/javaservice/security/AutorizacaoService.java)):
 a mesma pergunta `m:drone` do backend, pelas mesmas chaves de cache e com o modo de falha da classe
 A. Ele não enxerga a tabela `ModoAutorizacao`: o `modo_autorizacao` a espelha no Redis
 (`authz:modo:<módulo>`). O relógio da pergunta chega a ele pelo arquivo gerado

@@ -19,6 +19,7 @@
 | D74 (antivírus) | [modulos/funcoesimpexp.md](modulos/funcoesimpexp.md) | Decisão do dono, adiada com método definido |
 | D6 · D13 · D60 + backlog de ideias | [roadmap.md](roadmap.md) | Trabalho planejado, não achado |
 | Decisões do Orçamento | [modulos/moduloorcamento.md](modulos/moduloorcamento.md) | Decisão de módulo |
+| D185 (base referencial fora do dev) | [modulos/modulos-planejados.md](modulos/modulos-planejados.md) | Decisão do dono: dependência do `modulodms` |
 
 ---
 
@@ -36,47 +37,6 @@ decisão de produto: eram consequência do teto que o D76 consertou. O outro —
 contêiner que faltava na frota geral — foi fechado em 07/08/2026, também no histórico.
 
 ## 🟠 Altas
-
-### D225 — o código do drone que as fases 4, 5 e 6 exigem não está versionado em lugar nenhum · 🟠 aberto 29/09/2026
-
-`ImgDrone/` está no `.gitignore` do repositório (linha 119), e o repositório próprio dele não tem
-**nenhum commit** — `funcoesODM/backend/java-service/` aparece como não rastreado. Moram ali o PEP do
-drone (D205: `AutorizacaoService`, a conferência do `sid`), a validação de `iss`/`aud`/`typ` da fase 5
-(D220), o handshake do WebSocket pelo BFF e o `/ws` sem origem aberta (D219), e o app Angular sem
-token no `localStorage`. O `docs/` e os testes da IAM já descrevem e cobram esse código
-(`test_as_audiencias_do_drone_batem_com_as_do_java`), mas um clone novo sobe o drone sem nada disso —
-a imagem é construída do diretório local. **Decisão do dono:** onde o drone passa a ser versionado
-(commit no repositório do `ImgDrone`, submódulo, ou o `java-service` e o `frontend` dentro deste).
-
-### D212 — o `security-scan` do CI não roda: `trivy-action@0.28.0` não existe mais · 🟠 aberto 25/09/2026
-
-Visto no PR #26. O job para em "Prepare all required actions", antes de qualquer passo:
-`Unable to resolve action aquasecurity/trivy-action@0.28.0, unable to find version 0.28.0`
-(`.github/workflows/ci.yml:287`). Vermelho na `main` desde pelo menos a 1.0.21 — ou seja, **nenhuma
-varredura de CVE e segredo roda hoje**. **Correção (decisão do dono, porque é a versão de uma
-ferramenta de segurança):** fixar a action numa release existente, de preferência pelo SHA do commit
-(`uses: aquasecurity/trivy-action@<sha>  # vX.Y.Z`), conferida em
-https://github.com/aquasecurity/trivy-action/releases.
-
-### D213 — o CI do backend não cria a extensão `unaccent` no `template1` · 🟠 aberto 25/09/2026
-
-27 erros `function unaccent(text) does not exist` na suíte do backend (busca do Orçamento,
-`minhas-frentes` e busca única do PDCA). O passo `Habilitar PostGIS no template1` do
-`.github/workflows/ci.yml` diz espelhar [01-init-databases.sh](../infra/postgres/init/01-init-databases.sh),
-mas cria só o `postgis` — o init cria também o `unaccent` (ver `backend/nucleo/busca.py`). Mesma
-contagem na `main` 1.0.21; na 1.0.22 a suíte nem rodava ([D211](historico-correcoes.md)).
-**Correção:** acrescentar `CREATE EXTENSION IF NOT EXISTS unaccent;` no mesmo bloco SQL do passo.
-
-### D214 — `test_dwg_sem_derivada_nenhuma_diz_que_nao_foi_agendada` depende do LibreDWG instalado · 🟠 aberto 25/09/2026
-
-Falha no CI com `'sem_motor' != 'nao_agendada'`. `pipeline.planejar()` só planeja o DWG se o
-adaptador estiver `disponivel()` (`moduloprancheta/motores/__init__.py:91` → `shutil.which` do
-binário do LibreDWG), e o runner do GitHub não tem o binário — o teste passa só onde ele existe.
-**Correção:** no teste, forçar o motor com `mock.patch.object(<adaptador DWG>, "disponivel",
-return_value=True)` (é isso que o caso do D81 quer provar), ou instalar o LibreDWG no job.
-
-Com D212–D214 fechados, o CI volta a ficar verde: frontend e IAM já passam, e as 28 falhas do backend
-são só estas duas causas.
 
 ### F2 — Selects carregam tabelas inteiras · 🟠 parcial 25/07/2026
 
@@ -253,7 +213,8 @@ caminho de aprovar os números antigos em silêncio ([D202](historico-correcoes.
 era o único lugar onde aquela lição ainda estava escrita como cobrança.
 
 **Gatilho de fechamento:** os dois restantes podem ser apagados ao portar a última assertiva que
-eles têm e os novos não.
+eles têm e os novos não. O `pdca6_ritmo` ainda não tem sucessor escrito: o posto `PLANO` não tem
+roteiro de navegador próprio. *(O D223 os tinha listado como troca de URL — não é; 30/09/2026.)*
 
 ---
 ### D190 — o teste que fia os tetos é cego em 47 dos 74, e o motivo é o cache de inteiros do CPython · 🟠 aberto 20/09/2026
@@ -389,24 +350,6 @@ depende do download:
 ```
 manage.py carregar_base_oficial --fonte sinapi --mes 2026-01 --arquivo /tmp/SINAPI-2026-01.zip
 ```
-
-### D185 — o staging não tem o módulo de orçamento, e a SINAPI só existe na máquina de quem desenvolve · 🟠 aberto 16/09/2026
-
-O `erp_db` do staging tem **77 tabelas e 33 MB**; o de desenvolvimento tem **5.647 MB**. Nenhuma
-tabela de `moduloorcamento` existe lá, e `django_migrations` não registra **nenhuma** migration do
-app — a última aplicada em qualquer app é de 18/07/2026. A imagem do ERP de staging é tão antiga que
-o `manage.py` responde `No installed app with label 'moduloorcamento'`.
-
-Some junto o que o D169–D178 já apontou por outro caminho: o staging deixou de acompanhar o
-desenvolvimento e não valida mais o que se entrega.
-
-**O lado que é decisão, não esquecimento:** as 1.460 publicações ocupam 5,6 GB, e **não são
-reprodutíveis a partir do repositório** — chegaram ao banco de dev por 20 cargas manuais em
-15/09/2026 e vivem só no volume `02sistema_gestao_integrada_pg_data`. Subir o stack do zero dá um
-banco vazio. Então há duas perguntas separadas: (1) atualizar a imagem e as migrations do staging —
-que é manutenção devida; (2) **se** a base referencial deve existir em staging, e por qual caminho
-(dump restaurado, subconjunto de UFs/meses, ou carga rodada lá). A (2) é do dono: 5,6 GB por ambiente
-é custo, e testar com uma UF e três meses pode bastar.
 
 ### D179 — o ajuste de vencimento só conhece feriado onde a base foi sincronizada e o lote foi geocodificado · 🟠 aberto 16/09/2026
 
@@ -982,37 +925,16 @@ o que resolve na tela — mas deixa as duas trilhas contando histórias diferent
 
 ## 🟢 Baixas
 
-### D222 — `pdca1_cronograma_test.py` falha por causa da data e do plano do demo · 🟢 aberto 29/09/2026
+### D230 — a imagem do backend não tem HarfBuzz-Subset, que o WeasyPrint vai passar a exigir · 🟢 aberto 30/09/2026
 
-Dois checks, nenhum de código de produção: **(a)** "o sucessor pula o fim de semana" monta o plano a
-partir da segunda-feira da semana corrente e espera o sucessor na segunda seguinte — rodado em
-29/09/2026, essa segunda é 12/10, feriado, e o calendário empurra (certo) para a terça; **(b)** o bloco
-"plano modelo" espera poder marcar um modelo, e o tenant demo está no plano `profissional`, que tem
-`planos_modelo: 0` — o 402 `quota_excedida` é a regra funcionando. **Correção:** datar o cenário longe
-de feriado (ou num calendário sem feriados) e subir o demo de plano durante o bloco do modelo, como o
-`d23_teto_por_plano_test.py` faz.
-
-### D223 — quatro roteiros de navegador que falham por conta própria · 🟢 aberto 29/09/2026
-
-Da volta inteira das E2E de 29/09/2026, sem relação com a remodelagem:
-`pdca5_quadro_browser_test.py` e `pdca6_ritmo_browser_test.py` navegam para
-`/app/pdca/obra/<id>/cronograma/<id>`, rota que saiu na reorganização do PDCA
-(`/app/pdca/o/:obraId/<posto>`); `pdca_cockpit_browser_test.py` procura `pdca.` no texto da tela e
-acha o **nome de uma obra** criada por outro roteiro ("E2E PDCA.5 …"); `browser_smoke_test.py` aponta
-para o Vite (`:5173`), que o stack não sobe. **Correção:** as rotas novas, um padrão que não case com
-nome de obra, e o gateway (`:8090`) no smoke. `pdca_frente_test.py` e `pdca_semana_campo_browser_test.py`
-só pedem o seed da semana (`semear_pdca_execucao --tenant demo`), como eles mesmos dizem.
-
-### D206 — o nome da senha do superusuário do Postgres está corrompido em todo env-file · 🟢 aberto 25/09/2026
-
-`POSTGRES_SUPbackendASSWORD` (em `deploy/compose/base.yml`, nos `.env.example` e no `staging.env` com o
-segredo real) é resto de uma busca-e-troca de "ERP" por "backend" — o nome pretendido era
-`POSTGRES_SUPERPASSWORD`/`POSTGRES_SUPERUSER_PASSWORD`. Funciona porque está igual em todo lugar; o
-serviço `spicedb-banco` o usa pelo mesmo nome. Trocar exige fazer em todos os arquivos **e** no
-`staging.env` de uma vez, senão o Postgres do staging sobe com a senha padrão.
+A 70 avisa a cada PDF: *"Using fontTools instead of HarfBuzz-Subset … will be unsupported in future
+versions"*. Hoje funciona (o `fontTools` cobre), mas a próxima subida do `weasyprint` pode quebrar a
+exportação em PDF se a biblioteca de sistema não estiver na imagem. **Correção:** instalar a
+HarfBuzz-Subset ≥ 4.1 no `backend/Dockerfile` (pacote do sistema, ao lado do Pango) e conferir que o
+aviso some — antes de subir o `weasyprint` de novo.
 
 ---
-Fora o D206, o D222 e o D223, nenhum em aberto. O **D147** (seis erros de `eslint` em três telas da PDCA.3/4, que desligavam o
+Fora o D230, nenhum em aberto (D206, D222 e D223 fechados em 30/09/2026 — [histórico](historico-correcoes.md)). O **D147** (seis erros de `eslint` em três telas da PDCA.3/4, que desligavam o
 fast refresh justamente na tela em que se passa o dia digitando) e o **D148** (o traceback `CRÍTICO`
 impresso a cada execução da suíte) foram corrigidos em 15/09/2026, junto do fechamento da PDCA.5;
 relatos em [historico-correcoes.md](historico-correcoes.md).

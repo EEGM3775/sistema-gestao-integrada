@@ -104,6 +104,16 @@
 >   o diagnóstico que escolhe entre elas. O porte para `pikepdf` é trabalho conhecido, não pesquisa; o
 >   que não se reaproveita é a interface Tkinter.
 
+> 📦 **A base referencial fora da máquina de desenvolvimento — dependência do `modulodms`.**
+> *Decisão do dono, 30/09/2026.* As tabelas oficiais de preço do [Orçamento](moduloorcamento.md)
+> (SINAPI, ORSE, EMBASA — 1.460 publicações, 5,6 GB) existem hoje **só no banco de desenvolvimento**:
+> chegaram por 20 cargas manuais em 15/09/2026 e não são reprodutíveis a partir do repositório. O
+> staging tem só as 2 bases de fixture do seed, e a produção vai nascer vazia. **Se** e **como** essa
+> base chega a outro ambiente (dump, subconjunto de UFs/meses, carga rodada lá) fica para quando o
+> `modulodms` existir — não se resolve antes, nem de forma avulsa. O que o DMS faz aqui é pergunta
+> da planta dele. Até lá, testar o Orçamento com preço real é no dev, e os testes de segurança do
+> staging não dependem de preço. Origem: o [D185](../historico-correcoes.md).
+
 > `moduloprancheta` (**Prancheta** — visualizador central dos arquivos de projeto: DWG/DXF, RVT, IFC,
 > KMZ, QGIS, nuvem de pontos, PDF, para consulta em campo) **saiu da lista de placeholders**: PRA.0
 > (fundação do backend) ✅ 31/07/2026. Planta em [moduloprancheta.md](moduloprancheta.md); status no

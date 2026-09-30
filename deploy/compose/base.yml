@@ -40,7 +40,7 @@ services:
     command: ["postgres", "-c", "track_commit_timestamp=on"]
     environment:
       POSTGRES_USER: ${POSTGRES_SUPERUSER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_SUPbackendASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:-postgres}
       POSTGRES_DB: postgres
       backend_DB: ${POSTGRES_DB:-erp_db}
       backend_USER: ${POSTGRES_USER:-erp_app}
@@ -94,10 +94,7 @@ services:
     entrypoint: ["sh", "/criar_banco.sh"]
     environment:
       POSTGRES_SUPERUSER: ${POSTGRES_SUPERUSER:-postgres}
-      # O nome da variável tem um erro antigo de busca-e-troca ("ERP" → "backend")
-      # que está igual em todo env-file, inclusive o de staging com o segredo
-      # real. Usa-se o mesmo nome até a troca ser feita em todos de uma vez.
-      POSTGRES_SUPERUSER_PASSWORD: ${POSTGRES_SUPbackendASSWORD:-postgres}
+      POSTGRES_SUPERUSER_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:-postgres}
       SPICEDB_DB: ${SPICEDB_DB:-spicedb_db}
       SPICEDB_DB_USER: ${SPICEDB_DB_USER:-spicedb_app}
       SPICEDB_DB_PASSWORD: ${SPICEDB_DB_PASSWORD:-spicedb_app_senha_dev}
@@ -556,6 +553,11 @@ services:
       RATE_LIMIT_REDIS_URL: ${RATE_LIMIT_REDIS_URL:-redis://redis:6379/4}
       CELERY_TASK_ALWAYS_EAGER: "False"
       JWT_PUBLIC_KEY_PATH: /keys/jwt_public.pem
+      # O settings faz a fail-fast de produção no import (S4): fora de DEBUG ele
+      # recusa subir sem estes dois, mesmo num processo que não os use. O dev
+      # nunca viu a falta porque DEBUG=True aceita o padrão (D227).
+      IA_SERVICE_SECRET_TOKEN: ${IA_SERVICE_SECRET_TOKEN:-}
+      SERVICE_TOKEN_SECRET: ${SERVICE_TOKEN_SECRET:-service-token-dev-secret}
       # O orçamento por conversão (`PRANCHETA_CONVERSAO_MEMORIA_MB`/`_SEGUNDOS`)
       # NÃO é declarado aqui de propósito: o valor é do dono e vive em
       # `payment/planos.py`, de onde o `settings.py` já o lê. Declará-lo neste
@@ -711,6 +713,14 @@ services:
       SPICEDB_URL: ${SPICEDB_URL:-http://spicedb:8443}
       SPICEDB_CHAVE: ${SPICEDB_CHAVE:-spicedb-chave-dev}
       AUTORIZACAO_REDIS_URL: ${AUTORIZACAO_REDIS_URL:-redis://redis:6379/5}
+      # Fail-fast de produção da IAM no import (S4 e o host de e-mail): sem estes,
+      # fora de IAM_DEBUG o processo nem sobe (D227).
+      SERVICE_TOKEN_SECRET: ${SERVICE_TOKEN_SECRET:-service-token-dev-secret}
+      MAIL_HOST: ${MAIL_HOST:-mailpit}
+      MAIL_PORT: ${MAIL_PORT:-1025}
+      MAIL_USER: ${MAIL_USER:-}
+      MAIL_PASS: ${MAIL_PASS:-}
+      MAIL_FROM: ${MAIL_FROM:-Sistema de Gestão <noreply@sistemagestao.com>}
     volumes:
       - ../../infra/keys:/keys:ro
     depends_on:
@@ -750,6 +760,9 @@ services:
       SPICEDB_URL: ${SPICEDB_URL:-http://spicedb:8443}
       SPICEDB_CHAVE: ${SPICEDB_CHAVE:-spicedb-chave-dev}
       AUTORIZACAO_REDIS_URL: ${AUTORIZACAO_REDIS_URL:-redis://redis:6379/5}
+      # Fail-fast de produção do settings no import (S4) — ver o worker-conversao (D227).
+      IA_SERVICE_SECRET_TOKEN: ${IA_SERVICE_SECRET_TOKEN:-}
+      SERVICE_TOKEN_SECRET: ${SERVICE_TOKEN_SECRET:-service-token-dev-secret}
     volumes:
       - ../../infra/keys:/keys:ro
     depends_on:
@@ -781,7 +794,7 @@ services:
       POSTGRES_PASSWORD: ${ODM_POSTGRES_PASSWORD:-funcoesodm_dev}
     volumes:
       - odm_db_data:/var/lib/postgresql/data
-      - ../../ImgDrone/funcoesODM/init-db:/docker-entrypoint-initdb.d:ro
+      - ../../funcoesODM/init-db:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${ODM_POSTGRES_USER:-funcoesodm} -d ${ODM_POSTGRES_DB:-funcoesodm}"]
       interval: 10s
@@ -792,7 +805,7 @@ services:
 
   # ---------- funcoesODM: NodeODM (processamento) ----------
   nodeodm:
-    build: ../../ImgDrone/funcoesODM/docker/nodeodm
+    build: ../../funcoesODM/docker/nodeodm
     image: funcoesodm/nodeodm:numpy-fix
     container_name: ${SGI_PREFIX:-sgi}-nodeodm
     profiles: ["full"]
@@ -804,7 +817,7 @@ services:
 
   # ---------- funcoesODM: Potree Converter ----------
   potree-converter:
-    build: ../../ImgDrone/funcoesODM/docker/potree-converter
+    build: ../../funcoesODM/docker/potree-converter
     container_name: ${SGI_PREFIX:-sgi}-potree
     profiles: ["full"]
     environment:
@@ -819,7 +832,7 @@ services:
 
   # ---------- funcoesODM: backend Java (resource server da IAM) ----------
   java-service:
-    build: ../../ImgDrone/funcoesODM/backend/java-service
+    build: ../../funcoesODM/backend/java-service
     container_name: ${SGI_PREFIX:-sgi}-odm-java
     profiles: ["full"]
     environment:
@@ -872,7 +885,7 @@ services:
 
   # ---------- funcoesODM: frontend Angular (nginx interno, serve sob /drone/) ----------
   drone-nginx:
-    build: ../../ImgDrone/funcoesODM/frontend
+    build: ../../funcoesODM/frontend
     container_name: ${SGI_PREFIX:-sgi}-odm-nginx
     profiles: ["full"]
     depends_on:

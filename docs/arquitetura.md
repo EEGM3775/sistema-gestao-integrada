@@ -77,7 +77,7 @@ primeira classe, não detalhe de deploy.
 - **PDP (SpiceDB)** — responde "o que esta pessoa pode fazer?" a partir de relações que **só a IAM
   escreve**; não autentica ninguém. Decide módulo a módulo, com o token conferido em sombra até a
   virada. Desenho em [acesso-e-permissoes.md §10](acesso-e-permissoes.md) (construído: §10.15).
-- **funcoesODM (Java/Angular)** ([ImgDrone/funcoesODM/](../ImgDrone/funcoesODM/)) — produto destacável;
+- **funcoesODM (Java/Angular)** ([funcoesODM/](../funcoesODM/)) — produto destacável;
   valida o JWT, exige o entitlement `drone`, escopa por tenant, faz **JIT provisioning**.
 - **Microsserviços Node** (`funcoesnf`, `funcoeswhatsapp` + o worker embutido em `funcoesia`) —
   acionados pelo backend; validam o JWT quando expõem endpoints. Stack em descontinuação

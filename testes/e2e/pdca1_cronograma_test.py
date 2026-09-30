@@ -36,18 +36,24 @@ Seed: testes/seeds/seed_demo.py + testes/seeds/seed_demo_data.py
                            base mostra o desvio atividade a atividade.
  12. Cobertura         -> o denominador aparece: quantas folhas ficaram sem peso.
  13. A fronteira       -> outro tenant não enxerga nada disto.
- 14. Faxina            -> o teste apaga a obra que criou, e a cascata leva o resto.
+ 14. Faxina            -> o vigente não se apaga; as obras do teste vão para a
+                           lixeira (lápide), mesmo com plano, e a purga leva o resto.
 
 Rodar (stack de pé):  python testes/e2e/pdca1_cronograma_test.py
 """
+import atexit
 import json
 import os
 import ssl
 import sys
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from datetime import date, timedelta
+from _plano import ESPERA_S, definir_plano, plano_do_tenant
+from _segundo_fator import entrar
 from _sessao import cabecalhos, da_resposta
 
 try:
@@ -164,11 +170,16 @@ if status not in (200, 201) or not obra:
 obra_id = obra["obra_id"]
 check("obra criada só para este teste", True)
 
+# Sem feriado: a seção 7 prova o fim de semana, e com feriado na conta o
+# resultado dependeria do dia em que se roda — em 29/09/2026 a "segunda
+# seguinte" era 12/10 e o sucessor foi (certo) para a terça (D222). Feriado no
+# CPM é coberto na suíte do módulo, com data fixa.
 status, calendario = req("POST", "/api/pdca/calendarios/", demo, {
     "obra": obra_id,
     "nome": "Expediente " + MARCA,
     "trabalha_sabado": False,
     "trabalha_domingo": False,
+    "considera_feriados": False,
 })
 if status not in (200, 201) or not calendario:
     fatal(f"não consegui criar o calendário (HTTP {status}: {calendario})")
@@ -447,8 +458,20 @@ check("a EAP saiu numerada na ordem da árvore", codigos == ["1", "1.1", "1.2", 
 
 # ------------------------------------------------------------ 12c. plano modelo
 print("\n12c. O plano modelo — não se planeja 300 unidades 300 vezes")
-status, modelo = req("POST", f"/api/pdca/cronogramas/{v2_id}/marcar-modelo/", demo,
-                     {"nome": "Padrão " + MARCA})
+# A biblioteca de modelos é quota do plano, e o demo assina o `profissional`,
+# que tem `planos_modelo: 0` — o 402 seria a regra funcionando (D222; a
+# pergunta de produto é o D196). O bloco sobe o demo para o `empresarial` e
+# devolve o plano de antes, inclusive se o roteiro morrer no meio.
+plano_original = plano_do_tenant("demo")
+definir_plano("empresarial")
+atexit.register(definir_plano, plano_original or None)
+fim = time.monotonic() + ESPERA_S
+while True:  # a ficha nova leva até 30 s para chegar ao processo do backend
+    status, modelo = req("POST", f"/api/pdca/cronogramas/{v2_id}/marcar-modelo/", demo,
+                         {"nome": "Padrão " + MARCA})
+    if status != 402 or time.monotonic() > fim:
+        break
+    time.sleep(2)
 check("o plano entra na biblioteca", status == 200 and modelo["eh_modelo"] is True)
 
 status, sem_nome = req("POST", f"/api/pdca/cronogramas/{v2_id}/marcar-modelo/", demo, {"nome": ""})
@@ -480,17 +503,21 @@ status, repetido = req("POST", f"/api/pdca/cronogramas/{v2_id}/aplicar-modelo/",
 })
 check("aplicar de novo na mesma obra é recusado", status == 400)
 check("e manda replanejar, que é o caminho certo", "replaneje" in texto(repetido))
+definir_plano(plano_original or None)
+print(f"     (plano do demo devolvido: {plano_original or 'None'})")
 
 # -------------------------------------------------------------- 13. a fronteira
 print("\n13. A fronteira do tenant")
 status, _ = req("GET", f"/api/pdca/cronogramas/{plano_id}/", acme)
 check("outro tenant não alcança o cronograma (403 ou 404, nunca 200)", status in (403, 404))
-status, lista = req("GET", "/api/pdca/cronogramas/", demo)
+# Pela obra: a listagem inteira do demo é paginada e acumula os planos de toda
+# execução anterior — o do teste caía fora da primeira página.
+status, lista = req("GET", f"/api/pdca/cronogramas/?obra={obra_id}", demo)
 ids = [c["cronograma_id"] for c in (lista or {}).get("results", [])]
 check("e a listagem do dono traz os dois planos dele", plano_id in ids and v2_id in ids)
 
 # ------------------------------------------------------------------ 14. faxina
-print("\n14. Faxina — e as três recusas que ela encontra pelo caminho")
+print("\n14. Faxina — o vigente fica, e as obras vão para a lixeira")
 status, _ = req("DELETE", f"/api/pdca/cronogramas/{v2_id}/", demo)
 check("o rascunho sai", status in (200, 204))
 
@@ -498,19 +525,23 @@ status, vigente = req("DELETE", f"/api/pdca/cronogramas/{plano_id}/", demo)
 check("o vigente NÃO sai — ele é substituído, não apagado", status == 400)
 check("e a recusa diz isso", "substitu" in texto(vigente))
 
-# A obra fica: o calendário dela é `PROTECT` do cronograma vigente. A recusa
-# **com motivo** é o que este teste cobra — até 23/08/2026 ela era um 500, com a
-# página de erro do Django quebrando por cima (ver nucleo/excecoes.py).
-status, protegido = req("DELETE", f"/api/obras/{obra_id}/", demo)
-check("a obra com plano vigente é recusada com 409, e não com 500", status == 409)
-check("nomeando quantos dependem", protegido and protegido.get("total_dependentes", 0) >= 1)
-check("e sem imprimir o objeto protegido",
-      protegido and "cronograma" in texto(protegido.get("dependentes", [])))
-
-print(f"     a obra '{MARCA}' (id {obra_id}) fica no banco com o plano vigente;")
-print("     para remover:  docker exec sgi-erp python manage.py shell -c \\")
-print(f"       \"from obras.models import Obra; Obra.objects.filter(pk={obra_id}).delete()\"")
-print("     (excluir obra com plano publicado é decisão de produto — D116 em pendencias.md)")
+# Desde a lixeira (13/09/2026, arquitetura/lixo.md §2) excluir a obra põe uma
+# lápide e não consulta `PROTECT` nenhum: o 409 que este bloco cobrava era
+# justamente o defeito que a lixeira fechou — a obra com plano vigente era a que
+# ninguém conseguia tirar da frente. O calendário `PROTECT` só pesa na purga, e
+# o `antes_de_purgar` do PDCA o solta (§7).
+for obra_da_faxina in (obra_id, obra2_id):
+    status, _ = req("DELETE", f"/api/obras/{obra_da_faxina}/?motivo=Faxina+do+E2E+PDCA.1", demo)
+    check(f"a obra {obra_da_faxina} vai para a lixeira, mesmo com plano", status in (200, 204))
+status, _ = req("GET", f"/api/obras/{obra_id}/", demo)
+check("e sai da vista do dia a dia", status == 404)
+# Ler a lixeira é `plataforma.lixo.view`, do admin do tenant — o planejador
+# exclui, mas não administra a lixeira.
+admin = entrar(GW, "admin", "admin123", _CTX)
+status, lixo = req("GET", f"/api/lixo/?alvo_tipo__model=obra&search={urllib.parse.quote(MARCA)}", admin)
+achadas = {i["alvo_id"] for i in (lixo or {}).get("results", [])} if status == 200 else set()
+check("e está na lixeira, restaurável — não apagada",
+      str(obra_id) in {str(a) for a in achadas})
 
 
 ok = sum(1 for p in passed if p)

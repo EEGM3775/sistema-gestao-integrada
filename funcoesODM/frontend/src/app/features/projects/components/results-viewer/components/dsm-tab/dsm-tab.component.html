@@ -1,0 +1,83 @@
+<div class="dsm-viewer">
+
+  <!-- ── Toolbar ── -->
+  <div class="dsm-toolbar">
+    <div class="type-toggle">
+      <button
+        class="toggle-btn"
+        [class.active]="elevationType() === 'dsm'"
+        [disabled]="!hasDSM() || loading()"
+        (click)="setElevationType('dsm')">
+        DSM
+      </button>
+      <button
+        class="toggle-btn"
+        [class.active]="elevationType() === 'dtm'"
+        [disabled]="!hasDTM() || loading()"
+        (click)="setElevationType('dtm')">
+        DTM
+      </button>
+    </div>
+
+    <div class="opacity-control">
+      <span class="control-label">Opacidade</span>
+      <input
+        type="range"
+        min="0"
+        max="100"
+        [value]="opacityValue()"
+        (input)="onOpacityChange($event)"
+        class="opacity-slider"
+        title="Ajustar opacidade da camada">
+      <span class="opacity-value">{{ opacityValue() }}%</span>
+    </div>
+
+    @if (elevationRange()) {
+      <div class="elev-info">
+        <span class="elev-label">Min: <strong>{{ formatElev(elevationRange()?.min) }}</strong></span>
+        <span class="elev-sep">|</span>
+        <span class="elev-label">Max: <strong>{{ formatElev(elevationRange()?.max) }}</strong></span>
+      </div>
+    }
+  </div>
+
+  <!-- ── Mapa ── -->
+  <div class="map-wrapper">
+    <div #dsmMapContainer class="dsm-map"></div>
+
+    <!-- Loading overlay -->
+    @if (loading()) {
+      <div class="loading-overlay">
+        <div class="spinner"></div>
+        <p>Carregando {{ elevationType().toUpperCase() }}...</p>
+      </div>
+    }
+
+    <!-- Error state -->
+    @if (error() && !loading()) {
+      <div class="error-overlay">
+        <div class="error-icon">[!]</div>
+        <p>{{ error() }}</p>
+      </div>
+    }
+
+    <!-- Empty state -->
+    @if (!hasDSM() && !hasDTM() && !loading()) {
+      <div class="empty-overlay">
+        <div class="empty-icon">[DSM]</div>
+        <p>Nenhum modelo de elevação disponível nesta tarefa.</p>
+      </div>
+    }
+  </div>
+
+  <!-- ── Legenda ── -->
+  @if (elevationRange()) {
+    <div class="elevation-legend">
+      <span class="legend-min">{{ formatElev(elevationRange()?.min) }}</span>
+      <div class="legend-bar" [style.background]="legendGradient()"></div>
+      <span class="legend-max">{{ formatElev(elevationRange()?.max) }}</span>
+      <span class="legend-unit">Elevação (m)</span>
+    </div>
+  }
+
+</div>

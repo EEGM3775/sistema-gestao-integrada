@@ -1,0 +1,207 @@
+<!-- ============================================================================
+     VISUALIZADOR GERAL (Ortofoto / DSM / Nuvem de Pontos + Ferramentas de Medição)
+     ============================================================================ -->
+
+<div class="measurement-tab">
+  
+  <!-- Estado Vazio: Sem dados processados -->
+  @if (!hasProcessedData()) {
+    <div class="empty-state">
+      <div class="empty-icon">🗺️</div>
+      <h3>Visualizador</h3>
+      <p>Nenhum dado disponível para visualização.</p>
+      <p class="hint">Execute o processamento da tarefa para gerar ortofoto, DSM ou nuvem de pontos.</p>
+    </div>
+  }
+
+  <!-- Interface Principal de Medicoes -->
+  @else {
+    <div class="measurement-container">
+
+      <!-- ── ÁREA DO MAPA (esquerda/centro) ─────────────────────────────── -->
+      <div class="map-area">
+
+      <!-- Cabecalho: Selecao de Fonte de Dados -->
+      <div class="measurement-header">
+        <h3>Visualizador</h3>
+        <div class="data-source-selector">
+          <label>Camada:</label>
+          <select [ngModel]="selectedDataSource()" (ngModelChange)="selectedDataSource.set($event); onDataSourceChange()">
+            <option [value]="''" disabled>Selecione...</option>
+            @if (hasOrthophoto()) {
+              <option [value]="'orthophoto'">Ortofoto 2D</option>
+            }
+            @if (hasDSM()) {
+              <option [value]="'dsm'">DSM/DTM (Elevacao)</option>
+            }
+            @if (hasPointcloud()) {
+              <option [value]="'pointcloud'">Nuvem de Pontos 3D</option>
+            }
+          </select>
+        </div>
+      </div>
+
+      <!-- Area de Visualizacao -->
+      <div class="measurement-viewer">
+        @if (selectedDataSource() === '') {
+          <div class="viewer-placeholder">
+            <div class="placeholder-icon">🎯</div>
+            <p>Selecione uma fonte de dados acima para iniciar</p>
+          </div>
+        }
+        @else if (selectedDataSource() === 'orthophoto') {
+          <app-orthophoto-viewer
+            [projectId]="projectId"
+            [taskId]="taskId"
+            [nodeodmTaskId]="nodeodmTaskId"
+            [orthophotoUrl]="orthophotoUrl() || undefined"
+            [center]="mapCenter()"
+            [zoom]="mapZoom()"
+            (mapReady)="onMapReady($event)">
+          </app-orthophoto-viewer>
+        }
+        @else if (selectedDataSource() === 'dsm') {
+          <app-dem-viewer
+            [projectId]="projectId"
+            [taskId]="taskId"
+            [nodeodmTaskId]="nodeodmTaskId"
+            (mapReady)="onMapReady($event)">
+          </app-dem-viewer>
+        }
+        @else if (selectedDataSource() === 'pointcloud') {
+          <app-pointcloud-viewer
+            [projectId]="projectId"
+            [taskId]="taskId"
+            [nodeodmTaskId]="nodeodmTaskId">
+          </app-pointcloud-viewer>
+        }
+        
+        <!-- Loading Overlay -->
+        @if (isLoading()) {
+          <div class="viewer-loading">
+            <div class="loading-spinner"></div>
+            <p>Carregando visualizador...</p>
+          </div>
+        }
+
+        <!-- Live Measurement Banner -->
+        @if (isDrawing() || isQuerying()) {
+          <div class="live-measurement-banner" [class.querying]="isQuerying()">
+            <span class="live-indicator"></span>
+            <span class="live-text">{{ liveResult() }}</span>
+          </div>
+        }
+      </div>
+
+      </div><!-- /map-area -->
+
+      <!-- ── SIDEBAR DE MEDIÇÕES (direita, retrátil) ────────────────────── -->
+      <div class="sidebar" [class.collapsed]="sidebarCollapsed()">
+
+        <!-- Botão toggle (faixa esquerda da sidebar) -->
+        <button
+          class="sidebar-toggle"
+          (click)="toggleSidebar()"
+          [title]="sidebarCollapsed() ? 'Expandir painel de medições' : 'Retrair painel de medições'">
+          <span class="toggle-arrow" [class.flipped]="sidebarCollapsed()">›</span>
+        </button>
+
+        <!-- Label vertical exibida quando retraído -->
+        @if (sidebarCollapsed()) {
+          <div class="sidebar-collapsed-label">
+            <span>Medições</span>
+            @if (measurements().length > 0) {
+              <span class="collapsed-badge">{{ measurements().length }}</span>
+            }
+          </div>
+        }
+
+        <!-- Conteúdo expandido -->
+        <div class="sidebar-inner">
+
+          <!-- Ferramentas de desenho (MeasDrawingToolbarComponent) -->
+          <app-meas-drawing-toolbar
+            [activeTool]="activeTool()"
+            [hasDataSource]="!!selectedDataSource()"
+            [hasDSM]="hasDSM()"
+            [isDrawing]="isDrawing()"
+            [isQuerying]="isQuerying()"
+            [drawingPointsCount]="drawingPoints().length"
+            (toolActivated)="onToolActivated($event)"
+            (undoRequest)="undoLastPoint()"
+            (completeRequest)="completeMeasurement()"
+            (cancelRequest)="cancelMeasurement()"
+            (clearAllRequest)="clearAllMeasurements()">
+          </app-meas-drawing-toolbar>
+
+          <!-- ── Painel de Medições (scroll próprio) ── -->
+          <div class="sidebar-pane">
+            <app-meas-list
+              [measurements]="measurements()"
+              [visibleIds]="visibleIds()"
+              [projectId]="projectId"
+              (visibilityChange)="onVisibilityChange($event)"
+              (focusMeasurement)="onFocusFromList($event)"
+              (deleteMeasurement)="onDeleteFromList($event)"
+              (measurementRenamed)="onMeasurementRenamed($event)"
+              (openExport)="openExportPopup()">
+            </app-meas-list>
+          </div>
+
+          <!-- ── Painel de Anotações (scroll próprio) ── -->
+          @if (selectedDataSource() === 'orthophoto' || selectedDataSource() === 'dsm') {
+            <div class="sidebar-pane annotations-pane">
+
+              <!-- Header fixo: título + contador -->
+              <div class="pane-header">
+                <span class="pane-title">Anotacoes</span>
+                <span class="pane-count">{{ annotationService.annotations().length }}</span>
+              </div>
+
+              <!-- Controles de desenho (não rolam, abaixo do header) -->
+              @if (!annotateMode()) {
+                <div class="annotate-type-btns">
+                  <button class="btn-annotate-type" (click)="startAnnotating('MARKER')" title="Adicionar marcador de ponto">+ Marcador</button>
+                  <button class="btn-annotate-type" (click)="startAnnotating('POLYGON')" title="Desenhar poligono no mapa">+ Poligono</button>
+                </div>
+              }
+              @if (annotateMode()) {
+                <div class="annotate-active-bar">
+                  @if (annotationType() === 'MARKER') {
+                    <span class="annotate-hint-inline">Clique no mapa para posicionar um marcador.</span>
+                  }
+                  @if (annotationType() === 'POLYGON') {
+                    <span class="annotate-hint-inline">{{ polygonPoints().length }} ponto(s) — clique no mapa</span>
+                    @if (polygonPoints().length >= 3) {
+                      <button class="btn-complete-polygon" (click)="completePolygon()">Concluir</button>
+                    }
+                  }
+                  <button class="btn-cancel-annotate" (click)="cancelAnnotation()">Cancelar</button>
+                </div>
+              }
+
+              <!-- Lista de anotações com scroll (header interno suprimido) -->
+              <app-annotations-panel [projectId]="projectId" [showHeader]="false"></app-annotations-panel>
+
+            </div>
+          }
+
+        </div><!-- /sidebar-inner -->
+
+      </div><!-- /sidebar -->
+
+    </div><!-- /measurement-container -->
+  }
+
+  <!-- ============================================================== -->
+  <!-- Modal de Exportacao (componente standalone)                    -->
+  <!-- ============================================================== -->
+  @if (exportPopupOpen()) {
+    <app-measurement-export-modal
+      [projectId]="projectId"
+      [measurements]="measurements()"
+      (closed)="closeExportPopup()">
+    </app-measurement-export-modal>
+  }
+
+</div>

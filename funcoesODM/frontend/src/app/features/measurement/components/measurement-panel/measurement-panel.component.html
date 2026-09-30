@@ -1,0 +1,118 @@
+<div class="measurement-panel" *ngIf="measurement">
+  <!-- Header -->
+  <div class="panel-header">
+    <h3>{{ measurement.name }}</h3>
+    <span class="measurement-type">{{ measurement.type }}</span>
+  </div>
+
+  <!-- Resultado Principal -->
+  <div class="result-display">
+    <div class="result-value">{{ measurement.result.displayValue }}</div>
+    <div class="result-meta">
+      <span class="result-unit">{{ measurement.result.unit }}</span>
+      @if (measurement.result.metadata && measurement.result.metadata.accuracy) {
+        <span class="result-accuracy">±{{ measurement.result.metadata.accuracy }}%</span>
+      }
+    </div>
+  </div>
+
+  <!-- Resultados Secundários -->
+  @if (measurement.secondaryResults && measurement.secondaryResults.length > 0) {
+    <div class="secondary-results">
+      @for (result of measurement.secondaryResults; track $index) {
+        <div class="secondary-result">
+          <span class="label">{{ result.displayValue }}</span>
+        </div>
+      }
+    </div>
+  }
+
+  <!-- Pontos -->
+  <div class="points-section">
+    <button class="section-toggle" (click)="togglePoints()">
+      <span>{{ showPoints() ? '▼' : '▶' }}</span>
+      Pontos ({{ measurement.points.length }})
+    </button>
+    
+    @if (showPoints()) {
+      <div class="points-list">
+        @for (point of measurement.points; track point.id) {
+          <div class="point-item">
+            <span class="point-label">{{ point.label || 'P' + ($index + 1) }}</span>
+            <span class="point-coords">
+              {{ formatCoordinate(point.lat) }}, {{ formatCoordinate(point.lng) }}
+              @if (point.elevation !== undefined) {
+                <span class="point-elevation">{{ point.elevation.toFixed(2) }}m</span>
+              }
+            </span>
+          </div>
+        }
+      </div>
+    }
+  </div>
+
+  <!-- Configurações -->
+  <div class="settings-section">
+    <button class="section-toggle" (click)="toggleSettings()">
+      <span>{{ showSettings() ? '▼' : '▶' }}</span>
+      Configurações
+    </button>
+    
+    @if (showSettings()) {
+      <div class="settings-panel">
+        <div class="setting-item">
+          <label>Unidade</label>
+          <select 
+            [ngModel]="measurement.result.unit"
+            (ngModelChange)="onUnitChange($event)">
+            @for (unit of availableUnits(); track unit) {
+              <option [value]="unit">{{ unit }}</option>
+            }
+          </select>
+        </div>
+        
+        <div class="setting-item">
+          <label>Nome</label>
+          <input 
+            type="text" 
+            [(ngModel)]="measurement.name"
+            [disabled]="!isEditing" />
+        </div>
+        
+        <div class="setting-item">
+          <label>Descrição</label>
+          <textarea 
+            [(ngModel)]="measurement.description"
+            [disabled]="!isEditing"
+            rows="2"></textarea>
+        </div>
+      </div>
+    }
+  </div>
+
+  <!-- Ações -->
+  <div class="panel-actions">
+    <button class="action-btn save" (click)="onSave()">
+      💾 Salvar
+    </button>
+    
+    <div class="export-dropdown">
+      <button class="action-btn export">📤 Exportar</button>
+      <div class="export-menu">
+        <button (click)="onExport('PDF')">PDF</button>
+        <button (click)="onExport('CSV')">CSV</button>
+        <button (click)="onExport('GeoJSON')">GeoJSON</button>
+        <button (click)="onExport('KML')">KML</button>
+      </div>
+    </div>
+    
+    <button class="action-btn delete" (click)="onDelete()">
+      🗑️ Deletar
+    </button>
+  </div>
+
+  <!-- Metadata -->
+  <div class="panel-footer">
+    <small>Criada em {{ measurement.createdAt | date:'short' }}</small>
+  </div>
+</div>

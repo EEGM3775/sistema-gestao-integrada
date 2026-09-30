@@ -1,0 +1,114 @@
+<div class="annotations-panel">
+  @if (showHeader) {
+    <div class="panel-header">
+      <span class="panel-title">Anotacoes</span>
+      <span class="panel-count">{{ filteredAnnotations().length }}</span>
+    </div>
+  }
+
+  <div class="filter-bar">
+    <button class="filter-btn" [class.active]="filterType() === 'ALL'"      (click)="setFilter('ALL')">Todas</button>
+    <button class="filter-btn" [class.active]="filterType() === 'MARKER'"   (click)="setFilter('MARKER')">Marcadores</button>
+    <button class="filter-btn" [class.active]="filterType() === 'POLYGON'"  (click)="setFilter('POLYGON')">Poligonos</button>
+  </div>
+
+  <div class="panel-body">
+    <div class="loading" *ngIf="annotationService.loading()">
+      <div class="spinner-sm"></div>
+      <span>Carregando...</span>
+    </div>
+
+    <div class="error-msg" *ngIf="annotationService.error()">
+      {{ annotationService.error() }}
+    </div>
+
+    <div class="empty-state" *ngIf="!annotationService.loading() && filteredAnnotations().length === 0">
+      <span class="empty-icon">+</span>
+      <p>Nenhuma anotacao ainda.</p>
+      <p>Clique em "Anotar" no mapa para adicionar.</p>
+    </div>
+
+    <div class="annotation-list" *ngIf="filteredAnnotations().length > 0">
+      <div class="annotation-item" *ngFor="let a of filteredAnnotations()">
+
+        <label class="vis-check-wrap" [title]="annotationService.isVisible(a.id) ? 'Ocultar no mapa' : 'Mostrar no mapa'">
+          <input type="checkbox"
+                 class="vis-check"
+                 [checked]="annotationService.isVisible(a.id)"
+                 (change)="toggleVisibility(a.id)">
+          <span class="vis-check-box">
+            @if (annotationService.isVisible(a.id)) {
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none">
+                <path d="M8 3C4 3 1 8 1 8s3 5 7 5 7-5 7-5-3-5-7-5z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+                <circle cx="8" cy="8" r="2.5" fill="currentColor"/>
+              </svg>
+            } @else {
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none">
+                <path d="M2 2l12 12M6.5 6.7A2.5 2.5 0 0 0 9.3 9.5M4.2 4.4C2.8 5.4 1.5 7 1 8c1.2 2.5 4 5 7 5a7 7 0 0 0 3.6-1M6.5 3.2A7 7 0 0 1 8 3c3 0 5.8 2.5 7 5-.4.9-1 1.8-1.8 2.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+              </svg>
+            }
+          </span>
+        </label>
+
+        <div class="annotation-body">
+          <div class="annotation-header">
+            <span class="annotation-type">{{ typeLabel(a.type) }}</span>
+            <span class="annotation-author">{{ a.author.username }}</span>
+            @if (isOwn(a) && editingId() !== a.id) {
+              <button
+                class="edit-btn"
+                [disabled]="deletingId() === a.id"
+                (click)="startEdit(a)"
+                title="Editar anotacao">
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                  <path d="M11.5 2.5a1.5 1.5 0 0 1 2.12 2.12L5 13.24l-2.83.71.71-2.83L11.5 2.5z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+                </svg>
+              </button>
+            }
+            @if (isOwn(a) && editingId() !== a.id) {
+              <button
+                class="delete-btn"
+                [disabled]="deletingId() === a.id"
+                (click)="deleteAnnotation(a)"
+                title="Excluir anotacao">
+                @if (deletingId() === a.id) {
+                  <span class="delete-spinner"></span>
+                } @else {
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+                    <path d="M2 4h12M5 4V2.5A.5.5 0 0 1 5.5 2h5a.5.5 0 0 1 .5.5V4M6 7v5M10 7v5M3 4l1 9.5A.5.5 0 0 0 4.5 14h7a.5.5 0 0 0 .5-.5L13 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                }
+              </button>
+            }
+          </div>
+
+          @if (editingId() === a.id) {
+            <div class="annotation-edit-form">
+              <textarea
+                class="edit-textarea"
+                rows="2"
+                [value]="editText()"
+                (input)="editText.set($any($event.target).value)"
+                placeholder="Texto da anotacao"></textarea>
+              <div class="edit-actions">
+                <button class="btn-edit-save" (click)="saveEdit(a)" [disabled]="savingEditId() === a.id">
+                  @if (savingEditId() === a.id) {
+                    <span class="delete-spinner"></span>
+                  } @else {
+                    Salvar
+                  }
+                </button>
+                <button class="btn-edit-cancel" (click)="cancelEdit()">Cancelar</button>
+              </div>
+            </div>
+          } @else {
+            <p class="annotation-text" *ngIf="a.text">{{ a.text }}</p>
+          }
+
+          <span class="annotation-date">{{ formatDate(a.createdAt) }}</span>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>

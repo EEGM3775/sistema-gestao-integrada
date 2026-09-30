@@ -4920,8 +4920,13 @@ class ConversaoNaoAgendadaTests(PranchetaTestBase):
 
     def test_dwg_sem_derivada_nenhuma_diz_que_nao_foi_agendada(self):
         """O caso do D81, reproduzido: DWG vigente, plano com o motor, zero
-        derivadas. Antes desta correção respondia `sem_motor`."""
-        conversao = self._conversao(self._revisao())
+        derivadas. Antes desta correção respondia `sem_motor`.
+
+        "Plano com o motor" inclui o motor estar na imagem: sem forçar o
+        `disponivel()`, o teste só passava onde o LibreDWG está instalado e
+        caía em `sem_motor` no runner do CI (D214)."""
+        with mock.patch.object(ADAPTADORES["libredwg"], "disponivel", return_value=True):
+            conversao = self._conversao(self._revisao())
 
         self.assertEqual(conversao["estado"], "nao_agendada")
         self.assertIsNone(conversao["visualizador"])
