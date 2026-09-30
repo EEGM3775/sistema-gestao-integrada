@@ -19,6 +19,7 @@
 | D74 (antivírus) | [modulos/funcoesimpexp.md](modulos/funcoesimpexp.md) | Decisão do dono, adiada com método definido |
 | D6 · D13 · D60 + backlog de ideias | [roadmap.md](roadmap.md) | Trabalho planejado, não achado |
 | Decisões do Orçamento | [modulos/moduloorcamento.md](modulos/moduloorcamento.md) | Decisão de módulo |
+| D185 (base referencial fora do dev) | [modulos/modulos-planejados.md](modulos/modulos-planejados.md) | Decisão do dono: dependência do `modulodms` |
 
 ---
 
@@ -349,21 +350,6 @@ depende do download:
 ```
 manage.py carregar_base_oficial --fonte sinapi --mes 2026-01 --arquivo /tmp/SINAPI-2026-01.zip
 ```
-
-### D185 — a SINAPI só existe na máquina de quem desenvolve · 🟠 parcial 30/09/2026
-
-**Metade fechada em 30/09/2026:** o staging foi recriado do zero com a imagem de hoje — Postgres com
-PostGIS, `unaccent` e `track_commit_timestamp`, todas as migrations (inclusive as 15 do orçamento),
-SpiceDB e os dois processos do PDP, os 13 módulos decididos pelo PDP — e o gate passa **10/10**
-([D226](historico-correcoes.md), [D227](historico-correcoes.md), [D228](historico-correcoes.md)).
-Backup do banco antigo em `~/backups/staging_pre_atualizacao_20260930.sql.gz` (WSL).
-
-**O que resta é decisão do dono:** as 1.460 publicações da base referencial ocupam 5,6 GB e **não são
-reprodutíveis a partir do repositório** — chegaram ao banco de dev por 20 cargas manuais em
-15/09/2026 e vivem só no volume `02sistema_gestao_integrada_pg_data`; o staging tem só as 2 bases de
-fixture do seed. **Se** a base deve existir em staging, e por qual caminho (dump restaurado,
-subconjunto de UFs/meses, ou carga rodada lá): 5,6 GB por ambiente é custo, e uma UF com três meses
-pode bastar.
 
 ### D179 — o ajuste de vencimento só conhece feriado onde a base foi sincronizada e o lote foi geocodificado · 🟠 aberto 16/09/2026
 

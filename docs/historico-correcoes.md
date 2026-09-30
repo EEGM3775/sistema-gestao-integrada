@@ -10,6 +10,18 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D185 — o staging não tinha o módulo de orçamento, e a SINAPI só existe na máquina de quem desenvolve · ✅ fechado 30/09/2026
+
+Aberto em 16/09/2026: o `erp_db` do staging tinha 77 tabelas e 33 MB contra 5.647 MB do dev, nenhuma
+migration do `moduloorcamento`, e a imagem era de julho. Duas perguntas separadas, fechadas de dois
+jeitos. **(1) Staging atualizado — corrigido:** recriado do zero em 30/09/2026 (Postgres com PostGIS,
+`unaccent` e `track_commit_timestamp`, todas as migrations, SpiceDB e o PDP em todo módulo); gate
+10/10; a subida achou o [D226](#), o [D227](#) e o [D228](#). Backup do banco antigo em
+`~/backups/staging_pre_atualizacao_20260930.sql.gz` (WSL). **(2) A base referencial fora do dev —
+decisão do dono:** as 1.460 publicações (5,6 GB) não são reprodutíveis do repositório; levá-las a
+staging e produção virou **dependência do `modulodms`**, registrada em
+[modulos-planejados.md](modulos/modulos-planejados.md).
+
 ### D228 — os roteiros não enxergavam a sessão no staging, e dois atalhos olhavam o dev · ✅ corrigido 30/09/2026
 
 Achado no primeiro gate do staging recriado: 2 de 10, quase tudo 401. O helper
