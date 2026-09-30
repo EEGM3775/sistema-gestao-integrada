@@ -23,7 +23,8 @@
 - Frontend: frontend/src/app/
 - Backend: backend/java-service/src/main/java/
 - Docs: docs/
-- Docker: docker-compose.yml, docker/, init-db/
+- Docker: docker/ (NodeODM, Potree), init-db/ — no SGI o compose é o da plataforma
+  (`deploy/compose/base.yml`); o `docker-compose.yml` standalone ficou no `ImgDrone/`
 
 ## O que ja esta funcionando
 

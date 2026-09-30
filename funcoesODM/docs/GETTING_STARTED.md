@@ -1,5 +1,10 @@
 # Início Rápido - FuncoesODM
 
+> **Modo standalone.** Este guia é do drone rodando sozinho, com os scripts e o `docker-compose.yml`
+> que ficaram no `ImgDrone/` (fora do git do SGI). Dentro do SGI o drone sobe pelo compose da
+> plataforma e entra pela IAM — ver [README.md § Dentro do SGI](README.md#dentro-do-sgi). As
+> credenciais abaixo só valem com o login local ligado.
+
 ## Fluxo recomendado
 
 1. Leia [docs/README.md](README.md) para localizar a documentação principal.

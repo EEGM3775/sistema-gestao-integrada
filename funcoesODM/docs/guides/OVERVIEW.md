@@ -4,6 +4,9 @@ Plataforma SaaS para processamento de imagens aéreas e análise topográfica, c
 
 ## Início Ultra-Rápido
 
+> Modo standalone (scripts no `ImgDrone/`, fora do git). No SGI, ver
+> [README.md § Dentro do SGI](../README.md#dentro-do-sgi).
+
 **Windows:** Duplo clique em `start.bat` ou `menu.bat`
 **Linux/WSL:** Execute `./start.sh` ou `./menu.sh`
 
@@ -18,7 +21,7 @@ Aplicação moderna de fotogrametria focada em engenharia civil, com arquitetura
 - **Backend**: Java Spring Boot + PostgreSQL
 - **Processamento**: NodeODM/ClusterODM (via API)
 
-**[Visão Arquitetural Completa](VISION.md)**
+**[Visão Arquitetural Completa](../architecture/VISION.md)**
 
 ---
 
@@ -199,7 +202,7 @@ Ver [BEST_PRACTICES.md](../architecture/BEST_PRACTICES.md) para mais diretrizes.
 - **FuncoesODM**: Proprietário (camada de aplicação)
 - **OpenDroneMap/NodeODM**: GPLv3 (componentes base)
 
-Ver [VISION.md](VISION.md) seção 4 para detalhes sobre licenciamento.
+Ver [VISION.md](../architecture/VISION.md) seção 4 para detalhes sobre licenciamento.
 
 ---
 

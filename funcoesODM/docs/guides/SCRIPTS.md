@@ -2,6 +2,10 @@
 
 Documentação completa dos scripts de automação para inicialização, parada e gerenciamento do FuncoesODM.
 
+> **Modo standalone.** Estes scripts não estão no repositório do SGI — ficaram no `ImgDrone/`, fora
+> do git. No SGI o drone sobe pelo compose da plataforma: ver
+> [README.md § Dentro do SGI](../README.md#dentro-do-sgi).
+
 ## 📁 Scripts Disponíveis
 
 ### Windows

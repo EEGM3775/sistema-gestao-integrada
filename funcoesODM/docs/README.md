@@ -2,6 +2,23 @@
 
 Plataforma de fotogrametria e processamento de imagens baseada em OpenDroneMap, com frontend Angular, backend Spring Boot, PostgreSQL e NodeODM.
 
+## Dentro do SGI
+
+O drone é o módulo `drone` do SGI e é versionado no repositório do SGI, em `funcoesODM/`. Lá ele
+**não** roda pelos scripts standalone descritos em [GETTING_STARTED.md](GETTING_STARTED.md) e
+[guides/SCRIPTS.md](guides/SCRIPTS.md) — esses scripts e o `docker-compose.yml` próprio ficaram no
+`ImgDrone/`, fora do git. No SGI:
+
+- **Sobe** com o compose da plataforma: `deploy/compose/base.yml`, profile `full` (serviços
+  `java-service`, `drone-nginx`, `nodeodm`, `potree-converter`, `funcoesodm-db`) — ver
+  `docs/desenvolvimento.md` do SGI.
+- **Entra** pelo gateway: a SPA em `/drone/`, a API em `/odm-api/` (→ `/api/v1`), o WebSocket em `/ws/`.
+- **Autentica** só pela IAM do SGI (BFF: o gateway troca o cookie da sessão pelo token com
+  `aud=sgi-drone`). O login local (`/api/v1/auth/login`) fica desligado
+  (`APP_LOCAL_LOGIN_ENABLED=false`), e com ele as credenciais de teste do `init-db`.
+- **Autoriza** pelo PDP do SGI (`security/AutorizacaoService`) — desenho em
+  `docs/acesso-e-permissoes.md §10` do SGI.
+
 ## Comece aqui
 
 - [Início rápido](GETTING_STARTED.md) - fluxo de 3 passos para abrir a aplicação

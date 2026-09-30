@@ -38,6 +38,8 @@ Antes de documentar um campo, verificar se o modelo Python reflete o estado atua
 - Identidade visual (Sistema Malha — marca, cor, tipografia, voz): [docs/identidade-visual.md](docs/identidade-visual.md)
 - Acesso e permissões: [docs/acesso-e-permissoes.md](docs/acesso-e-permissoes.md)
 - Como rodar: [docs/desenvolvimento.md](docs/desenvolvimento.md)
+- Drone (Java + Angular, versionado aqui em `funcoesODM/`, docs próprias):
+  [funcoesODM/docs/README.md](funcoesODM/docs/README.md) — a cópia em `ImgDrone/` é antiga, não editar
 
 ## Padrões de desenvolvimento
 
