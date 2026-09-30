@@ -19,6 +19,10 @@ urlpatterns = [
     path("auth/service-token/", views.ServiceTokenView.as_view(), name="service-token"),
     # Interna (o gateway devolve 404): o PEP sem Redis pergunta se a sessão vale.
     path("auth/interno/sessao/<uuid:sid>/", views.SessaoInternaView.as_view(), name="sessao-interna"),
+    # Fase 5 — o BFF: o gateway troca o cookie da sessão pelo access do serviço.
+    path("auth/interno/bff/<str:servico>/", views.TokenDaSessaoView.as_view(), name="bff-token"),
+    # Fase 6 — o step-up: provar quem é de novo antes do ato grave.
+    path("auth/confirmar/", views.ConfirmarIdentidadeView.as_view(), name="confirmar-identidade"),
     path("auth/senha/", views.ChangePasswordView.as_view(), name="change-password"),
     # D11 — recuperação de senha. Públicas (sem autenticação): quem esqueceu a
     # senha, por definição, não consegue se autenticar. O gateway aplica rate
@@ -65,6 +69,8 @@ urlpatterns = [
     ),
     path("auth/conta/seguranca/", views.SegurancaDaContaView.as_view(), name="conta-seguranca"),
     path("catalogo-permissoes/", views.CatalogoPermissoesView.as_view(), name="catalogo-permissoes"),
+    # Fase 6 — o suporte da plataforma só entra com consentimento (§10.7).
+    path("suporte/", views.SuporteDaEmpresaView.as_view(), name="suporte-da-empresa"),
     path(".well-known/jwks.json", views.JwksView.as_view(), name="jwks"),
     path("", include(router.urls)),
 ]

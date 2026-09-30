@@ -27,11 +27,26 @@ logger = logging.getLogger(__name__)
 
 _client = None
 
+# Disjuntor (fase 6, achado do teste de caos): com o Redis fora, cada tentativa
+# pode custar segundos — a resolução DNS do host parado NÃO é limitada pelo
+# `socket_timeout`. O BFF fala com este Redis a cada chamada à API; sem o
+# disjuntor, a queda do Redis virava a API inteira esperando o DNS.
+_PAUSA_S = 5.0
+_parado_ate = 0.0
+
+
+def redis_caiu() -> None:
+    global _parado_ate
+    _parado_ate = time.monotonic() + _PAUSA_S
+
 
 def _redis():
     """Cliente Redis preguiçoso (uma conexão por processo). Timeouts curtos para
-    nunca segurar a request/response por causa do Redis."""
+    nunca segurar a request/response por causa do Redis; com o disjuntor aberto,
+    falha na hora (quem chama já trata a falha)."""
     global _client
+    if time.monotonic() < _parado_ate:
+        raise ConnectionError("Redis em pausa pelo disjuntor.")
     if _client is None:
         import redis  # dependência local do IAM (requirements.txt)
 
@@ -61,6 +76,7 @@ def bump_session_epoch(user_id) -> bool:
         )
         return True
     except Exception:  # noqa: BLE001 — Redis fora não pode derrubar a operação de negócio
+        redis_caiu()
         logger.exception(
             "Falha ao gravar época de revogação (Redis) p/ user=%s; a sessão foi "
             "blacklistada, mas o access residual só cai em <= access TTL.",

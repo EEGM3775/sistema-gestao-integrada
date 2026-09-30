@@ -19,6 +19,7 @@ Rodar (stack de pé):  python testes/e2e/phase9_auditoria_test.py
 import json, random, sys, urllib.request, urllib.error
 
 from _segundo_fator import completar_login
+from _sessao import cabecalhos, da_resposta
 
 # Console do Windows costuma ser cp1252 e quebra em emoji/acentos ao redirecionar.
 try:
@@ -33,7 +34,7 @@ def req(method, path, token=None, body=None):
     data = json.dumps(body).encode() if body is not None else None
     headers = {"Content-Type": "application/json"}
     if token:
-        headers["Authorization"] = "Bearer " + token
+        headers.update(cabecalhos(token))
     r = urllib.request.Request(GW + path, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(r, timeout=30) as resp:
@@ -51,7 +52,7 @@ def login(u, p):
     r = urllib.request.Request(GW + "/auth/login/", data=data, method="POST",
                                headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(r, timeout=30) as resp:
-        return completar_login(GW, json.load(resp))["access"]
+        return completar_login(GW, resp)["sessao"]
 
 
 def linhas(payload):

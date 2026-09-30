@@ -34,6 +34,22 @@ _BREAKER_COOLDOWN = 5.0
 _breaker_until = 0.0
 
 
+def abrir_disjuntor(*, propagar: bool = True) -> None:
+    """Abre o breaker. O Redis da autorização é o mesmo servidor: o disjuntor
+    de lá abre junto, para a mesma queda não ser descoberta duas vezes por
+    requisição (achado do teste de caos, fase 6)."""
+    global _breaker_until
+    _breaker_until = time.monotonic() + _BREAKER_COOLDOWN
+    if propagar:
+        from . import autorizacao_pdp
+
+        autorizacao_pdp.redis_caiu()
+
+
+def disjuntor_aberto() -> bool:
+    return time.monotonic() < _breaker_until
+
+
 def _redis():
     """Cliente Redis preguiçoso, com timeouts curtos e sem retry (a checagem roda
     em toda requisição autenticada; falha rápido para o breaker assumir)."""
@@ -77,7 +93,7 @@ def is_session_revoked(user_id, token_iat) -> bool:
     try:
         raw = _redis().get(f"{settings.SESSION_REVOKE_PREFIX}{user_id}")
     except Exception:  # noqa: BLE001 — Redis fora não pode quebrar a autenticação
-        _breaker_until = time.monotonic() + _BREAKER_COOLDOWN
+        abrir_disjuntor()
         fail_open = getattr(settings, "SESSION_REVOCATION_FAIL_OPEN", True)
         logger.warning(
             "Redis indisponível na checagem de revogação; abrindo breaker por %.0fs; "
@@ -146,7 +162,7 @@ def is_sid_revoked(sid) -> bool:
             _sids[sid] = (agora, revogada)
             return revogada
         except Exception:  # noqa: BLE001
-            _breaker_until = agora + _BREAKER_COOLDOWN
+            abrir_disjuntor()
             logger.warning("Redis indisponível na checagem do sid; cache de %.0fs, depois a IAM.",
                            _SID_TTL_S)
     visto = _sids.get(sid)

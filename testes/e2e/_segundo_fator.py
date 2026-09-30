@@ -2,9 +2,10 @@
 
 `admin` e `dono` são obrigados a ter segundo fator, e na demo nascem com um
 segredo TOTP conhecido (`testes/seeds/seed_demo.py`, o mesmo valor daqui). Os roteiros
-não sabem nada disso: trocam o `json.load(resp)["access"]` do login por
-`completar_login(GW, json.load(resp))`, e este módulo responde a segunda etapa
-quando ela vem.
+não sabem nada disso: passam a resposta do login a
+`completar_login(GW, resp)["sessao"]`, e este módulo responde a segunda etapa
+quando ela vem. Desde a fase 5 (BFF) o que volta é o cookie da sessão, e não um
+token — ver `_sessao.py`.
 
 O código é calculado aqui, só com a biblioteca padrão (RFC 6238), para o roteiro
 rodar no Python do sistema sem instalar nada.
@@ -17,6 +18,8 @@ import struct
 import time
 import urllib.error
 import urllib.request
+
+from _sessao import ANTI_CSRF, da_resposta
 
 #: O mesmo de `testes/seeds/seed_demo.py`. Só vale para a demo.
 SEGREDO_TOTP_DEMO = "GXW6RXK3CRP7C6FM3L25R55B6YAE72T5"
@@ -35,19 +38,23 @@ def codigo(deslocamento: int = 0, segredo: str = SEGREDO_TOTP_DEMO) -> str:
 def _post(gw, caminho, corpo, contexto):
     r = urllib.request.Request(
         gw + caminho, data=json.dumps(corpo).encode(), method="POST",
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", **ANTI_CSRF},
     )
     with urllib.request.urlopen(r, timeout=30, context=contexto) as resp:
-        return json.load(resp)
+        return {**json.load(resp), "sessao": da_resposta(resp)}
 
 
-def completar_login(gw: str, corpo: dict, contexto=None) -> dict:
-    """Recebe o JSON de `/auth/login/` e devolve o de uma sessão.
+def completar_login(gw: str, corpo, contexto=None) -> dict:
+    """Recebe a resposta de `/auth/login/` (ou o JSON dela) e devolve o JSON de
+    uma sessão, com o cookie dela em `sessao`.
 
     O código de um passo só vale uma vez por conta (anti-reuso). Se outro
     roteiro acabou de entrar com a mesma conta, o do passo atual já foi gasto —
     e o do passo seguinte também é aceito agora, pela tolerância de um passo.
     Se os dois foram gastos, espera o passo virar."""
+    if not isinstance(corpo, dict):  # a resposta do urllib: o cookie vem nela
+        resposta = corpo
+        corpo = {**json.load(resposta), "sessao": da_resposta(resposta)}
     if corpo.get("segundo_fator") != "codigo":
         return corpo
     tentativas = [0, 1, "esperar"]
@@ -63,6 +70,23 @@ def completar_login(gw: str, corpo: dict, contexto=None) -> dict:
                 raise
             erro = e
     raise erro
+
+
+def entrar(gw: str, usuario: str, senha: str, contexto=None, **extra) -> str | None:
+    """Login completo (com a segunda etapa, se vier) → o cookie da sessão, ou
+    `None` se a senha foi recusada. É o que o navegador guarda no lugar do token."""
+    r = urllib.request.Request(
+        gw + "/auth/login/", method="POST",
+        data=json.dumps({"username": usuario, "password": senha, **extra}).encode(),
+        headers={"Content-Type": "application/json", **ANTI_CSRF},
+    )
+    try:
+        with urllib.request.urlopen(r, timeout=60, context=contexto) as resp:
+            return completar_login(gw, resp, contexto).get("sessao")
+    except urllib.error.HTTPError as e:
+        if e.code in (400, 401):
+            return None
+        raise
 
 
 def responder_no_navegador(pagina) -> None:

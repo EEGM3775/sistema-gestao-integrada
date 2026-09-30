@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 
+from django.db import transaction
 from django.http import FileResponse, HttpResponse
 from rest_framework import status
 from rest_framework.exceptions import NotFound, ValidationError
@@ -267,8 +268,11 @@ class ExportarView(_Base):
                 )
                 from .tasks import gerar_exportacao
 
-                gerar_exportacao.delay(
-                    lote.pk, self.tenant_id, getattr(request.user, "pk", None),
+                # Depois do commit (D217): na transação da requisição, o worker
+                # podia pegar o job antes de o lote existir para ele.
+                usuario_id = getattr(request.user, "pk", None)
+                transaction.on_commit(
+                    lambda: gerar_exportacao.delay(lote.pk, self.tenant_id, usuario_id)
                 )
                 # 202: o arquivo ainda não existe. A tela acompanha por
                 # `exportacoes/<id>/` e baixa quando ficar pronta.
@@ -642,10 +646,15 @@ class ImportarView(_Base):
             parametros={"formato": formato.codigo},
         )
         lote.arquivo.save(arquivo.name, ContentFile(conteudo), save=True)
-        preparar_importacao.delay(
-            lote.pk, self.tenant_id,
+        # Depois do commit (D217): enfileirado dentro da transação da
+        # requisição, o worker pegava o job antes de o lote existir para ele
+        # ("importação sumiu antes do job") e a tela ficava em "lendo".
+        argumentos = dict(
             limites=self.limites, de_para=de_para, delimitador=delimitador,
             teto=self.teto_serializavel(), formato=formato.codigo,
+        )
+        transaction.on_commit(
+            lambda: preparar_importacao.delay(lote.pk, self.tenant_id, **argumentos)
         )
         return Response(
             motor_importacao.resumo(lote), status=status.HTTP_202_ACCEPTED,
@@ -834,9 +843,11 @@ class ImportacaoDecisaoView(_Base):
 
         from .tasks import preparar_importacao
 
-        preparar_importacao.delay(
-            importacao.pk, self.tenant_id, limites=self.limites, de_para=de_para,
-            teto=self.teto_serializavel(), formato=formato,
+        argumentos = dict(
+            limites=self.limites, de_para=de_para, teto=self.teto_serializavel(), formato=formato,
+        )
+        transaction.on_commit(  # D217: só depois de o novo estado existir para o worker
+            lambda: preparar_importacao.delay(importacao.pk, self.tenant_id, **argumentos)
         )
         return motor_importacao.resumo(importacao)
 

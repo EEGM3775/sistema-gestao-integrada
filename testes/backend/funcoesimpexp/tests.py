@@ -799,6 +799,23 @@ class ApiTests(APITestCase):
             "/api/impexp/teste.item/importar/", {"arquivo": arquivo}, format="multipart",
         )
 
+    @override_settings(MEDIA_ROOT=tempfile.mkdtemp(prefix="impexp-teste-"))
+    def test_o_job_so_sai_depois_do_commit(self):
+        """D217: enfileirado dentro da transação da requisição, o worker pegava
+        o job antes de o lote existir para ele ("importação sumiu antes do
+        job"), e a tela ficava parada em "lendo"."""
+        from unittest import mock
+
+        self.autenticar()
+        with mock.patch("funcoesimpexp.tasks.preparar_importacao.delay") as enfileirar:
+            with self.captureOnCommitCallbacks(execute=False) as depois_do_commit:
+                r = self._subir([CABECALHO] + [f"A-{i};Item;1" for i in range(4000)])
+            self.assertEqual(r.status_code, 202, r.data)
+            enfileirar.assert_not_called()
+            for callback in depois_do_commit:
+                callback()
+            enfileirar.assert_called_once()
+
     def test_recursos_lista_so_o_que_a_pessoa_pode_operar(self):
         self.autenticar(PERMS[:2])  # falta a de máscara
         self.assertEqual(self.client.get("/api/impexp/recursos/").data["recursos"], [])

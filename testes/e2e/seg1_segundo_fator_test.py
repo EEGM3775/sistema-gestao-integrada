@@ -29,6 +29,7 @@ import urllib.error
 import urllib.request
 
 from _segundo_fator import codigo as codigo_demo, completar_login
+from _sessao import ANTI_CSRF, NOME, access_do_bff
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -52,14 +53,28 @@ def fatal(msg):
 
 
 def navegador():
-    """Um "navegador" com pote de cookies: o refresh vive num cookie HttpOnly."""
-    return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+    """Um "navegador" com pote de cookies: o refresh e a sessão (BFF, fase 5)
+    vivem em cookies HttpOnly, e é o pote que os manda de volta."""
+    pote = http.cookiejar.CookieJar()
+    abridor = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(pote))
+    abridor.pote = pote
+    return abridor
 
 
-def req(abridor, method, path, body=None, token=None):
-    headers = {"Content-Type": "application/json"}
-    if token:
-        headers["Authorization"] = "Bearer " + token
+def sessao_de(abridor):
+    """O cookie da sessão que o "navegador" guardou, ou None."""
+    return next((c.value for c in abridor.pote if c.name == NOME and c.value), None)
+
+
+def amr_de(abridor):
+    """O `amr` do access que o gateway injetaria para esta sessão."""
+    sessao = sessao_de(abridor)
+    token = access_do_bff(sessao) if sessao else None
+    return carga(token).get("amr") if token else None
+
+
+def req(abridor, method, path, body=None):
+    headers = {"Content-Type": "application/json", **ANTI_CSRF}
     data = json.dumps(body).encode() if body is not None else None
     r = urllib.request.Request(GW + path, data=data, method=method, headers=headers)
     try:
@@ -101,7 +116,7 @@ try:
     st, corpo = req(nav, "POST", "/auth/login/", {"username": "admin", "password": "admin123"})
     if st != 200:
         fatal(f"login do admin respondeu {st}. Stack de pé? Seeds rodados?")
-    check("a senha certa do admin NÃO abre sessão", "access" not in (corpo or {}))
+    check("a senha certa do admin NÃO abre sessão", sessao_de(nav) is None)
     check("devolve o desafio da etapa do código", corpo.get("segundo_fator") == "codigo" and corpo.get("desafio"))
     desafio = corpo["desafio"]
 
@@ -114,20 +129,20 @@ try:
         if st == 200:
             sessao = r
             break
-    check("código certo → sessão", sessao is not None and "access" in sessao)
+    check("código certo → sessão (o cookie, sem token no corpo)",
+          sessao is not None and sessao_de(nav) and "access" not in sessao)
     if sessao is None:
         fatal("sem sessão do admin, o resto não anda")
-    check("o token diz como a sessão provou quem é: amr = senha + código", carga(sessao["access"]).get("amr") == ["pwd", "otp"])
+    check("o token diz como a sessão provou quem é: amr = senha + código", amr_de(nav) == ["pwd", "otp"])
 
     st, r = req(nav, "POST", "/auth/login/segundo-fator/", {"desafio": desafio, "codigo": codigo_demo(1)})
     check(f"o mesmo desafio não abre outra sessão ({st})", st == 401)
 
     st, r = req(nav, "POST", "/auth/refresh/")
     check(f"o refresh pelo cookie renova ({st})", st == 200)
-    check("e preserva o amr", st == 200 and carga(r["access"]).get("amr") == ["pwd", "otp"])
-    admin = r["access"] if st == 200 else sessao["access"]
+    check("e preserva o amr", st == 200 and amr_de(nav) == ["pwd", "otp"])
 
-    st, seg = req(nav, "GET", "/auth/conta/seguranca/", token=admin)
+    st, seg = req(nav, "GET", "/auth/conta/seguranca/")
     check("Minha conta: obrigatório e ativo", st == 200 and seg["segundo_fator"]["obrigatorio"] and seg["segundo_fator"]["ativo"])
     check("e a janela de confirmação começa no padrão do dono", st == 200 and seg["janela_confirmacao"]["minutos"] == seg["janela_confirmacao"]["padrao"])
 
@@ -136,40 +151,41 @@ try:
     # ------------------------------------------------------------------
     nav_demo = navegador()
     st, corpo = req(nav_demo, "POST", "/auth/login/", {"username": "demo", "password": "demo123"})
-    check(f"demo entra só com a senha ({st})", st == 200 and "access" in (corpo or {}))
-    demo = corpo["access"]
-    check("amr = só senha", carga(demo).get("amr") == ["pwd"])
+    check(f"demo entra só com a senha ({st})", st == 200 and sessao_de(nav_demo))
+    check("amr = só senha", amr_de(nav_demo) == ["pwd"])
 
-    st, inicio = req(nav_demo, "POST", "/auth/segundo-fator/cadastro/", {}, token=demo)
+    st, inicio = req(nav_demo, "POST", "/auth/segundo-fator/cadastro/", {})
     check(f"começar o cadastro devolve QR e chave ({st})", st == 200 and inicio["qr"].startswith("data:image/svg+xml") and inicio["segredo"])
     segredo = inicio["segredo"]
-    st, fim = req(nav_demo, "POST", "/auth/segundo-fator/cadastro/confirmar/", {"codigo": totp(segredo)}, token=demo)
+    st, fim = req(nav_demo, "POST", "/auth/segundo-fator/cadastro/confirmar/", {"codigo": totp(segredo)})
     check(f"o primeiro código certo liga o fator ({st})", st == 200)
     if st == 200:
         limpar_demo.append(True)
         check("devolve os 10 códigos de recuperação", len(fim.get("codigos", [])) == 10)
-        check("e uma sessão nova com código", carga(fim["access"]).get("amr") == ["pwd", "otp"])
+        check("e uma sessão nova com código", amr_de(nav_demo) == ["pwd", "otp"])
 
     st, corpo = req(navegador(), "POST", "/auth/login/", {"username": "demo", "password": "demo123"})
     check("agora a senha do demo também só devolve o desafio", st == 200 and corpo.get("segundo_fator") == "codigo")
-    st, r = req(navegador(), "POST", "/auth/login/segundo-fator/", {"desafio": corpo["desafio"], "codigo": fim["codigos"][0]})
-    check(f"um código de recuperação entra ({st})", st == 200 and "access" in (r or {}))
+    recuperado = navegador()
+    st, r = req(recuperado, "POST", "/auth/login/segundo-fator/", {"desafio": corpo["desafio"], "codigo": fim["codigos"][0]})
+    check(f"um código de recuperação entra ({st})", st == 200 and sessao_de(recuperado))
     check("e diz quantos restam", (r or {}).get("codigos_restantes") == 9)
 
     # ------------------------------------------------------------------
     print("\n3. A redefinição pelo admin — e a limpeza")
     # ------------------------------------------------------------------
-    st, usuarios = req(nav, "GET", "/iam/usuarios/", token=admin)
+    st, usuarios = req(nav, "GET", "/iam/usuarios/")
     alvo = next((u for u in (usuarios or []) if u["username"] == "demo"), None)
     check("a lista do admin mostra que o demo tem segundo fator", alvo is not None and alvo["segundo_fator_ativo"])
-    st, r = req(nav, "POST", f"/iam/usuarios/{alvo['id']}/redefinir-segundo-fator/", {}, token=admin)
+    st, r = req(nav, "POST", f"/iam/usuarios/{alvo['id']}/redefinir-segundo-fator/", {})
     check(f"o admin redefine ({st})", st == 200)
     if st == 200:
         limpar_demo.clear()
-    st, corpo = req(navegador(), "POST", "/auth/login/", {"username": "demo", "password": "demo123"})
-    check("e o demo volta a entrar só com a senha", st == 200 and "access" in (corpo or {}))
+    de_novo = navegador()
+    st, corpo = req(de_novo, "POST", "/auth/login/", {"username": "demo", "password": "demo123"})
+    check("e o demo volta a entrar só com a senha", st == 200 and sessao_de(de_novo))
     eu = next((u for u in (usuarios or []) if u["username"] == "admin"), None)
-    st, r = req(nav, "POST", f"/iam/usuarios/{eu['id']}/redefinir-segundo-fator/", {}, token=admin)
+    st, r = req(nav, "POST", f"/iam/usuarios/{eu['id']}/redefinir-segundo-fator/", {})
     check(f"ninguém redefine a própria conta por aqui ({st})", st == 400)
 finally:
     if limpar_demo:

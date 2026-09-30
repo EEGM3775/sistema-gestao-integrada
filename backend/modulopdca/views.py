@@ -1228,6 +1228,7 @@ def _exige(request, permissao: str, motivo: str) -> None:
     """
     if not autorizacao.pode(request.user, permissao):
         raise PermissionDenied(motivo)
+    autorizacao.exigir_confirmacao(request.user, permissao)  # classe C: step-up (fase 6)
 
 
 def _tem_permissao(request, permissao: str) -> bool:

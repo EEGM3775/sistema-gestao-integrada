@@ -179,6 +179,7 @@ CORS_ALLOW_HEADERS = [
     "user-agent",
     "x-csrftoken",
     "x-requested-with",
+    "x-sgi-csrf",  # fase 5: o cabeçalho anti-CSRF de toda escrita (identity/bff.py)
 ]
 # O refresh viaja em cookie HttpOnly → o browser precisa enviá-lo em requisições
 # XHR (fetch/axios com credentials). Em produção tudo é mesma-origem (gateway),
@@ -198,6 +199,26 @@ REFRESH_COOKIE_PATH = "/auth/"
 # (SESSION/CSRF); este é setado à mão em cookies.py e ficava de fora.
 REFRESH_COOKIE_SECURE = os.getenv("IAM_COOKIE_SECURE", "0" if DEBUG else "1") == "1"
 REFRESH_COOKIE_SAMESITE = os.getenv("IAM_COOKIE_SAMESITE", "Strict")
+
+# --- O cookie da sessão do BFF (remodelagem, fase 5 — identity/bff.py) ---------
+# O navegador guarda este cookie no lugar do token; o gateway o troca por um
+# access do serviço de destino a cada pedido. Path `/` (vai a /api/, /odm-api/,
+# /ws/) e as mesmas regras do refresh. Com Secure, o nome leva `__Host-`: o
+# navegador só o aceita com Secure, Path=/ e sem Domain.
+SESSAO_COOKIE_SECURE = REFRESH_COOKIE_SECURE
+SESSAO_COOKIE_SAMESITE = REFRESH_COOKIE_SAMESITE
+SESSAO_COOKIE_NAME = os.getenv(
+    "IAM_SESSAO_COOKIE", "__Host-sgi_sessao" if SESSAO_COOKIE_SECURE else "sgi_sessao"
+)
+if SESSAO_COOKIE_NAME.startswith("__Host-") and not SESSAO_COOKIE_SECURE:
+    raise ImproperlyConfigured("O cookie `__Host-` só existe com Secure (IAM_COOKIE_SECURE=1).")
+# A VOLTA ATRÁS da fase 5 (§10.12, "rota antiga mantida até o fim da fase"):
+# `BFF_ACCESS_NO_CORPO` devolve o access no corpo do login e da renovação, e
+# `BFF_BEARER_DO_CLIENTE` deixa o gateway repassar o `Authorization` que o
+# próprio cliente mandou. Os dois desligados é o fim da fase: nenhum token
+# chega ao JavaScript. Só para incidente — e os dois juntos.
+BFF_ACCESS_NO_CORPO = os.getenv("BFF_ACCESS_NO_CORPO", "False") == "True"
+BFF_BEARER_DO_CLIENTE = os.getenv("BFF_BEARER_DO_CLIENTE", "False") == "True"
 # Duração da sessão (refresh): curta (sem "lembrar") vs longa deslizante (com),
 # ambas limitadas por um teto absoluto desde o login.
 # Sessão SEM "manter conectado": janela DESLIZANTE de inatividade + teto absoluto
@@ -319,7 +340,10 @@ NUM_PROXIES = int(os.getenv("NUM_PROXIES", "1"))
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        # Fase 5: o navegador entra pelo cookie da sessão; o Bearer só com
+        # `aud` sgi-iam e `typ` at+jwt (identity/autenticacao.py).
+        "identity.autenticacao.SessaoDoNavegador",
+        "identity.autenticacao.TokenDaIam",
         "rest_framework.authentication.SessionAuthentication",  # browser/admin session
     ),
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
@@ -386,6 +410,10 @@ TESTING = "test" in sys.argv
 TEST_RUNNER = "iam_project.runner_testes.TestesDaIamRunner"
 if TESTING:
     CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+    # A revogação e os access do BFF (fase 5) moram no DB 2 do ambiente; a suíte
+    # usa outro banco do mesmo Redis, para nunca gravar sessão de teste no dev
+    # (a mesma família do D216). Quem confere o que foi publicado troca o cliente.
+    SESSION_REVOKE_REDIS_URL = SESSION_REVOKE_REDIS_URL.rsplit("/", 1)[0] + "/15"
     REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
         chave: None for chave in REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]
     }
@@ -405,6 +433,8 @@ def _read_key(path):
 JWT_PRIVATE_KEY = _read_key(os.getenv("JWT_PRIVATE_KEY_PATH"))
 JWT_PUBLIC_KEY = _read_key(os.getenv("JWT_PUBLIC_KEY_PATH"))
 
+from funcoesautorizacao import audiencias as _audiencias  # noqa: E402
+
 _JWT_COMMON = {
     # Access curto: a credencial de uso vive em memória no cliente e é renovada em
     # silêncio pelo refresh. Também define em quanto tempo uma revogação/mudança de
@@ -421,14 +451,12 @@ _JWT_COMMON = {
     "AUTH_HEADER_TYPES": ("Bearer",),
     "USER_ID_FIELD": "id",
     "USER_ID_CLAIM": "user_id",
-    "ISSUER": os.getenv("JWT_ISSUER", "sgi-iam"),
-    # S8 — `aud` passa a viajar no token para que os resource servers (backend,
-    # drone) possam exigi-lo. Valor único da plataforma: hoje todos os produtos
-    # aceitam o mesmo público; separar por produto exigiria um token por
-    # audiência, que só faz sentido quando houver consumidor de terceiro.
-    # ATENÇÃO: mudar isto obriga a mudar JWT_AUDIENCE nos validadores no mesmo
-    # deploy — divergência derruba TODA autenticação.
-    "AUDIENCE": os.getenv("JWT_AUDIENCE", "sgi"),
+    "ISSUER": _audiencias.EMISSOR,
+    # Fase 5 da remodelagem (§10.6): um `aud` por serviço. O que o SimpleJWT
+    # assina e valida aqui é só da IAM — o refresh e o Bearer que ela aceita. O
+    # access dos outros serviços sai de `identity/emissao.py`, com o `aud` de
+    # cada um (`funcoesautorizacao/audiencias.py`), e é o BFF que o pede.
+    "AUDIENCE": _audiencias.IAM,
 }
 
 if JWT_PRIVATE_KEY:

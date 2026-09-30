@@ -43,6 +43,7 @@ except Exception:
     pass
 
 from playwright.sync_api import sync_playwright
+from _sessao import cabecalhos, da_resposta
 
 GW = os.environ.get("SGI_GW", "http://localhost:8090")
 SHOTS = os.environ.get("SGI_SHOTS", "/tmp/sgi_semana")
@@ -71,11 +72,11 @@ def login(u, p):
     r = urllib.request.Request(GW + "/auth/login/", data=data, method="POST",
                                headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(r, timeout=30, context=_CTX) as resp:
-        return json.load(resp)["access"]
+        return da_resposta(resp)
 
 
 def req(path, token):
-    r = urllib.request.Request(GW + path, headers={"Authorization": "Bearer " + token})
+    r = urllib.request.Request(GW + path, headers=cabecalhos(token))
     try:
         with urllib.request.urlopen(r, timeout=60, context=_CTX) as resp:
             return resp.status, json.loads(resp.read().decode() or "null")
@@ -462,7 +463,7 @@ with sync_playwright() as p:
         if criada:
             r = urllib.request.Request(
                 f"{GW}/api/pdca/programacoes/{criada}/",
-                method="DELETE", headers={"Authorization": "Bearer " + token},
+                method="DELETE", headers=cabecalhos(token),
             )
             try:
                 urllib.request.urlopen(r, timeout=30, context=_CTX)

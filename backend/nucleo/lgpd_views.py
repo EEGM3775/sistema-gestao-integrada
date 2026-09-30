@@ -34,7 +34,11 @@ class RequirePermissionStrict(BasePermission):
         needed = getattr(view, "required_permission", None)
         if not needed:
             return True
-        return autorizacao.supervisiona(u) or autorizacao.pode(u, needed)
+        if not (autorizacao.supervisiona(u) or autorizacao.pode(u, needed)):
+            return False
+        # Exportar e esquecer são da classe C: pedem autenticação recente (fase 6).
+        autorizacao.exigir_confirmacao(u, needed)
+        return True
 
 
 class IsPlatformOwner(BasePermission):

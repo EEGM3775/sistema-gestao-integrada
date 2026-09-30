@@ -43,6 +43,7 @@ import urllib.request
 
 from _segundo_fator import completar_login
 from datetime import datetime, timedelta
+from _sessao import access_do_bff, cabecalhos, da_resposta
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -79,7 +80,7 @@ def req(method, path, token=None, body=None):
     data = json.dumps(body).encode() if body is not None else None
     headers = {"Content-Type": "application/json"}
     if token:
-        headers["Authorization"] = "Bearer " + token
+        headers.update(cabecalhos(token))
     r = urllib.request.Request(GW + path, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(r, timeout=120, context=_CTX) as resp:
@@ -97,7 +98,7 @@ def login(u, p):
     r = urllib.request.Request(GW + "/auth/login/", data=data, method="POST",
                                headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(r, timeout=30, context=_CTX) as resp:
-        return completar_login(GW, json.load(resp), _CTX)["access"]
+        return completar_login(GW, resp, _CTX)["sessao"]
 
 
 def claims(token):
@@ -142,10 +143,13 @@ print(f"Obra: {OBRA} — {lista_obras[0].get('nome_obra')}")
 # ---------------------------------------------------------------------------
 print("\n1. D194 — token sem lista; a lista exata vem do /auth/me/")
 # ---------------------------------------------------------------------------
-linha_admin = len("Authorization: Bearer ") + len(admin)
+# BFF (fase 5): o roteiro tem o cookie da sessão; o token é o que o gateway injeta.
+token_admin = access_do_bff(admin) or ""
+linha_admin = len("Authorization: Bearer ") + len(token_admin)
 check(f"a linha Authorization do admin tem {linha_admin} B, abaixo de {JANELA_DA_BORDA}",
-      linha_admin < JANELA_DA_BORDA)
-check("o token do admin não leva lista de permissões (fase 4)", "permissions" not in claims(admin))
+      token_admin and linha_admin < JANELA_DA_BORDA)
+check("o token do admin não leva lista de permissões (fase 4)",
+      token_admin and "permissions" not in claims(token_admin))
 codigo, corpo = req("GET", f"/api/pdca/qualidade/?obra={OBRA}", admin)
 check("o admin abre o posto da qualidade (200)", codigo == 200)
 check("e nenhum bloco vem negado", corpo is not None and corpo.get("sem_permissao") == [])

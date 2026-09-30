@@ -68,7 +68,9 @@ primeira classe, não detalhe de deploy.
 **Quem é dono do quê:**
 
 - **IAM** ([iam/](../iam/)) — única autoridade de identidade. Dona de tenants, usuários,
-  papéis/permissões e entitlements. Emite e assina os JWT.
+  papéis/permissões e entitlements. Emite e assina os JWT — um por serviço (`aud`) — e é o **BFF**:
+  o navegador só tem o cookie HttpOnly da sessão, e o gateway o troca, a cada chamada, pelo access do
+  serviço de destino ([arquitetura/auth-sso.md](arquitetura/auth-sso.md) §6).
 - **backend (Django)** ([backend/](../backend/)) — **resource server**: valida o JWT da IAM e aplica
   isolamento de tenant + RBAC + entitlement nas queries. Apps de negócio em [modulos/](modulos/README.md).
   Toda pergunta "pode?" passa por um lugar só ([nucleo/autorizacao.py](../backend/nucleo/autorizacao.py)).

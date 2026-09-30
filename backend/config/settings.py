@@ -315,6 +315,7 @@ CORS_ALLOW_HEADERS = [
     "user-agent",
     "x-csrftoken",
     "x-requested-with",
+    "x-sgi-csrf",  # fase 5: o cabeçalho anti-CSRF que o gateway (BFF) exige na escrita
 ]
 
 # --- D23: o teto do usuário DERIVA do teto da empresa ------------------------
@@ -429,6 +430,8 @@ JWT_PUBLIC_KEY = _read_public_key(os.getenv('JWT_PUBLIC_KEY_PATH'))
 # eles só valem na emissão e, quando existiam (24h/7d), contradiziam os valores
 # reais da IAM (access 5 min), induzindo a "ajustar o TTL" no lugar errado.
 # Fonte única dos tempos de sessão: iam/iam_project/settings.py.
+from funcoesautorizacao import audiencias as _audiencias  # noqa: E402
+
 _SIMPLE_JWT_COMMON = {
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
@@ -439,8 +442,11 @@ _SIMPLE_JWT_COMMON = {
     # emitido para outro produto da plataforma (ou por um emissor futuro que
     # compartilhe a chave) passaria como se fosse desta API. Os valores têm de
     # bater com os da IAM — fonte da emissão em iam/iam_project/settings.py.
-    'ISSUER': os.getenv('JWT_ISSUER', 'sgi-iam'),
-    'AUDIENCE': os.getenv('JWT_AUDIENCE', 'sgi'),
+    # Fase 5 da remodelagem (§10.6): a audiência é POR SERVIÇO — o access que o
+    # BFF pede para /api/ leva `sgi-api`, e o do drone ou da IAM não entra aqui.
+    # O `typ` (`at+jwt`) é conferido em nucleo/authentication.py.
+    'ISSUER': _audiencias.EMISSOR,
+    'AUDIENCE': _audiencias.API,
 }
 
 if JWT_PUBLIC_KEY:
@@ -894,7 +900,7 @@ GEO_TIMEOUT = (
 # mesmo segredo do endpoint /auth/service-token/) e chama o drone com ele.
 # Sem `DRONE_SERVICE_URL` configurada a reconciliação é no-op (log em debug) —
 # ambientes sem o produto drone não pagam nada.
-IAM_INTERNAL_URL = os.getenv('IAM_INTERNAL_URL', 'http://iam:8000')
+IAM_INTERNAL_URL = os.getenv('IAM_INTERNAL_URL', 'http://iam:8001')
 DRONE_SERVICE_URL = os.getenv('DRONE_SERVICE_URL', '')
 SERVICE_TOKEN_SECRET = _config('SERVICE_TOKEN_SECRET', 'service-token-dev-secret-NAO-USAR-EM-PROD')
 # Timeout (conectar, ler) das chamadas serviço→serviço (IAM e drone).

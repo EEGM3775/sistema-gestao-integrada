@@ -1,4 +1,4 @@
-"""Cookie HttpOnly do refresh token (Fase 10.6 / F1).
+"""Cookies HttpOnly da sessão: o do refresh (Fase 10.6 / F1) e o do BFF (fase 5).
 
 O refresh nunca aparece no corpo da resposta nem em `localStorage` — vive só num
 cookie HttpOnly (imune a XSS), com path restrito a `/auth/` (não vaza para `/api`)
@@ -32,4 +32,31 @@ def clear_refresh_cookie(response) -> None:
         settings.REFRESH_COOKIE_NAME,
         path=settings.REFRESH_COOKIE_PATH,
         samesite=settings.REFRESH_COOKIE_SAMESITE,
+    )
+
+
+def set_sessao_cookie(response, credencial: str, max_age: int, *, persistent: bool) -> None:
+    """O cookie da sessão do BFF (fase 5, §10.5) — o que o navegador tem no
+    lugar do token. Vai para **todo** caminho (`/`), porque é com ele que o
+    gateway pede o access de `/api/`, `/odm-api/` e `/ws/`; o gateway o tira do
+    pedido antes de repassá-lo aos serviços. Com HTTPS, o nome tem o prefixo
+    `__Host-`, que o navegador só aceita com `Secure`, `Path=/` e sem `Domain`:
+    nenhum subdomínio consegue plantar um cookie com esse nome.
+
+    Mesma regra de persistência do refresh: sem "manter conectado", cookie de
+    sessão do navegador; com, dura até o refresh expirar."""
+    kwargs = dict(
+        path="/",
+        httponly=True,
+        secure=settings.SESSAO_COOKIE_SECURE,
+        samesite=settings.SESSAO_COOKIE_SAMESITE,
+    )
+    if persistent:
+        kwargs["max_age"] = int(max_age)
+    response.set_cookie(settings.SESSAO_COOKIE_NAME, credencial, **kwargs)
+
+
+def clear_sessao_cookie(response) -> None:
+    response.delete_cookie(
+        settings.SESSAO_COOKIE_NAME, path="/", samesite=settings.SESSAO_COOKIE_SAMESITE,
     )

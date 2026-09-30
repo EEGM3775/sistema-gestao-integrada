@@ -50,6 +50,7 @@ except Exception:
     pass
 
 from playwright.sync_api import sync_playwright
+from _sessao import cabecalhos, da_resposta
 
 GW = os.environ.get("SGI_GW", "http://localhost:8090")
 SHOTS = os.environ.get("SGI_SHOTS", "/tmp/sgi_f5")
@@ -74,13 +75,13 @@ def login(u, p):
     r = urllib.request.Request(GW + "/auth/login/", data=data, method="POST",
                                headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(r, timeout=30, context=_CTX) as resp:
-        return completar_login(GW, json.load(resp), _CTX)["access"]
+        return completar_login(GW, resp, _CTX)["sessao"]
 
 
 def api(method, path, token, body=None):
     data = json.dumps(body).encode() if body is not None else None
     r = urllib.request.Request(GW + path, data=data, method=method, headers={
-        "Authorization": "Bearer " + token, "Content-Type": "application/json",
+        **cabecalhos(token), "Content-Type": "application/json",
     })
     try:
         with urllib.request.urlopen(r, timeout=90, context=_CTX) as resp:

@@ -22,7 +22,7 @@
 | 9    | RBAC de campo — catálogo de permissões + mascaramento de PII                  | ✅ A–E (fatia E 12/07, suíte 76/76); D3/D4/D5 ✅ 11/07; D6 = extensão planejada                                                                                                                                                                                                                                                                                                                       |
 | 10   | Observabilidade & redução de superfície operacional                           | 🚧 em andamento (10.1 base ✅ · 10.3.1/10.4/10.5.1-2/10.6/10.7/10.8/10.9/10.10 ✅ ·**10.2 parcial ✅ 19/07: deploy/ unificado + funcoesemail**)                                                                                                                                                                                                                                                  |
 | 11   | Consolidação de linguagens (Python como stack principal)                       | 🚧 11.2 ✅ 03/07 (funcoeslead) · 11.3 IA ✅ 14/07 + WhatsApp Fase C.0–C.4 ✅ 15/07 ·**11.1 NF ✅ 16/07 (funcoesnf + bridge PHP absorvidos → Celery task NFE.io, Node/PHP removidos)** · **11.4 ✅ 16/07 (resíduo Node limpo: dir `funcoeslead` + arquivos Node do `funcoesia` — zero `.js` no backend)**; resta só o LLM local no compose (11.3) + 11.5 Angular oportunístico |
-| 12   | Remodelagem da segurança — autorização fora do token (PDP), BFF, MFA, `aud` por serviço, auditoria de decisão | 🚧 fase 0 ✅ 25/09/2026 · fase 1 (TOTP) ✅ 25/09/2026 — passkey 📋 · **fase 2 ✅ 25/09/2026** (dev: equivalência exaustiva) · **fase 3 ✅ 25/09/2026** (todo módulo no PDP) · **fase 4 ✅ 25/09/2026** (token enxuto, `sid`, auditoria de decisão — D194 fechado) · fases 5–6 📋 — desenho em [acesso-e-permissoes.md §10](acesso-e-permissoes.md) |
+| 12   | Remodelagem da segurança — autorização fora do token (PDP), BFF, MFA, `aud` por serviço, auditoria de decisão | 🚧 fase 0 ✅ 25/09/2026 · fase 1 (TOTP) ✅ 25/09/2026 — passkey 📋 · **fase 2 ✅ 25/09/2026** (dev: equivalência exaustiva) · **fase 3 ✅ 25/09/2026** (todo módulo no PDP) · **fase 4 ✅ 25/09/2026** (token enxuto, `sid`, auditoria de decisão — D194 fechado) · **fase 5 ✅ 29/09/2026** (BFF, `aud` por serviço, token de serviço separado) · **fase 6 ✅ 29/09/2026 construída** (step-up na classe C, consentimento do suporte, caos 24/24) — pentest externo 📋 · desenho em [acesso-e-permissoes.md §10](acesso-e-permissoes.md) |
 
 Cada fase concluída foi validada por um script E2E em [testes/e2e/](../testes/e2e/README.md)
 (`phase4_e2e.py`, `phase5_rs256_test.py`, `phase6_rbac_test.py`, `phase7_sil_test.py`,
@@ -30,6 +30,14 @@ Cada fase concluída foi validada por um script E2E em [testes/e2e/](../testes/e
 `pra3b_escala_test.py`, `pra1d_hachura_test.py`, `d70_media_fechada_test.py`,
 `orc8_carga_base_test.py`, `pdca_cockpit_test.py`, `pdca_frente_test.py`).
 *(Moraram em `infra/gateway/` até 16/08/2026 — [D95](historico-correcoes.md).)*
+
+### Mudanças de 29/09/2026
+
+- **Remodelagem fase 5 — BFF ✅ 29/09/2026**: nenhum token no navegador (cookies HttpOnly; o gateway troca o da sessão pelo access de cada serviço, `auth_request`); anti-CSRF em toda escrita; `aud` por serviço (`sgi-api`, `sgi-drone`, `sgi-iam`) e `typ` (`at+jwt` / `svc+jwt`); token de serviço com escopo; o app do drone sem `localStorage`. E2E `seg5_bff_test.py` 21/21. → [acesso-e-permissoes.md §10.16](acesso-e-permissoes.md)
+- **Remodelagem fase 6 — endurecimento ✅ construída 29/09/2026**: step-up na classe C (backend e IAM, RFC 9470, diálogo "Confirme que é você") — `seg6_step_up_test.py` 14/14; o suporte da plataforma só entra com consentimento e prazo (`ConsentimentoSuporte`, cartão em Administração › Usuários); testes de caos PDP/Redis/IAM — `seg6_caos_test.py` 24/24.
+- **Pentest externo 📋** — o critério de saída da fase 6; contratação do dono. Escopo sugerido: o BFF (`/auth/interno/` fora da borda, troca do cookie, anti-CSRF, CSWSH no `/ws/`), a audiência por serviço (token de um serviço no outro, `svc+jwt` fora do escopo), o step-up (contornar a janela, reuso de código), o consentimento do suporte (as duas exceções) e a separação entre empresas (RLS + PDP + chave de cache).
+- **D217 · D218 · D219 · D220 · D221 ✅ 29/09/2026** — relatos em [historico-correcoes.md](historico-correcoes.md); abertos na leva: D222–D225.
+- **Decisões de engenharia a confirmar pelo dono** (§10.14): prazo do consentimento (1 dia, teto 7); as duas exceções ao consentimento; liberar o suporte como ato grave; refresh mantido ao lado do cookie da sessão.
 
 ### Mudanças de 25/09/2026
 

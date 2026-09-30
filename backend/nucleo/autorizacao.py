@@ -41,12 +41,19 @@ import time
 from typing import Iterable
 
 from django.conf import settings
+from rest_framework import status
+from rest_framework.exceptions import APIException
 
 import funcoesautorizacao
-from funcoesautorizacao import classes
+from funcoesautorizacao import classes, confirmacao
 from funcoesautorizacao.esquema import MODULOS_DE_FUNDACAO, permissao_do_codigo, tipo_do_modulo
+from payment.planos import (
+    CONFIRMACAO_JANELA_MAX_MIN,
+    CONFIRMACAO_JANELA_MIN_MIN,
+    CONFIRMACAO_JANELA_PADRAO_MIN,
+)
 
-from . import auditoria_decisao, autorizacao_pdp, autorizacao_sombra, observability
+from . import auditoria_decisao, autorizacao_pdp, autorizacao_sombra, fichas, observability
 from .autorizacao_pdp import Pergunta, Quem
 
 logger = logging.getLogger(__name__)
@@ -282,3 +289,52 @@ def supervisiona(user) -> bool:
 def permitidos(user, codigos: Iterable[str]) -> set[str]:
     """Quais destes códigos a pessoa tem — `pode` para cada um."""
     return {c for c in set(codigos) if c and pode(user, c)}
+
+
+# ---------------------------------------------------------------------------
+# Fase 6 — o step-up do ato grave (§10.5, §10.8 classe C)
+# ---------------------------------------------------------------------------
+
+
+class ConfirmacaoNecessaria(APIException):
+    """401 com o desafio da RFC 9470: a tela pede o código (ou a senha) em
+    `/auth/confirmar/` e refaz o pedido. Não é 403 — a pessoa **pode**; só
+    precisa provar de novo que é ela."""
+
+    status_code = status.HTTP_401_UNAUTHORIZED
+    default_code = confirmacao.CODIGO
+
+    def __init__(self, janela_s: int):
+        super().__init__(detail=confirmacao.corpo(janela_s))
+        # O `exception_handler` do DRF põe isto no `WWW-Authenticate`.
+        self.auth_header = confirmacao.desafio(janela_s)
+
+
+def janela_de_confirmacao(user) -> int:
+    """A janela que a pessoa escolheu (ficha publicada pela IAM), dentro da
+    faixa do dono. Sem ficha, o padrão."""
+    ficha = fichas.da_pessoa(getattr(user, "iam_user_id", None)) or {}
+    return confirmacao.janela_em_segundos(
+        ficha.get("janela_confirmacao_min"), CONFIRMACAO_JANELA_PADRAO_MIN,
+        CONFIRMACAO_JANELA_MIN_MIN, CONFIRMACAO_JANELA_MAX_MIN,
+    )
+
+
+def exigir_confirmacao(user, codigo: str) -> None:
+    """O ato da classe C pede autenticação recente: o `auth_time` do token dentro
+    da janela da pessoa. Chamar **no ponto que barra**, depois de `pode` dizer
+    sim — nunca no que só pergunta (a tela que desenha o botão de atestar não
+    pede confirmação para desenhá-lo).
+
+    Vale para toda pessoa que chegou com token da IAM (`user_id`); o usuário
+    forjado em teste e o superusuário local do Django não têm sessão a
+    confirmar."""
+    if classes.classe_do_codigo(codigo) != classes.C:
+        return
+    if not getattr(user, "iam_user_id", None):
+        return
+    janela = janela_de_confirmacao(user)
+    if confirmacao.recente(getattr(user, "iam_auth_time", None), janela):
+        return
+    logger.info("authz.confirmacao_pedida acao=c:%s janela_s=%s", codigo, janela)
+    raise ConfirmacaoNecessaria(janela)

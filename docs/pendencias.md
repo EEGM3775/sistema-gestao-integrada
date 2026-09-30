@@ -37,6 +37,17 @@ contêiner que faltava na frota geral — foi fechado em 07/08/2026, também no 
 
 ## 🟠 Altas
 
+### D225 — o código do drone que as fases 4, 5 e 6 exigem não está versionado em lugar nenhum · 🟠 aberto 29/09/2026
+
+`ImgDrone/` está no `.gitignore` do repositório (linha 119), e o repositório próprio dele não tem
+**nenhum commit** — `funcoesODM/backend/java-service/` aparece como não rastreado. Moram ali o PEP do
+drone (D205: `AutorizacaoService`, a conferência do `sid`), a validação de `iss`/`aud`/`typ` da fase 5
+(D220), o handshake do WebSocket pelo BFF e o `/ws` sem origem aberta (D219), e o app Angular sem
+token no `localStorage`. O `docs/` e os testes da IAM já descrevem e cobram esse código
+(`test_as_audiencias_do_drone_batem_com_as_do_java`), mas um clone novo sobe o drone sem nada disso —
+a imagem é construída do diretório local. **Decisão do dono:** onde o drone passa a ser versionado
+(commit no repositório do `ImgDrone`, submódulo, ou o `java-service` e o `frontend` dentro deste).
+
 ### D212 — o `security-scan` do CI não roda: `trivy-action@0.28.0` não existe mais · 🟠 aberto 25/09/2026
 
 Visto no PR #26. O job para em "Prepare all required actions", antes de qualquer passo:
@@ -780,6 +791,14 @@ Decisão do dono, com o número novo na mão. Não trava nada hoje.
 
 ## 🟡 Médias
 
+### D224 — na Prancheta, recalibrar a escala muda o valor de uma medida já anotada · 🟡 aberto 29/09/2026
+
+Visto na volta inteira das E2E da fase 5 (`pra8_prancheta_test.py`, seção 10 — "Recalibrar não
+reescreve o que alguém já anotou"): depois de trocar a régua de 20 para 40, a medida antiga responde
+`20.0 m` onde o roteiro espera o valor original, e não se declara desatualizada (`False`). Nada de
+autenticação no caminho — é a regra do módulo, e ainda não se sabe se a regra ou o roteiro está
+certo. **A investigar** contra a planta ([modulos/moduloprancheta.md](modulos/moduloprancheta.md)).
+
 ### D155 — a foto da verificação não carimba data nem coordenada · 🟡 aberto 16/09/2026
 
 Achado ao fechar a PDCA.7, conferindo a entrega contra a própria planta. A §5.2
@@ -963,6 +982,27 @@ o que resolve na tela — mas deixa as duas trilhas contando histórias diferent
 
 ## 🟢 Baixas
 
+### D222 — `pdca1_cronograma_test.py` falha por causa da data e do plano do demo · 🟢 aberto 29/09/2026
+
+Dois checks, nenhum de código de produção: **(a)** "o sucessor pula o fim de semana" monta o plano a
+partir da segunda-feira da semana corrente e espera o sucessor na segunda seguinte — rodado em
+29/09/2026, essa segunda é 12/10, feriado, e o calendário empurra (certo) para a terça; **(b)** o bloco
+"plano modelo" espera poder marcar um modelo, e o tenant demo está no plano `profissional`, que tem
+`planos_modelo: 0` — o 402 `quota_excedida` é a regra funcionando. **Correção:** datar o cenário longe
+de feriado (ou num calendário sem feriados) e subir o demo de plano durante o bloco do modelo, como o
+`d23_teto_por_plano_test.py` faz.
+
+### D223 — quatro roteiros de navegador que falham por conta própria · 🟢 aberto 29/09/2026
+
+Da volta inteira das E2E de 29/09/2026, sem relação com a remodelagem:
+`pdca5_quadro_browser_test.py` e `pdca6_ritmo_browser_test.py` navegam para
+`/app/pdca/obra/<id>/cronograma/<id>`, rota que saiu na reorganização do PDCA
+(`/app/pdca/o/:obraId/<posto>`); `pdca_cockpit_browser_test.py` procura `pdca.` no texto da tela e
+acha o **nome de uma obra** criada por outro roteiro ("E2E PDCA.5 …"); `browser_smoke_test.py` aponta
+para o Vite (`:5173`), que o stack não sobe. **Correção:** as rotas novas, um padrão que não case com
+nome de obra, e o gateway (`:8090`) no smoke. `pdca_frente_test.py` e `pdca_semana_campo_browser_test.py`
+só pedem o seed da semana (`semear_pdca_execucao --tenant demo`), como eles mesmos dizem.
+
 ### D206 — o nome da senha do superusuário do Postgres está corrompido em todo env-file · 🟢 aberto 25/09/2026
 
 `POSTGRES_SUPbackendASSWORD` (em `deploy/compose/base.yml`, nos `.env.example` e no `staging.env` com o
@@ -972,7 +1012,7 @@ serviço `spicedb-banco` o usa pelo mesmo nome. Trocar exige fazer em todos os a
 `staging.env` de uma vez, senão o Postgres do staging sobe com a senha padrão.
 
 ---
-Fora o D206, nenhum em aberto. O **D147** (seis erros de `eslint` em três telas da PDCA.3/4, que desligavam o
+Fora o D206, o D222 e o D223, nenhum em aberto. O **D147** (seis erros de `eslint` em três telas da PDCA.3/4, que desligavam o
 fast refresh justamente na tela em que se passa o dia digitando) e o **D148** (o traceback `CRÍTICO`
 impresso a cada execução da suíte) foram corrigidos em 15/09/2026, junto do fechamento da PDCA.5;
 relatos em [historico-correcoes.md](historico-correcoes.md).

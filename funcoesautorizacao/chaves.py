@@ -64,6 +64,17 @@ def sessao_revogada(sid: str) -> str:
     return f"sess:sid:{sid}"
 
 
+def token_da_sessao(hash_da_credencial: str, audiencia: str) -> str:
+    """O access que o BFF já emitiu para esta sessão e esta audiência (fase 5).
+
+    Mora no Redis da revogação (DB 2), como a sessão. A chave leva o **hash** da
+    credencial do cookie, nunca a credencial: quem lê o Redis não entra como
+    ninguém. Revogar a sessão apaga as chaves dela (`identity.sessoes`)."""
+    if not hash_da_credencial:
+        raise ValueError("Chave de token do BFF sem sessão é recusada.")
+    return f"sess:bff:{hash_da_credencial}:{audiencia}"
+
+
 def ficha_da_empresa(tenant_id: str) -> str:
     """O que era da empresa no token até a fase 4 — slug, nome, plano, teto de
     requisições e quotas —, publicado pela IAM e lido pelo backend (DB 5)."""

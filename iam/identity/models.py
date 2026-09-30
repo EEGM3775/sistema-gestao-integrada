@@ -360,6 +360,8 @@ class EventoSeguranca(models.Model):
         SEGUNDO_FATOR_CODIGOS = "segundo_fator_codigos", _("Códigos de recuperação trocados")
         SEGUNDO_FATOR_RECUPERACAO = "segundo_fator_recuperacao", _("Entrada com código de recuperação")
         SEGUNDO_FATOR_BLOQUEADO = "segundo_fator_bloqueado", _("Segundo fator bloqueado por tentativas")
+        SUPORTE_CONSENTIDO = "suporte_consentido", _("Acesso do suporte da plataforma liberado")
+        SUPORTE_ENCERRADO = "suporte_encerrado", _("Acesso do suporte da plataforma encerrado")
 
     id = models.BigAutoField(primary_key=True)
     tipo = models.CharField(max_length=40, choices=Tipo.choices)
@@ -589,6 +591,14 @@ class Sessao(models.Model):
 
     A IAM é a autoridade: quando o Redis falta, o PEP pergunta aqui
     (`/auth/interno/sessao/<sid>/`), e só nega se nem a IAM responder.
+
+    **Fase 5 (BFF).** O navegador não recebe mais token: guarda só o cookie
+    HttpOnly da sessão, cuja credencial aleatória fica aqui **como hash**
+    (`credencial_hash`). O gateway troca o cookie por um access de 5 minutos
+    para o serviço de destino (`/auth/interno/bff/<serviço>/`), e é desta linha
+    que saem o `amr`, o `auth_time` e a validade (`expira_em`, que acompanha a
+    janela deslizante do refresh). O `auth_time` só anda no login e na
+    confirmação do ato grave (step-up, fase 6).
     """
 
     sid = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -596,6 +606,11 @@ class Sessao(models.Model):
     criada_em = models.DateTimeField(auto_now_add=True)
     revogada_em = models.DateTimeField(null=True, blank=True)
     motivo = models.CharField(max_length=40, blank=True)
+    credencial_hash = models.CharField(max_length=64, unique=True, null=True, blank=True)
+    lembrar = models.BooleanField(default=False)
+    amr = models.JSONField(default=list, blank=True)
+    auth_time = models.DateTimeField(null=True, blank=True)
+    expira_em = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         verbose_name = _("Sessão")
@@ -608,3 +623,49 @@ class Sessao(models.Model):
     @property
     def ativa(self) -> bool:
         return self.revogada_em is None
+
+
+# ---------------------------------------------------------------------------
+# Remodelagem da segurança, fase 6 — o suporte só entra com consentimento (§10.7)
+# ---------------------------------------------------------------------------
+
+
+class ConsentimentoSuporte(models.Model):
+    """O admin da empresa deixa o supervisor da plataforma enxergar as pessoas,
+    os papéis e os acessos dela — **com data de fim** (§10.7, §10.10: "suporte da
+    plataforma lendo dado de cliente").
+
+    Sem uma linha vigente, o supervisor não vê nem mexe em ninguém de outra
+    empresa na IAM. A exceção é o resgate do próprio administrador (segundo
+    fator perdido): sem ele não há quem consinta, e a redefinição continua
+    registrada e avisada por e-mail (`identity.suporte`).
+
+    Encerrar é marcar `encerrado_em`; a linha fica, como trilha de quem liberou,
+    por quanto tempo e por quê.
+    """
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="consentimentos_suporte")
+    concedido_por = models.ForeignKey(
+        Usuario, on_delete=models.SET_NULL, null=True, related_name="consentimentos_concedidos",
+    )
+    concedido_por_username = models.CharField(max_length=150, blank=True)
+    motivo = models.CharField(max_length=200, blank=True)
+    criado_em = models.DateTimeField(auto_now_add=True)
+    ate = models.DateTimeField()
+    encerrado_em = models.DateTimeField(null=True, blank=True)
+    encerrado_por_username = models.CharField(max_length=150, blank=True)
+
+    class Meta:
+        verbose_name = _("Consentimento de suporte")
+        verbose_name_plural = _("Consentimentos de suporte")
+        ordering = ["-criado_em"]
+        indexes = [models.Index(fields=["tenant", "encerrado_em", "ate"])]
+
+    def __str__(self):
+        return f"{self.tenant_id} até {self.ate:%d/%m %H:%M}"
+
+    @property
+    def vigente(self) -> bool:
+        from django.utils import timezone
+
+        return self.encerrado_em is None and self.ate > timezone.now()

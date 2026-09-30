@@ -9,8 +9,10 @@ para o PDP (fase 3):
                          "Request header is too large" (o D194 no Tomcat), abre.
                          O `/auth/me/` segue dando a lista à tela; o plano chega
                          ao backend pela ficha da empresa.
-  3. Revogação        -> tirar o papel: o MESMO token perde o acesso em segundos.
-     em segundos         Logout: o MESMO access passa a 401 no backend e no drone.
+  3. Revogação        -> tirar o papel: a MESMA sessão perde o acesso em segundos.
+     em segundos         Logout: o MESMO access passa a 401 no backend e no drone,
+                         chamados direto (sem o gateway, que desde a fase 5 nem
+                         deixa o cliente mandar token).
   4. Auditoria        -> a negação fica registrada em `DecisaoAcesso`, com o `sid`.
 
 Limpeza: o papel do campo volta ao que era, com ou sem falha.
@@ -28,6 +30,7 @@ import urllib.error
 import urllib.request
 
 from _segundo_fator import completar_login
+from _sessao import access_do_bff, cabecalhos, da_resposta, direto
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -57,7 +60,7 @@ def fatal(msg):
 def req(method, path, body=None, token=None, cookie=None):
     headers = {"Content-Type": "application/json"}
     if token:
-        headers["Authorization"] = "Bearer " + token
+        headers.update(cabecalhos(token))
     if cookie:
         headers["Cookie"] = cookie
     data = json.dumps(body).encode() if body is not None else None
@@ -78,7 +81,7 @@ def req(method, path, body=None, token=None, cookie=None):
 
 
 def entrar(usuario, senha):
-    """Devolve (access, cookie de refresh)."""
+    """Devolve (cookie da sessão, os cookies da resposta — sessão e refresh)."""
     st, corpo, cab = req("POST", "/auth/login/", {"username": usuario, "password": senha})
     if st == 429:
         time.sleep(60)
@@ -86,10 +89,10 @@ def entrar(usuario, senha):
     if st != 200:
         fatal(f"login de {usuario} → {st}")
     if "segundo_fator" in (corpo or {}):
-        # Quem tem segundo fator (o admin) só precisa do access aqui.
-        return completar_login(GW, corpo)["access"], ""
-    cookie = "; ".join(c.split(";", 1)[0] for c in cab.get_all("Set-Cookie") or [])
-    return corpo["access"], cookie
+        # Quem tem segundo fator (o admin) só precisa da sessão aqui.
+        return completar_login(GW, corpo)["sessao"], ""
+    cookies = "; ".join(c.split(";", 1)[0] for c in cab.get_all("Set-Cookie") or [])
+    return da_resposta(cab), cookies
 
 
 def carga(token):
@@ -116,12 +119,13 @@ print("\n1. O token enxuto")
 pessoas = {}
 for usuario, senha in (("demo", "demo123"), ("semdrone", "semdrone123"), ("acme", "acme123"),
                        ("campo", "campo123"), ("admin", "admin123")):
-    access, cookie = entrar(usuario, senha)
-    pessoas[usuario] = (access, cookie)
-    c = carga(access)
+    sessao, cookie = entrar(usuario, senha)
+    pessoas[usuario] = (sessao, cookie)
+    access = access_do_bff(sessao) or ""  # o que o gateway injeta no backend
+    c = carga(access) if access else {}
     linha = len("Authorization: Bearer ") + len(access)
     check(f"{usuario}: linha Authorization com {linha} B (< {TETO_DO_TOKEN}), sem lista nem plano,"
-          f" com sid", linha < TETO_DO_TOKEN and not (SAIRAM & set(c)) and c.get("sid"))
+          f" com sid", access and linha < TETO_DO_TOKEN and not (SAIRAM & set(c)) and c.get("sid"))
 
 print("\n2. Tudo funciona pelo PDP")
 demo, sem = pessoas["demo"][0], pessoas["semdrone"][0]
@@ -163,18 +167,24 @@ try:
     t = esperar(lambda: req("GET", "/api/pdca/cronogramas/", token=campo)[0] == 200)
     check(f"com o papel de volta, lê de novo em {t} s", t is not None)
 
-    access, cookie = entrar("demo", "demo123")
-    check("com a sessão aberta, o access vale no backend e no drone",
-          (req("GET", "/api/clientes/", token=access)[0], req("GET", "/odm-api/projects", token=access)[0]) == (200, 200))
+    sessao, cookie = entrar("demo", "demo123")
+    do_backend, do_drone = access_do_bff(sessao, "api"), access_do_bff(sessao, "drone")
+    backend_direto = "http://localhost:8000/api/clientes/"
+    drone_direto = "http://java-service:8080/api/v1/projects"
+    check("com a sessão aberta, a sessão vale no backend e no drone",
+          (req("GET", "/api/clientes/", token=sessao)[0], req("GET", "/odm-api/projects", token=sessao)[0]) == (200, 200))
+    check("e o access de cada um vale direto no serviço",
+          (direto(backend_direto, do_backend), direto(drone_direto, do_drone)) == (200, 200))
     check("logout (200)", req("POST", "/auth/logout/", cookie=cookie)[0] == 200)
-    t = esperar(lambda: req("GET", "/api/clientes/", token=access)[0] == 401)
+    t = esperar(lambda: direto(backend_direto, do_backend) == 401)
     check(f"o MESMO access cai no backend em {t} s", t is not None)
-    t = esperar(lambda: req("GET", "/odm-api/projects", token=access)[0] == 401)
+    t = esperar(lambda: direto(drone_direto, do_drone) == 401)
     check(f"e no drone em {t} s", t is not None)
+    check("pelo gateway, a sessão encerrada não vira token (401)", req("GET", "/api/clientes/", token=sessao)[0] == 401)
     check("o refresh da sessão encerrada é recusado", req("POST", "/auth/refresh/", cookie=cookie)[0] == 401)
 
     print("\n4. Auditoria de decisão")
-    sid_sem = carga(sem)["sid"]
+    sid_sem = carga(access_do_bff(sem))["sid"]
     req("GET", "/api/funcionarios/", token=sem)
     n = shell("from nucleo.models import DecisaoAcesso as D; "
               f"print(D.objects.filter(sid='{sid_sem}', decisao=False, acao='m:rh').count())")

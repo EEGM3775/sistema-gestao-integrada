@@ -3,19 +3,19 @@ import React, { createContext, useState, useEffect, useCallback } from 'react'
 import axios from 'axios'
 import { attachAuth } from '../api/attachAuth'
 import {
-  changePassword as changePasswordApi, loginSession, logoutSession, pedeSegundoFator, refreshAccess,
+  changePassword as changePasswordApi, loginSession, logoutSession, pedeSegundoFator, renovarSessao,
 } from '../api/session'
 import type { LoginData } from '../api/session'
 import type { DesafioSegundoFator } from '../api/segundoFator'
-import { getAccessToken, onAccessTokenChange } from '../api/tokenStore'
 import {
   getAvisoSegundos, getExpiraEm, getUltimaAtividade, marcarAtividade, onRelogioChange,
 } from '../api/sessionClock'
 import { SessionWarningDialog } from '../components/SessionWarningDialog'
+import { ConfirmacaoDialog } from '../components/ConfirmacaoDialog'
 import type { User } from '../types'
 
 const iamBaseURL = (import.meta.env.VITE_IAM_BASE_URL as string | undefined) ?? '/auth'
-// Cliente da IAM para /auth/me/ — com token em memória + refresh no 401.
+// Cliente da IAM para /auth/me/ — pelo cookie da sessão, com renovação no 401.
 const iamClient = axios.create({ baseURL: iamBaseURL })
 attachAuth(iamClient)
 
@@ -41,6 +41,8 @@ interface AuthContextType {
 }
 
 export const AuthContext = createContext<AuthContextType>({} as AuthContextType)
+
+const RENOVAR_A_CADA_MS = 4 * 60_000
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null)
@@ -83,18 +85,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [avisoExpiraEm, setAvisoExpiraEm] = useState<number | null>(null)
 
   /** "Continuar conectado": rotaciona o refresh. `false` = teto atingido. */
-  const continuarSessao = useCallback(async () => {
-    const token = await refreshAccess()
-    return !!token
-  }, [])
+  const continuarSessao = useCallback(() => renovarSessao(), [])
 
-  // Bootstrap: sem access em memória (reload), tenta renovar pelo cookie de
-  // refresh. Se a sessão ainda vale, repopula tudo — o usuário NÃO reloga.
+  // Bootstrap (reload): renova pelo cookie do refresh. Se a sessão ainda vale,
+  // repopula tudo — o usuário NÃO reloga.
   useEffect(() => {
     let vivo = true
-    refreshAccess()
-      .then((token) => {
-        if (!token) return
+    renovarSessao()
+      .then((ok) => {
+        if (!ok) return
         return iamClient.get('me/').then((r) => {
           if (vivo) aplicarMe(r.data)
         })
@@ -119,36 +118,19 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return () => eventos.forEach((e) => window.removeEventListener(e, registrar))
   }, [])
 
-  // Refresh PROATIVO do access (~1 min antes de expirar), CONDICIONADO a interação
-  // real desde a emissão do token. Renovar só por ter aba aberta anularia a janela
-  // de inatividade da sessão (docs/acesso-e-permissoes.md §5.2): como a rotação do
-  // refresh ESTENDE essa janela, uma aba esquecida seguraria a sessão até o teto.
-  // Ocioso, deixamos o access expirar — quando o usuário voltar, o interceptor do
-  // attachAuth renova sob demanda no primeiro 401 (a sessão em si ainda vale).
+  // Renovação da sessão CONDICIONADA a interação real desde a última: é a
+  // rotação do refresh que ESTENDE a janela de inatividade (§5.2), então renovar
+  // só por ter a aba aberta seguraria a sessão de um notebook abandonado até o
+  // teto. O access de cada chamada não depende disto — o gateway o obtém.
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | undefined
-    let emitidoEm = Date.now()
-    const agendar = (token: string | null) => {
-      if (timer) clearTimeout(timer)
-      if (!token) return
-      emitidoEm = Date.now()
-      try {
-        const payload = JSON.parse(atob(token.split('.')[1]))
-        const expMs = payload.exp * 1000
-        const delay = Math.max(5000, expMs - Date.now() - 60_000)
-        timer = setTimeout(() => {
-          if (getUltimaAtividade() > emitidoEm) void refreshAccess()
-        }, delay)
-      } catch {
-        /* token não decodificável — ignora */
+    let ultimaRenovacao = Date.now()
+    const id = setInterval(() => {
+      if (getUltimaAtividade() > ultimaRenovacao) {
+        ultimaRenovacao = Date.now()
+        void renovarSessao()
       }
-    }
-    const desinscrever = onAccessTokenChange(agendar)
-    agendar(getAccessToken())
-    return () => {
-      desinscrever()
-      if (timer) clearTimeout(timer)
-    }
+    }, RENOVAR_A_CADA_MS)
+    return () => clearInterval(id)
   }, [])
 
   // Aviso de queda + logout na expiração, a partir do `session_expires_at` da IAM.
@@ -184,7 +166,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setModules(Array.isArray(data.modules) ? data.modules : [])
     setIsTenantAdmin(!!u.is_tenant_admin)
     setIsPlatformAdmin(!!u.is_platform_admin)
-    // As permissões efetivas viajam no token; /auth/me/ as devolve.
+    // As permissões efetivas vêm do /auth/me/ (o token não as carrega).
     try {
       const me = await iamClient.get('me/')
       setPermissions(Array.isArray(me.data.permissions) ? me.data.permissions : [])
@@ -218,6 +200,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }}>
       {children}
       {/* Gated por `user`: no logout o modal some junto com a sessão. */}
+      {user && <ConfirmacaoDialog />}
       {user && avisoExpiraEm !== null && (
         <SessionWarningDialog
           expiraEm={avisoExpiraEm}

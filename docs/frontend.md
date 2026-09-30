@@ -507,7 +507,10 @@ Utiliza `createBrowserRouter` com rotas aninhadas.
 
 > **Área de Administração (Fase 9.A):** [modules/admin/](../frontend/src/modules/admin/) — `PersonasPage`
 > (CRUD de papéis/personas com picker de permissões por módulo + clonar) e `UsuariosPage` (atribui
-> papéis a usuários). Itens de menu só aparecem para `is_tenant_admin` (`AuthContext.isTenantAdmin`).
+> papéis a usuários, e traz o cartão **Acesso do suporte da plataforma** — o admin libera, com prazo,
+> ou encerra; o supervisor vê quais empresas liberaram). Itens de menu só aparecem para
+> `is_tenant_admin` (`AuthContext.isTenantAdmin`). Mudar papel, liberar módulo e liberar o suporte são
+> atos graves: fora da janela de confirmação, abrem o `ConfirmacaoDialog` sozinhos (pelo `attachAuth`).
 > Falam com a IAM pelo cliente `iamAdminClient` (baseURL `/iam`, roteado pelo gateway → IAM). Detalhe
 > do modelo em [arquitetura/rbac-abac.md §9.1](arquitetura/rbac-abac.md).
 
@@ -1289,17 +1292,27 @@ const navItems = [
 
 ## 7. Camada de Dados
 
-### 7.1 apiClient (mantido)
+### 7.1 apiClient — sem token no navegador (BFF)
 
 ```ts
 // src/api/apiClient.ts
 const apiClient = axios.create({ baseURL: '/api' })
-apiClient.interceptors.request.use(config => {
-  const token = localStorage.getItem('token') // → cookie HttpOnly na Fase 10.6
-  if (token) config.headers.Authorization = `Bearer ${token}`
-  return config
-})
+attachAuth(apiClient)
 ```
+
+**Não há token no JavaScript** ([acesso-e-permissoes.md §10.16](acesso-e-permissoes.md)): a IAM grava
+cookies HttpOnly no login, e o gateway troca o cookie da sessão pelo access de cada serviço.
+`attachAuth` ([api/attachAuth.ts](../frontend/src/api/attachAuth.ts)) faz três coisas em todo cliente
+(`apiClient`, `iamAdminClient`, os da IAM):
+
+- manda o cabeçalho anti-CSRF (`X-SGI-CSRF`), que o gateway exige em toda escrita;
+- num **401** comum, renova a sessão pelo cookie do refresh (`renovarSessao`, uma por vez) e refaz o
+  pedido uma vez;
+- num **401 `confirmacao_necessaria`** (ato grave fora da janela), abre "Confirme que é você"
+  ([components/ConfirmacaoDialog.tsx](../frontend/src/components/ConfirmacaoDialog.tsx),
+  `api/confirmacao.ts`) e refaz o pedido quando a pessoa confirma — a tela que pediu não precisa saber.
+
+Imagem, mapa e download do mesmo site levam o cookie sozinhos; nenhum componente monta `Authorization`.
 
 ### 7.2 Padrão de hooks por módulo
 
@@ -1372,7 +1385,13 @@ src/
 ├── main.tsx                          ✅ entry; wraps <AuthProvider>
 ├── App.tsx                           ✅ BrowserRouter + Routes (/ /login /app/*)
 ├── api/
-│   └── apiClient.ts                  ✅ axios instance; interceptor Bearer
+│   ├── apiClient.ts                  ✅ axios instance de /api (attachAuth)
+│   ├── attachAuth.ts                 ✅ anti-CSRF + renovação no 401 + confirmação do ato grave
+│   ├── session.ts                    ✅ login/renovação/logout pela IAM — cookies, sem token
+│   ├── sessionClock.ts               ✅ relógio de queda da sessão (aviso) e da interação real
+│   ├── confirmacao.ts                ✅ step-up: /auth/confirmar/ e a ponte com o diálogo
+│   ├── segundoFator.ts               ✅ segundo fator (login e Minha conta)
+│   └── iamAdminClient.ts             ✅ administração da IAM em /iam (attachAuth)
 ├── contexts/
 │   ├── AuthContext.tsx               ✅ auth, modules, loading, login, logout, hasModule
 │   └── ThemeContext.tsx              ✅ tema Malha: light/dark/system, data-theme, persistência (Malha v1)
@@ -1384,6 +1403,7 @@ src/
 │   ├── PrivateRoute.tsx              ✅ guard de autenticação
 │   ├── ModuleRoute.tsx               ✅ guard de entitlement de módulo (hasModule) — tela amigável se não contratado
 │   ├── AccessNotice.tsx              ✅ tela reutilizável de acesso negado (módulo/permissão)
+│   ├── ConfirmacaoDialog.tsx         ✅ "Confirme que é você" — step-up do ato grave (código ou senha)
 │   ├── ThemeToggle.tsx               ✅ botão claro/escuro (gesto de marca)
 │   ├── brand/                        ✅ marca Malha: Quarteirao (marco), BairroRecorte (motivo), EdicaoChip (estágio)
 │   ├── malha/                        ✅ design system: Card, Pill (estado), Num (mono tabular), KpiCard + index (barrel)

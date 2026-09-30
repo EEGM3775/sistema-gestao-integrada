@@ -5,7 +5,6 @@ from django.core.management import call_command
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
-from rest_framework_simplejwt.tokens import AccessToken
 
 from identity import catalog
 from identity.models import (
@@ -14,6 +13,8 @@ from identity.models import (
 from identity.models import EventoSeguranca, TokenRecuperacaoSenha
 from identity.recuperacao import hash_token
 from identity.tokens import claims_de_acesso, issue_refresh
+
+from .bff_de_teste import cabecalho, confirmado_agora, decodificar
 
 
 class CatalogoConformidadeTests(TestCase):
@@ -212,7 +213,7 @@ class PersonasDinamicasTests(TestCase):
         self.assertEqual(self.client.get("/permissoes/").status_code, 403)
 
     def test_admin_cria_persona_dentro_do_plano(self):
-        self.client.force_authenticate(self.admin)
+        confirmado_agora(self.client, self.admin)
         rh_view = Permissao.objects.get(codename="rh.funcionario.view")
         obra_view = Permissao.objects.get(codename="obra.obra.view")  # base
         r = self.client.post("/perfis/", {
@@ -223,7 +224,7 @@ class PersonasDinamicasTests(TestCase):
         self.assertTrue(Perfil.objects.filter(tenant=self.t, nome="recepcao").exists())
 
     def test_admin_nao_escala_para_modulo_nao_assinado(self):
-        self.client.force_authenticate(self.admin)
+        confirmado_agora(self.client, self.admin)
         drone_perm = Permissao.objects.get(codename="drone.projeto.view")
         r = self.client.post("/perfis/", {
             "nome": "espiao", "permissoes": [drone_perm.id],
@@ -233,8 +234,9 @@ class PersonasDinamicasTests(TestCase):
 
 
 class SessaoCookieTests(TestCase):
-    """Ciclo de sessão (Fase 10.6/F1): access no corpo, refresh em cookie HttpOnly,
-    rotação com detecção de reuso, 'lembrar de mim' e logout."""
+    """Ciclo de sessão (Fase 10.6/F1, BFF desde a fase 5): nenhum token no corpo,
+    refresh e sessão em cookies HttpOnly, rotação com detecção de reuso,
+    'lembrar de mim' e logout."""
 
     def setUp(self):
         self.t = Tenant.objects.create(nome="T", slug="t")
@@ -250,22 +252,40 @@ class SessaoCookieTests(TestCase):
             format="json",
         )
 
-    def test_login_da_access_e_cookie_sem_refresh_no_corpo(self):
+    def test_login_da_os_dois_cookies_e_nenhum_token_no_corpo(self):
         r = self._login()
         self.assertEqual(r.status_code, 200)
-        self.assertIn("access", r.data)
+        self.assertNotIn("access", r.data)  # fase 5: o token não chega ao JavaScript
         self.assertNotIn("refresh", r.data)  # refresh NUNCA no corpo
         cookie = r.cookies.get(settings.REFRESH_COOKIE_NAME)
         self.assertIsNotNone(cookie)
         self.assertTrue(cookie["httponly"])
         self.assertEqual(cookie["path"], "/auth/")
+        sessao = r.cookies.get(settings.SESSAO_COOKIE_NAME)
+        self.assertIsNotNone(sessao)
+        self.assertTrue(sessao["httponly"])
+        self.assertEqual(sessao["path"], "/")  # o gateway o troca em /api/, /odm-api/, /ws/
+        self.assertEqual(sessao["samesite"], "Strict")
 
-    def test_refresh_pelo_cookie_gira_e_devolve_novo_access(self):
+    def test_refresh_pelo_cookie_gira_e_nao_devolve_token(self):
         self._login()
         r = self.client.post("/auth/refresh/")
         self.assertEqual(r.status_code, 200)
-        self.assertIn("access", r.data)
+        self.assertNotIn("access", r.data)
+        self.assertIn("session_expires_at", r.data)
         self.assertIn(settings.REFRESH_COOKIE_NAME, r.cookies)  # cookie rotacionado
+        self.assertIn(settings.SESSAO_COOKIE_NAME, r.cookies)  # e a sessão regravada
+
+    @override_settings(REFRESH_COOKIE_SECURE=True, SESSAO_COOKIE_SECURE=True)
+    def test_cookie_da_sessao_leva_secure_quando_ligado(self):
+        c = self._login().cookies[settings.SESSAO_COOKIE_NAME]
+        self.assertTrue(c["secure"])
+
+    @override_settings(BFF_ACCESS_NO_CORPO=True)
+    def test_a_volta_atras_devolve_o_access_no_corpo_para_todos_os_servicos(self):
+        r = self._login()
+        self.assertEqual(sorted(decodificar(r.data["access"], "sgi-api")["aud"]),
+                         ["sgi-api", "sgi-drone", "sgi-iam"])
 
     def test_reuso_de_refresh_antigo_derruba_sessao(self):
         self._login()
@@ -324,28 +344,46 @@ class TrocaSenhaTests(TestCase):
             format="json",
         )
 
+    def _trocar(self, client, atual, nova, **extra):
+        # O navegador entra pelo cookie da sessão; escrita leva o anti-CSRF.
+        return client.post("/auth/senha/", {"senha_atual": atual, "nova_senha": nova},
+                           format="json", HTTP_X_SGI_CSRF="1", **extra)
+
     def test_troca_encerra_outras_sessoes_mantendo_a_atual(self):
         A, B = APIClient(), APIClient()
         self._login(A); self._login(B)
         self.assertEqual(A.post("/auth/refresh/").status_code, 200)
         self.assertEqual(B.post("/auth/refresh/").status_code, 200)
 
-        A.force_authenticate(user=self.user)  # no app real o Bearer vem do attachAuth
-        r = A.post("/auth/senha/", {"senha_atual": "senha-antiga-1", "nova_senha": "senha-nova-99"}, format="json")
+        r = self._trocar(A, "senha-antiga-1", "senha-nova-99")
         self.assertEqual(r.status_code, 200)
-        self.assertIn("access", r.data)
+        self.assertNotIn("access", r.data)
+        self.assertIn(settings.SESSAO_COOKIE_NAME, r.cookies)  # sessão nova deste aparelho
 
         self.assertEqual(B.post("/auth/refresh/").status_code, 401)  # outra sessão caiu
         self.assertEqual(A.post("/auth/refresh/").status_code, 200)  # a atual continua
 
+    def test_sem_o_cabecalho_anti_csrf_a_escrita_pelo_cookie_e_recusada(self):
+        A = APIClient(); self._login(A)
+        r = A.post("/auth/senha/", {"senha_atual": "senha-antiga-1", "nova_senha": "senha-nova-99"},
+                   format="json")
+        self.assertEqual(r.status_code, 403)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("senha-antiga-1"))
+
+    def test_de_outra_origem_a_escrita_pelo_cookie_e_recusada(self):
+        A = APIClient(); self._login(A)
+        r = self._trocar(A, "senha-antiga-1", "senha-nova-99", HTTP_ORIGIN="https://evil.example")
+        self.assertEqual(r.status_code, 403)
+
     def test_senha_atual_errada_400(self):
-        A = APIClient(); self._login(A); A.force_authenticate(user=self.user)
-        r = A.post("/auth/senha/", {"senha_atual": "errada", "nova_senha": "qualquer-outra-1"}, format="json")
+        A = APIClient(); self._login(A)
+        r = self._trocar(A, "errada", "qualquer-outra-1")
         self.assertEqual(r.status_code, 400)
 
     def test_nova_senha_curta_400(self):
-        A = APIClient(); self._login(A); A.force_authenticate(user=self.user)
-        r = A.post("/auth/senha/", {"senha_atual": "senha-antiga-1", "nova_senha": "curta"}, format="json")
+        A = APIClient(); self._login(A)
+        r = self._trocar(A, "senha-antiga-1", "curta")
         self.assertEqual(r.status_code, 400)
 
 
@@ -387,7 +425,8 @@ class AdminRedefinirSenhaTests(TestCase):
 @override_settings(SERVICE_TOKEN_SECRET="segredo-de-servico-teste")
 class ServiceTokenTests(TestCase):
     """Token serviço→serviço (Fase 10.8): só com o segredo compartilhado; carrega
-    tenant + módulo pedidos e nenhuma identidade de usuário (sem user_id)."""
+    o tenant e nenhuma identidade de usuário. Desde a fase 5, tipo e audiência
+    próprios e um escopo só — nenhum serviço o aceita onde espera uma pessoa."""
 
     def setUp(self):
         self.client = APIClient()
@@ -399,12 +438,20 @@ class ServiceTokenTests(TestCase):
     def test_segredo_correto_emite_token_escopado(self):
         r = self._post("segredo-de-servico-teste", {"tenant_id": "t-123", "audience": "drone"})
         self.assertEqual(r.status_code, 200)
-        access = AccessToken(r.data["access"])  # valida assinatura + exp
+        access = decodificar(r.data["access"], "sgi-drone")  # assinatura, exp e aud
+        self.assertEqual(cabecalho(r.data["access"])["typ"], "svc+jwt")
+        self.assertEqual(access["aud"], "sgi-drone")
         self.assertEqual(access["tenant_id"], "t-123")
-        self.assertEqual(access["modules"], ["drone"])
+        self.assertEqual(access["scope"], "drone.projetos.desvincular")
         self.assertEqual(access["sub"], "svc-backend")
         self.assertTrue(access["svc"])
         self.assertNotIn("user_id", access)  # não representa um usuário
+        self.assertNotIn("sid", access)
+        self.assertNotIn("modules", access)  # o escopo diz o que pode, e só isto
+
+    def test_produto_sem_token_de_servico_400(self):
+        r = self._post("segredo-de-servico-teste", {"tenant_id": "t-123", "audience": "rh"})
+        self.assertEqual(r.status_code, 400)
 
     def test_segredo_errado_401(self):
         r = self._post("errado", {"tenant_id": "t-123"})
@@ -683,7 +730,7 @@ class AdminComprometidoTests(TestCase):
         self.vitima.set_password("senha-da-vitima-1")
         self.vitima.save()
         self.client = APIClient()
-        self.client.force_authenticate(self.admin)
+        confirmado_agora(self.client, self.admin)  # promove a admin: ato grave
         mail.outbox = []
 
     def test_patch_nao_troca_o_email(self):

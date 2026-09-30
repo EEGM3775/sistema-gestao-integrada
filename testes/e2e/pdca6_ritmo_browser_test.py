@@ -44,6 +44,7 @@ except Exception:
     pass
 
 from playwright.sync_api import sync_playwright
+from _sessao import cabecalhos, da_resposta
 
 GW = os.environ.get("SGI_GW", "http://localhost:8090")
 SHOTS = os.environ.get("SGI_SHOTS", "/tmp/sgi_pdca6")
@@ -71,7 +72,7 @@ def req(method, path, token=None, body=None):
     data = json.dumps(body).encode() if body is not None else None
     headers = {"Content-Type": "application/json"}
     if token:
-        headers["Authorization"] = "Bearer " + token
+        headers.update(cabecalhos(token))
     r = urllib.request.Request(GW + path, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(r, timeout=90, context=_CTX) as resp:
@@ -89,7 +90,7 @@ def login(u, p):
     r = urllib.request.Request(GW + "/auth/login/", data=data, method="POST",
                                headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(r, timeout=30, context=_CTX) as resp:
-        return json.load(resp)["access"]
+        return da_resposta(resp)
 
 
 print(f"\n{'='*62}\nPDCA.6 — a linha de balanço no navegador\n{'='*62}")

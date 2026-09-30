@@ -190,11 +190,15 @@ services:
     container_name: ${SGI_PREFIX:-sgi}-iam
     profiles: ["full"]
     environment:
-      # O gêmeo do `large_client_header_buffers` do gateway: o JWT da IAM leva o
-      # catálogo de permissões e já passa de 8 KB, e o padrão do gunicorn
-      # (`--limit-request-field_size 8190`) devolve **431** antes de o Django ver
-      # a requisição. Os dois tetos sobem juntos ou o 431 só troca de porta.
-      GUNICORN_CMD_ARGS: --limit-request-field_size 32768 --limit-request-line 8190
+      # O gêmeo do `large_client_header_buffers` do gateway (D194: o JWT chegou a
+      # passar de 8 KB; desde a fase 4 é ~950 B, e a folga ficou). E os workers:
+      # desde a fase 5 a IAM é o BFF — o gateway a consulta a CADA chamada à API
+      # (`auth_request`). Com o padrão do gunicorn (1 worker síncrono), uma
+      # consulta lenta (Redis fora: o DNS do host parado leva segundos) parava a
+      # plataforma inteira atrás dela — achado do teste de caos da fase 6.
+      GUNICORN_CMD_ARGS: >-
+        --limit-request-field_size 32768 --limit-request-line 8190
+        --worker-class gthread --workers ${IAM_GUNICORN_WORKERS:-2} --threads ${IAM_GUNICORN_THREADS:-8}
       IAM_SECRET_KEY: ${IAM_SECRET_KEY:-django-insecure-iam-dev}
       # Cifra do segredo TOTP de cada pessoa (remodelagem, fase 1). Vazio em dev:
       # a IAM deriva uma do IAM_SECRET_KEY. Fora de DEBUG é obrigatória.
@@ -242,6 +246,11 @@ services:
       SPICEDB_CHAVE: ${SPICEDB_CHAVE:-spicedb-chave-dev}
       # DB 5, da autorização: ZedToken e versão por tenant (funcoesautorizacao/chaves.py).
       AUTORIZACAO_REDIS_URL: ${AUTORIZACAO_REDIS_URL:-redis://redis:6379/5}
+      # As voltas atrás da remodelagem (§10.12), desligadas; só em incidente. Fase 4:
+      # reemitir as listas no token. Fase 5: access no corpo e Bearer do cliente.
+      AUTORIZACAO_TOKEN_COM_LISTAS: ${AUTORIZACAO_TOKEN_COM_LISTAS:-False}
+      BFF_ACCESS_NO_CORPO: ${BFF_ACCESS_NO_CORPO:-False}
+      BFF_BEARER_DO_CLIENTE: ${BFF_BEARER_DO_CLIENTE:-False}
     volumes:
       - ../../infra/keys:/keys:ro
     depends_on:
@@ -283,11 +292,13 @@ services:
     mem_limit: ${ERP_MEM_LIMIT:-3g}
     cpus: ${ERP_CPUS:-2}
     environment:
-      # O gêmeo do `large_client_header_buffers` do gateway: o JWT da IAM leva o
-      # catálogo de permissões e já passa de 8 KB, e o padrão do gunicorn
-      # (`--limit-request-field_size 8190`) devolve **431** antes de o Django ver
-      # a requisição. Os dois tetos sobem juntos ou o 431 só troca de porta.
-      GUNICORN_CMD_ARGS: --limit-request-field_size 32768 --limit-request-line 8190
+      # O gêmeo do `large_client_header_buffers` do gateway (D194). E os workers:
+      # o padrão do gunicorn é 1 worker síncrono — uma requisição presa (Redis
+      # fora, a healthcheck esperando o DNS) segurava todas as outras atrás dela
+      # (teste de caos da fase 6).
+      GUNICORN_CMD_ARGS: >-
+        --limit-request-field_size 32768 --limit-request-line 8190
+        --worker-class gthread --workers ${ERP_GUNICORN_WORKERS:-2} --threads ${ERP_GUNICORN_THREADS:-4}
       SECRET_KEY: ${SECRET_KEY:-django-insecure-erp-dev}
       DEBUG: ${DEBUG:-True}
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1,erp,gateway}

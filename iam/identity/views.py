@@ -4,6 +4,8 @@ import hmac
 from urllib.parse import urlparse
 
 from django.conf import settings
+from django.db.models import Q
+from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.decorators import action
@@ -15,7 +17,9 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
-from . import emails, quotas, recuperacao, segundo_fator, sessoes
+from funcoesautorizacao import audiencias
+
+from . import bff, emails, emissao, quotas, recuperacao, segundo_fator, sessoes, suporte
 from .models import (
     AcessoUsuarioModulo,
     AssinaturaTenant,
@@ -23,11 +27,23 @@ from .models import (
     Modulo,
     Perfil,
     Permissao,
+    Sessao,
     Tenant,
     Usuario,
 )
-from .cookies import clear_refresh_cookie, set_refresh_cookie
-from .permissions import IsPlatformAdmin, IsTenantAdmin
+from .cookies import (
+    clear_refresh_cookie,
+    clear_sessao_cookie,
+    set_refresh_cookie,
+    set_sessao_cookie,
+)
+from .permissions import (
+    AtoGraveConfirmado,
+    IsPlatformAdmin,
+    IsTenantAdmin,
+    PapelDoUsuarioConfirmado,
+    janela_da_pessoa,
+)
 from .serializers import (
     AcessoUsuarioModuloSerializer,
     AssinaturaTenantSerializer,
@@ -50,16 +66,16 @@ from .tokens import (
     claims_de_acesso,
     cookie_max_age,
     issue_refresh,
-    issue_service_token,
     revoke_all_sessions,
 )
 
 
 # --- Autenticação / SSO ---
-# Modelo de sessão (Fase 10.6 / F1): o **access token** (15 min) volta no corpo e
-# vive em memória no cliente; o **refresh** vive só num cookie HttpOnly. O cliente
-# renova o access em silêncio via /auth/refresh/ (cookie) → nunca desloga. Rotação
-# + blacklist detectam reuso; o refresh recalcula as claims (permissões atualizam).
+# Modelo de sessão (Fase 10.6 / F1, BFF desde a fase 5 da remodelagem): o navegador
+# guarda dois cookies HttpOnly e nenhum token. O **refresh** (`/auth/`) desliza a
+# janela de inatividade a cada renovação com interação — rotação + blacklist
+# detectam reuso. A **sessão** (`/`) é o que o gateway troca, a cada pedido, pelo
+# access de 5 minutos do serviço de destino (`TokenDaSessaoView`, `identity.bff`).
 
 
 def _bloqueia_origem_estranha(request) -> None:
@@ -81,18 +97,33 @@ def _bloqueia_origem_estranha(request) -> None:
     raise PermissionDenied("Origem não permitida.")
 
 
-def _corpo_sessao(user, access, refresh) -> dict:
-    """Corpo devolvido no login: access + identidade + entitlements (sem refresh).
+def _corpo_da_renovacao(user, refresh) -> dict:
+    """O que toda resposta que abre ou renova a sessão diz ao navegador.
 
     `session_expires_at` é o `exp` do REFRESH (época em segundos). O refresh vive
     num cookie HttpOnly — opaco ao JS —, então sem este campo o front não teria como
     saber quando a sessão cai nem agendar o aviso. É só um instante, não vaza segredo.
+
+    **Sem `access` desde a fase 5** (§10.5): o navegador não recebe token — quem o
+    põe no pedido é o gateway (`identity.bff`). Só a volta atrás
+    (`BFF_ACCESS_NO_CORPO`) o devolve, válido para todos os serviços, como antes.
     """
-    tenant = user.tenant
-    return {
-        "access": str(access),
+    corpo = {
         "session_expires_at": int(refresh.payload["exp"]),
         "session_warn_seconds": settings.SESSION_WARN_SECONDS,
+    }
+    if settings.BFF_ACCESS_NO_CORPO:
+        corpo["access"] = access_with_claims(
+            refresh, user, audiencia=[audiencias.API, audiencias.DRONE, audiencias.IAM],
+        )
+    return corpo
+
+
+def _corpo_sessao(user, refresh) -> dict:
+    """Corpo do login: a renovação + identidade e módulos (sem token, sem refresh)."""
+    tenant = user.tenant
+    return {
+        **_corpo_da_renovacao(user, refresh),
         "user": {
             "id": str(user.id),
             "username": user.username,
@@ -107,14 +138,34 @@ def _corpo_sessao(user, access, refresh) -> dict:
     }
 
 
+def _gravar_cookies(resp, refresh, credencial: str | None, *, remember: bool) -> None:
+    """Os dois cookies HttpOnly: o refresh (`/auth/`, que desliza a janela) e a
+    sessão do BFF (`/`, que o gateway troca por access). Sem "manter conectado",
+    os dois somem ao fechar o navegador; com, duram até o refresh expirar."""
+    max_age = cookie_max_age(refresh)
+    set_refresh_cookie(resp, str(refresh), max_age, persistent=remember)
+    if credencial:
+        set_sessao_cookie(resp, credencial, max_age, persistent=remember)
+
+
+def _emitir_sessao(user, *, remember: bool, amr: list[str]):
+    """Abre a sessão (`Sessao` com a credencial do cookie) e o refresh dela.
+    Devolve `(refresh, credencial)`."""
+    sessao = sessoes.abrir(user, lembrar=remember, amr=amr)
+    refresh = issue_refresh(
+        user, remember=remember, amr=amr, sid=sessao.sid,
+        auth_time=int(sessao.auth_time.timestamp()),
+    )
+    sessoes.prolongar(sessao.sid, refresh.payload["exp"])
+    return refresh, sessao.credencial
+
+
 def _abrir_sessao(user, *, remember: bool, amr: list[str], extra: dict | None = None):
-    """Emite a sessão (access no corpo, refresh no cookie). Único ponto por onde
-    o login — com ou sem segundo fator — entrega uma sessão nova."""
-    refresh = issue_refresh(user, remember=remember, amr=amr)
-    resp = Response({**_corpo_sessao(user, access_with_claims(refresh, user), refresh), **(extra or {})})
-    # Sem "manter conectado" → cookie de sessão (some ao fechar o navegador/
-    # desligar o PC → novo login). Com → persistente (sobrevive ao reboot).
-    set_refresh_cookie(resp, str(refresh), cookie_max_age(refresh), persistent=remember)
+    """Único ponto por onde o login — com ou sem segundo fator — entrega uma
+    sessão nova: o corpo, o refresh e o cookie do BFF."""
+    refresh, credencial = _emitir_sessao(user, remember=remember, amr=amr)
+    resp = Response({**_corpo_sessao(user, refresh), **(extra or {})})
+    _gravar_cookies(resp, refresh, credencial, remember=remember)
     return resp
 
 
@@ -210,6 +261,7 @@ class RefreshView(APIView):
                 except (AttributeError, TokenError):
                     pass
             clear_refresh_cookie(resp)
+            clear_sessao_cookie(resp)
             return resp
 
         try:
@@ -252,22 +304,45 @@ class RefreshView(APIView):
             old.blacklist()
         except (AttributeError, TokenError):
             pass
+        sessao, credencial = self._sessao_do_bff(request, user, sid, remember=remember, amr=amr)
+        # O `auth_time` é da sessão: a confirmação do ato grave (fase 6) o faz
+        # andar na linha, e a rotação não pode trazê-lo de volta ao do login.
+        auth_time = max(int(old.get("auth_time") or 0), int(sessao.auth_time.timestamp()))
         novo = issue_refresh(user, remember=remember, sst=sst, amr=amr,
-                             sid=sid, auth_time=old.get("auth_time"))
-        resp = Response({
-            "access": str(access_with_claims(novo, user)),
-            # Cada rotação estende a janela deslizante: o front reagenda o aviso de
-            # queda a partir daqui (não consegue ler o `exp` do cookie HttpOnly).
-            "session_expires_at": int(novo.payload["exp"]),
-            "session_warn_seconds": settings.SESSION_WARN_SECONDS,
-        })
-        set_refresh_cookie(resp, str(novo), cookie_max_age(novo), persistent=remember)
+                             sid=sessao.sid, auth_time=auth_time)
+        sessoes.prolongar(sessao.sid, novo.payload["exp"])
+        # Cada rotação estende a janela deslizante: o front reagenda o aviso de
+        # queda a partir daqui (não consegue ler o `exp` do cookie HttpOnly).
+        resp = Response(_corpo_da_renovacao(user, novo))
+        _gravar_cookies(resp, novo, credencial, remember=remember)
         return resp
+
+    @staticmethod
+    def _sessao_do_bff(request, user, sid, *, remember, amr):
+        """A sessão que continua, e a credencial do cookie para regravar.
+
+        Quem renova prova ser dono da sessão pelo refresh, então pode receber a
+        credencial dela de novo: é o que dá o cookie do BFF à sessão aberta antes
+        da fase 5 (sem credencial) ou ao navegador que o perdeu — sem pedir login.
+        A credencial nova troca a antiga, e os access guardados com ela saem."""
+        sessao = Sessao.objects.filter(sid=sid).first() if sid else None
+        if sessao is None:  # refresh de antes da fase 4: a sessão nasce aqui
+            sessao = sessoes.abrir(user, lembrar=remember, amr=amr)
+            return sessao, sessao.credencial
+        if sessao.auth_time is None:  # aberta pela fase 4: completa com o refresh
+            sessao.lembrar, sessao.amr = remember, amr
+            sessao.auth_time = sessao.criada_em
+            sessao.save(update_fields=["lembrar", "amr", "auth_time"])
+        credencial = request.COOKIES.get(settings.SESSAO_COOKIE_NAME)
+        if credencial and sessoes.hash_da_credencial(credencial) == sessao.credencial_hash:
+            return sessao, credencial
+        return sessao, sessoes.trocar_credencial(sessao)
 
 
 class LogoutView(APIView):
-    """Encerra a sessão: blacklista o refresh do cookie e limpa o cookie. Aceita
-    mesmo sem access válido (o usuário pode estar com o access já expirado)."""
+    """Encerra a sessão: blacklista o refresh do cookie, revoga a sessão e apaga
+    os dois cookies. Aceita mesmo sem access válido (o usuário pode estar com o
+    access já expirado) e com só um dos cookies."""
 
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -277,6 +352,7 @@ class LogoutView(APIView):
         raw = request.COOKIES.get(settings.REFRESH_COOKIE_NAME)
         resp = Response({"detail": "logout efetuado"}, status=200)
         clear_refresh_cookie(resp)
+        clear_sessao_cookie(resp)
         if raw:
             try:
                 refresh = RefreshToken(raw)
@@ -287,6 +363,9 @@ class LogoutView(APIView):
                     sessoes.revogar(refresh["sid"], "logout")
             except TokenError:
                 pass
+        sessao = sessoes.pela_credencial(request.COOKIES.get(settings.SESSAO_COOKIE_NAME))
+        if sessao is not None:
+            sessoes.revogar(sessao.sid, "logout")
         return resp
 
 
@@ -295,9 +374,9 @@ class ServiceTokenView(APIView):
 
     Não é login de usuário: o chamador é um serviço da plataforma (ex.: o
     backend), autenticado por um segredo compartilhado no header
-    `X-Service-Secret` (comparação em tempo constante). O token resultante
-    carrega só o `tenant_id` e o `modules` pedidos — o suficiente para passar no
-    gate de módulo do produto-alvo (drone). Ver `tokens.issue_service_token`.
+    `X-Service-Secret` (comparação em tempo constante). Desde a fase 5 o token
+    tem tipo próprio (`svc+jwt`), a audiência do produto de destino e um escopo
+    só; nenhum serviço o aceita onde espera uma pessoa. Ver `emissao.token_de_servico`.
     """
 
     permission_classes = [AllowAny]
@@ -313,10 +392,12 @@ class ServiceTokenView(APIView):
         tenant_id = request.data.get("tenant_id")
         if not tenant_id:
             return Response({"detail": "tenant_id é obrigatório"}, status=400)
-        audience = request.data.get("audience") or "drone"
+        produto = request.data.get("audience") or "drone"
         caller = request.data.get("caller") or "backend"
-
-        token = issue_service_token(caller=caller, tenant_id=tenant_id, audience=audience)
+        try:
+            token = emissao.token_de_servico(caller=caller, tenant_id=tenant_id, produto=produto)
+        except ValueError:
+            return Response({"detail": "produto sem token de serviço"}, status=400)
         return Response({"access": token, "expires_in": settings.SERVICE_TOKEN_TTL_SECONDS})
 
 
@@ -345,14 +426,17 @@ class ChangePasswordView(APIView):
         # dispositivo — trocar a senha não desfaz o segundo fator já provado.
         remember = False
         amr = ["pwd"]
-        raw = request.COOKIES.get(settings.REFRESH_COOKIE_NAME)
-        if raw:
-            try:
-                atual_refresh = RefreshToken(raw)
-                remember = bool(atual_refresh.get("rem"))
-                amr = list(atual_refresh.get("amr") or ["pwd"])
-            except TokenError:
-                pass
+        if isinstance(request.auth, Sessao):
+            remember, amr = request.auth.lembrar, list(request.auth.amr or ["pwd"])
+        else:
+            raw = request.COOKIES.get(settings.REFRESH_COOKIE_NAME)
+            if raw:
+                try:
+                    atual_refresh = RefreshToken(raw)
+                    remember = bool(atual_refresh.get("rem"))
+                    amr = list(atual_refresh.get("amr") or ["pwd"])
+                except TokenError:
+                    pass
 
         user.set_password(nova)
         user.save(update_fields=["password"])
@@ -362,15 +446,13 @@ class ChangePasswordView(APIView):
         bump_session_epoch(user.id)
 
         # Reemite uma sessão nova só para quem trocou a senha (não é deslogado).
-        refresh = issue_refresh(user, remember=remember, amr=amr)
+        refresh, credencial = _emitir_sessao(user, remember=remember, amr=amr)
         resp = Response({
             "detail": "Senha alterada. As outras sessões foram encerradas.",
-            "access": str(access_with_claims(refresh, user)),
             # Sessão nova → o front precisa reagendar o aviso de queda.
-            "session_expires_at": int(refresh.payload["exp"]),
-            "session_warn_seconds": settings.SESSION_WARN_SECONDS,
+            **_corpo_da_renovacao(user, refresh),
         })
-        set_refresh_cookie(resp, str(refresh), cookie_max_age(refresh), persistent=remember)
+        _gravar_cookies(resp, refresh, credencial, remember=remember)
         return resp
 
 
@@ -396,9 +478,103 @@ class SessaoInternaView(APIView):
 
     permission_classes = [AllowAny]
     authentication_classes = []
+    # O PEP pergunta aqui justamente quando o Redis caiu: o throttle, que mora
+    # no Redis, só o faria esperar o Redis que não vem (teste de caos, fase 6).
+    throttle_classes = []
 
     def get(self, request, sid):
         return Response({"ativa": sessoes.ativa(sid)})
+
+
+class TokenDaSessaoView(APIView):
+    """Troca o cookie da sessão pelo access de um serviço — o BFF (fase 5, §10.5).
+
+    Quem chama é o gateway, num `auth_request` a cada pedido de `/api/`,
+    `/odm-api/` e `/ws/`, com os cabeçalhos do pedido original e o método em
+    `X-Original-Method`. Responde 204 com o `Authorization` que o gateway deve
+    injetar (`X-BFF-Authorization`), ou 204 sem ele: pedido anônimo, e o serviço
+    decide (a rota pública passa, a protegida dá 401 e a tela renova a sessão).
+    Só recusa — 403 — a escrita sem o cabeçalho anti-CSRF ou de outra origem.
+
+    Interna: `/auth/interno/` é 404 na borda; o gateway a alcança pela rede.
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_classes = []  # é um pedido por chamada à API: o teto é o de lá
+
+    def get(self, request, servico):
+        audiencia = audiencias.DO_BFF.get(servico)
+        if audiencia is None:
+            return Response(status=404)
+        resp = HttpResponse(status=204)
+        credencial = request.COOKIES.get(settings.SESSAO_COOKIE_NAME)
+        if credencial:
+            metodo = request.headers.get("X-Original-Method", "GET")
+            if not bff.escrita_legitima(metodo, request.headers, request.get_host()):
+                return Response(
+                    {"detail": "Escrita sem o cabeçalho anti-CSRF ou de outra origem."}, status=403,
+                )
+            token = bff.token_para(credencial, audiencia)
+            if token:
+                resp["X-BFF-Authorization"] = f"Bearer {token}"
+                return resp
+        # A volta atrás da fase 5: o Bearer que o próprio cliente mandou segue.
+        if settings.BFF_BEARER_DO_CLIENTE and request.headers.get("Authorization"):
+            resp["X-BFF-Authorization"] = request.headers["Authorization"]
+        return resp
+
+
+class ConfirmarIdentidadeView(APIView):
+    """O step-up (fase 6, §10.5): provar quem é de novo antes do ato grave.
+
+    `GET` diz à tela o que pedir — o código do app (quem tem segundo fator) ou a
+    senha (quem não tem, decisão 6 do dono) — e até quando vale a última prova.
+    `POST` confere e faz o `auth_time` da sessão andar; o próximo access já sai
+    com a hora nova, e o pedido recusado pode ser refeito. Código de
+    recuperação não serve aqui: ele é para entrar sem o celular, não para
+    assinar pagamento. Os erros contam no mesmo bloqueio do segundo fator."""
+
+    permission_classes = [IsAuthenticated]
+
+    def _sessao(self, request):
+        if isinstance(request.auth, Sessao):
+            return request.auth
+        sid = request.auth.get("sid") if request.auth is not None else None
+        return Sessao.objects.filter(sid=sid, revogada_em__isnull=True).first() if sid else None
+
+    def _estado(self, user, sessao):
+        janela = janela_da_pessoa(user)
+        prova = int(sessao.auth_time.timestamp()) if sessao and sessao.auth_time else None
+        return {
+            "metodo": "codigo" if segundo_fator.ativo(user) is not None else "senha",
+            "janela_s": janela,
+            "valida_ate": prova + janela if prova else None,
+        }
+
+    def get(self, request):
+        return Response(self._estado(request.user, self._sessao(request)))
+
+    def post(self, request):
+        _bloqueia_origem_estranha(request)
+        user = request.user
+        sessao = self._sessao(request)
+        if sessao is None:
+            return Response({"detail": "Sessão encerrada."}, status=401)
+        com_codigo = segundo_fator.ativo(user) is not None
+        try:
+            if com_codigo:
+                segundo_fator.verificar(
+                    user, request.data.get("codigo"), request=request, aceita_recuperacao=False,
+                )
+            else:
+                segundo_fator.conferir_senha(user, request.data.get("senha"), request=request)
+        except segundo_fator.CodigoRecusado as erro:
+            if erro.motivo != "bloqueado" and not com_codigo:
+                return Response({"detail": "Senha incorreta."}, status=400)
+            return _resposta_recusa(erro)
+        sessoes.confirmar(sessao, com_segundo_fator=com_codigo)
+        return Response(self._estado(user, sessao))
 
 
 # ---------------------------------------------------------------------------
@@ -752,6 +928,87 @@ class JwksView(APIView):
         return Response({"keys": [jwk]})
 
 
+# --- O suporte da plataforma só entra com consentimento (fase 6, §10.7) ---
+
+_SEM_CONSENTIMENTO = (
+    "Esta empresa não liberou o acesso do suporte da plataforma. Peça ao "
+    "administrador dela que libere em Administração › Usuários."
+)
+
+
+def _consentimento(c):
+    return {
+        "id": c.id,
+        "concedido_por": c.concedido_por_username,
+        "motivo": c.motivo,
+        "criado_em": c.criado_em,
+        "ate": c.ate,
+        "vigente": c.vigente,
+        "encerrado_em": c.encerrado_em,
+        "encerrado_por": c.encerrado_por_username,
+    }
+
+
+class SuporteDaEmpresaView(APIView):
+    """O admin libera (com prazo) ou encerra o acesso do suporte da plataforma às
+    pessoas, papéis e acessos da empresa dele. Liberar muda quem pode — é ato
+    grave e pede confirmação recente (fase 6). O supervisor lê aqui quais
+    empresas o deixaram entrar, e até quando."""
+
+    def get_permissions(self):
+        # Encerrar tira acesso: não pede confirmação. Liberar dá: pede.
+        if self.request.method == "POST":
+            return [IsTenantAdmin(), AtoGraveConfirmado()]
+        return [IsTenantAdmin()]
+
+    def get(self, request):
+        from payment.planos import SUPORTE_CONSENTIMENTO_MAX_DIAS, SUPORTE_CONSENTIMENTO_PADRAO_DIAS
+
+        from .models import ConsentimentoSuporte
+
+        u = request.user
+        corpo = {
+            "vigente": None,
+            "historico": [],
+            "dias": {"padrao": SUPORTE_CONSENTIMENTO_PADRAO_DIAS, "maximo": SUPORTE_CONSENTIMENTO_MAX_DIAS},
+        }
+        if u.tenant_id:
+            atual = suporte.vigente(u.tenant_id)
+            corpo["vigente"] = _consentimento(atual) if atual else None
+            corpo["historico"] = [
+                _consentimento(c) for c in ConsentimentoSuporte.objects.filter(tenant_id=u.tenant_id)[:10]
+            ]
+        if u.is_superuser:
+            corpo["empresas"] = [
+                {"id": str(c.tenant_id), "nome": c.tenant.nome, "ate": c.ate}
+                for c in ConsentimentoSuporte.objects.select_related("tenant").filter(
+                    encerrado_em__isnull=True, ate__gt=timezone.now(),
+                ).exclude(tenant_id=u.tenant_id)
+            ]
+        return Response(corpo)
+
+    def post(self, request):
+        u = request.user
+        if u.is_superuser:
+            return Response({"detail": "Quem libera o suporte é o administrador da empresa."}, status=403)
+        try:
+            dias = int(request.data.get("dias"))
+        except (TypeError, ValueError):
+            return Response({"dias": ["Informe por quantos dias."]}, status=400)
+        from payment.planos import SUPORTE_CONSENTIMENTO_MAX_DIAS
+
+        if not 1 <= dias <= SUPORTE_CONSENTIMENTO_MAX_DIAS:
+            return Response(
+                {"dias": [f"Escolha de 1 a {SUPORTE_CONSENTIMENTO_MAX_DIAS} dias."]}, status=400,
+            )
+        c = suporte.conceder(u, dias, request.data.get("motivo") or "", request=request)
+        return Response(_consentimento(c), status=201)
+
+    def delete(self, request):
+        encerrados = suporte.encerrar(request.user, request=request)
+        return Response({"encerrados": encerrados})
+
+
 # --- Administração da plataforma (superuser) ---
 
 class TenantViewSet(viewsets.ModelViewSet):
@@ -827,19 +1084,34 @@ class CatalogoPermissoesView(APIView):
 class UsuarioViewSet(viewsets.ModelViewSet):
     queryset = Usuario.objects.select_related("tenant", "segundo_fator").all()
     serializer_class = UsuarioSerializer
-    permission_classes = [IsTenantAdmin]
+    permission_classes = [IsTenantAdmin, PapelDoUsuarioConfirmado]
+
+    #: O resgate que dispensa consentimento (fase 6): o admin que perdeu o
+    #: segundo fator não tem como consentir. Continua na trilha e no e-mail.
+    RESGATE = {"redefinir_segundo_fator"}
 
     def get_queryset(self):
         qs = super().get_queryset()
         u = self.request.user
-        return qs if u.is_superuser else qs.filter(tenant_id=u.tenant_id)
+        if not u.is_superuser:
+            return qs.filter(tenant_id=u.tenant_id)
+        # Fase 6 (§10.7): o supervisor vê a própria empresa e as que consentiram.
+        filtro = suporte.filtro_de_pessoas(u)
+        if self.action in self.RESGATE:
+            filtro |= Q(is_tenant_admin=True, is_active=True)
+        return qs.filter(filtro)
 
     def perform_create(self, serializer):
         u = self.request.user
         if u.is_superuser:
             # Dono da plataforma provisionando: não é cliente, não tem plano a
-            # respeitar. É também o caminho de resgate quando um tenant precisa
-            # de um usuário fora do que contratou (suporte, migração).
+            # respeitar. Desde a fase 6, só na empresa dele, nas que consentiram,
+            # ou o primeiro admin de uma empresa que não tem nenhum (implantação).
+            tenant = serializer.validated_data.get("tenant")
+            if tenant is not None and not suporte.pode_criar_em(
+                u, tenant.id, criando_admin=bool(serializer.validated_data.get("is_tenant_admin")),
+            ):
+                raise PermissionDenied(_SEM_CONSENTIMENTO)
             serializer.save()
             return
         quotas.checar_seats(u.tenant)  # D24 — 402 antes de gravar
@@ -848,6 +1120,9 @@ class UsuarioViewSet(viewsets.ModelViewSet):
     def perform_update(self, serializer):
         u = self.request.user
         if u.is_superuser:
+            tenant = serializer.validated_data.get("tenant")
+            if tenant is not None and not suporte.pode_criar_em(u, tenant.id, criando_admin=False):
+                raise PermissionDenied(_SEM_CONSENTIMENTO)
             serializer.save()
             return
         # D24 — REATIVAR consome um seat tanto quanto criar. Sem esta checagem a
@@ -1003,28 +1278,55 @@ class UsuarioViewSet(viewsets.ModelViewSet):
 class PerfilViewSet(viewsets.ModelViewSet):
     queryset = Perfil.objects.select_related("tenant").all()
     serializer_class = PerfilSerializer
-    permission_classes = [IsTenantAdmin]
+    permission_classes = [IsTenantAdmin, AtoGraveConfirmado]
 
     def get_queryset(self):
         qs = super().get_queryset()
         u = self.request.user
-        return qs if u.is_superuser else qs.filter(tenant_id=u.tenant_id)
+        if u.is_superuser:  # fase 6: só a própria empresa e as que consentiram
+            return qs.filter(suporte.filtro_de_pessoas(u))
+        return qs.filter(tenant_id=u.tenant_id)
+
+    def _empresa_permitida(self, serializer):
+        u = self.request.user
+        tenant = serializer.validated_data.get("tenant")
+        if tenant is not None and not suporte.pode_criar_em(u, tenant.id, criando_admin=False):
+            raise PermissionDenied(_SEM_CONSENTIMENTO)
 
     def perform_create(self, serializer):
         u = self.request.user
-        serializer.save() if u.is_superuser else serializer.save(tenant=u.tenant)
+        if u.is_superuser:
+            self._empresa_permitida(serializer)
+            serializer.save()
+        else:
+            serializer.save(tenant=u.tenant)
 
     def perform_update(self, serializer):
         u = self.request.user
-        serializer.save() if u.is_superuser else serializer.save(tenant=u.tenant)
+        if u.is_superuser:
+            self._empresa_permitida(serializer)
+            serializer.save()
+        else:
+            serializer.save(tenant=u.tenant)
 
 
 class AcessoUsuarioModuloViewSet(viewsets.ModelViewSet):
     queryset = AcessoUsuarioModulo.objects.select_related("usuario", "modulo").all()
     serializer_class = AcessoUsuarioModuloSerializer
-    permission_classes = [IsTenantAdmin]
+    permission_classes = [IsTenantAdmin, AtoGraveConfirmado]
 
     def get_queryset(self):
         qs = super().get_queryset()
         u = self.request.user
-        return qs if u.is_superuser else qs.filter(usuario__tenant_id=u.tenant_id)
+        if u.is_superuser:  # fase 6: só a própria empresa e as que consentiram
+            return qs.filter(suporte.filtro_de_pessoas(u, "usuario__tenant_id"))
+        return qs.filter(usuario__tenant_id=u.tenant_id)
+
+    def perform_create(self, serializer):
+        u = self.request.user
+        alvo = serializer.validated_data.get("usuario")
+        if u.is_superuser and alvo is not None and not suporte.pode_criar_em(
+            u, alvo.tenant_id, criando_admin=False,
+        ):
+            raise PermissionDenied(_SEM_CONSENTIMENTO)
+        serializer.save()

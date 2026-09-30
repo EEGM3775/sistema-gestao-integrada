@@ -22,6 +22,8 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from _sessao import cabecalhos, da_resposta
+from _segundo_fator import entrar
 
 GW = os.getenv("SGI_GW", "http://localhost:8090").rstrip("/")
 IAM_CONTAINER = os.getenv("SGI_IAM_CONTAINER", "sgi-iam")
@@ -53,7 +55,7 @@ def _post(caminho: str, corpo: dict) -> tuple[int, dict, dict]:
 
 def _get(caminho: str, token: str) -> tuple[int, dict]:
     req = urllib.request.Request(
-        f"{GW}{caminho}", headers={"Authorization": f"Bearer {token}"}
+        f"{GW}{caminho}", headers=cabecalhos(token)
     )
     try:
         with urllib.request.urlopen(req) as r:
@@ -65,7 +67,7 @@ def _get(caminho: str, token: str) -> tuple[int, dict]:
 
 def claims(token: str) -> dict:
     """O plano e o teto como a IAM os calcula — o corpo do `/auth/me/`."""
-    req = urllib.request.Request(f"{GW}/auth/me/", headers={"Authorization": f"Bearer {token}"})
+    req = urllib.request.Request(f"{GW}/auth/me/", headers=cabecalhos(token))
     with urllib.request.urlopen(req) as r:
         return json.loads(r.read())
 
@@ -81,11 +83,11 @@ def teto_no_backend(token: str, esperado: int) -> tuple[int, dict]:
 
 
 def login() -> str:
-    status, corpo, _ = _post("/auth/login/", {"username": USUARIO, "password": SENHA})
-    if status != 200 or "access" not in corpo:
-        print(f"login falhou ({status}) — a stack está no ar? {GW}")
+    sessao = entrar(GW, USUARIO, SENHA)  # o cookie da sessão (BFF, fase 5)
+    if not sessao:
+        print(f"login falhou — a stack está no ar? {GW}")
         sys.exit(2)
-    return corpo["access"]
+    return sessao
 
 
 def definir_plano(slug: str | None) -> None:

@@ -7,6 +7,7 @@ Prova: camada 1 (entitlement de módulo) e camada 2 (papel), com o MESMO
 mecanismo do drone, agora nos módulos internos do backend.
 """
 import json, urllib.request, urllib.error
+from _sessao import cabecalhos, da_resposta
 
 GW = __import__("os").environ.get("SGI_GW", "http://localhost:8090")  # SGI_GW aponta ao staging (10.7)
 
@@ -14,7 +15,7 @@ def req(method, path, token=None, body=None):
     data = json.dumps(body).encode() if body is not None else None
     headers = {"Content-Type": "application/json"}
     if token:
-        headers["Authorization"] = "Bearer " + token
+        headers.update(cabecalhos(token))
     r = urllib.request.Request(GW + path, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(r, timeout=20) as resp:
@@ -27,7 +28,7 @@ def login(u, p):
     r = urllib.request.Request(GW + "/auth/login/", data=data, method="POST",
                                headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(r, timeout=20) as resp:
-        return json.load(resp)["access"]
+        return da_resposta(resp)
 
 demo = login("demo", "demo123")
 sem = login("semdrone", "semdrone123")

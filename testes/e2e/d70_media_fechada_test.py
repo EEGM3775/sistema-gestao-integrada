@@ -24,6 +24,7 @@ import sys
 import time
 
 import requests
+from _sessao import ANTI_CSRF
 
 GW = "http://localhost:8090"
 OK, FALHA = [], []
@@ -49,7 +50,8 @@ def entrar(usuario, senha):
     r = s.post(f"{GW}/auth/login/", json={"username": usuario, "password": senha}, timeout=30)
     if r.status_code != 200:
         return s, None
-    return s, {"Authorization": f"Bearer {r.json()['access']}"}
+    # BFF (fase 5): a Session guarda o cookie da sessão; falta só o anti-CSRF.
+    return s, dict(ANTI_CSRF)
 
 
 s, H = entrar("demo", "demo123")

@@ -78,7 +78,12 @@ class RequirePermission(BasePermission):
         # Fail-closed: sem a permissão, nega. O admin do tenant e o superusuário
         # local passam — a regra mora em `nucleo/autorizacao.py`, que decide pelo
         # token ou pelo PDP conforme o módulo (remodelagem, fase 3).
-        return autorizacao.pode(user, needed)
+        if not autorizacao.pode(user, needed):
+            return False
+        # Fase 6: o ato da classe C (pagar, atestar, exportar dado pessoal...)
+        # pede autenticação recente — senão, 401 com o desafio do step-up.
+        autorizacao.exigir_confirmacao(user, needed)
+        return True
 
     def _needed(self, request, view):
         # Verbo de domínio por ação (ex.: dar_baixa → erp.conta_receber.baixar) —

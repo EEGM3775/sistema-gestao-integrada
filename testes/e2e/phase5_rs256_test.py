@@ -3,19 +3,27 @@
 Prova: (a) a IAM assina RS256, (b) backend e drone validam com a chave pública,
 (c) um token forjado com o ANTIGO segredo HS256 é REJEITADO — o buraco do
 segredo compartilhado (bug da Fase 2) está fechado.
+
+Desde a fase 5 da remodelagem (BFF) o navegador não tem token: o roteiro entra
+com o cookie da sessão, lê o token que o gateway injetaria (`access_do_bff`) e
+confere que o `Authorization` mandado pelo cliente nem chega aos serviços.
 """
 import json, base64, urllib.request, urllib.error, hmac, hashlib, time, uuid
+from _sessao import access_do_bff, cabecalhos
+from _segundo_fator import entrar
 
 GW = __import__("os").environ.get("SGI_GW", "http://localhost:8090")  # SGI_GW aponta ao staging (10.7)
 
 def b64u_decode(s):
     return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
 
-def req(method, path, token=None, body=None):
+def req(method, path, token=None, body=None, bearer=None):
     data = json.dumps(body).encode() if body is not None else None
     headers = {"Content-Type": "application/json"}
     if token:
-        headers["Authorization"] = "Bearer " + token
+        headers.update(cabecalhos(token))
+    if bearer:
+        headers["Authorization"] = "Bearer " + bearer
     r = urllib.request.Request(GW + path, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(r, timeout=20) as resp:
@@ -27,18 +35,20 @@ def req(method, path, token=None, body=None):
     except urllib.error.HTTPError as e:
         return e.code, None
 
-s, d = req("POST", "/auth/login/", body={"username": "demo", "password": "demo123"})
-tok = d["access"]
+sessao = entrar(GW, "demo", "demo123")
+tok = access_do_bff(sessao, "api")
 hdr = json.loads(b64u_decode(tok.split(".")[0]))
-print("1) IAM assina com alg =", hdr.get("alg"), "(esperado RS256)")
+print("1) IAM assina com alg =", hdr.get("alg"), "(esperado RS256) | typ =", hdr.get("typ"), "(esperado at+jwt)")
 
 s, jwks = req("GET", "/.well-known/jwks.json")
 kty = jwks["keys"][0]["kty"] if jwks and jwks.get("keys") else None
 print("2) JWKS ->", s, "| kty =", kty, "(esperado RSA)")
 
-print("3) Token RS256 REAL da IAM:")
-print("   drone /odm-api/projects ->", req("GET", "/odm-api/projects", tok)[0], "(esperado 200)")
-print("   backend   /api/clientes/    ->", req("GET", "/api/clientes/", tok)[0], "(esperado 200)")
+print("3) Sessão real (o gateway injeta o RS256 da IAM):")
+print("   drone /odm-api/projects ->", req("GET", "/odm-api/projects", sessao)[0], "(esperado 200)")
+print("   backend   /api/clientes/    ->", req("GET", "/api/clientes/", sessao)[0], "(esperado 200)")
+print("   o token REAL mandado pelo cliente como Bearer não entra (o gateway o descarta):")
+print("   backend   /api/clientes/    ->", req("GET", "/api/clientes/", bearer=tok)[0], "(esperado 401)")
 
 # 4) Ataque: forja um token HS256 com o antigo segredo compartilhado
 secret = None
@@ -53,5 +63,5 @@ p = {"sub": "attacker", "tenant_id": str(uuid.uuid4()), "tenant_slug": "x",
 si = b64u(json.dumps(h).encode()) + "." + b64u(json.dumps(p).encode())
 forged = si + "." + b64u(hmac.new(secret.encode(), si.encode(), hashlib.sha256).digest())
 print("4) Token FORJADO (HS256 com o segredo antigo) — deve ser REJEITADO:")
-print("   drone /odm-api/projects ->", req("GET", "/odm-api/projects", forged)[0], "(esperado 401)")
-print("   backend   /api/clientes/    ->", req("GET", "/api/clientes/", forged)[0], "(esperado 401)")
+print("   drone /odm-api/projects ->", req("GET", "/odm-api/projects", bearer=forged)[0], "(esperado 401)")
+print("   backend   /api/clientes/    ->", req("GET", "/api/clientes/", bearer=forged)[0], "(esperado 401)")

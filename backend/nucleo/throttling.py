@@ -31,6 +31,7 @@ requisição**. Por isso o mixin envolve os três eixos, e não só o novo.
 from __future__ import annotations
 
 import logging
+import time
 
 from rest_framework.exceptions import Throttled
 from rest_framework.throttling import (
@@ -66,6 +67,19 @@ class LimiteDoTenantExcedido(Throttled):
         )
 
 
+_suspenso_avisado_ate = 0.0
+
+
+def _avisar_suspensao(escopo: str) -> None:
+    """Um erro por janela, e não um por requisição: o fail-open precisa aparecer
+    (a lição do D21) sem inundar o log enquanto o Redis está fora."""
+    global _suspenso_avisado_ate
+    agora = time.monotonic()
+    if agora >= _suspenso_avisado_ate:
+        _suspenso_avisado_ate = agora + 60
+        logger.error("throttle_suspenso_redis_fora", extra={"escopo": escopo})
+
+
 class FailOpenMixin:
     """Falha da cache **libera** a requisição, e registra erro.
 
@@ -77,6 +91,15 @@ class FailOpenMixin:
     """
 
     def allow_request(self, request, view):
+        # Redis sabidamente fora (disjuntor aberto pela autenticação ou pelo PDP
+        # na mesma requisição): nem tenta. A cache tem IGNORE_EXCEPTIONS, então a
+        # falha não chegaria ao `except` abaixo — só custaria, por throttle e por
+        # requisição, o tempo de descobrir que o Redis caiu (teste de caos, fase 6).
+        from . import autorizacao_pdp
+
+        if autorizacao_pdp.redis_parado():
+            _avisar_suspensao(getattr(self, "scope", "?"))
+            return True
         try:
             return super().allow_request(request, view)
         except Throttled:

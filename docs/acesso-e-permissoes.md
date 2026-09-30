@@ -520,7 +520,7 @@ existir.
 > **Natureza: desenho aprovado, construído em fases.** As seções 1 a 9 descrevem o sistema como ele
 > era antes da remodelagem; esta descreve para onde ele vai e por quê. Onde as duas discordam sobre o
 > token e a decisão de acesso, vale esta. Faseamento em §10.12; o que já está construído e como,
-> em §10.15; o estado de cada fase, no [roadmap](roadmap.md); o que o dono ainda precisa decidir, em
+> em §10.15 e §10.16; o estado de cada fase, no [roadmap](roadmap.md); o que o dono ainda precisa decidir, em
 > §10.14.
 
 ### 10.1 Por que remodelar
@@ -868,6 +868,11 @@ não de desenho.
   empresa na demo — pouco uso para fixar número.
 - A fonte das relações: a fase 4 manteve as tabelas da IAM como fonte, com reconciliação (§10.15). Se
   a fonte única no SpiceDB continuar sendo o alvo, ela é uma fase própria.
+- *(Fases 5 e 6, decisões de engenharia de 29/09/2026 a confirmar — §10.16)*: o prazo do
+  consentimento de suporte (padrão 1 dia, teto 7, em `payment/planos.py` §5.5r); as duas exceções ao
+  consentimento (primeiro admin da empresa sem nenhum; redefinir o segundo fator de um admin); liberar
+  o suporte como ato grave (step-up) e encerrar sem ele; o refresh mantido ao lado do cookie da sessão
+  (em vez de uma sessão só no servidor).
 
 ### 10.15 Como as fases 2, 3 e 4 estão construídas
 
@@ -987,5 +992,85 @@ reconciliação dá depois de uma queda do PDP. *(Decisão de engenharia de 25/0
 dono — ver §10.14.)*
 
 **O que da §10.6 fica para depois:** `sub` como UUID estável (hoje é o `username`, chave do espelho no
-backend e no drone), `acr`, `typ: at+jwt` e `aud` por serviço. Os dois últimos são a fase 5.
+backend e no drone). `acr`, `typ: at+jwt` e `aud` por serviço vieram com a fase 5 (§10.16).
+
+### 10.16 Como as fases 5 e 6 estão construídas
+
+#### A fase 5 — o BFF e a audiência por serviço
+
+**O navegador não tem token.** O login (e a segunda etapa, a troca de senha, o cadastro do segundo
+fator) grava dois cookies HttpOnly e `SameSite=Strict` e devolve só identidade e o relógio da sessão:
+o do **refresh** (`/auth/`, desliza a janela de inatividade, como antes) e o da **sessão**
+(`sgi_sessao`, `/`; com HTTPS, `__Host-sgi_sessao`). A credencial do cookie da sessão é aleatória e
+fica na `Sessao` só como hash ([`identity/sessoes.py`](../iam/identity/sessoes.py)).
+
+**O gateway é o BFF.** Em `/api/`, `/odm-api/` e `/ws/`, o nginx faz `auth_request` a
+`/auth/interno/bff/<api|drone>/` ([`identity/bff.py`](../iam/identity/bff.py)), que troca o cookie
+pelo access **daquele serviço** e o devolve em `X-BFF-Authorization`; o gateway o injeta no
+`Authorization`, descarta o que o cliente mandou e tira o cookie da sessão do pedido. O access fica
+guardado no Redis (DB 2, `sess:bff:<hash>:<aud>`) até um minuto antes de vencer; revogar a sessão o
+apaga. A IAM, que é o próprio BFF, autentica o navegador direto pelo cookie
+([`identity/autenticacao.py`](../iam/identity/autenticacao.py)). IAM fora → o gateway responde 5xx:
+sem sessão confirmável, nada passa.
+
+**Escrita pelo cookie** exige o cabeçalho `X-SGI-CSRF` e, quando o navegador diz de onde vem
+(`Sec-Fetch-Site`, `Origin`), a mesma origem; senão, 403 na borda. O WebSocket, que não leva
+cabeçalho próprio, é decidido pelo `Origin` (CSWSH) — o drone também deixou de aceitar handshake de
+qualquer origem.
+
+**A audiência e o tipo** ([`funcoesautorizacao/audiencias.py`](../funcoesautorizacao/audiencias.py)):
+
+| Token | `typ` | `aud` | Quem aceita |
+|---|---|---|---|
+| access de pessoa para o backend | `at+jwt` | `sgi-api` | backend |
+| access de pessoa para o drone | `at+jwt` | `sgi-drone` | drone (REST e WebSocket) |
+| access de pessoa para a IAM (testes, volta atrás) | `at+jwt` | `sgi-iam` | IAM |
+| token de serviço | `svc+jwt` | o do produto de destino | só a rota do `scope` dele (hoje: desvínculo de projetos do drone) |
+
+Quem assina é [`identity/emissao.py`](../iam/identity/emissao.py), com a chave e o `kid` do JWKS; o
+SimpleJWT segue assinando só o refresh. O access ganhou `acr` (`aal1` só senha, `aal2` com segundo
+fator) e `nbf`; a linha `Authorization` ficou perto de 950 B para qualquer persona.
+
+**O SPA** ([`api/attachAuth.ts`](../frontend/src/api/attachAuth.ts)) manda o cabeçalho anti-CSRF em
+toda chamada; num 401 renova a sessão pelo refresh e refaz uma vez. A renovação periódica só acontece
+se houve interação — é o que fecha a janela de inatividade. **O app do drone** deixou de guardar token
+no `localStorage` e de recebê-lo por URL ou `postMessage`: pergunta ao drone quem é a pessoa da sessão
+e, sem sessão, volta ao login da plataforma.
+
+**A volta atrás** (§10.12, "rota antiga mantida até o fim da fase") são duas flags da IAM, desligadas:
+`BFF_ACCESS_NO_CORPO` devolve o access no corpo (válido para os três serviços) e
+`BFF_BEARER_DO_CLIENTE` deixa o gateway repassar o `Authorization` do cliente.
+
+#### A fase 6 — endurecimento
+
+**Step-up na classe C.** Os atos críticos da lista do dono (§10.8) pedem o `auth_time` dentro da
+janela que a pessoa escolheu (faixa do dono em `payment/planos.py` §5.5o). No backend a regra mora em
+`autorizacao.exigir_confirmacao`, chamada **nos pontos que barram** — `RequirePermission`, o portão
+do LGPD, o `_exige` do PDCA e o atesto da escada —, nunca no `pode()`, que também desenha tela. Na
+IAM, mudar papel é compor persona, liberar módulo e mexer em `perfis`/`is_tenant_admin` de alguém
+(`AtoGraveConfirmado`, `PapelDoUsuarioConfirmado`). A recusa é **401** com
+`codigo: confirmacao_necessaria` e o `WWW-Authenticate` da RFC 9470; a janela da pessoa chega ao
+backend pela ficha dela. A tela abre "Confirme que é você"
+([`ConfirmacaoDialog`](../frontend/src/components/ConfirmacaoDialog.tsx)), chama `/auth/confirmar/`
+— o código do app para quem tem segundo fator; a senha para quem não tem (decisão 6) — e refaz o
+pedido. Código de recuperação não assina ato grave, e erro de senha conta no mesmo bloqueio do código.
+
+**O consentimento do supervisor** ([`identity/suporte.py`](../iam/identity/suporte.py)). O PDP já
+prendia o supervisor à própria empresa; a IAM não — ele via e mexia em pessoas, papéis e acessos de
+todas. Agora, fora da empresa dele, só com um `ConsentimentoSuporte` vigente, que o admin concede em
+Administração › Usuários por 1 a `SUPORTE_CONSENTIMENTO_MAX_DIAS` e encerra quando quiser (liberar é
+ato grave; encerrar não). Duas exceções, sem as quais a empresa trancaria para sempre: criar o
+primeiro admin de uma empresa que não tem nenhum, e redefinir o segundo fator de um admin — as duas
+continuam na trilha e no e-mail. Conceder e encerrar viram `EventoSeguranca`.
+
+**Testes de caos** ([`seg6_caos_test.py`](../testes/e2e/seg6_caos_test.py)): derrubam o SpiceDB, o
+Redis e a IAM do dev, um de cada vez e juntos, e conferem o modo de falha da §10.8 classe a classe,
+o logout com o Redis fora e a borda fechada com a IAM fora. Na primeira volta acharam que o Redis
+fora parava a plataforma em vez de só deixá-la mais lenta (D221): IAM e backend com um worker
+síncrono do gunicorn, operações de Redis por requisição sem disjuntor e o gateway esperando 30 s o
+DNS da IAM. Hoje: gunicorn com threads, disjuntor compartilhado (revogação, PDP e throttle no
+backend; BFF e sessões na IAM) e tempos curtos no gateway.
+
+**Pentest externo** — o critério de saída da fase 6 — é contratação do dono; o escopo sugerido está
+no [roadmap](roadmap.md).
 

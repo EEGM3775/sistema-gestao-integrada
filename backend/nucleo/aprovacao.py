@@ -250,6 +250,9 @@ def decidir(*, pedido: PedidoAprovacao, usuario, aprovar: bool,
         raise PermissionDenied(
             f"O degrau '{nivel.nome}' exige a permissão '{nivel.permissao_exigida}'."
         )
+    # O degrau que exige um código da classe C (atestar, pagar...) pede
+    # autenticação recente de quem assina — fase 6, §10.5.
+    autorizacao.exigir_confirmacao(usuario, nivel.permissao_exigida)
 
     Atesto.objects.create(
         tenant_id=pedido.tenant_id,

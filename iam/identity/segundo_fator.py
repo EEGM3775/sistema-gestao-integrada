@@ -207,6 +207,19 @@ def _zerar_falhas(usuario) -> None:
     cache.delete(_chave_falhas(usuario))
 
 
+def conferir_senha(usuario, senha, *, request=None) -> None:
+    """A senha redigitada no ato grave de quem não tem segundo fator (step-up,
+    fase 6 — §10.5, decisão 6 do dono). Conta no **mesmo** bloqueio do código:
+    quem roubou a sessão não ganha, na confirmação, um adivinhador de senha sem
+    freio. Levanta `CodigoRecusado`."""
+    if bloqueado(usuario):
+        raise CodigoRecusado("bloqueado")
+    if not usuario.check_password(senha or ""):
+        _registrar_falha(usuario, request)
+        raise CodigoRecusado("invalido")
+    _zerar_falhas(usuario)
+
+
 # --- verificar -------------------------------------------------------------------
 def verificar(usuario, codigo, *, request=None, aceita_recuperacao: bool = True) -> str:
     """Confere o código do app (ou um de recuperação). Devolve `totp` ou

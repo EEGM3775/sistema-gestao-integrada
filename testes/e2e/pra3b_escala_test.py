@@ -21,6 +21,8 @@ reconversao a sobrescreve (a regra do pin `exata` do MAP.6).
 Pre-requisito: stack `--profile full` de pe e os seeds rodados (demo/demo123).
 """
 import json, os, ssl, sys, time, urllib.request, urllib.error, uuid
+from _sessao import cabecalhos, da_resposta
+from _segundo_fator import entrar
 
 BASE = "http://localhost:8090"
 
@@ -58,7 +60,7 @@ def req(metodo, caminho, token=None, corpo=None, arquivo=None):
     url = BASE + caminho
     dados, headers = None, {}
     if token:
-        headers["Authorization"] = f"Bearer {token}"
+        headers.update(cabecalhos(token))
     if arquivo:
         limite = uuid.uuid4().hex
         nome, conteudo = arquivo
@@ -88,10 +90,9 @@ def checar(nome, condicao, extra=""):
     if not condicao:
         falhas.append(nome)
 
-status, corpo = req("POST", "/auth/login/", corpo={"username": "demo", "password": "demo123"})
-token = (corpo or {}).get("access") if status == 200 else None
+token = entrar(BASE, "demo", "demo123")  # o cookie da sessão (BFF, fase 5)
 if not token:
-    print(f"login falhou: {status} {corpo}"); sys.exit(1)
+    print("login falhou"); sys.exit(1)
 
 status, obras = req("GET", "/api/obras/?page_size=1", token)
 lista = obras["results"] if isinstance(obras, dict) else obras

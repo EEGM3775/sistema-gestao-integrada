@@ -26,6 +26,13 @@ def da_empresa(tenant) -> dict:
     return {"slug": tenant.slug, "nome": tenant.nome, **dados_do_plano(tenant)}
 
 
+def da_pessoa(email, janela_confirmacao_min) -> dict:
+    """O e-mail, que o espelho do backend precisa, e a janela de confirmação do
+    ato grave (fase 6), que o backend aplica no step-up da classe C. Nada mais:
+    a ficha não é um segundo token."""
+    return {"email": email, "janela_confirmacao_min": janela_confirmacao_min}
+
+
 def publicar(tenant_id, redis_cliente) -> int:
     """Publica a ficha da empresa e a de cada pessoa ativa dela. Devolve quantas."""
     from .models import Tenant, Usuario
@@ -36,8 +43,11 @@ def publicar(tenant_id, redis_cliente) -> int:
     pipe = redis_cliente.pipeline()
     pipe.set(chaves.ficha_da_empresa(str(tenant.id)), json.dumps(da_empresa(tenant)))
     n = 1
-    for uid, email in Usuario.objects.filter(tenant=tenant, is_active=True).values_list("id", "email"):
-        pipe.set(chaves.ficha_da_pessoa(str(uid)), json.dumps({"email": email}))
+    pessoas = Usuario.objects.filter(tenant=tenant, is_active=True).values_list(
+        "id", "email", "janela_confirmacao_min",
+    )
+    for uid, email, janela in pessoas:
+        pipe.set(chaves.ficha_da_pessoa(str(uid)), json.dumps(da_pessoa(email, janela)))
         n += 1
     pipe.execute()
     return n

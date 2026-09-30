@@ -1810,6 +1810,23 @@ AUTORIZACAO_DIVERGENCIA_JANELA_S: int = 3600
 AUTORIZACAO_SOMBRA_DIAS_SEM_DIVERGENCIA: int = 14
 
 # ---------------------------------------------------------------------------
+# 5.5r O consentimento de suporte (remodelagem, fase 6)
+# ---------------------------------------------------------------------------
+# docs/acesso-e-permissoes.md §10.7. O supervisor da plataforma só enxerga as
+# pessoas, os papéis e os acessos de uma empresa enquanto o admin dela deixa, e
+# **com data de fim**. Não é por plano, pela mesma razão da §5.5o: o que protege
+# o dado do cliente não é upsell.
+#
+# **Até quanto tempo o admin pode liberar de uma vez.** Um chamado de suporte
+# se resolve em horas ou dias; um prazo aberto vira acesso permanente que
+# ninguém lembra de fechar. **7 dias** cobre o chamado que atravessa um fim de
+# semana; passado disso, o admin libera de novo — e fica registrado de novo.
+# **1 dia** é o que a tela sugere. *(Números propostos pela engenharia em
+# 29/09/2026, a confirmar pelo dono.)*
+SUPORTE_CONSENTIMENTO_PADRAO_DIAS: int = 1
+SUPORTE_CONSENTIMENTO_MAX_DIAS: int = 7
+
+# ---------------------------------------------------------------------------
 # 5.5q A venda de unidade — quantos meios de pagamento uma proposta comporta
 # ---------------------------------------------------------------------------
 # A venda deixou de ter **uma** condição e passou a ser uma lista livre de meios

@@ -109,10 +109,11 @@ def _payload(**overrides):
     return base
 
 
-def _assinar(payload):
-    """Assina com a privada efêmera, sempre em RS256 — ver `_par_efemero`."""
+def _assinar(payload, typ="at+jwt"):
+    """Assina com a privada efêmera, sempre em RS256 — ver `_par_efemero`. O
+    `typ` do cabeçalho é o do access de pessoa (fase 5); `None` o omite."""
     privada, _ = _par_efemero()
-    return jwt.encode(payload, privada, algorithm="RS256")
+    return jwt.encode(payload, privada, algorithm="RS256", headers={"typ": typ} if typ else None)
 
 
 def _token(**overrides):
@@ -187,6 +188,24 @@ class S8IssuerAudienceTests(APITestCase):
         """O caso que motiva o `aud`: token válido, porém destinado a outro consumidor."""
         with self.assertRaises(AuthenticationFailed):
             self._autenticar(_token(aud="outro-produto"))
+
+    def test_a_audiencia_desta_api_e_a_dela(self):
+        """Fase 5 (§10.6): um `aud` por serviço. O access que o BFF pede para o
+        drone ou para a IAM — mesma chave, mesmo emissor — não entra aqui."""
+        self.assertEqual(settings.SIMPLE_JWT["AUDIENCE"], "sgi-api")
+        for outra in ("sgi-drone", "sgi-iam", "sgi"):
+            with self.subTest(aud=outra), self.assertRaises(AuthenticationFailed):
+                self._autenticar(_token(aud=outra))
+
+    def test_token_de_servico_nao_entra_como_pessoa(self):
+        """O `svc+jwt` não representa ninguém a quem a RLS e o PDP respondam."""
+        with self.assertRaises(AuthenticationFailed):
+            self._autenticar(_assinar(_payload(svc=True), typ="svc+jwt"))
+
+    def test_access_sem_typ_e_recusado(self):
+        """O access de antes da fase 5, sem o `typ`, não passa mais."""
+        with self.assertRaises(AuthenticationFailed):
+            self._autenticar(_assinar(_payload(), typ=None))
 
     def test_sem_iss_ou_aud_e_recusado(self):
         """Token legado (anterior ao S8) não é aceito: exigir a claim é o ponto."""

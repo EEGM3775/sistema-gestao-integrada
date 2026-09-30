@@ -54,7 +54,9 @@ class ObservabilityMiddleware:
         view = self._view_label(request)
         obs.observe_request(self.service, request.method, view, status, duration_s)
 
-        if path in _QUIET_PATHS:
+        # O BFF (fase 5) é consultado pelo gateway a cada chamada à API: a linha
+        # do acesso já sai no serviço de destino, e a métrica acima fica.
+        if path in _QUIET_PATHS or path.startswith("/auth/interno/bff/"):
             return
 
         logger.log(

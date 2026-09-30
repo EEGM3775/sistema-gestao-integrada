@@ -37,6 +37,8 @@ Pre-requisito: stack `--profile full` de pe (incluindo o **worker-conversao**) e
 os seeds rodados (demo/demo123).
 """
 import json, ssl, sys, time, urllib.error, urllib.request, uuid
+from _sessao import cabecalhos, da_resposta
+from _segundo_fator import entrar
 
 BASE = "http://localhost:8090"
 #: Quanto esperar a conversao. Generoso de proposito: a prancha pesada tem de
@@ -58,7 +60,7 @@ def req(metodo, caminho, token=None, corpo=None, arquivo=None):
     url = BASE + caminho
     dados, headers = None, {}
     if token:
-        headers["Authorization"] = f"Bearer {token}"
+        headers.update(cabecalhos(token))
     if arquivo:
         limite = uuid.uuid4().hex
         nome, conteudo = arquivo
@@ -160,10 +162,9 @@ def memoria_de(revisao):
 
 
 # ---------------------------------------------------------------------------
-status, corpo = req("POST", "/auth/login/", corpo={"username": "demo", "password": "demo123"})
-token = (corpo or {}).get("access") if status == 200 else None
+token = entrar(BASE, "demo", "demo123")  # o cookie da sessão (BFF, fase 5)
 if not token:
-    print(f"login falhou: {status} {corpo}")
+    print("login falhou")
     sys.exit(1)
 
 status, obras = req("GET", "/api/obras/?page_size=1", token)

@@ -35,6 +35,8 @@ import sys
 import urllib.error
 import urllib.request
 import uuid
+from _sessao import cabecalhos as _cabecalhos_da_sessao, da_resposta
+from _segundo_fator import entrar
 
 _CTX = ssl.create_default_context()
 _CTX.check_hostname = False
@@ -49,7 +51,7 @@ def req(gw, metodo, caminho, token=None, corpo=None, timeout=300):
     dados = json.dumps(corpo).encode() if corpo is not None else None
     cabecalhos = {"Content-Type": "application/json"}
     if token:
-        cabecalhos["Authorization"] = "Bearer " + token
+        cabecalhos.update(_cabecalhos_da_sessao(token))
     pedido = urllib.request.Request(gw + caminho, data=dados, method=metodo,
                                     headers=cabecalhos)
     try:
@@ -89,7 +91,7 @@ def upload_lote(gw, caminho, token, campos, arquivos, timeout=900):
     pedido = urllib.request.Request(
         gw + caminho, data=b"".join(partes), method="POST",
         headers={"Content-Type": f"multipart/form-data; boundary={limite}",
-                 "Authorization": "Bearer " + token},
+                 **cabecalhos(token)},
     )
     try:
         with urllib.request.urlopen(pedido, timeout=timeout, context=_CTX) as resposta:
@@ -169,11 +171,9 @@ def principal():
     opcoes = analisador.parse_args()
 
     gw = opcoes.gateway.rstrip("/")
-    status, sessao = req(gw, "POST", "/auth/login/",
-                         corpo={"username": opcoes.usuario, "password": opcoes.senha})
-    if status != 200 or not (sessao or {}).get("access"):
-        sys.exit(f"login falhou ({status}): {sessao}")
-    token = sessao["access"]
+    token = entrar(gw, opcoes.usuario, opcoes.senha)  # o cookie da sessão (BFF)
+    if not token:
+        sys.exit("login falhou: usuário ou senha recusados")
 
     relativos = escolher(opcoes.pasta, opcoes)
     if not relativos:

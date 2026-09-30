@@ -52,6 +52,7 @@ Rodar (stack de pé):  python testes/e2e/map6_maps_test.py
 """
 import json, os, ssl, sys, urllib.error, urllib.parse, urllib.request, uuid
 from datetime import date, timedelta
+from _sessao import cabecalhos, da_resposta
 
 # Console do Windows costuma ser cp1252 e quebra em acento ao redirecionar.
 try:
@@ -75,7 +76,7 @@ def req(method, path, token=None, body=None, raw=False, timeout=120):
     data = json.dumps(body).encode() if body is not None else None
     headers = {"Content-Type": "application/json"}
     if token:
-        headers["Authorization"] = "Bearer " + token
+        headers.update(cabecalhos(token))
     r = urllib.request.Request(GW + path, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(r, timeout=timeout, context=_CTX) as resp:
@@ -109,7 +110,7 @@ def upload(path, token, nome_arquivo, conteudo: bytes, campos=None):
         GW + path, data=corpo, method="POST",
         headers={
             "Content-Type": f"multipart/form-data; boundary={limite}",
-            "Authorization": "Bearer " + token,
+            **cabecalhos(token),
         },
     )
     try:
@@ -127,7 +128,7 @@ def login(u, p):
     r = urllib.request.Request(GW + "/auth/login/", data=data, method="POST",
                                headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(r, timeout=30, context=_CTX) as resp:
-        return json.load(resp)["access"]
+        return da_resposta(resp)
 
 
 def linhas(payload):

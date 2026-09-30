@@ -64,6 +64,7 @@ import json, os, ssl, sys, time, urllib.error, urllib.request, uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from amostras_pra8 import AMOSTRAS, DWG, DXF, PDF, RVT_RECONHECIVEL  # noqa: E402
+from _sessao import cabecalhos, da_resposta
 
 # Console do Windows costuma ser cp1252 e quebra em acento ao redirecionar.
 try:
@@ -92,7 +93,7 @@ def req(method, path, token=None, body=None, timeout=120):
     data = json.dumps(body).encode() if body is not None else None
     headers = {"Content-Type": "application/json"}
     if token:
-        headers["Authorization"] = "Bearer " + token
+        headers.update(cabecalhos(token))
     r = urllib.request.Request(GW + path, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(r, timeout=timeout, context=_CTX) as resp:
@@ -110,7 +111,7 @@ def bruto(path, token=None, timeout=120):
     Os headers SÃO o teste aqui: `nosniff`, `attachment` e `immutable` são as
     três decisões de entrega da planta §7.1, e nenhuma delas aparece no corpo.
     """
-    headers = {"Authorization": "Bearer " + token} if token else {}
+    headers = cabecalhos(token) if token else {}
     r = urllib.request.Request(GW + path, method="GET", headers=headers)
     try:
         with urllib.request.urlopen(r, timeout=timeout, context=_CTX) as resp:
@@ -140,7 +141,7 @@ def upload(path, token, campos, arquivo=None, metodo="POST"):
         GW + path, data=b"".join(partes), method=metodo,
         headers={
             "Content-Type": f"multipart/form-data; boundary={limite}",
-            "Authorization": "Bearer " + token,
+            **cabecalhos(token),
         },
     )
     try:
@@ -182,7 +183,7 @@ def upload_lote(path, token, campos, arquivos):
         GW + path, data=b"".join(partes), method="POST",
         headers={
             "Content-Type": f"multipart/form-data; boundary={limite}",
-            "Authorization": "Bearer " + token,
+            **cabecalhos(token),
         },
     )
     try:
@@ -200,7 +201,7 @@ def login(u, p):
     r = urllib.request.Request(GW + "/auth/login/", data=data, method="POST",
                                headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(r, timeout=30, context=_CTX) as resp:
-        return json.load(resp)["access"]
+        return da_resposta(resp)
 
 
 def linhas(payload):

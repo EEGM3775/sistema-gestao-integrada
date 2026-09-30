@@ -14,12 +14,14 @@ from django.core.cache import cache
 from django.test import SimpleTestCase, TestCase, override_settings
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken
-from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from identity import catalog, segundo_fator, views
 from identity.models import CodigoRecuperacao, EventoSeguranca, SegundoFator, Tenant, Usuario
 from identity.tokens import access_with_claims, issue_refresh
 from payment import planos
+
+from .bff_de_teste import access_do_bff, carga
 
 
 def _codigo(usuario, deslocamento=0):
@@ -150,7 +152,7 @@ class NenhumAdminEntraSemSegundoFatorTests(BaseSegundoFator):
     def test_comum_sem_segundo_fator_entra_so_com_senha(self):
         r = self._login("ana")
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(AccessToken(r.data["access"])["amr"], ["pwd"])
+        self.assertEqual(carga(access_do_bff(self.client))["amr"], ["pwd"])
 
     def test_admin_sem_segundo_fator_cai_no_cadastro_e_nao_ganha_sessao(self):
         r = self._login("adm")
@@ -169,7 +171,7 @@ class NenhumAdminEntraSemSegundoFatorTests(BaseSegundoFator):
             {"desafio": desafio, "codigo": _codigo(self.admin)}, format="json",
         )
         self.assertEqual(r.status_code, 200, r.data)
-        self.assertEqual(AccessToken(r.data["access"])["amr"], ["pwd", "otp"])
+        self.assertEqual(carga(access_do_bff(self.client))["amr"], ["pwd", "otp"])
         self.assertEqual(len(r.data["codigos"]), planos.SEGUNDO_FATOR_CODIGOS_DE_RECUPERACAO)
         self.assertIn("sgi_refresh", r.cookies)
         self.assertTrue(
@@ -190,7 +192,7 @@ class NenhumAdminEntraSemSegundoFatorTests(BaseSegundoFator):
         self.assertNotIn("access", r.data)
         ok = self._segunda_etapa(r.data["desafio"], _codigo(self.admin, 1))
         self.assertEqual(ok.status_code, 200, ok.data)
-        self.assertEqual(AccessToken(ok.data["access"])["amr"], ["pwd", "otp"])
+        self.assertEqual(carga(access_do_bff(self.client))["amr"], ["pwd", "otp"])
         self.assertIsNotNone(ok.cookies["sgi_refresh"]["max-age"])  # o "lembrar" atravessou
 
     def test_a_sessao_antiga_do_admin_cai_no_refresh(self):
@@ -205,7 +207,7 @@ class NenhumAdminEntraSemSegundoFatorTests(BaseSegundoFator):
         self._bearer(self.admin)
         r = self.client.post("/auth/refresh/")
         self.assertEqual(r.status_code, 200, r.data)
-        self.assertEqual(AccessToken(r.data["access"])["amr"], ["pwd", "otp"])
+        self.assertEqual(carga(access_do_bff(self.client))["amr"], ["pwd", "otp"])
 
     def test_comum_que_ativou_perde_a_sessao_so_de_senha(self):
         _ativar(self.comum)
@@ -216,7 +218,8 @@ class NenhumAdminEntraSemSegundoFatorTests(BaseSegundoFator):
         self.t.segundo_fator_obrigatorio = False
         self.t.save()
         r = self._login("adm")
-        self.assertIn("access", r.data)
+        self.assertNotIn("segundo_fator", r.data)
+        self.assertEqual(carga(access_do_bff(self.client))["amr"], ["pwd"])
 
 
 class CodigoTests(BaseSegundoFator):
@@ -279,7 +282,7 @@ class TelaDePerfilTests(BaseSegundoFator):
             "/auth/segundo-fator/cadastro/confirmar/", {"codigo": _codigo(self.comum)}, format="json",
         )
         self.assertEqual(r.status_code, 200, r.data)
-        self.assertEqual(AccessToken(r.data["access"])["amr"], ["pwd", "otp"])
+        self.assertEqual(carga(access_do_bff(self.client))["amr"], ["pwd", "otp"])
         self.assertTrue(BlacklistedToken.objects.filter(token__jti=outra["jti"]).exists())
         nova = RefreshToken(r.cookies["sgi_refresh"].value)  # valida: não está na blacklist
         self.assertNotEqual(nova["jti"], outra["jti"])

@@ -8,9 +8,12 @@ Ver docs/arquitetura.md (Fase 0.3).
 """
 import logging
 
+import jwt
 from django.contrib.auth import get_user_model
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken
+
+from funcoesautorizacao import audiencias
 
 from . import fichas
 from .models import Tenant
@@ -22,6 +25,20 @@ User = get_user_model()
 
 
 class IamJWTAuthentication(JWTAuthentication):
+    def get_validated_token(self, raw_token):
+        """Fase 5 (§10.6): só entra o access **de pessoa** — `typ: at+jwt`. O
+        token de serviço (`svc+jwt`) tem audiência de outro produto e, mesmo que
+        a tivesse, não representa ninguém a quem a RLS e o PDP pudessem
+        responder; o access sem `typ` é o de antes da fase 5. A audiência
+        (`sgi-api`) o SimpleJWT confere, pelo settings."""
+        try:
+            tipo = jwt.get_unverified_header(raw_token).get("typ")
+        except jwt.PyJWTError as erro:
+            raise InvalidToken("Token ilegível.") from erro
+        if tipo != audiencias.TIPO_PESSOA:
+            raise InvalidToken("Tipo de token não aceito nesta API.")
+        return super().get_validated_token(raw_token)
+
     def authenticate(self, request):
         """Além de validar o JWT, **arma o contexto RLS** assim que o usuário é
         resolvido. Como isto roda em `initial()` → dentro da transação do
@@ -91,6 +108,9 @@ class IamJWTAuthentication(JWTAuthentication):
         user.iam_tenant_id = validated_token.get("tenant_id")
         user.iam_token_iat = validated_token.get("iat")
         user.iam_sid = validated_token.get("sid")
+        # Fase 6: quando a sessão provou quem é pela última vez — o step-up do
+        # ato grave (classe C) confere com a janela da pessoa (autorizacao.py).
+        user.iam_auth_time = validated_token.get("auth_time")
 
         # As listas de acesso. **Só `nucleo/autorizacao.py` as lê** (cobrado por
         # teste): toda pergunta "pode?" passa por lá. Desde a fase 4 o token não

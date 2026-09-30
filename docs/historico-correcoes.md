@@ -10,6 +10,63 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D221 — com o Redis fora, a plataforma parava em vez de ficar mais lenta · ✅ corrigido 29/09/2026
+
+Achado pelo teste de caos da fase 6 (`seg6_caos_test.py`, 14/24 na primeira volta). A §10.8 diz
+"Redis fora: o PEP pergunta direto ao PDP (mais lento, correto)". Com o Redis parado, toda chamada à
+API levava 40 s e voltava **401 "Sessão encerrada"** — quem estava trabalhando era posto para fora.
+Quatro causas, uma sobre a outra:
+
+- o nome de um Redis parado não resolve, e **a resolução DNS não é limitada pelo `socket_timeout`**:
+  cada tentativa custava ~4 s;
+- o backend tentava o Redis várias vezes por requisição sem disjuntor — os throttles do DRF (a cache
+  tem `IGNORE_EXCEPTIONS`, então o fail-open nunca via a falha), o cache do PDP e a revogação, cada
+  um descobrindo a mesma queda; na IAM, o BFF (a cada chamada) também;
+- **IAM e backend rodavam o padrão do gunicorn: um worker síncrono.** Uma requisição presa (inclusive
+  a healthcheck do Docker) segurava todas as outras — e o PEP, sem resposta da IAM em 1 s, negava a
+  sessão, como a classe B manda;
+- o gateway esperava 30 s pelo DNS da IAM parada (padrão do `resolver_timeout`) e 60 s pela conexão.
+
+**Correção:** gunicorn `gthread` com workers e threads nos dois (`deploy/compose/base.yml`,
+`IAM_GUNICORN_*`/`ERP_GUNICORN_*`); disjuntor compartilhado no backend (revogação e PDP abrem um ao
+outro; o throttle não toca o Redis com ele aberto e avisa uma vez por minuto) e na IAM
+(`revocation.redis_caiu`, usado pelo BFF e pelas sessões); a pergunta interna da sessão sem throttle;
+`resolver_timeout 5s`, `proxy_connect_timeout 5s` e tempos curtos no `auth_request` do gateway. O
+padrão do `IAM_INTERNAL_URL` do backend apontava para a porta errada (8000) e foi corrigido (o compose
+já passava 8001). Guardas: `test_disjuntor_redis.py` e o caos, 24/24 — com o Redis fora a leitura
+passa em ~4 a 8 s, e o logout ainda derruba o access em ~4 s.
+
+**Vale para produção também:** o worker único era um teto de concorrência que a fase 5 tornou
+crítico — a IAM passou a ser consultada em toda chamada à API.
+---
+### D220 — o drone não conferia emissor nem audiência do token · ✅ corrigido 29/09/2026
+
+Visto ao preparar a fase 5: o `JwtUtil` do funcoesODM validava assinatura e `exp`, e mais nada.
+Qualquer JWT assinado pela IAM — de qualquer audiência, inclusive o de serviço — entrava em qualquer
+rota do drone. **Correção** (fase 5): `iss` `sgi-iam`, `aud` `sgi-drone` e `typ` `at+jwt`/`svc+jwt`
+exigidos; o de serviço só na rota de desvínculo e com o escopo dela (`JwtUtilAudienciaTest`).
+---
+### D219 — o WebSocket do drone aceitava handshake de qualquer origem · ✅ corrigido 29/09/2026
+
+`setAllowedOriginPatterns("*")` no `/ws`. Com o token no frame STOMP era inofensivo; com a sessão
+num cookie (fase 5), uma página de outro site abriria o canal com a sessão de quem a visitou
+(CSWSH). **Correção:** as origens do CORS (`app.cors.allowed-origins`) também no handshake, e o BFF
+recusa o upgrade cujo `Origin` não é o do site (`X-Original-Upgrade`). E2E: `phase10_8_service_ws_test.py`.
+---
+### D218 — o staging e a produção não limitavam por IP a segunda etapa do login · ✅ corrigido 29/09/2026
+
+O `nginx.unified.conf` (dev) tinha a zona `segundo_fator` em `/auth/login/segundo-fator/` desde a
+fase 1; o `nginx.staging.conf`, que o `prod.yml` também usa, não — ali o código só tinha o bloqueio
+por conta da IAM. **Correção:** a mesma zona e a mesma location no staging.
+---
+### D217 — a importação grande ficava parada em "lendo" · ✅ corrigido 29/09/2026
+
+Achado pela E2E `ie_impexp_test.py`: o job da importação assíncrona era enfileirado **dentro** da
+transação da requisição (`ATOMIC_REQUESTS`), e o worker o pegava antes do commit — "importação sumiu
+antes do job" no log, e a tela parada em "lendo" para sempre. A exportação grande tinha o mesmo
+desenho. **Correção:** os três `delay` de `funcoesimpexp/views.py` passaram a `transaction.on_commit`;
+guarda em `test_o_job_so_sai_depois_do_commit`.
+---
 ### D210 — a venda tinha uma condição de pagamento só, e a da incorporadora é combinada · ✅ corrigido 25/09/2026
 
 Relato do dono, itens 47–50: *"Em clientes Nova Aquisição o cliente pode escolher mais de um meio de

@@ -3,6 +3,8 @@
 Pré: `docker compose --profile full up -d` e o seed da IAM (demo/semdrone).
 """
 import json, urllib.request, urllib.error
+from _sessao import cabecalhos, da_resposta
+from _segundo_fator import entrar
 
 GW = __import__("os").environ.get("SGI_GW", "http://localhost:8090")  # SGI_GW aponta ao staging (10.7)
 
@@ -10,7 +12,7 @@ def req(method, path, token=None, body=None):
     data = json.dumps(body).encode() if body is not None else None
     headers = {"Content-Type": "application/json"}
     if token:
-        headers["Authorization"] = "Bearer " + token
+        headers.update(cabecalhos(token))
     r = urllib.request.Request(GW + path, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(r, timeout=20) as resp:
@@ -23,8 +25,7 @@ def req(method, path, token=None, body=None):
         return e.code, e.read().decode(errors="replace")[:160]
 
 def login(user, pwd):
-    s, d = req("POST", "/auth/login/", body={"username": user, "password": pwd})
-    return d["access"] if s == 200 else None
+    return entrar(GW, user, pwd)  # o cookie da sessão (BFF, fase 5)
 
 print("== Login pela IAM (via gateway) ==")
 tok_demo = login("demo", "demo123")

@@ -119,8 +119,20 @@ def redis():
 
 
 def redis_caiu() -> None:
+    """Abre o disjuntor. O Redis da revogação é o mesmo servidor (outro banco):
+    ele também para de ser tentado — senão cada um pagaria, por requisição, o
+    próprio tempo de descobrir que o Redis caiu (achado do teste de caos, fase 6)."""
     global _redis_parado_ate
     _redis_parado_ate = time.monotonic() + _REDIS_PAUSA_S
+    from . import revocation
+
+    revocation.abrir_disjuntor(propagar=False)
+
+
+def redis_parado() -> bool:
+    """O disjuntor do Redis está aberto — quem usa o Redis por requisição (o
+    throttle) não o tenta enquanto isso."""
+    return time.monotonic() < _redis_parado_ate
 
 
 def _consistencia(classe: str, zedtoken: str | None) -> dict:

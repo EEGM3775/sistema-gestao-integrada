@@ -15,11 +15,14 @@ Prova (stack de pé, imagens IAM e java-service REBUILDADAS):
   2. O endpoint de desvínculo do drone (/odm-api/projects/links/obra/{id}) é
      gateado pelo módulo drone: sem token → 401; com um token da IAM com o módulo
      drone → 200 (o token de serviço é exatamente isso — um JWT da IAM com drone).
-  3. WS: CONNECT sem Authorization → ERROR; CONNECT com o access do demo → CONNECTED.
+  3. WS: CONNECT sem sessão → ERROR; com a sessão do demo → CONNECTED. Desde a
+     fase 5 da remodelagem (BFF) o cookie da sessão vai no upgrade e o gateway
+     injeta o access do drone ali; de outro site (Origin estranho), não abre (CSWSH).
 
 Rodar (stack de pé):  python testes/e2e/phase10_8_service_ws_test.py
 """
 import json, os, socket, sys, base64, struct, urllib.request, urllib.error
+from _sessao import NOME, cabecalhos, da_resposta
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -45,7 +48,7 @@ def req(method, path, token=None, body=None, headers=None):
     data = json.dumps(body).encode() if body is not None else None
     h = {"Content-Type": "application/json"}
     if token:
-        h["Authorization"] = "Bearer " + token
+        h.update(cabecalhos(token))
     if headers:
         h.update(headers)
     r = urllib.request.Request(GW + path, data=data, method=method, headers=h)
@@ -64,18 +67,20 @@ def login(u, p):
     r = urllib.request.Request(GW + "/auth/login/", data=data, method="POST",
                                headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(r, timeout=30) as resp:
-        return json.load(resp)["access"]
+        return da_resposta(resp)
 
 # --- Cliente WebSocket + STOMP mínimo (stdlib) --------------------------------
-def stomp_connect(auth_token):
-    """Abre o WS nativo em /ws/websocket e envia um frame STOMP CONNECT.
+def stomp_connect(sessao, origem=WS_ORIGIN):
+    """Abre o WS nativo em /ws/websocket (com o cookie da sessão no upgrade, como
+    o navegador) e envia um frame STOMP CONNECT sem token.
     Devolve o comando do frame de resposta: 'CONNECTED' (aceito) ou 'ERROR'."""
     key = base64.b64encode(os.urandom(16)).decode()
+    biscoito = f"Cookie: {NOME}={sessao}\r\n" if sessao else ""
     handshake = (
         f"GET /ws/websocket HTTP/1.1\r\nHost: {WS_HOST}:{WS_PORT}\r\n"
         "Upgrade: websocket\r\nConnection: Upgrade\r\n"
         f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n"
-        f"Origin: {WS_ORIGIN}\r\n\r\n"
+        f"{biscoito}Origin: {origem}\r\n\r\n"
     )
     s = socket.create_connection((WS_HOST, WS_PORT), timeout=15)
     try:
@@ -84,8 +89,6 @@ def stomp_connect(auth_token):
         if "101" not in resp.split("\r\n", 1)[0]:
             return f"NO_UPGRADE({resp.splitlines()[0] if resp else 'vazio'})"
         hdrs = "\naccept-version:1.2\nhost:localhost\n"
-        if auth_token:
-            hdrs = f"\naccept-version:1.2\nhost:localhost\nAuthorization:Bearer {auth_token}\n"
         _ws_send_text(s, f"CONNECT{hdrs}\n\x00")
         return _stomp_command(_ws_recv_text(s))
     finally:
@@ -145,15 +148,18 @@ print("== 2) Drone: endpoint de desvínculo gateado pelo módulo drone ==")
 status, _ = req("DELETE", "/odm-api/projects/links/obra/999999")
 check(f"desvínculo SEM token -> {status} (esperado 401)", status == 401)
 status, body = req("DELETE", "/odm-api/projects/links/obra/999999", token=demo)
-check(f"desvínculo com token (módulo drone) -> {status} (esperado 200)", status == 200)
+check(f"desvínculo com a sessão (módulo drone) -> {status} (esperado 200)", status == 200)
 check("resposta traz 'unlinked'", isinstance(body, dict) and "unlinked" in body)
 
 # --- 3) WebSocket CONNECT exige o token ---------------------------------------
-print("== 3) WebSocket /ws — CONNECT exige token da IAM ==")
+print("== 3) WebSocket /ws — CONNECT exige a sessão da IAM ==")
 sem = stomp_connect(None)
-check(f"CONNECT sem token -> {sem} (esperado ERROR)", sem == "ERROR")
+check(f"CONNECT sem sessão -> {sem} (esperado ERROR)", sem == "ERROR")
 com = stomp_connect(demo)
-check(f"CONNECT com token do demo -> {com} (esperado CONNECTED)", com == "CONNECTED")
+check(f"CONNECT com a sessão do demo -> {com} (esperado CONNECTED)", com == "CONNECTED")
+alheio = stomp_connect(demo, origem="https://evil.example")
+check(f"a sessão vinda de outro site não abre o canal -> {alheio} (esperado sem upgrade)",
+      alheio.startswith("NO_UPGRADE"))
 
 print()
 if all(passed):

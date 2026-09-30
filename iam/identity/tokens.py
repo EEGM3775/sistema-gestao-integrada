@@ -1,10 +1,8 @@
 """Claims do JWT emitido pela IAM e consumido por todos os produtos."""
 
-from datetime import timedelta
-
 from django.conf import settings
 from django.utils import timezone
-from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from payment.regras import (
     CLAIM_QUOTAS,
@@ -122,48 +120,27 @@ def issue_refresh(user, *, remember: bool, sst: int | None = None,
     token["sst"] = int(sst) if sst else agora
     token["rem"] = bool(remember)
     token["amr"] = list(amr) if amr else ["pwd"]
-    token["sid"] = str(sid) if sid else str(sessoes.abrir(user).sid)
+    token["sid"] = str(sid) if sid else str(
+        sessoes.abrir(user, lembrar=remember, amr=token["amr"]).sid
+    )
     token["auth_time"] = int(auth_time) if auth_time else agora
     _aplicar_validade(token, remember)
     return token
 
 
-def access_with_claims(refresh: RefreshToken, user):
-    """Access token derivado do refresh + claims da plataforma. É o que os
-    resource servers (backend, drone) consomem; vale `ACCESS_TOKEN_LIFETIME` (5 min)."""
-    access = refresh.access_token
-    for chave, valor in build_claims(user).items():
-        access[chave] = valor
-    return access
+def access_with_claims(refresh: RefreshToken, user, audiencia=None) -> str:
+    """O access de uma pessoa, com a sessão do refresh. Sem audiência, é para a
+    própria IAM (`sgi-iam`): o navegador não recebe mais access desde a fase 5 —
+    quem o pede ao BFF é o gateway (`identity.bff`). Com a volta atrás
+    (`BFF_ACCESS_NO_CORPO`), o corpo do login leva um para todos os serviços."""
+    from funcoesautorizacao import audiencias
 
+    from .emissao import access_da_pessoa
 
-def issue_service_token(*, caller: str, tenant_id: str, audience: str = "drone",
-                        ttl_seconds: int | None = None) -> str:
-    """JWT **serviço→serviço** de vida curta (Fase 10.8), assinado com a mesma
-    chave da plataforma (RS256 em produção / HS256 em dev) → os resource servers
-    (backend, drone) o validam **exatamente** como um access de usuário.
-
-    Diferente do access de usuário: não representa uma pessoa — não carrega
-    `user_id` (logo a checagem de revogação por época é no-op: não há sessão a
-    revogar) e vem sem permissões/papéis. Carrega só o mínimo que a borda do
-    produto-alvo exige: `sub` de serviço (`svc-<caller>`, provisionado JIT no
-    drone), o `tenant_id` a que a ação se restringe e o `modules` com o
-    entitlement do produto (ex.: `drone`), para passar no gate de módulo.
-
-    Usado hoje pelo backend ao excluir obra/empreendimento, para desvincular
-    (soft) no drone os projetos órfãos daquele tenant (pendência da Fase 3).
-    """
-    token = AccessToken()
-    ttl = ttl_seconds if ttl_seconds is not None else settings.SERVICE_TOKEN_TTL_SECONDS
-    token.set_exp(lifetime=timedelta(seconds=ttl))
-    token["sub"] = f"svc-{caller}"
-    token["svc"] = True  # marcador: é um token de serviço, não de usuário
-    token["tenant_id"] = str(tenant_id) if tenant_id else None
-    # O entitlement do produto-alvo, e só ele: token de serviço não tem pessoa
-    # para o PDP responder, então decide pela claim (a separação por tipo e
-    # audiência é a fase 5).
-    token["modules"] = [audience]
-    return str(token)
+    return access_da_pessoa(
+        user, audiencia=audiencia or audiencias.IAM, sid=refresh["sid"],
+        amr=refresh.get("amr"), auth_time=refresh["auth_time"], sst=refresh.get("sst"),
+    )
 
 
 def cookie_max_age(token) -> int:

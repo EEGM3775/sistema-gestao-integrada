@@ -46,6 +46,7 @@ import urllib.request
 from playwright.sync_api import sync_playwright
 
 from _segundo_fator import completar_login, responder_no_navegador
+from _sessao import cabecalhos, da_resposta
 
 GW = "http://localhost:8090"
 OK, FALHA = [], []
@@ -75,7 +76,7 @@ def acervo_por_api(token, obra):
         pedido = urllib.request.Request(
             f"{GW}/api/prancheta/revisoes/?documento__obra={obra}"
             f"&page_size=200&page={pagina}",
-            headers={"Authorization": "Bearer " + token},
+            headers=cabecalhos(token),
         )
         with urllib.request.urlopen(pedido, timeout=60) as resposta:
             dados = json.loads(resposta.read().decode())
@@ -92,7 +93,7 @@ def token_de(usuario, senha):
         headers={"Content-Type": "application/json"},
     )
     with urllib.request.urlopen(pedido, timeout=60) as resposta:
-        return completar_login(GW, json.loads(resposta.read().decode()))["access"]
+        return completar_login(GW, resposta)["sessao"]
 
 
 def rodar(pasta, obra, usuario, senha, esperados, nome_da_obra):

@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import maplibregl, { type Map as MapLibreMap, type StyleSpecification } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { useTheme } from '@/hooks/useTheme'
-import { getAccessToken } from '@/api/tokenStore'
 
 /**
  * `<Mapa>` — a superfície espacial da Malha (MAP.1).
@@ -145,16 +144,6 @@ export function Mapa({
       center: centro ?? BRASIL,
       zoom: centro ? zoom : 3.4,
       attributionControl: { compact: true },
-      // Tile de ortofoto sai do NOSSO backend, com entitlement e escopo de
-      // tenant (o COG do drone é `permitAll` — achado S10). O MapLibre não
-      // manda header sozinho: é aqui que o access token entra.
-      transformRequest: (url) => {
-        if (url.startsWith('/api/') || url.includes('/api/maps/')) {
-          const token = getAccessToken()
-          return token ? { url, headers: { Authorization: `Bearer ${token}` } } : { url }
-        }
-        return { url }
-      },
     })
     m.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
     m.addControl(new maplibregl.ScaleControl({ maxWidth: 90, unit: 'metric' }))

@@ -9,6 +9,7 @@ import sys
 import time
 
 import requests
+from _sessao import ANTI_CSRF
 
 GW = "http://localhost:8090"
 OK, FALHA = [], []
@@ -22,8 +23,7 @@ def checar(nome, condicao, detalhe=""):
 s = requests.Session()
 login = s.post(f"{GW}/auth/login/", json={"username": "demo", "password": "demo123"}, timeout=30)
 checar("login demo", login.status_code == 200, login.status_code)
-token = login.json().get("access")
-H = {"Authorization": f"Bearer {token}"}
+H = dict(ANTI_CSRF)  # BFF (fase 5): a Session guarda o cookie da sessão
 
 # --- 1. o recurso aparece para quem tem acesso total -------------------------
 r = s.get(f"{GW}/api/impexp/recursos/", headers=H, timeout=30)
@@ -111,7 +111,7 @@ checar("exportar responde", exp.status_code in (200, 202), exp.status_code)
 sem = requests.Session()
 login2 = sem.post(f"{GW}/auth/login/", json={"username": "semdrone", "password": "demo123"}, timeout=30)
 if login2.status_code == 200:
-    H2 = {"Authorization": f"Bearer {login2.json()['access']}"}
+    H2 = dict(ANTI_CSRF)
     ids2 = [x["id"] for x in sem.get(f"{GW}/api/impexp/recursos/", headers=H2,
                                      timeout=30).json().get("recursos", [])]
     checar("operacional não vê o recurso (R11)", "orcamento.banco_preco" not in ids2, ids2)

@@ -41,6 +41,7 @@ Rodar (stack de pé):  python testes/e2e/orc6_orcamento_test.py
 import json, os, ssl, sys, urllib.error, urllib.parse, urllib.request
 from datetime import date
 from decimal import Decimal
+from _sessao import cabecalhos, da_resposta
 
 # Console do Windows costuma ser cp1252 e quebra em acento ao redirecionar.
 try:
@@ -59,7 +60,7 @@ def req(method, path, token=None, body=None, raw=False):
     data = json.dumps(body).encode() if body is not None else None
     headers = {"Content-Type": "application/json"}
     if token:
-        headers["Authorization"] = "Bearer " + token
+        headers.update(cabecalhos(token))
     r = urllib.request.Request(GW + path, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(r, timeout=120, context=_CTX) as resp:
@@ -78,7 +79,7 @@ def login(u, p):
     r = urllib.request.Request(GW + "/auth/login/", data=data, method="POST",
                                headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(r, timeout=30, context=_CTX) as resp:
-        return json.load(resp)["access"]
+        return da_resposta(resp)
 
 
 def linhas(payload):

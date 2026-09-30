@@ -4,6 +4,7 @@ import { Modal, Btn } from '@/components/malha'
 import { FormErrorBanner, parseApiErrors, type FieldErrors } from '@/utils/formErrors'
 import { useUsuarios } from '../hooks/useUsuarios'
 import { useAuth } from '@/hooks/useAuth'
+import { SuporteDaPlataforma } from '../components/SuporteDaPlataforma'
 import { PasswordField } from '@/components/PasswordField'
 import type { UsuarioAdmin, Perfil } from '../types'
 
@@ -214,7 +215,7 @@ const UsuariosPage: React.FC = () => {
   const [editing, setEditing] = useState<UsuarioAdmin | null>(null)
   const [resetting, setResetting] = useState<UsuarioAdmin | null>(null)
   const [redefinindo, setRedefinindo] = useState<UsuarioAdmin | null>(null)
-  const { user } = useAuth()
+  const { user, isPlatformAdmin } = useAuth()
 
   const nomePorId = useMemo(() => new Map(perfis.map(p => [p.id, p.nome])), [perfis])
   const filtered = useMemo(() => {
@@ -234,6 +235,8 @@ const UsuariosPage: React.FC = () => {
       <p className="text-sm mb-6" style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-body)' }}>
         Atribua papéis (personas) a cada usuário do tenant. Os papéis são geridos em <b>Papéis e Acessos</b>.
       </p>
+
+      <SuporteDaPlataforma supervisor={isPlatformAdmin} />
 
       <div className="relative max-w-xs mb-5">
         <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--color-text-muted)' }} />

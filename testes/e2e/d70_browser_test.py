@@ -59,6 +59,12 @@ def rodar():
         pagina.fill("input#username", "demo")
         pagina.fill("input#password", "demo123")
         pagina.click("button[type=submit]")
+        # O `networkidle` chega antes de o login sair (a página já estava parada):
+        # espera a navegação que o login faz, e não o silêncio da rede.
+        try:
+            pagina.wait_for_url(lambda url: "/login" not in url, timeout=20_000)
+        except Exception:
+            pass
         pagina.wait_for_load_state("networkidle")
         checar("login demo pelo gateway", "/login" not in pagina.url, pagina.url)
 

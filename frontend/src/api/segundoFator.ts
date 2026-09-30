@@ -2,12 +2,11 @@
 //
 // Duas portas para o mesmo cadastro: o login de quem é obrigado a ter e ainda
 // não tem (autorizado pelo `desafio` que a senha certa devolveu) e a tela
-// Minha conta › Segurança (autorizada pela sessão). Toda resposta que traz
-// `access` é uma sessão nova, e é guardada aqui mesmo — como no login.
+// Minha conta › Segurança (autorizada pela sessão). A resposta que abre uma sessão
+// nova traz os cookies dela e o relógio de queda — como no login.
 import axios from 'axios'
 import { attachAuth } from './attachAuth'
-import type { LoginData } from './session'
-import { setAccessToken } from './tokenStore'
+import { CABECALHO_ANTI_CSRF, type LoginData } from './session'
 import { atualizarRelogio, type CamposSessao } from './sessionClock'
 
 const iamBaseURL = (import.meta.env.VITE_IAM_BASE_URL as string | undefined) ?? '/auth'
@@ -15,7 +14,7 @@ const iamBaseURL = (import.meta.env.VITE_IAM_BASE_URL as string | undefined) ?? 
 const semSessao = axios.create({
   baseURL: iamBaseURL,
   withCredentials: true,
-  headers: { 'Content-Type': 'application/json' },
+  headers: { 'Content-Type': 'application/json', ...CABECALHO_ANTI_CSRF },
 })
 
 const comSessao = axios.create({ baseURL: iamBaseURL })
@@ -53,11 +52,8 @@ export interface SegurancaDaConta {
   janela_confirmacao: { minutos: number; padrao: number; minimo: number; maximo: number }
 }
 
-function guardarSessao<T extends { access?: string } & CamposSessao>(data: T): T {
-  if (data.access) {
-    setAccessToken(data.access)
-    atualizarRelogio(data)
-  }
+function guardarSessao<T extends CamposSessao>(data: T): T {
+  atualizarRelogio(data)
   return data
 }
 

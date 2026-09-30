@@ -101,7 +101,19 @@ class TravaDeSeatsTests(SeatsTestBase):
         self.assertEqual(self._criar("segundo").status_code, 201)
 
     def test_dono_da_plataforma_provisiona_acima_do_teto(self):
-        """Caminho de resgate: suporte e migração não podem depender do plano."""
+        """Caminho de resgate: suporte e migração não podem depender do plano.
+
+        Desde a fase 6 o suporte só entra na empresa que consentiu (§10.7) — o
+        consentimento vem primeiro; o teto de seats continua não valendo para ele."""
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from identity.models import ConsentimentoSuporte
+
+        ConsentimentoSuporte.objects.create(
+            tenant=self.tenant, concedido_por=self.admin, ate=timezone.now() + timedelta(days=1),
+        )
         dono = Usuario.objects.create(
             username="dono", email="dono@teste.com", is_superuser=True, is_staff=True
         )
