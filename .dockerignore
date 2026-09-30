@@ -16,6 +16,8 @@ testes
 docs
 media
 ImgDrone
+# O drone builda dos próprios diretórios (funcoesODM/...), nunca da raiz.
+funcoesODM
 frontend
 infra
 deploy

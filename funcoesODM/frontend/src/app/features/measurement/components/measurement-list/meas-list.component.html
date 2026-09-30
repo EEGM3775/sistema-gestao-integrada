@@ -1,0 +1,43 @@
+<!-- MeasListComponent — lista de medições com header -->
+<div class="measurement-results">
+
+  <!-- Cabeçalho -->
+  <div class="results-header">
+    <h4>Medições</h4>
+    <span class="results-count">{{ measurements.length }}</span>
+    @if (measurements.length > 0) {
+      <button class="export-trigger-btn" (click)="openExport.emit()" title="Exportar medições">
+        Exportar
+      </button>
+    }
+  </div>
+
+  <!-- Estado vazio -->
+  @if (measurements.length === 0) {
+    <div class="results-empty">
+      <p>Nenhuma medição realizada ainda</p>
+      <p class="hint">Use as ferramentas acima para criar medições</p>
+    </div>
+  } @else {
+    <!-- Lista de itens -->
+    <div class="results-list">
+      @for (m of measurements; track m.id) {
+        <app-meas-item
+          [measurement]="m"
+          [isVisible]="visibleIds.has(m.id)"
+          [isExpanded]="expandedId() === m.id"
+          [isEditing]="editingId() === m.id"
+          [editingName]="editingId() === m.id ? editingName() : ''"
+          (toggleVisibilityChange)="onToggleVisibility(m, $event)"
+          (focusRequested)="onFocusMeasurement(m)"
+          (toggleDetailRequested)="onToggleDetail(m.id)"
+          (startEditRequested)="onStartEdit(m)"
+          (confirmEditRequested)="onConfirmEdit(m, $event)"
+          (cancelEditRequested)="onCancelEdit()"
+          (deleteRequested)="onDelete(m.id)">
+        </app-meas-item>
+      }
+    </div>
+  }
+
+</div>

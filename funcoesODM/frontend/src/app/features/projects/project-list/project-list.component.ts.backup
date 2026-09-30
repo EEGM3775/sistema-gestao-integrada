@@ -1,0 +1,1040 @@
+import { Component, OnInit, signal, computed, effect } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
+import { Router, RouterLink } from '@angular/router';
+import { ProjectService } from '../services/project.service';
+import { Project, ProjectStatus } from '../models/project.model';
+import { CardComponent } from '../../../shared/components/card/card.component';
+import { ButtonComponent } from '../../../shared/components/button/button.component';
+import { LoadingSpinnerComponent } from '../../../shared/components/loading-spinner/loading-spinner.component';
+import { PaginationComponent, PageEvent } from '../../../shared/components/pagination/pagination.component';
+import { FilterChipComponent } from '../../../shared/components/filter-chip/filter-chip.component';
+
+// Tipos para filtros e ordenação
+export type SortField = 'name' | 'createdAt' | 'updatedAt' | 'imageCount' | 'status';
+export type SortDirection = 'asc' | 'desc';
+
+export interface ProjectFilters {
+  status: string;
+  search: string;
+  dateFrom: string;
+  dateTo: string;
+}
+
+export interface SortConfig {
+  field: SortField;
+  direction: SortDirection;
+}
+
+@Component({
+  selector: 'app-project-list',
+  standalone: true,
+  imports: [
+    CommonModule, 
+    FormsModule,
+    RouterLink, 
+    CardComponent, 
+    ButtonComponent, 
+    LoadingSpinnerComponent,
+    PaginationComponent,
+    FilterChipComponent
+  ],
+  template: `
+    <div class="project-list-page">
+      <header class="page-header">
+        <div>
+          <h1>Projetos</h1>
+          <p>Gerencie seus projetos de fotogrametria</p>
+        </div>
+        <app-button routerLink="/projects/new">
+          + Novo Projeto
+        </app-button>
+      </header>
+
+      <!-- Barra de Filtros Avançados -->
+      <div class="filters-section">
+        <div class="filters-row">
+          <!-- Busca -->
+          <div class="search-box">
+            <span class="search-icon">🔍</span>
+            <input 
+              type="text" 
+              placeholder="Buscar por nome ou descrição..." 
+              [value]="filters().search"
+              (input)="onSearch($event)"
+            />
+            <button 
+              *ngIf="filters().search" 
+              class="clear-btn" 
+              (click)="clearSearch()"
+              title="Limpar busca"
+            >
+              ×
+            </button>
+          </div>
+
+          <!-- Filtro por Status -->
+          <div class="filter-group">
+            <label>Status:</label>
+            <select [value]="filters().status" (change)="onStatusChange($event)">
+              <option value="all">Todos</option>
+              <option *ngFor="let s of statusOptions" [value]="s.value">
+                {{ s.label }}
+              </option>
+            </select>
+          </div>
+
+          <!-- Filtro por Data -->
+          <div class="filter-group">
+            <label>De:</label>
+            <input 
+              type="date" 
+              [value]="filters().dateFrom"
+              (change)="onDateFromChange($event)"
+            />
+          </div>
+          <div class="filter-group">
+            <label>Até:</label>
+            <input 
+              type="date" 
+              [value]="filters().dateTo"
+              (change)="onDateToChange($event)"
+            />
+          </div>
+
+          <!-- Botão de Limpar Filtros -->
+          <button 
+            class="clear-filters-btn" 
+            *ngIf="hasActiveFilters()"
+            (click)="clearAllFilters()"
+          >
+            Limpar Filtros
+          </button>
+        </div>
+
+        <!-- Ordenação -->
+        <div class="sort-row">
+          <div class="sort-controls">
+            <label>Ordenar por:</label>
+            <select [value]="sortConfig().field" (change)="onSortFieldChange($event)">
+              <option *ngFor="let opt of sortOptions" [value]="opt.value">
+                {{ opt.label }}
+              </option>
+            </select>
+            <button 
+              class="sort-direction-btn" 
+              (click)="toggleSortDirection()"
+              [title]="sortConfig().direction === 'asc' ? 'Crescente' : 'Decrescente'"
+            >
+              {{ sortConfig().direction === 'asc' ? '↑' : '↓' }}
+            </button>
+          </div>
+
+          <div class="view-toggle">
+            <button 
+              class="view-btn" 
+              [class.active]="viewMode() === 'grid'"
+              (click)="setViewMode('grid')"
+              title="Visualização em grade"
+            >
+              ▦
+            </button>
+            <button 
+              class="view-btn" 
+              [class.active]="viewMode() === 'list'"
+              (click)="setViewMode('list')"
+              title="Visualização em lista"
+            >
+              ☰
+            </button>
+          </div>
+        </div>
+
+        <!-- Chips de Filtros Ativos -->
+        <div class="active-filters" *ngIf="hasActiveFilters()">
+          <span class="active-filters-label">Filtros ativos:</span>
+          <app-filter-chip 
+            *ngIf="filters().status !== 'all'"
+            label="Status"
+            [value]="getStatusLabel(filters().status)"
+            (remove)="clearStatusFilter()"
+          />
+          <app-filter-chip 
+            *ngIf="filters().search"
+            label="Busca"
+            [value]="filters().search"
+            (remove)="clearSearch()"
+          />
+          <app-filter-chip 
+            *ngIf="filters().dateFrom"
+            label="De"
+            [value]="formatDate(filters().dateFrom)"
+            (remove)="clearDateFrom()"
+          />
+          <app-filter-chip 
+            *ngIf="filters().dateTo"
+            label="Até"
+            [value]="formatDate(filters().dateTo)"
+            (remove)="clearDateTo()"
+          />
+        </div>
+      </div>
+
+      <!-- Resumo dos Resultados -->
+      <div class="results-summary" *ngIf="!isLoading()">
+        <span class="count">{{ filteredAndSortedProjects().length }} projeto(s) encontrado(s)</span>
+        <span class="total" *ngIf="projects().length !== filteredAndSortedProjects().length">
+          de {{ projects().length }} total
+        </span>
+      </div>
+
+      <app-loading-spinner *ngIf="isLoading()" message="Carregando projetos..."></app-loading-spinner>
+
+      <!-- Estado Vazio -->
+      <div *ngIf="!isLoading() && filteredAndSortedProjects().length === 0" class="empty-state">
+        <div class="empty-icon">📁</div>
+        <h3 *ngIf="hasActiveFilters()">Nenhum projeto encontrado com os filtros aplicados</h3>
+        <h3 *ngIf="!hasActiveFilters()">Nenhum projeto encontrado</h3>
+        <p *ngIf="hasActiveFilters()">Tente ajustar os filtros ou</p>
+        <p *ngIf="!hasActiveFilters()">Crie seu primeiro projeto para começar</p>
+        <div class="empty-actions">
+          <app-button 
+            *ngIf="hasActiveFilters()" 
+            variant="outline" 
+            (click)="clearAllFilters()"
+          >
+            Limpar Filtros
+          </app-button>
+          <app-button routerLink="/projects/new" variant="primary">
+            Criar Projeto
+          </app-button>
+        </div>
+      </div>
+
+      <!-- Grade de Projetos -->
+      <div 
+        *ngIf="!isLoading() && paginatedProjects().length > 0" 
+        class="projects-container"
+        [class.grid-view]="viewMode() === 'grid'"
+        [class.list-view]="viewMode() === 'list'"
+      >
+        <app-card 
+          *ngFor="let project of paginatedProjects(); trackBy: trackByProjectId" 
+          [clickable]="true"
+          class="project-card"
+          [routerLink]="['/projects', project.id]"
+        >
+          <div class="project-header">
+            <h3>{{ project.name }}</h3>
+            <span class="status-badge" [class]="project.status.toLowerCase()">
+              {{ getStatusLabel(project.status) }}
+            </span>
+          </div>
+          
+          <p class="project-description">{{ project.description || 'Sem descrição' }}</p>
+          
+          <div class="project-stats">
+            <div class="stat">
+              <span class="stat-value">{{ project.imageCount }}</span>
+              <span class="stat-label">Imagens</span>
+            </div>
+            <div class="stat">
+              <span class="stat-value">{{ project.taskCount }}</span>
+              <span class="stat-label">Tarefas</span>
+            </div>
+          </div>
+
+          <div class="project-footer">
+            <span class="date">
+              <span class="date-icon">📅</span>
+              {{ project.createdAt | date:'dd/MM/yyyy' }}
+            </span>
+            <div class="actions">
+              <button 
+                class="action-btn" 
+                title="Visualizar Mapa" 
+                (click)="openMap($event, project.id)"
+              >
+                🗺️
+              </button>
+              <button 
+                class="action-btn" 
+                title="Visualizar 3D" 
+                (click)="open3D($event, project.id)"
+              >
+                🧊
+              </button>
+              <button 
+                class="action-btn danger" 
+                title="Excluir" 
+                (click)="deleteProject($event, project.id)"
+              >
+                🗑️
+              </button>
+            </div>
+          </div>
+        </app-card>
+      </div>
+
+      <!-- Paginação -->
+      <app-pagination
+        *ngIf="!isLoading() && filteredAndSortedProjects().length > 0"
+        [length]="filteredAndSortedProjects().length"
+        [pageSizeInput]="pageSize()"
+        [pageIndexInput]="pageIndex()"
+        [pageSizeOptions]="[6, 12, 24, 48]"
+        (page)="onPageChange($event)"
+      />
+    </div>
+  `,
+  styles: [`
+    .project-list-page {
+      padding: 1.5rem;
+      max-width: 1400px;
+      margin: 0 auto;
+      color: var(--color-text);
+    }
+
+    /* Header */
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.5rem;
+    }
+
+    .page-header h1 {
+      margin: 0;
+      font-size: 1.75rem;
+      color: var(--color-text);
+    }
+
+    .page-header p {
+      margin: 0.25rem 0 0;
+      color: var(--color-text-secondary);
+    }
+
+    /* Filters Section */
+    .filters-section {
+      background: var(--color-bg-white);
+      border: 1px solid var(--color-border);
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .filters-row {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      align-items: flex-end;
+    }
+
+    .search-box {
+      flex: 1;
+      min-width: 250px;
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .search-icon {
+      position: absolute;
+      left: 12px;
+      font-size: 0.9rem;
+      opacity: 0.5;
+    }
+
+    .search-box input {
+      width: 100%;
+      padding: 0.625rem 2rem 0.625rem 2.25rem;
+      border: 1px solid var(--color-border);
+      background: var(--color-bg-white);
+      color: var(--color-text);
+      border-radius: 6px;
+      font-size: 0.95rem;
+    }
+
+    .search-box input:focus {
+      outline: none;
+      border-color: var(--color-primary);
+      box-shadow: 0 0 0 3px var(--color-primary-bg);
+    }
+
+    .clear-btn {
+      position: absolute;
+      right: 8px;
+      background: none;
+      border: none;
+      color: var(--color-text-muted);
+      cursor: pointer;
+      font-size: 1.25rem;
+      padding: 0.25rem;
+      line-height: 1;
+    }
+
+    .clear-btn:hover {
+      color: var(--color-text);
+    }
+
+    .filter-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.375rem;
+    }
+
+    .filter-group label {
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: var(--color-text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .filter-group select,
+    .filter-group input[type="date"] {
+      padding: 0.5rem 0.75rem;
+      border: 1px solid var(--color-border);
+      background: var(--color-bg-white);
+      color: var(--color-text);
+      border-radius: 6px;
+      font-size: 0.875rem;
+      min-width: 140px;
+    }
+
+    .filter-group select:focus,
+    .filter-group input:focus {
+      outline: none;
+      border-color: var(--color-primary);
+    }
+
+    .clear-filters-btn {
+      padding: 0.5rem 1rem;
+      background: transparent;
+      border: 1px solid var(--color-danger);
+      color: var(--color-danger);
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.875rem;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+
+    .clear-filters-btn:hover {
+      background: var(--color-danger);
+      color: white;
+    }
+
+    /* Sort Row */
+    .sort-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 1rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--color-border);
+    }
+
+    .sort-controls {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .sort-controls label {
+      font-size: 0.875rem;
+      color: var(--color-text-secondary);
+    }
+
+    .sort-controls select {
+      padding: 0.375rem 0.75rem;
+      border: 1px solid var(--color-border);
+      background: var(--color-bg-white);
+      color: var(--color-text);
+      border-radius: 4px;
+      font-size: 0.875rem;
+    }
+
+    .sort-direction-btn {
+      padding: 0.375rem 0.625rem;
+      background: var(--color-bg-white);
+      border: 1px solid var(--color-border);
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 1rem;
+      transition: all 0.15s;
+    }
+
+    .sort-direction-btn:hover {
+      background: var(--color-bg-hover);
+      border-color: var(--color-primary);
+    }
+
+    .view-toggle {
+      display: flex;
+      border: 1px solid var(--color-border);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .view-btn {
+      padding: 0.375rem 0.625rem;
+      background: var(--color-bg-white);
+      border: none;
+      cursor: pointer;
+      font-size: 1rem;
+      color: var(--color-text-secondary);
+      transition: all 0.15s;
+    }
+
+    .view-btn:not(:last-child) {
+      border-right: 1px solid var(--color-border);
+    }
+
+    .view-btn:hover {
+      background: var(--color-bg-hover);
+    }
+
+    .view-btn.active {
+      background: var(--color-primary);
+      color: white;
+    }
+
+    /* Active Filters */
+    .active-filters {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.5rem;
+      margin-top: 1rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--color-border);
+    }
+
+    .active-filters-label {
+      font-size: 0.8rem;
+      color: var(--color-text-secondary);
+      font-weight: 500;
+    }
+
+    /* Results Summary */
+    .results-summary {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+      font-size: 0.9rem;
+    }
+
+    .results-summary .count {
+      color: var(--color-text);
+      font-weight: 500;
+    }
+
+    .results-summary .total {
+      color: var(--color-text-muted);
+    }
+
+    /* Projects Container */
+    .projects-container.grid-view {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 1.25rem;
+    }
+
+    .projects-container.list-view {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .projects-container.list-view .project-card {
+      display: grid;
+      grid-template-columns: 2fr 3fr 1fr 1fr auto;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .projects-container.list-view .project-header {
+      flex-direction: column;
+      align-items: flex-start;
+      margin-bottom: 0;
+    }
+
+    .projects-container.list-view .project-description {
+      margin: 0;
+    }
+
+    .projects-container.list-view .project-stats {
+      border: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    .projects-container.list-view .project-footer {
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    /* Project Card Styles */
+    .project-card {
+      cursor: pointer;
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+
+    .project-card:hover {
+      transform: translateY(-2px);
+    }
+
+    .project-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 0.75rem;
+    }
+
+    .project-header h3 {
+      margin: 0;
+      font-size: 1.1rem;
+      color: var(--color-text);
+    }
+
+    .status-badge {
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      flex-shrink: 0;
+    }
+
+    .status-badge.completed {
+      background: var(--color-success-bg);
+      color: var(--color-success);
+      border: 1px solid var(--color-success);
+    }
+
+    .status-badge.processing {
+      background: var(--color-warning-bg);
+      color: var(--color-warning);
+      border: 1px solid var(--color-warning);
+    }
+
+    .status-badge.pending {
+      background: var(--color-bg-active);
+      color: var(--color-text-muted);
+      border: 1px solid var(--color-border);
+    }
+
+    .status-badge.error {
+      background: var(--color-danger-bg);
+      color: var(--color-danger);
+      border: 1px solid var(--color-danger);
+    }
+
+    .project-description {
+      color: var(--color-text-secondary);
+      font-size: 0.9rem;
+      margin: 0 0 1rem;
+      line-height: 1.4;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .project-stats {
+      display: flex;
+      gap: 2rem;
+      padding: 0.75rem 0;
+      border-top: 1px solid var(--color-border);
+      border-bottom: 1px solid var(--color-border);
+      margin-bottom: 0.75rem;
+    }
+
+    .stat {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .stat-value {
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: var(--color-text);
+    }
+
+    .stat-label {
+      font-size: 0.8rem;
+      color: var(--color-text-muted);
+    }
+
+    .project-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .date {
+      display: flex;
+      align-items: center;
+      gap: 0.375rem;
+      font-size: 0.8rem;
+      color: var(--color-text-muted);
+    }
+
+    .date-icon {
+      font-size: 0.875rem;
+    }
+
+    .actions {
+      display: flex;
+      gap: 0.25rem;
+    }
+
+    .action-btn {
+      padding: 0.375rem;
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      font-size: 1rem;
+      opacity: 0.6;
+      transition: all 0.15s;
+      border-radius: 4px;
+    }
+
+    .action-btn:hover {
+      opacity: 1;
+      background: var(--color-bg-hover);
+    }
+
+    .action-btn.danger:hover {
+      background: var(--color-danger-bg);
+    }
+
+    /* Empty State */
+    .empty-state {
+      text-align: center;
+      padding: 4rem 2rem;
+      background: var(--color-bg-white);
+      border-radius: 8px;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--color-border);
+    }
+
+    .empty-icon {
+      font-size: 4rem;
+      margin-bottom: 1rem;
+      opacity: 0.5;
+    }
+
+    .empty-state h3 {
+      margin: 0 0 0.5rem;
+      color: var(--color-text);
+    }
+
+    .empty-state p {
+      margin: 0 0 1.5rem;
+      color: var(--color-text-secondary);
+    }
+
+    .empty-actions {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .filters-row {
+        flex-direction: column;
+      }
+
+      .search-box {
+        min-width: 100%;
+      }
+
+      .filter-group {
+        width: 100%;
+      }
+
+      .filter-group select,
+      .filter-group input[type="date"] {
+        width: 100%;
+      }
+
+      .sort-row {
+        flex-direction: column;
+        gap: 1rem;
+        align-items: stretch;
+      }
+
+      .sort-controls {
+        justify-content: space-between;
+      }
+
+      .view-toggle {
+        align-self: flex-end;
+      }
+
+      .projects-container.list-view .project-card {
+        grid-template-columns: 1fr;
+      }
+    }
+  `]
+})
+export class ProjectListComponent implements OnInit {
+  isLoading = signal(true);
+  projects = signal<Project[]>([]);
+  
+  // Filtros
+  filters = signal<ProjectFilters>({
+    status: 'all',
+    search: '',
+    dateFrom: '',
+    dateTo: ''
+  });
+
+  // Ordenação
+  sortConfig = signal<SortConfig>({
+    field: 'createdAt',
+    direction: 'desc'
+  });
+
+  // Paginação
+  pageIndex = signal(0);
+  pageSize = signal(12);
+
+  // Modo de visualização
+  viewMode = signal<'grid' | 'list'>('grid');
+
+  // Opções de status
+  statusOptions = [
+    { label: 'Pendente', value: 'PENDING' },
+    { label: 'Processando', value: 'PROCESSING' },
+    { label: 'Concluído', value: 'COMPLETED' },
+    { label: 'Erro', value: 'ERROR' }
+  ];
+
+  // Opções de ordenação
+  sortOptions = [
+    { label: 'Data de Criação', value: 'createdAt' },
+    { label: 'Nome', value: 'name' },
+    { label: 'Última Atualização', value: 'updatedAt' },
+    { label: 'Número de Imagens', value: 'imageCount' },
+    { label: 'Status', value: 'status' }
+  ];
+
+  // Computed: projetos filtrados e ordenados
+  filteredAndSortedProjects = computed(() => {
+    let result = this.projects();
+    const currentFilters = this.filters();
+    const sort = this.sortConfig();
+
+    // Aplicar filtro de status
+    if (currentFilters.status !== 'all') {
+      result = result.filter((p: Project) => p.status === currentFilters.status);
+    }
+
+    // Aplicar filtro de busca
+    if (currentFilters.search) {
+      const query = currentFilters.search.toLowerCase();
+      result = result.filter((p: Project) => 
+        p.name.toLowerCase().includes(query) || 
+        p.description?.toLowerCase().includes(query)
+      );
+    }
+
+    // Aplicar filtro de data inicial
+    if (currentFilters.dateFrom) {
+      const fromDate = new Date(currentFilters.dateFrom);
+      result = result.filter((p: Project) => new Date(p.createdAt) >= fromDate);
+    }
+
+    // Aplicar filtro de data final
+    if (currentFilters.dateTo) {
+      const toDate = new Date(currentFilters.dateTo);
+      toDate.setHours(23, 59, 59, 999); // Fim do dia
+      result = result.filter((p: Project) => new Date(p.createdAt) <= toDate);
+    }
+
+    // Aplicar ordenação
+    result = [...result].sort((a, b) => {
+      let comparison = 0;
+      
+      switch (sort.field) {
+        case 'name':
+          comparison = a.name.localeCompare(b.name);
+          break;
+        case 'createdAt':
+        case 'updatedAt':
+          comparison = new Date(a[sort.field]).getTime() - new Date(b[sort.field]).getTime();
+          break;
+        case 'imageCount':
+          comparison = a.imageCount - b.imageCount;
+          break;
+        case 'status':
+          const statusOrder = ['PENDING', 'PROCESSING', 'COMPLETED', 'ERROR'];
+          comparison = statusOrder.indexOf(a.status) - statusOrder.indexOf(b.status);
+          break;
+      }
+
+      return sort.direction === 'asc' ? comparison : -comparison;
+    });
+
+    return result;
+  });
+
+  // Computed: projetos paginados
+  paginatedProjects = computed(() => {
+    const filtered = this.filteredAndSortedProjects();
+    const start = this.pageIndex() * this.pageSize();
+    const end = start + this.pageSize();
+    return filtered.slice(start, end);
+  });
+
+  constructor(
+    private projectService: ProjectService,
+    private router: Router
+  ) {
+    // Reset página quando filtros mudam
+    effect(() => {
+      // Acessa os filtros para criar dependência
+      this.filters();
+      this.sortConfig();
+      // Reset para primeira página
+      this.pageIndex.set(0);
+    }, { allowSignalWrites: true });
+  }
+
+  ngOnInit(): void {
+    this.loadProjects();
+  }
+
+  loadProjects(): void {
+    this.isLoading.set(true);
+    this.projectService.loadProjects().subscribe({
+      next: (projects: Project[]) => {
+        this.projects.set(projects);
+        this.isLoading.set(false);
+      },
+      error: () => {
+        this.isLoading.set(false);
+      }
+    });
+  }
+
+  // Filtros
+  onSearch(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    this.filters.update((f: ProjectFilters) => ({ ...f, search: input.value }));
+  }
+
+  onStatusChange(event: Event): void {
+    const select = event.target as HTMLSelectElement;
+    this.filters.update((f: ProjectFilters) => ({ ...f, status: select.value }));
+  }
+
+  onDateFromChange(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    this.filters.update((f: ProjectFilters) => ({ ...f, dateFrom: input.value }));
+  }
+
+  onDateToChange(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    this.filters.update((f: ProjectFilters) => ({ ...f, dateTo: input.value }));
+  }
+
+  clearSearch(): void {
+    this.filters.update((f: ProjectFilters) => ({ ...f, search: '' }));
+  }
+
+  clearStatusFilter(): void {
+    this.filters.update((f: ProjectFilters) => ({ ...f, status: 'all' }));
+  }
+
+  clearDateFrom(): void {
+    this.filters.update((f: ProjectFilters) => ({ ...f, dateFrom: '' }));
+  }
+
+  clearDateTo(): void {
+    this.filters.update((f: ProjectFilters) => ({ ...f, dateTo: '' }));
+  }
+
+  clearAllFilters(): void {
+    this.filters.set({
+      status: 'all',
+      search: '',
+      dateFrom: '',
+      dateTo: ''
+    });
+  }
+
+  hasActiveFilters(): boolean {
+    const f = this.filters();
+    return f.status !== 'all' || f.search !== '' || f.dateFrom !== '' || f.dateTo !== '';
+  }
+
+  // Ordenação
+  onSortFieldChange(event: Event): void {
+    const select = event.target as HTMLSelectElement;
+    this.sortConfig.update((s: SortConfig) => ({ ...s, field: select.value as SortField }));
+  }
+
+  toggleSortDirection(): void {
+    this.sortConfig.update((s: SortConfig) => ({
+      ...s,
+      direction: s.direction === 'asc' ? 'desc' : 'asc'
+    }));
+  }
+
+  // Paginação
+  onPageChange(event: PageEvent): void {
+    this.pageIndex.set(event.pageIndex);
+    this.pageSize.set(event.pageSize);
+  }
+
+  // Visualização
+  setViewMode(mode: 'grid' | 'list'): void {
+    this.viewMode.set(mode);
+  }
+
+  // Helpers
+  getStatusLabel(status: string): string {
+    const labels: Record<string, string> = {
+      'COMPLETED': 'Concluído',
+      'PROCESSING': 'Processando',
+      'PENDING': 'Pendente',
+      'ERROR': 'Erro'
+    };
+    return labels[status] || status;
+  }
+
+  formatDate(dateString: string): string {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    return date.toLocaleDateString('pt-BR');
+  }
+
+  trackByProjectId(index: number, project: Project): number {
+    return project.id;
+  }
+
+  // Ações
+  openMap(event: Event, id: number): void {
+    event.stopPropagation();
+    this.router.navigate(['/projects', id, 'map']);
+  }
+
+  open3D(event: Event, id: number): void {
+    event.stopPropagation();
+    this.router.navigate(['/projects', id, '3d']);
+  }
+
+  deleteProject(event: Event, id: number): void {
+    event.stopPropagation();
+    if (confirm('Tem certeza que deseja excluir este projeto? Esta ação não pode ser desfeita.')) {
+      this.projectService.deleteProject(id).subscribe(() => {
+        this.projects.update((projects: Project[]) => projects.filter((p: Project) => p.id !== id));
+      });
+    }
+  }
+}

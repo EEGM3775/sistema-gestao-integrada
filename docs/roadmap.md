@@ -38,6 +38,7 @@ Cada fase concluída foi validada por um script E2E em [testes/e2e/](../testes/e
 - **Pentest externo 📋** — o critério de saída da fase 6; contratação do dono. Escopo sugerido: o BFF (`/auth/interno/` fora da borda, troca do cookie, anti-CSRF, CSWSH no `/ws/`), a audiência por serviço (token de um serviço no outro, `svc+jwt` fora do escopo), o step-up (contornar a janela, reuso de código), o consentimento do suporte (as duas exceções) e a separação entre empresas (RLS + PDP + chave de cache).
 - **D217 · D218 · D219 · D220 · D221 ✅ 29/09/2026** — relatos em [historico-correcoes.md](historico-correcoes.md); abertos na leva: D222–D225.
 - **D212 · D213 · D214 ✅ 29/09/2026** — CI: `trivy-action` fixado pelo SHA (v0.36.0), `unaccent` no `template1`, teste do DWG sem depender do LibreDWG. Relatos em [historico-correcoes.md](historico-correcoes.md).
+- **D225 ✅ 29/09/2026** — o drone (Java, Angular, `init-db`, imagens NodeODM/Potree, `docs/`) versionado neste repositório, em `funcoesODM/`; o compose builda de lá. Relato em [historico-correcoes.md](historico-correcoes.md).
 - **Decisões de engenharia a confirmar pelo dono** (§10.14): prazo do consentimento (1 dia, teto 7); as duas exceções ao consentimento; liberar o suporte como ato grave; refresh mantido ao lado do cookie da sessão.
 
 ### Mudanças de 25/09/2026

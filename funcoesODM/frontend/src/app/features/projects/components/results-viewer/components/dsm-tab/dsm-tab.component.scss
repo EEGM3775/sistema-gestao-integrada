@@ -1,0 +1,207 @@
+// ─── Layout principal ─────────────────────────────────────────────────────
+
+.dsm-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  font-family: var(--font-family, 'Inter', sans-serif);
+  font-size: 13px;
+}
+
+// ─── Toolbar ──────────────────────────────────────────────────────────────
+
+.dsm-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 10px 16px;
+  background: #16213e;
+  border-bottom: 1px solid #2a2a4a;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.type-toggle {
+  display: flex;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid #2a2a4a;
+}
+
+.toggle-btn {
+  padding: 5px 18px;
+  background: transparent;
+  border: none;
+  color: #9a9ab0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+
+  &.active {
+    background: #007acc;
+    color: #fff;
+  }
+
+  &:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+
+  &:not(.active):not(:disabled):hover {
+    background: #22223a;
+    color: #ccc;
+  }
+}
+
+.opacity-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.control-label {
+  color: #7c7ca0;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.opacity-slider {
+  width: 90px;
+  height: 4px;
+  accent-color: #007acc;
+  cursor: pointer;
+}
+
+.opacity-value {
+  min-width: 30px;
+  text-align: right;
+  color: #a0aec0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.elev-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 11px;
+  color: #7c7ca0;
+}
+
+.elev-label strong {
+  color: #e0e0e0;
+  font-variant-numeric: tabular-nums;
+}
+
+.elev-sep {
+  color: #3a3a5a;
+}
+
+// ─── Mapa ─────────────────────────────────────────────────────────────────
+
+.map-wrapper {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.dsm-map {
+  width: 100%;
+  height: 100%;
+}
+
+// ─── Overlays (loading / error / empty) ───────────────────────────────────
+
+.loading-overlay,
+.error-overlay,
+.empty-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(20, 20, 40, 0.82);
+  z-index: 600;
+  pointer-events: none;
+
+  p {
+    margin: 0;
+    font-size: 13px;
+    color: #a0aec0;
+    text-align: center;
+    max-width: 320px;
+  }
+}
+
+.spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid #2a2a4a;
+  border-top-color: #007acc;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.error-icon,
+.empty-icon {
+  font-size: 13px;
+  font-weight: 700;
+  color: #fc8181;
+  border: 1px solid #fc8181;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-family: monospace;
+}
+
+.empty-icon {
+  color: #4a5568;
+  border-color: #4a5568;
+}
+
+// ─── Legenda de elevação ───────────────────────────────────────────────────
+
+.elevation-legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: #16213e;
+  border-top: 1px solid #2a2a4a;
+  flex-shrink: 0;
+}
+
+.legend-min,
+.legend-max {
+  font-size: 11px;
+  color: #a0aec0;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.legend-bar {
+  flex: 1;
+  height: 14px;
+  border-radius: 3px;
+  min-width: 80px;
+}
+
+.legend-unit {
+  font-size: 10px;
+  color: #4a5568;
+  white-space: nowrap;
+  margin-left: 4px;
+  font-size: 12px;
+  color: #666;
+  font-weight: 500;
+}

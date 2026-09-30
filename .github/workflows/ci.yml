@@ -283,7 +283,8 @@ jobs:
 
       # Varredura de filesystem: vuln (só com correção) + SEGREDOS vazados.
       # node_modules já existe (npm ci acima) — pulado para não escanear deps
-      # de terceiros duas vezes. ImgDrone é gitignored (fora do checkout).
+      # de terceiros duas vezes. O drone (funcoesODM/: pom.xml e package-lock
+      # do Angular) entra na varredura desde o D225; ImgDrone segue fora do checkout.
       # Fixada pelo SHA do commit, não pela tag (D212): depois de um ataque de
       # cadeia de suprimentos a Aqua reescreveu as tags para o prefixo `v`, e a
       # `0.28.0` sumiu. Tag muda; SHA não. Subir de versão = trocar o SHA

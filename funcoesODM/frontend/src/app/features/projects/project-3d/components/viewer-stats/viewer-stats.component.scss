@@ -1,0 +1,51 @@
+:host {
+  display: block;
+}
+
+.stats-panel {
+  position: absolute;
+  bottom: 1rem;
+  left: 1rem;
+  display: flex;
+  gap: 1.5rem;
+  background: rgba(15, 23, 42, 0.85);
+  padding: 0.75rem 1.25rem;
+  border-radius: 8px;
+  backdrop-filter: blur(10px);
+  z-index: 100;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.stat-label {
+  font-size: 0.7rem;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.stat-value {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: white;
+  font-family: 'Courier New', monospace;
+}
+
+@media (max-width: 768px) {
+  .stats-panel {
+    gap: 1rem;
+    padding: 0.5rem 0.75rem;
+  }
+
+  .stat-label {
+    font-size: 0.65rem;
+  }
+
+  .stat-value {
+    font-size: 0.9rem;
+  }
+}

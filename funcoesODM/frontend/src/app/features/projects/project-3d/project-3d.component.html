@@ -1,0 +1,141 @@
+<div class="viewer-page">
+  <!-- Top Bar -->
+  <div class="top-bar">
+    <div class="left-section">
+      <a [routerLink]="['/projects', projectId]" class="back-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="m15 18-6-6 6-6"/>
+        </svg>
+      </a>
+      <div class="project-info">
+        <h1>{{ project()?.name || 'Carregando...' }}</h1>
+        <span class="breadcrumb">Visualização 3D</span>
+      </div>
+    </div>
+    
+    <div class="right-section">
+      <div class="view-tabs">
+        <a [routerLink]="['/projects', projectId]" class="tab-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
+            <polyline points="14 2 14 8 20 8"/>
+          </svg>
+          Detalhes
+        </a>
+        <a [routerLink]="['/projects', projectId, 'map']" class="tab-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/>
+          </svg>
+          Mapa 2D
+        </a>
+        <a [routerLink]="['/projects', projectId, '3d']" class="tab-btn active">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 3L2 7.5l10 4.5 10-4.5L12 3z"/>
+            <path d="M2 17.5l10 4.5 10-4.5"/>
+            <path d="M2 12.5l10 4.5 10-4.5"/>
+          </svg>
+          3D View
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3D Viewer Container -->
+  <div class="viewer-container" #viewerContainer>
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" *ngIf="isLoading()">
+      <div class="loader">
+        <div class="cube-wrapper">
+          <div class="cube">
+            <div class="face front"></div>
+            <div class="face back"></div>
+            <div class="face left"></div>
+            <div class="face right"></div>
+            <div class="face top"></div>
+            <div class="face bottom"></div>
+          </div>
+        </div>
+        <p>Carregando modelo 3D...</p>
+        <div class="progress-bar">
+          <div class="progress-fill" [style.width.%]="loadProgress()"></div>
+        </div>
+        <span class="progress-text">{{ loadProgress() }}%</span>
+      </div>
+    </div>
+
+    <!-- Canvas 3D -->
+    <canvas #canvas3D class="canvas-3d"></canvas>
+
+    <!-- Toggle Mesh / PointCloud -->
+    <div class="mode-toggle" *ngIf="!isLoading() && has3DData()">
+      <button
+        class="mode-btn"
+        [class.active]="viewerMode() === 'mesh'"
+        (click)="switchToMesh()"
+        title="Mesh 3D (rapido)">
+        Mesh
+      </button>
+      <button
+        class="mode-btn"
+        [class.active]="viewerMode() === 'pointcloud'"
+        (click)="switchToPointCloud()"
+        title="Nuvem de pontos LAZ (Potree)">
+        Nuvem
+      </button>
+    </div>
+
+    <!-- Potree conversion status -->
+    <div class="potree-status" *ngIf="potreeStatus() === 'converting'">
+      <div class="potree-spinner"></div>
+      <span>Convertendo para Potree...</span>
+    </div>
+
+    <!-- Viewer Controls -->
+    <app-viewer-controls
+      [viewMode]="viewMode()"
+      [isFullscreen]="isFullscreen()"
+      (viewModeChange)="onViewModeChange($event)"
+      (resetCamera)="onResetCamera()"
+      (takeScreenshot)="onTakeScreenshot()"
+      (toggleFullscreen)="onToggleFullscreen()"
+    />
+
+    <!-- Viewer Options -->
+    <app-viewer-options
+      [displayType]="displayType()"
+      [colorMode]="colorMode()"
+      [pointSize]="pointSize()"
+      [showGrid]="showGrid()"
+      [showAxes]="showAxes()"
+      (displayTypeChange)="onDisplayTypeChange($event)"
+      (colorModeChange)="onColorModeChange($event)"
+      (pointSizeChange)="onPointSizeChange($event)"
+      (showGridChange)="onShowGridChange($event)"
+      (showAxesChange)="onShowAxesChange($event)"
+    />
+
+    <!-- Viewer Stats -->
+    <app-viewer-stats [stats]="stats()" />
+
+    <!-- No Data Placeholder -->
+    <div class="no-data-placeholder" *ngIf="!isLoading() && !has3DData()">
+      <div class="placeholder-content">
+        <div class="placeholder-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M12 3L2 7.5l10 4.5 10-4.5L12 3z"/>
+            <path d="M2 17.5l10 4.5 10-4.5"/>
+            <path d="M2 12.5l10 4.5 10-4.5"/>
+          </svg>
+        </div>
+        <h3>Modelo 3D não disponível</h3>
+        <p>Execute o processamento para gerar a nuvem de pontos e o modelo 3D</p>
+        <button class="btn-primary" [routerLink]="['/projects', projectId]">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="5 3 19 12 5 21 5 3"/>
+          </svg>
+          Iniciar Processamento
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

@@ -48,7 +48,7 @@ validação integrada da leva 8→11** em [../../infra/staging/README.md](../../
 - **IAM** [iam/Dockerfile](../../iam/Dockerfile) — Python + `argon2-cffi`; `migrate` na subida.
 - **React** [frontend/Dockerfile](../../frontend/Dockerfile) — build Vite → estáticos servidos por nginx.
 - **Drone** — `java-service`, `nodeodm` (com fix de numpy), `potree-converter`, `drone-nginx`
-  (em [ImgDrone/funcoesODM/](../../ImgDrone/funcoesODM/)).
+  (em [funcoesODM/](../../funcoesODM/)).
 - **Pin de versão:** `Django>=5.2,<5.3` no backend e IAM (evita regressões de major, ex.: CheckConstraint).
 
 ## 3. Gateway de borda (segurança)

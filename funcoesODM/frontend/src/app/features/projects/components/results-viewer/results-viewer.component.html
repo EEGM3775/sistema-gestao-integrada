@@ -1,0 +1,122 @@
+<div class="results-viewer">
+  <!-- Tab Bar -->
+  <div class="tabs">
+    <button
+      class="tab"
+      [class.active]="activeTab() === 'measurements'"
+      (click)="setActiveTab('measurements')">
+      <span class="tab-icon">🗺️</span>
+      <span class="tab-label">Visualizador</span>
+    </button>
+
+    <button
+      class="tab"
+      [class.active]="activeTab() === 'downloads'"
+      (click)="setActiveTab('downloads')">
+      <span class="tab-icon">📥</span>
+      <span class="tab-label">Downloads</span>
+      <span class="tab-badge" *ngIf="assets().length > 0">{{ assets().length }}</span>
+    </button>
+
+    <button
+      class="tab"
+      [class.active]="activeTab() === 'warnings'"
+      (click)="setActiveTab('warnings')"
+      [class.has-warnings]="hasWarnings()"
+      [class.has-critical]="hasCriticalWarnings()">
+      <span class="tab-icon">{{ hasCriticalWarnings() ? '⚠️' : 'ℹ️' }}</span>
+      <span class="tab-label">Avisos</span>
+      <span class="tab-badge warning" *ngIf="warningCount() > 0">{{ warningCount() }}</span>
+    </button>
+
+    <button
+      *ngIf="hasOrthophoto()"
+      class="tab"
+      [class.active]="activeTab() === 'vegetation'"
+      (click)="setActiveTab('vegetation')">
+      <span class="tab-icon">🌿</span>
+      <span class="tab-label">Vegetacao</span>
+    </button>
+
+  </div>
+
+  <div class="tab-content">
+
+    <!-- Visualizador — mantido vivo; oculto via CSS para preservar mapa e estado -->
+    <app-measurement-tab
+      [hidden]="activeTab() !== 'measurements'"
+      [visible]="activeTab() === 'measurements'"
+      [projectId]="projectId"
+      [task]="cachedActiveTask">
+    </app-measurement-tab>
+
+    <!-- Downloads — leve, sem mapa; @if e suficiente -->
+    @if (activeTab() === 'downloads') {
+      <app-downloads-tab
+        [assets]="selectableAssets()"
+        [nodeodmTaskId]="nodeodmTaskId"
+        (downloadAsset)="downloadAsset($event)"
+        (downloadSelected)="downloadSelected($event)"
+        (downloadAllZip)="downloadAllZip()"
+        (previewAsset)="previewAsset($event)"
+        (assetsChange)="selectableAssets.set($event)">
+      </app-downloads-tab>
+    }
+
+    <!-- Avisos — leve, sem mapa; @if e suficiente -->
+    @if (activeTab() === 'warnings') {
+      <app-warnings-tab
+        [warnings]="taskWarnings()"
+        [loading]="loadingWarnings()">
+      </app-warnings-tab>
+    }
+
+    <!-- Vegetacao — mantido vivo; oculto via CSS para preservar mapa e indice calculado -->
+    <app-vegetation-tab
+      *ngIf="hasOrthophoto()"
+      [hidden]="activeTab() !== 'vegetation'"
+      [visible]="activeTab() === 'vegetation'"
+      [assets]="assets()"
+      [projectId]="projectId"
+      [taskId]="taskId">
+    </app-vegetation-tab>
+
+  </div>
+
+  <!-- Preview Modal -->
+  <div class="preview-modal" *ngIf="previewOpen()">
+    <div class="preview-backdrop" (click)="closePreview()"></div>
+    <div class="preview-content">
+      <div class="preview-header">
+        <h3>{{ previewTitle() }}</h3>
+        <button class="preview-close" (click)="closePreview()">✖</button>
+      </div>
+      <div class="preview-body">
+        <div class="preview-loading" *ngIf="previewLoading()">
+          <div class="spinner"></div>
+          <p>Carregando visualização...</p>
+        </div>
+        <div class="preview-error" *ngIf="previewError()">
+          <p>{{ previewError() }}</p>
+        </div>
+        <canvas
+          #previewCanvas
+          class="preview-canvas"
+          *ngIf="previewType() === 'tiff' && !previewLoading()">
+        </canvas>
+        <iframe
+          *ngIf="previewType() === 'pdf' && previewPdfUrl() && !previewLoading()"
+          class="preview-iframe"
+          [src]="previewPdfUrl()"
+          title="Preview PDF">
+        </iframe>
+        <div class="preview-message" *ngIf="previewType() === 'message' && !previewLoading()">
+          <p>{{ previewMessage() }}</p>
+          <a class="preview-download" *ngIf="previewDownloadUrl()" [href]="previewDownloadUrl()" target="_blank">
+            Abrir arquivo
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

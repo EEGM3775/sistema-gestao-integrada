@@ -115,8 +115,13 @@ vendor/
 media/
 
 # --- Higiene do repo (nunca versionar aqui) ---
-# Repo git aninhado separado (~2.4 GB, tem .git próprio)
+# Repo git aninhado separado (~2.4 GB, tem .git próprio): os fontes do ODM de
+# terceiros e binários. O drone do SGI (Java + Angular + imagens) é versionado
+# aqui, em funcoesODM/ (D225) — não voltar a editar a cópia do ImgDrone.
 ImgDrone/
+# Saídas de build do drone
+funcoesODM/backend/java-service/target/
+funcoesODM/frontend/.angular/
 # Scratch de operação (scripts ad-hoc + logs de ngrok/webhook)
 .runtime/
 # Segredo OAuth do Google (funcoeslead) e afins

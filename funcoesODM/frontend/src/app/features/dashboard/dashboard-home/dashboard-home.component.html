@@ -1,0 +1,56 @@
+<div class="dashboard-container">
+  <!-- Search Header -->
+  <app-search-header
+    [viewMode]="viewMode()"
+    [searchTerm]="searchTerm()"
+    (searchChange)="onSearch($event)"
+    (viewModeChange)="setViewMode($event)"
+  />
+
+  <!-- Stats Bar -->
+  <app-stats-bar [stats]="stats()" />
+
+  <!-- Loading State -->
+  <div *ngIf="isLoading()" class="loading-state">
+    <div class="spinner"></div>
+    <p>Carregando projetos...</p>
+  </div>
+
+  <!-- Empty State -->
+  <div *ngIf="!isLoading() && filteredProjects().length === 0" class="empty-state">
+    <div class="empty-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+        <path d="M12 11v6M9 14h6"/>
+      </svg>
+    </div>
+    <h3>Nenhum projeto encontrado</h3>
+    <p>{{ searchTerm() ? 'Tente uma busca diferente' : 'Crie seu primeiro projeto de fotogrametria' }}</p>
+    <button *ngIf="!searchTerm()" class="btn-primary" routerLink="/projects/new">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 5v14M5 12h14"/>
+      </svg>
+      Criar Projeto
+    </button>
+  </div>
+
+  <!-- Grid View -->
+  <app-project-grid
+    *ngIf="!isLoading() && filteredProjects().length > 0 && viewMode() === 'grid'"
+    [projects]="filteredProjects()"
+    (mapClick)="openMap($event.event, $event.project)"
+    (downloadClick)="download($event.event, $event.project)"
+    (menuClick)="openMenu($event.event, $event.project)"
+    (imageError)="onImageError($event)"
+  />
+
+  <!-- List View -->
+  <app-project-list
+    *ngIf="!isLoading() && filteredProjects().length > 0 && viewMode() === 'list'"
+    [projects]="filteredProjects()"
+    (mapClick)="openMap($event.event, $event.project)"
+    (downloadClick)="download($event.event, $event.project)"
+    (menuClick)="openMenu($event.event, $event.project)"
+    (imageError)="onImageError($event)"
+  />
+</div>

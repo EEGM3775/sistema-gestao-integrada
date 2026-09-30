@@ -78,4 +78,4 @@ repositório (não em `backend/` e `iam/`), para enxergarem o pacote compartilha
 [`funcoesemail/`](../funcoesemail/README.md). É por isso que os `Dockerfile`
 copiam `backend/…` e `iam/…` com o prefixo, e que existe um
 [`.dockerignore` na raiz](../.dockerignore) — sem ele, cada build arrastaria
-`ImgDrone/`, `node_modules/` e o `.git`.
+`ImgDrone/`, o drone (`funcoesODM/`, que builda do próprio diretório), `node_modules/` e o `.git`.

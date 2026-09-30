@@ -1,0 +1,1821 @@
+import { Component, Input, OnInit, OnDestroy, signal, computed, inject, AfterViewInit, ElementRef, ViewChild, ChangeDetectorRef } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
+import { ResultsService, AssetInfo, TaskWarnings, WarningSummary } from '../../services/results.service';
+import { TaskOutputs } from '../../services/task.service';
+import { CardComponent } from '../../../../shared/components/card/card.component';
+import { ButtonComponent } from '../../../../shared/components/button/button.component';
+import * as L from 'leaflet';
+import { HttpClient } from '@angular/common/http';
+import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
+import { fromArrayBuffer } from 'geotiff';
+import { firstValueFrom } from 'rxjs';
+
+type TabType = 'map' | 'dsm' | 'downloads' | 'warnings';
+
+interface SelectableAsset extends AssetInfo {
+  selected: boolean;
+  size?: string;
+}
+
+@Component({
+  selector: 'app-results-viewer',
+  standalone: true,
+  imports: [CommonModule, FormsModule, CardComponent, ButtonComponent],
+  template: `
+    <div class="results-viewer">
+      <div class="tabs">
+        <button 
+          class="tab" 
+          [class.active]="activeTab() === 'map'"
+          (click)="setActiveTab('map')"
+          [disabled]="!hasOrthophoto()">
+          🗺️ Ortofoto
+        </button>
+        <button 
+          class="tab" 
+          [class.active]="activeTab() === 'dsm'"
+          (click)="setActiveTab('dsm')"
+          [disabled]="!hasDSM()">
+          🏔️ DSM/DTM
+        </button>
+        <button 
+          class="tab" 
+          [class.active]="activeTab() === 'downloads'"
+          (click)="setActiveTab('downloads')">
+          📥 Downloads ({{ assets().length }})
+        </button>
+        <button 
+          class="tab" 
+          [class.active]="activeTab() === 'warnings'"
+          (click)="setActiveTab('warnings')"
+          [class.has-warnings]="hasWarnings()"
+          [class.has-critical]="hasCriticalWarnings()">
+          {{ hasCriticalWarnings() ? '⚠️' : 'ℹ️' }} Avisos 
+          <span class="warning-badge" *ngIf="warningCount() > 0">{{ warningCount() }}</span>
+        </button>
+      </div>
+
+      <div class="tab-content">
+        <!-- Map Tab -->
+        <div class="map-container" *ngIf="activeTab() === 'map'" #mapContainer>
+          <div id="orthophoto-map" class="map"></div>
+          <div class="map-controls">
+            <button class="map-btn" (click)="zoomIn()" title="Zoom In">➕</button>
+            <button class="map-btn" (click)="zoomOut()" title="Zoom Out">➖</button>
+            <button class="map-btn" (click)="resetView()" title="Reset View">🎯</button>
+            <button class="map-btn" (click)="toggleLayer()" title="Toggle Layer">
+              {{ showOrtho() ? '🗺️' : '🌍' }}
+            </button>
+          </div>
+          <div class="map-info" *ngIf="mapInfo()">
+            <span>Zoom: {{ mapInfo()?.zoom }}</span>
+            <span>Lat: {{ mapInfo()?.lat?.toFixed(6) }}</span>
+            <span>Lng: {{ mapInfo()?.lng?.toFixed(6) }}</span>
+          </div>
+        </div>
+
+        <!-- DSM/DTM Tab -->
+        <div class="elevation-viewer" *ngIf="activeTab() === 'dsm'">
+          <div class="elevation-controls">
+            <label>
+              <input 
+                type="radio" 
+                name="elevationType" 
+                value="dsm" 
+                [checked]="elevationType() === 'dsm'"
+                (change)="setElevationType('dsm')"
+                [disabled]="!hasDSM()">
+              DSM (Superfície)
+            </label>
+            <label>
+              <input 
+                type="radio" 
+                name="elevationType" 
+                value="dtm" 
+                [checked]="elevationType() === 'dtm'"
+                (change)="setElevationType('dtm')"
+                [disabled]="!hasDTM()">
+              DTM (Terreno)
+            </label>
+          </div>
+          <div class="elevation-preview">
+            <div class="placeholder" *ngIf="!elevationPreviewUrl()">
+              <div class="placeholder-icon">🏔️</div>
+              <p>Selecione um modelo de elevação para visualizar</p>
+            </div>
+            <img 
+              *ngIf="elevationPreviewUrl()" 
+              [src]="elevationPreviewUrl()" 
+              alt="Elevation Model Preview"
+              class="elevation-image">
+          </div>
+          <div class="color-scale">
+            <div class="scale-bar"></div>
+            <div class="scale-labels">
+              <span>Baixo</span>
+              <span>Alto</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Downloads Tab -->
+        <div class="downloads-section" *ngIf="activeTab() === 'downloads'">
+          <div class="download-actions-bar">
+            <div class="select-actions">
+              <label class="select-all-checkbox">
+                <input 
+                  type="checkbox" 
+                  [checked]="allSelected()"
+                  [indeterminate]="someSelected() && !allSelected()"
+                  (change)="toggleSelectAll()">
+                <span>Selecionar Todos</span>
+              </label>
+              <span class="selected-count" *ngIf="selectedCount() > 0">
+                {{ selectedCount() }} selecionado(s)
+              </span>
+            </div>
+            <div class="bulk-actions">
+              <button 
+                class="action-btn download-all-btn"
+                (click)="downloadAllZip()"
+                title="Baixar pacote completo">
+                📦 Baixar Tudo (ZIP)
+              </button>
+              <button 
+                class="action-btn download-selected-btn"
+                [disabled]="selectedCount() === 0"
+                (click)="downloadSelected()"
+                title="Baixar selecionados">
+                📥 Baixar Selecionados
+              </button>
+            </div>
+          </div>
+
+          <div class="downloads-list">
+            <div 
+              class="download-item" 
+              *ngFor="let asset of selectableAssets()"
+              [class.selected]="asset.selected">
+              <label class="asset-checkbox">
+                <input 
+                  type="checkbox" 
+                  [(ngModel)]="asset.selected"
+                  (ngModelChange)="onAssetSelectionChange()">
+              </label>
+              <div class="asset-icon">{{ asset.icon }}</div>
+              <div class="asset-info">
+                <h4>{{ asset.displayName }}</h4>
+                <p>{{ asset.description }}</p>
+                <span class="asset-meta" *ngIf="asset.size">
+                  <span class="file-size">{{ asset.size }}</span>
+                  <span class="file-ext">{{ asset.extension }}</span>
+                </span>
+              </div>
+              <div class="asset-actions">
+                <button 
+                  class="preview-btn"
+                  *ngIf="canPreview(asset)"
+                  (click)="previewAsset(asset)"
+                  title="Visualizar">
+                  👁️
+                </button>
+                <button 
+                  class="download-btn"
+                  (click)="downloadAsset(asset)"
+                  title="Download">
+                  📥
+                </button>
+              </div>
+            </div>
+            
+            <div class="download-item all-zip-item">
+              <div class="asset-icon">📦</div>
+              <div class="asset-info">
+                <h4>Pacote Completo</h4>
+                <p>Todos os resultados em um único arquivo ZIP</p>
+                <span class="asset-meta">
+                  <span class="file-ext">.zip</span>
+                </span>
+              </div>
+              <div class="asset-actions">
+                <button 
+                  class="download-btn primary"
+                  (click)="downloadAllZip()"
+                  title="Download all.zip">
+                  📥 Download
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="no-assets" *ngIf="assets().length === 0">
+            <div class="no-assets-icon">📭</div>
+            <p>Nenhum resultado disponível</p>
+            <small>Os resultados estarão disponíveis após o processamento</small>
+          </div>
+        </div>
+
+        <!-- Warnings Tab -->
+        <div class="warnings-section" *ngIf="activeTab() === 'warnings'">
+          <div class="warnings-loading" *ngIf="loadingWarnings()">
+            <div class="spinner"></div>
+            <p>Carregando avisos...</p>
+          </div>
+
+          <div class="no-warnings" *ngIf="!loadingWarnings() && warningCount() === 0">
+            <div class="success-icon">✅</div>
+            <h3>Nenhum aviso encontrado</h3>
+            <p>O processamento foi concluído sem problemas.</p>
+          </div>
+
+          <div class="warnings-content" *ngIf="!loadingWarnings() && warningCount() > 0">
+            <div class="warnings-header">
+              <h3>{{ warningCount() }} aviso(s) durante o processamento</h3>
+              <p class="warnings-subtitle">
+                O processamento foi concluído, mas alguns avisos foram detectados.
+              </p>
+            </div>
+
+            <div class="warning-categories">
+              <div 
+                class="warning-category" 
+                *ngFor="let category of warningSummary()"
+                [class.severity-warning]="category.severity === 'warning'"
+                [class.severity-info]="category.severity === 'info'"
+                [class.severity-error]="category.severity === 'error'">
+                <div class="category-header">
+                  <span class="category-icon">{{ category.icon }}</span>
+                  <div class="category-title">
+                    <h4>{{ category.title }}</h4>
+                    <p>{{ category.description }}</p>
+                  </div>
+                  <span class="category-count">{{ category.warnings.length }}</span>
+                </div>
+                
+                <div class="category-warnings">
+                  <div class="warning-item" *ngFor="let warning of category.warnings">
+                    <span class="warning-bullet">•</span>
+                    <span class="warning-text">{{ warning }}</span>
+                  </div>
+                </div>
+
+                <div class="category-tip" *ngIf="category.tip">
+                  <span class="tip-icon">💡</span>
+                  <span class="tip-text">{{ category.tip }}</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="raw-warnings-section">
+              <button class="toggle-raw-btn" (click)="toggleRawWarnings()">
+                {{ showRawWarnings() ? '🔼 Ocultar' : '🔽 Mostrar' }} log completo
+              </button>
+              <div class="raw-warnings" *ngIf="showRawWarnings()">
+                <pre>{{ rawWarningsText() }}</pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Preview Modal -->
+      <div class="preview-modal" *ngIf="previewOpen()">
+        <div class="preview-backdrop" (click)="closePreview()"></div>
+        <div class="preview-content">
+          <div class="preview-header">
+            <h3>{{ previewTitle() }}</h3>
+            <button class="preview-close" (click)="closePreview()">✖</button>
+          </div>
+          <div class="preview-body">
+            <div class="preview-loading" *ngIf="previewLoading()">
+              <div class="spinner"></div>
+              <p>Carregando visualização...</p>
+            </div>
+
+            <div class="preview-error" *ngIf="previewError()">
+              <p>{{ previewError() }}</p>
+            </div>
+
+            <canvas
+              #previewCanvas
+              class="preview-canvas"
+              *ngIf="previewType() === 'tiff' && !previewLoading()">
+            </canvas>
+
+            <iframe
+              *ngIf="previewType() === 'pdf' && previewPdfUrl() && !previewLoading()"
+              class="preview-iframe"
+              [src]="previewPdfUrl()"
+              title="Preview PDF">
+            </iframe>
+
+            <div class="preview-message" *ngIf="previewType() === 'message' && !previewLoading()">
+              <p>{{ previewMessage() }}</p>
+              <a class="preview-download" *ngIf="previewDownloadUrl()" [href]="previewDownloadUrl()" target="_blank">
+                Abrir arquivo
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `,
+  styles: [`
+    .results-viewer {
+      background: #1e1e1e;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      color: #e0e0e0;
+    }
+
+    .tabs {
+      display: flex;
+      background: #252526;
+      border-bottom: 1px solid #3e3e42;
+      flex-shrink: 0;
+    }
+
+    .tab {
+      flex: 1;
+      padding: 12px 16px;
+      border: none;
+      background: transparent;
+      color: #a0a0a0;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .tab:hover:not(:disabled) {
+      background: #2d2d2d;
+      color: #e0e0e0;
+    }
+
+    .tab.active {
+      background: #007acc;
+      color: white;
+    }
+
+    .tab:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .tab-content {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      min-height: 400px;
+    }
+
+    /* Map Styles */
+    .map-container {
+      position: relative;
+      flex: 1;
+      height: 100%;
+      min-height: 350px;
+    }
+
+    .map {
+      width: 100%;
+      height: 100%;
+      min-height: 350px;
+      background: #1e1e1e;
+    }
+
+    .map-controls {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      z-index: 1000;
+    }
+
+    .map-btn {
+      width: 36px;
+      height: 36px;
+      border: none;
+      background: #2d2d2d;
+      color: #e0e0e0;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+      transition: all 0.2s;
+    }
+
+    .map-btn:hover {
+      background: #007acc;
+      color: white;
+    }
+
+    .map-info {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      background: rgba(30,30,30,0.9);
+      padding: 6px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      display: flex;
+      gap: 16px;
+      z-index: 1000;
+      color: #e0e0e0;
+    }
+
+    /* Elevation Viewer */
+    .elevation-viewer {
+      padding: 20px;
+    }
+
+    .elevation-controls {
+      display: flex;
+      gap: 24px;
+      margin-bottom: 16px;
+    }
+
+    .elevation-controls label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      color: #e0e0e0;
+    }
+
+    .elevation-preview {
+      background: #252526;
+      border-radius: 8px;
+      min-height: 350px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      border: 1px solid #3e3e42;
+    }
+
+    .placeholder {
+      text-align: center;
+      color: #a0a0a0;
+    }
+
+    .placeholder-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+    }
+
+    .elevation-image {
+      max-width: 100%;
+      max-height: 350px;
+      object-fit: contain;
+    }
+
+    .color-scale {
+      margin-top: 16px;
+    }
+
+    .scale-bar {
+      height: 20px;
+      border-radius: 4px;
+      background: linear-gradient(to right, 
+        #2b83ba, #64abb0, #a1d4a7, #d9ef8b, 
+        #fee08b, #fdae61, #f46d43, #d53e4f
+      );
+    }
+
+    .scale-labels {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 4px;
+      font-size: 12px;
+      color: #a0a0a0;
+    }
+
+    /* Downloads Styles */
+    .downloads-section {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .download-actions-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      background: #252526;
+      border-bottom: 1px solid #3e3e42;
+    }
+
+    .select-actions {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .select-all-checkbox {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      font-weight: 500;
+      color: #e0e0e0;
+    }
+
+    .select-all-checkbox input {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+    }
+
+    .selected-count {
+      font-size: 13px;
+      color: #007acc;
+      font-weight: 500;
+    }
+
+    .bulk-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .action-btn {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+
+    .download-all-btn {
+      background: #007acc;
+      color: white;
+    }
+
+    .download-all-btn:hover {
+      background: #0063a5;
+    }
+
+    .download-selected-btn {
+      background: #2d2d2d;
+      color: #e0e0e0;
+      border: 1px solid #3e3e42;
+    }
+
+    .download-selected-btn:hover:not(:disabled) {
+      background: #3e3e42;
+    }
+
+    .download-selected-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .downloads-list {
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
+    .download-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 16px;
+      background: #252526;
+      border-radius: 8px;
+      border: 1px solid #3e3e42;
+      transition: all 0.2s;
+    }
+
+    .download-item:hover {
+      border-color: #007acc;
+    }
+
+    .download-item.selected {
+      background: rgba(0, 122, 204, 0.1);
+      border-color: #007acc;
+    }
+
+    .download-item.all-zip-item {
+      background: linear-gradient(135deg, rgba(0, 122, 204, 0.2) 0%, rgba(0, 122, 204, 0.1) 100%);
+      border: 2px solid #007acc;
+    }
+
+    .asset-checkbox {
+      display: flex;
+      align-items: center;
+    }
+
+    .asset-checkbox input {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+    }
+
+    .asset-icon {
+      font-size: 28px;
+      width: 40px;
+      text-align: center;
+    }
+
+    .asset-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .asset-info h4 {
+      margin: 0 0 4px 0;
+      color: #e0e0e0;
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    .asset-info p {
+      margin: 0 0 6px 0;
+      font-size: 12px;
+      color: #a0a0a0;
+    }
+
+    .asset-meta {
+      display: flex;
+      gap: 12px;
+      font-size: 11px;
+    }
+
+    .file-size {
+      color: #a0a0a0;
+      background: #2d2d2d;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .file-ext {
+      color: #007acc;
+      font-weight: 500;
+    }
+
+    .asset-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .preview-btn, .download-btn {
+      width: 36px;
+      height: 36px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 16px;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .preview-btn {
+      background: #2d2d2d;
+      color: #e0e0e0;
+    }
+
+    .preview-btn:hover {
+      background: #3e3e42;
+    }
+
+    .download-btn {
+      background: #007acc;
+      color: white;
+    }
+
+    .download-btn:hover {
+      background: #0063a5;
+    }
+
+    .download-btn.primary {
+      width: auto;
+      padding: 8px 16px;
+      gap: 6px;
+    }
+
+    .no-assets {
+      text-align: center;
+      padding: 48px 20px;
+      color: #a0a0a0;
+    }
+
+    .no-assets-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+    }
+
+    .no-assets p {
+      margin: 0 0 8px 0;
+      font-size: 16px;
+      color: #e0e0e0;
+    }
+
+    .no-assets small {
+      font-size: 13px;
+    }
+
+    /* Warning tab styles */
+    .tab.has-warnings {
+      position: relative;
+    }
+
+    .tab.has-critical {
+      color: #f59e0b;
+    }
+
+    .warning-badge {
+      background: #f59e0b;
+      color: #1e1e1e;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 10px;
+      margin-left: 4px;
+    }
+
+    /* Warnings section */
+    .warnings-section {
+      padding: 20px;
+    }
+
+    .warnings-loading {
+      text-align: center;
+      padding: 40px;
+    }
+
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid #3e3e42;
+      border-top-color: #007acc;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 16px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .no-warnings {
+      text-align: center;
+      padding: 40px;
+    }
+
+    .success-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+    }
+
+    .no-warnings h3 {
+      color: #10b981;
+      margin: 0 0 8px 0;
+    }
+
+    .no-warnings p {
+      color: #a0a0a0;
+      margin: 0;
+    }
+
+    .warnings-content {
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    .warnings-header {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+
+    .warnings-header h3 {
+      color: #f59e0b;
+      margin: 0 0 8px 0;
+      font-size: 18px;
+    }
+
+    .warnings-subtitle {
+      color: #a0a0a0;
+      margin: 0;
+      font-size: 14px;
+    }
+
+    .warning-categories {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .warning-category {
+      background: #252526;
+      border-radius: 8px;
+      border: 1px solid #3e3e42;
+      overflow: hidden;
+    }
+
+    .warning-category.severity-warning {
+      border-left: 4px solid #f59e0b;
+    }
+
+    .warning-category.severity-info {
+      border-left: 4px solid #3b82f6;
+    }
+
+    .warning-category.severity-error {
+      border-left: 4px solid #ef4444;
+    }
+
+    .category-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      background: #2d2d2d;
+      border-bottom: 1px solid #3e3e42;
+    }
+
+    .category-icon {
+      font-size: 24px;
+    }
+
+    .category-title {
+      flex: 1;
+    }
+
+    .category-title h4 {
+      margin: 0 0 2px 0;
+      font-size: 14px;
+      font-weight: 600;
+      color: #e0e0e0;
+    }
+
+    .category-title p {
+      margin: 0;
+      font-size: 12px;
+      color: #a0a0a0;
+    }
+
+    .category-count {
+      background: #3e3e42;
+      color: #a0a0a0;
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .category-warnings {
+      padding: 12px 16px;
+    }
+
+    .warning-item {
+      display: flex;
+      gap: 8px;
+      padding: 6px 0;
+      font-size: 13px;
+      color: #e0e0e0;
+    }
+
+    .warning-bullet {
+      color: #a0a0a0;
+    }
+
+    .warning-text {
+      word-break: break-word;
+    }
+
+    .category-tip {
+      display: flex;
+      gap: 8px;
+      padding: 12px 16px;
+      background: rgba(59, 130, 246, 0.1);
+      border-top: 1px solid #3e3e42;
+      font-size: 13px;
+    }
+
+    .tip-icon {
+      flex-shrink: 0;
+    }
+
+    .tip-text {
+      color: #60a5fa;
+    }
+
+    .raw-warnings-section {
+      margin-top: 24px;
+      padding-top: 16px;
+      border-top: 1px solid #3e3e42;
+    }
+
+    .toggle-raw-btn {
+      width: 100%;
+      padding: 10px;
+      background: #2d2d2d;
+      border: 1px solid #3e3e42;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      color: #a0a0a0;
+      transition: all 0.2s;
+    }
+
+    .toggle-raw-btn:hover {
+      background: #3e3e42;
+      color: #e0e0e0;
+    }
+
+    .raw-warnings {
+      margin-top: 12px;
+      background: #1e1e1e;
+      border-radius: 6px;
+      padding: 16px;
+      overflow-x: auto;
+      border: 1px solid #3e3e42;
+    }
+
+    .raw-warnings pre {
+      margin: 0;
+      font-family: 'Consolas', 'Monaco', monospace;
+      font-size: 12px;
+      color: #e0e0e0;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* Preview Modal Styles */
+    .preview-modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .preview-backdrop {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(4px);
+    }
+
+    .preview-content {
+      position: relative;
+      background: #1e1e1e;
+      border: 1px solid #3e3e42;
+      border-radius: 8px;
+      max-width: 90vw;
+      max-height: 90vh;
+      width: 1200px;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+      z-index: 10000;
+    }
+
+    .preview-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid #3e3e42;
+      background: #252526;
+    }
+
+    .preview-header h3 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
+      color: #e0e0e0;
+    }
+
+    .preview-close {
+      width: 32px;
+      height: 32px;
+      border: none;
+      background: transparent;
+      color: #a0a0a0;
+      font-size: 18px;
+      cursor: pointer;
+      border-radius: 4px;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .preview-close:hover {
+      background: #3e3e42;
+      color: #e0e0e0;
+    }
+
+    .preview-body {
+      flex: 1;
+      overflow: auto;
+      padding: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 300px;
+      position: relative;
+    }
+
+    .preview-loading {
+      text-align: center;
+    }
+
+    .preview-loading .spinner {
+      width: 48px;
+      height: 48px;
+      border: 4px solid #3e3e42;
+      border-top-color: #007acc;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 16px;
+    }
+
+    .preview-loading p {
+      color: #a0a0a0;
+      margin: 0;
+    }
+
+    .preview-error {
+      text-align: center;
+      color: #f48771;
+      padding: 20px;
+    }
+
+    .preview-error p {
+      margin: 0;
+    }
+
+    .preview-canvas {
+      max-width: 100%;
+      max-height: calc(90vh - 180px);
+      object-fit: contain;
+      display: block;
+      margin: 0 auto;
+      background: #1e1e1e;
+      border-radius: 4px;
+    }
+
+    .preview-iframe {
+      width: 100%;
+      height: calc(90vh - 140px);
+      border: none;
+      background: white;
+      border-radius: 4px;
+    }
+
+    .preview-message {
+      text-align: center;
+      padding: 40px;
+      color: #a0a0a0;
+    }
+
+    .preview-message p {
+      margin: 0 0 16px 0;
+      font-size: 14px;
+    }
+
+    .preview-download {
+      display: inline-block;
+      padding: 10px 20px;
+      background: #007acc;
+      color: white;
+      text-decoration: none;
+      border-radius: 6px;
+      font-size: 14px;
+      transition: all 0.2s;
+    }
+
+    .preview-download:hover {
+      background: #0063a5;
+    }
+  `]
+})
+export class ResultsViewerComponent implements OnInit, AfterViewInit, OnDestroy {
+  @Input() projectId!: number;
+  @Input() taskId!: number;
+  @Input() nodeodmTaskId?: string;
+  @Input() outputs: TaskOutputs | { [key: string]: string } = {};
+
+  @ViewChild('mapContainer') mapContainer!: ElementRef;
+  @ViewChild('previewCanvas') previewCanvas?: ElementRef<HTMLCanvasElement>;
+
+  private resultsService = inject(ResultsService);
+  private http = inject(HttpClient);
+  private sanitizer = inject(DomSanitizer);
+  private cdr = inject(ChangeDetectorRef);
+  private map: L.Map | null = null;
+  private orthophotoLayer: L.Layer | null = null;
+  private baseLayer: L.TileLayer | null = null;
+
+  activeTab = signal<TabType>('downloads');
+  assets = signal<AssetInfo[]>([]);
+  selectableAssets = signal<SelectableAsset[]>([]);
+  elevationType = signal<'dsm' | 'dtm'>('dsm');
+  showOrtho = signal(true);
+  mapInfo = signal<{ zoom: number; lat: number; lng: number } | null>(null);
+
+  // Warnings signals
+  taskWarnings = signal<TaskWarnings | null>(null);
+  loadingWarnings = signal(false);
+  showRawWarnings = signal(false);
+
+  // Preview signals
+  previewOpen = signal(false);
+  previewTitle = signal('');
+  previewType = signal<'tiff' | 'pdf' | 'message'>('message');
+  previewMessage = signal('');
+  previewError = signal<string | null>(null);
+  previewLoading = signal(false);
+  previewPdfUrl = signal<SafeResourceUrl | null>(null);
+  previewDownloadUrl = signal<string | null>(null);
+
+  private previewObjectUrl: string | null = null;
+
+  // Computed signals for warnings
+  hasWarnings = computed(() => {
+    const warnings = this.taskWarnings();
+    return warnings !== null && warnings.warning_count > 0;
+  });
+
+  hasCriticalWarnings = computed(() => {
+    const warnings = this.taskWarnings();
+    return warnings?.has_critical_warnings ?? false;
+  });
+
+  warningCount = computed(() => {
+    const warnings = this.taskWarnings();
+    return warnings?.unique_warning_count ?? 0;
+  });
+
+  warningSummary = computed(() => {
+    const warnings = this.taskWarnings();
+    return warnings?.summary ?? [];
+  });
+
+  rawWarningsText = computed(() => {
+    const warnings = this.taskWarnings();
+    return warnings?.warnings.join('\n') ?? '';
+  });
+
+  // Computed signals for selection
+  selectedCount = computed(() => 
+    this.selectableAssets().filter(a => a.selected).length
+  );
+
+  allSelected = computed(() => {
+    const assets = this.selectableAssets();
+    return assets.length > 0 && assets.every(a => a.selected);
+  });
+
+  someSelected = computed(() => 
+    this.selectableAssets().some(a => a.selected)
+  );
+
+  hasOrthophoto = computed(() => 
+    this.assets().some(a => a.name.includes('orthophoto'))
+  );
+
+  hasDSM = computed(() => 
+    this.assets().some(a => a.name.includes('dsm'))
+  );
+
+  hasDTM = computed(() => 
+    this.assets().some(a => a.name.includes('dtm'))
+  );
+
+  elevationPreviewUrl = computed(() => {
+    const type = this.elevationType();
+    const asset = this.assets().find(a => a.name.includes(type));
+    return asset?.previewUrl;
+  });
+
+  ngOnInit(): void {
+    this.loadAssets();
+    this.loadWarnings();
+  }
+
+  ngAfterViewInit(): void {
+    // Map will be initialized when tab is switched to 'map'
+  }
+
+  ngOnDestroy(): void {
+    if (this.map) {
+      this.map.remove();
+      this.map = null;
+    }
+  }
+
+  loadAssets(): void {
+    if (this.outputs && Object.keys(this.outputs).length > 0) {
+      const outputsObj = this.outputs as Record<string, string | undefined>;
+      const assets = this.mapOutputsToAssets(outputsObj);
+      this.assets.set(assets);
+      this.updateSelectableAssets(assets);
+    } else if (this.projectId && this.taskId) {
+      this.resultsService.getTaskAssets(this.projectId, this.taskId).subscribe({
+        next: (assets) => {
+          this.assets.set(assets);
+          this.updateSelectableAssets(assets);
+        },
+        error: (err) => console.error('Failed to load assets:', err)
+      });
+    }
+  }
+
+  loadWarnings(): void {
+    if (!this.nodeodmTaskId) {
+      return;
+    }
+
+    this.loadingWarnings.set(true);
+    this.resultsService.getTaskWarnings(this.nodeodmTaskId).subscribe({
+      next: (warnings) => {
+        this.taskWarnings.set(warnings);
+        this.loadingWarnings.set(false);
+        
+        if (warnings?.has_critical_warnings) {
+          console.log('Task has critical warnings:', warnings.summary);
+        }
+      },
+      error: (err) => {
+        console.error('Failed to load warnings:', err);
+        this.loadingWarnings.set(false);
+      }
+    });
+  }
+
+  toggleRawWarnings(): void {
+    this.showRawWarnings.set(!this.showRawWarnings());
+  }
+
+  private updateSelectableAssets(assets: AssetInfo[]): void {
+    const selectable: SelectableAsset[] = assets.map(asset => ({
+      ...asset,
+      selected: false,
+      size: this.getEstimatedSize(asset.name)
+    }));
+    this.selectableAssets.set(selectable);
+  }
+
+  private getEstimatedSize(assetName: string): string {
+    const sizes: { [key: string]: string } = {
+      'orthophoto': '~5-50 MB',
+      'dsm': '~2-20 MB',
+      'dtm': '~2-20 MB',
+      'pointCloud': '~10-100 MB',
+      'model3d': '~5-50 MB',
+      'report': '~1-5 MB'
+    };
+    for (const [key, size] of Object.entries(sizes)) {
+      if (assetName.includes(key)) return size;
+    }
+    return '';
+  }
+
+  // Selection methods
+  toggleSelectAll(): void {
+    const allSelected = this.allSelected();
+    const updated = this.selectableAssets().map(a => ({
+      ...a,
+      selected: !allSelected
+    }));
+    this.selectableAssets.set(updated);
+  }
+
+  onAssetSelectionChange(): void {
+    this.selectableAssets.set([...this.selectableAssets()]);
+  }
+
+  canPreview(asset: SelectableAsset): boolean {
+    const canPreview = asset.name !== 'all' && asset.name !== 'all.zip';
+    console.log('🔍 canPreview for', asset.name, ':', canPreview);
+    return canPreview;
+  }
+
+  previewAsset(asset: SelectableAsset): void {
+    console.log('🔍 previewAsset called with:', asset);
+    
+    const filename = `${asset.displayName.replace(/\s+/g, '_')}${asset.extension}`;
+    // Use chunk endpoint since taskId is actually chunkId
+    const url = this.projectId && this.taskId
+      ? this.resultsService.getChunkAssetDownloadUrl(this.projectId, this.taskId, asset.name)
+      : asset.downloadUrl;
+
+    console.log('📁 Filename:', filename);
+    console.log('🌐 URL:', url);
+    console.log('🆔 Project ID:', this.projectId, 'Chunk ID:', this.taskId);
+
+    this.previewOpen.set(true);
+    this.previewTitle.set(asset.displayName);
+    this.previewMessage.set('');
+    this.previewError.set(null);
+    this.previewPdfUrl.set(null);
+    this.previewDownloadUrl.set(url || null);
+    this.previewLoading.set(true);
+
+    console.log('✅ Preview modal opened:', this.previewOpen());
+
+    if (!url) {
+      console.warn('⚠️ No URL available for preview');
+      this.previewType.set('message');
+      this.previewMessage.set('Arquivo indisponível para visualização.');
+      this.previewLoading.set(false);
+      return;
+    }
+
+    if (asset.extension.toLowerCase() === '.pdf') {
+      console.log('📄 Rendering PDF preview');
+      this.previewType.set('pdf');
+      void this.renderPdfPreview(url, filename);
+      return;
+    }
+
+    if (asset.extension.toLowerCase() === '.tif' || asset.extension.toLowerCase() === '.tiff') {
+      console.log('🖼️ Rendering TIFF preview');
+      this.previewType.set('tiff');
+      void this.renderTiffPreview(url, filename);
+      return;
+    }
+
+    console.log('ℹ️ Preview not available for this file type');
+    this.previewType.set('message');
+    this.previewMessage.set('Pré-visualização não disponível para este tipo de arquivo.');
+    this.previewLoading.set(false);
+  }
+
+  closePreview(): void {
+    this.previewOpen.set(false);
+    this.previewLoading.set(false);
+    this.previewError.set(null);
+    this.previewMessage.set('');
+    this.previewPdfUrl.set(null);
+    this.previewDownloadUrl.set(null);
+    if (this.previewObjectUrl) {
+      URL.revokeObjectURL(this.previewObjectUrl);
+      this.previewObjectUrl = null;
+    }
+  }
+
+  /**
+   * Aguarda o canvas estar disponível no DOM com retry inteligente
+   * @param maxAttempts Número máximo de tentativas (padrão: 50)
+   * @param delayMs Delay entre tentativas em ms (padrão: 20ms)
+   * @returns Promise que resolve quando canvas está disponível
+   */
+  private async waitForCanvas(maxAttempts: number = 50, delayMs: number = 20): Promise<HTMLCanvasElement> {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      // Forçar detecção de mudanças apenas na primeira tentativa
+      if (attempt === 0) {
+        this.cdr.detectChanges();
+      }
+      
+      const canvas = this.previewCanvas?.nativeElement;
+      if (canvas) {
+        console.log(`✅ Canvas encontrado após ${attempt + 1} tentativa(s)`);
+        return canvas;
+      }
+      
+      // Aguardar antes da próxima tentativa
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+    }
+    
+    throw new Error(`Canvas não disponível após ${maxAttempts} tentativas (${maxAttempts * delayMs}ms)`);
+  }
+
+  private async renderPdfPreview(url: string, filename: string): Promise<void> {
+    console.log('📄 Starting PDF preview render for:', filename);
+    console.log('🌐 Fetching from URL:', url);
+    
+    try {
+      console.log('📡 Fetching PDF data...');
+      const blob = await firstValueFrom(this.http.get(url, { responseType: 'blob' }));
+      console.log('✅ PDF data fetched, size:', blob.size, 'bytes');
+      
+      if (this.previewObjectUrl) {
+        URL.revokeObjectURL(this.previewObjectUrl);
+      }
+      
+      this.previewObjectUrl = URL.createObjectURL(blob);
+      console.log('🔗 Object URL created:', this.previewObjectUrl);
+      
+      this.previewPdfUrl.set(this.sanitizer.bypassSecurityTrustResourceUrl(this.previewObjectUrl));
+      this.previewLoading.set(false);
+      console.log('✅ PDF preview rendered successfully!');
+    } catch (error) {
+      console.error('❌ PDF preview failed:', error);
+      this.previewType.set('message');
+      this.previewError.set(`Não foi possível gerar a visualização de ${filename}.`);
+      this.previewLoading.set(false);
+    }
+  }
+
+  private async renderTiffPreview(url: string, filename: string): Promise<void> {
+    console.log('🖼️ Starting TIFF preview render for:', filename);
+    console.log('🌐 Fetching from URL:', url);
+    
+    try {
+      console.log('📡 Fetching TIFF data...');
+      const buffer = await firstValueFrom(this.http.get(url, { responseType: 'arraybuffer' }));
+      console.log('✅ TIFF data fetched, size:', buffer.byteLength, 'bytes');
+      
+      console.log('📖 Parsing TIFF...');
+      const tiff = await fromArrayBuffer(buffer);
+      const image = await tiff.getImage();
+      console.log('✅ TIFF parsed, dimensions:', image.getWidth(), 'x', image.getHeight());
+
+      const maxWidth = 1024;
+      const scale = Math.min(1, maxWidth / image.getWidth());
+      const width = Math.max(1, Math.floor(image.getWidth() * scale));
+      const height = Math.max(1, Math.floor(image.getHeight() * scale));
+      console.log('📐 Render dimensions:', width, 'x', height, '(scale:', scale, ')');
+
+      console.log('🎨 Reading raster data...');
+      const raster = await image.readRasters({ width, height });
+      console.log('✅ Raster data read');
+      
+      // CRÍTICO: Desativar loading ANTES de acessar canvas
+      // O canvas só é renderizado quando previewLoading() === false
+      console.log('🎬 Desativando loading para renderizar canvas no DOM...');
+      this.previewLoading.set(false);
+      
+      // Aguardar canvas estar disponível com retry inteligente
+      console.log('⏳ Aguardando canvas...');
+      const canvas = await this.waitForCanvas();
+
+      canvas.width = width;
+      canvas.height = height;
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        throw new Error('Contexto de canvas não disponível.');
+      }
+
+      const imageData = ctx.createImageData(width, height);
+      const data = imageData.data;
+
+      const bands = Array.isArray(raster) ? raster : [raster];
+      console.log('📊 Number of bands:', bands.length);
+      
+      if (bands.length >= 3) {
+        console.log('🎨 Rendering RGB image...');
+        const r = bands[0] as Uint8Array | Uint16Array | Float32Array;
+        const g = bands[1] as Uint8Array | Uint16Array | Float32Array;
+        const b = bands[2] as Uint8Array | Uint16Array | Float32Array;
+        for (let i = 0, j = 0; i < r.length; i++, j += 4) {
+          data[j] = this.normalizeSample(r[i]);
+          data[j + 1] = this.normalizeSample(g[i]);
+          data[j + 2] = this.normalizeSample(b[i]);
+          data[j + 3] = 255;
+        }
+      } else {
+        console.log('⚫ Rendering grayscale image...');
+        const band = bands[0] as Uint8Array | Uint16Array | Float32Array;
+        const { min, max } = this.findMinMax(band);
+        console.log('📊 Data range: min=', min, ', max=', max);
+        const range = max - min || 1;
+        for (let i = 0, j = 0; i < band.length; i++, j += 4) {
+          const value = Math.round(((band[i] - min) / range) * 255);
+          data[j] = value;
+          data[j + 1] = value;
+          data[j + 2] = value;
+          data[j + 3] = 255;
+        }
+      }
+
+      console.log('🖌️ Drawing image data to canvas...');
+      ctx.putImageData(imageData, 0, 0);
+      this.previewLoading.set(false);
+      console.log('✅ TIFF preview rendered successfully!');
+    } catch (error) {
+      console.error('❌ Preview failed:', error);
+      this.previewType.set('message');
+      this.previewError.set(`Não foi possível gerar a visualização de ${filename}.`);
+      this.previewLoading.set(false);
+    }
+  }
+
+  private findMinMax(data: Uint8Array | Uint16Array | Float32Array): { min: number; max: number } {
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+    for (let i = 0; i < data.length; i++) {
+      const value = data[i];
+      if (value < min) min = value;
+      if (value > max) max = value;
+    }
+    return { min, max };
+  }
+
+  private normalizeSample(value: number): number {
+    if (Number.isNaN(value)) return 0;
+    if (value <= 1) return Math.round(value * 255);
+    if (value <= 255) return Math.round(value);
+    return Math.min(255, Math.round(value / 256));
+  }
+
+  downloadSelected(): void {
+    const selected = this.selectableAssets().filter(a => a.selected);
+    if (selected.length === 0) return;
+
+    selected.forEach(asset => {
+      this.downloadAsset(asset);
+    });
+  }
+
+  downloadAllZip(): void {
+    if (!this.projectId || !this.taskId) {
+      console.error('No project/chunk ID available');
+      return;
+    }
+
+    // Use chunk endpoint since taskId is actually chunkId
+    const url = this.resultsService.getChunkAssetDownloadUrl(this.projectId, this.taskId, 'all');
+    this.triggerDownload(url, 'resultados_completos.zip');
+  }
+
+  private mapOutputsToAssets(outputs: Record<string, any>): AssetInfo[] {
+    const assets: AssetInfo[] = [];
+    
+    const assetDefs: { [key: string]: { displayName: string; description: string; icon: string; extension: string; aliases: string[] } } = {
+      'orthophoto': { displayName: 'Ortofoto', description: 'Mosaico ortorretificado em formato GeoTIFF', icon: '🗺️', extension: '.tif', aliases: ['orthophoto', 'orthophoto.tif'] },
+      'dsm': { displayName: 'DSM', description: 'Modelo Digital de Superfície', icon: '🏔️', extension: '.tif', aliases: ['dsm', 'dsm.tif'] },
+      'dtm': { displayName: 'DTM', description: 'Modelo Digital de Terreno', icon: '⛰️', extension: '.tif', aliases: ['dtm', 'dtm.tif'] },
+      'pointCloud': { displayName: 'Nuvem de Pontos', description: 'Nuvem de pontos georreferenciada', icon: '✨', extension: '.laz', aliases: ['pointCloud', 'georeferenced_model.laz'] },
+      'model3d': { displayName: 'Modelo 3D', description: 'Modelo 3D texturizado', icon: '🎮', extension: '.zip', aliases: ['model3d', 'textured_model.zip'] },
+      'report': { displayName: 'Relatório', description: 'Relatório do processamento', icon: '📄', extension: '.pdf', aliases: ['report', 'report.pdf'] }
+    };
+
+    const addedAssets = new Set<string>();
+
+    // Parse outputs if it comes as string
+    let parsedOutputs = outputs;
+    if (typeof outputs === 'string') {
+      try {
+        parsedOutputs = JSON.parse(outputs);
+      } catch (e) {
+        console.error('Failed to parse outputs:', e);
+        return assets;
+      }
+    }
+
+    for (const [key, value] of Object.entries(parsedOutputs)) {
+      if (key.endsWith('_size')) continue;
+      
+      // Extract filename from URL if value is a URL string
+      let filename = key;
+      if (typeof value === 'string' && value.includes('/')) {
+        const parts = value.split('/');
+        filename = parts[parts.length - 1];
+      }
+      
+      for (const [assetType, def] of Object.entries(assetDefs)) {
+        if (def.aliases.some(alias => filename.includes(alias)) && !addedAssets.has(assetType)) {
+          // Build download URL using chunk endpoint - taskId is actually chunkId
+          let downloadUrl: string;
+          if (this.projectId && this.taskId) {
+            // Use chunk endpoint since taskId is actually chunkId
+            downloadUrl = this.resultsService.getChunkAssetDownloadUrl(this.projectId, this.taskId, assetType);
+          } else if (typeof value === 'string') {
+            downloadUrl = value;
+          } else {
+            continue;
+          }
+          
+          addedAssets.add(assetType);
+          assets.push({
+            name: assetType,
+            displayName: def.displayName,
+            description: def.description,
+            icon: def.icon,
+            extension: def.extension,
+            downloadUrl,
+            available: true
+          });
+          break;
+        }
+      }
+    }
+
+    if (assets.length > 0) {
+      // Use chunk endpoint for all.zip since taskId is actually chunkId
+      assets.push({
+        name: 'all',
+        displayName: 'Todos os Arquivos',
+        description: 'Download de todos os resultados em um arquivo ZIP',
+        icon: '📦',
+        extension: '.zip',
+        downloadUrl: this.projectId && this.taskId
+          ? this.resultsService.getChunkAssetDownloadUrl(this.projectId, this.taskId, 'all')
+          : '',
+        available: true
+      });
+    }
+
+    return assets;
+  }
+
+  setActiveTab(tab: TabType): void {
+    this.activeTab.set(tab);
+    
+    if (tab === 'map') {
+      setTimeout(() => this.initializeMap(), 100);
+    }
+  }
+
+  setElevationType(type: 'dsm' | 'dtm'): void {
+    this.elevationType.set(type);
+  }
+
+  downloadAsset(asset: AssetInfo | SelectableAsset): void {
+    if (this.projectId && this.taskId) {
+      const filename = `${asset.displayName.replace(/\s+/g, '_')}${asset.extension}`;
+      // Use chunk endpoint since taskId is actually chunkId
+      const url = this.resultsService.getChunkAssetDownloadUrl(this.projectId, this.taskId, asset.name);
+      this.triggerDownload(url, filename);
+      return;
+    }
+
+    if (asset.downloadUrl) {
+      const filename = `${asset.displayName.replace(/\s+/g, '_')}${asset.extension}`;
+      this.triggerDownload(asset.downloadUrl, filename);
+      return;
+    }
+
+    if (!this.nodeodmTaskId) {
+      console.error('No task ID available');
+      return;
+    }
+    
+    const assetPaths: { [key: string]: string } = {
+      'orthophoto': 'orthophoto.tif',
+      'dsm': 'dsm.tif',
+      'dtm': 'dtm.tif',
+      'pointCloud': 'georeferenced_model.laz',
+      'model3d': 'textured_model.zip',
+      'report': 'report.pdf'
+    };
+    
+    let downloadPath = '';
+    for (const [key, path] of Object.entries(assetPaths)) {
+      if (asset.name.includes(key)) {
+        downloadPath = path;
+        break;
+      }
+    }
+    
+    if (downloadPath) {
+      const url = `/nodeodm-api/task/${this.nodeodmTaskId}/download/${downloadPath}`;
+      const filename = `${asset.displayName.replace(/\s+/g, '_')}${asset.extension}`;
+      this.triggerDownload(url, filename);
+    }
+  }
+
+  private triggerDownload(url: string, filename: string): void {
+    this.resultsService.downloadAsset(url, filename);
+  }
+
+  // Map Methods
+  private initializeMap(): void {
+    if (this.map) return;
+
+    const mapElement = document.getElementById('orthophoto-map');
+    if (!mapElement) {
+      console.warn('Map element not found, retrying...');
+      setTimeout(() => this.initializeMap(), 200);
+      return;
+    }
+
+    this.map = L.map('orthophoto-map', {
+      center: [0, 0],
+      zoom: 2,
+      zoomControl: false
+    });
+
+    this.baseLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors'
+    });
+    this.baseLayer.addTo(this.map);
+
+    // Force map to recalculate size after container is visible
+    setTimeout(() => {
+      if (this.map) {
+        this.map.invalidateSize();
+      }
+    }, 100);
+
+    this.loadOrthophotoBounds();
+
+    this.map.on('moveend', () => this.updateMapInfo());
+    this.map.on('zoomend', () => this.updateMapInfo());
+    this.updateMapInfo();
+  }
+
+  private loadOrthophotoBounds(): void {
+    if (!this.map || !this.nodeodmTaskId) {
+      this.loadTaskLocation();
+      return;
+    }
+
+    this.resultsService.getOrthophotoBounds(this.nodeodmTaskId).subscribe({
+      next: (bounds) => {
+        if (bounds && this.map) {
+          const latLngBounds = L.latLngBounds(
+            [bounds.south, bounds.west],
+            [bounds.north, bounds.east]
+          );
+          this.map.fitBounds(latLngBounds);
+          
+          const orthoAsset = this.assets().find(a => a.name.includes('orthophoto'));
+          if (orthoAsset && this.map) {
+            // Use preview endpoint for web-friendly PNG
+            const previewUrl = `/nodeodm-api/task/${this.nodeodmTaskId}/download/orthophoto.tif`;
+            this.orthophotoLayer = L.imageOverlay(previewUrl, latLngBounds, {
+              opacity: 0.8
+            });
+            this.orthophotoLayer.addTo(this.map);
+          }
+        } else {
+          this.loadTaskLocation();
+        }
+      },
+      error: () => this.loadTaskLocation()
+    });
+  }
+
+  private loadTaskLocation(): void {
+    if (!this.map) return;
+    
+    this.resultsService.getTaskLocation(this.projectId, this.taskId, this.nodeodmTaskId).subscribe({
+      next: (location) => {
+        if (location && this.map) {
+          this.map.setView([location.lat, location.lng], location.zoom || 18);
+        }
+      },
+      error: () => {
+        console.warn('Could not load task location');
+      }
+    });
+  }
+
+  private updateMapInfo(): void {
+    if (!this.map) return;
+    const center = this.map.getCenter();
+    this.mapInfo.set({
+      zoom: this.map.getZoom(),
+      lat: center.lat,
+      lng: center.lng
+    });
+  }
+
+  zoomIn(): void {
+    this.map?.zoomIn();
+  }
+
+  zoomOut(): void {
+    this.map?.zoomOut();
+  }
+
+  resetView(): void {
+    this.loadOrthophotoBounds();
+  }
+
+  toggleLayer(): void {
+    if (!this.map || !this.orthophotoLayer) return;
+    
+    if (this.showOrtho()) {
+      this.map.removeLayer(this.orthophotoLayer);
+    } else {
+      this.orthophotoLayer.addTo(this.map);
+    }
+    this.showOrtho.update(v => !v);
+  }
+}

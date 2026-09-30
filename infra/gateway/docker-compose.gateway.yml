@@ -6,7 +6,8 @@
 # O compose unificado com todos os serviços é a Fase 4.
 #
 # Pré-requisitos (rodando à parte):
-#   - funcoesODM no ar:  cd ImgDrone/funcoesODM && docker compose up -d
+#   - funcoesODM no ar:  o compose standalone ficou só no ImgDrone/ (fora do git);
+#                        hoje o drone sobe pelo deploy/compose (--profile full)
 #   - IAM   no host:     cd iam     && ../.venv/bin/python manage.py runserver 8001
 #   - backend   no host:     cd backend && ../.venv/bin/python manage.py runserver 8000
 #   - React no host:     cd frontend && npm run dev    (vite em 5173)

@@ -37,17 +37,6 @@ contêiner que faltava na frota geral — foi fechado em 07/08/2026, também no 
 
 ## 🟠 Altas
 
-### D225 — o código do drone que as fases 4, 5 e 6 exigem não está versionado em lugar nenhum · 🟠 aberto 29/09/2026
-
-`ImgDrone/` está no `.gitignore` do repositório (linha 119), e o repositório próprio dele não tem
-**nenhum commit** — `funcoesODM/backend/java-service/` aparece como não rastreado. Moram ali o PEP do
-drone (D205: `AutorizacaoService`, a conferência do `sid`), a validação de `iss`/`aud`/`typ` da fase 5
-(D220), o handshake do WebSocket pelo BFF e o `/ws` sem origem aberta (D219), e o app Angular sem
-token no `localStorage`. O `docs/` e os testes da IAM já descrevem e cobram esse código
-(`test_as_audiencias_do_drone_batem_com_as_do_java`), mas um clone novo sobe o drone sem nada disso —
-a imagem é construída do diretório local. **Decisão do dono:** onde o drone passa a ser versionado
-(commit no repositório do `ImgDrone`, submódulo, ou o `java-service` e o `frontend` dentro deste).
-
 ### F2 — Selects carregam tabelas inteiras · 🟠 parcial 25/07/2026
 
 Formulários carregam todos os clientes/fornecedores/empreendimentos para montar selects.

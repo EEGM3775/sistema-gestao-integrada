@@ -10,6 +10,26 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D225 — o código do drone que as fases 4, 5 e 6 exigem não estava versionado em lugar nenhum · ✅ corrigido 29/09/2026
+
+`ImgDrone/` está no `.gitignore` do repositório, e o repositório próprio dele não tinha **nenhum
+commit**. Moravam só ali o PEP do drone (D205: `AutorizacaoService`, a conferência do `sid`), a
+validação de `iss`/`aud`/`typ` da fase 5 (D220), o handshake do WebSocket pelo BFF e o `/ws` sem
+origem aberta (D219), e o app Angular sem token no `localStorage`. Os docs e os testes da IAM já
+cobravam esse código, mas um clone novo não tinha como construir o drone: o compose apontava cinco
+caminhos para `ImgDrone/funcoesODM/`.
+
+**Decisão do dono:** o drone passa a ser versionado **dentro deste repositório**. **Correção:** as
+cinco entradas do compose e a `docs/` do drone copiadas para `funcoesODM/` na raiz, com a mesma
+estrutura (`backend/java-service`, `frontend`, `init-db`, `docker/nodeodm`,
+`docker/potree-converter`, `docs`) — 348 arquivos, sem `target/`, `.angular/`, `dist/`,
+`node_modules` nem `.env`. `deploy/compose/base.yml` aponta para lá; o `ImgDrone/` segue ignorado,
+com os fontes do ODM de terceiros. O `.dockerignore` da raiz exclui `funcoesODM` (o drone builda do
+próprio diretório), e o trivy do CI passa a varrer o `pom.xml` e o `package-lock` do drone.
+`test_as_audiencias_do_drone_batem_com_as_do_java` agora lê `funcoesODM/` e deixa de ser pulado no
+CI. Conferido: `compose config` resolve os cinco caminhos; as imagens do `java-service` e do Angular
+constroem de `funcoesODM/`; `test_bff` 28/28 com o teste de audiências executado. A cópia antiga em `ImgDrone/funcoesODM/` ficou para trás e não deve mais ser editada.
+
 ### D212 — o `security-scan` do CI não roda: `trivy-action@0.28.0` não existe mais · ✅ corrigido 29/09/2026
 
 Visto no PR #26. O job parava em "Prepare all required actions", antes de qualquer passo:

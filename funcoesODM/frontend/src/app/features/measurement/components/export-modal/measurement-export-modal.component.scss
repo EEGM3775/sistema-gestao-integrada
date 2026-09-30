@@ -1,0 +1,433 @@
+/**
+ * Estilos do modal de exportação de medições.
+ * Extraídos do measurement-tab.component.scss.
+ */
+
+// ===========================================================================
+// Overlay
+// ===========================================================================
+
+.em-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 8, 23, 0.55);
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(3px);
+  padding: 1rem;
+}
+
+// ===========================================================================
+// Modal
+// ===========================================================================
+
+.em-modal {
+  position: relative; // ancora o overlay do popup de fuso
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 24px 80px rgba(2, 8, 23, 0.28);
+  width: 540px;
+  max-width: 100%;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+
+  // ---------- Cabecalho ----------
+  .em-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 1rem 1.25rem 0.85rem;
+    border-bottom: 1px solid #e2e8f0;
+    flex-shrink: 0;
+
+    .em-header-info {
+      display: flex;
+      flex-direction: column;
+      gap: 0.15rem;
+    }
+
+    .em-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: #0f172a;
+      letter-spacing: 0.01em;
+    }
+
+    .em-subtitle {
+      font-size: 0.7rem;
+      color: #94a3b8;
+      font-weight: 400;
+    }
+
+    .em-close {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      color: #94a3b8;
+      font-size: 1.15rem;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background 0.15s, color 0.15s;
+      margin-top: -2px;
+
+      &:hover { background: #f1f5f9; color: #334155; }
+    }
+  }
+
+  // ---------- Barra de coordenadas ----------
+  .em-coord-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.65rem 1.25rem;
+    border-bottom: 1px solid #e2e8f0;
+    background: #f8fafc;
+    flex-shrink: 0;
+
+    .em-coord-label {
+      font-size: 0.65rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: #64748b;
+      white-space: nowrap;
+    }
+
+    .em-coord-opts {
+      display: flex;
+      gap: 0.35rem;
+    }
+
+    .em-coord-opt {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.28rem 0.65rem;
+      border: 1.5px solid #e2e8f0;
+      border-radius: 6px;
+      background: #fff;
+      cursor: pointer;
+      font-size: 0.72rem;
+      color: #64748b;
+      transition: border-color 0.15s, background 0.15s, color 0.15s;
+
+      strong {
+        font-weight: 800;
+        font-size: 0.73rem;
+        color: inherit;
+      }
+
+      span {
+        font-size: 0.63rem;
+        color: #94a3b8;
+      }
+
+      &.active {
+        border-color: #3b82f6;
+        background: #eff6ff;
+        color: #1d4ed8;
+
+        span { color: #3b82f6; }
+      }
+
+      &:hover:not(.active) {
+        border-color: #94a3b8;
+        background: #f1f5f9;
+      }
+    }
+  }
+
+  // ---------- Popup de selecao de fuso UTM ----------
+  .em-zone-popup-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    border-radius: inherit;
+  }
+
+  .em-zone-popup {
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.22);
+    padding: 1.25rem 1.4rem 1rem;
+    width: min(340px, 90%);
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+
+    .em-zone-popup-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+
+      strong {
+        font-size: 0.78rem;
+        font-weight: 700;
+        color: #1c1917;
+      }
+    }
+
+    .em-zone-popup-close {
+      background: none;
+      border: none;
+      font-size: 1.1rem;
+      line-height: 1;
+      color: #78716c;
+      cursor: pointer;
+      padding: 0 0.1rem;
+
+      &:hover { color: #1c1917; }
+    }
+
+    .em-zone-popup-desc {
+      font-size: 0.67rem;
+      color: #57534e;
+      line-height: 1.5;
+      margin: 0;
+    }
+
+    .em-zone-popup-opts {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+
+    .em-zone-opt {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.08rem;
+      padding: 0.5rem 0.75rem;
+      border: 1.5px solid #e7e5e4;
+      border-radius: 7px;
+      background: #fafaf9;
+      cursor: pointer;
+      text-align: left;
+      transition: border-color 0.15s, background 0.15s;
+      width: 100%;
+
+      strong {
+        font-size: 0.7rem;
+        font-weight: 700;
+        color: #1c1917;
+      }
+
+      span {
+        font-size: 0.6rem;
+        color: #78716c;
+        line-height: 1.3;
+      }
+
+      &.active {
+        border-color: #0369a1;
+        background: #f0f9ff;
+
+        strong { color: #0c4a6e; }
+        span   { color: #0284c7; }
+      }
+
+      &:hover:not(.active) {
+        border-color: #a8a29e;
+        background: #f5f5f4;
+      }
+    }
+
+    .em-zone-popup-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.5rem;
+      padding-top: 0.25rem;
+      border-top: 1px solid #f5f5f4;
+    }
+
+    .em-btn-secondary {
+      padding: 0.38rem 0.85rem;
+      border: 1.5px solid #d6d3d1;
+      border-radius: 6px;
+      background: #fff;
+      font-size: 0.68rem;
+      font-weight: 600;
+      color: #57534e;
+      cursor: pointer;
+      transition: border-color 0.15s;
+
+      &:hover { border-color: #a8a29e; }
+    }
+
+    .em-btn-primary {
+      padding: 0.38rem 1rem;
+      border: none;
+      border-radius: 6px;
+      background: #0369a1;
+      font-size: 0.68rem;
+      font-weight: 700;
+      color: #fff;
+      cursor: pointer;
+      transition: background 0.15s;
+
+      &:hover { background: #0284c7; }
+    }
+  }
+
+  // ---------- Corpo (scroll) ----------
+  .em-body {
+    overflow-y: auto;
+    padding: 1rem 1.25rem;
+    flex: 1;
+  }
+
+  .em-cat {
+    margin: 0 0 0.5rem;
+    font-size: 0.6rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #94a3b8;
+
+    &:not(:first-child) { margin-top: 1.1rem; }
+  }
+
+  .em-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.4rem;
+  }
+
+  // ---------- Card ----------
+  .em-card {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.1rem;
+    padding: 0.55rem 0.6rem 0.5rem;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 8px;
+    background: #f8fafc;
+    cursor: pointer;
+    text-align: left;
+    transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+    min-width: 0;
+
+    .em-card-ext {
+      font-size: 0.78rem;
+      font-weight: 900;
+      letter-spacing: 0.03em;
+      color: #1e293b;
+      white-space: nowrap;
+    }
+
+    .em-card-name {
+      font-size: 0.68rem;
+      font-weight: 600;
+      color: #334155;
+      margin-top: 0.1rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+    }
+
+    .em-card-compat {
+      font-size: 0.55rem;
+      color: #94a3b8;
+      margin-top: 0.1rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+    }
+
+    .em-badge {
+      display: inline-block;
+      margin-top: 0.35rem;
+      padding: 0.1rem 0.35rem;
+      border-radius: 20px;
+      font-size: 0.52rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+
+      &.ready { background: #dcfce7; color: #15803d; }
+      &.soon  { background: #fef9c3; color: #854d0e; }
+      &.plan  { background: #f1f5f9; color: #94a3b8; }
+      &.beta  { background: #fff7ed; color: #c2410c; }
+    }
+
+    // Estado: disponivel
+    &.status-ready {
+      background: #fff;
+      border-color: #bfdbfe;
+
+      .em-card-ext  { color: #1d4ed8; }
+      .em-card-name { color: #1e3a8a; }
+
+      &:hover {
+        border-color: #3b82f6;
+        background: #eff6ff;
+        box-shadow: 0 2px 8px rgba(59, 130, 246, 0.15);
+      }
+
+      &:active { background: #dbeafe; }
+    }
+
+    // Estado: beta (funcional, mas em validacao)
+    &.status-beta {
+      background: #fff;
+      border-color: #fed7aa;
+
+      .em-card-ext  { color: #c2410c; }
+      .em-card-name { color: #9a3412; }
+
+      &:hover {
+        border-color: #fb923c;
+        background: #fff7ed;
+        box-shadow: 0 2px 8px rgba(251, 146, 60, 0.15);
+      }
+
+      &:active { background: #ffedd5; }
+    }
+
+    // Estado: em breve
+    &.status-soon {
+      opacity: 0.72;
+      cursor: not-allowed;
+
+      &:hover { border-color: #e2e8f0; box-shadow: none; }
+    }
+
+    // Estado: planejado (mais distante)
+    &.status-plan {
+      opacity: 0.45;
+      cursor: not-allowed;
+      border-style: dashed;
+
+      &:hover { border-color: #e2e8f0; box-shadow: none; }
+    }
+  }
+
+  // ---------- Rodape ----------
+  .em-footer {
+    border-top: 1px solid #e2e8f0;
+    padding: 0.55rem 1.25rem;
+    background: #f8fafc;
+    flex-shrink: 0;
+
+    .em-footer-note {
+      font-size: 0.65rem;
+      color: #94a3b8;
+    }
+  }
+}

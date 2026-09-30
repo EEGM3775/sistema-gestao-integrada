@@ -1,0 +1,114 @@
+<!--
+  GcpEditorComponent — template externo
+  Orquestra os sub-componentes: ImportPanel, MapPicker, GcpList e ImageViewer.
+-->
+
+<div class="gcp-overlay" (click)="onOverlayClick($event)">
+  <div class="gcp-editor" (click)="$event.stopPropagation()">
+
+    <!-- ===== HEADER ===== -->
+    <div class="gcp-header">
+      <div class="gcp-title-area">
+        <span class="gcp-icon">[GCP]</span>
+        <span class="gcp-title">Editor de Ground Control Points</span>
+      </div>
+      <button class="btn-close" (click)="closeEditor.emit()">[X] Fechar</button>
+    </div>
+
+    <!-- ===== BODY ===== -->
+    <div class="gcp-body">
+
+      <!-- ---- SIDEBAR ESQUERDA ---- -->
+      <div class="gcp-sidebar">
+
+        @if (showMapPicker()) {
+
+          <!-- Map picker: auto-inicia o Leaflet no AfterViewInit do proprio componente -->
+          <app-gcp-map-picker
+            [gcpPoints]="gcpPoints()"
+            (gcpAdded)="onGcpAdded($event)"
+            (closedRequest)="showMapPicker.set(false)"
+          />
+
+        } @else {
+
+          <!-- Painel de importacao por texto / arquivo -->
+          @if (showImportPanel()) {
+            <app-gcp-import-panel
+              [gcpPoints]="gcpPoints()"
+              (pointsImported)="onPointsImported($event)"
+              (openMapRequest)="showMapPicker.set(true)"
+            />
+          }
+
+          <!-- Lista de GCPs carregados -->
+          @if (gcpPoints().length > 0) {
+            <app-gcp-list
+              [gcpPoints]="gcpPoints()"
+              [marks]="marks()"
+              [selectedGcpId]="selectedGcpId()"
+              [showImportPanel]="showImportPanel()"
+              (gcpSelected)="selectedGcpId.set($event)"
+              (gcpRemoved)="onGcpRemoved($event)"
+              (openMapRequest)="showMapPicker.set(true)"
+              (toggleImportRequest)="toggleImportPanel()"
+            />
+          } @else if (!showImportPanel()) {
+            <div class="sidebar-empty">
+              <p>Nenhum GCP carregado.</p>
+              <div class="sidebar-empty-actions">
+                <button class="btn-secondary" (click)="showImportPanel.set(true)">+ Importar texto</button>
+                <button class="btn-secondary" (click)="showMapPicker.set(true)">+ Via Mapa</button>
+              </div>
+            </div>
+          }
+
+        }
+
+      </div>
+
+      <!-- ---- VIEWER CENTRAL ---- -->
+      <div class="gcp-viewer">
+        <app-gcp-image-viewer
+          [projectId]="projectId"
+          [images]="images"
+          [marks]="marks()"
+          [gcpPoints]="gcpPoints()"
+          [selectedGcpId]="selectedGcpId()"
+          (markAdded)="onMarkAdded($event)"
+          (markRemoved)="onMarkRemoved($event)"
+          (nextGcpSuggested)="selectedGcpId.set($event)"
+        />
+      </div>
+
+    </div>
+
+    <!-- ===== FOOTER ===== -->
+    <div class="gcp-footer">
+      <div
+        class="validation"
+        [class.valid]="validation().valid"
+        [class.invalid]="!validation().valid && marks().length > 0"
+      >
+        @if (marks().length === 0) {
+          Marque cada GCP em pelo menos 2 fotos diferentes para gerar o arquivo.
+        } @else if (!validation().valid) {
+          [ATENCAO] {{ validation().reason }}
+        } @else {
+          [OK] {{ marks().length }} marcacoes em {{ uniqueImageCount() }} fotos — pronto para gerar.
+        }
+      </div>
+      <div class="footer-actions">
+        <button class="btn-secondary" (click)="closeEditor.emit()">Cancelar</button>
+        <button
+          class="btn-primary"
+          [disabled]="!validation().valid"
+          (click)="generate()"
+        >
+          Usar gcp_list.txt ({{ marks().length }} marcas)
+        </button>
+      </div>
+    </div>
+
+  </div>
+</div>

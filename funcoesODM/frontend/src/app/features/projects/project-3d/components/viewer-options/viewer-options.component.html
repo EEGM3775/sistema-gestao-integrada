@@ -1,0 +1,89 @@
+<div class="options-panel">
+  <h4>Opções de Visualização</h4>
+
+  <!-- Display Type -->
+  <div class="option-row">
+    <label>Tipo de Visualização</label>
+    <div class="toggle-group">
+      <button
+        class="toggle-btn"
+        [class.active]="displayType === 'pointcloud'"
+        (click)="setDisplayType('pointcloud')"
+      >
+        Nuvem de Pontos
+      </button>
+      <button
+        class="toggle-btn"
+        [class.active]="displayType === 'mesh'"
+        (click)="setDisplayType('mesh')"
+      >
+        Malha 3D
+      </button>
+    </div>
+  </div>
+
+  <!-- Color Mode -->
+  <div class="option-row">
+    <label>Modo de Cor</label>
+    <div class="toggle-group small">
+      <button
+        class="toggle-btn small"
+        [class.active]="colorMode === 'rgb'"
+        (click)="setColorMode('rgb')"
+      >
+        RGB
+      </button>
+      <button
+        class="toggle-btn small"
+        [class.active]="colorMode === 'elevation'"
+        (click)="setColorMode('elevation')"
+      >
+        Elevação
+      </button>
+      <button
+        class="toggle-btn small"
+        [class.active]="colorMode === 'intensity'"
+        (click)="setColorMode('intensity')"
+      >
+        Intensidade
+      </button>
+    </div>
+  </div>
+
+  <!-- Point Size -->
+  <div class="option-row">
+    <label>Tamanho dos Pontos</label>
+    <input
+      type="range"
+      min="1"
+      max="10"
+      [value]="pointSize"
+      (input)="onPointSizeChange($event)"
+    />
+    <span class="range-value">{{ pointSize }}px</span>
+  </div>
+
+  <!-- Show Grid -->
+  <div class="option-row">
+    <label class="checkbox-label">
+      <input
+        type="checkbox"
+        [checked]="showGrid"
+        (change)="toggleGrid()"
+      />
+      <span>Mostrar Grade</span>
+    </label>
+  </div>
+
+  <!-- Show Axes -->
+  <div class="option-row">
+    <label class="checkbox-label">
+      <input
+        type="checkbox"
+        [checked]="showAxes"
+        (change)="toggleAxes()"
+      />
+      <span>Mostrar Eixos</span>
+    </label>
+  </div>
+</div>

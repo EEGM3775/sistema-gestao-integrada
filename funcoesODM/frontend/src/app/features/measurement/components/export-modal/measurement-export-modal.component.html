@@ -1,0 +1,221 @@
+<div class="em-overlay" (click)="close()">
+  <div class="em-modal" (click)="$event.stopPropagation()" role="dialog" aria-modal="true" aria-label="Exportar medições">
+
+    <!-- Cabecalho -->
+    <div class="em-header">
+      <div class="em-header-info">
+        <span class="em-title">Exportar Medições</span>
+        <span class="em-subtitle">{{ measurements.length }} medição{{ measurements.length !== 1 ? 'ões' : '' }}&nbsp;&middot;&nbsp;Projeto #{{ projectId }}</span>
+      </div>
+      <button class="em-close" (click)="close()" title="Fechar">&times;</button>
+    </div>
+
+    <!-- Seletor de sistema de coordenadas -->
+    <div class="em-coord-bar">
+      <span class="em-coord-label">Sistema de coordenadas</span>
+      <div class="em-coord-opts">
+        <button class="em-coord-opt" [class.active]="coordFormat() === 'wgs84'" (click)="coordFormat.set('wgs84')">
+          <strong>WGS84</strong>
+          <span>Lat / Lng decimal</span>
+        </button>
+        <button class="em-coord-opt" [class.active]="coordFormat() === 'utm'" (click)="coordFormat.set('utm')">
+          <strong>UTM</strong>
+          <span>3 casas decimais</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Popup de selecao de fuso UTM (intercepta exportacao quando ha multi-fuso) -->
+    @if (pendingExport() !== null) {
+      <div class="em-zone-popup-overlay" (click)="cancelExport()">
+        <div class="em-zone-popup" (click)="$event.stopPropagation()" role="dialog" aria-modal="true">
+          <div class="em-zone-popup-header">
+            <strong>Medicoes em fusos UTM diferentes</strong>
+            <button class="em-zone-popup-close" (click)="cancelExport()">&times;</button>
+          </div>
+          <p class="em-zone-popup-desc">
+            Seus pontos estao nos fusos <strong>{{ fusoLabels() }}</strong>.
+            Escolha como deseja exportar:
+          </p>
+          <div class="em-zone-popup-opts">
+            <button class="em-zone-opt" [class.active]="selectedEpsg() === null" (click)="selectedEpsg.set(null)">
+              <strong>Lat / Lng (WGS84)</strong>
+              <span>Geometria preservada &mdash; recomendado para GIS</span>
+            </button>
+            @for (z of availableZones(); track z.epsg) {
+              <button class="em-zone-opt" [class.active]="selectedEpsg() === z.epsg" (click)="selectedEpsg.set(z.epsg)">
+                <strong>{{ z.label }}</strong>
+                <span>Reprojetar todos os pontos para este fuso</span>
+              </button>
+            }
+          </div>
+          <div class="em-zone-popup-actions">
+            <button class="em-btn-secondary" (click)="cancelExport()">Cancelar</button>
+            <button class="em-btn-primary" (click)="confirmExport()">Exportar</button>
+          </div>
+        </div>
+      </div>
+    }
+
+    <!-- Grade de formatos -->
+    <div class="em-body">
+
+      <!-- Web / GIS -->
+      <p class="em-cat">Web / GIS</p>
+      <div class="em-grid">
+
+        <button class="em-card status-ready" (click)="exportCSV()">
+          <span class="em-card-ext">CSV</span>
+          <span class="em-card-name">CSV</span>
+          <span class="em-card-compat">Excel &middot; Sheets &middot; Python</span>
+          <span class="em-badge ready">Disponível</span>
+        </button>
+
+        <button class="em-card status-ready" (click)="exportGeoJSON()">
+          <span class="em-card-ext">JSON</span>
+          <span class="em-card-name">GeoJSON</span>
+          <span class="em-card-compat">QGIS &middot; ArcGIS &middot; Leaflet</span>
+          <span class="em-badge ready">Disponível</span>
+        </button>
+
+        <button class="em-card status-ready" (click)="exportKML()">
+          <span class="em-card-ext">KML</span>
+          <span class="em-card-name">KML / KMZ</span>
+          <span class="em-card-compat">Google Earth &middot; Garmin</span>
+          <span class="em-badge ready">Disponível</span>
+        </button>
+
+        <button class="em-card status-ready" (click)="exportWKT()">
+          <span class="em-card-ext">WKT</span>
+          <span class="em-card-name">WKT</span>
+          <span class="em-card-compat">PostGIS &middot; SpatiaLite</span>
+          <span class="em-badge ready">Disponível</span>
+        </button>
+
+        <button class="em-card status-ready" (click)="exportGML()">
+          <span class="em-card-ext">GML</span>
+          <span class="em-card-name">GML</span>
+          <span class="em-card-compat">IBGE &middot; INDE &middot; GeoServer</span>
+          <span class="em-badge ready">Disponível</span>
+        </button>
+
+        <button class="em-card status-ready" (click)="exportTopoJSON()">
+          <span class="em-card-ext">TOPO</span>
+          <span class="em-card-name">TopoJSON</span>
+          <span class="em-card-compat">D3.js &middot; Mapshaper</span>
+          <span class="em-badge ready">Disponível</span>
+        </button>
+
+        <button class="em-card status-ready" (click)="exportShapefile()">
+          <span class="em-card-ext">SHP</span>
+          <span class="em-card-name">Shapefile</span>
+          <span class="em-card-compat">ArcGIS &middot; QGIS &middot; GDAL</span>
+          <span class="em-badge ready">Disponível</span>
+        </button>
+
+        <button class="em-card status-ready" (click)="exportGeoPackage()">
+          <span class="em-card-ext">GPKG</span>
+          <span class="em-card-name">GeoPackage</span>
+          <span class="em-card-compat">QGIS &middot; ArcGIS Pro</span>
+          <span class="em-badge ready">Disponível</span>
+        </button>
+
+      </div>
+
+      <!-- Topografia / Geodesia -->
+      <p class="em-cat">Topografia / Geodésia</p>
+      <div class="em-grid">
+
+        <button class="em-card status-beta" (click)="exportGPX()" title="Formato em validação — pode conter inconsistências">
+          <span class="em-card-ext">GPX</span>
+          <span class="em-card-name">GPX</span>
+          <span class="em-card-compat">Garmin &middot; Trimble &middot; Leica</span>
+          <span class="em-badge beta">Beta</span>
+        </button>
+
+        <button class="em-card status-ready" (click)="exportPNEZD()">
+          <span class="em-card-ext">PNZ</span>
+          <span class="em-card-name">PNEZD</span>
+          <span class="em-card-compat">Carlson &middot; Topcon &middot; Civil 3D</span>
+          <span class="em-badge ready">Disponível</span>
+        </button>
+
+        <button class="em-card status-ready" (click)="exportLandXML()">
+          <span class="em-card-ext">XML</span>
+          <span class="em-card-name">LandXML</span>
+          <span class="em-card-compat">Civil 3D &middot; Trimble &middot; 12d</span>
+          <span class="em-badge ready">Disponível</span>
+        </button>
+
+        <button class="em-card status-ready" (click)="exportGCP()" title="Ground Control Points para reprocessamento com maior precisão no ODM">
+          <span class="em-card-ext">GCP</span>
+          <span class="em-card-name">GCP (ODM)</span>
+          <span class="em-card-compat">ODM &middot; WebODM &middot; OpenDroneMap</span>
+          <span class="em-badge ready">Disponível</span>
+        </button>
+
+      </div>
+
+      <!-- CAD -->
+      <p class="em-cat">CAD</p>
+      <div class="em-grid">
+
+        <button class="em-card status-ready" (click)="exportDXF()">
+          <span class="em-card-ext">DXF</span>
+          <span class="em-card-name">DXF</span>
+          <span class="em-card-compat">AutoCAD &middot; BricsCAD &middot; QGIS</span>
+          <span class="em-badge ready">Disponível</span>
+        </button>
+
+        <button class="em-card status-ready" (click)="exportSVG()">
+          <span class="em-card-ext">SVG</span>
+          <span class="em-card-name">SVG</span>
+          <span class="em-card-compat">Inkscape &middot; Illustrator</span>
+          <span class="em-badge ready">Disponível</span>
+        </button>
+
+      </div>
+
+      <!-- Planilha / Relatorio -->
+      <p class="em-cat">Planilha / Relatório</p>
+      <div class="em-grid">
+
+        <button class="em-card status-ready" (click)="exportJSON()">
+          <span class="em-card-ext">&#123;&nbsp;&#125;</span>
+          <span class="em-card-name">JSON</span>
+          <span class="em-card-compat">APIs &middot; Integrações</span>
+          <span class="em-badge ready">Disponível</span>
+        </button>
+
+        <button class="em-card status-ready" (click)="exportXLSX()">
+          <span class="em-card-ext">XLS</span>
+          <span class="em-card-name">Excel XLSX</span>
+          <span class="em-card-compat">Excel &middot; LibreOffice</span>
+          <span class="em-badge ready">Disponível</span>
+        </button>
+
+        <button class="em-card status-ready" (click)="exportPDF()">
+          <span class="em-card-ext">PDF</span>
+          <span class="em-card-name">Relatório PDF</span>
+          <span class="em-card-compat">Universal &middot; Impressão</span>
+          <span class="em-badge ready">Disponível</span>
+        </button>
+
+      </div>
+
+    </div><!-- /em-body -->
+
+    <!-- Rodape -->
+    <div class="em-footer">
+      <span class="em-footer-note">
+        Coordenadas:
+        @if (coordFormat() === 'utm') {
+          UTM WGS84 &middot; 3 casas decimais
+        } @else {
+          WGS84 &middot; Lat / Lng decimal (7 casas)
+        }
+      </span>
+    </div>
+
+  </div>
+</div>

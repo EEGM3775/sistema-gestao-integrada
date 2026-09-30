@@ -1,0 +1,60 @@
+<div class="warnings-section">
+  <div class="warnings-loading" *ngIf="loadingWarnings()">
+    <div class="spinner"></div>
+    <p>Carregando avisos...</p>
+  </div>
+
+  <div class="no-warnings" *ngIf="!loadingWarnings() && warningCount() === 0">
+    <div class="success-icon">✅</div>
+    <h3>Nenhum aviso encontrado</h3>
+    <p>O processamento foi concluído sem problemas.</p>
+  </div>
+
+  <div class="warnings-content" *ngIf="!loadingWarnings() && warningCount() > 0">
+    <div class="warnings-header">
+      <h3>{{ warningCount() }} aviso(s) durante o processamento</h3>
+      <p class="warnings-subtitle">
+        O processamento foi concluído, mas alguns avisos foram detectados.
+      </p>
+    </div>
+
+    <div class="warning-categories">
+      <div 
+        class="warning-category" 
+        *ngFor="let category of warningSummary()"
+        [class.severity-warning]="category.severity === 'warning'"
+        [class.severity-info]="category.severity === 'info'"
+        [class.severity-error]="category.severity === 'error'">
+        <div class="category-header">
+          <span class="category-icon">{{ category.icon }}</span>
+          <div class="category-title">
+            <h4>{{ category.title }}</h4>
+            <p>{{ category.description }}</p>
+          </div>
+          <span class="category-count">{{ category.warnings.length }}</span>
+        </div>
+        
+        <div class="category-warnings">
+          <div class="warning-item" *ngFor="let warning of category.warnings">
+            <span class="warning-bullet">•</span>
+            <span class="warning-text">{{ warning }}</span>
+          </div>
+        </div>
+
+        <div class="category-tip" *ngIf="category.tip">
+          <span class="tip-icon">💡</span>
+          <span class="tip-text">{{ category.tip }}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="raw-warnings-section">
+      <button class="toggle-raw-btn" (click)="toggleRawWarnings()">
+        {{ showRawWarnings() ? '🔼 Ocultar' : '🔽 Mostrar' }} log completo
+      </button>
+      <div class="raw-warnings" *ngIf="showRawWarnings()">
+        <pre>{{ rawWarningsText() }}</pre>
+      </div>
+    </div>
+  </div>
+</div>
