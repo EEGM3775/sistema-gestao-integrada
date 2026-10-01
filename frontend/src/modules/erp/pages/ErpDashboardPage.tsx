@@ -1,6 +1,6 @@
 import { useMemo, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { Wallet, TrendingUp, TrendingDown, Scale, ArrowRight, ArrowDownCircle, ArrowUpCircle, FileText, ScrollText, Lock } from 'lucide-react'
+import { Wallet, TrendingUp, TrendingDown, Scale, ArrowRight, ArrowDownCircle, ArrowUpCircle, FileText, ScrollText, Lock, Building2 } from 'lucide-react'
 import { useErpDashboard } from '../hooks/useErpDashboard'
 import { KpiCard } from '../components/shared/KpiCard'
 import { DivergenciasErpButton } from '../components/DivergenciasErpButton'
@@ -69,16 +69,23 @@ export default function ErpDashboardPage() {
         <WorkspaceLinkCard
           to="/app/erp/contas-a-receber"
           label="Contas a receber"
-          description="Lançamentos, rateios, emissão de NF e recebimentos de clientes"
+          description="Parcelas por cliente, empreendimento e lote; boletos em lote, segunda via e nota fiscal"
           icon={<ArrowDownCircle size={20} />}
           accentBg="#dcfce7" accentColor="#16a34a"
         />
         <WorkspaceLinkCard
           to="/app/erp/boletos"
           label="Boletos"
-          description="Cobranças emitidas via Asaas (boleto/PIX): acompanhamento, linha digitável e timeline de pagamento"
+          description="Boletos pelo Asaas e pelo banco: de quem é, de qual parcela e lote, e quando foi pago"
           icon={<FileText size={20} />}
           accentBg="#e0f2fe" accentColor="#0369a1"
+        />
+        <WorkspaceLinkCard
+          to="/app/erp/cobranca-bancaria"
+          label="Cobrança bancária (CNAB)"
+          description="Carteiras de cobrança, arquivos de remessa e de retorno dos bancos"
+          icon={<Building2 size={20} />}
+          accentBg="#fef3c7" accentColor="#b45309"
         />
         <WorkspaceLinkCard
           to="/app/erp/notas-fiscais"

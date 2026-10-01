@@ -541,6 +541,9 @@ def _estado_do_calendario(ajuste) -> dict:
         'uf': ajuste.uf,
         'municipio': bool(ajuste.ibge),
         'feriadosCarregados': base_sincronizada(),
+        # Lido depois do cálculo: diz se algum feriado da cidade veio da regra
+        # (o dataset municipal só publica alguns anos).
+        'municipalProjetado': ajuste.municipal_projetado,
     }
 
 

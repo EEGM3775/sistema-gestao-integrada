@@ -23,6 +23,51 @@ class BoletoSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['tenant']  # injetado pelo perform_create (Fase 8.2 / D3)
 
+
+def _rotulo_unidade(conta):
+    aquisicao = getattr(conta, 'cliente_empreendimento', None) if conta else None
+    unidade = getattr(aquisicao, 'unidade', None)
+    return unidade.rotulo if unidade else ''
+
+
+class BoletoListaSerializer(BoletoSerializer):
+    """O boleto com a origem dita por extenso (item 54 do dono).
+
+    A tela de boletos mostrava "Conta a receber #172000" e mais nada: não dava
+    para saber de quem era o boleto nem de que lote. Os nomes vêm do
+    `select_related` da view — nada de consulta por linha.
+    """
+    pessoa_nome = serializers.SerializerMethodField()
+    cliente_id = serializers.SerializerMethodField()
+    conta_descricao = serializers.SerializerMethodField()
+    empreendimento_nome = serializers.SerializerMethodField()
+    unidade = serializers.SerializerMethodField()
+
+    def _conta(self, obj):
+        return obj.conta_receber or obj.conta_pagar
+
+    def get_pessoa_nome(self, obj):
+        if obj.conta_receber_id:
+            return obj.conta_receber.cliente.nome_completo
+        if obj.conta_pagar_id:
+            return obj.conta_pagar.fornecedor.razao_social
+        return ''
+
+    def get_cliente_id(self, obj):
+        return obj.conta_receber.cliente_id if obj.conta_receber_id else None
+
+    def get_conta_descricao(self, obj):
+        conta = self._conta(obj)
+        return conta.descricao if conta else ''
+
+    def get_empreendimento_nome(self, obj):
+        conta = self._conta(obj)
+        emp = getattr(conta, 'empreendimento', None)
+        return emp.empreendimento if emp else ''
+
+    def get_unidade(self, obj):
+        return _rotulo_unidade(obj.conta_receber) if obj.conta_receber_id else ''
+
 class NotaFiscalServicoSerializer(ArquivoGateadoSerializerMixin, TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
     """NFS-e emitida pela NFE.io — PDF e XML pela porta única (D70)."""
     arquivos_gateados = {
@@ -108,6 +153,77 @@ def _validar_rateios(rateios, valor, campo='rateios'):
         })
 
 
+class TravaDeEdicaoMixin(serializers.Serializer):
+    """Item 57: o que a baixa trava, publicado para a tela e cobrado na escrita.
+
+    A tela lê `campos_travados`/`travado_porque` em vez de reimplementar a
+    condição (frontend-convencoes §11) — e a mensagem que ela mostra é a mesma
+    que a API devolveria. `pode_estornar` só vem no detalhe: é uma pergunta ao
+    PDP, e cem delas por página de lista não valem o custo.
+    """
+    campos_travados = serializers.SerializerMethodField()
+    travado_porque = serializers.SerializerMethodField()
+    pode_estornar = serializers.SerializerMethodField()
+    estorno_impedido_porque = serializers.SerializerMethodField()
+
+    permissao_estorno = ''
+
+    def get_campos_travados(self, obj):
+        from .estorno import travas
+        return travas(obj)[0]
+
+    def get_travado_porque(self, obj):
+        from .estorno import travas
+        return travas(obj)[1]
+
+    def _eh_detalhe(self):
+        view = self.context.get('view')
+        return getattr(view, 'action', None) in ('retrieve', 'estornar_baixa', 'partial_update', 'update')
+
+    def get_pode_estornar(self, obj):
+        if not self._eh_detalhe() or obj.valor_pago <= 0:
+            return False
+        from nucleo import autorizacao
+        request = self.context.get('request')
+        return bool(request and autorizacao.pode(request.user, self.permissao_estorno))
+
+    def get_estorno_impedido_porque(self, obj):
+        if not self._eh_detalhe():
+            return ''
+        from .estorno import motivo_para_nao_estornar
+        return motivo_para_nao_estornar(obj) if obj.valor_pago > 0 else ''
+
+    def _recusar_campos_travados(self, attrs):
+        from .estorno import recusa_de_edicao
+        erros = recusa_de_edicao(self.instance, attrs)
+        if erros:
+            raise serializers.ValidationError(erros)
+
+    CAMPOS_AUDITADOS = ('valor', 'data_vencimento')
+
+    def _foto_financeira(self, conta) -> dict:
+        campos = {c: getattr(conta, c) for c in self.CAMPOS_AUDITADOS}
+        campos['pessoa'] = conta.cliente_id if isinstance(conta, ContaReceber) else conta.fornecedor_id
+        return campos
+
+    def _auditar_mudanca_financeira(self, conta, antes: dict, **extra):
+        """Item 57 (01/10/2026): mudar valor, vencimento ou contraparte deixa rastro.
+
+        A conta do dono foi corrigida de 01/01 para 02/01/2030 e não havia como
+        saber quem nem quando — a edição comum não passava pela auditoria.
+        """
+        depois = self._foto_financeira(conta)
+        mudancas = {c: [str(antes[c]), str(depois[c])] for c in depois if antes.get(c) != depois[c]}
+        if not mudancas:
+            return
+        from nucleo.auditoria import registrar_auditoria
+        request = self.context.get('request')
+        registrar_auditoria(
+            acao="editar_financeiro", instance=conta, usuario=getattr(request, 'user', None),
+            detalhes={'mudancas': mudancas, **extra},
+        )
+
+
 def _validar_edicao_valor(instance, valor, rateios_no_payload):
     """
     L6: numa EDIÇÃO de título, o novo `valor` não pode (a) deixar o título com
@@ -142,7 +258,7 @@ def _validar_edicao_valor(instance, valor, rateios_no_payload):
                 })
 
 
-class ContaPagarSerializer(serializers.ModelSerializer):
+class ContaPagarSerializer(TravaDeEdicaoMixin, serializers.ModelSerializer):
     """
     Serializador para o modelo ContaPagar.
 
@@ -155,20 +271,28 @@ class ContaPagarSerializer(serializers.ModelSerializer):
     rateios = RateioContaPagarSerializer(many=True, required=False)
     total_devido = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
     saldo_aberto = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
+    # Os nomes vêm prontos (item 53 do dono): a tela procurava o nome numa lista
+    # de opções e mostrava "Fornecedor #12" quando ele não estava entre elas.
+    permissao_estorno = 'erp.conta_pagar.estornar'
+    fornecedor_nome = serializers.CharField(source='fornecedor.razao_social', read_only=True, default='')
+    empreendimento_nome = serializers.CharField(source='empreendimento.empreendimento', read_only=True, default='')
 
     class Meta:
         model = ContaPagar
         fields = [
-            'conta_pagar_id', 'fornecedor', 'empreendimento', 'nota_fiscal',
+            'conta_pagar_id', 'fornecedor', 'fornecedor_nome', 'empreendimento', 'empreendimento_nome',
+            'nota_fiscal',
             'descricao', 'valor', 'data_emissao', 'data_vencimento', 'data_agendamento',
             'status', 'valor_pago', 'juros', 'multa', 'desconto', 'data_pagamento',
             'total_devido', 'saldo_aberto', 'rateios', 'boletos',
+            'campos_travados', 'travado_porque', 'pode_estornar', 'estorno_impedido_porque',
         ]
         read_only_fields = ['status', 'valor_pago', 'juros', 'multa', 'desconto', 'data_pagamento']
 
     def validate(self, attrs):
         rateios = attrs.get('rateios')
         valor = attrs.get('valor', getattr(self.instance, 'valor', None))
+        self._recusar_campos_travados(attrs)  # item 57: a trava fala primeiro, com a saída
         _validar_rateios(rateios, valor)
         _validar_edicao_valor(self.instance, valor, rateios is not None)  # L6
         return attrs
@@ -182,15 +306,17 @@ class ContaPagarSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         rateios_data = validated_data.pop('rateios', None)
+        antes = self._foto_financeira(instance)
         conta = super().update(instance, validated_data)
         if rateios_data is not None:
             conta.rateios.all().delete()
             for rateio in rateios_data:
                 RateioContaPagar.objects.create(conta_pagar=conta, tenant=conta.tenant, **rateio)
+        self._auditar_mudanca_financeira(conta, antes)
         return conta
 
 
-class ContaReceberSerializer(serializers.ModelSerializer):
+class ContaReceberSerializer(TravaDeEdicaoMixin, serializers.ModelSerializer):
     """
     Serializador para o modelo ContaReceber.
 
@@ -201,21 +327,53 @@ class ContaReceberSerializer(serializers.ModelSerializer):
     rateios = RateioContaReceberSerializer(many=True, required=False)
     total_devido = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
     saldo_aberto = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
+    # Nomes prontos (itens 53/54 do dono) — ver ContaPagarSerializer.
+    permissao_estorno = 'erp.conta_receber.estornar'
+    cliente_nome = serializers.CharField(source='cliente.nome_completo', read_only=True, default='')
+    empreendimento_nome = serializers.CharField(source='empreendimento.empreendimento', read_only=True, default='')
+    unidade = serializers.SerializerMethodField()
+    # Item 57 (01/10/2026): com boleto vivo no Asaas, mudar valor ou vencimento
+    # cancela o boleto e emite outro — e isso só acontece com a confirmação.
+    atualizar_boleto = serializers.BooleanField(write_only=True, required=False, default=False)
+    boleto_desatualizado = serializers.SerializerMethodField()
 
     class Meta:
         model = ContaReceber
         fields = [
-            'conta_receber_id', 'cliente', 'empreendimento',
+            'conta_receber_id', 'cliente', 'cliente_nome', 'empreendimento', 'empreendimento_nome',
+            'cliente_empreendimento', 'unidade',
             'nota_fiscal_recebida', 'nota_fiscal_servico', 'nota_fiscal_produto',
             'descricao', 'valor', 'data_emissao', 'data_vencimento', 'data_agendamento',
             'status', 'valor_pago', 'juros', 'multa', 'desconto', 'data_recebimento',
             'total_devido', 'saldo_aberto', 'rateios', 'boletos',
+            'campos_travados', 'travado_porque', 'pode_estornar', 'estorno_impedido_porque',
+            'atualizar_boleto', 'boleto_desatualizado',
         ]
-        read_only_fields = ['status', 'valor_pago', 'juros', 'multa', 'desconto', 'data_recebimento']
+        read_only_fields = [
+            'status', 'valor_pago', 'juros', 'multa', 'desconto', 'data_recebimento',
+            'cliente_empreendimento',
+        ]
+
+    def get_unidade(self, obj):
+        return _rotulo_unidade(obj)
+
+    def get_boleto_desatualizado(self, obj):
+        """A frase de por que o boleto vivo não é mais o desta conta (só no detalhe)."""
+        if not self._eh_detalhe():
+            return ''
+        from .boleto_da_conta import desencontro
+        return desencontro(obj)
 
     def validate(self, attrs):
         rateios = attrs.get('rateios')
         valor = attrs.get('valor', getattr(self.instance, 'valor', None))
+        confirmado = attrs.pop('atualizar_boleto', False)
+        self._recusar_campos_travados(attrs)  # item 57: a trava fala primeiro, com a saída
+        if self.instance is not None:
+            from .boleto_da_conta import recusa_por_boleto
+            erros = recusa_por_boleto(self.instance, attrs, confirmado=confirmado)
+            if erros:
+                raise serializers.ValidationError(erros)
         _validar_rateios(rateios, valor)
         _validar_edicao_valor(self.instance, valor, rateios is not None)  # L6
         return attrs
@@ -228,12 +386,17 @@ class ContaReceberSerializer(serializers.ModelSerializer):
         return conta
 
     def update(self, instance, validated_data):
+        from .boleto_da_conta import reemitir_se_preciso
+
         rateios_data = validated_data.pop('rateios', None)
+        antes = self._foto_financeira(instance)
         conta = super().update(instance, validated_data)
         if rateios_data is not None:
             conta.rateios.all().delete()
             for rateio in rateios_data:
                 RateioContaReceber.objects.create(conta_receber=conta, tenant=conta.tenant, **rateio)
+        reemitido = reemitir_se_preciso(conta, antes=antes)
+        self._auditar_mudanca_financeira(conta, antes, **({'boleto_reemitido': True} if reemitido else {}))
         return conta
 
 

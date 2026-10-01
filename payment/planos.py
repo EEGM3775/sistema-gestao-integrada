@@ -1846,6 +1846,68 @@ SUPORTE_CONSENTIMENTO_MAX_DIAS: int = 7
 VENDA_TETO_MEIOS_DE_PAGAMENTO: int = 12
 
 # ---------------------------------------------------------------------------
+# 5.5s O ERP financeiro — a grade dos títulos, a cobrança e a remessa (itens 51–58)
+# ---------------------------------------------------------------------------
+# *(Números propostos pela engenharia em 30/09/2026, a confirmar pelo dono.)*
+#
+#   - `ERP_TETO_NIVEIS_AGRUPAMENTO` — quantos "agrupar por" a grade de contas
+#     empilha. O mesmo 3 da carteira de clientes: a partir do quarto nível o
+#     cabeçalho do grupo já não cabe na linha, e o `GROUP BY` multiplica
+#     combinações que ninguém abre.
+#   - `ERP_TETO_COBRANCAS_POR_LOTE` — quantos boletos um clique de "gerar em
+#     lote" emite. Cada um é uma chamada ao Asaas, com custo por boleto e com o
+#     teto `integracao_externa` do usuário; 500 cobre o carnê mensal de um
+#     loteamento grande e é o freio contra "selecionar tudo" em 86 mil linhas.
+#   - `ERP_SEGUNDA_VIA_PRAZO_DIAS` — quando o título já venceu, a nova data
+#     **sugerida** é hoje mais estes dias (e depois o próximo dia útil). Três dias
+#     dão tempo de o boleto chegar ao cliente; quem opera pode escolher outra.
+#   - `ERP_ENCARGOS_MULTA_PADRAO_PERCENTUAL` / `_JUROS_MES_PADRAO_PERCENTUAL` — o
+#     que o contrato cobra por atraso quando a venda não disse outro número: 2% de
+#     multa (o teto do CDC, art. 52 §1º, para venda a consumidor) e 1% ao mês de
+#     juros de mora, pró-rata por dia. É o padrão do mercado de loteamento.
+#   - `ERP_ENCARGOS_MULTA_TETO_PERCENTUAL` / `_JUROS_MES_TETO_PERCENTUAL` — até
+#     onde a venda pode subir esses números. 10% é a cláusula penal máxima da Lei
+#     6.766/79 (art. 26, V); 1% ao mês é o dobro da taxa legal que a Lei de Usura
+#     admite para quem não é banco.
+#   - `ERP_BOLETO_PDF_TETO_MB` / `_SEGUNDOS` — a miniatura e a pré-visualização
+#     do boleto buscam o PDF no Asaas pela nossa máquina. É arquivo de terceiro:
+#     corta por tamanho durante o download e desiste pelo relógio.
+#   - `ERP_CNAB_RETORNO_TETO_MB` — o arquivo de retorno que se sobe. O retorno
+#     de um mês de um loteamento grande tem centenas de KB; 10 MB recusa o
+#     arquivo errado (um extrato, um backup) antes de lê-lo linha a linha. A
+#     remessa não tem teto próprio: ela nasce de um lote, e o lote já tem o seu.
+ERP_TETO_NIVEIS_AGRUPAMENTO: int = 3
+ERP_TETO_COBRANCAS_POR_LOTE: int = 500
+ERP_SEGUNDA_VIA_PRAZO_DIAS: int = 3
+ERP_ENCARGOS_MULTA_PADRAO_PERCENTUAL: str = "2.00"
+ERP_ENCARGOS_JUROS_MES_PADRAO_PERCENTUAL: str = "1.00"
+ERP_ENCARGOS_MULTA_TETO_PERCENTUAL: str = "10.00"
+ERP_ENCARGOS_JUROS_MES_TETO_PERCENTUAL: str = "1.00"
+ERP_BOLETO_PDF_TETO_MB: int = 5
+ERP_BOLETO_PDF_SEGUNDOS: int = 15
+ERP_CNAB_RETORNO_TETO_MB: int = 10
+
+# ---------------------------------------------------------------------------
+# 5.5t Feriados de 1900 a 2100 e a NFS-e em lote (itens 55 e 58, revisão de 01/10/2026)
+# ---------------------------------------------------------------------------
+#   - `CALENDARIO_ANO_INICIAL` / `_FINAL` — **decisão do dono (01/10/2026): "os
+#     feriados têm que bater de 1900 a 2100"**. É a mesma faixa que todo campo de
+#     data da plataforma aceita (`maxCalendarioISO` do frontend, decisão de
+#     15/09/2026). A tabela de feriados cobria só quatro anos, e um boleto de
+#     parcela de 2030 saiu num 1º de janeiro sem aviso.
+#   - `ERP_NFSE_CONSULTA_INTERVALO_S` / `_TENTATIVAS` — a NFE.io responde
+#     "Created" e emite depois; o SGI volta a perguntar a cada 20 s, até 30 vezes
+#     (dez minutos). Prefeitura lenta passa disso, e aí a nota fica "Processando"
+#     com o botão de consultar — mas não para sempre por falta de quem pergunte.
+#   - `ERP_TETO_NOTAS_POR_LOTE` — quantas NFS-e um clique de "emitir notas" cria.
+#     O mesmo 500 do lote de boletos: as notas acompanham o carnê do mês.
+CALENDARIO_ANO_INICIAL: int = 1900
+CALENDARIO_ANO_FINAL: int = 2100
+ERP_NFSE_CONSULTA_INTERVALO_S: int = 20
+ERP_NFSE_CONSULTA_TENTATIVAS: int = 30
+ERP_TETO_NOTAS_POR_LOTE: int = 500
+
+# ---------------------------------------------------------------------------
 # 5.6 O que NÃO é limite — e por isso continua no código de engenharia
 # ---------------------------------------------------------------------------
 # A régua é "todo teto ou limite vive aqui", e ela tem uma fronteira: número que

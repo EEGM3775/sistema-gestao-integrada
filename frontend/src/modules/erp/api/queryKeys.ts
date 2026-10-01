@@ -59,6 +59,11 @@ export const erpKeys = {
     list: (filtros: NotaFiscalRecebidaFiltros = {}) => ['erp', 'notas-fiscais', 'list', filtros] as const,
   },
 
+  /** A grade de rolagem infinita (`grade/`) — lista, grupos e linhas de grupo. */
+  grade: {
+    all: ['erp', 'grade'] as const,
+  },
+
   dashboard: {
     all: ['erp', 'dashboard'] as const,
     summary: (empreendimentoId?: number) => ['erp', 'dashboard', 'summary', empreendimentoId ?? null] as const,

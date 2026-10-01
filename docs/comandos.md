@@ -119,6 +119,7 @@ Rode os DOIS, nesta ordem. Pode repetir sem medo — não duplica.
     (5000 clientes, suas quadras/lotes e um carnê com atrasos distribuídos):
 
     docker compose exec erp python manage.py semear_carteira_demo --clientes 5000
+    docker compose exec erp python manage.py completar_enderecos_demo   # endereços reais (ViaCEP/OSM) — sem eles, NFS-e e CNAB recusam
 
     Só dev/staging. É idempotente (repetir não duplica) e aceita
     --tenant, --empreendimentos e --semente.

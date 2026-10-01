@@ -61,6 +61,20 @@ export function isoLocal(d: Date): string {
   return `${d.getFullYear()}-${mm}-${dd}`
 }
 
+/**
+ * Instante ISO do servidor (`2026-10-01T00:33:31Z`) → `30/09/2026 21:33` no fuso
+ * **local**. Fatiar o texto (`iso.slice(0, 10)`) dá o dia em UTC: o arquivo
+ * gerado às 21h aparecia como do dia seguinte.
+ */
+export function dataHoraBR(iso: string): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mi = String(d.getMinutes()).padStart(2, '0')
+  return `${formatISO(isoLocal(d))} ${hh}:${mi}`
+}
+
 // ─── Helpers internos ─────────────────────────────────────────────────────────
 
 function toISO(d: Date): string { return d.toISOString().slice(0, 10) }

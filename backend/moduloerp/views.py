@@ -34,6 +34,7 @@ from .serializers import (
     ContaReceberSerializer,
     CobrancaClienteSerializer,
     BoletoSerializer,
+    BoletoListaSerializer,
     CentroCustoSerializer,
     LoteRemessaSerializer,
     BaixaSerializer,
@@ -43,7 +44,15 @@ from .filters import (
     TransacaoFilter, ContaPagarFilter, ContaReceberFilter,
     CobrancaClienteFilter, BoletoFilter, NotaFiscalServicoFilter,
 )
+from datetime import date
 from .pagination import ErpPageNumberPagination
+from . import cobranca_lote, listao
+from .models import ContaCobrancaBancaria, LoteCobranca
+from nucleo import autorizacao
+from payment.planos import ERP_TETO_COBRANCAS_POR_LOTE, ERP_TETO_NIVEIS_AGRUPAMENTO
+from funcoescobrancas.segunda_via import VencimentoInvalido, planejar
+from django.http import HttpResponse
+from funcoescobrancas.documento import DocumentoIndisponivel, baixar_pdf, miniatura_de_pdf, miniatura_png
 from funcoescobrancas.tasks import criar_cobranca
 from funcoescobrancas.client import AsaasAPIError
 from funcoescobrancas.services import (
@@ -171,7 +180,49 @@ def _dados_cliente_para_nf(cliente):
     }
 
 
-def _emitir_nf_para_conta_receber(request, conta, tipo_nf):
+def _so_digitos(texto):
+    return ''.join(ch for ch in (texto or '') if ch.isdigit())
+
+
+def _conferir_tomador(cliente):
+    """O que falta no cadastro para a prefeitura aceitar a nota — antes de criá-la.
+
+    **O defeito (item 58 do dono).** As sete NFS-e com erro do dev falharam pela
+    mesma razão: nenhum dos 2.004 clientes tinha CEP nem código IBGE do
+    município. A nota era criada, ia para a fila e só a tarefa descobria — a
+    pessoa via "Erro" sem saber o que consertar, e a conta ficava presa à nota
+    com erro ("já existente"), sem como tentar de novo.
+
+    O código IBGE é **completado** aqui quando cidade e UF existem (é o que todo
+    cadastro tem): o `nucleo.geo` resolve pelo nome oficial do IBGE e o valor
+    fica gravado no cliente. CEP e documento não se inventam — faltando, a
+    resposta diz qual campo e de quem.
+    """
+    faltando = []
+    documento = _so_digitos(cliente.cpf_cnpj)
+    if len(documento) not in (11, 14):
+        faltando.append('CPF/CNPJ')
+    if len(_so_digitos(cliente.cep)) != 8:
+        faltando.append('CEP')
+    if not cliente.cidade_ibge:
+        from nucleo import geo
+        achado = geo.resolver(
+            cep=_so_digitos(cliente.cep) or None, cidade=cliente.cidade or None, uf=cliente.estado or None,
+        )
+        if achado and achado.get('ibge'):
+            cliente.cidade_ibge = achado['ibge']
+            cliente.save(update_fields=['cidade_ibge'])
+        else:
+            faltando.append('município (confira cidade e UF)')
+    return faltando
+
+
+def _nf_substituivel(nf):
+    """Nota que não impede outra: a que a prefeitura recusou ou que foi cancelada."""
+    return nf is None or nf.status in (StatusNFE.ERRO, StatusNFE.CANCELADA)
+
+
+def _emitir_nf_para_conta_receber(request, conta, tipo_nf, countdown=0):
     """
     Emite NFS-e ou NF-e para uma ContaReceber e a vincula via
     `nota_fiscal_servico`/`nota_fiscal_produto`. A NF herda o `tenant` da
@@ -186,10 +237,28 @@ def _emitir_nf_para_conta_receber(request, conta, tipo_nf):
     Python `emitir_nota_fiscal_servico`, que fala REST direto com a NFE.io.
     """
     try:
-        if tipo_nf == 'servico' and conta.nota_fiscal_servico:
-            return Response({'message': 'Nota Fiscal de Serviço já existente para esta conta.'}, status=status_module.HTTP_400_BAD_REQUEST)
-        elif tipo_nf == 'produto' and conta.nota_fiscal_produto:
-            return Response({'message': 'Nota Fiscal de Produto já existente para esta conta.'}, status=status_module.HTTP_400_BAD_REQUEST)
+        # A nota recusada ou cancelada fica no histórico (é documento) e sai do
+        # caminho: a conta ganha uma nova.
+        if tipo_nf == 'servico' and not _nf_substituivel(conta.nota_fiscal_servico):
+            return Response({'detail': 'Esta conta já tem uma nota fiscal de serviço emitida ou em emissão.'}, status=status_module.HTTP_400_BAD_REQUEST)
+        elif tipo_nf == 'produto' and not _nf_substituivel(conta.nota_fiscal_produto):
+            return Response({'detail': 'Esta conta já tem uma nota fiscal de produto registrada.'}, status=status_module.HTTP_400_BAD_REQUEST)
+
+        if tipo_nf == 'servico':
+            faltando = _conferir_tomador(conta.cliente)
+            if faltando:
+                return Response(
+                    {
+                        'detail': (
+                            f"Para emitir a nota, complete o cadastro de {conta.cliente.nome_completo}: "
+                            f"falta {', '.join(faltando)}."
+                        ),
+                        'code': 'tomador_incompleto',
+                        'faltando': faltando,
+                        'cliente_id': conta.cliente_id,
+                    },
+                    status=status_module.HTTP_409_CONFLICT,
+                )
 
         # Create the NotaFiscal instance with required data
         if tipo_nf == 'servico':
@@ -235,7 +304,11 @@ def _emitir_nf_para_conta_receber(request, conta, tipo_nf):
             # status vira EMITIDA/ERRO quando a task grava o retorno da NFE.io.
             nf.status = StatusNFE.PROCESSANDO
             nf.save(update_fields=['status', 'atualizado_em'])
-            emitir_nota_fiscal_servico.delay(nf.id)
+            if countdown:
+                # Lote: espaçado, para a NFE.io não receber a rajada inteira.
+                emitir_nota_fiscal_servico.apply_async(args=[nf.id], countdown=countdown)
+            else:
+                emitir_nota_fiscal_servico.delay(nf.id)
             return Response(
                 {'message': 'Emissão de NFS-e iniciada — o status é atualizado quando a NFE.io responder.',
                  'data': serializer_class(nf).data},
@@ -256,6 +329,77 @@ def _emitir_nf_para_conta_receber(request, conta, tipo_nf):
         return Response({'error': f'Erro interno do servidor: {str(e)}'}, status=status_module.HTTP_500_INTERNAL_SERVER_ERROR)
 
 # --- ViewSets ---
+
+
+class EstornoMixin:
+    """Item 57: estornar a baixa e não excluir conta que tem baixa.
+
+    Omie e TOTVS fazem igual: conta com pagamento não se exclui — primeiro se
+    cancela o pagamento. Excluir aqui mandaria à lixeira um título cujas baixas
+    continuam no ledger, e o caixa passaria a somar pagamento de conta nenhuma.
+    """
+
+    @action(detail=True, methods=['post'], url_path='estornar-baixa')
+    def estornar_baixa(self, request, pk=None):
+        from .estorno import EstornoRecusado, estornar_baixas
+        conta = self.get_object()
+        try:
+            estornar_baixas(conta, usuario=request.user, motivo=request.data.get('motivo', ''))
+        except EstornoRecusado as exc:
+            return Response({'detail': exc.mensagem}, status=status_module.HTTP_400_BAD_REQUEST)
+        return Response(self.get_serializer(self.get_queryset().get(pk=conta.pk)).data)
+
+    def destroy(self, request, *args, **kwargs):
+        conta = self.get_object()
+        if conta.valor_pago > 0:
+            return Response(
+                {'detail': 'Esta conta tem baixa. Estorne a baixa antes de excluir.'},
+                status=status_module.HTTP_400_BAD_REQUEST,
+            )
+        return super().destroy(request, *args, **kwargs)
+
+
+class ListaoMixin:
+    """A grade de rolagem infinita dos títulos (listao.py) num ViewSet.
+
+    Anota o que a grade ordena e agrupa, troca a busca e a ordenação pelas do
+    listão e expõe `GET …/grupos/?por=a,b` — os subtotais do recorte inteiro,
+    com os mesmos filtros da lista (é o que faz o cabeçalho do grupo bater com
+    as linhas que ele abre).
+    """
+    fonte_listao: listao.Fonte = None
+    campos_busca: list[str] = []
+    # Achar pelo documento é ler o documento: só entra para quem o desmascara.
+    campos_busca_documental: list[str] = []
+    permissao_documento = "cadastro.cliente_doc.view"
+
+    def campos_de_busca(self, request):
+        campos = list(self.campos_busca)
+        if self.campos_busca_documental and autorizacao.pode(request.user, self.permissao_documento):
+            campos += self.campos_busca_documental
+        return campos
+
+    def paginate_queryset(self, queryset):
+        if self.action != 'list':
+            return super().paginate_queryset(queryset)
+        return listao.pagina_em_dois_passos(
+            queryset, super().paginate_queryset, self.get_queryset,
+        )
+
+    @action(detail=False, methods=['get'], url_path='grupos')
+    def grupos(self, request):
+        hoje = listao.hoje_local()
+        qs = listao.anotar(self.filter_queryset(self.get_queryset()), self.fonte_listao, hoje)
+        niveis = [n for n in (request.query_params.get('por') or '').split(',') if n]
+        return Response({
+            'totais': listao.totais(qs, self.fonte_listao, hoje),
+            'grupos': listao.agrupar(qs, self.fonte_listao, niveis, hoje, ERP_TETO_NIVEIS_AGRUPAMENTO),
+            'dimensoes': [
+                {'chave': chave, 'rotulo': dim.rotulo}
+                for chave, dim in self.fonte_listao.dimensoes.items()
+            ],
+            'teto_niveis': ERP_TETO_NIVEIS_AGRUPAMENTO,
+        })
 
 class TransacaoViewSet(TenantScopedViewSetMixin, viewsets.ReadOnlyModelViewSet):
     """O ledger é somente leitura pela API (D204): quem escreve transação são os
@@ -480,7 +624,7 @@ class NotaFiscalViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     ordering_fields = ['data_emissao', 'valor_total']
     ordering = ['-data_emissao']
 
-class ContaPagarViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+class ContaPagarViewSet(EstornoMixin, ListaoMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
     """
     Endpoint da API para visualizar e editar contas a pagar.
     """
@@ -491,14 +635,18 @@ class ContaPagarViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     required_resource = "erp.conta_pagar"   # CRUD: GET→.view · escrita→.edit
     action_permission_map = {               # verbos de domínio (@action)
         "dar_baixa": "erp.conta_pagar.baixar",
+        "estornar_baixa": "erp.conta_pagar.estornar",
         "gerar_lote_remessa": "erp.lote_remessa.create",
     }
     pagination_class = ErpPageNumberPagination
-    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, listao.BuscaDeTitulos, listao.OrdenacaoDoListao]
     filterset_class = ContaPagarFilter
-    search_fields = ['descricao']
-    ordering_fields = ['data_vencimento', 'valor', 'status']
-    ordering = ['-data_vencimento']
+    fonte_listao = listao.PAGAR
+    # CNPJ de fornecedor é dado de empresa, público — entra na busca de todos.
+    campos_busca = [
+        'descricao', 'fornecedor__razao_social', 'fornecedor__cnpj',
+        'empreendimento__empreendimento', 'nota_fiscal__numero_nota',
+    ]
 
     def get_queryset(self):
         return super().get_queryset().select_related(
@@ -600,7 +748,7 @@ class ContaPagarViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
         return Response(data, status=status_module.HTTP_201_CREATED)
 
 
-class ContaReceberViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+class ContaReceberViewSet(EstornoMixin, ListaoMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
     """
     Endpoint da API para visualizar e editar contas a receber.
     """
@@ -611,10 +759,15 @@ class ContaReceberViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     required_resource = "erp.conta_receber"   # CRUD: GET→.view · escrita→.edit
     action_permission_map = {                 # verbos de domínio: baixa, cobrança, NF
         "dar_baixa": "erp.conta_receber.baixar",
+        "estornar_baixa": "erp.conta_receber.estornar",
         "gerar_cobranca": "erp.cobranca.emitir",
+        "previa_cobranca": "erp.cobranca.view",
+        "previa_cobrancas_lote": "erp.cobranca.view",
+        "gerar_cobrancas_lote": "erp.cobranca.emitir",
         "emitir_nota_fiscal_servico": "erp.nf.emitir",
         "emitir_nota_fiscal_produto": "erp.nf.emitir",
         "emitir_lote_nfse": "erp.nf.emitir",
+        "previa_lote_nfse": "erp.nf.emitir",
     }
     # Ações que consomem cota de TERCEIRO (Asaas, NFE.io) e produzem efeito com
     # custo real — boleto emitido, nota fiscal emitida. Ganham um teto próprio,
@@ -622,6 +775,7 @@ class ContaReceberViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     # API, é fatura de terceiro e documento fiscal indevido.
     ACOES_INTEGRACAO_EXTERNA = {
         "gerar_cobranca",
+        "gerar_cobrancas_lote",
         "emitir_nota_fiscal_servico",
         "emitir_nota_fiscal_produto",
         "emitir_lote_nfse",
@@ -635,15 +789,21 @@ class ContaReceberViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
             self.throttle_scope = "integracao_externa"
         return super().get_throttles()
     pagination_class = ErpPageNumberPagination
-    filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, listao.BuscaDeTitulos, listao.OrdenacaoDoListao]
     filterset_class = ContaReceberFilter
-    search_fields = ['descricao']
-    ordering_fields = ['data_vencimento', 'valor', 'status']
-    ordering = ['-data_vencimento']
+    fonte_listao = listao.RECEBER
+    # Como se procura uma parcela no balcão: pelo nome, pelo empreendimento ou
+    # pelo lote. "silva qd 12" casa cada palavra em algum destes campos.
+    campos_busca = [
+        'descricao', 'cliente__nome_completo', 'empreendimento__empreendimento',
+        'cliente_empreendimento__unidade__quadra', 'cliente_empreendimento__unidade__lote',
+        'cliente_empreendimento__unidade__bloco_torre', 'cliente_empreendimento__unidade__apto',
+    ]
+    campos_busca_documental = ['cliente__cpf_cnpj']
 
     def get_queryset(self):
         return super().get_queryset().select_related(
-            'cliente', 'empreendimento',
+            'cliente', 'empreendimento', 'cliente_empreendimento__unidade',
             'nota_fiscal_recebida', 'nota_fiscal_servico', 'nota_fiscal_produto',
         ).prefetch_related('rateios__centro_custo', 'boletos')
 
@@ -700,6 +860,19 @@ class ContaReceberViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
                 status=status_module.HTTP_400_BAD_REQUEST,
             )
 
+        # A data que a pessoa escolheu na prévia (item 55). Conferida aqui, de
+        # forma síncrona, para o "no passado" voltar como frase e não virar um
+        # boleto ERRO minutos depois.
+        vencimento = None
+        if request.data.get('vencimento'):
+            try:
+                vencimento = date.fromisoformat(str(request.data['vencimento']))
+                planejar(conta, vencimento)
+            except ValueError:
+                return Response({'detail': 'Data de vencimento inválida.'}, status=status_module.HTTP_400_BAD_REQUEST)
+            except VencimentoInvalido as exc:
+                return Response({'detail': exc.mensagem}, status=status_module.HTTP_400_BAD_REQUEST)
+
         # Trava de identidade ANTES de enfileirar: nome + CPF/CNPJ do cliente
         # têm de bater com o cadastro no gateway. Devolve mensagem clara ao
         # usuário e impede boleto no cliente errado (ver funcoescobrancas).
@@ -720,11 +893,11 @@ class ContaReceberViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
             )
 
         try:
-            criar_cobranca.delay(conta.conta_receber_id)
+            criar_cobranca.delay(conta.conta_receber_id, vencimento.isoformat() if vencimento else None)
         except Exception as e:
             logger.error(f"Erro ao acionar geração de cobrança Asaas para a conta #{conta.conta_receber_id}: {e}")
             return Response(
-                {'detail': f'Erro ao gerar cobrança no Asaas: {e}'},
+                {'detail': 'Não foi possível pedir o boleto ao Asaas agora. Nenhum boleto foi emitido — tente de novo.'},
                 status=status_module.HTTP_502_BAD_GATEWAY,
             )
         # Auditoria (Fase 9.E): cobrança enfileirada com sucesso.
@@ -738,6 +911,94 @@ class ContaReceberViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
             status=status_module.HTTP_202_ACCEPTED,
         )
 
+    @action(detail=True, methods=['get'], url_path='previa-cobranca')
+    def previa_cobranca(self, request, pk=None):
+        """Item 55: o boleto antes de emitir — data do contrato, data do banco
+        (com o feriado dito pelo nome), título vencido, multa e juros até a data
+        escolhida e o boleto antigo que a segunda via vai substituir.
+        `?vencimento=AAAA-MM-DD` refaz a conta para outra data."""
+        conta = self.get_object()
+        vencimento = None
+        if request.query_params.get('vencimento'):
+            try:
+                vencimento = date.fromisoformat(request.query_params['vencimento'])
+            except ValueError:
+                return Response({'detail': 'Data de vencimento inválida.'}, status=status_module.HTTP_400_BAD_REQUEST)
+        try:
+            plano = planejar(conta, vencimento)
+        except VencimentoInvalido as exc:
+            return Response({'detail': exc.mensagem}, status=status_module.HTTP_400_BAD_REQUEST)
+        return Response({
+            k: (str(v) if isinstance(v, Decimal) else v.isoformat() if isinstance(v, date) else v)
+            for k, v in plano.items()
+        } | {
+            'boleto_substituido': plano['boleto_substituido'] and {
+                'boleto_id': plano['boleto_substituido']['boleto_id'],
+                'vencimento': plano['boleto_substituido']['vencimento'].isoformat(),
+                'valor': str(plano['boleto_substituido']['valor']),
+            },
+        })
+
+    def _contas_do_lote(self, request):
+        """As contas escolhidas: por id, ou "todas do filtro" (os mesmos
+        parâmetros da grade, na query string) menos as que a pessoa desmarcou
+        depois (`excluir_ids`)."""
+        ids = request.data.get('ids')
+        if request.data.get('todos_do_filtro'):
+            contas = self.filter_queryset(self.get_queryset())
+            excluir = request.data.get('excluir_ids') or []
+            if not isinstance(excluir, list):
+                raise cobranca_lote.LoteRecusado("Lista de contas desmarcadas inválida.")
+            if excluir:
+                contas = contas.exclude(pk__in=[int(i) for i in excluir])
+            return cobranca_lote.carregar(contas, None)
+        if not isinstance(ids, list) or not ids:
+            raise cobranca_lote.LoteRecusado("Escolha as contas que vão receber boleto.")
+        return cobranca_lote.carregar(self.get_queryset(), [int(i) for i in ids])
+
+    def _vencimento_do_lote(self, request):
+        bruto = request.data.get('vencimento_segunda_via')
+        if not bruto:
+            return None
+        valor = date.fromisoformat(str(bruto))
+        if valor < timezone.localdate():
+            raise cobranca_lote.LoteRecusado("A nova data dos vencidos não pode ser anterior a hoje.")
+        return valor
+
+    @action(detail=False, methods=['post'], url_path='previa-cobrancas-lote')
+    def previa_cobrancas_lote(self, request):
+        """Item 52: quantos boletos saem, quantos já têm boleto e quantos vão
+        como segunda via — antes de qualquer chamada ao gateway ou ao banco."""
+        try:
+            triagem = cobranca_lote.triar(self._contas_do_lote(request), self._vencimento_do_lote(request))
+        except cobranca_lote.LoteRecusado as exc:
+            return Response({'detail': exc.mensagem}, status=status_module.HTTP_400_BAD_REQUEST)
+        except ValueError:
+            return Response({'detail': 'Data inválida.'}, status=status_module.HTTP_400_BAD_REQUEST)
+        return Response(triagem.resumo() | {'teto': ERP_TETO_COBRANCAS_POR_LOTE})
+
+    @action(detail=False, methods=['post'], url_path='gerar-cobrancas-lote')
+    def gerar_cobrancas_lote(self, request):
+        """Item 52: emite os boletos do lote pelo Asaas ou por remessa CNAB."""
+        canal = request.data.get('canal') or Boleto.Canal.ASAAS
+        try:
+            triagem = cobranca_lote.triar(self._contas_do_lote(request), self._vencimento_do_lote(request))
+            if canal == Boleto.Canal.CNAB:
+                from .cnab.emissao import emitir_por_remessa
+                carteira = ContaCobrancaBancaria.objects.filter(
+                    pk=request.data.get('conta_cobranca'), ativa=True,
+                ).first()
+                if carteira is None:
+                    raise cobranca_lote.LoteRecusado("Escolha a carteira de cobrança do banco.")
+                lote = emitir_por_remessa(triagem, carteira=carteira, usuario=request.user)
+            else:
+                lote = cobranca_lote.emitir_pelo_asaas(triagem, usuario=request.user)
+        except cobranca_lote.LoteRecusado as exc:
+            return Response({'detail': exc.mensagem}, status=status_module.HTTP_400_BAD_REQUEST)
+        except ValueError:
+            return Response({'detail': 'Data inválida.'}, status=status_module.HTTP_400_BAD_REQUEST)
+        return Response(cobranca_lote.andamento(lote), status=status_module.HTTP_201_CREATED)
+
     @action(detail=True, methods=['post'], url_path='emitir-nfse')
     def emitir_nota_fiscal_servico(self, request, pk=None):
         """ Aciona a emissão de uma NFS-e para esta conta a receber. """
@@ -750,74 +1011,61 @@ class ContaReceberViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
         conta = self.get_object()
         return _emitir_nf_para_conta_receber(request, conta, 'produto')
 
+    def _contas_das_notas(self, request):
+        """A escolha do lote de notas: a mesma da grade (ids, ou todas do filtro
+        menos as desmarcadas). `conta_receber_ids` é o nome antigo de `ids`."""
+        from payment.planos import ERP_TETO_NOTAS_POR_LOTE
+
+        base =self.get_queryset().select_related('nota_fiscal_servico')
+        if request.data.get('todos_do_filtro'):
+            contas = self.filter_queryset(base)
+            excluir = request.data.get('excluir_ids') or []
+            if not isinstance(excluir, list):
+                raise cobranca_lote.LoteRecusado("Lista de contas desmarcadas inválida.")
+            if excluir:
+                contas = contas.exclude(pk__in=[int(i) for i in excluir])
+        else:
+            ids = request.data.get('ids') or request.data.get('conta_receber_ids')
+            if not isinstance(ids, list) or not ids:
+                raise cobranca_lote.LoteRecusado("Escolha as contas que vão receber nota fiscal.")
+            contas = base.filter(pk__in=[int(i) for i in ids])
+        total = contas.count()
+        if total > ERP_TETO_NOTAS_POR_LOTE:
+            raise cobranca_lote.LoteRecusado(
+                f"São {total:,} contas — o lote emite até {ERP_TETO_NOTAS_POR_LOTE:,} notas de uma vez. "
+                "Filtre por mês ou empreendimento.".replace(",", ".")
+            )
+        return list(contas)
+
+    @action(detail=False, methods=['post'], url_path='previa-lote-nfse')
+    def previa_lote_nfse(self, request):
+        """Quantas notas saem, quantas contas já têm nota e de quem falta cadastro."""
+        from . import nfse_lote
+        try:
+            triagem = nfse_lote.triar(self._contas_das_notas(request))
+        except cobranca_lote.LoteRecusado as exc:
+            return Response({'detail': exc.mensagem}, status=status_module.HTTP_400_BAD_REQUEST)
+        from payment.planos import ERP_TETO_NOTAS_POR_LOTE
+        return Response(triagem.resumo() | {'teto': ERP_TETO_NOTAS_POR_LOTE})
+
     @action(detail=False, methods=['post'], url_path='emitir-lote-nfse')
     def emitir_lote_nfse(self, request):
-        """ Emite NFS-e em lote para múltiplas contas a receber. """
+        """Emite a NFS-e de cada conta escolhida — junto do lote de boletos ou sozinha."""
+        from . import nfse_lote
         try:
-            conta_ids = request.data.get('conta_receber_ids', [])
-            city_service_code = request.data.get('city_service_code', '010701')
-            descricao = request.data.get('descricao', None)
-
-            if not conta_ids:
-                return Response({'error': 'Lista de conta_receber_ids é obrigatória'}, status=status_module.HTTP_400_BAD_REQUEST)
-
-            resultados = []
-            sucessos = 0
-            erros = 0
-
-            for conta_id in conta_ids:
-                try:
-                    conta = self.get_queryset().get(conta_receber_id=conta_id)
-
-                    individual_request = type('Request', (), {
-                        'data': {
-                            'city_service_code': city_service_code,
-                            'descricao': descricao
-                        }
-                    })()
-
-                    response = _emitir_nf_para_conta_receber(individual_request, conta, 'servico')
-
-                    if response.status_code in [201, 202]:
-                        sucessos += 1
-                        resultados.append({
-                            'conta_receber_id': conta_id,
-                            'status': 'sucesso',
-                            'message': f'NFS-e iniciada para conta a receber #{conta_id}'
-                        })
-                    else:
-                        erros += 1
-                        resultados.append({
-                            'conta_receber_id': conta_id,
-                            'status': 'erro',
-                            'message': response.data.get('error', 'Erro desconhecido')
-                        })
-
-                except ContaReceber.DoesNotExist:
-                    erros += 1
-                    resultados.append({
-                        'conta_receber_id': conta_id,
-                        'status': 'erro',
-                        'message': 'Conta a receber não encontrada'
-                    })
-                except Exception as e:
-                    erros += 1
-                    resultados.append({
-                        'conta_receber_id': conta_id,
-                        'status': 'erro',
-                        'message': str(e)
-                    })
-
-            return Response({
-                'message': f'Lote processado: {sucessos} sucessos, {erros} erros',
-                'sucessos': sucessos,
-                'erros': erros,
-                'resultados': resultados
-            }, status=status_module.HTTP_200_OK)
-
-        except Exception as e:
-            logger.error(f"Erro ao processar lote de NFS-e: {e}")
-            return Response({'error': f'Erro interno: {str(e)}'}, status=status_module.HTTP_500_INTERNAL_SERVER_ERROR)
+            triagem = nfse_lote.triar(self._contas_das_notas(request))
+        except cobranca_lote.LoteRecusado as exc:
+            return Response({'detail': exc.mensagem}, status=status_module.HTTP_400_BAD_REQUEST)
+        if not triagem.emitir and not triagem.sem_cadastro:
+            return Response(
+                {'detail': 'Nenhuma das contas escolhidas precisa de nota: todas já têm nota emitida ou em emissão.'},
+                status=status_module.HTTP_400_BAD_REQUEST,
+            )
+        resultado = nfse_lote.emitir(
+            triagem, usuario=request.user,
+            city_service_code=request.data.get('city_service_code') or '010701',
+        )
+        return Response(resultado, status=status_module.HTTP_201_CREATED)
 
 
 class CentroCustoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
@@ -921,22 +1169,37 @@ class CobrancaClienteViewSet(TenantScopedViewSetMixin, viewsets.ReadOnlyModelVie
     ordering_fields = ['data_vencimento', 'valor_nominal', 'status']
     ordering = ['-data_vencimento']
 
-class BoletoViewSet(TenantScopedViewSetMixin, viewsets.ReadOnlyModelViewSet):
+class BoletoViewSet(ListaoMixin, TenantScopedViewSetMixin, viewsets.ReadOnlyModelViewSet):
     """
     Boletos, somente leitura (D204); o único ato de escrita é `cancelar`, com
     verbo próprio no catálogo.
     """
     queryset = Boleto.objects.all()
-    serializer_class = BoletoSerializer
+    serializer_class = BoletoListaSerializer
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
     required_resource = "erp.cobranca"   # boleto é o instrumento da cobrança
     action_permission_map = {"cancelar": "erp.cobranca.emitir"}   # cancelar = gerir a cobrança
     pagination_class = ErpPageNumberPagination
-    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, listao.BuscaDeTitulos, listao.OrdenacaoDoListao]
     filterset_class = BoletoFilter
-    ordering_fields = ['data_vencimento', 'valor', 'status']
-    ordering = ['-data_vencimento']
+    fonte_listao = listao.BOLETOS
+    campos_busca = [
+        'conta_receber__descricao', 'conta_pagar__descricao',
+        'conta_receber__cliente__nome_completo', 'conta_pagar__fornecedor__razao_social',
+        'conta_receber__empreendimento__empreendimento',
+        'conta_receber__cliente_empreendimento__unidade__quadra',
+        'conta_receber__cliente_empreendimento__unidade__lote',
+        'linha_digitavel', 'gateway_id',
+    ]
+    campos_busca_documental = ['conta_receber__cliente__cpf_cnpj']
+
+    def get_queryset(self):
+        return super().get_queryset().select_related(
+            'conta_receber__cliente', 'conta_receber__empreendimento',
+            'conta_receber__cliente_empreendimento__unidade',
+            'conta_pagar__fornecedor', 'conta_pagar__empreendimento',
+        )
 
     @action(detail=True, methods=['get'], url_path='documento')
     def documento(self, request, pk=None):
@@ -947,6 +1210,44 @@ class BoletoViewSet(TenantScopedViewSetMixin, viewsets.ReadOnlyModelViewSet):
         """
         boleto = self.get_object()
         return Response(verificar_cobranca_asaas(boleto))
+
+    @staticmethod
+    def _pdf_do_boleto(boleto):
+        """O Asaas guarda o PDF dele; o do CNAB é nosso e sai na hora."""
+        if boleto.canal == Boleto.Canal.CNAB:
+            if not boleto.codigo_barras or boleto.conta_receber_id is None:
+                raise DocumentoIndisponivel("Este boleto ainda não tem código de barras.")
+            from .cnab.pdf import pdf_do_boleto
+            return pdf_do_boleto(boleto)
+        return baixar_pdf(boleto.url_pdf or '')
+
+    @action(detail=True, methods=['get'], url_path='pdf')
+    def pdf(self, request, pk=None):
+        """O PDF do boleto servido daqui — para abrir dentro da tela (item 56)."""
+        boleto = self.get_object()
+        try:
+            conteudo = self._pdf_do_boleto(boleto)
+        except DocumentoIndisponivel as exc:
+            return Response({'detail': exc.mensagem}, status=status_module.HTTP_502_BAD_GATEWAY)
+        resposta = HttpResponse(conteudo, content_type='application/pdf')
+        resposta['Content-Disposition'] = f'inline; filename="boleto-{boleto.boleto_id}.pdf"'
+        resposta['Cache-Control'] = 'private, max-age=300'
+        return resposta
+
+    @action(detail=True, methods=['get'], url_path='miniatura')
+    def miniatura(self, request, pk=None):
+        """A primeira página do boleto em PNG — a miniatura da tela lateral."""
+        boleto = self.get_object()
+        try:
+            if boleto.canal == Boleto.Canal.CNAB:
+                png = miniatura_de_pdf(self._pdf_do_boleto(boleto))
+            else:
+                png = miniatura_png(boleto.url_pdf or '')
+        except DocumentoIndisponivel as exc:
+            return Response({'detail': exc.mensagem}, status=status_module.HTTP_502_BAD_GATEWAY)
+        resposta = HttpResponse(png, content_type='image/png')
+        resposta['Cache-Control'] = 'private, max-age=3600'
+        return resposta
 
     @action(detail=True, methods=['post'], url_path='cancelar')
     def cancelar(self, request, pk=None):
@@ -960,6 +1261,15 @@ class BoletoViewSet(TenantScopedViewSetMixin, viewsets.ReadOnlyModelViewSet):
         if boleto.status == Boleto.StatusBoleto.PAGO:
             return Response(
                 {'detail': 'Não é possível cancelar um boleto já pago — use estorno.'},
+                status=status_module.HTTP_400_BAD_REQUEST,
+            )
+        if boleto.canal == Boleto.Canal.CNAB:
+            # A baixa de boleto registrado vai ao banco por remessa de instrução,
+            # que o SGI ainda não gera — marcar cancelado aqui deixaria o boleto
+            # pagável no banco e "cancelado" na tela.
+            return Response(
+                {'detail': 'Boleto registrado no banco: peça a baixa pelo internet banking. '
+                           'O retorno do banco atualiza este boleto sozinho.'},
                 status=status_module.HTTP_400_BAD_REQUEST,
             )
         try:

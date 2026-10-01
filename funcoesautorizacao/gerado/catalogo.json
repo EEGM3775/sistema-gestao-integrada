@@ -220,6 +220,10 @@
    "classe": "B",
    "modulo": "erp_financeiro"
   },
+  "erp.conta_pagar.estornar": {
+   "classe": "B",
+   "modulo": "erp_financeiro"
+  },
   "erp.conta_pagar.view": {
    "classe": "B",
    "modulo": "erp_financeiro"
@@ -237,6 +241,10 @@
    "modulo": "erp_financeiro"
   },
   "erp.conta_receber.edit": {
+   "classe": "B",
+   "modulo": "erp_financeiro"
+  },
+  "erp.conta_receber.estornar": {
    "classe": "B",
    "modulo": "erp_financeiro"
   },

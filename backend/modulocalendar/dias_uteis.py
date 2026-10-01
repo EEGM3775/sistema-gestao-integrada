@@ -17,10 +17,12 @@ IBGE. Afirmar feriado municipal sem saber o município seria inventar dia parado
 a mesma régua de dado honesto de `modulopdca.services.feriados_do_periodo`, de
 onde este módulo herda a consulta.
 
-**A base nasce vazia.** Quem a enche é `manage.py sincronizar_feriados`. Sem ela
-o cálculo continua certo para fim de semana e simplesmente não conhece feriado —
-por isso `base_sincronizada()` existe e as telas que dependem disso a exibem, em
-vez de prometer um ajuste que não aconteceu.
+**De 1900 a 2100, com ou sem a tabela** *(decisão do dono, 01/10/2026)*. A tabela
+`Feriado` é a fonte (o `sincronizar_feriados` grava a faixa inteira), mas um
+ano que falte nela não vira "dia útil por não saber": a lei daquele ano é
+calculada na hora, o feriado do município é projetado pela regra dos anos que
+o dataset publica, e o Carnaval e o Corpus Christi entram como dias sem
+expediente bancário. Ver `modulocalendar.feriados`.
 """
 from __future__ import annotations
 
@@ -28,6 +30,7 @@ from datetime import date, timedelta
 
 from django.db.models import Q
 
+from . import feriados as _feriados
 from .models import Feriado
 
 #: Guarda-corpo do laço que anda um dia por vez — **não é teto de produto**
@@ -56,13 +59,32 @@ def feriados_entre(inicio: date, fim: date, *, uf: str = "", ibge: str = "") -> 
 
 
 def base_sincronizada() -> bool:
-    """A tabela global de feriados foi populada alguma vez?
+    """O ajuste conhece os feriados? **Sempre, desde 01/10/2026.**
 
-    Quem responde "não" deve dizê-lo na tela: um vencimento "ajustado" sem base
-    de feriados só desviou de sábado e domingo, e parecer mais do que é seria o
-    pior dos dois mundos.
+    Era a pergunta "a tabela tem alguma linha?", e ela respondia sim com a
+    tabela cobrindo só 2025–2028 — o boleto de 2030 saiu num feriado sem aviso.
+    Hoje um ano ausente da tabela é calculado (lei) ou projetado (município), e
+    o que foi projetado o ajuste diz em `municipal_projetado`. A função fica
+    porque as telas ainda leem o campo; a ressalva delas deixou de ter caso.
     """
-    return Feriado.objects.exists()
+    return True
+
+
+def _lei_na_tabela(ano: int, uf: str) -> dict[date, str] | None:
+    """Nacional + estadual do ano pela tabela, ou `None` se o ano não está nela.
+
+    Ano sem nenhum feriado nacional é ano não sincronizado: não existe
+    calendário brasileiro sem 1º de janeiro.
+    """
+    escopo = Q(escopo="nacional")
+    if uf:
+        escopo |= Q(escopo="estadual", uf=uf)
+    linhas = list(
+        Feriado.objects.filter(escopo, data__year=ano).values_list("data", "nome", "escopo")
+    )
+    if not any(e == "nacional" for _, _, e in linhas):
+        return None
+    return {dia: nome for dia, nome, _ in linhas}
 
 
 class AjusteDeVencimento:
@@ -79,12 +101,19 @@ class AjusteDeVencimento:
     chamador.
     """
 
-    def __init__(self, *, uf: str = "", ibge: str = "", ativo: bool = True):
+    def __init__(self, *, uf: str = "", ibge: str = "", ativo: bool = True, bancario: bool = False):
         self.uf = (uf or "").upper()[:2]
         self.ibge = ibge or ""
         self.ativo = ativo
+        # Carnaval e Corpus Christi: sem expediente bancário, mas não feriado de
+        # lei. Vencimento de título liga; prazo legal (CAT) não.
+        self.bancario = bancario
         self._feriados: dict[date, str] = {}
         self._anos_carregados: set[int] = set()
+        self._municipais = _feriados.FeriadosMunicipais(self.ibge)
+        self.anos_calculados: set[int] = set()  # a lei veio do cálculo, não da tabela
+        self._datas_projetadas: set[date] = set()
+        self.municipal_projetado = False  # um feriado municipal deduzido decidiu alguma data
 
     # -- consulta ------------------------------------------------------------
     def _garantir(self, dia: date) -> None:
@@ -94,9 +123,19 @@ class AjusteDeVencimento:
         for ano in (dia.year, dia.year + 1):
             if ano in self._anos_carregados:
                 continue
-            self._feriados.update(
-                feriados_entre(date(ano, 1, 1), date(ano, 12, 31), uf=self.uf, ibge=self.ibge)
-            )
+            lei = _lei_na_tabela(ano, self.uf)
+            if lei is None:
+                lei = _feriados.de_lei(ano, self.uf)
+                self.anos_calculados.add(ano)
+            # A ordem decide o nome quando dois caem no mesmo dia: a lei fala
+            # primeiro, depois o município, por fim o calendário do banco.
+            do_ano = dict(_feriados.sem_expediente_bancario(ano)) if self.bancario else {}
+            municipais = self._municipais.do_ano(ano)
+            do_ano.update(municipais)
+            if ano in self._municipais.projetados:
+                self._datas_projetadas.update(d for d in municipais if d not in lei)
+            do_ano.update(lei)
+            self._feriados.update(do_ano)
             self._anos_carregados.add(ano)
 
     def motivo(self, dia: date) -> str:
@@ -110,6 +149,8 @@ class AjusteDeVencimento:
         if dia.weekday() == 6:
             return "domingo"
         self._garantir(dia)
+        if dia in self._datas_projetadas:
+            self.municipal_projetado = True
         return self._feriados.get(dia, "")
 
     def eh_dia_util(self, dia: date) -> bool:

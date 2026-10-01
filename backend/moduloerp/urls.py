@@ -18,7 +18,13 @@ from .views import (
     ConsultarStatusNFView
 )
 
+from .views_cnab import ContaCobrancaViewSet, LoteCobrancaViewSet, RemessaViewSet, RetornoViewSet
+
 router = DefaultRouter()
+router.register(r'carteiras-cobranca', ContaCobrancaViewSet)
+router.register(r'remessas-cnab', RemessaViewSet)
+router.register(r'retornos-cnab', RetornoViewSet)
+router.register(r'lotes-cobranca', LoteCobrancaViewSet)
 router.register(r'transacoes', TransacaoViewSet)
 router.register(r'notas-fiscais-servico', NotaFiscalServicoViewSet)
 router.register(r'notas-fiscais-produto', NotaFiscalProdutoViewSet)

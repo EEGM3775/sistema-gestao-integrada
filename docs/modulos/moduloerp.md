@@ -54,7 +54,10 @@ Isolado por tenant. Ver [../acesso-e-permissoes.md](../acesso-e-permissoes.md).
 | `NotaFiscalServico` / `NotaFiscalProduto` | NFS-e / NF-e: dados enviados à API externa + retorno (chave, número, PDF/XML, status) |
 | `NotaFiscal` | NF **recebida** de fornecedor (XML/PDF) — `db_table = financeiro_notafiscal` |
 | `CobrancaCliente` | Parcelas geradas ao cliente (forma de pagamento, status) |
-| `Boleto` | Boleto ligado a uma `ContaReceber` **ou** `ContaPagar` (CHECK garante só uma associação) |
+| `Boleto` | Boleto ligado a uma `ContaReceber` **ou** `ContaPagar` (CHECK garante só uma associação); `canal` (`asaas` ou `cnab`), `valor_multa`/`valor_juros` embutidos na segunda via, e — no CNAB — `conta_cobranca`, `nosso_numero`, `codigo_barras`, `remessa` |
+| `LoteCobranca` / `ItemLoteCobranca` | Um clique de "gerar boletos" sobre várias contas; cada item guarda o desfecho da sua conta (na fila, emitido, não emitido com o motivo, fora do lote) |
+| `ContaCobrancaBancaria` | A carteira de cobrança da empresa num banco (banco, layout 240/400, agência, conta, carteira, convênio, beneficiário) e os contadores de nosso número e de sequencial de remessa |
+| `RemessaCnab` / `RetornoCnab` | Os arquivos que vão ao banco e que voltam dele, guardados inteiros, com o resumo do que o retorno aplicou |
 
 > O legado `Fatura` foi **removido** (07/06/2026): consolidado em `ContaPagar`/`ContaReceber` — único
 > modelo de título da empresa, com `dar_baixa()` como caminho único de baixa (manual hoje, webhook
@@ -62,14 +65,18 @@ Isolado por tenant. Ver [../acesso-e-permissoes.md](../acesso-e-permissoes.md).
 
 ### Endpoints (`/api/erp/`)
 `/contas-a-pagar/` (+ `dar-baixa`, `gerar-lote-remessa`) · `/contas-a-receber/` (+ `dar-baixa`,
-`gerar-cobranca` ✅ D.1.2 — enfileira `funcoescobrancas.tasks.criar_cobranca`, gera `Boleto` via Asaas,
-`emitir-nfse`, `emitir-nfe`, `emitir-lote-nfse`) · `/revisoes-baixa/` (somente leitura + `aprovar`,
+`gerar-cobranca` — enfileira `funcoescobrancas.tasks.criar_cobranca` com a data escolhida, `previa-cobranca`,
+`previa-cobrancas-lote`, `gerar-cobrancas-lote`, `estornar-baixa`, `emitir-nfse`, `emitir-nfe`, `previa-lote-nfse`,
+`emitir-lote-nfse`).
+`contas-a-pagar`, `contas-a-receber` e `boletos` ganham `grupos/` (subtotais por `?por=`) — ver §5.9 · `/revisoes-baixa/` (somente leitura + `aprovar`,
 `rejeitar` — fila do financeiro para baixas em títulos já quitados/cancelados) · `/centros-custo/` ·
 `/lotes-remessa/` · `/transacoes/` · `/notas-fiscais-servico/` (+ `cancelar`, `documento` — verifica a
 NFE.io ao vivo e resolve o PDF/XML atual, a versão CANCELADA quando cancelada; offline → última versão
 local + aviso) · `/notas-fiscais-produto/` · `/notas-fiscais/` · `/cobrancas-cliente/` ·
 `/boletos/` (+ `cancelar` → Asaas `cancelar_payment`, exige `erp.cobranca.emitir`; `documento` — verifica
-o Asaas ao vivo, mesmo contrato de fallback offline) · `/dashboard/` (aging + fluxo de caixa) ·
+o Asaas ao vivo, mesmo contrato de fallback offline; `pdf` e `miniatura` — o PDF servido pelo backend,
+para abrir dentro da tela) · `/carteiras-cobranca/` (+ `bancos`) · `/remessas-cnab/` (+ `arquivo`) ·
+`/retornos-cnab/` (+ `enviar`) · `/lotes-cobranca/` (andamento) · `/dashboard/` (aging + fluxo de caixa) ·
 `/atualizar-status-nf/` · `/nf/<id>/consultar/`.
 
 Erros ficam visíveis: NFS-e e `Boleto` guardam o retorno cru do gateway em `dados_retorno_api` (na falha,
@@ -383,6 +390,38 @@ modules/erp/
 Lazy-load por sub-módulo (`React.lazy` + `Suspense`), virtualização das tabelas grandes, `Skeleton` em
 todo carregamento, suspense boundaries por área. O bundle do ERP nunca entra no carregamento inicial do app.
 
+### 5.9 A grade dos títulos — contas a receber, a pagar e boletos
+
+As três listas são a grade da carteira de clientes ([frontend.md §5.8](../frontend.md)) aplicada aos
+títulos: rolagem infinita virtualizada, cabeçalho e primeira coluna congelados, toda coluna ordena
+(com "Ordenar por" dito em palavras) e **agrupar por** até `ERP_TETO_NIVEIS_AGRUPAMENTO` níveis, com
+contagem, valor, saldo em aberto e vencido de cada grupo calculados por `GROUP BY` sobre o recorte
+inteiro. O motor é um só — [`listao.py`](../../backend/moduloerp/listao.py) — e cada lista declara uma
+`Fonte` (o que anotar, por onde ordenar, por onde agrupar):
+
+| Lista | Agrupa por | Busca em |
+|---|---|---|
+| Contas a receber | empreendimento, cliente, quadra, mês, situação do vencimento, status | descrição, cliente, empreendimento, quadra, lote, bloco, apto; CPF/CNPJ só com `cadastro.cliente_doc.view` |
+| Contas a pagar | fornecedor, empreendimento, mês, situação, status | descrição, fornecedor, CNPJ, empreendimento, número da nota |
+| Boletos | empreendimento, cliente, mês, status | parcela, pagador, empreendimento, quadra, lote, linha digitável, id no gateway |
+
+Três regras de desempenho, e o porquê de cada uma está no código:
+
+- **Paginação em dois passos.** Os ids da página saem primeiro, só com o JOIN que a ordem pede; as
+  linhas inteiras (nomes, rateios, boletos) depois, para cem ids. Anotar tudo sempre fazia o Postgres
+  juntar a tabela inteira a seis outras antes de ordenar — a política de RLS de cada tabela juntada é
+  inestimável para o planejador ([D238](../pendencias.md)).
+- **Busca em outra tabela é `IN (subconsulta)`**, nunca JOIN com `UNACCENT` linha a linha.
+- **Cada palavra buscada casa pelo começo de uma palavra do dado**, sem acento nem caixa (`ana ro` não
+  acha "Ana Ribeiro"; `aco` acha "Aço" e não "Fundações"). Número de 5+ dígitos (documento) casa em
+  qualquer ponto; número curto ignora o zero à esquerda.
+- **Toda ordem desempata pela chave primária**, senão a rolagem infinita repete uma linha e come outra.
+
+Cada grupo tem o filtro que o abre (`mes`, `faixa`, `quadra`, `cliente`…); "abrir só este grupo" vira
+filtro e a rolagem infinita continua dentro dele. Ordem e agrupamento ficam lembrados por pessoa e por
+tela. Em Contas a receber, marcar linhas (ou "todas do filtro", pela caixa do cabeçalho, menos as
+desmarcadas depois — `excluir_ids`) leva ao boleto em lote (§6.2).
+
 ---
 
 ## 6. Boletos & cobrança — integração Asaas
@@ -452,6 +491,86 @@ Asaas e recebe o webhook. O [funcoesnf](funcoesnf.md) também passa a usar o Asa
 
 ---
 
+
+### 6.1 O vencimento do boleto e a segunda via
+
+O título guarda a data do contrato; o boleto, a data pagável. Antes de emitir, a prévia
+(`previa-cobranca`, [`segunda_via.py`](../../backend/funcoescobrancas/segunda_via.py)) diz:
+
+- a data do contrato e a do boleto, com o **motivo** quando diferem (sábado, domingo, o feriado pelo
+  nome — nacional, estadual e do município do imóvel — e os dias sem expediente bancário, Carnaval e
+  Corpus Christi). O calendário vale **de 1900 a 2100** (`CALENDARIO_ANO_*` do `planos.py`): a lei de um
+  ano ausente da tabela é calculada na hora, e o feriado municipal de um ano que o dataset não publica é
+  projetado pela regra dos anos publicados (data fixa ou móvel com a Páscoa) — a prévia diz quando foi
+  projetado (`calendario.municipal_projetado`). Ver [`modulocalendar/feriados.py`](../../backend/modulocalendar/feriados.py);
+- título **vencido**: nova data sugerida (`ERP_SEGUNDA_VIA_PRAZO_DIAS`), que a pessoa pode trocar, e o
+  boleto soma **multa** (uma vez, sobre o saldo) e **juros de mora** pró-rata por dia, do vencimento do
+  contrato ao do boleto. Os percentuais são da venda (`ClienteEmpreendimento.multa_atraso_percentual`,
+  `juros_mora_mensal_percentual`); sem venda, o padrão do `planos.py`. O empurrão de um título em dia
+  para o próximo dia útil não é atraso e não gera encargo;
+- o boleto ativo que a segunda via **cancela** no Asaas antes de emitir o novo.
+
+A emissão usa a mesma conta da prévia, é idempotente por data e valor e tranca a linha da conta (dois
+cliques não viram duas cobranças). A linha digitável, o código de barras e o nosso número do Asaas vêm
+de `GET /payments/{id}/identificationField` — não do objeto do pagamento — na emissão; o boleto que
+nasceu sem ela a completa na primeira verificação ao vivo (`boletos/:id/documento/`), que a tela chama
+quando a linha falta. A baixa — pelo webhook ou pelo retorno CNAB — lança
+`Boleto.valor_multa`/`valor_juros` como multa e juros, e não como principal.
+
+### 6.2 Boletos em lote
+
+`previa-cobrancas-lote` separa as contas escolhidas em: boleto novo, segunda via (vencidas, com a
+data única escolhida para elas), já tem boleto válido e encerradas — com o total e quanto dele é
+encargo. `gerar-cobrancas-lote` emite até `ERP_TETO_COBRANCAS_POR_LOTE`: pelo **Asaas**, uma task por
+conta no ritmo do gateway, cada `ItemLoteCobranca` recebendo o boleto ou o motivo; ou pelo **banco**
+(§6.3), numa remessa só. A tela acompanha o andamento (`lotes-cobranca/:id`) e lista quem não saiu.
+
+### 6.2.1 Notas fiscais junto do lote
+
+O diálogo do lote oferece "emitir também a nota fiscal de cada conta" (para quem tem `erp.nf.emitir`):
+emitidos os boletos, a mesma escolha vai a `emitir-lote-nfse` (§7).
+
+### 6.3 Cobrança registrada no banco (CNAB)
+
+O caminho dos bancos, em [`moduloerp/cnab/`](../../backend/moduloerp/cnab/__init__.py): a empresa cadastra a
+**carteira de cobrança** (`ContaCobrancaBancaria`); o SGI numera o boleto (nosso número da carteira),
+calcula código de barras e linha digitável (padrão FEBRABAN, com o fator de vencimento reiniciado em
+22/02/2025), gera a **remessa** e lê o **retorno**:
+
+| Banco | Layouts |
+|---|---|
+| Banco do Brasil (001), Santander (033), Caixa (104), Sicredi (748), Sicoob (756) | CNAB 240 |
+| Bradesco (237), Itaú (341) | CNAB 240 e 400 |
+
+O que muda de banco para banco (campo livre, dígito do nosso número, campos do 240) mora numa classe
+por banco em `bancos.py`. O pagador precisa de CPF/CNPJ, endereço, CEP, cidade e UF — sem isso a conta
+fica fora do lote, com o motivo. O boleto sai em PDF pela porta única de PDF (`html_para_pdf`).
+
+O retorno casa cada linha pelo id do boleto (enviado no campo "uso da empresa") ou pelo nosso número:
+entrada confirmada → emitido; rejeitada → erro com o motivo do banco; liquidação → `dar_baixa` com
+origem `cnab` e pago; baixa → cancelado. Ler o mesmo retorno duas vezes não paga duas vezes. Cada banco
+homologa a carteira nova com uma remessa de teste ([D239](../pendencias.md)).
+
+Fora do desenho atual: remessa de **instrução** (pedido de baixa, prorrogação) — a baixa de boleto
+registrado se pede no internet banking, e o retorno atualiza o boleto ([D245](../pendencias.md)) — e o
+CNAB de **pagamento** a fornecedor (Pag-For/SISPAG), que é o lado do `LoteRemessa`.
+
+### 6.4 Editar uma conta que tem boleto
+
+Em [`boleto_da_conta.py`](../../backend/moduloerp/boleto_da_conta.py), no desenho de Conta Azul/Omie
+(boleto por integradora) e TOTVS (CNAB):
+
+- **Asaas:** mudar valor ou vencimento com boleto vivo exige `atualizar_boleto: true` — sem ele a API
+  recusa com a frase do que vai acontecer. Salvo, o boleto antigo é cancelado e o novo é emitido pela
+  via da segunda via (§6.1), com feriado e encargos refeitos. O formulário avisa antes ("Salvar e
+  reemitir o boleto") e o painel acompanha o boleto novo chegar;
+- **CNAB:** valor, vencimento e cliente travam (`campos_travados`), com o caminho — baixa pelo banco;
+- **cliente:** trava com boleto vivo — boleto não muda de pagador;
+- o detalhe da conta publica `boleto_desatualizado`: a frase de por que o boleto vivo não é mais o da
+  conta (principal ≠ saldo, ou vencimento do contrato ≠ o que o boleto carregava), e a tela oferece
+  "Emitir boleto atualizado";
+- toda mudança de valor, vencimento ou contraparte (a pagar e a receber) vai à auditoria
+  (`editar_financeiro`, antes → depois).
 ## 7. Notas fiscais — emitir · cancelar · ver
 
 Cobre o pedido de *"ver notas fiscais, emitir e cancelar"* e *"ver quem já pagou"*.
@@ -462,14 +581,39 @@ Cobre o pedido de *"ver notas fiscais, emitir e cancelar"* e *"ver quem já pago
 - **Recebidas (entrada):** `NotaFiscal` de fornecedor (XML/PDF) → origina `ContaPagar`; futuro:
   **manifestação do destinatário** e importação automática por XML/chave.
 - **Tela de NF:** abas Emitidas / Recebidas / Canceladas; filtros (período, cliente/fornecedor, status,
-  obra); ações emitir (individual e **lote**, já existe `emitir-lote-nfse`), cancelar, baixar PDF/XML,
-  consultar status (`/nf/<id>/consultar/`).
+  obra); ações emitir (individual e **lote**), cancelar, baixar PDF/XML, consultar status
+  (`/nf/<id>/consultar/`).
+- **Lote** ([`nfse_lote.py`](../../backend/moduloerp/nfse_lote.py)): a escolha da grade de contas a
+  receber (ids, ou todas do filtro menos as desmarcadas) — sozinha ("Emitir notas") ou junto do lote de
+  boletos (§6.2.1). `previa-lote-nfse` separa notas a emitir, contas que já têm nota emitida ou em
+  emissão, canceladas e tomadores com cadastro incompleto (com o que falta e o link do cliente);
+  `emitir-lote-nfse` cria as notas pelo mesmo caminho da avulsa, espaçadas para a NFE.io, até
+  `ERP_TETO_NOTAS_POR_LOTE`, e devolve as recusas conta a conta.
+- **Acompanhamento:** a NFE.io responde "Created" e emite depois. A task volta a consultar a cada
+  `ERP_NFSE_CONSULTA_INTERVALO_S` até a nota sair de "Processando" (ou as
+  `ERP_NFSE_CONSULTA_TENTATIVAS` acabarem; aí fica o "consultar" da tela).
 - **"Quem pagou":** cruzar NF emitida → `ContaReceber` → `Boleto`/`Transacao` (status de
   pagamento vem do webhook Asaas).
 
 ---
 
 ## 8. Devoluções / estornos
+
+### 8.1 Estorno de baixa — editar um título já pago
+
+O desenho dos ERPs de mercado (Omie "cancelar pagamento", TOTVS "cancelamento de baixa", Conta Azul
+"voltar para em aberto"), em [`estorno.py`](../../backend/moduloerp/estorno.py):
+
+- com baixa, o que é **descrição** do título segue editável (descrição, obra, datas de emissão e
+  agendamento, rateio, nota); o que é **dinheiro ou contraparte** (valor, vencimento, fornecedor/cliente)
+  trava. A API publica `campos_travados`/`travado_porque` e recusa a escrita com a mesma frase;
+- a saída é **estornar a baixa** (`erp.conta_pagar.estornar` / `erp.conta_receber.estornar`, motivo
+  obrigatório, auditoria): uma `Transacao` de valor negativo anula as baixas — a original fica no
+  ledger — e a conta volta a "Aberto";
+- conta a receber paga por boleto não se estorna aqui (o dinheiro entrou pelo banco: a devolução é no
+  banco); conta com baixa não se exclui.
+
+### 8.2 Devoluções
 
 Modelo novo `Devolucao` (ou `notas de crédito/débito`) cobrindo os dois lados:
 - **De cliente** (a empresa devolve): estorno de cobrança (refund Asaas), NF de devolução, baixa

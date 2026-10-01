@@ -51,6 +51,7 @@ const SEGMENT_LABELS: Record<string, string> = {
   'contas-a-pagar': 'Contas a pagar',
   'contas-a-receber': 'Contas a receber',
   boletos: 'Boletos',
+  'cobranca-bancaria': 'Cobrança bancária',
   rh: 'RH',
   cargos: 'Cargos',
   crm: 'CRM',

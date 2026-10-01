@@ -405,6 +405,9 @@ export interface ClienteEmpreendimento {
   indice_correcao_nome: string | null
   periodicidade_correcao: PeriodicidadeCorrecao
   data_base_correcao: string | null
+  /** Encargos por atraso do contrato (item 55): o que a segunda via soma. */
+  multa_atraso_percentual: string
+  juros_mora_mensal_percentual: string
   plano: ResumoPlano | null
   tenant: number
 }
@@ -420,6 +423,9 @@ export interface ClienteEmpreendimentoFormData {
   indice_correcao: number | ''
   periodicidade_correcao: PeriodicidadeCorrecao
   data_base_correcao: string
+  /** Vazio = o padrão do dono (payment/planos.py §5.5s). */
+  multa_atraso_percentual: string
+  juros_mora_mensal_percentual: string
 }
 
 /** Prévia/resultado de `corrigir/` — uma linha por parcela em aberto. */

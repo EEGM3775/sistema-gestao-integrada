@@ -166,6 +166,29 @@ boleto e estranhar a data encontra o porquê ao lado dela.
 Título sem empreendimento (lançamento avulso do financeiro) cai em fim de semana + feriado nacional,
 que continua melhor que um boleto vencendo no domingo.
 
+### A prévia, a segunda via e o PDF na tela
+
+Antes de emitir, a tela mostra o boleto que vai sair: [`segunda_via.planejar`](../../backend/funcoescobrancas/segunda_via.py)
+calcula a data pagável (a de cima), e — com o título vencido — a nova data e os encargos do contrato
+(multa uma vez, juros pró-rata por dia; percentuais da venda). `gerar_cobranca_asaas` usa **a mesma
+conta**: a tela nunca promete um valor que o boleto não carrega. Com data ou valor diferentes do boleto
+ativo, é segunda via: o anterior é cancelado no Asaas antes do novo nascer. A task tranca a linha da
+conta e grava o que já aconteceu no gateway (boleto ERRO, anterior cancelado) antes de propagar a falha.
+O webhook lança `valor_multa`/`valor_juros` do boleto como multa e juros da baixa.
+
+O PDF passa pelo backend ([`documento.py`](../../backend/funcoescobrancas/documento.py)) porque a tela o
+mostra dentro do SGI e o navegador não embute o Asaas: só `https` em host do Asaas, sem seguir redirect,
+com teto de tamanho cortado durante o download e relógio (`ERP_BOLETO_PDF_*` no `planos.py`); a
+miniatura é a 1ª página rasterizada (`pypdfium2`), em cache.
+
+### A linha digitável vem de outro endpoint
+
+O Asaas não devolve a linha digitável no objeto do pagamento (nem no `POST`, nem no `GET
+/payments/{id}`): ela, o código de barras e o nosso número vêm de `GET
+/payments/{id}/identificationField` (`AsaasClient.buscar_linha_digitavel`). A emissão a pede logo
+depois de criar o pagamento — falhar ali não derruba o boleto — e `verificar_cobranca_asaas` completa o
+boleto que nasceu sem ela.
+
 ### Fora do escopo do MVP (slice 2 futura)
 `tasks.estornar` (`refund` → lança `Devolucao`), QR PIX e parcelamento (`installments`) — adiados por
 decisão do usuário (07/06/2026) para manter o MVP no golden path emitir+baixa. Cancelamento de boleto:

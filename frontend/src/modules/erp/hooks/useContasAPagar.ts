@@ -38,6 +38,7 @@ function useInvalidateContasAPagar() {
   return () => {
     queryClient.invalidateQueries({ queryKey: erpKeys.contasAPagar.all })
     queryClient.invalidateQueries({ queryKey: erpKeys.dashboard.all })
+    queryClient.invalidateQueries({ queryKey: erpKeys.grade.all })
   }
 }
 

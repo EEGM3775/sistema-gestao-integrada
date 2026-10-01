@@ -1,374 +1,294 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft, Plus } from 'lucide-react'
-import type { ColumnDef, SortingState } from '@tanstack/react-table'
-import { FilterBar, type FilterBarValue } from '../components/shared/FilterBar'
-import { FinanceDataTable } from '../components/shared/FinanceDataTable'
+import { Files, Plus, ScrollText, X } from 'lucide-react'
+import { useAuth } from '@/hooks/useAuth'
+import { TelaDaGrade } from '../grade/TelaDaGrade'
+import { estiloFiltro } from '../grade/estilos'
+import { useGrade } from '../grade/useGrade'
+import { filtrosDoGrupo } from '../grade/arvore'
+import type { ColunaGrade, Filtros, NoGrupo } from '../grade/tipos'
 import { Sheet } from '../components/shared/Sheet'
 import { MoneyDisplay } from '../components/shared/MoneyDisplay'
 import { StatusContaBadge } from '../components/shared/StatusContaBadge'
 import { StatusBoletoBadge } from '../components/shared/StatusBoletoBadge'
-import { BotaoErroGateway } from '../components/shared/GatewayErro'
-import { STATUS_CONTA_OPTIONS } from '../components/shared/statusConta'
 import { ContaReceberForm } from '../components/forms/ContaReceberForm'
-import { BaixaForm } from '../components/forms/BaixaForm'
-import { GerarCobrancaDialog } from '../components/GerarCobrancaDialog'
-import { buttonPrimaryStyle, buttonSecondaryStyle } from '../components/forms/formStyles'
-import {
-  useContasAReceber, useCreateContaAReceber, useUpdateContaAReceber, useDarBaixaContaAReceber,
-} from '../hooks/useContasAReceber'
-import { useGerarCobrancaContaAReceber } from '../hooks/useBoletos'
-import { useClienteOptions, useEmpreendimentoOptions } from '../hooks/useEntityOptions'
+import { DetalheContaReceber } from '../components/DetalheContaReceber'
+import { GerarBoletosLoteDialog } from '../components/GerarBoletosLoteDialog'
+import { EmitirNotasLoteDialog } from '../components/EmitirNotasLoteDialog'
+import { useCreateContaAReceber } from '../hooks/useContasAReceber'
+import { useEmpreendimentoOptions } from '../hooks/useEntityOptions'
+import { STATUS_CONTA_CONFIG } from '../components/shared/statusConta'
 import { apiDecimalToCents } from '@/utils/money'
-import { dateToBR } from '@/utils/dates'
-import { parseApiErrors } from '@/utils/formErrors'
-import type { ContaReceber, ContaReceberFiltros, StatusConta } from '../types'
+import { dateToBR, maxCalendarioISO, maxTodayISO, minCalendarioISO } from '@/utils/dates'
+import type { ContaReceber } from '../types'
 
-/** Feedback do fluxo assíncrono de "Gerar cobrança" — `ok` mostra confirmação, `erro` destaca o bloqueio. */
-type GerarCobrancaFeedback = { tipo: 'ok' | 'erro'; mensagem: string } | null
+const SITUACOES = [
+  { valor: '', rotulo: 'Todas' },
+  { valor: 'a_vencer', rotulo: 'A vencer' },
+  { valor: 'vencido', rotulo: 'Vencidas' },
+  { valor: 'encerrado', rotulo: 'Quitadas e canceladas' },
+]
 
-const PAGE_SIZE = 20
+/** Os filtros que um grupo "aberto sozinho" deixa — rótulo para o chip. */
+const ROTULO_EXTRA: Record<string, string> = {
+  cliente: 'Cliente', quadra: 'Quadra', mes: 'Mês', status: 'Status', faixa: 'Situação', empreendimento: 'Empreendimento',
+}
 
-type SheetState =
-  | { mode: 'create' }
-  | { mode: 'view' | 'edit' | 'baixa'; conta: ContaReceber }
+const diasDeAtraso = (venc: string) => Math.floor((Date.parse(maxTodayISO()) - Date.parse(venc)) / 86_400_000)
 
 /**
- * Workspace de Contas a Receber (D.1.1, docs/modulos/moduloerp.md §5.5):
- * listão paginado/filtrado no servidor + Sheet de lançamento/detalhe/baixa —
- * mesmo arquétipo de "Workspace de lista financeira" usado em Contas a Pagar.
+ * Contas a receber (itens 51, 53 e 54 do dono): a grade de rolagem infinita da
+ * carteira de clientes, agora para os títulos. A busca responde enquanto se
+ * digita e acha pelo cliente, pelo CPF, pelo empreendimento, pela quadra e pelo
+ * lote; toda coluna ordena; "agrupar por" empilha empreendimento, cliente,
+ * quadra, mês e situação com os subtotais do banco. Marcar linhas (ou "todas
+ * do filtro") leva ao boleto em lote (item 52) e às notas fiscais em lote.
  */
 export default function ContasAReceberPage() {
-  const [filtros, setFiltros] = useState<FilterBarValue>({})
-  const [pageIndex, setPageIndex] = useState(0)
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'data_vencimento', desc: false }])
-  const [sheet, setSheet] = useState<SheetState | null>(null)
-  const [cobrancaOpen, setCobrancaOpen] = useState(false)  // dialog de confirmação de cobrança (D3)
+  const [busca, setBusca] = useState('')
+  const [situacao, setSituacao] = useState('')
+  const [empreendimento, setEmpreendimento] = useState('')
+  const [periodo, setPeriodo] = useState({ de: '', ate: '' })
+  const [extras, setExtras] = useState<{ chave: string; valor: string; rotulo: string }[]>([])
+  const [marcados, setMarcados] = useState<ReadonlySet<number>>(new Set())
+  const [todosDoFiltro, setTodosDoFiltro] = useState(false)
+  // Em "todas do filtro", as que a pessoa desmarcou uma a uma depois.
+  const [excluidos, setExcluidos] = useState<ReadonlySet<number>>(new Set())
+  const [aberta, setAberta] = useState<number | null>(null)
+  const [criando, setCriando] = useState(false)
+  const [loteAberto, setLoteAberto] = useState(false)
+  const [notasAbertas, setNotasAbertas] = useState(false)
+  const { hasPermission } = useAuth()
+  const [tituloSheet, setTituloSheet] = useState<{ titulo: string; descricao?: string }>({ titulo: '' })
 
-  const ordering = sorting[0] ? `${sorting[0].desc ? '-' : ''}${sorting[0].id}` : undefined
-  const queryFiltros: ContaReceberFiltros = useMemo(() => ({
-    status: filtros.status as StatusConta | undefined,
-    empreendimento: filtros.empreendimento,
-    cliente: filtros.cliente,
-    data_de: filtros.data_de,
-    data_ate: filtros.data_ate,
-    search: filtros.search,
-    page: pageIndex + 1,
-    page_size: PAGE_SIZE,
-    ordering,
-  }), [filtros, pageIndex, ordering])
+  const filtros: Filtros = useMemo(() => ({
+    search: busca, faixa: situacao, empreendimento, data_de: periodo.de, data_ate: periodo.ate,
+    ...Object.fromEntries(extras.map(e => [e.chave, e.valor])),
+  }), [busca, situacao, empreendimento, periodo, extras])
 
-  const { data, isLoading, isFetching } = useContasAReceber(queryFiltros)
-  const clienteOptions = useClienteOptions(true)
-  const empreendimentoOptions = useEmpreendimentoOptions(true)
+  const grade = useGrade<ContaReceber>({ recurso: 'contas-a-receber', filtros, ordenarPadrao: 'vencimento' })
+  const empreendimentos = useEmpreendimentoOptions(true)
+  const criar = useCreateContaAReceber()
 
-  const labelCliente = (id: number | null) =>
-    (id != null && clienteOptions.data?.find(o => o.id === id)?.label) || (id ? `Cliente #${id}` : '—')
-  const labelEmpreendimento = (id: number | null) =>
-    id == null ? '—' : (empreendimentoOptions.data?.find(o => o.id === id)?.label ?? `Obra #${id}`)
+  const desmarcarTudo = () => { setMarcados(new Set()); setTodosDoFiltro(false); setExcluidos(new Set()) }
+  const mudarFiltro = (f: () => void) => { f(); desmarcarTudo() }
 
-  const createMutation = useCreateContaAReceber()
-  const updateMutation = useUpdateContaAReceber()
-  const baixaMutation = useDarBaixaContaAReceber()
-  const gerarCobrancaMutation = useGerarCobrancaContaAReceber()
-
-  // D3: só dispara a cobrança após o passo de confirmação. Fecha o dialog no fim
-  // (sucesso ou 409 de bloqueio) — o resultado aparece no feedback do detalhe.
-  const confirmarCobranca = () => {
-    if (sheet?.mode !== 'view') return
-    gerarCobrancaMutation.mutate(sheet.conta.conta_receber_id, {
-      onSettled: () => setCobrancaOpen(false),
+  const abrirSoOGrupo = (no: NoGrupo) => {
+    const f = filtrosDoGrupo({}, no)
+    mudarFiltro(() => {
+      setExtras(atual => [
+        ...atual.filter(e => !(e.chave in f)),
+        ...no.filtros.map((chave, i) => ({ chave, valor: no.chaves[i], rotulo: `${ROTULO_EXTRA[chave] ?? chave}: ${no.rotulos[i]}` })),
+      ])
+      grade.setNiveis([])
     })
   }
 
-  const columns = useMemo<ColumnDef<ContaReceber>[]>(() => [
-    {
-      accessorKey: 'descricao',
-      header: 'Descrição',
-      enableSorting: false,
-      cell: ({ row }) => (
-        <div className="flex flex-col">
-          <span className="font-medium">{row.original.descricao}</span>
-          <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-            {labelEmpreendimento(row.original.empreendimento)}
-          </span>
-        </div>
-      ),
-    },
-    {
-      accessorKey: 'cliente',
-      header: 'Cliente',
-      enableSorting: false,
-      cell: ({ getValue }) => labelCliente(getValue<number | null>()),
-    },
-    {
-      accessorKey: 'data_vencimento',
-      header: 'Vencimento',
-      cell: ({ getValue }) => dateToBR(getValue<string>()),
-    },
-    {
-      accessorKey: 'valor',
-      header: 'Valor',
-      cell: ({ getValue }) => <MoneyDisplay cents={apiDecimalToCents(getValue<string>())} />,
-    },
-    {
-      accessorKey: 'saldo_aberto',
-      header: 'Saldo em aberto',
-      enableSorting: false,
-      cell: ({ getValue }) => <MoneyDisplay cents={apiDecimalToCents(getValue<string>())} />,
-    },
-    {
-      accessorKey: 'status',
-      header: 'Status',
-      cell: ({ getValue }) => <StatusContaBadge status={getValue<StatusConta>()} />,
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [clienteOptions.data, empreendimentoOptions.data])
+  const trocar = (id: number) => (atual: ReadonlySet<number>) => {
+    const prox = new Set(atual)
+    if (prox.has(id)) prox.delete(id)
+    else prox.add(id)
+    return prox
+  }
+  const podeMarcar = (c: ContaReceber) => c.status === 'ABERTO' || c.status === 'PARCIAL'
+  const alternar = (c: ContaReceber) => {
+    if (todosDoFiltro) setExcluidos(trocar(c.conta_receber_id))
+    else setMarcados(trocar(c.conta_receber_id))
+  }
+  const marcada = (c: ContaReceber) => (todosDoFiltro
+    ? podeMarcar(c) && !excluidos.has(c.conta_receber_id)
+    : marcados.has(c.conta_receber_id))
+  const marcarTodasDoFiltro = () => { setMarcados(new Set()); setExcluidos(new Set()); setTodosDoFiltro(true) }
 
-  const closeSheet = () => setSheet(null)
+  const colunas = useMemo<ColunaGrade<ContaReceber>[]>(() => [
+    {
+      chave: 'cliente', titulo: 'Cliente', largura: 230, ordenar: 'cliente',
+      render: c => (
+        <span className="flex flex-col min-w-0">
+          <Link to={`/app/clientes/${c.cliente}`} onClick={e => e.stopPropagation()} className="truncate font-semibold"
+            style={{ color: 'var(--ink)', textDecoration: 'none' }} title="Abrir a ficha do cliente">
+            {c.cliente_nome}
+          </Link>
+        </span>
+      ),
+      texto: c => c.cliente_nome,
+    },
+    { chave: 'descricao', titulo: 'Parcela', largura: 210, ordenar: 'descricao', render: c => <span className="truncate" title={c.descricao}>{c.descricao}</span>, texto: c => c.descricao },
+    { chave: 'empreendimento', titulo: 'Empreendimento', largura: 190, ordenar: 'empreendimento', render: c => <span className="truncate">{c.empreendimento_nome || '—'}</span>, texto: c => c.empreendimento_nome },
+    { chave: 'unidade', titulo: 'Unidade', largura: 120, ordenar: 'unidade', tipo: 'endereco', render: c => c.unidade || '—', texto: c => c.unidade },
+    {
+      chave: 'vencimento', titulo: 'Vencimento', largura: 150, ordenar: 'vencimento', tipo: 'data',
+      render: c => {
+        const atraso = (c.status === 'ABERTO' || c.status === 'PARCIAL') ? diasDeAtraso(c.data_vencimento) : 0
+        return (
+          <span className="flex flex-col">
+            <span>{dateToBR(c.data_vencimento)}</span>
+            {atraso > 0 && <span style={{ fontSize: 11, color: 'var(--danger-ink)', fontWeight: 600 }}>{atraso} dia{atraso !== 1 ? 's' : ''} de atraso</span>}
+          </span>
+        )
+      },
+      texto: c => dateToBR(c.data_vencimento),
+    },
+    { chave: 'valor', titulo: 'Valor', largura: 120, ordenar: 'valor', tipo: 'numero', alinhamento: 'right', render: c => <MoneyDisplay cents={apiDecimalToCents(c.valor)} />, texto: c => c.valor },
+    { chave: 'saldo', titulo: 'Em aberto', largura: 120, ordenar: 'saldo', tipo: 'numero', alinhamento: 'right', render: c => <MoneyDisplay cents={apiDecimalToCents(c.saldo_aberto)} />, texto: c => c.saldo_aberto },
+    {
+      chave: 'status', titulo: 'Situação', largura: 170, ordenar: 'status',
+      render: c => {
+        const b = c.boletos.find(x => ['EMITIDO', 'VENCIDO', 'AGUARDANDO', 'ERRO'].includes(x.status))
+        return (
+          <span className="flex items-center gap-1.5">
+            <StatusContaBadge status={c.status} />
+            {b && <StatusBoletoBadge status={b.status} />}
+          </span>
+        )
+      },
+      texto: c => STATUS_CONTA_CONFIG[c.status]?.label ?? c.status,
+    },
+  ], [])
+
+  const doFiltro = grade.totais?.contagem ?? 0
+  const selecionadas = todosDoFiltro ? Math.max(0, doFiltro - excluidos.size) : marcados.size
+  const temFiltroAtivo = Boolean(busca || situacao || empreendimento || periodo.de || periodo.ate || extras.length)
+  const estadoTodas = todosDoFiltro
+    ? (excluidos.size ? 'algumas' : 'todas')
+    : (marcados.size ? 'algumas' : 'nenhuma')
+  const fecharSheet = useCallback(() => { setAberta(null); setCriando(false) }, [])
+  const definirTitulo = useCallback((titulo: string, descricao?: string) => setTituloSheet({ titulo, descricao }), [])
 
   return (
-    <div className="px-6 py-8">
-      <Link
-        to="/app/erp"
-        className="inline-flex items-center gap-1.5 text-xs font-semibold mb-3 transition-colors duration-150"
-        style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-body)', textDecoration: 'none' }}
-        onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-brand)')}
-        onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text-muted)')}
-      >
-        <ArrowLeft size={14} /> ERP Financeiro
-      </Link>
-
-      <div className="flex items-center justify-between gap-3 mb-6 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold" style={{ fontFamily: 'var(--font-heading)', color: 'var(--color-brand)' }}>
-            Contas a receber
-          </h1>
-          <p className="text-xs" style={{ fontFamily: 'var(--font-body)', color: 'var(--color-text-muted)' }}>
-            Lançamentos, rateios e recebimentos de clientes
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setSheet({ mode: 'create' })}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors duration-150"
-          style={{ background: 'var(--color-brand)', color: '#FFFFFF', fontFamily: 'var(--font-body)', cursor: 'pointer' }}
-        >
-          <Plus size={16} /> Nova conta
-        </button>
-      </div>
-
-      <FilterBar
-        value={filtros}
-        onChange={next => { setFiltros(next); setPageIndex(0) }}
-        fields={['search', 'periodo', 'empreendimento', 'cliente', 'status']}
-        statusOptions={STATUS_CONTA_OPTIONS}
-        searchPlaceholder="Buscar por descrição…"
-      />
-
-      <FinanceDataTable
-        data={data?.results ?? []}
-        columns={columns}
-        count={data?.count ?? 0}
-        pageIndex={pageIndex}
-        pageSize={PAGE_SIZE}
-        onPageChange={setPageIndex}
-        sorting={sorting}
-        onSortingChange={setSorting}
-        getRowId={row => String(row.conta_receber_id)}
-        isLoading={isLoading}
-        isFetching={isFetching}
-        emptyMessage="Nenhuma conta a receber encontrada para os filtros atuais."
-        onRowClick={conta => setSheet({ mode: 'view', conta })}
-      />
-
-      <Sheet
-        open={sheet != null}
-        onClose={closeSheet}
-        width={560}
-        title={
-          sheet?.mode === 'create' ? 'Nova conta a receber'
-          : sheet?.mode === 'edit' ? 'Editar conta a receber'
-          : sheet?.mode === 'baixa' ? 'Dar baixa'
-          : sheet?.mode === 'view' ? sheet.conta.descricao
-          : ''
+    <>
+      <TelaDaGrade<ContaReceber>
+        titulo="Contas a receber"
+        subtitulo="Parcelas, boletos e recebimentos — busque por cliente, CPF, empreendimento, quadra, lote ou parcela"
+        acoes={
+          <>
+            {selecionadas > 0 && (
+              <button type="button" onClick={() => setLoteAberto(true)} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold"
+                style={{ background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer' }}>
+                <Files size={16} /> Gerar boletos ({selecionadas.toLocaleString('pt-BR')})
+              </button>
+            )}
+            {selecionadas > 0 && hasPermission('erp.nf.emitir') && (
+              <button type="button" onClick={() => setNotasAbertas(true)} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold"
+                style={{ background: 'var(--surface)', color: 'var(--accent-ink)', border: '1.5px solid var(--accent)', cursor: 'pointer' }}>
+                <ScrollText size={16} /> Emitir notas ({selecionadas.toLocaleString('pt-BR')})
+              </button>
+            )}
+            <button type="button" onClick={() => setCriando(true)} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold"
+              style={{ background: 'var(--brand)', color: '#fff', border: 'none', cursor: 'pointer' }}>
+              <Plus size={16} /> Nova conta
+            </button>
+          </>
         }
-        description={sheet && sheet.mode !== 'create' ? labelCliente(sheet.conta.cliente) : undefined}
-      >
-        {sheet?.mode === 'create' && (
-          <ContaReceberForm
-            onCancel={closeSheet}
-            onSubmit={async payload => { await createMutation.mutateAsync(payload); closeSheet() }}
-          />
-        )}
+        busca={busca}
+        onBuscar={t => mudarFiltro(() => setBusca(t))}
+        placeholderBusca="Buscar por cliente, CPF, empreendimento, quadra, lote ou parcela"
+        situacoes={SITUACOES}
+        situacao={situacao}
+        onSituacao={v => mudarFiltro(() => setSituacao(v))}
+        filtros={
+          <>
+            <select aria-label="Empreendimento" value={empreendimento} style={estiloFiltro}
+              onChange={e => mudarFiltro(() => setEmpreendimento(e.target.value))}>
+              <option value="">Todos os empreendimentos</option>
+              {(empreendimentos.data ?? []).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+            </select>
+            <span className="flex items-center gap-1.5" style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>
+              Vencimento
+              <input type="date" aria-label="Vencimento de" min={minCalendarioISO} max={maxCalendarioISO} value={periodo.de} style={estiloFiltro}
+                onChange={e => mudarFiltro(() => setPeriodo(p => ({ ...p, de: e.target.value })))} />
+              até
+              <input type="date" aria-label="Vencimento até" min={minCalendarioISO} max={maxCalendarioISO} value={periodo.ate} style={estiloFiltro}
+                onChange={e => mudarFiltro(() => setPeriodo(p => ({ ...p, ate: e.target.value })))} />
+            </span>
+            {extras.map(e => (
+              <span key={e.chave} className="flex items-center gap-1" style={{ padding: '3px 6px 3px 10px', borderRadius: 999, background: 'var(--surface-2)', fontSize: 12, fontWeight: 600, color: 'var(--ink-2)' }}>
+                {e.rotulo}
+                <button type="button" aria-label={`Tirar o filtro ${e.rotulo}`} onClick={() => mudarFiltro(() => setExtras(x => x.filter(y => y.chave !== e.chave)))}
+                  style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'inherit', display: 'flex', padding: 0 }}><X size={13} /></button>
+              </span>
+            ))}
+            {temFiltroAtivo && (
+              <button type="button" onClick={() => mudarFiltro(() => { setBusca(''); setSituacao(''); setEmpreendimento(''); setPeriodo({ de: '', ate: '' }); setExtras([]) })}
+                style={{ border: 'none', background: 'none', color: 'var(--ink-3)', fontSize: 12.5, cursor: 'pointer' }}>
+                Limpar filtros
+              </button>
+            )}
+          </>
+        }
+        grade={grade}
+        colunas={colunas}
+        onAbrir={c => setAberta(c.conta_receber_id)}
+        onAbrirSoOGrupo={abrirSoOGrupo}
+        selecao={{
+          marcada, alternar, podeMarcar,
+          todas: {
+            estado: estadoTodas,
+            habilitada: estadoTodas !== 'nenhuma' || (doFiltro > 0 && temFiltroAtivo),
+            dica: estadoTodas !== 'nenhuma'
+              ? 'Desmarcar todas'
+              : temFiltroAtivo
+                ? `Marcar todas as ${doFiltro.toLocaleString('pt-BR')} contas do filtro`
+                : 'Filtre a lista (busca, situação, empreendimento ou período) para marcar todas de uma vez',
+            alternar: () => (estadoTodas === 'nenhuma' ? marcarTodasDoFiltro() : desmarcarTudo()),
+          },
+        }}
+        extraTotais={
+          <span className="flex items-center gap-2" style={{ fontSize: 12.5 }}>
+            {marcados.size > 0 && !todosDoFiltro && <span>{marcados.size} marcada{marcados.size !== 1 ? 's' : ''}</span>}
+            {todosDoFiltro && (
+              <span>
+                Todas as {doFiltro.toLocaleString('pt-BR')} do filtro marcadas
+                {excluidos.size > 0 && `, menos ${excluidos.size}`}
+              </span>
+            )}
+            {!todosDoFiltro && doFiltro > 0 && temFiltroAtivo && (
+              <button type="button" onClick={marcarTodasDoFiltro}
+                style={{ border: 'none', background: 'none', color: 'var(--accent-ink)', fontWeight: 600, cursor: 'pointer', fontSize: 12.5 }}>
+                Marcar todas do filtro
+              </button>
+            )}
+            {(marcados.size > 0 || todosDoFiltro) && (
+              <button type="button" onClick={desmarcarTudo}
+                style={{ border: 'none', background: 'none', color: 'var(--ink-3)', cursor: 'pointer', fontSize: 12.5 }}>
+                Desmarcar
+              </button>
+            )}
+          </span>
+        }
+        substantivo={['conta', 'contas']}
+        mostrarSaldo
+        vazio={temFiltroAtivo ? 'Nenhuma conta para esta busca. Tente outra palavra ou limpe os filtros.' : 'Nenhuma conta a receber lançada.'}
+      />
 
-        {sheet?.mode === 'edit' && (
-          <ContaReceberForm
-            initial={sheet.conta}
-            onCancel={closeSheet}
-            onSubmit={async payload => {
-              await updateMutation.mutateAsync({ id: sheet.conta.conta_receber_id, payload })
-              closeSheet()
-            }}
-          />
+      <Sheet open={aberta != null || criando} onClose={fecharSheet} width={580}
+        title={criando ? 'Nova conta a receber' : tituloSheet.titulo} description={criando ? undefined : tituloSheet.descricao}>
+        {criando && (
+          <ContaReceberForm onCancel={fecharSheet}
+            onSubmit={async payload => { await criar.mutateAsync(payload); fecharSheet() }} />
         )}
-
-        {sheet?.mode === 'baixa' && (
-          <BaixaForm
-            saldoAberto={sheet.conta.saldo_aberto}
-            onCancel={closeSheet}
-            onSubmit={async payload => {
-              await baixaMutation.mutateAsync({ id: sheet.conta.conta_receber_id, payload })
-              closeSheet()
-            }}
-          />
-        )}
-
-        {sheet?.mode === 'view' && (
-          <ContaReceberDetail
-            conta={sheet.conta}
-            labelEmpreendimento={labelEmpreendimento}
-            onEditar={() => setSheet({ mode: 'edit', conta: sheet.conta })}
-            onDarBaixa={() => setSheet({ mode: 'baixa', conta: sheet.conta })}
-            onGerarCobranca={() => setCobrancaOpen(true)}
-            gerarCobrancaPending={gerarCobrancaMutation.isPending}
-            gerarCobrancaFeedback={
-              gerarCobrancaMutation.isSuccess
-                ? { tipo: 'ok', mensagem: gerarCobrancaMutation.data?.detail ?? 'Cobrança iniciada.' }
-                : gerarCobrancaMutation.isError
-                ? { tipo: 'erro', mensagem: parseApiErrors(gerarCobrancaMutation.error)._form
-                    ?? 'Não foi possível gerar a cobrança no Asaas — tente novamente.' }
-                : null
-            }
-          />
-        )}
+        {aberta != null && <DetalheContaReceber key={aberta} contaId={aberta} onTitulo={definirTitulo} />}
       </Sheet>
 
-      {sheet?.mode === 'view' && (
-        <GerarCobrancaDialog
-          open={cobrancaOpen}
-          onClose={() => setCobrancaOpen(false)}
-          onConfirm={confirmarCobranca}
-          pending={gerarCobrancaMutation.isPending}
-          valorCents={apiDecimalToCents(sheet.conta.saldo_aberto)}
+      {loteAberto && (
+        <GerarBoletosLoteDialog
+          quantidade={selecionadas}
+          escolha={todosDoFiltro
+            ? { todos_do_filtro: true, filtros, excluir_ids: [...excluidos] }
+            : { ids: [...marcados] }}
+          onFechar={() => { setLoteAberto(false); desmarcarTudo() }}
         />
       )}
-    </div>
+      {notasAbertas && (
+        <EmitirNotasLoteDialog
+          quantidade={selecionadas}
+          escolha={todosDoFiltro
+            ? { todos_do_filtro: true, filtros, excluir_ids: [...excluidos] }
+            : { ids: [...marcados] }}
+          onFechar={emitiu => { setNotasAbertas(false); if (emitiu) desmarcarTudo() }}
+        />
+      )}
+    </>
   )
 }
 
-function ContaReceberDetail({
-  conta, labelEmpreendimento, onEditar, onDarBaixa,
-  onGerarCobranca, gerarCobrancaPending, gerarCobrancaFeedback,
-}: {
-  conta: ContaReceber
-  labelEmpreendimento: (id: number | null) => string
-  onEditar: () => void
-  onDarBaixa: () => void
-  onGerarCobranca: () => void
-  gerarCobrancaPending: boolean
-  gerarCobrancaFeedback: GerarCobrancaFeedback
-}) {
-  const podeBaixar = conta.status === 'ABERTO' || conta.status === 'PARCIAL'
-  const podeGerarCobranca = conta.status === 'ABERTO' || conta.status === 'PARCIAL'
-  return (
-    <div className="flex flex-col gap-5">
-      <div className="flex items-center justify-between">
-        <StatusContaBadge status={conta.status} />
-        <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{labelEmpreendimento(conta.empreendimento)}</span>
-      </div>
-
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm" style={{ fontFamily: 'var(--font-body)' }}>
-        <DetailItem label="Valor" value={<MoneyDisplay cents={apiDecimalToCents(conta.valor)} />} />
-        <DetailItem label="Saldo em aberto" value={<MoneyDisplay cents={apiDecimalToCents(conta.saldo_aberto)} />} />
-        <DetailItem label="Emissão" value={conta.data_emissao ? dateToBR(conta.data_emissao) : '—'} />
-        <DetailItem label="Vencimento" value={dateToBR(conta.data_vencimento)} />
-        <DetailItem label="Agendamento" value={conta.data_agendamento ? dateToBR(conta.data_agendamento) : '—'} />
-        <DetailItem label="Recebimento" value={conta.data_recebimento ? dateToBR(conta.data_recebimento) : '—'} />
-      </dl>
-
-      {conta.rateios.length > 0 && (
-        <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--color-brand)' }}>
-            Rateio por centro de custo
-          </h3>
-          <ul className="flex flex-col gap-1 text-sm">
-            {conta.rateios.map(r => (
-              <li key={r.rateio_id} className="flex items-center justify-between">
-                <span>{r.centro_custo_nome}</span>
-                <MoneyDisplay cents={apiDecimalToCents(r.valor)} />
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {conta.boletos.length > 0 && (
-        <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--color-brand)' }}>Boletos</h3>
-          <ul className="flex flex-col gap-1.5 text-sm">
-            {conta.boletos.map(b => (
-              <li key={b.boleto_id} className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Link
-                    to={`/app/erp/boletos/${b.boleto_id}`}
-                    className="flex items-center gap-2"
-                    style={{ color: 'var(--color-text)', textDecoration: 'none' }}
-                    onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-brand)')}
-                    onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text)')}
-                  >
-                    <span>{dateToBR(b.data_vencimento)}</span>
-                  </Link>
-                  {/* "Erro" clicável abre os códigos do Asaas aqui também (decisão: Ambos). */}
-                  {b.status === 'ERRO'
-                    ? <BotaoErroGateway dados={b.dados_retorno_api} titulo="Erro na cobrança (Asaas)" />
-                    : <StatusBoletoBadge status={b.status} />}
-                </div>
-                <MoneyDisplay cents={apiDecimalToCents(b.valor)} />
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {gerarCobrancaFeedback && (
-        gerarCobrancaFeedback.tipo === 'erro' ? (
-          <div
-            role="alert"
-            className="text-sm"
-            style={{
-              padding: '10px 14px', borderRadius: '8px',
-              background: '#fff5f5', border: '1px solid #fed7d7',
-              color: '#c53030', fontFamily: 'var(--font-body)', lineHeight: 1.4,
-            }}
-          >
-            ⚠ {gerarCobrancaFeedback.mensagem}
-          </div>
-        ) : (
-          <p className="text-xs" style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-body)' }}>
-            {gerarCobrancaFeedback.mensagem}
-          </p>
-        )
-      )}
-
-      <div className="flex items-center justify-end gap-2 pt-2">
-        <button type="button" onClick={onEditar} style={buttonSecondaryStyle}>Editar</button>
-        {podeGerarCobranca && (
-          <button type="button" onClick={onGerarCobranca} disabled={gerarCobrancaPending} style={{ ...buttonSecondaryStyle, opacity: gerarCobrancaPending ? 0.6 : 1, cursor: gerarCobrancaPending ? 'wait' : 'pointer' }}>
-            {gerarCobrancaPending ? 'Gerando…' : 'Gerar cobrança (Asaas)'}
-          </button>
-        )}
-        {podeBaixar && <button type="button" onClick={onDarBaixa} style={buttonPrimaryStyle}>Dar baixa</button>}
-      </div>
-    </div>
-  )
-}
-
-function DetailItem({ label, value }: { label: string; value: ReactNode }) {
-  return (
-    <div>
-      <dt className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{label}</dt>
-      <dd className="font-medium" style={{ color: 'var(--color-text)' }}>{value}</dd>
-    </div>
-  )
-}

@@ -1280,3 +1280,54 @@ class TetosDaAutorizacaoTests(SimpleTestCase):
         # dentro do que uma requisição aguenta, e não pode ser zero.
         self.assertGreater(planos.AUTORIZACAO_PDP_TIMEOUT_MS, 0)
         self.assertLessEqual(planos.AUTORIZACAO_PDP_TIMEOUT_MS, 1000)
+
+
+class TetosDoErpFinanceiroTests(SimpleTestCase):
+    """§5.5s — a grade de títulos, o lote de boletos, a segunda via e o CNAB (itens 51–58)."""
+
+    def _importa(self, modulo, nome):
+        import ast
+
+        arvore = ast.parse(inspect.getsource(modulo))
+        importado = any(
+            isinstance(no, ast.ImportFrom) and no.module == "payment.planos"
+            and any(a.name == nome for a in no.names)
+            for no in ast.walk(arvore)
+        )
+        self.assertTrue(importado, f"{modulo.__name__} deixou de ler {nome} do payment/planos.py")
+
+    def test_os_limites_do_erp_vem_do_payment(self):
+        from funcoescobrancas import documento, segunda_via
+        from moduloerp import cobranca_lote, views, views_cnab
+
+        self._importa(views, "ERP_TETO_NIVEIS_AGRUPAMENTO")
+        self._importa(cobranca_lote, "ERP_TETO_COBRANCAS_POR_LOTE")
+        self._importa(segunda_via, "ERP_SEGUNDA_VIA_PRAZO_DIAS")
+        self._importa(segunda_via, "ERP_ENCARGOS_MULTA_PADRAO_PERCENTUAL")
+        self._importa(documento, "ERP_BOLETO_PDF_TETO_MB")
+        self._importa(documento, "ERP_BOLETO_PDF_SEGUNDOS")
+        self._importa(views_cnab, "ERP_CNAB_RETORNO_TETO_MB")
+
+    def test_o_padrao_de_encargos_cabe_no_teto(self):
+        from decimal import Decimal
+
+        self.assertLessEqual(
+            Decimal(planos.ERP_ENCARGOS_MULTA_PADRAO_PERCENTUAL), Decimal(planos.ERP_ENCARGOS_MULTA_TETO_PERCENTUAL),
+        )
+        self.assertLessEqual(
+            Decimal(planos.ERP_ENCARGOS_JUROS_MES_PADRAO_PERCENTUAL),
+            Decimal(planos.ERP_ENCARGOS_JUROS_MES_TETO_PERCENTUAL),
+        )
+
+    def test_feriados_e_notas_em_lote_vem_do_payment(self):
+        """§5.5t (01/10/2026) — a faixa do calendário e o acompanhamento da NFS-e."""
+        from modulocalendar.management.commands import sincronizar_feriados
+        from moduloerp import tasks, views
+
+        self._importa(sincronizar_feriados, "CALENDARIO_ANO_INICIAL")
+        self._importa(sincronizar_feriados, "CALENDARIO_ANO_FINAL")
+        self._importa(tasks, "ERP_NFSE_CONSULTA_INTERVALO_S")
+        self._importa(tasks, "ERP_NFSE_CONSULTA_TENTATIVAS")
+        self._importa(views, "ERP_TETO_NOTAS_POR_LOTE")
+        # A faixa é a mesma de todo campo de data da plataforma (`maxCalendarioISO`).
+        self.assertEqual((planos.CALENDARIO_ANO_INICIAL, planos.CALENDARIO_ANO_FINAL), (1900, 2100))

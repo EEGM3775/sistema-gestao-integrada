@@ -486,6 +486,7 @@ Utiliza `createBrowserRouter` com rotas aninhadas.
   /app/erp                    → ErpDashboardPage ✅      (hasModule: erp_financeiro — lazy/Suspense, hub D.1.0)
   /app/erp/contas-a-pagar     → ContasAPagarPage ✅      (rota-irmã, D.1.1 07/06/2026 — workspace: lançar/editar/ver/baixa)
   /app/erp/contas-a-receber   → ContasAReceberPage ✅    (idem, espelhado p/ cliente/NF — D.1.1 07/06/2026)
+  /app/erp/cobranca-bancaria  → CobrancaBancariaPage     (carteiras CNAB, remessas e retornos)
   /app/erp/boletos            → BoletosListPage ✅       (rota-irmã, D.1.2 08/06/2026 — telas dedicadas, somente leitura)
   /app/erp/boletos/:id        → BoletoDetailPage ✅      (gateway + timeline de eventos do webhook Asaas)
   /app/rh               → RHPage               (hasModule: rh)
@@ -915,11 +916,27 @@ andamento das obras do empreendimento comprado, com o percentual declarado como
   (gate LGPD+escopo — `hasModule` não basta, é do tenant; reforçado no backend), documento mascarado sem
   `cadastro.cliente_doc.view`. Sem `erp.relatorio.view`, os KPIs/gráficos degradam para um aviso amigável
   (403 velado, F4)
-- **`ContasAPagarPage`/`ContasAReceberPage`** (`/app/erp/contas-a-{pagar,receber}`, rotas-irmãs) ✅ —
-  arquétipo "Workspace de lista financeira" ([moduloerp.md §5.5](modulos/moduloerp.md#55-arquétipos-de-página-layouts-reutilizáveis)):
-  `FilterBar`+`FinanceDataTable` (paginação/ordenação server-side) + `Sheet` lateral com 4 modos
-  (`create`/`edit`/`view`/`baixa`) — lançar conta com `RateioField` (centro de custo), ver detalhe
-  (rateios, boletos, ações), editar, dar baixa parcial ou total. Breadcrumb de volta ao hub.
+- **`ContasAReceberPage` / `ContasAPagarPage` / `BoletosListPage`** — a **grade dos títulos**
+  ([`erp/grade/`](../frontend/src/modules/erp/grade/), planta em [moduloerp.md §5.9](modulos/moduloerp.md)):
+  `TelaDaGrade` (cabeçalho, `CaixaDeBusca` que responde enquanto se digita, `Situacoes` — a vencer,
+  vencidas, encerradas —, filtros, `AgruparPor`, `Totais`) + `Grade` (rolagem infinita virtualizada,
+  cabeçalho e 1ª coluna congelados, "Ordenar por" em palavras, grupos com subtotal do banco, seleção,
+  Ctrl+C) sobre `useGrade` (lista infinita, grupos, linhas do grupo aberto, preferências por tela em
+  `localStorage`). O nome do cliente na grade abre a ficha dele. Em Contas a receber, marcar linhas ou
+  "todas do filtro" abre o **`GerarBoletosLoteDialog`** (prévia, Asaas ou carteira CNAB, andamento
+  conta a conta).
+- **`DetalheContaReceber`** (painel lateral) — lê a conta **ao vivo** (`useQuery` do detalhe) e, pedida
+  a cobrança, consulta até o boleto chegar; **`BoletoNaTela`** (miniatura, linha digitável, leitor
+  `LeitorDeBoleto` com o PDF servido pelo backend); **`GerarCobrancaDialog`** com a prévia do backend
+  (datas do contrato e do boleto, feriado pelo nome, segunda via com nova data, multa e juros);
+  **`EstornarBaixaDialog`**; nota fiscal pelo `EmitirNfseDialog` com a conta já escolhida. O de
+  contas a pagar vive na própria página.
+- **Formulários de conta** — a trava da baixa vem da API (`campos_travados`/`travado_porque`,
+  `AvisoDeTrava`) e o campo travado vira texto (`TextoTravado`, convenções §10); o seletor de obra é
+  controlado (vazio = sem obra); erro da API ou da validação sem campo na tela vai para a faixa de aviso
+  (`distribuirErros`/`errosSemLugar`) — nunca reprovação silenciosa.
+- **`CobrancaBancariaPage`** (`/app/erp/cobranca-bancaria`) — carteiras de cobrança (a ajuda de cada
+  campo muda por banco), remessas para baixar e envio do arquivo de retorno com o resumo do que foi pago.
 - **`Sheet`** (slide-over) ✅ — **1º uso no projeto**; `open/onClose/title/description/footer/width`
 - **Formulários RHF+zod** ✅ — **1ª adoção de `react-hook-form`+`zod` no projeto** (ver
   [moduloerp.md §5.3](modulos/moduloerp.md#53-stack-adicional-estende-o-do-projeto)):

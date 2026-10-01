@@ -59,6 +59,8 @@ EMISSOR = "SGI"
 ALCADA_FINANCEIRA = frozenset({
     "erp.conta_pagar.baixar",
     "erp.conta_receber.baixar",
+    "erp.conta_pagar.estornar",
+    "erp.conta_receber.estornar",
     "pdca.medicao.atestar",
     "pdca.aditivo.aprovar",
     "sil.requisicao.aprovar",

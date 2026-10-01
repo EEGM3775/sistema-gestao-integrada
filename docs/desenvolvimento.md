@@ -188,6 +188,7 @@ Os dados de negócio vêm depois, no backend:
 ```bash
 docker compose exec -T erp python manage.py shell < testes/seeds/seed_demo_data.py   # cadastros base
 docker compose exec erp python manage.py semear_carteira_demo --tenant demo     # carteira de clientes
+docker compose exec erp python manage.py completar_enderecos_demo --tenant demo # endereço real + CEP + IBGE (NFS-e e CNAB)
 docker compose exec erp python manage.py semear_pdca_demo --tenant demo         # obra planejada E em execução
 ```
 

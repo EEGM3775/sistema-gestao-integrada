@@ -218,11 +218,13 @@ definition modulo_erp_financeiro {
     relation concede_erp__conta_pagar__create: papel#portador
     relation concede_erp__conta_pagar__delete: papel#portador
     relation concede_erp__conta_pagar__edit: papel#portador
+    relation concede_erp__conta_pagar__estornar: papel#portador
     relation concede_erp__conta_pagar__view: papel#portador
     relation concede_erp__conta_receber__baixar: papel#portador
     relation concede_erp__conta_receber__create: papel#portador
     relation concede_erp__conta_receber__delete: papel#portador
     relation concede_erp__conta_receber__edit: papel#portador
+    relation concede_erp__conta_receber__estornar: papel#portador
     relation concede_erp__conta_receber__view: papel#portador
     relation concede_erp__lote_remessa__create: papel#portador
     relation concede_erp__lote_remessa__view: papel#portador
@@ -243,11 +245,13 @@ definition modulo_erp_financeiro {
     permission erp__conta_pagar__create = empresa->administrador + catalogado->supervisor + (usa & concede_erp__conta_pagar__create)
     permission erp__conta_pagar__delete = empresa->administrador + catalogado->supervisor + (usa & concede_erp__conta_pagar__delete)
     permission erp__conta_pagar__edit = empresa->administrador + catalogado->supervisor + (usa & concede_erp__conta_pagar__edit)
+    permission erp__conta_pagar__estornar = empresa->administrador + catalogado->supervisor + (usa & concede_erp__conta_pagar__estornar)
     permission erp__conta_pagar__view = empresa->administrador + catalogado->supervisor + (usa & concede_erp__conta_pagar__view)
     permission erp__conta_receber__baixar = empresa->administrador + catalogado->supervisor + (usa & concede_erp__conta_receber__baixar)
     permission erp__conta_receber__create = empresa->administrador + catalogado->supervisor + (usa & concede_erp__conta_receber__create)
     permission erp__conta_receber__delete = empresa->administrador + catalogado->supervisor + (usa & concede_erp__conta_receber__delete)
     permission erp__conta_receber__edit = empresa->administrador + catalogado->supervisor + (usa & concede_erp__conta_receber__edit)
+    permission erp__conta_receber__estornar = empresa->administrador + catalogado->supervisor + (usa & concede_erp__conta_receber__estornar)
     permission erp__conta_receber__view = empresa->administrador + catalogado->supervisor + (usa & concede_erp__conta_receber__view)
     permission erp__lote_remessa__create = empresa->administrador + catalogado->supervisor + (usa & concede_erp__lote_remessa__create)
     permission erp__lote_remessa__view = empresa->administrador + catalogado->supervisor + (usa & concede_erp__lote_remessa__view)

@@ -247,6 +247,14 @@ class ContaPagar(TenantScopedModel, Excluivel):
         verbose_name_plural = _("Contas a Pagar")
         ordering = ['data_vencimento']
         db_table = 'financeiro_contapagar'
+        # A ordem padrão da grade (listao.py), só das linhas vivas — as da lixeira
+        # nunca aparecem nela.
+        indexes = [
+            models.Index(
+                fields=['tenant', 'data_vencimento'], condition=models.Q(excluido_em__isnull=True),
+                name='cp_vencimento_vivo',
+            ),
+        ]
 
     def __str__(self):
         return f"Pagar a {self.fornecedor.razao_social} - Vence em {self.data_vencimento}"
@@ -290,7 +298,10 @@ class ContaPagar(TenantScopedModel, Excluivel):
             novo_total_devido = (
                 self.valor + (self.juros + juros) + (self.multa + multa) - (self.desconto + desconto)
             )
-            novo_valor_pago = self.valor_pago + valor
+            # O que entrou (ou saiu) de caixa: principal + encargos - desconto —
+            # o mesmo número da `Transacao` abaixo. Somar só o principal deixava
+            # a conta paga com juros eternamente "Parcial" (achado no item 55).
+            novo_valor_pago = self.valor_pago + valor + juros + multa - desconto
             ja_encerrado = self.status in (StatusConta.QUITADO, StatusConta.CANCELADO)
             excede_saldo = novo_valor_pago > novo_total_devido
 
@@ -411,6 +422,13 @@ class ContaReceber(TenantScopedModel, Excluivel):
         verbose_name_plural = _("Contas a Receber")
         ordering = ['data_vencimento']
         db_table = 'financeiro_contareceber'
+        # Ver ContaPagar.Meta — mesma grade, mesma ordem padrão.
+        indexes = [
+            models.Index(
+                fields=['tenant', 'data_vencimento'], condition=models.Q(excluido_em__isnull=True),
+                name='cr_vencimento_vivo',
+            ),
+        ]
 
     def __str__(self):
         return f"Receber de {self.cliente.nome_completo} - Vence em {self.data_vencimento}"
@@ -442,7 +460,10 @@ class ContaReceber(TenantScopedModel, Excluivel):
             novo_total_devido = (
                 self.valor + (self.juros + juros) + (self.multa + multa) - (self.desconto + desconto)
             )
-            novo_valor_pago = self.valor_pago + valor
+            # O que entrou (ou saiu) de caixa: principal + encargos - desconto —
+            # o mesmo número da `Transacao` abaixo. Somar só o principal deixava
+            # a conta paga com juros eternamente "Parcial" (achado no item 55).
+            novo_valor_pago = self.valor_pago + valor + juros + multa - desconto
             ja_encerrado = self.status in (StatusConta.QUITADO, StatusConta.CANCELADO)
             excede_saldo = novo_valor_pago > novo_total_devido
 
@@ -751,6 +772,12 @@ class Boleto(TenantScopedModel):
 
     status = models.CharField(max_length=20, choices=StatusBoleto.choices, default=StatusBoleto.AGUARDANDO)
     valor = models.DecimalField(_("Valor do Boleto"), max_digits=15, decimal_places=2)
+    # Segunda via de título vencido (item 55): o boleto carrega saldo + multa +
+    # juros até a nova data. As duas parcelas ficam separadas aqui porque é
+    # assim que a baixa precisa lançá-las — somar tudo como principal jogaria o
+    # pagamento em "baixa acima do saldo" e o título para revisão manual.
+    valor_multa = models.DecimalField(_("Multa embutida"), max_digits=15, decimal_places=2, default=Decimal('0'))
+    valor_juros = models.DecimalField(_("Juros embutidos"), max_digits=15, decimal_places=2, default=Decimal('0'))
     data_vencimento = models.DateField(_("Data de Vencimento"))
     data_emissao = models.DateTimeField(_("Data de Emissão"), auto_now_add=True)
     data_pagamento = models.DateTimeField(_("Data de Pagamento"), null=True, blank=True)
@@ -765,6 +792,27 @@ class Boleto(TenantScopedModel):
     # popup de "detalhes do erro" e o que sustenta o fallback offline do documento.
     dados_retorno_api = models.JSONField(_("Retorno do Gateway"), null=True, blank=True)
 
+    # ─── Canal de emissão (item 52) ───────────────────────────────────────────
+    # `asaas`: o gateway emite, registra e avisa o pagamento pelo webhook.
+    # `cnab`: o boleto é registrado direto no banco da empresa por arquivo de
+    # remessa; o nosso número e o código de barras são nossos, e o pagamento
+    # chega pelo arquivo de retorno.
+    class Canal(models.TextChoices):
+        ASAAS = 'asaas', _('Asaas')
+        CNAB = 'cnab', _('Banco (CNAB)')
+
+    canal = models.CharField(max_length=10, choices=Canal.choices, default=Canal.ASAAS)
+    conta_cobranca = models.ForeignKey(
+        'ContaCobrancaBancaria', on_delete=models.PROTECT, null=True, blank=True, related_name='boletos',
+        verbose_name=_("Carteira de cobrança"),
+    )
+    nosso_numero = models.CharField(_("Nosso número"), max_length=30, blank=True, default='')
+    codigo_barras = models.CharField(_("Código de barras"), max_length=44, blank=True, default='')
+    remessa = models.ForeignKey(
+        'RemessaCnab', on_delete=models.SET_NULL, null=True, blank=True, related_name='boletos',
+        verbose_name=_("Remessa"),
+    )
+
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
 
@@ -772,6 +820,7 @@ class Boleto(TenantScopedModel):
         verbose_name = _("Boleto")
         verbose_name_plural = _("Boletos")
         ordering = ['-data_vencimento']
+        indexes = [models.Index(fields=['tenant', 'data_vencimento'], name='boleto_vencimento')]
         constraints = [
             models.CheckConstraint(
                 check=(
@@ -784,3 +833,134 @@ class Boleto(TenantScopedModel):
 
     def __str__(self):
         return f"Boleto {self.boleto_id} - R$ {self.valor} - Venc: {self.data_vencimento}"
+
+
+# --- Emissão em lote e cobrança registrada no banco (item 52) ---
+
+class LoteCobranca(TenantScopedModel):
+    """Um clique de "gerar boletos" sobre várias contas.
+
+    Cada conta vira um item com a sua própria sorte — emitido, recusado ou
+    ignorado, com o motivo. É o que deixa a tela responder "dos 480, quais não
+    saíram e por quê" em vez de "processado".
+    """
+    lote_id = models.AutoField(primary_key=True)
+    canal = models.CharField(max_length=10, choices=Boleto.Canal.choices, default=Boleto.Canal.ASAAS)
+    conta_cobranca = models.ForeignKey(
+        'ContaCobrancaBancaria', on_delete=models.PROTECT, null=True, blank=True, related_name='lotes',
+    )
+    remessa = models.ForeignKey('RemessaCnab', on_delete=models.SET_NULL, null=True, blank=True, related_name='lotes')
+    criado_em = models.DateTimeField(auto_now_add=True)
+    criado_por = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    total = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        verbose_name = _("Lote de cobrança")
+        verbose_name_plural = _("Lotes de cobrança")
+        ordering = ['-criado_em']
+
+
+class ItemLoteCobranca(TenantScopedModel):
+    class Situacao(models.TextChoices):
+        PENDENTE = 'PENDENTE', _('Na fila')
+        EMITIDO = 'EMITIDO', _('Emitido')
+        ERRO = 'ERRO', _('Não emitido')
+        IGNORADO = 'IGNORADO', _('Fora do lote')
+
+    item_id = models.BigAutoField(primary_key=True)
+    lote = models.ForeignKey(LoteCobranca, on_delete=models.CASCADE, related_name='itens')
+    conta_receber = models.ForeignKey(ContaReceber, on_delete=models.CASCADE, related_name='+')
+    vencimento = models.DateField(null=True, blank=True)
+    situacao = models.CharField(max_length=10, choices=Situacao.choices, default=Situacao.PENDENTE)
+    mensagem = models.TextField(blank=True, default='')
+    boleto = models.ForeignKey(Boleto, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    atualizado_em = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _("Item de lote de cobrança")
+        verbose_name_plural = _("Itens de lote de cobrança")
+        ordering = ['item_id']
+
+
+class ContaCobrancaBancaria(TenantScopedModel):
+    """A carteira de cobrança da empresa num banco — de onde sai o CNAB.
+
+    Os dados vêm do contrato de cobrança que a empresa assinou com o banco
+    (convênio, carteira, código do beneficiário). O nosso número e o
+    sequencial da remessa são contadores **desta** carteira: o banco recusa
+    nosso número repetido e remessa fora de ordem.
+    """
+    class Layout(models.TextChoices):
+        CNAB240 = '240', _('CNAB 240 (FEBRABAN)')
+        CNAB400 = '400', _('CNAB 400')
+
+    conta_cobranca_id = models.AutoField(primary_key=True)
+    nome = models.CharField(_("Nome"), max_length=80, help_text=_('Ex.: "Itaú — carteira 109".'))
+    banco = models.CharField(_("Banco"), max_length=3)
+    layout = models.CharField(_("Layout"), max_length=3, choices=Layout.choices, default=Layout.CNAB240)
+    agencia = models.CharField(_("Agência"), max_length=5)
+    agencia_dv = models.CharField(_("DV da agência"), max_length=1, blank=True, default='')
+    conta = models.CharField(_("Conta"), max_length=12)
+    conta_dv = models.CharField(_("DV da conta"), max_length=2, blank=True, default='')
+    convenio = models.CharField(
+        _("Convênio / código do beneficiário"), max_length=20, blank=True, default='',
+        help_text=_("O número que o banco deu ao contrato de cobrança."),
+    )
+    carteira = models.CharField(_("Carteira"), max_length=3)
+    variacao_carteira = models.CharField(_("Variação da carteira"), max_length=3, blank=True, default='')
+    beneficiario_nome = models.CharField(_("Nome do beneficiário"), max_length=120)
+    beneficiario_documento = models.CharField(_("CNPJ/CPF do beneficiário"), max_length=14)
+    proximo_nosso_numero = models.BigIntegerField(_("Próximo nosso número"), default=1)
+    proximo_sequencial_remessa = models.PositiveIntegerField(_("Próximo sequencial de remessa"), default=1)
+    instrucoes = models.CharField(
+        _("Instruções do boleto"), max_length=200, blank=True, default='',
+        help_text=_('Impressas no boleto. Ex.: "Não receber após 60 dias do vencimento."'),
+    )
+    ativa = models.BooleanField(default=True)
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = _("Carteira de cobrança")
+        verbose_name_plural = _("Carteiras de cobrança")
+        ordering = ['nome']
+
+    def __str__(self):
+        return self.nome
+
+
+class RemessaCnab(TenantScopedModel):
+    """O arquivo que vai ao banco. Guardado inteiro: é documento, e é o que se
+    reenvia quando o banco diz que não recebeu."""
+    remessa_id = models.AutoField(primary_key=True)
+    conta_cobranca = models.ForeignKey(ContaCobrancaBancaria, on_delete=models.PROTECT, related_name='remessas')
+    sequencial = models.PositiveIntegerField()
+    nome_arquivo = models.CharField(max_length=40)
+    conteudo = models.TextField()
+    quantidade = models.PositiveIntegerField(default=0)
+    valor_total = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'))
+    criado_em = models.DateTimeField(auto_now_add=True)
+    criado_por = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+
+    class Meta:
+        verbose_name = _("Remessa CNAB")
+        verbose_name_plural = _("Remessas CNAB")
+        ordering = ['-criado_em']
+        constraints = [
+            models.UniqueConstraint(fields=['tenant', 'conta_cobranca', 'sequencial'], name='remessa_sequencial_unico'),
+        ]
+
+
+class RetornoCnab(TenantScopedModel):
+    """O arquivo que o banco devolve, com o que aconteceu com cada boleto."""
+    retorno_id = models.AutoField(primary_key=True)
+    conta_cobranca = models.ForeignKey(ContaCobrancaBancaria, on_delete=models.PROTECT, related_name='retornos')
+    nome_arquivo = models.CharField(max_length=120)
+    conteudo = models.TextField()
+    resumo = models.JSONField(default=dict)
+    recebido_em = models.DateTimeField(auto_now_add=True)
+    recebido_por = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+
+    class Meta:
+        verbose_name = _("Retorno CNAB")
+        verbose_name_plural = _("Retornos CNAB")
+        ordering = ['-recebido_em']

@@ -38,6 +38,34 @@ contêiner que faltava na frota geral — foi fechado em 07/08/2026, também no 
 
 ## 🟠 Altas
 
+### D241 — "Trocar de celular" deixa o admin protegido só pela senha até o próximo login · 🟠 aberto 01/10/2026
+
+Visto em 01/10/2026, num teste do próprio dono (não foi incidente): às 20:08 de 30/09, o `admin` entrou com um código de recuperação e usou **Minha conta
+› Segurança › Trocar de celular** ([MinhaContaPage.tsx](../frontend/src/pages/app/MinhaContaPage.tsx)),
+com a senha e outro código de recuperação (eventos 120 e 121 da trilha). A
+[`DesativarSegundoFatorView`](../iam/identity/views.py) **apaga** o fator e deixa o cadastro novo para o
+próximo login. Às 06:29 de 01/10, a senha sozinha levou à tela de cadastro, e o fator novo foi
+ativado (evento 122). Não houve contorno: os dois passos exigiram o que o desenho exige. A falha está
+na **janela**: durante essas 10 horas, uma conta obrigada a ter 2FA ficou só com a senha, e quem a
+tivesse cadastraria o **próprio** autenticador no primeiro login. O único alarme é o e-mail de
+"ativado". **Correção:** a troca de celular deve ser atômica, na sessão que provou os dois fatores:
+cadastrar e confirmar o aparelho novo **antes** de apagar o antigo, sem passar por um estado "sem
+fator". O "desativar" puro fica só para quem não é obrigado. Avaliar também se o cadastro na etapa do
+login (desafio `cadastro`) deve exigir algo além da senha para quem **já teve** um fator.
+
+### D238 — o filtro de RLS não é estimável, e toda consulta com JOIN supõe 1% das linhas · 🟠 aberto 30/09/2026
+
+Achado no [D231](historico-correcoes.md). A política `tenant_isolation` é
+`current_setting('app.rls_bypass') = 'on' OR tenant_id::text = current_setting('app.current_tenant')`.
+O planejador não conhece o valor de `current_setting` nem sabe estimar o `OR`, e o cast `::text` na
+coluna tira o índice de `tenant_id` do jogo: cada tabela juntada entra estimada em ~1% das linhas. Em
+Contas a receber isso juntava 86 mil títulos a seis tabelas antes de ordenar (560 ms de 590). A grade
+do ERP contornou (paginação em dois passos, `IN (subconsulta)` na busca), mas **toda outra listagem com
+JOIN sobre tabela grande** está sujeita ao mesmo plano ruim. **Caminho:** reescrever a política para
+`tenant_id = NULLIF(current_setting('app.current_tenant', true), '')::uuid OR …bypass` (estimável pelo
+`n_distinct` da coluna e indexável) — é mudança de segurança em todas as tabelas, com a equivalência da
+RLS provada antes (`phase8_tenancy`), e por isso não entrou no pacote do ERP.
+
 ### F2 — Selects carregam tabelas inteiras · 🟠 parcial 25/07/2026
 
 Formulários carregam todos os clientes/fornecedores/empreendimentos para montar selects.
@@ -48,8 +76,11 @@ clientes** deixou de ser client-side — virou a carteira paginada com rolagem i
 ([frontend.md §5.8](frontend.md)). Efeito colateral tratado: como `/api/clientes/` passou a ser
 paginado, `useClienteOptions` ([useEntityOptions.ts](../frontend/src/modules/erp/hooks/useEntityOptions.ts))
 truncaria a lista em 50 **em silêncio** — pediria a primeira página e o cliente nº 200 sumiria do
-formulário do ERP. Mitigado com `page_size=300` e comentário no código. **Falta** o select com busca
-server-side de verdade nos formulários (clientes, fornecedores, empreendimentos).
+formulário do ERP. Mitigado com `page_size=300` e comentário no código. **Andamento (30/09):** as
+grades do ERP deixaram de depender dessas opções (os nomes vêm da API — [D232](historico-correcoes.md)),
+o diálogo de NFS-e busca a conta no servidor, e os formulários de conta mantêm na lista a pessoa da
+conta aberta. **Falta** o select com busca server-side de verdade nos formulários (clientes,
+fornecedores, empreendimentos).
 
 ### D39 — Os planos vendem 6 formatos geo, e o motor `gdal` não tem adaptador · 🟠 aberto
 
@@ -733,6 +764,47 @@ sobre um acervo que não é o real, e o Essencial em 150 mil agora fica **abaixo
 Decisão do dono, com o número novo na mão. Não trava nada hoje.
 
 ## 🟡 Médias
+
+### D245 — segunda via pelo CNAB deixa o boleto antigo pagável no banco · 🟡 aberto 01/10/2026
+
+Visto na revisão do item 57. A remessa só leva o comando de **entrada** (01): o SGI não gera instrução
+de baixa (02) nem de alteração de vencimento (06). Na segunda via de um título vencido pelo banco, o
+boleto antigo segue registrado até a baixa automática do banco — o cliente pode pagar os dois, e o
+retorno da segunda liquidação cai na revisão de baixas. Pela mesma razão, conta com boleto CNAB vivo
+tem valor, vencimento e cliente travados ([D248](historico-correcoes.md)), com o caminho "baixa pelo
+internet banking". **Caminho:** remessa de instrução por banco em `cnab/` (baixa ao emitir segunda via;
+alteração de vencimento ao editar), homologada junto com o D239 (abaixo).
+Latente enquanto nenhuma carteira estiver homologada.
+
+### D240 — gerar códigos de recuperação pelo shell do IAM não deixa rastro · 🟡 aberto 30/09/2026
+
+Em 30/09/2026, o dono perdeu o celular e voltou a entrar com códigos gerados por `docker exec sgi-iam
+python manage.py shell` chamando
+[`segundo_fator.gerar_codigos`](../iam/identity/segundo_fator.py). Esse caminho funciona, mas a função
+de serviço é **muda**: quem grava o evento na trilha (`SEGUNDO_FATOR_CODIGOS`) e manda o e-mail ao dono
+da conta é a view ([`CodigosSegundoFatorView`](../iam/identity/views.py), que ainda exige o código do
+app), não a função. O mesmo vale para `segundo_fator.remover`. Resultado: quem tem shell no container
+ou acesso de escrita ao banco troca ou apaga o 2FA de **qualquer** conta, supervisor incluído, sem
+evento e sem aviso. **A verificar:** (a) quem tem esse acesso em staging e produção; (b) se as duas
+rotas HTTP continuam fechadas como o desenho pretende: a própria conta só com o código do app, e a
+`redefinir-segundo-fator` só para `IsTenantAdmin`, sem alcançar o supervisor nem a própria conta;
+(c) se o evento e o e-mail devem descer para dentro de `gerar_codigos`/`remover`, ou se o shell deve
+passar a ter um comando de gestão próprio (`autor` = operador), para que o caminho de emergência
+fique registrado.
+
+### D239 — nenhuma carteira CNAB foi homologada em banco · 🟡 aberto 30/09/2026
+
+O CNAB entrou em 30/09/2026 (item 52) para sete bancos: remessa 240 FEBRABAN e 400 de Bradesco e Itaú,
+retorno, nosso número, código de barras e boleto em PDF. O que é padrão (código de barras, linha
+digitável, fator de vencimento de 2025, larguras do 240/400) está provado em teste; o que é **de cada
+banco** — campo livre, dígito do nosso número, versão do layout, campos "uso do banco" — segue os
+manuais públicos e só se confirma no teste de remessa que o banco faz ao liberar a carteira. Até a
+primeira homologação, tratar a carteira nova como teste (um lote pequeno), e ajustar a classe do banco
+em [`cnab/bancos.py`](../backend/moduloerp/cnab/bancos.py) com o que o banco apontar.
+
+**01/10/2026:** primeiro laudo de validador de banco (Sicoob) aplicado — ver
+[D244](historico-correcoes.md). O Sicoob fica pronto para nova rodada no validador; os outros seis
+bancos seguem sem laudo.
 
 ### D224 — na Prancheta, recalibrar a escala muda o valor de uma medida já anotada · 🟡 aberto 29/09/2026
 

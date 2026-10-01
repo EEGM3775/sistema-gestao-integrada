@@ -10,10 +10,24 @@ barra de filtro, não telas duplicadas).
 """
 from django_filters import rest_framework as filters
 
+from .listao import filtro_de_faixa, filtro_de_mes, hoje_local
 from .models import (
     Transacao, ContaPagar, ContaReceber, CobrancaCliente, Boleto,
     NotaFiscalServico,
 )
+
+
+class _FiltrosDoListao(filters.FilterSet):
+    """Os filtros que abrem um grupo da grade (listao.py): cada dimensão de
+    agrupamento tem o seu, senão clicar no grupo não saberia pedir as linhas dele."""
+    faixa = filters.CharFilter(method="filtrar_faixa")
+    mes = filters.CharFilter(method="filtrar_mes")
+
+    def filtrar_faixa(self, queryset, name, value):
+        return queryset.filter(filtro_de_faixa(value, hoje_local()))
+
+    def filtrar_mes(self, queryset, name, value):
+        return queryset.filter(filtro_de_mes(value))
 
 
 class NotaFiscalServicoFilter(filters.FilterSet):
@@ -39,7 +53,7 @@ class TransacaoFilter(filters.FilterSet):
         fields = ['tipo', 'empreendimento', 'obra', 'conta_pagar', 'conta_receber', 'data_de', 'data_ate']
 
 
-class ContaPagarFilter(filters.FilterSet):
+class ContaPagarFilter(_FiltrosDoListao):
     data_de = filters.DateFilter(field_name='data_vencimento', lookup_expr='gte')
     data_ate = filters.DateFilter(field_name='data_vencimento', lookup_expr='lte')
 
@@ -48,9 +62,10 @@ class ContaPagarFilter(filters.FilterSet):
         fields = ['fornecedor', 'empreendimento', 'status', 'data_de', 'data_ate']
 
 
-class ContaReceberFilter(filters.FilterSet):
+class ContaReceberFilter(_FiltrosDoListao):
     data_de = filters.DateFilter(field_name='data_vencimento', lookup_expr='gte')
     data_ate = filters.DateFilter(field_name='data_vencimento', lookup_expr='lte')
+    quadra = filters.CharFilter(field_name='cliente_empreendimento__unidade__quadra', lookup_expr='iexact')
 
     class Meta:
         model = ContaReceber
@@ -72,7 +87,15 @@ class BoletoFilter(filters.FilterSet):
     # Abas da tela de Boletos: "Ativos" exclui CANCELADO; "Cancelados" filtra por
     # ele (mesmo padrão do NotaFiscalServicoFilter) — sem duas rotas.
     excluir_status = filters.CharFilter(field_name='status', exclude=True)
+    # Os eixos da grade (listao.py): abrir o grupo "cliente X" ou "mar/2026"
+    # pede as linhas por eles.
+    cliente = filters.NumberFilter(field_name='conta_receber__cliente')
+    empreendimento = filters.NumberFilter(field_name='conta_receber__empreendimento')
+    mes = filters.CharFilter(method='filtrar_mes')
 
     class Meta:
         model = Boleto
         fields = ['status', 'conta_receber', 'conta_pagar', 'data_de', 'data_ate']
+
+    def filtrar_mes(self, queryset, name, value):
+        return queryset.filter(filtro_de_mes(value))
