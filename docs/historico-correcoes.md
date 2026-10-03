@@ -10,6 +10,69 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D240 — gerar códigos de recuperação pelo shell do IAM não deixa rastro · ✅ corrigido 03/10/2026
+
+Em 30/09/2026, o dono perdeu o celular e voltou a entrar com códigos gerados por `docker exec sgi-iam
+python manage.py shell` chamando
+[`segundo_fator.gerar_codigos`](../iam/identity/segundo_fator.py). Esse caminho funciona, mas a função
+de serviço é **muda**: quem grava o evento na trilha (`SEGUNDO_FATOR_CODIGOS`) e manda o e-mail ao dono
+da conta é a view ([`CodigosSegundoFatorView`](../iam/identity/views.py), que ainda exige o código do
+app), não a função. O mesmo vale para `segundo_fator.remover`. Resultado: quem tem shell no container
+ou acesso de escrita ao banco troca ou apaga o 2FA de **qualquer** conta, supervisor incluído, sem
+evento e sem aviso. **A verificar:** (a) quem tem esse acesso em staging e produção; (b) se as duas
+rotas HTTP continuam fechadas como o desenho pretende: a própria conta só com o código do app, e a
+`redefinir-segundo-fator` só para `IsTenantAdmin`, sem alcançar o supervisor nem a própria conta;
+(c) se o evento e o e-mail devem descer para dentro de `gerar_codigos`/`remover`, ou se o shell deve
+passar a ter um comando de gestão próprio (`autor` = operador), para que o caminho de emergência
+fique registrado.
+
+**Correção (03/10/2026), pela saída (c):** comando de gestão
+[`segundo_fator_emergencia`](../iam/identity/management/commands/segundo_fator_emergencia.py) —
+`<username> --codigos|--remover --operador "Nome" --motivo "..."`. Faz o que a sessão de 30/09 fez à mão
+e nunca é silencioso: `EventoSeguranca` (`SEGUNDO_FATOR_CODIGOS` ou `_REDEFINIDO`) com
+`{"via": "comando", "operador", "motivo"}` nos detalhes e `autor` vazio, e-mail ao dono da conta
+("pela operação da plataforma (Nome)"); `--remover` derruba as sessões como a redefinição do admin. As
+funções de serviço seguiram mudas de propósito — a view e o comando registram, e pôr o evento dentro
+delas dobraria o da view. (b) conferido: `desativar` e `codigos` exigem o código do app, e a
+`redefinir-segundo-fator` recusa a própria conta e o supervisor (`test_segundo_fator`). (a) — quem tem
+shell e banco em staging e produção — é operação, e fica com o dono. IAM `test_segundo_fator` 47/47.
+
+### D245 — segunda via pelo CNAB deixa o boleto antigo pagável no banco · ✅ corrigido 03/10/2026 (a baixa na segunda via)
+
+Visto na revisão do item 57. A remessa só leva o comando de **entrada** (01): o SGI não gera instrução
+de baixa (02) nem de alteração de vencimento (06). Na segunda via de um título vencido pelo banco, o
+boleto antigo segue registrado até a baixa automática do banco — o cliente pode pagar os dois, e o
+retorno da segunda liquidação cai na revisão de baixas. Pela mesma razão, conta com boleto CNAB vivo
+tem valor, vencimento e cliente travados ([D248](historico-correcoes.md)), com o caminho "baixa pelo
+internet banking". **Caminho:** remessa de instrução por banco em `cnab/` (baixa ao emitir segunda via;
+alteração de vencimento ao editar), homologada junto com o D239 (abaixo).
+Latente enquanto nenhuma carteira estiver homologada.
+
+**Correção (03/10/2026), metade da baixa:** `Titulo.movimento` (01 entrada, 02 pedido de baixa) e os
+geradores usam o código: no 240, a instrução vai só com o segmento P, no mesmo lote, e o trailer conta
+só as entradas; no 400 (Bradesco, Itaú), a ocorrência em 109-110. A
+[`emissao`](../backend/moduloerp/cnab/emissao.py) põe na remessa da segunda via o pedido de baixa de
+cada boleto vencido da conta registrado na mesma carteira, recompõe o nosso número pelo impresso
+guardado (`numero-dv`) e marca `baixa_pedida` para não pedir duas vezes; boleto de outra carteira vira
+frase no item do lote. A alteração de vencimento (06) ao editar segue aberta no
+[pendencias.md](pendencias.md). `test_itens_51_58` + `test_revisao_55_58` 70/70.
+
+### D252 — filtro de situação das unidades mostrou "QD 27 · LT 08" disponível · ✅ corrigido 03/10/2026 (causa provável)
+
+Item 59 do dono: filtrando Reservadas ou Vendidas na aba Unidades, aparecia sempre a QD 27 · LT 08
+disponível. **Não reproduzido:** a API filtra certo em todos os empreendimentos (inclusive com quadra,
+busca, ordenação e todas as páginas), e no navegador — troca rápida de filtro e "Carregar mais" até o
+fim — nenhuma disponível aparece. Há duas QD 27 · LT 08 disponíveis (Loteamento Demo 1 e 3).
+**Falta:** qual empreendimento, o passo a passo e o print. Suspeita a conferir: o `useUnidades` não
+descarta resposta atrasada de um filtro anterior.
+
+**Correção (03/10/2026):** a suspeita se confirmou no código. O
+[`useUnidades`](../frontend/src/modules/empreendimentos/hooks/useUnidades.ts) aplicava toda resposta que
+chegasse: trocar de "Todas" para "Vendidas" com o primeiro pedido no ar deixava a resposta atrasada —
+com as disponíveis — sobrescrever a lista filtrada. Agora cada pedido leva um número, e só o último
+aplica linhas, erro e "carregando". Não reproduzido em bancada (precisa de rede lenta); se o dono voltar
+a ver, reabrir com empreendimento e passo a passo.
+
 ### D238 — o filtro de RLS não era estimável, e toda consulta com JOIN supunha 1% das linhas · ✅ corrigido 03/10/2026
 
 Achado no D231. A política `tenant_isolation` das 164 tabelas era

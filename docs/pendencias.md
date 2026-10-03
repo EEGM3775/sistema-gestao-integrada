@@ -737,41 +737,15 @@ Decisão do dono, com o número novo na mão. Não trava nada hoje.
 
 ## 🟡 Médias
 
-### D252 — filtro de situação das unidades mostrou "QD 27 · LT 08" disponível · 🟡 aberto 01/10/2026
+### D245 — a conta com boleto CNAB vivo não muda valor nem vencimento pelo SGI · 🟡 parcial 03/10/2026
 
-Item 59 do dono: filtrando Reservadas ou Vendidas na aba Unidades, aparecia sempre a QD 27 · LT 08
-disponível. **Não reproduzido:** a API filtra certo em todos os empreendimentos (inclusive com quadra,
-busca, ordenação e todas as páginas), e no navegador — troca rápida de filtro e "Carregar mais" até o
-fim — nenhuma disponível aparece. Há duas QD 27 · LT 08 disponíveis (Loteamento Demo 1 e 3).
-**Falta:** qual empreendimento, o passo a passo e o print. Suspeita a conferir: o `useUnidades` não
-descarta resposta atrasada de um filtro anterior.
-
-### D245 — segunda via pelo CNAB deixa o boleto antigo pagável no banco · 🟡 aberto 01/10/2026
-
-Visto na revisão do item 57. A remessa só leva o comando de **entrada** (01): o SGI não gera instrução
-de baixa (02) nem de alteração de vencimento (06). Na segunda via de um título vencido pelo banco, o
-boleto antigo segue registrado até a baixa automática do banco — o cliente pode pagar os dois, e o
-retorno da segunda liquidação cai na revisão de baixas. Pela mesma razão, conta com boleto CNAB vivo
-tem valor, vencimento e cliente travados ([D248](historico-correcoes.md)), com o caminho "baixa pelo
-internet banking". **Caminho:** remessa de instrução por banco em `cnab/` (baixa ao emitir segunda via;
-alteração de vencimento ao editar), homologada junto com o D239 (abaixo).
-Latente enquanto nenhuma carteira estiver homologada.
-
-### D240 — gerar códigos de recuperação pelo shell do IAM não deixa rastro · 🟡 aberto 30/09/2026
-
-Em 30/09/2026, o dono perdeu o celular e voltou a entrar com códigos gerados por `docker exec sgi-iam
-python manage.py shell` chamando
-[`segundo_fator.gerar_codigos`](../iam/identity/segundo_fator.py). Esse caminho funciona, mas a função
-de serviço é **muda**: quem grava o evento na trilha (`SEGUNDO_FATOR_CODIGOS`) e manda o e-mail ao dono
-da conta é a view ([`CodigosSegundoFatorView`](../iam/identity/views.py), que ainda exige o código do
-app), não a função. O mesmo vale para `segundo_fator.remover`. Resultado: quem tem shell no container
-ou acesso de escrita ao banco troca ou apaga o 2FA de **qualquer** conta, supervisor incluído, sem
-evento e sem aviso. **A verificar:** (a) quem tem esse acesso em staging e produção; (b) se as duas
-rotas HTTP continuam fechadas como o desenho pretende: a própria conta só com o código do app, e a
-`redefinir-segundo-fator` só para `IsTenantAdmin`, sem alcançar o supervisor nem a própria conta;
-(c) se o evento e o e-mail devem descer para dentro de `gerar_codigos`/`remover`, ou se o shell deve
-passar a ter um comando de gestão próprio (`autor` = operador), para que o caminho de emergência
-fique registrado.
+Visto na revisão do item 57. **A metade grave fechou em 03/10/2026:** a segunda via já pede a baixa
+(movimento 02) do boleto antigo na mesma remessa — relato em [historico-correcoes.md](historico-correcoes.md).
+**Falta a outra metade:** a instrução de **alteração de vencimento/valor** (06) ao editar a conta. Sem
+ela, conta com boleto CNAB vivo segue com valor, vencimento e cliente travados ([D248](historico-correcoes.md)),
+e o caminho é a baixa pelo internet banking. **Caminho:** `Titulo.movimento = "06"` já é aceito pelos
+geradores 240/400; falta a remessa avulsa de instrução (sem entrada), destravar o vencimento na
+edição e a confirmação do retorno (14 no 240). Homologar junto com o D239 (abaixo).
 
 ### D239 — nenhuma carteira CNAB foi homologada em banco · 🟡 aberto 30/09/2026
 
