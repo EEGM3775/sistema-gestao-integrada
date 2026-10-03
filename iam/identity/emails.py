@@ -143,6 +143,7 @@ def enviar_aviso_privilegio_alterado(usuario, autor, resumo):
 _SEGUNDO_FATOR = {
     "ativado": ("ativado", "O segundo fator foi ativado"),
     "desativado": ("desativado", "O segundo fator foi desativado"),
+    "trocado": ("trocado de aparelho", "O segundo fator passou para um celular novo"),
     "codigos": ("códigos trocados", "Os códigos de recuperação foram trocados"),
     "recuperacao": ("código de recuperação usado", "Um código de recuperação foi usado para entrar"),
     "redefinido": ("redefinido", "O segundo fator foi redefinido {por_quem}"),

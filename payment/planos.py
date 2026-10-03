@@ -1774,7 +1774,9 @@ CONFIRMACAO_JANELA_MAX_MIN: int = 120
 #
 # **O desafio do login** — o passe que a senha certa dá para a segunda etapa.
 # Cinco minutos cobrem abrir o app autenticador (ou, no cadastro obrigatório do
-# admin, instalar um e ler o QR); depois disso, a senha é pedida de novo.
+# admin, instalar um e ler o QR); depois disso, a senha é pedida de novo. O mesmo
+# prazo vale para o "trocar de celular" (D241): o QR do aparelho novo espera esse
+# tempo pela confirmação, e o aparelho antigo segue valendo enquanto isso.
 SEGUNDO_FATOR_DESAFIO_VALIDADE_S: int = 300
 #
 # **Tentativas erradas por pessoa**, somadas entre login, desativação e troca

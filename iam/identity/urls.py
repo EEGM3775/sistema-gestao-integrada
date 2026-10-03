@@ -58,6 +58,16 @@ urlpatterns = [
         name="segundo-fator-confirmar",
     ),
     path(
+        "auth/segundo-fator/troca/",
+        views.TrocaSegundoFatorView.as_view(),
+        name="segundo-fator-troca",
+    ),
+    path(
+        "auth/segundo-fator/troca/confirmar/",
+        views.ConfirmarTrocaSegundoFatorView.as_view(),
+        name="segundo-fator-troca-confirmar",
+    ),
+    path(
         "auth/segundo-fator/desativar/",
         views.DesativarSegundoFatorView.as_view(),
         name="segundo-fator-desativar",

@@ -10,6 +10,58 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D238 — o filtro de RLS não era estimável, e toda consulta com JOIN supunha 1% das linhas · ✅ corrigido 03/10/2026
+
+Achado no D231. A política `tenant_isolation` das 164 tabelas era
+`current_setting('app.rls_bypass') = 'on' OR tenant_id::text = current_setting('app.current_tenant')`.
+O cast `::text` na coluna tirava o índice de `tenant_id` do jogo, e o planejador, sem estatística para
+a expressão, estimava cada tabela em ~1% das linhas. Medido no banco de dev (86 mil contas a receber
+de um tenant só), num JOIN de três tabelas com `LIMIT 50`: **1 linha estimada contra 86.047 reais**,
+nested loop sobre os 2.004 clientes, **110 ms**. A grade do ERP tinha contornado (paginação em dois
+passos), mas toda outra listagem com JOIN sobre tabela grande caía no mesmo plano.
+
+**Correção:** a migration `nucleo 0029_rls_estimavel` reescreve no lugar (`ALTER POLICY`, com volta)
+toda política ainda na forma antiga para
+`bypass OR tenant_id = NULLIF(current_setting('app.current_tenant', true), '')::uuid`. Comparando
+`uuid` com `uuid`, a estimativa sai do `n_distinct` da coluna e o índice volta a valer: o mesmo JOIN
+estima 86.089, desce pelo índice da chave e para em 50 linhas — **1,3 ms**. A contagem com JOIN foi
+de 36,8 ms para 26,8 ms. A semântica não muda no domínio que o `nucleo.tenancy` escreve (UUID canônico
+ou vazio); um valor que não seja UUID passa a dar erro em vez de zero linhas — falha alta, que nenhum
+caminho produz. Provas em `test_rls_estimavel`: toda política do banco na forma nova (a trava contra a
+migration futura que copiar o texto antigo, como é o padrão da casa); as duas expressões, exatamente
+como a migration as grava, iguais nos 16 casos de tenant (próprio, outro, vazio, nunca definido) ×
+bypass (on, off, vazio, nulo); e a estimativa sob a RLS, com metade da tabela de um tenant, acima da
+metade — a forma antiga dava ~1%. O isolamento em si segue coberto por `test_rls_fail_closed` e
+`test_tenant_isolation`, que passaram a rodar sobre a política nova.
+
+### D241 — "Trocar de celular" deixava o admin protegido só pela senha até o próximo login · ✅ corrigido 03/10/2026
+
+Visto em 01/10/2026, num teste do próprio dono (não foi incidente): às 20:08 de 30/09, o `admin` entrou
+com um código de recuperação e usou **Minha conta › Segurança › Trocar de celular**, com a senha e
+outro código de recuperação (eventos 120 e 121 da trilha). A `DesativarSegundoFatorView` **apagava** o
+fator e deixava o cadastro novo para depois; a tela abria o cadastro na hora, mas quem fechasse ficava
+sem fator. Às 06:29 de 01/10, a senha sozinha levou à tela de cadastro do login, e o fator novo foi
+ativado (evento 122). Durante essas 10 horas, uma conta obrigada a ter 2FA ficou só com a senha, e
+quem a tivesse cadastraria o **próprio** autenticador no primeiro login.
+
+**Correção:** a troca virou duas etapas que nunca passam por "sem fator".
+`POST /auth/segundo-fator/troca/` pede a senha e o código do aparelho atual (ou de recuperação) e
+devolve o QR do novo; o segredo novo espera no cache, cifrado, pelo prazo do desafio do login
+(`SEGUNDO_FATOR_DESAFIO_VALIDADE_S`), e o aparelho atual segue valendo. `.../troca/confirmar/` recebe
+o primeiro código do aparelho novo e troca o segredo **no lugar**, numa transação; gera códigos de
+recuperação novos, derruba as outras sessões, registra `segundo_fator_trocado` e avisa por e-mail. Se
+a troca vencer, o cache cair ou a pessoa fechar a tela, nada muda. O **desativar** recusa (409) quem
+é obrigado. Na mesma passada, a senha do desativar e da troca passou a contar no bloqueio por tentativa
+(`conferir_senha`, o mesmo do step-up): antes, uma sessão roubada tinha ali um adivinhador de senha
+sem freio. IAM 281 testes (9 novos em `TrocaDeCelularTests`).
+
+**Avaliado e mantido:** o cadastro na etapa `cadastro` do login continua pedindo só a senha. Com o
+desativar fechado ao obrigado, essa etapa só aparece para quem já teve fator depois de uma
+**redefinição feita por outra pessoa** (`redefinir-segundo-fator`, nunca na própria conta), que derruba
+as sessões, fica na trilha com o nome de quem fez e manda e-mail ao alvo. É o caminho de quem perdeu
+o celular **e** os códigos, e pedir mais do que a senha ali exigiria um canal fora da conta (e-mail
+com link, por exemplo), que ainda não existe.
+
 ### D257 — a busca de clientes procurava no CPF sem a permissão de documento · ✅ corrigido 03/10/2026
 
 Visto ao documentar a busca nova (D254). A carteira mascara o CPF/CNPJ sem `cadastro.cliente_doc.view`
@@ -22,6 +74,7 @@ permissão, nos três caminhos — `BUSCA_DOCUMENTAL` na carteira (`aplicar_filt
 fail-closed por padrão), `campos_de_busca` no `ClienteViewSet` (o gancho subiu do listão para o
 `BuscaSemAcento`, que agora serve aos dois) e `?cpf_cnpj=` respondendo vazio sem a permissão, para
 qualquer valor. Testes nas duas pontas (sem e com a permissão) em `testes/backend/clientes/tests.py`.
+
 
 ### D256 — `ponte.sh subir` saía com 141 antes de levantar a ponte · ✅ corrigido 03/10/2026
 

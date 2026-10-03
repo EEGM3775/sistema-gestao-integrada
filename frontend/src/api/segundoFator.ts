@@ -89,6 +89,17 @@ export async function desativarSegundoFator(senha: string, codigo: string): Prom
   await comSessao.post('segundo-fator/desativar/', { senha, codigo })
 }
 
+/** Trocar de celular (D241): o aparelho antigo segue valendo até `confirmarTroca`. */
+export async function iniciarTroca(senha: string, codigo: string): Promise<InicioCadastro> {
+  const r = await comSessao.post('segundo-fator/troca/', { senha, codigo })
+  return r.data as InicioCadastro
+}
+
+export async function confirmarTroca(codigo: string): Promise<SessaoComCodigos> {
+  const r = await comSessao.post('segundo-fator/troca/confirmar/', { codigo })
+  return guardarSessao(r.data as SessaoComCodigos)
+}
+
 export async function trocarCodigos(codigo: string): Promise<string[]> {
   const r = await comSessao.post('segundo-fator/codigos/', { codigo })
   return r.data.codigos as string[]

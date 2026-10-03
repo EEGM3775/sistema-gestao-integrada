@@ -356,6 +356,7 @@ class EventoSeguranca(models.Model):
         USUARIO_DESATIVADO = "usuario_desativado", _("Usuário desativado")
         SEGUNDO_FATOR_ATIVADO = "segundo_fator_ativado", _("Segundo fator ativado")
         SEGUNDO_FATOR_DESATIVADO = "segundo_fator_desativado", _("Segundo fator desativado")
+        SEGUNDO_FATOR_TROCADO = "segundo_fator_trocado", _("Segundo fator trocado de aparelho")
         SEGUNDO_FATOR_REDEFINIDO = "segundo_fator_redefinido", _("Segundo fator redefinido pelo admin")
         SEGUNDO_FATOR_CODIGOS = "segundo_fator_codigos", _("Códigos de recuperação trocados")
         SEGUNDO_FATOR_RECUPERACAO = "segundo_fator_recuperacao", _("Entrada com código de recuperação")

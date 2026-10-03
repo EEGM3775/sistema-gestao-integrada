@@ -3,7 +3,7 @@ import { Loader2, Smartphone } from 'lucide-react'
 import { Btn } from '@/components/malha'
 import { FormErrorBanner, parseApiErrors, type FieldErrors } from '@/utils/formErrors'
 import {
-  confirmarCadastro, iniciarCadastro, type InicioCadastro, type SessaoComCodigos,
+  confirmarCadastro, confirmarTroca, iniciarCadastro, type InicioCadastro, type SessaoComCodigos,
 } from '@/api/segundoFator'
 import { CampoCodigo } from './CampoCodigo'
 import { CodigosDeRecuperacao } from './CodigosDeRecuperacao'
@@ -16,13 +16,16 @@ interface CadastroSegundoFatorProps {
   aoCancelar?: () => void
   /** O login recomeça quando o passe da senha vence. */
   aoVencer?: () => void
+  /** Trocar de celular (D241): o QR já veio da primeira etapa, e confirmar
+   *  troca o aparelho — o antigo vale até aqui. */
+  troca?: InicioCadastro
 }
 
 type Passo = 'carregando' | 'ler' | 'codigos'
 
-export function CadastroSegundoFator({ conta, desafio, aoConcluir, aoCancelar, aoVencer }: CadastroSegundoFatorProps) {
-  const [passo, setPasso] = useState<Passo>('carregando')
-  const [inicio, setInicio] = useState<InicioCadastro | null>(null)
+export function CadastroSegundoFator({ conta, desafio, aoConcluir, aoCancelar, aoVencer, troca }: CadastroSegundoFatorProps) {
+  const [passo, setPasso] = useState<Passo>(troca ? 'ler' : 'carregando')
+  const [inicio, setInicio] = useState<InicioCadastro | null>(troca ?? null)
   const [codigo, setCodigo] = useState('')
   const [sessao, setSessao] = useState<SessaoComCodigos | null>(null)
   const [erros, setErros] = useState<FieldErrors>({})
@@ -32,6 +35,7 @@ export function CadastroSegundoFator({ conta, desafio, aoConcluir, aoCancelar, a
   venceu.current = aoVencer
 
   useEffect(() => {
+    if (troca) return  // o QR já veio na primeira etapa da troca
     let vivo = true
     iniciarCadastro(desafio)
       .then(r => { if (vivo) { setInicio(r); setPasso('ler') } })
@@ -41,7 +45,7 @@ export function CadastroSegundoFator({ conta, desafio, aoConcluir, aoCancelar, a
         else setErros(parseApiErrors(err))
       })
     return () => { vivo = false }
-  }, [desafio])
+  }, [desafio, troca])
 
   const confirmar = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -49,7 +53,7 @@ export function CadastroSegundoFator({ conta, desafio, aoConcluir, aoCancelar, a
     setErros({})
     setEnviando(true)
     try {
-      const r = await confirmarCadastro(codigo, desafio)
+      const r = troca ? await confirmarTroca(codigo) : await confirmarCadastro(codigo, desafio)
       setSessao(r)
       setPasso('codigos')
     } catch (err) {
@@ -78,7 +82,7 @@ export function CadastroSegundoFator({ conta, desafio, aoConcluir, aoCancelar, a
       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
         <Smartphone size={18} style={{ color: 'var(--brand)', flex: 'none', marginTop: 2 }} />
         <p style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.5, margin: 0 }}>
-          Abra um app autenticador no celular (Google Authenticator, Microsoft Authenticator, Authy ou
+          Abra um app autenticador no celular{troca ? ' novo' : ''} (Google Authenticator, Microsoft Authenticator, Authy ou
           o do seu gerenciador de senhas), toque em <b>adicionar conta</b> e aponte a câmera para o
           código abaixo.
         </p>
@@ -129,7 +133,7 @@ export function CadastroSegundoFator({ conta, desafio, aoConcluir, aoCancelar, a
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
         {aoCancelar && <Btn type="button" onClick={aoCancelar}>Cancelar</Btn>}
         <Btn type="submit" variant="brand" disabled={codigo.length !== 6 || enviando || !inicio}>
-          {enviando ? 'Conferindo…' : 'Ativar'}
+          {enviando ? 'Conferindo…' : troca ? 'Trocar' : 'Ativar'}
         </Btn>
       </div>
     </form>
