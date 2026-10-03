@@ -964,3 +964,25 @@ class RetornoCnab(TenantScopedModel):
         verbose_name = _("Retorno CNAB")
         verbose_name_plural = _("Retornos CNAB")
         ordering = ['-recebido_em']
+
+
+class ConfiguracaoFinanceiro(TenantScopedModel):
+    """O que a empresa escolhe para o próprio financeiro, dentro do plano (§5.5u).
+
+    Hoje, quantos boletos e notas um lote emite. Vazio = o máximo do plano; um
+    número = freio da empresa contra o lote grande por engano. O teto continua
+    sendo o do plano (`moduloerp.limites_lote`): gravar acima dele é recusado, e
+    um plano que desce não deixa o número antigo valer mais que o novo teto.
+    Quem muda: o administrador ou quem tem `erp.lote.configurar`.
+    """
+    boletos_por_lote = models.PositiveIntegerField(_("Boletos por lote"), null=True, blank=True)
+    notas_por_lote = models.PositiveIntegerField(_("Notas fiscais por lote"), null=True, blank=True)
+    atualizado_em = models.DateTimeField(auto_now=True)
+    atualizado_por = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+
+    class Meta:
+        verbose_name = _("Configuração do financeiro")
+        verbose_name_plural = _("Configurações do financeiro")
+        constraints = [
+            models.UniqueConstraint(fields=['tenant'], name='configuracao_financeiro_por_tenant'),
+        ]

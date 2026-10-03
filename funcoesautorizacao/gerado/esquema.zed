@@ -226,6 +226,7 @@ definition modulo_erp_financeiro {
     relation concede_erp__conta_receber__edit: papel#portador
     relation concede_erp__conta_receber__estornar: papel#portador
     relation concede_erp__conta_receber__view: papel#portador
+    relation concede_erp__lote__configurar: papel#portador
     relation concede_erp__lote_remessa__create: papel#portador
     relation concede_erp__lote_remessa__view: papel#portador
     relation concede_erp__nf__cancelar: papel#portador
@@ -253,6 +254,7 @@ definition modulo_erp_financeiro {
     permission erp__conta_receber__edit = empresa->administrador + catalogado->supervisor + (usa & concede_erp__conta_receber__edit)
     permission erp__conta_receber__estornar = empresa->administrador + catalogado->supervisor + (usa & concede_erp__conta_receber__estornar)
     permission erp__conta_receber__view = empresa->administrador + catalogado->supervisor + (usa & concede_erp__conta_receber__view)
+    permission erp__lote__configurar = empresa->administrador + catalogado->supervisor + (usa & concede_erp__lote__configurar)
     permission erp__lote_remessa__create = empresa->administrador + catalogado->supervisor + (usa & concede_erp__lote_remessa__create)
     permission erp__lote_remessa__view = empresa->administrador + catalogado->supervisor + (usa & concede_erp__lote_remessa__view)
     permission erp__nf__cancelar = empresa->administrador + catalogado->supervisor + (usa & concede_erp__nf__cancelar)

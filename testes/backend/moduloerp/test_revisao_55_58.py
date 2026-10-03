@@ -7,6 +7,8 @@
 - 58: a nota ficava "Processando" para sempre — a NFE.io emite depois e o SGI
   não voltava a perguntar.
 - Pedido novo: NFS-e em lote, junto do lote de boletos ou sozinha.
+- Pedido novo: o limite do lote é do plano (paywall), e a empresa escolhe o dela
+  abaixo dele — quem muda é o admin ou quem tem `erp.lote.configurar`.
 """
 from datetime import date, timedelta
 from decimal import Decimal
@@ -285,9 +287,10 @@ class NotasEmLoteTests(_Base):
             self.assertIsNone(type(b).objects.get(pk=b.pk).nota_fiscal_servico_id)
 
     def test_teto_do_lote(self, _geo):
-        with patch("payment.planos.ERP_TETO_NOTAS_POR_LOTE", 1):
-            resp = self.client.post("/api/erp/contas-a-receber/previa-lote-nfse/",
-                                    {"ids": [self.conta().pk, self.conta().pk]}, format="json")
+        self.user.iam_plano = "profissional"
+        self.user.iam_quotas = {"notas_por_lote": 1}
+        resp = self.client.post("/api/erp/contas-a-receber/previa-lote-nfse/",
+                                {"ids": [self.conta().pk, self.conta().pk]}, format="json")
         self.assertEqual(resp.status_code, 400)
         self.assertIn("até 1 notas", resp.data["detail"])
 
@@ -296,3 +299,82 @@ class NotasEmLoteTests(_Base):
         resp = self.client.post("/api/erp/contas-a-receber/emitir-lote-nfse/", {"ids": [self.conta().pk]}, format="json")
         self.assertEqual(resp.status_code, 403)
 
+
+
+class LimiteDoLoteTests(_Base):
+    """§5.5u — infraestrutura ≥ plano ≥ empresa; quem muda é o admin ou `erp.lote.configurar`."""
+
+    URL = "/api/erp/configuracao/lotes/"
+
+    def setUp(self):
+        super().setUp()
+        self.user.iam_plano = "profissional"
+        self.user.iam_quotas = {"boletos_por_lote": 500, "notas_por_lote": 500}
+
+    def _pode_configurar(self):
+        self.user.iam_permissions = [*self.user.iam_permissions, "erp.lote.configurar"]
+
+    def _previa_boletos(self, n):
+        ids = [self.conta().pk for _ in range(n)]
+        return self.client.post("/api/erp/contas-a-receber/previa-cobrancas-lote/", {"ids": ids}, format="json")
+
+    def test_mostra_o_teto_do_plano_e_quem_pode_mudar(self):
+        r = self.client.get(self.URL).data
+        self.assertEqual(r["plano"], "Profissional")
+        self.assertEqual(r["boletos_por_lote"], {"valor": 500, "escolhido": None, "teto_plano": 500, "teto_infra": 5000})
+        self.assertFalse(r["pode_editar"])
+
+    def test_sem_a_permissao_especial_nao_muda(self):
+        resp = self.client.put(self.URL, {"boletos_por_lote": 2}, format="json")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_o_admin_do_tenant_muda_sem_a_permissao(self):
+        self.user.is_tenant_admin = True
+        resp = self.client.put(self.URL, {"boletos_por_lote": 2}, format="json")
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertTrue(resp.data["pode_editar"])
+
+    def test_a_empresa_trava_abaixo_do_plano_e_a_recusa_diz_o_caminho(self):
+        self._pode_configurar()
+        resp = self.client.put(self.URL, {"boletos_por_lote": 2, "notas_por_lote": 1}, format="json")
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data["boletos_por_lote"]["valor"], 2)
+        recusa = self._previa_boletos(3)
+        self.assertEqual(recusa.status_code, 400)
+        self.assertIn("limite da sua empresa é 2 boletos", recusa.data["detail"])
+        self.assertIn("o plano permite até 500", recusa.data["detail"])
+        self.assertEqual(self._previa_boletos(2).data["teto"], 2)
+        with rls_bypass():
+            log = AuditLog.objects.get(acao="configurar_limite_lote")
+        self.assertEqual(log.detalhes["boletos_por_lote"], [None, 2])
+
+    def test_acima_do_plano_e_recusado(self):
+        self._pode_configurar()
+        resp = self.client.put(self.URL, {"boletos_por_lote": 501}, format="json")
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("até 500 boletos", str(resp.data["boletos_por_lote"]))
+
+    def test_vazio_volta_ao_maximo_do_plano(self):
+        self._pode_configurar()
+        self.client.put(self.URL, {"boletos_por_lote": 2}, format="json")
+        resp = self.client.put(self.URL, {"boletos_por_lote": None}, format="json")
+        self.assertEqual(resp.data["boletos_por_lote"]["valor"], 500)
+
+    def test_o_teto_do_plano_oferece_o_plano_seguinte(self):
+        self.user.iam_quotas = {"boletos_por_lote": 2}
+        recusa = self._previa_boletos(3)
+        self.assertEqual(recusa.status_code, 400)
+        self.assertIn("plano Profissional emite até 2 boletos", recusa.data["detail"])
+        self.assertIn("No plano Empresarial, até 2.000", recusa.data["detail"])
+
+    def test_plano_que_desce_vence_o_numero_antigo_da_empresa(self):
+        self._pode_configurar()
+        self.client.put(self.URL, {"boletos_por_lote": 400}, format="json")
+        self.user.iam_quotas = {"boletos_por_lote": 50}
+        self.assertEqual(self.client.get(self.URL).data["boletos_por_lote"]["valor"], 50)
+
+    def test_ficha_sem_a_quota_usa_o_plano(self):
+        """Ficha da empresa publicada antes da quota existir: vale o plano da claim."""
+        self.user.iam_plano = "essencial"
+        self.user.iam_quotas = {"obras": 8}
+        self.assertEqual(self.client.get(self.URL).data["notas_por_lote"]["teto_plano"], 50)

@@ -252,6 +252,10 @@
    "classe": "B",
    "modulo": "erp_financeiro"
   },
+  "erp.lote.configurar": {
+   "classe": "B",
+   "modulo": "erp_financeiro"
+  },
   "erp.lote_remessa.create": {
    "classe": "C",
    "modulo": "erp_financeiro"

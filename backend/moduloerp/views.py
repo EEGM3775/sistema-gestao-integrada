@@ -46,10 +46,10 @@ from .filters import (
 )
 from datetime import date
 from .pagination import ErpPageNumberPagination
-from . import cobranca_lote, listao
+from . import cobranca_lote, limites_lote, listao
 from .models import ContaCobrancaBancaria, LoteCobranca
 from nucleo import autorizacao
-from payment.planos import ERP_TETO_COBRANCAS_POR_LOTE, ERP_TETO_NIVEIS_AGRUPAMENTO
+from payment.planos import ERP_TETO_NIVEIS_AGRUPAMENTO
 from funcoescobrancas.segunda_via import VencimentoInvalido, planejar
 from django.http import HttpResponse
 from funcoescobrancas.documento import DocumentoIndisponivel, baixar_pdf, miniatura_de_pdf, miniatura_png
@@ -951,10 +951,10 @@ class ContaReceberViewSet(EstornoMixin, ListaoMixin, TenantScopedViewSetMixin, v
                 raise cobranca_lote.LoteRecusado("Lista de contas desmarcadas inválida.")
             if excluir:
                 contas = contas.exclude(pk__in=[int(i) for i in excluir])
-            return cobranca_lote.carregar(contas, None)
+            return cobranca_lote.carregar(contas, None, usuario=request.user)
         if not isinstance(ids, list) or not ids:
             raise cobranca_lote.LoteRecusado("Escolha as contas que vão receber boleto.")
-        return cobranca_lote.carregar(self.get_queryset(), [int(i) for i in ids])
+        return cobranca_lote.carregar(self.get_queryset(), [int(i) for i in ids], usuario=request.user)
 
     def _vencimento_do_lote(self, request):
         bruto = request.data.get('vencimento_segunda_via')
@@ -975,7 +975,7 @@ class ContaReceberViewSet(EstornoMixin, ListaoMixin, TenantScopedViewSetMixin, v
             return Response({'detail': exc.mensagem}, status=status_module.HTTP_400_BAD_REQUEST)
         except ValueError:
             return Response({'detail': 'Data inválida.'}, status=status_module.HTTP_400_BAD_REQUEST)
-        return Response(triagem.resumo() | {'teto': ERP_TETO_COBRANCAS_POR_LOTE})
+        return Response(triagem.resumo() | {'teto': limites_lote.limite(request.user, limites_lote.BOLETOS)})
 
     @action(detail=False, methods=['post'], url_path='gerar-cobrancas-lote')
     def gerar_cobrancas_lote(self, request):
@@ -1014,9 +1014,7 @@ class ContaReceberViewSet(EstornoMixin, ListaoMixin, TenantScopedViewSetMixin, v
     def _contas_das_notas(self, request):
         """A escolha do lote de notas: a mesma da grade (ids, ou todas do filtro
         menos as desmarcadas). `conta_receber_ids` é o nome antigo de `ids`."""
-        from payment.planos import ERP_TETO_NOTAS_POR_LOTE
-
-        base =self.get_queryset().select_related('nota_fiscal_servico')
+        base = self.get_queryset().select_related('nota_fiscal_servico')
         if request.data.get('todos_do_filtro'):
             contas = self.filter_queryset(base)
             excluir = request.data.get('excluir_ids') or []
@@ -1029,12 +1027,9 @@ class ContaReceberViewSet(EstornoMixin, ListaoMixin, TenantScopedViewSetMixin, v
             if not isinstance(ids, list) or not ids:
                 raise cobranca_lote.LoteRecusado("Escolha as contas que vão receber nota fiscal.")
             contas = base.filter(pk__in=[int(i) for i in ids])
-        total = contas.count()
-        if total > ERP_TETO_NOTAS_POR_LOTE:
-            raise cobranca_lote.LoteRecusado(
-                f"São {total:,} contas — o lote emite até {ERP_TETO_NOTAS_POR_LOTE:,} notas de uma vez. "
-                "Filtre por mês ou empreendimento.".replace(",", ".")
-            )
+        frase = limites_lote.recusa(request.user, limites_lote.NOTAS, contas.count())
+        if frase:
+            raise cobranca_lote.LoteRecusado(frase)
         return list(contas)
 
     @action(detail=False, methods=['post'], url_path='previa-lote-nfse')
@@ -1045,8 +1040,7 @@ class ContaReceberViewSet(EstornoMixin, ListaoMixin, TenantScopedViewSetMixin, v
             triagem = nfse_lote.triar(self._contas_das_notas(request))
         except cobranca_lote.LoteRecusado as exc:
             return Response({'detail': exc.mensagem}, status=status_module.HTTP_400_BAD_REQUEST)
-        from payment.planos import ERP_TETO_NOTAS_POR_LOTE
-        return Response(triagem.resumo() | {'teto': ERP_TETO_NOTAS_POR_LOTE})
+        return Response(triagem.resumo() | {'teto': limites_lote.limite(request.user, limites_lote.NOTAS)})
 
     @action(detail=False, methods=['post'], url_path='emitir-lote-nfse')
     def emitir_lote_nfse(self, request):
@@ -1286,6 +1280,65 @@ class BoletoViewSet(ListaoMixin, TenantScopedViewSetMixin, viewsets.ReadOnlyMode
             detalhes={"boleto_id": boleto.boleto_id, "gateway_id": boleto.gateway_id},
         )
         return Response({'detail': 'Boleto cancelado no Asaas.', 'boleto': BoletoSerializer(boleto).data})
+
+
+class ConfiguracaoLotesView(TenantScopedAPIViewMixin, views.APIView):
+    """Quantos boletos e notas um lote emite nesta empresa (§5.5u do `planos.py`).
+
+    `GET` — o valor que vale, o escolhido pela empresa, o teto do plano e se quem
+    pergunta pode mudar. `PUT` — o administrador, ou quem tem
+    `erp.lote.configurar` (permissão própria: nenhum papel padrão a recebe por
+    curinga), grava um número até o teto do plano; vazio volta ao máximo do plano.
+    """
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
+    required_module = "erp_financeiro"
+    permission_map = {"view": "erp.conta_receber.view", "write": limites_lote.PERMISSAO}
+
+    def get(self, request):
+        return Response(limites_lote.resumo(request.user))
+
+    def put(self, request):
+        from .models import ConfiguracaoFinanceiro
+
+        user = request.user
+        novos, erros = {}, {}
+        for recurso in limites_lote.RECURSOS:
+            if recurso.chave not in request.data:
+                continue
+            bruto = request.data.get(recurso.chave)
+            if bruto in (None, ''):
+                novos[recurso.chave] = None
+                continue
+            try:
+                valor = int(bruto)
+            except (TypeError, ValueError):
+                erros[recurso.chave] = 'Informe um número inteiro.'
+                continue
+            teto = limites_lote.teto_do_plano(user, recurso)
+            if valor < 1:
+                erros[recurso.chave] = 'O lote precisa de pelo menos 1.'
+            elif valor > teto:
+                erros[recurso.chave] = (
+                    f"O plano permite até {teto:,} {recurso.plural} por lote.".replace(",", ".")
+                )
+            else:
+                novos[recurso.chave] = valor
+        if erros:
+            return Response(erros, status=status_module.HTTP_400_BAD_REQUEST)
+
+        config, _ = ConfiguracaoFinanceiro.objects.get_or_create(tenant_id=user.tenant_id)
+        antes = {r.chave: getattr(config, r.chave) for r in limites_lote.RECURSOS}
+        for chave, valor in novos.items():
+            setattr(config, chave, valor)
+        config.atualizado_por = user
+        config.save()
+
+        from nucleo.auditoria import registrar_auditoria
+        registrar_auditoria(
+            acao="configurar_limite_lote", instance=config, usuario=user,
+            detalhes={c: [antes[c], novos[c]] for c in novos if antes[c] != novos[c]},
+        )
+        return Response(limites_lote.resumo(user))
 
 
 class AtualizarStatusNFView(TenantScopedAPIViewMixin, views.APIView):

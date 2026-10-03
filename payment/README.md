@@ -59,6 +59,7 @@ por isso que a lista está à vista neste arquivo.
 | `requisicoes_hora` | ✅ aplicada — teto do eixo por tenant do throttle (**D23**) |
 | `seats` | ✅ aplicada na **IAM** — criar/reativar usuário acima do teto dá **402** |
 | `empreendimentos`, `obras`, `clientes`, `fornecedores` | ✅ aplicadas no **backend** — criar acima do teto dá **402** |
+| `boletos_por_lote`, `notas_por_lote` | ✅ aplicadas no **backend** — teto de UM lote do financeiro; a empresa escolhe um número menor em Configurações do financeiro (§5.5u) |
 | `armazenamento_gb`, `analises_ia_mes`, `notas_fiscais_mes`, `cobrancas_mes`, `processamentos_drone_mes` | ⏸️ declaradas e **inertes** |
 
 A linha de baixo é **inerte por desenho, não por atraso**: é a família de COGS, e a regra de ouro do

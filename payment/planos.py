@@ -80,6 +80,10 @@ PLANOS: dict[str, dict] = {
         "analises_ia_mes": 0,
         "notas_fiscais_mes": 0,
         "cobrancas_mes": 0,
+        # Quantos boletos e quantas NFS-e UM lote emite (§5.5u). Teto de uma
+        # chamada, não de acervo: a empresa escolhe o dela até aqui.
+        "boletos_por_lote": 10,
+        "notas_por_lote": 10,
         "processamentos_drone_mes": 0,
         "banco_preco_linhas": 500,
         "importacao_linhas": 500,
@@ -125,6 +129,8 @@ PLANOS: dict[str, dict] = {
         "analises_ia_mes": 30,
         "notas_fiscais_mes": 0,
         "cobrancas_mes": 0,
+        "boletos_por_lote": 50,
+        "notas_por_lote": 50,
         "processamentos_drone_mes": 0,
         "banco_preco_linhas": 20_000,
         "importacao_linhas": 5_000,
@@ -164,6 +170,8 @@ PLANOS: dict[str, dict] = {
         "analises_ia_mes": 300,
         "notas_fiscais_mes": 100,
         "cobrancas_mes": 200,
+        "boletos_por_lote": 500,
+        "notas_por_lote": 500,
         "processamentos_drone_mes": 0,  # add-on
         "banco_preco_linhas": 150_000,
         "importacao_linhas": 40_000,
@@ -211,6 +219,8 @@ PLANOS: dict[str, dict] = {
         "analises_ia_mes": 1_500,
         "notas_fiscais_mes": 500,
         "cobrancas_mes": 1_000,
+        "boletos_por_lote": 2_000,
+        "notas_por_lote": 1_000,
         "processamentos_drone_mes": 25,
         "banco_preco_linhas": 600_000,
         "importacao_linhas": 120_000,
@@ -264,6 +274,8 @@ PLANOS: dict[str, dict] = {
         "analises_ia_mes": None,
         "notas_fiscais_mes": None,
         "cobrancas_mes": None,
+        "boletos_por_lote": None,
+        "notas_por_lote": None,
         "processamentos_drone_mes": None,
         "banco_preco_linhas": None,
         "importacao_linhas": None,
@@ -361,7 +373,10 @@ QUOTA_SEATS = "seats"
 # um arquivo de 90 mil linhas prende um worker e enche a área de conferência. O
 # cliente que precisa de mais divide o arquivo — o acervo total continua regido
 # por `banco_preco_linhas`.
-QUOTAS_POR_OPERACAO: tuple[str, ...] = ("importacao_linhas",)
+# `boletos_por_lote` / `notas_por_lote` (§5.5u): quantos documentos UM clique de
+# "gerar em lote" emite. A empresa pode escolher um número menor que o do plano
+# (`moduloerp.ConfiguracaoFinanceiro`), nunca maior.
+QUOTAS_POR_OPERACAO: tuple[str, ...] = ("importacao_linhas", "boletos_por_lote", "notas_por_lote")
 
 # Janelas — quanto TEMPO o plano dá, e não quantos objetos. `lixo_retencao_dias`
 # é a primeira, e não cabia em nenhuma das duas listas acima: não é acervo a
@@ -1854,10 +1869,9 @@ VENDA_TETO_MEIOS_DE_PAGAMENTO: int = 12
 #     empilha. O mesmo 3 da carteira de clientes: a partir do quarto nível o
 #     cabeçalho do grupo já não cabe na linha, e o `GROUP BY` multiplica
 #     combinações que ninguém abre.
-#   - `ERP_TETO_COBRANCAS_POR_LOTE` — quantos boletos um clique de "gerar em
-#     lote" emite. Cada um é uma chamada ao Asaas, com custo por boleto e com o
-#     teto `integracao_externa` do usuário; 500 cobre o carnê mensal de um
-#     loteamento grande e é o freio contra "selecionar tudo" em 86 mil linhas.
+#   - `ERP_TETO_COBRANCAS_POR_LOTE` — o teto de **infraestrutura** de um lote de
+#     boletos, acima de qualquer plano (o do plano é `boletos_por_lote`, §5.5u).
+#     Os boletos do Asaas saem espaçados em 0,25 s: 5.000 são ~21 minutos de fila.
 #   - `ERP_SEGUNDA_VIA_PRAZO_DIAS` — quando o título já venceu, a nova data
 #     **sugerida** é hoje mais estes dias (e depois o próximo dia útil). Três dias
 #     dão tempo de o boleto chegar ao cliente; quem opera pode escolher outra.
@@ -1877,7 +1891,7 @@ VENDA_TETO_MEIOS_DE_PAGAMENTO: int = 12
 #     arquivo errado (um extrato, um backup) antes de lê-lo linha a linha. A
 #     remessa não tem teto próprio: ela nasce de um lote, e o lote já tem o seu.
 ERP_TETO_NIVEIS_AGRUPAMENTO: int = 3
-ERP_TETO_COBRANCAS_POR_LOTE: int = 500
+ERP_TETO_COBRANCAS_POR_LOTE: int = 5_000
 ERP_SEGUNDA_VIA_PRAZO_DIAS: int = 3
 ERP_ENCARGOS_MULTA_PADRAO_PERCENTUAL: str = "2.00"
 ERP_ENCARGOS_JUROS_MES_PADRAO_PERCENTUAL: str = "1.00"
@@ -1899,13 +1913,34 @@ ERP_CNAB_RETORNO_TETO_MB: int = 10
 #     "Created" e emite depois; o SGI volta a perguntar a cada 20 s, até 30 vezes
 #     (dez minutos). Prefeitura lenta passa disso, e aí a nota fica "Processando"
 #     com o botão de consultar — mas não para sempre por falta de quem pergunte.
-#   - `ERP_TETO_NOTAS_POR_LOTE` — quantas NFS-e um clique de "emitir notas" cria.
-#     O mesmo 500 do lote de boletos: as notas acompanham o carnê do mês.
+#   - `ERP_TETO_NOTAS_POR_LOTE` — o teto de **infraestrutura** de um lote de NFS-e,
+#     acima de qualquer plano (o do plano é `notas_por_lote`, §5.5u). Mil porque
+#     as notas nascem dentro da requisição (cada tomador conferido, cada nota
+#     criada): acima disso o lote precisa virar tarefa em segundo plano.
 CALENDARIO_ANO_INICIAL: int = 1900
 CALENDARIO_ANO_FINAL: int = 2100
 ERP_NFSE_CONSULTA_INTERVALO_S: int = 20
 ERP_NFSE_CONSULTA_TENTATIVAS: int = 30
-ERP_TETO_NOTAS_POR_LOTE: int = 500
+ERP_TETO_NOTAS_POR_LOTE: int = 1_000
+
+# ---------------------------------------------------------------------------
+# 5.5u Lotes do financeiro: o plano dá o teto, a empresa escolhe o dela (01/10/2026)
+# ---------------------------------------------------------------------------
+# *(Pedido do dono, 01/10/2026: "algo para o admin ou dono do tenant controlar
+# dentro do limite paywall dele, e alguma permissão especial também". Números
+# propostos pela engenharia, a confirmar.)*
+#
+# Três camadas, da mais forte para a mais fraca:
+#
+#   1. **Infraestrutura** — `ERP_TETO_COBRANCAS_POR_LOTE` / `ERP_TETO_NOTAS_POR_LOTE`
+#      (§5.5s/§5.5t). Vale até para o Sob Medida ilimitado.
+#   2. **Plano** — `boletos_por_lote` / `notas_por_lote` em `PLANOS` (ou o que o
+#      contrato gravou em `AssinaturaTenant.limites`). É o paywall: 10 no Free,
+#      50 no Essencial, 500 no Profissional, 2.000 boletos e 1.000 notas no
+#      Empresarial, o teto de infraestrutura no Sob Medida.
+#   3. **Empresa** — `moduloerp.ConfiguracaoFinanceiro`: o administrador (ou quem
+#      tem `erp.lote.configurar`) põe um número menor, como freio contra o lote
+#      grande por engano. Vazio = o máximo do plano.
 
 # ---------------------------------------------------------------------------
 # 5.6 O que NÃO é limite — e por isso continua no código de engenharia

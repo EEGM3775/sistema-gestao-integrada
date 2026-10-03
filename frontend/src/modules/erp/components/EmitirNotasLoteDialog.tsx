@@ -84,6 +84,10 @@ export function ResumoNotas({ previa: p }: { previa: PreviaLoteNfse }) {
         <dt className="font-bold" style={{ color: 'var(--ink)' }}>Valor dos serviços</dt>
         <dd className="text-right font-bold" style={{ color: 'var(--ink)' }}>{formatBRL(apiDecimalToCents(p.valor_total))}</dd>
       </dl>
+      <p style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+        Até {p.teto.toLocaleString('pt-BR')} notas por lote nesta empresa.{' '}
+        <Link to="/app/erp/configuracoes" style={{ color: 'var(--accent-ink)', fontWeight: 600 }}>Ver o limite</Link>
+      </p>
       {p.cadastro_incompleto_total > 0 && (
         <div style={{ padding: '10px 12px', borderRadius: 'var(--r-md)', background: 'var(--accent-soft)', color: 'var(--accent-ink)', fontSize: 12.5 }}>
           <p className="font-semibold">A prefeitura só aceita a nota com CPF/CNPJ, CEP e município do tomador.</p>

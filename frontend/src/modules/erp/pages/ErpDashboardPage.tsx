@@ -1,6 +1,6 @@
 import { useMemo, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { Wallet, TrendingUp, TrendingDown, Scale, ArrowRight, ArrowDownCircle, ArrowUpCircle, FileText, ScrollText, Lock, Building2 } from 'lucide-react'
+import { Wallet, TrendingUp, TrendingDown, Scale, ArrowRight, ArrowDownCircle, ArrowUpCircle, FileText, ScrollText, Lock, Building2, Settings2 } from 'lucide-react'
 import { useErpDashboard } from '../hooks/useErpDashboard'
 import { KpiCard } from '../components/shared/KpiCard'
 import { DivergenciasErpButton } from '../components/DivergenciasErpButton'
@@ -93,6 +93,13 @@ export default function ErpDashboardPage() {
           description="NFS-e emitidas (NFE.io), canceladas e notas recebidas de fornecedores: status, cancelamento e PDF/XML"
           icon={<ScrollText size={20} />}
           accentBg="#ede9fe" accentColor="#6d28d9"
+        />
+        <WorkspaceLinkCard
+          to="/app/erp/configuracoes"
+          label="Configurações do financeiro"
+          description="Quantos boletos e notas um lote emite, dentro do que o plano permite"
+          icon={<Settings2 size={20} />}
+          accentBg="#f1f5f9" accentColor="#475569"
         />
       </div>
 

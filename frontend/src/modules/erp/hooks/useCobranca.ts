@@ -4,7 +4,7 @@ import { erpKeys } from '../api/queryKeys'
 import {
   baixarRemessa, enviarRetorno, estornarBaixaPagar, estornarBaixaReceber, fetchAndamentoLote, fetchBancosCnab,
   fetchCarteiras, fetchMiniaturaBoleto, fetchPdfBoleto, fetchPreviaCobranca, fetchRemessas, fetchRetornos,
-  emitirLoteNfse, gerarCobranca, gerarLote, previaLote, previaLoteNfse, salvarCarteira, type EscolhaDoLote,
+  emitirLoteNfse, fetchLimitesLote, gerarCobranca, gerarLote, previaLote, previaLoteNfse, salvarCarteira, salvarLimitesLote, type EscolhaDoLote,
 } from '../api/endpoints/cobranca'
 import type { CarteiraCobranca, ContaPagar, ContaReceber, RemessaCnab } from '../types'
 
@@ -60,6 +60,19 @@ export function useGerarLote() {
     mutationFn: ({ escolha, canal, carteira }: { escolha: EscolhaDoLote; canal: 'asaas' | 'cnab'; carteira?: number }) =>
       gerarLote(escolha, canal, carteira),
     onSuccess: invalidar,
+  })
+}
+
+/** O limite dos lotes (§5.5u): o plano dá o teto, a empresa escolhe o dela. */
+export function useLimitesLote() {
+  return useQuery({ queryKey: [...COBRANCA, 'limites'], queryFn: fetchLimitesLote })
+}
+
+export function useSalvarLimitesLote() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: salvarLimitesLote,
+    onSuccess: dados => qc.setQueryData([...COBRANCA, 'limites'], dados),
   })
 }
 

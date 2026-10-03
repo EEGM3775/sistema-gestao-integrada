@@ -126,7 +126,20 @@ def run():
         page.screenshot(path=f"{SHOTS}/05_boletos_com_notas.png")
         check("o lote de boletos oferece emitir as notas junto, com a prévia",
               "e notas" in page.get_by_role("dialog", name="Gerar boletos em lote").inner_text())
+        check("o diálogo diz o limite do lote desta empresa",
+              "boletos por lote nesta empresa" in page.get_by_role("dialog", name="Gerar boletos em lote").inner_text())
         page.get_by_role("dialog", name="Gerar boletos em lote").get_by_role("button", name="Cancelar").click()
+
+        # ── Limite dos lotes: o plano dá o teto, a empresa escolhe o dela ──────
+        print("→ Configurações do financeiro")
+        page.goto(f"{GW}/app/erp/configuracoes")
+        page.wait_for_selector("text=Limite dos lotes", timeout=15000)
+        page.wait_for_timeout(500)
+        tela = page.inner_text("body")
+        page.screenshot(path=f"{SHOTS}/06_limites.png")
+        check("a tela mostra o teto do plano Profissional (500)", "Profissional" in tela and "500" in tela)
+        check("quem não tem a permissão especial vê o número e quem pode mudar, sem campo",
+              "Quem muda este limite" in tela and page.locator("input[type=number]").count() == 0)
 
         check("nenhum erro de JavaScript na página", not erros_js)
         for e in erros_js[:5]:

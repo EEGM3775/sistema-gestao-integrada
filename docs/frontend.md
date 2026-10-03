@@ -487,6 +487,7 @@ Utiliza `createBrowserRouter` com rotas aninhadas.
   /app/erp/contas-a-pagar     → ContasAPagarPage ✅      (rota-irmã, D.1.1 07/06/2026 — workspace: lançar/editar/ver/baixa)
   /app/erp/contas-a-receber   → ContasAReceberPage ✅    (idem, espelhado p/ cliente/NF — D.1.1 07/06/2026)
   /app/erp/cobranca-bancaria  → CobrancaBancariaPage     (carteiras CNAB, remessas e retornos)
+  /app/erp/configuracoes      → ConfiguracoesFinanceiroPage (limite dos lotes: o plano dá o teto, a empresa escolhe o dela)
   /app/erp/boletos            → BoletosListPage ✅       (rota-irmã, D.1.2 08/06/2026 — telas dedicadas, somente leitura)
   /app/erp/boletos/:id        → BoletoDetailPage ✅      (gateway + timeline de eventos do webhook Asaas)
   /app/rh               → RHPage               (hasModule: rh)
@@ -937,6 +938,9 @@ andamento das obras do empreendimento comprado, com o percentual declarado como
   (`distribuirErros`/`errosSemLugar`) — nunca reprovação silenciosa.
 - **`CobrancaBancariaPage`** (`/app/erp/cobranca-bancaria`) — carteiras de cobrança (a ajuda de cada
   campo muda por banco), remessas para baixar e envio do arquivo de retorno com o resumo do que foi pago.
+- **`ConfiguracoesFinanceiroPage`** (`/app/erp/configuracoes`) — o limite dos lotes de boletos e de notas:
+  o teto do plano e o número da empresa. Quem tem `pode_editar` (admin ou `erp.lote.configurar`) edita;
+  os outros veem o número e quem pode mudá-lo.
 - **`Sheet`** (slide-over) ✅ — **1º uso no projeto**; `open/onClose/title/description/footer/width`
 - **Formulários RHF+zod** ✅ — **1ª adoção de `react-hook-form`+`zod` no projeto** (ver
   [moduloerp.md §5.3](modulos/moduloerp.md#53-stack-adicional-estende-o-do-projeto)):

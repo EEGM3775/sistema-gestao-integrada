@@ -67,7 +67,7 @@ Isolado por tenant. Ver [../acesso-e-permissoes.md](../acesso-e-permissoes.md).
 `/contas-a-pagar/` (+ `dar-baixa`, `gerar-lote-remessa`) · `/contas-a-receber/` (+ `dar-baixa`,
 `gerar-cobranca` — enfileira `funcoescobrancas.tasks.criar_cobranca` com a data escolhida, `previa-cobranca`,
 `previa-cobrancas-lote`, `gerar-cobrancas-lote`, `estornar-baixa`, `emitir-nfse`, `emitir-nfe`, `previa-lote-nfse`,
-`emitir-lote-nfse`).
+`emitir-lote-nfse`), e `configuracao/lotes/` (o limite dos lotes, §6.2.2).
 `contas-a-pagar`, `contas-a-receber` e `boletos` ganham `grupos/` (subtotais por `?por=`) — ver §5.9 · `/revisoes-baixa/` (somente leitura + `aprovar`,
 `rejeitar` — fila do financeiro para baixas em títulos já quitados/cancelados) · `/centros-custo/` ·
 `/lotes-remessa/` · `/transacoes/` · `/notas-fiscais-servico/` (+ `cancelar`, `documento` — verifica a
@@ -530,6 +530,24 @@ conta no ritmo do gateway, cada `ItemLoteCobranca` recebendo o boleto ou o motiv
 O diálogo do lote oferece "emitir também a nota fiscal de cada conta" (para quem tem `erp.nf.emitir`):
 emitidos os boletos, a mesma escolha vai a `emitir-lote-nfse` (§7).
 
+### 6.2.2 O limite do lote: o plano dá o teto, a empresa escolhe o dela
+
+Em [`limites_lote.py`](../../backend/moduloerp/limites_lote.py), três camadas (`planos.py` §5.5u):
+
+1. **infraestrutura** — `ERP_TETO_COBRANCAS_POR_LOTE` / `ERP_TETO_NOTAS_POR_LOTE`, acima de qualquer
+   plano (as notas nascem dentro da requisição; acima do teto delas, o lote precisa virar tarefa);
+2. **plano** — as quotas `boletos_por_lote` / `notas_por_lote`, na claim `quotas` (o contrato do
+   `AssinaturaTenant.limites` por cima do plano; ficha sem a chave cai no plano da claim `plano`);
+3. **empresa** — `ConfiguracaoFinanceiro` (uma por tenant, RLS): um número menor, como freio contra o
+   lote grande por engano. Vazio = o máximo do plano; plano que desce vence o número antigo.
+
+`GET configuracao/lotes/` devolve o que vale, o escolhido, o teto do plano e `pode_editar`; `PUT`
+exige **`erp.lote.configurar`** — permissão própria, fora de `erp.cobranca.*` para nenhum papel padrão
+recebê-la por curinga: o administrador do tenant passa sempre e a concede a quem quiser. Gravar acima do
+plano é recusado; a mudança vai à auditoria (`configurar_limite_lote`). A recusa do lote diz qual camada
+bateu e o caminho: o limite da empresa (e quem sobe), o plano (e o seguinte, com o teto dele) ou a
+infraestrutura. Tela: `/app/erp/configuracoes`; os diálogos de lote mostram o limite em vigor.
+
 ### 6.3 Cobrança registrada no banco (CNAB)
 
 O caminho dos bancos, em [`moduloerp/cnab/`](../../backend/moduloerp/cnab/__init__.py): a empresa cadastra a
@@ -673,6 +691,9 @@ requisito de controle interno e LGPD:
 | `fiscal` | NF, apuração de tributos, retenções, obrigações |
 | `gestor_obra` | financeiro **da sua obra** (centro de custo restrito) |
 | `auditor` | leitura ampla, sem escrita |
+
+**Permissão especial `erp.lote.configurar`** (01/10/2026): definir quantos boletos e notas um lote emite,
+até o teto do plano (§6.2.2). Nenhum papel padrão a recebe; o administrador a concede.
 
 **Mascaramento (Fase 9):** valores de folha por funcionário, dados bancários e margens sensíveis
 redigidos para quem não tem o papel — na serialização, não só bloqueando o endpoint. Trilha de

@@ -1298,10 +1298,10 @@ class TetosDoErpFinanceiroTests(SimpleTestCase):
 
     def test_os_limites_do_erp_vem_do_payment(self):
         from funcoescobrancas import documento, segunda_via
-        from moduloerp import cobranca_lote, views, views_cnab
+        from moduloerp import limites_lote, views, views_cnab
 
         self._importa(views, "ERP_TETO_NIVEIS_AGRUPAMENTO")
-        self._importa(cobranca_lote, "ERP_TETO_COBRANCAS_POR_LOTE")
+        self._importa(limites_lote, "ERP_TETO_COBRANCAS_POR_LOTE")
         self._importa(segunda_via, "ERP_SEGUNDA_VIA_PRAZO_DIAS")
         self._importa(segunda_via, "ERP_ENCARGOS_MULTA_PADRAO_PERCENTUAL")
         self._importa(documento, "ERP_BOLETO_PDF_TETO_MB")
@@ -1322,12 +1322,23 @@ class TetosDoErpFinanceiroTests(SimpleTestCase):
     def test_feriados_e_notas_em_lote_vem_do_payment(self):
         """§5.5t (01/10/2026) — a faixa do calendário e o acompanhamento da NFS-e."""
         from modulocalendar.management.commands import sincronizar_feriados
-        from moduloerp import tasks, views
+        from moduloerp import limites_lote, tasks
 
         self._importa(sincronizar_feriados, "CALENDARIO_ANO_INICIAL")
         self._importa(sincronizar_feriados, "CALENDARIO_ANO_FINAL")
         self._importa(tasks, "ERP_NFSE_CONSULTA_INTERVALO_S")
         self._importa(tasks, "ERP_NFSE_CONSULTA_TENTATIVAS")
-        self._importa(views, "ERP_TETO_NOTAS_POR_LOTE")
+        self._importa(limites_lote, "ERP_TETO_NOTAS_POR_LOTE")
         # A faixa é a mesma de todo campo de data da plataforma (`maxCalendarioISO`).
         self.assertEqual((planos.CALENDARIO_ANO_INICIAL, planos.CALENDARIO_ANO_FINAL), (1900, 2100))
+
+    def test_o_lote_do_plano_nao_passa_da_infraestrutura(self):
+        """§5.5u — o teto por lote de cada plano cabe no teto de infraestrutura,
+        e as duas quotas viajam no token (família por operação)."""
+        for slug, plano in planos.PLANOS.items():
+            for chave, infra in (("boletos_por_lote", planos.ERP_TETO_COBRANCAS_POR_LOTE),
+                                 ("notas_por_lote", planos.ERP_TETO_NOTAS_POR_LOTE)):
+                valor = plano[chave]
+                self.assertTrue(valor is None or 0 < valor <= infra, f"{slug}.{chave}={valor}")
+        self.assertIn("boletos_por_lote", planos.QUOTAS_APLICADAS)
+        self.assertIn("notas_por_lote", planos.QUOTAS_APLICADAS)

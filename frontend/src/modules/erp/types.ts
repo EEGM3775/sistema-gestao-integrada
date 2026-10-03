@@ -370,6 +370,25 @@ export interface PreviaLote {
   boletos_sem_cadastro: number
 }
 
+/** Um limite de lote (§5.5u do `planos.py`): o que vale, o escolhido pela empresa e o teto do plano. */
+export interface LimiteDeLote {
+  valor: number
+  /** `null` = a empresa não escolheu: vale o máximo do plano. */
+  escolhido: number | null
+  teto_plano: number
+  teto_infra: number
+}
+
+/** `GET/PUT erp/configuracao/lotes/` — quantos boletos e notas um lote emite nesta empresa. */
+export interface LimitesLote {
+  plano: string
+  pode_editar: boolean
+  atualizado_em: string | null
+  atualizado_por: string
+  boletos_por_lote: LimiteDeLote
+  notas_por_lote: LimiteDeLote
+}
+
 /** Prévia das NFS-e em lote (`previa-lote-nfse`). */
 export interface PreviaLoteNfse {
   emitir: number

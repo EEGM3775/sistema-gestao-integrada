@@ -103,6 +103,13 @@ export function GerarBoletosLoteDialog({ escolha, quantidade, onFechar }: {
                 </dl>
               )}
 
+              {p && (
+                <p style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: -8 }}>
+                  Até {p.teto.toLocaleString('pt-BR')} boletos por lote nesta empresa.{' '}
+                  <Link to="/app/erp/configuracoes" style={{ color: 'var(--accent-ink)', fontWeight: 600 }}>Ver o limite</Link>
+                </p>
+              )}
+
               {p && p.segunda_via > 0 && (
                 <label className="flex flex-col gap-1">
                   <span style={{ fontWeight: 600 }}>Nova data das vencidas</span>

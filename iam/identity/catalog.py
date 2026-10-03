@@ -80,6 +80,10 @@ CATALOGO: tuple[Perm, ...] = (
     Perm("erp.cobranca.view", "Ver cobranças/boletos", "erp_financeiro"),
     Perm("erp.cobranca.emitir", "Emitir cobrança/boleto (Asaas)", "erp_financeiro"),
     Perm("erp.cobranca.conciliar", "Conciliar retorno/divergências Asaas", "erp_financeiro"),
+    # Recurso próprio, fora de `erp.cobranca.*`: é permissão ESPECIAL (pedido do
+    # dono, 01/10/2026) — nenhum papel padrão a recebe por curinga; o admin a dá
+    # a quem quiser. Ver `payment/planos.py` §5.5u.
+    Perm("erp.lote.configurar", "Definir quantos boletos e notas um lote emite (até o teto do plano)", "erp_financeiro"),
     # --- CRM (módulo 'crm') — recursos reais: campanha, lead, conta, contato,
     #     oportunidade, produto-da-oportunidade (o do S5) e interação/agenda ---
     Perm("crm.campanha.view", "Ver campanhas", "crm"),

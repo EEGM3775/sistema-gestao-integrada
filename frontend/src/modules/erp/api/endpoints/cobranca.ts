@@ -1,6 +1,6 @@
 import { erpClient, ERP_BASE } from '../erpClient'
 import type {
-  AndamentoLote, BancoCnab, CarteiraCobranca, ContaPagar, ContaReceber, PreviaCobranca, PreviaLote,
+  AndamentoLote, BancoCnab, CarteiraCobranca, ContaPagar, ContaReceber, LimitesLote, PreviaCobranca, PreviaLote,
   PreviaLoteNfse, RemessaCnab, ResultadoLoteNfse, RetornoCnab,
 } from '../../types'
 
@@ -64,6 +64,19 @@ export async function gerarLote(e: EscolhaDoLote, canal: 'asaas' | 'cnab', conta
   const { data } = await erpClient.post<AndamentoLote>(
     `${ERP_BASE}contas-a-receber/gerar-cobrancas-lote/`, { ...corpo, canal, conta_cobranca: contaCobranca }, { params },
   )
+  return data
+}
+
+/** O limite dos lotes desta empresa, dentro do plano (§5.5u). */
+export async function fetchLimitesLote(): Promise<LimitesLote> {
+  const { data } = await erpClient.get<LimitesLote>(`${ERP_BASE}configuracao/lotes/`)
+  return data
+}
+
+export async function salvarLimitesLote(
+  valores: { boletos_por_lote: number | null; notas_por_lote: number | null },
+): Promise<LimitesLote> {
+  const { data } = await erpClient.put<LimitesLote>(`${ERP_BASE}configuracao/lotes/`, valores)
   return data
 }
 

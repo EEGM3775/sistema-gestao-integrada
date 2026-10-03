@@ -22,7 +22,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from funcoescobrancas.segunda_via import encargos_ate
-from payment.planos import ERP_SEGUNDA_VIA_PRAZO_DIAS, ERP_TETO_COBRANCAS_POR_LOTE
+from payment.planos import ERP_SEGUNDA_VIA_PRAZO_DIAS
 
 from .models import Boleto, ContaReceber, ItemLoteCobranca, LoteCobranca, StatusConta
 
@@ -125,16 +125,17 @@ def triar(contas, vencimento_segunda_via: date | None = None) -> Triagem:
     return t
 
 
-def carregar(queryset, ids: list[int] | None):
+def carregar(queryset, ids: list[int] | None, *, usuario):
+    """As contas do lote, se couberem no limite de quem pede (§5.5u):
+    o da empresa, dentro do plano, dentro da infraestrutura."""
+    from .limites_lote import BOLETOS, recusa
+
     qs = queryset.select_related('cliente', 'empreendimento', 'cliente_empreendimento').prefetch_related('boletos')
     if ids is not None:
         qs = qs.filter(pk__in=ids)
-    total = qs.count()
-    if total > ERP_TETO_COBRANCAS_POR_LOTE:
-        raise LoteRecusado(
-            f"São {total:,} contas — o lote gera até {ERP_TETO_COBRANCAS_POR_LOTE:,} boletos de uma vez. "
-            "Filtre por mês ou empreendimento.".replace(",", ".")
-        )
+    frase = recusa(usuario, BOLETOS, qs.count())
+    if frase:
+        raise LoteRecusado(frase)
     return list(qs)
 
 

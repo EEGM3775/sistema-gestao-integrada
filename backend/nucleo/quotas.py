@@ -98,6 +98,9 @@ ROTULOS: dict[str, str] = {
     # Janela, não contagem — o rótulo é lido numa frase ("15 dias para
     # desfazer"), nunca ao lado de uma barra de progresso. Ver `plano_views`.
     "lixo_retencao_dias": "dias de lixeira",
+    # Teto de uma chamada (§5.5u): não tem uso a medir, só o limite.
+    "boletos_por_lote": "boletos por lote",
+    "notas_por_lote": "notas fiscais por lote",
 }
 
 
