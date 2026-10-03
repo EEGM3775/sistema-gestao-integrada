@@ -10,6 +10,19 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D257 — a busca de clientes procurava no CPF sem a permissão de documento · ✅ corrigido 03/10/2026
+
+Visto ao documentar a busca nova (D254). A carteira mascara o CPF/CNPJ sem `cadastro.cliente_doc.view`
+e trava a **ordenação** por documento pelo mesmo motivo — mas a **busca** procurava em `cpf_cnpj` para
+qualquer um que visse o cadastro: quem não podia ler o CPF perguntava "existe cliente com este CPF?" e
+lia a resposta na grade, um oráculo contra a máscara (LGPD art. 46). O mesmo valia para a busca do
+cadastro (`/api/clientes/?search=`) e para o filtro `?cpf_cnpj=`. O listão do ERP já fechava isso.
+**Correção (pedido do dono: "de acordo com a LGPD"):** o documento só é critério de busca com a
+permissão, nos três caminhos — `BUSCA_DOCUMENTAL` na carteira (`aplicar_filtros(…, pode_documento)`,
+fail-closed por padrão), `campos_de_busca` no `ClienteViewSet` (o gancho subiu do listão para o
+`BuscaSemAcento`, que agora serve aos dois) e `?cpf_cnpj=` respondendo vazio sem a permissão, para
+qualquer valor. Testes nas duas pontas (sem e com a permissão) em `testes/backend/clientes/tests.py`.
+
 ### D256 — `ponte.sh subir` saía com 141 antes de levantar a ponte · ✅ corrigido 03/10/2026
 
 A senha era gerada por `tr -dc … < /dev/urandom | head -c 20`: quando o `head` fecha o cano, o `tr`

@@ -304,10 +304,8 @@ class BuscaDeTitulos(BuscaSemAcento):
        palavra que começa assim — é como o Google e a agenda do celular acham.
     """
 
-    def get_search_fields(self, view, request):
-        if hasattr(view, "campos_de_busca"):
-            return view.campos_de_busca(request)
-        return super().get_search_fields(view, request)
+    # O item 1 (`campos_de_busca` da view) agora mora no `BuscaSemAcento`, que
+    # serve também ao cadastro de clientes (D257).
 
     def filter_queryset(self, request, queryset, view):
         """Cada palavra tem de casar em algum campo — como o `SearchFilter` —,

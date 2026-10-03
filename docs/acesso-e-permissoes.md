@@ -136,6 +136,14 @@ vazá-los por engano — e a ordenação por valor/atraso também é recusada, p
 uma forma de lê-la. O documento segue mascarado sem `cadastro.cliente_doc.view`, e não há exportação
 para planilha nesta tela (decisão do dono do produto).
 
+**Ler, ordenar e buscar são a mesma permissão.** Sem `cadastro.cliente_doc.view`, o CPF/CNPJ não é
+critério nem de ordenação (a ordem alfabética reconstrói o dígito escondido) nem de **busca**: buscar um
+CPF e ver quem volta é perguntar "existe cliente com este documento?" e ler a resposta — um oráculo
+contra a máscara (LGPD art. 46). Vale na busca da carteira, na busca do cadastro
+(`/api/clientes/?search=`, via `campos_de_busca` do `BuscaSemAcento`) e no filtro `?cpf_cnpj=`, que sem
+a permissão responde vazio para qualquer valor. É a mesma regra do listão do ERP
+([moduloerp.md §5.9](modulos/moduloerp.md)).
+
 **O que foi decidido conscientemente:** o rótulo binário *é* dado financeiro de pessoa natural e
 aparece para todo usuário do cadastro. A alternativa (esconder também a pílula) foi levantada e
 recusada — quem atende o cliente precisa saber se há pendência antes de prometer entrega ou emitir

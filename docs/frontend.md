@@ -818,7 +818,12 @@ relatórios do Salesforce) e nos Subtotais do Excel:
   bloco/torre, cidade, UF, faixa de atraso, condição de pagamento, ano da compra,
   cliente). Cada grupo é um cabeçalho recolhível com contagem e subtotais
   calculados **no banco sobre a carteira inteira** (`GROUP BY`), não sobre a
-  página carregada; abrir um grupo dispara a consulta das linhas dele.
+  página carregada; abrir um grupo dispara a consulta das linhas dele, e o grupo
+  **rola infinito como a lista plana** — a página seguinte (200 linhas) desce quando
+  o fim do grupo entra na tela, ou pelo botão "Carregar mais". Os grupos saem na
+  **ordem de quem lê**, não na do valor cru: quadra e bloco/torre na ordem natural
+  (a quadra 2 antes da 10), empreendimento e cliente em ordem alfabética, faixa de
+  atraso na ordem das faixas, "sem informação" por último.
 
 **Ordenar** — **toda coluna ordena**, pelo clique no título (alterna o sentido) ou
 pelo menu **"Ordenar por"** do cabeçalho, que diz em palavras o que a seta faz
@@ -828,6 +833,52 @@ correspondente em `ORDENACOES` ([carteira.py](../backend/clientes/carteira.py)) 
 menu sem item morto. Toda ordem carrega o desempate pela chave primária: sem ele
 duas linhas de mesmo valor trocam de lugar entre páginas e a rolagem infinita
 repete uma e come a outra.
+
+**Buscar** — uma caixa só (com espera de 300 ms entre teclas), resolvida no servidor por
+`termos_da_busca` + `aplicar_filtros` ([carteira.py](../backend/clientes/carteira.py)). A
+busca lê o que se digita como a pessoa escreveria a unidade num papel:
+
+- **Palavra por palavra.** Cada palavra tem de casar em algum campo, e elas se somam:
+  `ana lt 06` é a Ana, no lote 06.
+- **O endereço da unidade, de qualquer tipo de empreendimento.** Um prefixo anuncia o nível e
+  o valor vem depois — separado (`QD 14`) ou colado (`QD14`):
+
+  | Nível | Prefixos | Exemplos |
+  | --- | --- | --- |
+  | Quadra | `qd`, `qda`, `q`, `quadra` | `QD 14`, `QD14`, `Q14`, `quadra 14` |
+  | Lote | `lt`, `l`, `lote` | `LT 05`, `LT5`, `L5` |
+  | Bloco/torre | `bl`, `bloco`, `torre`, `tr`, `edifício`, `ed`, `prédio` | `Torre A`, `BL B`, `BLA` |
+  | Andar | `andar`, `and`, `pavimento`, `pav`, `piso` — ou o ordinal antes de "andar" | `3º andar`, `andar 3`, `pav 12` |
+  | Apto/número | `ap`, `apt`, `apto`, `apartamento`, `casa`, `cs`, `sala`, `sl`, `loja`, `lj`, `conjunto`, `cj`, `cobertura`, `cob`, `box`, `vaga`, `unidade`, `un`, `nº`, `num`, `número` | `apto 302`, `AP302`, `casa 7`, `CS07`, `sala 1204` |
+
+  O modelo tem cinco níveis (quadra, lote, bloco/torre, andar, apto/número); casa, sala, loja,
+  box e vaga moram no apto/número, que é o mesmo papel. Prefixo sem acento ou caixa (`EDIFICIO`
+  vale). Letra colada ao prefixo só vale para bloco/torre (`BLA` = bloco A) — senão "Lu" viraria o
+  lote "u". *Residencial* e *Condomínio* **não** são prefixo: costumam ser o nome do
+  empreendimento ("Residencial Aurora"), que a busca já acha pelo nome.
+- **O valor casa como está gravado.** Bloco e número são texto livre — o mesmo bloco pode estar
+  como "A", "Torre A" ou "Bloco A"; a casa, como "7" ou "Casa 7". O valor casa no **fim** do
+  campo, depois de um rótulo opcional, sem acento, caixa ou zero à esquerda: `5` acha "05" e
+  "Casa 5", `a` acha "Torre A", e nenhum dos dois acha "15" ou "Torre AB".
+- **A frase antes das palavras soltas.** Se as palavras sem prefixo, juntas e inteiras, formam um
+  nome da carteira (empreendimento, cliente, e-mail, bloco; na visão Clientes também cidade e
+  bairro), a frase vence: `Loteamento Demo 1` acha esse
+  empreendimento — e não o "Demo 10" — em vez de virar "Loteamento" + "Demo" + quadra 1. Só
+  quando a frase não casa com nada é que as palavras são procuradas uma a uma.
+- **Texto casa pelo começo de uma palavra** (`ro` acha "Rocha" e "Rodrigo", não "Ribeiro"),
+  sem acento nem caixa — a régua do listão do ERP ([moduloerp.md §5.9](modulos/moduloerp.md)).
+  **Número casa em qualquer ponto**: é trecho de CPF, telefone ou CEP, que a pessoa cola de onde
+  estiver; CPF colado com pontuação (`123.456.789-00`) vira só os dígitos.
+- **Número curto solto é endereço.** Na visão Unidades, `5` sozinho procura só quadra, lote e
+  apto — no CPF, casaria com quase toda a carteira.
+
+Onde cada visão procura: **Unidades** — nome e e-mail do cliente, empreendimento, bloco/torre e
+os níveis da unidade; **Clientes** — nome, e-mail, telefone, cidade, bairro e CEP da pessoa e, por
+prefixo, a unidade de qualquer aquisição dela (sem repetir quem comprou duas na mesma quadra).
+O **CPF/CNPJ** entra nas duas visões **só com `cadastro.cliente_doc.view`** — a mesma permissão que o
+desmascara e que libera ordenar por ele: buscar por um documento e ver quem volta é lê-lo (LGPD;
+[acesso-e-permissoes.md](acesso-e-permissoes.md)). A busca respeita os demais filtros e o agrupamento: com grupos
+abertos, cada grupo mostra só o que casou dentro dele.
 
 Demais recursos de planilha: rolagem infinita virtualizada (só o visível é
 renderizado), cabeçalho e primeira coluna congelados, colunas redimensionáveis e

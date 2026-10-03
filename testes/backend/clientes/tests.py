@@ -233,6 +233,43 @@ class CarteiraGateFinanceiroTests(CarteiraBaseTestCase):
         self.assertEqual(self.client.get(f"/api/clientes/{self.ana.pk}/financeiro/").status_code, 403)
 
 
+class BuscaPorDocumentoLgpdTests(CarteiraBaseTestCase):
+    """D257 — o CPF só é critério de busca para quem pode lê-lo.
+
+    Buscar por um CPF e ver quem volta é ler o documento que a máscara esconde:
+    sem `cadastro.cliente_doc.view` a resposta não pode depender dele — nem na
+    carteira, nem na busca do cadastro, nem no filtro `?cpf_cnpj=`.
+    """
+    CPF_ANA = "52998224725"
+
+    def test_carteira_sem_permissao_nao_acha_pelo_cpf(self):
+        self.autenticar(permissoes=["cadastro.cliente.view"])
+        for visao in ("clientes", "unidades"):
+            for busca in (self.CPF_ANA, "529.982.247-25", "98224"):
+                r = self.client.get("/api/clientes/carteira/", {"visao": visao, "busca": busca})
+                self.assertEqual(r.data["count"], 0, (visao, busca))
+        # O resto da busca continua de pé.
+        r = self.client.get("/api/clientes/carteira/", {"visao": "clientes", "busca": "Ana"})
+        self.assertEqual([l["nome"] for l in r.data["results"]], ["Ana Souza"])
+
+    def test_carteira_com_permissao_acha_pelo_cpf(self):
+        self.autenticar()
+        for visao in ("clientes", "unidades"):
+            r = self.client.get("/api/clientes/carteira/", {"visao": visao, "busca": "529.982.247-25"})
+            self.assertEqual({l["nome"] for l in r.data["results"]}, {"Ana Souza"}, visao)
+
+    def test_cadastro_sem_permissao_nao_acha_pelo_cpf(self):
+        self.autenticar(permissoes=["cadastro.cliente.view"])
+        self.assertEqual(self.client.get("/api/clientes/", {"search": self.CPF_ANA}).data["count"], 0)
+        self.assertEqual(self.client.get("/api/clientes/", {"cpf_cnpj": self.CPF_ANA}).data["count"], 0)
+        self.assertEqual(self.client.get("/api/clientes/", {"search": "Ana"}).data["count"], 1)
+
+    def test_cadastro_com_permissao_acha_pelo_cpf(self):
+        self.autenticar()
+        self.assertEqual(self.client.get("/api/clientes/", {"search": self.CPF_ANA}).data["count"], 1)
+        self.assertEqual(self.client.get("/api/clientes/", {"cpf_cnpj": self.CPF_ANA}).data["count"], 1)
+
+
 class CarteiraOrdenacaoTests(CarteiraBaseTestCase):
     """Cada visão tem a sua ordem padrão, e toda coluna é ordenável."""
 

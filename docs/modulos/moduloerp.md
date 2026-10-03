@@ -418,7 +418,10 @@ Três regras de desempenho, e o porquê de cada uma está no código:
 - **Toda ordem desempata pela chave primária**, senão a rolagem infinita repete uma linha e come outra.
 
 Cada grupo tem o filtro que o abre (`mes`, `faixa`, `quadra`, `cliente`…); "abrir só este grupo" vira
-filtro e a rolagem infinita continua dentro dele. Ordem e agrupamento ficam lembrados por pessoa e por
+filtro e a rolagem infinita continua dentro dele. Os grupos saem na **ordem de quem lê**
+(`_ordem_do_grupo`): quadra, lote e bloco na ordem natural (a quadra 2 antes da 10 — o campo é
+texto), nomes em ordem alfabética, situação e status na ordem em que foram declarados, vazio por
+último. Ordem e agrupamento ficam lembrados por pessoa e por
 tela. Em Contas a receber, marcar linhas (ou "todas do filtro", pela caixa do cabeçalho, menos as
 desmarcadas depois — `excluir_ids`) leva ao boleto em lote (§6.2).
 

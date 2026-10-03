@@ -341,16 +341,26 @@ FILTROS = {
 
 BUSCA = {
     "unidades": [
-        "cliente__nome_completo", "cliente__cpf_cnpj", "cliente__email",
+        "cliente__nome_completo", "cliente__email",
         "unidade__bloco_torre", "empreendimento__empreendimento",
     ],
     "clientes": [
-        "nome_completo", "cpf_cnpj", "email", "telefone", "cidade", "bairro", "cep",
+        "nome_completo", "email", "telefone", "cidade", "bairro", "cep",
     ],
 }
+#: O documento só é critério de busca para quem pode lê-lo
+#: (`cadastro.cliente_doc.view`). Buscar é perguntar "existe cliente com este
+#: CPF?" e ler a resposta na grade — um oráculo que reconstrói o que a máscara
+#: esconde (LGPD art. 46; D257). Mesma regra da ordenação por documento e da
+#: busca do listão do ERP.
+BUSCA_DOCUMENTAL = {"unidades": ["cliente__cpf_cnpj"], "clientes": ["cpf_cnpj"]}
 
 
-def aplicar_filtros(qs: QuerySet, visao: str, params, hoje: date) -> QuerySet:
+def aplicar_filtros(
+    qs: QuerySet, visao: str, params, hoje: date, pode_documento: bool = False,
+) -> QuerySet:
+    """`pode_documento` (`cadastro.cliente_doc.view`) põe o CPF/CNPJ entre os
+    campos da busca. O padrão é **não**: quem chama sem dizer não abre o oráculo."""
     for chave, caminho in FILTROS[visao].items():
         valor = params.get(chave)
         if valor:
@@ -385,7 +395,7 @@ def aplicar_filtros(qs: QuerySet, visao: str, params, hoje: date) -> QuerySet:
             qs = qs.filter(frase)
             termos = [(campo, termo) for campo, termo in termos if campo]
     for campo_unidade, termo in termos:
-        qs = qs.filter(_condicao_do_termo(visao, campo_unidade, termo))
+        qs = qs.filter(_condicao_do_termo(visao, campo_unidade, termo, pode_documento))
 
     # Filtrar pessoas por um atributo da aquisição atravessa uma relação de
     # muitos: quem comprou dois lotes na mesma quadra viria duplicado.
@@ -525,7 +535,9 @@ def _casa_palavra(caminho: str, termo: str) -> Q:
     return Q(**{f"{caminho}__unaccent__iregex": r"\m" + re.escape(_sem_acento(termo))})
 
 
-def _condicao_do_termo(visao: str, campo_unidade: str | None, termo: str) -> Q:
+def _condicao_do_termo(
+    visao: str, campo_unidade: str | None, termo: str, pode_documento: bool = False,
+) -> Q:
     unidade = "unidade" if visao == "unidades" else "clienteempreendimento__unidade"
     if campo_unidade:
         return _nivel_da_unidade(f"{unidade}__{campo_unidade}", termo)
@@ -533,7 +545,8 @@ def _condicao_do_termo(visao: str, campo_unidade: str | None, termo: str) -> Q:
     numero_curto = termo.isdigit() and len(termo) < 5
     if not (visao == "unidades" and numero_curto):
         # "5" no CPF casaria com quase toda a carteira: número curto é endereço.
-        for caminho in BUSCA[visao]:
+        campos = BUSCA[visao] + (BUSCA_DOCUMENTAL[visao] if pode_documento else [])
+        for caminho in campos:
             alvo |= _casa_palavra(caminho, termo)
     if visao == "unidades":
         # Número solto pode ser a quadra, o lote ou o apto que a pessoa leu na tela.

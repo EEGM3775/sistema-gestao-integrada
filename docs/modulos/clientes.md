@@ -185,7 +185,7 @@ Campos de exibição adicionados (somente leitura):
 
 | Rota | Componente | Funcionalidade |
 |---|---|---|
-| `/app/clientes` | `ClientesListPage` | Tabela de clientes; busca por texto (server-side); filtro por empreendimento (server-side via `?empreendimento=`); botão "+ Novo Cliente" abre sheet |
+| `/app/clientes` | `ClientesListPage` | A carteira: grade tipo planilha com visões Clientes/Unidades, agrupar por, ordenação e busca server-side que entende a unidade (`QD 14 LT 05`, `Torre A apto 302`, `casa 7`) — desenho completo em [frontend.md §5.8](../frontend.md); botão "+ Novo Cliente" abre sheet |
 | `/app/clientes/:id` | `ClienteDetailPage` | Detalhe com 4 abas: Dados Cadastrais · Aquisições/Contratos · Documentos · Dados Bancários |
 
 ### Abas do detalhe
