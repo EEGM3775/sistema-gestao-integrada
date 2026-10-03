@@ -572,9 +572,17 @@ entrada confirmada → emitido; rejeitada → erro com o motivo do banco; liquid
 origem `cnab` e pago; baixa → cancelado. Ler o mesmo retorno duas vezes não paga duas vezes. Cada banco
 homologa a carteira nova com uma remessa de teste ([D239](../pendencias.md)).
 
-Fora do desenho atual: remessa de **instrução** (pedido de baixa, prorrogação) — a baixa de boleto
-registrado se pede no internet banking, e o retorno atualiza o boleto ([D245](../pendencias.md)) — e o
-CNAB de **pagamento** a fornecedor (Pag-For/SISPAG), que é o lado do `LoteRemessa`.
+**A segunda via pede a baixa do boleto antigo.** A remessa que registra a segunda via leva, no mesmo
+lote, o **pedido de baixa** (movimento 02 — segmento P só, no 240; ocorrência 02 em 109-110, no 400)
+de cada boleto vencido daquela conta registrado **na mesma carteira**; o boleto antigo ganha
+`baixa_pedida` (sequencial e instante) e não é pedido de novo, e o retorno de baixa (09/10) o marca
+cancelado. O trailer do lote e o total da `RemessaCnab` somam só as entradas. Boleto antigo de outra
+carteira não cabe no arquivo: fica a frase no item do lote, com o caminho.
+
+Fora do desenho atual: instrução de **alteração de vencimento ou valor** (movimento 06) ao editar a
+conta — por isso a conta com boleto CNAB vivo ainda trava valor, vencimento e cliente (§6.4,
+[D245](../pendencias.md)) — e o CNAB de **pagamento** a fornecedor (Pag-For/SISPAG), que é o lado do
+`LoteRemessa`.
 
 ### 6.4 Editar uma conta que tem boleto
 
