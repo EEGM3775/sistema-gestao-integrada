@@ -38,19 +38,6 @@ contêiner que faltava na frota geral — foi fechado em 07/08/2026, também no 
 
 ## 🟠 Altas
 
-### D238 — o filtro de RLS não é estimável, e toda consulta com JOIN supõe 1% das linhas · 🟠 aberto 30/09/2026
-
-Achado no [D231](historico-correcoes.md). A política `tenant_isolation` é
-`current_setting('app.rls_bypass') = 'on' OR tenant_id::text = current_setting('app.current_tenant')`.
-O planejador não conhece o valor de `current_setting` nem sabe estimar o `OR`, e o cast `::text` na
-coluna tira o índice de `tenant_id` do jogo: cada tabela juntada entra estimada em ~1% das linhas. Em
-Contas a receber isso juntava 86 mil títulos a seis tabelas antes de ordenar (560 ms de 590). A grade
-do ERP contornou (paginação em dois passos, `IN (subconsulta)` na busca), mas **toda outra listagem com
-JOIN sobre tabela grande** está sujeita ao mesmo plano ruim. **Caminho:** reescrever a política para
-`tenant_id = NULLIF(current_setting('app.current_tenant', true), '')::uuid OR …bypass` (estimável pelo
-`n_distinct` da coluna e indexável) — é mudança de segurança em todas as tabelas, com a equivalência da
-RLS provada antes (`phase8_tenancy`), e por isso não entrou no pacote do ERP.
-
 ### F2 — Selects carregam tabelas inteiras · 🟠 parcial 25/07/2026
 
 Formulários carregam todos os clientes/fornecedores/empreendimentos para montar selects.

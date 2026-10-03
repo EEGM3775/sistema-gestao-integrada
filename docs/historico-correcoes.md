@@ -10,6 +10,30 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D238 — o filtro de RLS não era estimável, e toda consulta com JOIN supunha 1% das linhas · ✅ corrigido 03/10/2026
+
+Achado no D231. A política `tenant_isolation` das 164 tabelas era
+`current_setting('app.rls_bypass') = 'on' OR tenant_id::text = current_setting('app.current_tenant')`.
+O cast `::text` na coluna tirava o índice de `tenant_id` do jogo, e o planejador, sem estatística para
+a expressão, estimava cada tabela em ~1% das linhas. Medido no banco de dev (86 mil contas a receber
+de um tenant só), num JOIN de três tabelas com `LIMIT 50`: **1 linha estimada contra 86.047 reais**,
+nested loop sobre os 2.004 clientes, **110 ms**. A grade do ERP tinha contornado (paginação em dois
+passos), mas toda outra listagem com JOIN sobre tabela grande caía no mesmo plano.
+
+**Correção:** a migration `nucleo 0029_rls_estimavel` reescreve no lugar (`ALTER POLICY`, com volta)
+toda política ainda na forma antiga para
+`bypass OR tenant_id = NULLIF(current_setting('app.current_tenant', true), '')::uuid`. Comparando
+`uuid` com `uuid`, a estimativa sai do `n_distinct` da coluna e o índice volta a valer: o mesmo JOIN
+estima 86.089, desce pelo índice da chave e para em 50 linhas — **1,3 ms**. A contagem com JOIN foi
+de 36,8 ms para 26,8 ms. A semântica não muda no domínio que o `nucleo.tenancy` escreve (UUID canônico
+ou vazio); um valor que não seja UUID passa a dar erro em vez de zero linhas — falha alta, que nenhum
+caminho produz. Provas em `test_rls_estimavel`: toda política do banco na forma nova (a trava contra a
+migration futura que copiar o texto antigo, como é o padrão da casa); as duas expressões, exatamente
+como a migration as grava, iguais nos 16 casos de tenant (próprio, outro, vazio, nunca definido) ×
+bypass (on, off, vazio, nulo); e a estimativa sob a RLS, com metade da tabela de um tenant, acima da
+metade — a forma antiga dava ~1%. O isolamento em si segue coberto por `test_rls_fail_closed` e
+`test_tenant_isolation`, que passaram a rodar sobre a política nova.
+
 ### D241 — "Trocar de celular" deixava o admin protegido só pela senha até o próximo login · ✅ corrigido 03/10/2026
 
 Visto em 01/10/2026, num teste do próprio dono (não foi incidente): às 20:08 de 30/09, o `admin` entrou
