@@ -19,7 +19,7 @@
 | D74 (antivírus) | [modulos/funcoesimpexp.md](modulos/funcoesimpexp.md) | Decisão do dono, adiada com método definido |
 | D6 · D13 · D60 + backlog de ideias | [roadmap.md](roadmap.md) | Trabalho planejado, não achado |
 | Decisões do Orçamento | [modulos/moduloorcamento.md](modulos/moduloorcamento.md) | Decisão de módulo |
-| D185 (base referencial fora do dev) | [modulos/funcoesimpexp.md](modulos/funcoesimpexp.md) §13.1 | Ferramenta pronta (pacote da base, DMS.1); carga real no staging pendente — ver o roadmap |
+| D185 (base referencial fora do dev) | [modulos/funcoesimpexp.md](modulos/funcoesimpexp.md) §13.1 | Resolvido: pacote da base (DMS.1); a base entrou no staging em 03/10/2026 |
 
 ---
 
