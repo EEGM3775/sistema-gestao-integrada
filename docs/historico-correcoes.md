@@ -10,6 +10,13 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D256 — `ponte.sh subir` saía com 141 antes de levantar a ponte · ✅ corrigido 03/10/2026
+
+A senha era gerada por `tr -dc … < /dev/urandom | head -c 20`: quando o `head` fecha o cano, o `tr`
+morre de SIGPIPE, e com `set -o pipefail` o script inteiro saía (141) — nada subia, nada ficava
+exposto, mas a ponte não abria. **Correção:** lê um bloco finito de `/dev/urandom` e corta no bash,
+sem cano que feche cedo.
+
 ### D253 — grupo da carteira parava em 200 linhas · ✅ corrigido 03/10/2026
 
 Revisão do dono: agrupada por empreendimento, a carteira mostrava "Mostrando 200 de 534 — refine o

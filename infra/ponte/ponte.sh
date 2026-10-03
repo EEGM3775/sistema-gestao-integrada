@@ -143,8 +143,15 @@ subir() {
   # A senha vive poucas horas e trafega em Basic auth (protegido pelo TLS do
   # túnel). Gerada, e não escolhida: senha reaproveitada de outra coisa é o que
   # transforma uma exposição de 4 horas num problema permanente.
-  local senha
-  senha="$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 20)"
+  #
+  # Sem cano: `tr < /dev/urandom | head -c 20` morre de SIGPIPE quando o `head`
+  # fecha, e com `pipefail` o script inteiro saía com 141 antes de subir nada.
+  # Lê-se um bloco finito e corta no bash.
+  local senha=''
+  while [ "${#senha}" -lt 20 ]; do
+    senha="$senha$(head -c 256 /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9')"
+  done
+  senha="${senha:0:20}"
   docker run --rm httpd:alpine htpasswd -nb sgi "$senha" > "$DIR/htpasswd" 2>/dev/null
   chmod 644 "$DIR/htpasswd"
 
