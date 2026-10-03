@@ -19,7 +19,7 @@
 | D74 (antivírus) | [modulos/funcoesimpexp.md](modulos/funcoesimpexp.md) | Decisão do dono, adiada com método definido |
 | D6 · D13 · D60 + backlog de ideias | [roadmap.md](roadmap.md) | Trabalho planejado, não achado |
 | Decisões do Orçamento | [modulos/moduloorcamento.md](modulos/moduloorcamento.md) | Decisão de módulo |
-| D185 (base referencial fora do dev) | [modulos/modulos-planejados.md](modulos/modulos-planejados.md) | Decisão do dono: dependência do `modulodms` |
+| D185 (base referencial fora do dev) | [modulos/funcoesimpexp.md](modulos/funcoesimpexp.md) §13.1 | Ferramenta pronta (pacote da base, DMS.1); carga real no staging pendente — ver o roadmap |
 
 ---
 
@@ -148,31 +148,6 @@ dado sensível com retenção legal obrigatória é do dono.
 **Enquanto isso, o que vale:** a ocorrência **não** é exportada nem esquecida, e este parágrafo é o
 registro de que a ausência é conhecida. O mascaramento por permissão (`pdca.ocorrencia.dado_medico`)
 funciona e está testado — o que falta é o outro lado, o do titular.
-
----
-### D196 — o plano `profissional` contrata o PDCA e não contrata a biblioteca de planos modelo · 🟡 aberto 21/09/2026
-
-Achado ao rodar os roteiros vizinhos para verificar a fatia da semana.
-`pdca1_cronograma_test.py` reprova em três checks seguidos (marcar modelo, listar a biblioteca,
-aplicar à obra nova) porque `POST .../marcar-modelo/` responde **402**:
-
-> *"O plano contratado inclui 0 planos modelo e o limite já foi atingido."* — `plano: profissional`
-
-O número está no [`planos.py`](../payment/planos.py), e a justificativa escrita ao lado dele é:
-*"os degraus abaixo do `empresarial` recebem 0 porque não contratam o `pdca`"*. **Só que contratam.**
-O tenant `demo` do seed está em `profissional` e tem o módulo `pdca` — é com ele que todo o módulo é
-demonstrado e testado. A premissa da quota e o que o produto faz divergiram em algum ponto, e o
-efeito é um cliente que paga pelo módulo de planejamento e recebe 402 ao tentar padronizar a torre
-que vai repetir 300 vezes — que é, segundo o próprio comentário, *"exatamente o que se vende"*.
-
-**Não é defeito de código, é uma decisão de plano**, e por isso fica aqui em vez de ser corrigida:
-ou `profissional` passa a incluir um punhado de planos modelo (e a frase da justificativa muda
-junto), ou o seed da demo sobe para o degrau que os inclui — e aí o que se está dizendo é que a
-demonstração do módulo exige um plano que a maioria não tem. A primeira parece a intenção original;
-a escolha é do dono.
-
-**Enquanto isso**, três checks do roteiro mais antigo do módulo ficam vermelhos por um motivo que
-nada tem a ver com cronograma, e quem rodar a suíte vai procurar o defeito no lugar errado.
 
 ---
 ### D195 — dois roteiros de navegador do PDCA dirigem a tela que foi apagada · 🟠 parcial 24/09/2026
@@ -488,40 +463,6 @@ a resposta da fonte; reapontar os itens para a publicação 2025; e dar procedê
 
 ---
 
-### D153 — o tenant de demonstração assina um plano que não vende o PDCA · 🟠 aberto 15/09/2026
-
-Achado ao rodar os E2E do PDCA em série, fechando a PDCA.6: a seção **12c do
-[pdca1_cronograma_test.py](../testes/e2e/pdca1_cronograma_test.py)** — o plano modelo da PDCA.1b —
-falha com **402**, e a mensagem é a correta:
-
-> *"O plano contratado inclui 0 planos modelo e o limite já foi atingido."* · `plano: profissional`
-
-**A quota está certa; o cenário é que é incoerente.** O `pdca` é **vendido do `empresarial` para
-cima** *(decisão do dono, 22/08/2026)*, e é no `empresarial` que `planos_modelo` vale 25; no
-`profissional` ele é **0**, justamente porque ali o módulo não se vende. Só que o tenant `demo` está
-no `profissional` **e tem o módulo `pdca`**, porque o acesso a módulo vem de `AcessoUsuarioModulo`
-(concessão por usuário) e não da assinatura.
-
-O resultado é um ambiente de demonstração onde **metade do módulo funciona e a outra metade é
-recusada por quota**, sem que nada na tela explique por quê — e um E2E que não tem como passar por
-mérito. É a mesma família do **D114** e do **D115**: o plano e o que a empresa realmente faz não
-conversam.
-
-**Não é regressão da PDCA.6** — ela não toca plano nem quota, e as demais suítes do módulo passam. O
-que a PDCA.6 fez foi rodar as oito juntas pela primeira vez e expor isto.
-
-**Duas saídas, e a escolha é de produto, não de engenharia:**
-
-- **subir o `demo` para `empresarial`**, que é o plano que de fato vende o que ele demonstra. Barato,
-  e alinha o seed com a decisão de 22/08. Efeito colateral a conferir: os outros tetos do
-  `empresarial` mudam junto, e há E2E que medem teto;
-- **aceitar e declarar**: o `demo` fica no `profissional` de propósito (para exercitar a recusa por
-  quota com token real, que é coisa que nenhum outro ator do seed faz), e a §12c do `pdca1` passa a
-  **exigir** um tenant `empresarial` — ou a afirmar a recusa, em vez do sucesso.
-
-Enquanto nenhuma das duas acontece, o `pdca1_cronograma_test.py` sai com 4 recusas que não são
-defeito de código.
-
 ### D124 — a paywall não decidiu se orçamento tem quantidade · 🟠 aberto 13/09/2026
 
 **Decisão do dono, 13/09/2026, ao definir a trava de exclusão do orçamento:**
@@ -551,28 +492,6 @@ coisas que hoje não existem, e esquecer qualquer uma recria a armadilha que est
 3. **o degrau por plano**, nos cinco níveis, como todo o resto do §4 do `planos.py`.
 
 Não trava nada hoje. É decisão comercial, e o dono pediu para registrar em vez de decidir agora.
-
-### D115 — a demo nasce com o dobro de clientes que o plano dela permite · 🟠 aberto 22/08/2026
-
-Achado pelo dono, olhando o hub: o card **Requer sua decisão** anuncia
-permanentemente *"Limite de clientes atingido — 2004 de 1000"*, e o bloqueio é
-real (`POST /api/clientes/` → **402 `quota_excedida`**). Ou seja: **na demo não dá
-para cadastrar cliente**, que é fundação e é justamente o que alguém quer
-exercitar numa demonstração.
-
-A causa é uma colisão entre dois artefatos do próprio projeto, e nenhum dos dois
-está errado sozinho:
-
-- [`semear_carteira_demo`](../backend/clientes/management/commands/semear_carteira_demo.py)
-  tem `--clientes 2000` como **padrão**, e existe para provar que a carteira
-  aguenta volume — *"com 20 cadastros qualquer implementação parece rápida"*;
-- o tenant `demo` está no `profissional`, cujo teto de `clientes` é **1000**, e
-  `clientes` está em `QUOTAS_APLICADAS` (trava de verdade).
-
-Três saídas, todas baratas, e é escolha de quem opera a demo: baixar o padrão do
-seeder (perde parte da prova de volume); re-semear menor após `--limpar`; ou pôr
-o `demo` num plano sem esse aperto, deixando o `acme` (free) como o tenant onde a
-parede de quota é visível de propósito — papel que o `planos.py` já dá a ele.
 
 ### D114 — no `profissional`, o teto de clientes não conversa com o de empreendimentos · 🟠 aberto 22/08/2026
 
@@ -736,6 +655,17 @@ sobre um acervo que não é o real, e o Essencial em 150 mil agora fica **abaixo
 Decisão do dono, com o número novo na mão. Não trava nada hoje.
 
 ## 🟡 Médias
+
+### D258 — os contêineres de aplicação rodam como root · 🟡 aberto 03/10/2026
+
+Visto ao montar o cofre de produção (10.3): `sgi-erp` e `sgi-iam` respondem `uid=0(root)` — os
+Dockerfiles do backend e da IAM não têm `USER`. É o que hoje deixa o segredo `0400` de root ser lido
+pelo app, e é também o que faz qualquer RCE no Django virar root no contêiner (escrita em `/app`,
+leitura de todo `/run/secrets`). O pentest vai apontar. **Caminho:** usuário sem privilégio no
+Dockerfile (`USER app`, uid fixo), `/app` só leitura, e os segredos montados com `uid`/`mode` do
+compose (`secrets: - source: … uid: "1000" mode: 0400`) em vez de depender de root; conferir os
+volumes de mídia (dono) e o `worker-conversao` (LibreDWG/ODA gravam em `/tmp`).
+
 
 ### D245 — a conta com boleto CNAB vivo não muda valor nem vencimento pelo SGI · 🟡 parcial 03/10/2026
 

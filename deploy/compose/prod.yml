@@ -14,7 +14,9 @@
 # (volume local, sem PITR, sem réplica) é o que a Fase 10.3 quer evitar.
 #
 # Antes do primeiro uso, resolver:
-#   - segredos fora de arquivo .env (Vault / Secrets Manager) — Fase 10.3
+#   - segredos fora do .env ✅ 10.3: Docker Compose secrets (`secrets:` no fim deste
+#     arquivo), um arquivo por segredo em ${SGI_SEGREDOS:-/etc/sgi/segredos}, montado só
+#     em /run/secrets de quem usa; o app lê `NOME_FILE` (settings). Criar: infra/segredos/criar.sh
 #   - ingress dos webhooks sem ngrok (Cloudflare Tunnel) — Fase 10.3.2
 #   - backup/PITR + ensaio de restore — Fase 10.3
 #   - imagens versionadas por tag ✅ 10.5.3: o workflow `Imagens` publica no GHCR
@@ -32,45 +34,119 @@ services:
     # Em produção a imagem vem do registry (tag imutável `sha-<commit>`), não de build local.
     image: ${REGISTRY:?defina REGISTRY}/sgi-iam:${TAG:?defina TAG}
     environment:
+      IAM_SECRET_KEY_FILE: /run/secrets/iam_secret_key
+      IAM_SEGUNDO_FATOR_CHAVE_FILE: /run/secrets/iam_segundo_fator_chave
+      IAM_POSTGRES_PASSWORD_FILE: /run/secrets/iam_postgres_password
+      SERVICE_TOKEN_SECRET_FILE: /run/secrets/service_token_secret
+      SPICEDB_CHAVE_FILE: /run/secrets/spicedb_chave
+      MAIL_PASS_FILE: /run/secrets/mail_pass
       IAM_DEBUG: "False"
       # TLS obrigatório no banco: o achado D14 era exatamente isto ser impossível.
       # `verify-full` exige a CA em DB_SSLROOTCERT.
       DB_SSLMODE: ${DB_SSLMODE:-verify-full}
+    secrets: [iam_secret_key, iam_segundo_fator_chave, iam_postgres_password, service_token_secret,
+              spicedb_chave, mail_pass]
     restart: always
 
   erp:
     image: ${REGISTRY:?defina REGISTRY}/sgi-backend:${TAG:?defina TAG}
     environment:
+      SECRET_KEY_FILE: /run/secrets/secret_key
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      ASAAS_API_KEY_FILE: /run/secrets/asaas_api_key
+      ASAAS_WEBHOOK_TOKEN_FILE: /run/secrets/asaas_webhook_token
+      NFE_IO_API_KEY_FILE: /run/secrets/nfe_io_api_key
+      IA_SERVICE_SECRET_TOKEN_FILE: /run/secrets/ia_service_secret_token
+      SERVICE_TOKEN_SECRET_FILE: /run/secrets/service_token_secret
+      SPICEDB_CHAVE_FILE: /run/secrets/spicedb_chave
+      MAIL_PASS_FILE: /run/secrets/mail_pass
       DEBUG: "False"
       DB_SSLMODE: ${DB_SSLMODE:-verify-full}
       # Produção emite cobrança de verdade.
       ASAAS_BASE_URL: ${ASAAS_BASE_URL:-https://api.asaas.com/v3}
+    secrets: [secret_key, postgres_password, asaas_api_key, asaas_webhook_token, nfe_io_api_key,
+              ia_service_secret_token, service_token_secret, spicedb_chave, mail_pass]
     restart: always
 
   worker:
     image: ${REGISTRY:?defina REGISTRY}/sgi-backend:${TAG:?defina TAG}
     environment:
+      SECRET_KEY_FILE: /run/secrets/secret_key
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      ASAAS_API_KEY_FILE: /run/secrets/asaas_api_key
+      ASAAS_WEBHOOK_TOKEN_FILE: /run/secrets/asaas_webhook_token
+      NFE_IO_API_KEY_FILE: /run/secrets/nfe_io_api_key
+      IA_SERVICE_SECRET_TOKEN_FILE: /run/secrets/ia_service_secret_token
+      SERVICE_TOKEN_SECRET_FILE: /run/secrets/service_token_secret
+      SPICEDB_CHAVE_FILE: /run/secrets/spicedb_chave
+      MAIL_PASS_FILE: /run/secrets/mail_pass
       DEBUG: "False"
       DB_SSLMODE: ${DB_SSLMODE:-verify-full}
       ASAAS_BASE_URL: ${ASAAS_BASE_URL:-https://api.asaas.com/v3}
+    secrets: [secret_key, postgres_password, asaas_api_key, asaas_webhook_token, nfe_io_api_key,
+              ia_service_secret_token, service_token_secret, spicedb_chave, mail_pass]
     restart: always
 
   beat:
     image: ${REGISTRY:?defina REGISTRY}/sgi-backend:${TAG:?defina TAG}
     environment:
+      SECRET_KEY_FILE: /run/secrets/secret_key
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      ASAAS_API_KEY_FILE: /run/secrets/asaas_api_key
+      ASAAS_WEBHOOK_TOKEN_FILE: /run/secrets/asaas_webhook_token
+      NFE_IO_API_KEY_FILE: /run/secrets/nfe_io_api_key
+      IA_SERVICE_SECRET_TOKEN_FILE: /run/secrets/ia_service_secret_token
+      SERVICE_TOKEN_SECRET_FILE: /run/secrets/service_token_secret
+      SPICEDB_CHAVE_FILE: /run/secrets/spicedb_chave
+      MAIL_PASS_FILE: /run/secrets/mail_pass
       DEBUG: "False"
       DB_SSLMODE: ${DB_SSLMODE:-verify-full}
+    secrets: [secret_key, postgres_password, asaas_api_key, asaas_webhook_token, nfe_io_api_key,
+              ia_service_secret_token, service_token_secret, spicedb_chave, mail_pass]
     restart: always
 
   # A mesma imagem do backend e da IAM, com outro comando (base.yml).
   worker-conversao:
     image: ${REGISTRY:?defina REGISTRY}/sgi-backend:${TAG:?defina TAG}
+    environment:
+      SECRET_KEY_FILE: /run/secrets/secret_key
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      ASAAS_API_KEY_FILE: /run/secrets/asaas_api_key
+      ASAAS_WEBHOOK_TOKEN_FILE: /run/secrets/asaas_webhook_token
+      NFE_IO_API_KEY_FILE: /run/secrets/nfe_io_api_key
+      IA_SERVICE_SECRET_TOKEN_FILE: /run/secrets/ia_service_secret_token
+      SERVICE_TOKEN_SECRET_FILE: /run/secrets/service_token_secret
+      SPICEDB_CHAVE_FILE: /run/secrets/spicedb_chave
+      MAIL_PASS_FILE: /run/secrets/mail_pass
+    secrets: [secret_key, postgres_password, asaas_api_key, asaas_webhook_token, nfe_io_api_key,
+              ia_service_secret_token, service_token_secret, spicedb_chave, mail_pass]
     restart: always
   pdp-invalidador:
     image: ${REGISTRY:?defina REGISTRY}/sgi-backend:${TAG:?defina TAG}
+    environment:
+      SECRET_KEY_FILE: /run/secrets/secret_key
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      ASAAS_API_KEY_FILE: /run/secrets/asaas_api_key
+      ASAAS_WEBHOOK_TOKEN_FILE: /run/secrets/asaas_webhook_token
+      NFE_IO_API_KEY_FILE: /run/secrets/nfe_io_api_key
+      IA_SERVICE_SECRET_TOKEN_FILE: /run/secrets/ia_service_secret_token
+      SERVICE_TOKEN_SECRET_FILE: /run/secrets/service_token_secret
+      SPICEDB_CHAVE_FILE: /run/secrets/spicedb_chave
+      MAIL_PASS_FILE: /run/secrets/mail_pass
+    secrets: [secret_key, postgres_password, asaas_api_key, asaas_webhook_token, nfe_io_api_key,
+              ia_service_secret_token, service_token_secret, spicedb_chave, mail_pass]
     restart: always
   iam-pdp:
     image: ${REGISTRY:?defina REGISTRY}/sgi-iam:${TAG:?defina TAG}
+    environment:
+      IAM_SECRET_KEY_FILE: /run/secrets/iam_secret_key
+      IAM_SEGUNDO_FATOR_CHAVE_FILE: /run/secrets/iam_segundo_fator_chave
+      IAM_POSTGRES_PASSWORD_FILE: /run/secrets/iam_postgres_password
+      SERVICE_TOKEN_SECRET_FILE: /run/secrets/service_token_secret
+      SPICEDB_CHAVE_FILE: /run/secrets/spicedb_chave
+      MAIL_PASS_FILE: /run/secrets/mail_pass
+    secrets: [iam_secret_key, iam_segundo_fator_chave, iam_postgres_password, service_token_secret,
+              spicedb_chave, mail_pass]
     restart: always
   react:
     image: ${REGISTRY:?defina REGISTRY}/sgi-react:${TAG:?defina TAG}
@@ -93,3 +169,32 @@ services:
       # Certificado real (ACME/Let's Encrypt ou o do LB), não o self-signed do staging.
       - ../../infra/gateway/nginx.staging.conf:/etc/nginx/nginx.conf:ro
     restart: always
+
+# --- Segredos (Fase 10.3) -----------------------------------------------------
+# Um arquivo por segredo, fora do repositório e do .env. `infra/segredos/criar.sh`
+# cria a pasta (root, 0700) e gera os internos; os de terceiros nascem vazios.
+secrets:
+  secret_key:
+    file: ${SGI_SEGREDOS:-/etc/sgi/segredos}/secret_key
+  postgres_password:
+    file: ${SGI_SEGREDOS:-/etc/sgi/segredos}/postgres_password
+  asaas_api_key:
+    file: ${SGI_SEGREDOS:-/etc/sgi/segredos}/asaas_api_key
+  asaas_webhook_token:
+    file: ${SGI_SEGREDOS:-/etc/sgi/segredos}/asaas_webhook_token
+  nfe_io_api_key:
+    file: ${SGI_SEGREDOS:-/etc/sgi/segredos}/nfe_io_api_key
+  ia_service_secret_token:
+    file: ${SGI_SEGREDOS:-/etc/sgi/segredos}/ia_service_secret_token
+  service_token_secret:
+    file: ${SGI_SEGREDOS:-/etc/sgi/segredos}/service_token_secret
+  spicedb_chave:
+    file: ${SGI_SEGREDOS:-/etc/sgi/segredos}/spicedb_chave
+  mail_pass:
+    file: ${SGI_SEGREDOS:-/etc/sgi/segredos}/mail_pass
+  iam_secret_key:
+    file: ${SGI_SEGREDOS:-/etc/sgi/segredos}/iam_secret_key
+  iam_segundo_fator_chave:
+    file: ${SGI_SEGREDOS:-/etc/sgi/segredos}/iam_segundo_fator_chave
+  iam_postgres_password:
+    file: ${SGI_SEGREDOS:-/etc/sgi/segredos}/iam_postgres_password

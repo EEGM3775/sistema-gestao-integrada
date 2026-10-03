@@ -107,6 +107,27 @@ if tenant.plano != "profissional":  # idempotente sobre banco já semeado
     tenant.save(update_fields=["plano"])
 assinar(tenant, modulos.keys())
 
+# --- Os extras que a demo COMPROU (D115, D153, D196 — decisão do dono, 03/10/2026) ---
+# A demo continua no `profissional` e compra, além dele, o que usa: a biblioteca
+# de planos modelo do PDCA (o `profissional` dá 0) e clientes acima dos 1.000 do
+# plano (o `semear_carteira_demo` cria 2.000). É o mesmo caminho que o checkout
+# (D24) vai gravar — `AssinaturaTenant.limites`, que vence o plano em
+# `payment/regras.quota_efetiva` —, e por isso a demo é também o teste de que a
+# compra de extra funciona. O `acme` (free) segue sendo a parede de quota.
+# Os limites são do tenant inteiro (`Tenant.limites_contratados` funde as
+# assinaturas); cada um fica na assinatura do módulo que o vende.
+EXTRAS_DA_DEMO = {
+    "pdca": {"planos_modelo": 25},
+    "erp_financeiro": {"clientes": 5_000},
+}
+for cod, limites in EXTRAS_DA_DEMO.items():
+    # `save()`, não `.update()`: o `post_save` é o que regrava a ficha da empresa
+    # que o backend lê (identity/pdp_sinais.py). Sem ele, a compra fica no banco da
+    # IAM e o backend segue cobrando o limite do plano.
+    for assinatura in AssinaturaTenant.objects.filter(tenant=tenant, modulo=modulos[cod]):
+        assinatura.limites = limites
+        assinatura.save(update_fields=["limites"])
+
 acme_tenant, _ = Tenant.objects.get_or_create(
     slug="acme", defaults={"id": ACME_TENANT_ID, "nome": "Empresa Acme", "plano": "free"}
 )

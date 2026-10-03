@@ -74,8 +74,19 @@ continua sendo a cópia independente dele e o único dos arquivos.
 ## Segredos por arquivo (Fase 10.3)
 
 Backend e IAM aceitam `NOME_FILE=/caminho` para qualquer variável `NOME` (Docker secrets, Vault
-Agent, CSI do Secrets Manager): o segredo é lido do arquivo montado antes de qualquer setting. O valor
-explícito no ambiente vence o arquivo.
+Agent, CSI do Secrets Manager): o segredo é lido do arquivo montado antes de qualquer setting. O
+arquivo vence o ambiente — o `base.yml` injeta defaults de dev em toda variável, e eles não podem
+ganhar do segredo. Em produção o cofre é o **Docker Compose secrets** (decisão de 03/10/2026, abaixo).
+
+**Produção — o cofre.** SaaS num servidor: um arquivo por segredo em `/etc/sgi/segredos` (dono
+root, `0700` na pasta, `0400` nos arquivos), montado pelo `prod.yml` só em `/run/secrets/` de quem
+usa — nunca no `.env`, nunca em `docker inspect`, nunca na imagem. Por que não Vault: num servidor
+único o cofre guardaria a própria chave no mesmo disco, e seria mais um serviço para manter no ar
+sem ganho de isolamento. Criar a pasta e gerar os que nascem aleatórios:
+
+```bash
+sudo bash infra/segredos/criar.sh            # gera os internos; os de terceiros (Asaas, NFE.io, WhatsApp, SMTP) ficam vazios para preencher
+```
 
 ## Imagens publicadas (Fase 10.5.3)
 
