@@ -24,14 +24,16 @@ das divergências Asaas. Sem a permissão a linha traz só a situação
 """
 from __future__ import annotations
 
+import re
+import unicodedata
 from datetime import date, timedelta
 from decimal import Decimal
 
 from django.db.models import (
-    Case, CharField, Count, DecimalField, F, Min, OuterRef, Q, QuerySet,
-    Subquery, Sum, Value, When,
+    Case, CharField, Count, DecimalField, Exists, F, IntegerField, Min, OuterRef, Q,
+    QuerySet, Subquery, Sum, Value, When,
 )
-from django.db.models.functions import Coalesce, ExtractYear, LPad, NullIf
+from django.db.models.functions import Cast, Coalesce, ExtractYear, Lower, LPad, NullIf
 from django.utils import timezone
 
 from moduloerp.models import ContaReceber, StatusConta
@@ -47,10 +49,12 @@ STATUS_EM_ABERTO = [StatusConta.ABERTO, StatusConta.PARCIAL]
 
 
 # ─── Faixas de atraso ─────────────────────────────────────────────────────────
-# Os mesmos cortes do aging do ERP. `em_dia` cobre quem não tem NADA vencido —
-# inclusive quem não deve nada, porque para a carteira as duas situações se
-# resolvem igual: não há o que cobrar hoje.
+# Os mesmos cortes do aging do ERP. `em_dia` cobre quem tem parcela lançada e
+# nada vencido — inclusive quem já quitou tudo. Quem **não tem parcela nenhuma**
+# (venda sem carnê gerado) é `sem_parcelas`: chamá-lo de adimplente afirmava um
+# histórico de pagamento que não existe (item 60 do dono, 01/10/2026).
 FAIXAS = [
+    {"chave": "sem_parcelas", "rotulo": "Sem parcelas", "de": None, "ate": None},
     {"chave": "em_dia", "rotulo": "Em dia", "de": None, "ate": None},
     {"chave": "d1_30", "rotulo": "1-30 dias", "de": 1, "ate": 30},
     {"chave": "d31_60", "rotulo": "31-60 dias", "de": 31, "ate": 60},
@@ -80,6 +84,7 @@ def _caso_faixa(hoje: date):
     está na faixa de 120, não na média das duas.
     """
     return Case(
+        When(tem_parcelas=False, then=Value("sem_parcelas")),
         When(venc_mais_antigo__lt=hoje - timedelta(days=90), then=Value("d90_mais")),
         When(venc_mais_antigo__lt=hoje - timedelta(days=60), then=Value("d61_90")),
         When(venc_mais_antigo__lt=hoje - timedelta(days=30), then=Value("d31_60")),
@@ -113,6 +118,12 @@ def anotar_adimplencia(qs: QuerySet, contas: QuerySet, ref: str, hoje: date) -> 
     consequência assumida ao criar o vínculo sem inventar o passado.
     """
     return qs.annotate(
+        # Item 60: sem nenhuma parcela lançada não há o que estar em dia — a
+        # linha é "sem parcelas", não "adimplente". Cancelada não conta: quem
+        # teve o carnê cancelado e nada relançado também não tem o que pagar.
+        tem_parcelas=Exists(
+            contas.filter(**{ref: OuterRef("pk")}).exclude(status=StatusConta.CANCELADO)
+        ),
         parcelas_atraso=Coalesce(_sub(contas, ref, Count("pk"), True, hoje), Value(0)),
         valor_atraso=Coalesce(_sub(contas, ref, Sum(SALDO, output_field=DINHEIRO), True, hoje), ZERO),
         valor_aberto=Coalesce(_sub(contas, ref, Sum(SALDO, output_field=DINHEIRO), False, hoje), ZERO),
@@ -330,14 +341,11 @@ FILTROS = {
 
 BUSCA = {
     "unidades": [
-        "cliente__nome_completo__icontains", "cliente__cpf_cnpj__icontains",
-        "cliente__email__icontains", "unidade__quadra__iexact", "unidade__lote__iexact",
-        "unidade__apto__iexact", "unidade__bloco_torre__icontains",
-        "empreendimento__empreendimento__icontains",
+        "cliente__nome_completo", "cliente__cpf_cnpj", "cliente__email",
+        "unidade__bloco_torre", "empreendimento__empreendimento",
     ],
     "clientes": [
-        "nome_completo__icontains", "cpf_cnpj__icontains", "email__icontains",
-        "telefone__icontains", "cidade__icontains", "bairro__icontains", "cep__icontains",
+        "nome_completo", "cpf_cnpj", "email", "telefone", "cidade", "bairro", "cep",
     ],
 }
 
@@ -350,8 +358,10 @@ def aplicar_filtros(qs: QuerySet, visao: str, params, hoje: date) -> QuerySet:
 
     faixa = params.get("faixa")
     if faixa in FAIXA_POR_CHAVE:
-        if faixa == "em_dia":
-            qs = qs.filter(venc_mais_antigo__isnull=True)
+        if faixa == "sem_parcelas":
+            qs = qs.filter(tem_parcelas=False)
+        elif faixa == "em_dia":
+            qs = qs.filter(tem_parcelas=True, venc_mais_antigo__isnull=True)
         else:
             f = FAIXA_POR_CHAVE[faixa]
             limites = Q(venc_mais_antigo__lte=hoje - timedelta(days=f["de"]))
@@ -364,19 +374,172 @@ def aplicar_filtros(qs: QuerySet, visao: str, params, hoje: date) -> QuerySet:
         campo = "data_compra__year" if visao == "unidades" else "clienteempreendimento__data_compra__year"
         qs = qs.filter(**{campo: ano})
 
-    busca = (params.get("busca") or "").strip()
-    if busca:
-        alvo = Q()
-        for caminho in BUSCA[visao]:
-            alvo |= Q(**{caminho: busca})
-        qs = qs.filter(alvo)
+    termos = termos_da_busca(params.get("busca") or "")
+    soltos = [termo for campo, termo in termos if not campo]
+    if len(soltos) > 1:
+        # "Loteamento Demo 1": palavra por palavra, o "1" virava quadra/lote e
+        # trazia a QD 1 de todo "Loteamento Demo". Se as palavras soltas, juntas,
+        # são um nome (empreendimento, cliente…), a frase vence.
+        frase = _condicao_da_frase(visao, soltos)
+        if qs.filter(frase).exists():
+            qs = qs.filter(frase)
+            termos = [(campo, termo) for campo, termo in termos if campo]
+    for campo_unidade, termo in termos:
+        qs = qs.filter(_condicao_do_termo(visao, campo_unidade, termo))
 
     # Filtrar pessoas por um atributo da aquisição atravessa uma relação de
     # muitos: quem comprou dois lotes na mesma quadra viria duplicado.
-    atravessa_aquisicao = visao == "clientes" and any(
-        params.get(k) for k in ("empreendimento", "quadra", "ano_compra")
+    atravessa_aquisicao = visao == "clientes" and (
+        any(params.get(k) for k in ("empreendimento", "quadra", "ano_compra"))
+        or any(campo for campo, _ in termos)
     )
     return qs.distinct() if atravessa_aquisicao else qs
+
+
+# ─── Busca ────────────────────────────────────────────────────────────────────
+# Item do dono (03/10/2026): "QD 14" não achava nada. A busca comparava a frase
+# inteira com cada campo, e a quadra guarda "14", não "QD 14" — justamente o
+# jeito como a tela escreve a unidade. Agora a busca é **por palavra** (todas
+# têm de casar, cada uma em algum campo) e entende o endereço de qualquer tipo
+# de empreendimento como se escreve:
+#
+# - horizontal (loteamento, condomínio de casas): "QD 14 LT 05", "QD14 LT5",
+#   "quadra 14 lote 05", "Q14 L5", "casa 12";
+# - vertical (residencial, comercial): "Torre A apto 302", "BL B AP 101",
+#   "edifício Norte sala 1204", "3º andar", "pav 3", "loja 2", "cobertura 1".
+#
+# O modelo tem cinco níveis (quadra, lote, bloco/torre, andar, apto/número);
+# casa, sala, loja, box e vaga moram no "apto/número" — é o mesmo papel.
+
+#: Palavra que anuncia o nível da unidade → campo de `Unidade` (sem acento).
+PREFIXOS_DA_UNIDADE = {
+    **dict.fromkeys(("qd", "qda", "q", "quadra"), "quadra"),
+    **dict.fromkeys(("lt", "l", "lote"), "lote"),
+    # "Residencial"/"Condomínio" ficam de fora: costumam ser o nome do
+    # empreendimento ("Residencial Aurora"), que a busca já acha pelo nome.
+    **dict.fromkeys(("bl", "bloco", "torre", "tr", "edificio", "ed", "predio"), "bloco_torre"),
+    **dict.fromkeys(("andar", "and", "pavimento", "pav", "piso"), "andar"),
+    **dict.fromkeys(
+        ("ap", "apt", "apto", "apartamento", "casa", "cs", "sala", "sl", "loja", "lj",
+         "conjunto", "cj", "cobertura", "cob", "box", "vaga", "unidade", "un", "unid",
+         "numero", "num", "nº", "n°"),
+        "apto",
+    ),
+}
+#: "QD14", "LT5", "AP302", "Nº12", "BLA", "TR2" — prefixo e valor colados. Letra
+#: sozinha só depois de bloco/torre: senão "Lu" viraria o lote "u".
+_PREFIXO_COLADO = re.compile(
+    r"^(?:(qda|qd|q|lt|l|apto|apt|ap|cs|sl|lj|cj|cob|pav|un|n[º°])\.?(\d+[a-z]?)"
+    r"|(bl|tr)\.?(\d+[a-z]?|[a-z]))$",
+    re.IGNORECASE,
+)
+#: "3º", "3°", "3o", "3a" — ordinal, que só é andar quando "andar"/"pav" vem atrás.
+_ORDINAL = re.compile(r"^(\d+)(?:º|°|ª|o|a)?$", re.IGNORECASE)
+_SEPARADORES = re.compile(r"[\s,;·]+")
+
+
+def _sem_acento(texto: str) -> str:
+    return "".join(
+        c for c in unicodedata.normalize("NFD", texto.lower()) if unicodedata.category(c) != "Mn"
+    )
+
+
+def _prefixo(palavra: str) -> str | None:
+    return PREFIXOS_DA_UNIDADE.get(palavra.lower()) or PREFIXOS_DA_UNIDADE.get(_sem_acento(palavra))
+
+
+def termos_da_busca(busca: str) -> list[tuple[str | None, str]]:
+    """`"QD 14 LT 05 ana"` → `[("quadra", "14"), ("lote", "05"), (None, "ana")]`."""
+    palavras = [p.strip(".:") for p in _SEPARADORES.split(busca.strip()) if p.strip(".:")]
+    termos, i = [], 0
+    while i < len(palavras):
+        palavra = palavras[i]
+        campo = _prefixo(palavra)
+        colado = _PREFIXO_COLADO.match(palavra)
+        seguinte = palavras[i + 1] if i + 1 < len(palavras) else None
+        ordinal = _ORDINAL.match(palavra)
+        if ordinal and seguinte and _prefixo(seguinte) == "andar":
+            termos.append(("andar", ordinal.group(1)))  # "3º andar"
+            i += 2
+            continue
+        if campo and seguinte:
+            valor = seguinte
+            if campo == "andar" and _ORDINAL.match(valor):
+                valor = _ORDINAL.match(valor).group(1)  # "andar 3º"
+            termos.append((campo, valor))
+            i += 2
+            continue
+        if colado:
+            prefixo, valor = (colado.group(1), colado.group(2)) if colado.group(1) else colado.group(3, 4)
+            termos.append((_prefixo(prefixo), valor))
+        else:
+            # CPF colado com pontuação: o banco guarda só os dígitos.
+            digitos = re.sub(r"\D", "", palavra)
+            documento = digitos and re.fullmatch(r"[\d.\-/]+", palavra) and len(digitos) >= 5
+            termos.append((None, digitos if documento else palavra))
+        i += 1
+    return termos
+
+
+def _nivel_da_unidade(caminho: str, valor: str) -> Q:
+    """Um nível da unidade pelo valor, sem caixa, sem acento e sem zero à esquerda.
+
+    O campo é texto livre: o mesmo bloco pode estar gravado "A", "Torre A" ou
+    "Bloco A"; a casa, "12" ou "Casa 12". Por isso o valor casa no **fim** do
+    campo, depois de um rótulo opcional — `5` acha "05" e "Casa 5", `a` acha
+    "Torre A", e nenhum dos dois acha "15" ou "Torre AB".
+    """
+    alvo = str(int(valor)) if valor.isdigit() else re.escape(_sem_acento(valor))
+    return Q(**{f"{caminho}__unaccent__iregex": rf"^([^0-9]*\s)?0*{alvo}$"})
+
+
+#: Os campos de texto em que uma frase inteira faz sentido (nome, não número).
+FRASE = {
+    "unidades": [
+        "cliente__nome_completo", "cliente__email", "empreendimento__empreendimento",
+        "unidade__bloco_torre",
+    ],
+    "clientes": ["nome_completo", "email", "cidade", "bairro"],
+}
+
+
+def _condicao_da_frase(visao: str, palavras: list[str]) -> Q:
+    """As palavras em sequência, inteiras, sem acento nem caixa: "Demo 1" acha
+    "Loteamento Demo 1" e não "Loteamento Demo 10"."""
+    padrao = r"\m" + r"\s+".join(re.escape(_sem_acento(p)) for p in palavras) + r"\M"
+    alvo = Q()
+    for caminho in FRASE[visao]:
+        alvo |= Q(**{f"{caminho}__unaccent__iregex": padrao})
+    return alvo
+
+
+def _casa_palavra(caminho: str, termo: str) -> Q:
+    """O termo no **começo** de uma palavra do campo, sem acento nem caixa.
+
+    `ro` acha "Rocha" e "Rodrigo", não "Ribei**ro**" — a mesma régua do listão
+    do ERP (D242). Número casa em qualquer ponto: é trecho de CPF, telefone ou
+    CEP, que a pessoa cola de onde estiver.
+    """
+    if termo.isdigit():
+        return Q(**{f"{caminho}__icontains": termo})
+    return Q(**{f"{caminho}__unaccent__iregex": r"\m" + re.escape(_sem_acento(termo))})
+
+
+def _condicao_do_termo(visao: str, campo_unidade: str | None, termo: str) -> Q:
+    unidade = "unidade" if visao == "unidades" else "clienteempreendimento__unidade"
+    if campo_unidade:
+        return _nivel_da_unidade(f"{unidade}__{campo_unidade}", termo)
+    alvo = Q()
+    numero_curto = termo.isdigit() and len(termo) < 5
+    if not (visao == "unidades" and numero_curto):
+        # "5" no CPF casaria com quase toda a carteira: número curto é endereço.
+        for caminho in BUSCA[visao]:
+            alvo |= _casa_palavra(caminho, termo)
+    if visao == "unidades":
+        # Número solto pode ser a quadra, o lote ou o apto que a pessoa leu na tela.
+        for nivel in ("quadra", "lote", "apto"):
+            alvo |= _nivel_da_unidade(f"unidade__{nivel}", termo)
+    return alvo
 
 
 # ─── Montagem das visões ──────────────────────────────────────────────────────
@@ -459,7 +622,11 @@ def _financeiro(linha, usuario, pode_financeiro: bool, hoje: date) -> dict:
     docs/acesso-e-permissoes.md).
     """
     dias = (hoje - linha.venc_mais_antigo).days if linha.venc_mais_antigo else 0
-    dados = {"adimplente": linha.parcelas_atraso == 0, "faixa": faixa_de(dias)}
+    if not linha.tem_parcelas:
+        # `None` = não dá para dizer: sem parcela não há adimplência nem atraso.
+        dados = {"adimplente": None, "faixa": "sem_parcelas"}
+    else:
+        dados = {"adimplente": linha.parcelas_atraso == 0, "faixa": faixa_de(dias)}
     if pode_financeiro:
         dados |= {
             "parcelasAtraso": linha.parcelas_atraso,
@@ -560,7 +727,15 @@ def agrupar(qs: QuerySet, visao: str, niveis: list[str], pode_financeiro: bool) 
             Sum("valor_compra" if visao == "unidades" else "valor_venda", output_field=DINHEIRO), ZERO
         )
 
-    linhas = qs.values(*agrupamento).annotate(**anotacoes).order_by(*agrupamento)
+    # A ordem dos grupos é a de quem lê, não a do valor cru: a quadra é texto e
+    # "19" vinha antes de "2"; o empreendimento saía pela ordem de cadastro. Cada
+    # nível ganha a sua chave — e "sem informação" vai para o fim.
+    ordens = {f"_ordem_{i}": _ordem_do_grupo(dims[n], n) for i, n in enumerate(validos)}
+    qs = qs.annotate(**ordens)
+    linhas = (
+        qs.values(*agrupamento, *ordens).annotate(**anotacoes)
+        .order_by(*[F(alias).asc(nulls_last=True) for alias in ordens], *agrupamento)
+    )
 
     saida = []
     for linha in linhas:
@@ -581,6 +756,26 @@ def agrupar(qs: QuerySet, visao: str, niveis: list[str], pode_financeiro: bool) 
             } if pode_financeiro else {}),
         })
     return saida
+
+
+#: Níveis da unidade: texto lido como número ("Quadra 2" antes de "Quadra 10").
+_ORDEM_NATURAL = {"quadra", "bloco_torre"}
+
+
+def _ordem_do_grupo(dim: dict, nivel: str):
+    """A chave de ordenação de um nível de agrupamento."""
+    if nivel == "faixa":
+        return Case(
+            *[When(faixa=f["chave"], then=Value(i)) for i, f in enumerate(FAIXAS)],
+            default=Value(len(FAIXAS)), output_field=IntegerField(),
+        )
+    if nivel in _ORDEM_NATURAL:
+        return chave_natural(dim["campo"])
+    if dim.get("rotulo_campo"):
+        return NullIf(Lower(dim["rotulo_campo"]), Value(""))
+    if "expressao" in dim:
+        return F(dim["campo"])
+    return NullIf(Lower(Cast(dim["campo"], CharField())), Value(""))
 
 
 def _rotulo_valor(dim: dict, valor) -> str:

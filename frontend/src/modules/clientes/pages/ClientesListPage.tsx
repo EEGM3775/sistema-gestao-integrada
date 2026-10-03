@@ -9,7 +9,9 @@ import type { ClienteFormData } from '@/types'
 import { BarraCarteira } from '../carteira/BarraCarteira'
 import { Grade, montarArvore, type ItemGrade, type NoGrupo } from '../carteira/Grade'
 import { COLUNA_ANCORA, colunasDisponiveis, colunasVisiveis } from '../carteira/colunas'
-import { useCarteira, useGruposCarteira, useLinhasDeGrupos, useOpcoesCarteira } from '../carteira/hooks'
+import {
+  PAGINA_DO_GRUPO, useCarteira, useGruposCarteira, useLinhasDeGrupos, useOpcoesCarteira,
+} from '../carteira/hooks'
 import { usePreferenciasCarteira } from '../carteira/preferencias'
 import type { FiltrosCarteira, LinhaCarteira } from '../carteira/types'
 
@@ -67,9 +69,19 @@ export default function ClientesListPage() {
     return saida
   }, [arvore, abertos])
 
+  // Quantas páginas de cada grupo aberto já foram pedidas. Recomeça quando o
+  // recorte muda (filtro, ordem, visão, agrupamento): a página 3 de outro
+  // critério não é a página 3 deste.
+  const [paginasDoGrupo, setPaginasDoGrupo] = useState<ReadonlyMap<string, number>>(new Map())
+  useEffect(() => { setPaginasDoGrupo(new Map()) }, [visao, filtros, prefs.ordenar, prefs.agrupamento])
+
   const linhasDeGrupo = useLinhasDeGrupos({
-    visao, filtros, ordenar: prefs.ordenar, abertos: folhasAbertas,
+    visao, filtros, ordenar: prefs.ordenar, abertos: folhasAbertas, paginas: paginasDoGrupo,
   })
+
+  const maisDoGrupo = useCallback((chave: string) => {
+    setPaginasDoGrupo(atual => new Map(atual).set(chave, (atual.get(chave) ?? 1) + 1))
+  }, [])
 
   const podeFinanceiro = agrupado ? grupos.podeFinanceiro : lista.podeFinanceiro
   const podeDocumento = agrupado ? grupos.podeDocumento : lista.podeDocumento
@@ -100,10 +112,13 @@ export default function ClientesListPage() {
         }
         carregado.linhas.forEach(linha => saida.push({ tipo: 'linha', linha, nivel: nivel + 1 }))
         if (carregado.total > carregado.linhas.length) {
+          const restantes = carregado.total - carregado.linhas.length
           saida.push({
-            tipo: 'aviso',
-            texto: `Mostrando ${carregado.linhas.length} de ${carregado.total} — refine o filtro para ver o restante.`,
+            tipo: 'mais',
+            chave,
+            texto: `Carregar mais ${Math.min(restantes, PAGINA_DO_GRUPO)} (${carregado.linhas.length} de ${carregado.total})`,
             nivel: nivel + 1,
+            buscando: carregado.buscandoMais,
           })
         }
       }
@@ -242,6 +257,7 @@ export default function ClientesListPage() {
           onReordenar={reordenarColunas}
           onAbrir={(linha: LinhaCarteira) => navigate(`/app/clientes/${linha.clienteId}`)}
           onAlternarGrupo={alternarGrupo}
+          onMaisDoGrupo={maisDoGrupo}
           onFimDaLista={() => { if (!agrupado && lista.temMais && !lista.buscandoMais) lista.proximaPagina() }}
         />
       )}

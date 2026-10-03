@@ -329,6 +329,22 @@ class FeriadosFeedTests(APITestCase):
         municipais = [f for f in feriados if f["extendedProps"]["scope"] == "municipal"]
         self.assertEqual(len(municipais), 1)
         self.assertIn("São Paulo", municipais[0]["title"])
+        self.assertFalse(municipais[0]["extendedProps"]["projetado"])
+
+    def test_municipal_aparece_nos_anos_que_o_dataset_nao_tem(self):
+        """Item 61 — o dataset só tem 2026; a agenda de 2028 também mostra o
+        aniversário da cidade, marcado como projetado (mesma fonte do vencimento)."""
+        Feriado.objects.create(data=date(2028, 1, 1), nome="Confraternização", escopo="nacional")
+        self.user.iam_permissions = ["calendario.evento.view"]
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get("/api/calendar/events/", {
+            "start": "2028-01-01T00:00:00-03:00", "end": "2028-01-31T00:00:00-03:00",
+            "uf": "SP", "ibge": "3550308",
+        })
+        municipais = [e for e in resp.json() if e.get("extendedProps", {}).get("scope") == "municipal"]
+        self.assertEqual([m["start"] for m in municipais], ["2028-01-25"])
+        self.assertTrue(municipais[0]["extendedProps"]["projetado"])
+        self.assertIn("São Paulo", municipais[0]["title"])
 
     @patch("modulocalendar.views.get_holidays", return_value=[])
     def test_mes_sem_feriado_nacional_nao_chama_api_externa(self, mock_holidays):

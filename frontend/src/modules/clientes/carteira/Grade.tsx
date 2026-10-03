@@ -57,13 +57,16 @@ export type ItemGrade =
   | { tipo: 'grupo'; no: NoGrupo; nivel: number; aberto: boolean }
   | { tipo: 'linha'; linha: LinhaCarteira; nivel: number }
   | { tipo: 'aviso'; texto: string; nivel: number }
+  /** O fim do que já desceu de um grupo maior: carrega a próxima página ao
+   *  entrar na tela (rolagem infinita por grupo) e também ao clique. */
+  | { tipo: 'mais'; chave: string; texto: string; nivel: number; buscando: boolean }
 
 const brl = (v: number) =>
   v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
 
 export function Grade({
   itens, colunas, larguras, ordenar, podeFinanceiro, podeDocumento, carregando,
-  onOrdenar, onLargura, onReordenar, onAbrir, onAlternarGrupo, onFimDaLista,
+  onOrdenar, onLargura, onReordenar, onAbrir, onAlternarGrupo, onFimDaLista, onMaisDoGrupo,
 }: {
   itens: ItemGrade[]
   colunas: ColunaDef[]
@@ -78,6 +81,7 @@ export function Grade({
   onAbrir: (linha: LinhaCarteira) => void
   onAlternarGrupo: (no: NoGrupo) => void
   onFimDaLista: () => void
+  onMaisDoGrupo: (chave: string) => void
 }) {
   const refRolagem = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
@@ -306,6 +310,15 @@ export function Grade({
                 />
               )
             }
+            if (item.tipo === 'mais') {
+              return (
+                <MaisDoGrupo
+                  key={`m-${item.chave}`}
+                  item={item} topo={topo}
+                  onCarregar={() => onMaisDoGrupo(item.chave)}
+                />
+              )
+            }
             if (item.tipo === 'aviso') {
               return (
                 <div
@@ -478,11 +491,43 @@ function LinhaGrupo({
 }
 
 const CORES_FAIXA: Record<string, [string, string]> = {
+  sem_parcelas: ['var(--surface-2)', 'var(--ink-3)'],
   em_dia: ['var(--good-soft)', 'var(--good-ink)'],
   d1_30: ['var(--accent-soft)', 'var(--accent-ink)'],
   d31_60: ['var(--accent-soft)', 'var(--accent-ink)'],
   d61_90: ['var(--danger-soft)', 'var(--danger-ink)'],
   d90_mais: ['var(--danger-soft)', 'var(--danger-ink)'],
+}
+
+/** Montado só quando visível (a grade é virtualizada): aparecer na tela já é o
+ *  pedido da próxima página do grupo. O botão fica para quem prefere clicar. */
+function MaisDoGrupo({ item, topo, onCarregar }: {
+  item: Extract<ItemGrade, { tipo: 'mais' }>
+  topo: number
+  onCarregar: () => void
+}) {
+  const { buscando } = item
+  const carregar = useRef(onCarregar)
+  useEffect(() => { carregar.current = onCarregar })
+  useEffect(() => {
+    if (!buscando) carregar.current()
+  }, [buscando])
+  return (
+    <div style={{
+      position: 'absolute', top: topo, height: ALTURA_LINHA, left: 0, right: 0,
+      display: 'flex', alignItems: 'center', paddingLeft: 18 + item.nivel * 18,
+    }}>
+      <button
+        onClick={onCarregar} disabled={buscando}
+        style={{
+          border: '1px solid var(--line)', background: 'var(--surface)', borderRadius: 'var(--r-sm)',
+          padding: '4px 10px', fontSize: 12, color: 'var(--ink-2)', cursor: buscando ? 'wait' : 'pointer',
+        }}
+      >
+        {buscando ? 'Carregando mais…' : item.texto}
+      </button>
+    </div>
+  )
 }
 
 function LinhaCliente({
@@ -569,11 +614,15 @@ function LinhaCliente({
  */
 function PilulaSituacao({ linha, podeFinanceiro }: { linha: LinhaCarteira; podeFinanceiro: boolean }) {
   const [fundo, cor] = CORES_FAIXA[linha.faixa] ?? CORES_FAIXA.em_dia
-  const detalhe = podeFinanceiro && !linha.adimplente
-    ? `${linha.parcelasAtraso} parcela(s) em atraso · ${Number(linha.valorAtraso ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} · ${linha.diasAtraso} dias`
-    : podeFinanceiro
-      ? 'Sem parcelas vencidas'
-      : 'Valores exigem permissão de cobranças'
+  // Sem parcela lançada não é adimplente: é venda ainda sem carnê (item 60).
+  const semParcelas = linha.adimplente === null
+  const detalhe = semParcelas
+    ? 'Nenhuma parcela lançada no financeiro — gere o carnê para acompanhar o pagamento'
+    : podeFinanceiro && !linha.adimplente
+      ? `${linha.parcelasAtraso} parcela(s) em atraso · ${Number(linha.valorAtraso ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} · ${linha.diasAtraso} dias`
+      : podeFinanceiro
+        ? 'Sem parcelas vencidas'
+        : 'Valores exigem permissão de cobranças'
 
   return (
     <span
@@ -584,7 +633,7 @@ function PilulaSituacao({ linha, podeFinanceiro }: { linha: LinhaCarteira; podeF
         fontSize: 10, fontWeight: 700, lineHeight: '15px', whiteSpace: 'nowrap',
       }}
     >
-      {linha.adimplente ? 'Adimplente' : 'Inadimplente'}
+      {semParcelas ? 'Sem parcelas' : linha.adimplente ? 'Adimplente' : 'Inadimplente'}
     </span>
   )
 }

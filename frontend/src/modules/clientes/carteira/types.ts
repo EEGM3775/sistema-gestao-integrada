@@ -9,7 +9,7 @@
 
 export type Visao = 'clientes' | 'unidades'
 
-export type FaixaChave = 'em_dia' | 'd1_30' | 'd31_60' | 'd61_90' | 'd90_mais'
+export type FaixaChave = 'sem_parcelas' | 'em_dia' | 'd1_30' | 'd31_60' | 'd61_90' | 'd90_mais'
 
 export interface LinhaCarteira {
   tipo: 'cliente' | 'unidade'
@@ -37,8 +37,9 @@ export interface LinhaCarteira {
   condicaoPagamento?: string
   unidadesTotal: number
   valorVenda: string | null
-  /** Situação — sempre presente, é a pílula que todos veem. */
-  adimplente: boolean
+  /** Situação — sempre presente, é a pílula que todos veem. `null` = sem
+   *  parcela lançada: não há adimplência a afirmar (faixa `sem_parcelas`). */
+  adimplente: boolean | null
   faixa: FaixaChave
   /** Números — só com `erp.cobranca.view`. */
   parcelasAtraso?: number
@@ -147,7 +148,8 @@ export interface FinanceiroCliente {
     valorPago: string
     parcelasAtraso: number
     parcelasTotal: number
-    adimplente: boolean
+    /** `null` quando não há parcela lançada (cancelada não conta). */
+    adimplente: boolean | null
   }
   parcelas: ParcelaCliente[]
 }

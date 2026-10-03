@@ -157,6 +157,41 @@ class CarteiraVisoesTests(CarteiraBaseTestCase):
         # A parcela a vencer entra no aberto, não no atraso.
         self.assertEqual(Decimal(ana["valorAberto"]), Decimal("2400.00"))
 
+    def test_venda_sem_parcela_nao_e_adimplente(self):
+        """Item 60 — sem carnê gerado não há adimplência a afirmar."""
+        carla = Cliente.objects.create(
+            tenant=self.tenant, nome_completo="Carla Sem Carnê", cpf_cnpj="11144477735",
+            email="carla@exemplo.com", telefone="48999990003", data_nascimento=date(1990, 1, 1),
+            cidade="Florianópolis", estado="SC",
+        )
+        lote2 = Unidade.objects.create(
+            tenant=self.tenant, empreendimento=self.emp2, quadra="3", lote="02",
+            valor_base=Decimal("1"), endereco="Rua B, 20",
+        )
+        ClienteEmpreendimento.objects.create(
+            tenant=self.tenant, cliente=carla, empreendimento=self.emp2, unidade=lote2,
+            data_compra=date(2026, 9, 1), valor_tabela=Decimal("1"), valor_compra=Decimal("1"),
+        )
+        # Parcela cancelada também não conta como histórico de pagamento.
+        ContaReceber.objects.create(
+            tenant=self.tenant, cliente=carla, empreendimento=self.emp2, descricao="Cancelada",
+            valor=Decimal("10.00"), data_vencimento=self.hoje - timedelta(days=5),
+            status=StatusConta.CANCELADO,
+        )
+        self.autenticar()
+        r = self.client.get("/api/clientes/carteira/", {"visao": "clientes"})
+        linha = next(l for l in r.data["results"] if l["nome"] == "Carla Sem Carnê")
+        self.assertIsNone(linha["adimplente"])
+        self.assertEqual(linha["faixa"], "sem_parcelas")
+
+        filtro = self.client.get("/api/clientes/carteira/", {"visao": "clientes", "faixa": "sem_parcelas"})
+        self.assertEqual([l["nome"] for l in filtro.data["results"]], ["Carla Sem Carnê"])
+        em_dia = self.client.get("/api/clientes/carteira/", {"visao": "clientes", "faixa": "em_dia"})
+        self.assertNotIn("Carla Sem Carnê", [l["nome"] for l in em_dia.data["results"]])
+
+        ficha = self.client.get(f"/api/clientes/{carla.pk}/financeiro/")
+        self.assertIsNone(ficha.data["resumo"]["adimplente"])
+
     def test_titulo_quitado_nao_conta_como_aberto(self):
         self.autenticar()
         r = self.client.get("/api/clientes/carteira/", {"visao": "clientes"})
@@ -271,6 +306,84 @@ class CarteiraFiltrosTests(CarteiraBaseTestCase):
         r = self.client.get("/api/clientes/carteira/", {"visao": "unidades", "busca": "12"})
         self.assertEqual(r.data["count"], 2)
 
+    def test_busca_pela_unidade_como_a_tela_escreve(self):
+        """Item do dono (03/10/2026): "QD 14" não achava nada."""
+        self.autenticar()
+        for busca, esperado in (
+            ("QD 12", ["QD 12 · LT 05", "QD 12 · LT 06"]),
+            ("QD 12 · LT 05", ["QD 12 · LT 05"]),
+            ("qd12 lt5", ["QD 12 · LT 05"]),
+            ("quadra 12 lote 6", ["QD 12 · LT 06"]),
+            ("Ana LT 06", ["QD 12 · LT 06"]),
+            ("5", ["QD 12 · LT 05"]),
+        ):
+            r = self.client.get("/api/clientes/carteira/", {"visao": "unidades", "busca": busca})
+            self.assertEqual(sorted(l["unidade"] for l in r.data["results"]), esperado, busca)
+
+    def test_busca_por_unidade_de_predio_e_de_casa(self):
+        """Vertical e casas: o bloco é texto livre ("Torre A" ou "B"), casa e
+        sala moram no número."""
+        def vender(nome, cpf, **unidade):
+            cliente = Cliente.objects.create(
+                tenant=self.tenant, nome_completo=nome, cpf_cnpj=cpf, email=f"{cpf}@x.com",
+                telefone="48999990009", data_nascimento=date(1990, 1, 1), cidade="Itajaí", estado="SC",
+            )
+            un = Unidade.objects.create(
+                tenant=self.tenant, empreendimento=self.emp2, valor_base=Decimal("1"), **unidade,
+            )
+            ClienteEmpreendimento.objects.create(
+                tenant=self.tenant, cliente=cliente, empreendimento=self.emp2, unidade=un,
+                data_compra=date(2026, 1, 1), valor_tabela=Decimal("1"), valor_compra=Decimal("1"),
+            )
+        vender("Davi Torre", "11144477735", bloco_torre="Torre A", andar="3", apto="302")
+        vender("Eva Bloco", "52998224726", bloco_torre="B", andar="12", apto="1201")
+        vender("Fábio Casa", "52998224727", apto="Casa 7")
+        self.autenticar()
+        for busca, esperado in (
+            ("Torre A apto 302", ["Davi Torre"]),
+            ("torre a", ["Davi Torre"]),
+            ("BL B AP 1201", ["Eva Bloco"]),
+            ("bla", ["Davi Torre"]),  # bloco e torre são o mesmo nível
+            ("BLB", ["Eva Bloco"]),
+            ("3º andar", ["Davi Torre"]),
+            ("pav 12", ["Eva Bloco"]),
+            ("302", ["Davi Torre"]),
+            ("casa 7", ["Fábio Casa"]),
+            ("cs07", ["Fábio Casa"]),
+        ):
+            r = self.client.get("/api/clientes/carteira/", {"visao": "unidades", "busca": busca})
+            self.assertEqual(sorted(l["nome"] for l in r.data["results"]), esperado, busca)
+
+    def test_busca_pelo_nome_do_empreendimento_com_numero(self):
+        """"Loteamento Demo 1" não pode virar "Loteamento" + "Demo" + quadra 1."""
+        self.emp.empreendimento = "Loteamento Demo 1"
+        self.emp.save()
+        self.emp2.empreendimento = "Loteamento Demo 10"
+        self.emp2.save()
+        self.autenticar()
+        r = self.client.get("/api/clientes/carteira/", {"visao": "unidades", "busca": "Loteamento Demo 1"})
+        self.assertEqual(sorted(l["unidade"] for l in r.data["results"]), ["QD 12 · LT 05", "QD 12 · LT 06"])
+        r = self.client.get("/api/clientes/carteira/", {"visao": "unidades", "busca": "demo 10 qd 3"})
+        self.assertEqual([l["unidade"] for l in r.data["results"]], ["QD 3 · LT 01"])
+
+    def test_busca_casa_pelo_comeco_da_palavra(self):
+        """"Ro" acha Rocha, não Ribei-ro (mesma régua do listão, D242)."""
+        self.ana.nome_completo = "Ana Ribeiro"
+        self.ana.save()
+        self.bruno.nome_completo = "Bruno Rocha"
+        self.bruno.save()
+        self.autenticar()
+        for visao in ("clientes", "unidades"):
+            r = self.client.get("/api/clientes/carteira/", {"visao": visao, "busca": "Ro"})
+            self.assertEqual({l["nome"] for l in r.data["results"]}, {"Bruno Rocha"}, visao)
+        r = self.client.get("/api/clientes/carteira/", {"visao": "clientes", "busca": "ribe"})
+        self.assertEqual([l["nome"] for l in r.data["results"]], ["Ana Ribeiro"])
+
+    def test_busca_por_unidade_na_visao_clientes_nao_duplica(self):
+        self.autenticar()
+        r = self.client.get("/api/clientes/carteira/", {"visao": "clientes", "busca": "QD 12"})
+        self.assertEqual([l["nome"] for l in r.data["results"]], ["Ana Souza"])
+
     def test_filtro_por_empreendimento_na_visao_clientes_nao_duplica(self):
         """Ana comprou dois lotes no mesmo empreendimento — tem de vir UMA vez."""
         self.autenticar()
@@ -309,6 +422,18 @@ class CarteiraGruposTests(CarteiraBaseTestCase):
         combinacoes = {tuple(g["rotulos"]) for g in r.data["grupos"]}
         self.assertIn(("Residencial Alfa", "12"), combinacoes)
         self.assertIn(("Residencial Beta", "3"), combinacoes)
+
+    def test_grupos_em_ordem_de_leitura(self):
+        """Quadra 3 antes da 12 (era texto: "12" < "3"); empreendimento pelo nome."""
+        self.emp.empreendimento = "Zeta"
+        self.emp.save()
+        self.autenticar()
+        r = self.client.get("/api/clientes/carteira/grupos/", {"visao": "unidades", "por": "quadra"})
+        self.assertEqual([g["chaves"][0] for g in r.data["grupos"]], ["3", "12"])
+        r = self.client.get("/api/clientes/carteira/grupos/", {"visao": "unidades", "por": "empreendimento"})
+        self.assertEqual([g["rotulos"][0] for g in r.data["grupos"]], ["Residencial Beta", "Zeta"])
+        r = self.client.get("/api/clientes/carteira/grupos/", {"visao": "unidades", "por": "faixa"})
+        self.assertEqual([g["chaves"][0] for g in r.data["grupos"]], ["em_dia", "d31_60"])
 
     def test_agrupa_por_faixa_de_atraso(self):
         self.autenticar()

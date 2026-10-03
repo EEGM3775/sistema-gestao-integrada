@@ -850,7 +850,8 @@ mistura ao loteamento. Cidade/UF saem do **empreendimento** (campos próprios, n
 do endereço em texto livre) — é a cidade do imóvel, que não se confunde com a do
 cliente.
 
-**Adimplência e LGPD.** A pílula *adimplente/inadimplente* aparece para quem
+**Adimplência e LGPD.** A pílula *adimplente/inadimplente* (ou *sem parcelas*, quando a
+venda ainda não tem carnê — não há adimplência a afirmar) aparece para quem
 enxerga o cadastro; **parcelas, valores e dias de atraso** exigem
 `erp.cobranca.view` além de `cadastro.cliente.view` (gate de duas pontas, o
 mesmo das divergências Asaas) e nem saem do backend sem ela — a tela nunca

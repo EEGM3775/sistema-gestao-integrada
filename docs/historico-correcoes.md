@@ -10,6 +10,53 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D253 — grupo da carteira parava em 200 linhas · ✅ corrigido 03/10/2026
+
+Revisão do dono: agrupada por empreendimento, a carteira mostrava "Mostrando 200 de 534 — refine o
+filtro para ver o restante", sem como ver o resto. O grupo aberto pedia só a 1ª página. **Correção:**
+cada grupo rola infinito como a lista plana — a página seguinte desce quando o fim do grupo entra na
+tela (e por botão "Carregar mais"), cada página é uma consulta própria no cache, e a contagem recomeça
+quando filtro, ordem, visão ou agrupamento mudam.
+
+### D254 — a busca da carteira não achava "QD 14" · ✅ corrigido 03/10/2026
+
+Revisão do dono. A busca comparava a frase inteira com cada campo, e a quadra guarda "14", não
+"QD 14" — que é como a própria tela escreve a unidade. **Correção:** a busca é por palavra (todas casam,
+cada uma em algum campo) e entende o endereço de qualquer tipo de empreendimento: quadra/lote
+(`QD 14 LT 05`, `QD14 LT5`, `quadra 14 lote 05`), bloco/torre/edifício (`Torre A`, `BL B`, `BLA`),
+andar (`3º andar`, `pav 12`) e apto/casa/sala/loja/box/vaga/nº (`apto 302`, `casa 7`, `CS07`). Bloco e
+número são texto livre, então o valor casa no fim do campo com rótulo opcional ("A" acha "Torre A",
+"7" acha "Casa 7"), sem acento, caixa ou zero à esquerda. Número curto solto procura só quadra, lote e
+apto — no CPF ele casaria com quase toda a carteira. Vale nas duas visões (Clientes e Unidades).
+No reteste, dois casos a mais: "Loteamento Demo 1" trazia a QD 1 de todo "Loteamento Demo" (o "1"
+virava quadra) — agora as palavras soltas são tentadas antes **como frase** (palavras inteiras: "Demo 1"
+não acha "Demo 10"); e "Ro" trazia "Ribei**ro**" — agora o texto casa pelo **começo** de uma palavra,
+a régua do D242 (número segue casando em qualquer ponto: CPF, telefone, CEP).
+
+### D255 — grupos em ordem de texto: depois da quadra 19 vinha a 2 · ✅ corrigido 03/10/2026
+
+Revisão do dono. O agrupamento ordenava pelo valor cru: a quadra é texto ("19" < "2") e o
+empreendimento saía pela ordem de cadastro. **Correção:** cada nível tem a sua chave de ordem —
+quadra/lote/bloco na ordem natural da lista (`chave_natural`), nomes em ordem alfabética, faixa e status
+na ordem declarada, "sem informação" por último. Na carteira de clientes e no listão do ERP (Contas a
+receber, a pagar e Boletos), que tinham o mesmo defeito.
+
+### D250 — cliente sem parcela nenhuma aparecia "Adimplente" · ✅ corrigido 01/10/2026
+
+Item 60 do dono. A pílula da carteira e o resumo da aba Financeiro diziam `adimplente = parcelas em
+atraso == 0`, e quem não tem parcela tem zero em atraso: venda sem carnê gerado afirmava um histórico
+de pagamento que não existe. **Correção:** a carteira anota `tem_parcelas` (cancelada não conta) e
+ganha a faixa **Sem parcelas** (filtro, agrupamento e pílula neutra); `adimplente` vem `null` nesse
+caso, na grade e na ficha. "Em dia" passa a ser só quem tem parcela e nada vencido.
+
+### D251 — a agenda só mostrava feriado municipal dos anos do dataset · ✅ corrigido 01/10/2026
+
+Item 61 do dono ("só aparece os feriados municipais do ano corrente"). O feed da agenda lia o
+municipal direto da tabela `Feriado`, que só tem os anos publicados (2025–2026); o vencimento do
+boleto já enxergava os outros anos pela projeção do D247. **Correção:** a agenda pergunta ao mesmo
+`FeriadosMunicipais` — publicado quando há, projetado pela regra nos demais anos — e o projetado vem
+marcado (`projetado`) e diz na descrição que é projeção a confirmar na prefeitura.
+
 ### D246 — boleto do Asaas nunca mostrava a linha digitável · ✅ corrigido 01/10/2026
 
 Item 55 do dono, no reteste: "Emitido · Asaas · vence 01/01/2030 · Linha digitável ainda não

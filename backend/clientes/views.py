@@ -160,7 +160,12 @@ class ClienteViewSet(QuotaEnforcedMixin, TenantScopedViewSetMixin, viewsets.Mode
                 'valorPago': str(pago),
                 'parcelasAtraso': em_atraso,
                 'parcelasTotal': len(linhas),
-                'adimplente': em_atraso == 0,
+                # Item 60: sem parcela (cancelada não conta) não há adimplência
+                # a afirmar — `None`, a mesma régua da pílula da carteira.
+                'adimplente': (
+                    em_atraso == 0
+                    if any(l['status'] != StatusConta.CANCELADO for l in linhas) else None
+                ),
             },
             'parcelas': linhas,
         })

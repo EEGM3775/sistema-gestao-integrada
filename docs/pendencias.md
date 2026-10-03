@@ -765,6 +765,15 @@ Decisão do dono, com o número novo na mão. Não trava nada hoje.
 
 ## 🟡 Médias
 
+### D252 — filtro de situação das unidades mostrou "QD 27 · LT 08" disponível · 🟡 aberto 01/10/2026
+
+Item 59 do dono: filtrando Reservadas ou Vendidas na aba Unidades, aparecia sempre a QD 27 · LT 08
+disponível. **Não reproduzido:** a API filtra certo em todos os empreendimentos (inclusive com quadra,
+busca, ordenação e todas as páginas), e no navegador — troca rápida de filtro e "Carregar mais" até o
+fim — nenhuma disponível aparece. Há duas QD 27 · LT 08 disponíveis (Loteamento Demo 1 e 3).
+**Falta:** qual empreendimento, o passo a passo e o print. Suspeita a conferir: o `useUnidades` não
+descarta resposta atrasada de um filtro anterior.
+
 ### D245 — segunda via pelo CNAB deixa o boleto antigo pagável no banco · 🟡 aberto 01/10/2026
 
 Visto na revisão do item 57. A remessa só leva o comando de **entrada** (01): o SGI não gera instrução

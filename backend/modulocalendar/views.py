@@ -17,6 +17,7 @@ from nucleo import geo
 from modulocrm.models import Interaction
 from modulodiario.models import DiarioObra
 
+from .feriados import FeriadosMunicipais
 from .models import CalendarEvent, EventReminder, Feriado, FeriadoSync
 from .serializers import CalendarEventSerializer
 from .services import get_holidays
@@ -322,24 +323,17 @@ class CalendarEventViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
         filtro = Q(escopo='nacional')
         if uf:
             filtro |= Q(escopo='estadual', uf=uf)
-        if ibge:
-            filtro |= Q(escopo='municipal', ibge=ibge)
         feriados = list(Feriado.objects.filter(filtro, data__gte=inicio, data__lte=fim))
 
         eventos = []
         for feriado in feriados:
             local = self._feriado_local(feriado)
-            eventos.append({
-                'title': f"{feriado.nome} · {local}",
-                'start': feriado.data.isoformat(),
-                'allDay': True,
-                'extendedProps': {
-                    'type': 'holiday',
-                    'scope': feriado.escopo,  # nacional | estadual | municipal
-                    'local': local,
-                    'description': f"Feriado {feriado.get_escopo_display()} — {local}",
-                },
-            })
+            eventos.append(self._evento_feriado(
+                feriado.nome, feriado.data, feriado.escopo, local,
+                f"Feriado {feriado.get_escopo_display()} — {local}",
+            ))
+        if ibge:
+            eventos.extend(self._feriados_municipais(inicio, fim, ibge))
 
         # Plano B: a TABELA não tem o nacional daqueles anos (sync ainda não
         # rodou, ou rodou sem cobrir o ano que se está olhando) → Nager.Date,
@@ -353,6 +347,54 @@ class CalendarEventViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
         # do ano, em toda navegação. Era esta a demora que o dono via na tela.
         if not self._tem_nacional_na_tabela(inicio, fim):
             eventos.extend(self._feriados_nager(start_dt, end_dt))
+        return eventos
+
+    @staticmethod
+    def _evento_feriado(nome, dia, escopo, local, descricao, projetado=False):
+        return {
+            'title': f"{nome} · {local}",
+            'start': dia.isoformat(),
+            'allDay': True,
+            'extendedProps': {
+                'type': 'holiday',
+                'scope': escopo,  # nacional | estadual | municipal
+                'local': local,
+                'description': descricao,
+                'projetado': projetado,
+            },
+        }
+
+    def _feriados_municipais(self, inicio, fim, ibge):
+        """Os municipais da janela, publicados **ou projetados** (item 61).
+
+        O dataset público só tem alguns anos de cada município (hoje 2025–2026);
+        ler só a tabela deixava a agenda sem feriado municipal em 2027 em diante,
+        enquanto o vencimento do boleto já os enxergava pela projeção. A agenda
+        passa a perguntar ao mesmo `FeriadosMunicipais` — os dois nunca discordam
+        sobre se o dia é feriado na cidade — e o projetado diz que é projeção.
+        """
+        municipio = (
+            Feriado.objects.filter(escopo='municipal', ibge=ibge)
+            .values('cidade', 'uf').first()
+        )
+        if not municipio:
+            return []
+        local = (
+            f"{municipio['cidade']}/{municipio['uf']}" if municipio['cidade']
+            else (municipio['uf'] or 'Município')
+        )
+        fonte = FeriadosMunicipais(ibge)
+        eventos = []
+        for ano in range(inicio.year, fim.year + 1):
+            do_ano = fonte.do_ano(ano)
+            projetado = ano in fonte.projetados
+            for dia, nome in sorted(do_ano.items()):
+                if not inicio <= dia <= fim:
+                    continue
+                descricao = f"Feriado Municipal — {local}"
+                if projetado:
+                    descricao += " (projetado pela data dos anos publicados — confirme na prefeitura)"
+                eventos.append(self._evento_feriado(nome, dia, 'municipal', local, descricao, projetado))
         return eventos
 
     @staticmethod

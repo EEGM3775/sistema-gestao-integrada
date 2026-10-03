@@ -20,9 +20,9 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from django.db.models import (
-    Case, CharField, Count, DecimalField, F, Q, QuerySet, Sum, Value, When,
+    Case, CharField, Count, DecimalField, F, IntegerField, Q, QuerySet, Sum, Value, When,
 )
-from django.db.models.functions import Coalesce, TruncMonth
+from django.db.models.functions import Coalesce, Lower, NullIf, TruncMonth
 from django.utils import timezone
 from rest_framework import filters
 
@@ -217,6 +217,20 @@ def totais(qs: QuerySet, fonte: Fonte, hoje: date) -> dict:
     return _sem_prefixo(qs.order_by().aggregate(**_somas(fonte, hoje)))
 
 
+def _ordem_do_grupo(dim: Dimensao):
+    """A chave de ordenação de um nível de agrupamento."""
+    if dim.rotulos:
+        return Case(
+            *[When(**{dim.campo: chave}, then=Value(i)) for i, chave in enumerate(dim.rotulos)],
+            default=Value(len(dim.rotulos)), output_field=IntegerField(),
+        )
+    if dim.campo.endswith(("__quadra", "__lote", "__bloco_torre")):
+        return chave_natural(dim.campo)
+    if dim.rotulo_campo:
+        return NullIf(Lower(dim.rotulo_campo), Value(""))
+    return F(dim.campo)
+
+
 def agrupar(qs: QuerySet, fonte: Fonte, niveis: list[str], hoje: date, teto_niveis: int) -> list[dict]:
     """Subtotais por combinação de níveis, calculados no banco.
 
@@ -232,7 +246,14 @@ def agrupar(qs: QuerySet, fonte: Fonte, niveis: list[str], hoje: date, teto_nive
     rotulos_campos = [dims[n].rotulo_campo for n in validos]
     agrupamento = campos + [c for c in rotulos_campos if c]
 
-    linhas = qs.order_by().values(*agrupamento).annotate(**_somas(fonte, hoje)).order_by(*agrupamento)
+    # A ordem de quem lê: quadra "2" antes da "10" (é texto), nomes em ordem
+    # alfabética, faixa e status na ordem em que foram declarados; vazio no fim.
+    ordens = {f"_ordem_{i}": _ordem_do_grupo(dims[n]) for i, n in enumerate(validos)}
+    linhas = (
+        qs.order_by().annotate(**ordens).values(*agrupamento, *ordens)
+        .annotate(**_somas(fonte, hoje))
+        .order_by(*[F(alias).asc(nulls_last=True) for alias in ordens], *agrupamento)
+    )
 
     saida = []
     for linha in linhas:
