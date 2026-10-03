@@ -71,7 +71,17 @@ class BuscaSemAcento(filters.SearchFilter):
       daria um casamento assimétrico — pior que não normalizar.
 
     Sobra o caso sem prefixo, que é `icontains` e é ~toda busca do produto.
+
+    **Campos que dependem de quem pergunta.** Se a view define
+    `campos_de_busca(request)`, é ela quem diz onde procurar — buscar num campo é
+    lê-lo, então documento só entra na lista para quem pode desmascará-lo (D257).
+    Sem o método, valem os `search_fields` de sempre.
     """
+
+    def get_search_fields(self, view, request):
+        if hasattr(view, "campos_de_busca"):
+            return view.campos_de_busca(request)
+        return super().get_search_fields(view, request)
 
     def construct_search(self, field_name, queryset=None):
         original = super().construct_search(field_name, queryset)

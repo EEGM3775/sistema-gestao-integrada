@@ -139,6 +139,8 @@ const EMPTY = (clienteId: number): FormState => ({
   indice_correcao: '',
   periodicidade_correcao: 'anual',
   data_base_correcao: '',
+  multa_atraso_percentual: '',
+  juros_mora_mensal_percentual: '',
 })
 
 function toForm(a: ClienteEmpreendimento): FormState {
@@ -153,6 +155,8 @@ function toForm(a: ClienteEmpreendimento): FormState {
     indice_correcao: a.indice_correcao ?? '',
     periodicidade_correcao: a.periodicidade_correcao ?? 'anual',
     data_base_correcao: a.data_base_correcao ?? '',
+    multa_atraso_percentual: a.multa_atraso_percentual ?? '',
+    juros_mora_mensal_percentual: a.juros_mora_mensal_percentual ?? '',
   }
 }
 
@@ -367,6 +371,9 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
         meios: form.meios.map(meioParaApi),
         indice_correcao: form.indice_correcao === '' ? null : form.indice_correcao,
         data_base_correcao: form.data_base_correcao || null,
+        // Em branco, o backend aplica o padrão do contrato.
+        multa_atraso_percentual: form.multa_atraso_percentual || undefined,
+        juros_mora_mensal_percentual: form.juros_mora_mensal_percentual || undefined,
       } as unknown as ClienteEmpreendimentoFormData)
       onClose()
     } catch (err) {
@@ -772,6 +779,30 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
                   </p>
                 </div>
               )}
+            </>
+          )}
+
+          {temPrazo && (
+            <>
+              <SectionTitle>Atraso</SectionTitle>
+              <p style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: -6 }}>
+                O que a segunda via de uma parcela vencida soma ao saldo: multa uma vez e juros por dia de atraso.
+                Em branco, vale o padrão (2% de multa e 1% ao mês). Venda a consumidor: multa de até 2%.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label style={labelCls}>Multa por atraso (%)</label>
+                  <input style={inputCls} inputMode="decimal" placeholder="2,00" value={form.multa_atraso_percentual.replace('.', ',')}
+                    onChange={e => set('multa_atraso_percentual', e.target.value.replace(',', '.').replace(/[^0-9.]/g, ''))} />
+                  <FieldError msg={fieldErrors.multa_atraso_percentual} />
+                </div>
+                <div>
+                  <label style={labelCls}>Juros de mora (% ao mês)</label>
+                  <input style={inputCls} inputMode="decimal" placeholder="1,00" value={form.juros_mora_mensal_percentual.replace('.', ',')}
+                    onChange={e => set('juros_mora_mensal_percentual', e.target.value.replace(',', '.').replace(/[^0-9.]/g, ''))} />
+                  <FieldError msg={fieldErrors.juros_mora_mensal_percentual} />
+                </div>
+              </div>
             </>
           )}
 

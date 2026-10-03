@@ -357,16 +357,22 @@ def vencimento_bancario(conta_receber):
     return ajuste_da_conta(conta_receber).explicar(conta_receber.data_vencimento)
 
 
-def gerar_cobranca_asaas(conta_receber):
+def gerar_cobranca_asaas(conta_receber, vencimento_pedido=None):
     """
-    Cria a cobrança no Asaas para uma `ContaReceber` e grava/atualiza o
-    `Boleto` correspondente (status `EMITIDO`, `gateway_id`, `url_pdf`,
-    `linha_digitavel`). Idempotente por conta: reaproveita o `Boleto`
-    existente em vez de duplicar a cobrança no gateway.
+    Cria a cobrança no Asaas para uma `ContaReceber` e grava o `Boleto`
+    correspondente (status `EMITIDO`, `gateway_id`, `url_pdf`,
+    `linha_digitavel`).
 
-    O `dueDate` enviado é o **dia útil bancário** (ver `vencimento_bancario`), e
-    é ele que fica gravado em `Boleto.data_vencimento`: o boleto e o gateway
-    contam a mesma história, e o título segue com a data do contrato.
+    **O plano é o da prévia** (`segunda_via.planejar`): a data sai ajustada para
+    o dia útil, e título vencido leva multa e juros do contrato até ela. O que a
+    tela mostrou é o que o boleto carrega.
+
+    **Idempotente por conta:** se já existe um boleto ativo com a mesma data e o
+    mesmo valor, é ele que volta — clique duplo ou reprocessamento da task não
+    duplicam a cobrança no gateway. Com data ou valor diferentes é **segunda
+    via**: o boleto anterior é cancelado no Asaas antes do novo nascer, para o
+    cliente nunca ter dois boletos válidos da mesma parcela. Boleto pago ou
+    cancelado não conta — a conta parcialmente paga ganha boleto do que falta.
 
     Se o Asaas recusar, o erro é PERSISTIDO num `Boleto` status ERRO (com os
     códigos/mensagens do gateway) para a UI mostrar — não fica invisível. Erro
@@ -374,18 +380,24 @@ def gerar_cobranca_asaas(conta_receber):
     indisponibilidade (5xx/rede) → propaga `AsaasAPIError` (a task reprocessa).
     """
     from moduloerp.models import Boleto  # import tardio: evita ciclo de apps
+    from .segunda_via import boleto_ativo, planejar
 
-    boleto_existente = conta_receber.boletos.filter(gateway_id__isnull=False).exclude(gateway_id='').first()
-    if boleto_existente:
-        return boleto_existente
+    plano = planejar(conta_receber, vencimento_pedido)
+    vencimento = plano['vencimento_bancario']
+    motivo_do_ajuste = plano['motivo_ajuste']
+    valor = plano['total']
 
-    vencimento, motivo_do_ajuste = vencimento_bancario(conta_receber)
+    anterior = boleto_ativo(conta_receber)
+    if anterior and anterior.data_vencimento == vencimento and anterior.valor == valor:
+        return anterior
     try:
+        if anterior:
+            cancelar_cobranca_asaas(anterior)
         customer_id = garantir_customer_asaas(conta_receber.cliente)
         client = AsaasClient()
         pagamento = client.criar_payment(
             customer_id=customer_id,
-            valor=conta_receber.saldo_aberto,
+            valor=valor,
             vencimento=vencimento,
             descricao=conta_receber.descricao,
             external_reference=conta_receber.conta_receber_id,
@@ -398,15 +410,20 @@ def gerar_cobranca_asaas(conta_receber):
             raise CobrancaRejeitada(str(exc), payload=getattr(exc, 'payload', None), status_code=status_code) from exc
         raise  # 5xx/rede: transitório → a task faz retry
 
+    linha = _linha_digitavel_do_asaas(client, pagamento.get('id'))
     boleto = Boleto.objects.create(
         tenant=conta_receber.tenant,
         conta_receber=conta_receber,
         status=Boleto.StatusBoleto.EMITIDO,
-        valor=conta_receber.saldo_aberto,
+        valor=valor,
+        valor_multa=plano['multa'],
+        valor_juros=plano['juros'],
         data_vencimento=vencimento,
         gateway_id=pagamento.get('id', ''),
         url_pdf=pagamento.get('bankSlipUrl') or pagamento.get('invoiceUrl') or '',
-        linha_digitavel=pagamento.get('identificationField') or '',
+        linha_digitavel=linha.get('linha_digitavel', ''),
+        codigo_barras=linha.get('codigo_barras', ''),
+        nosso_numero=linha.get('nosso_numero') or pagamento.get('nossoNumero') or '',
         dados_retorno_api={
             'emissao': pagamento,
             # Por que a data do boleto difere da do título — a resposta fica
@@ -416,9 +433,36 @@ def gerar_cobranca_asaas(conta_receber):
                 'bancario': vencimento.isoformat(),
                 'motivo': motivo_do_ajuste,
             }} if motivo_do_ajuste else {}),
+            **({'segunda_via': {
+                'substitui_boleto': anterior.boleto_id if anterior else None,
+                'dias': plano['dias_encargos'],
+                'multa_percentual': str(plano['multa_percentual']),
+                'juros_mes_percentual': str(plano['juros_mes_percentual']),
+            }} if plano['multa'] or plano['juros'] or anterior else {}),
         },
     )
     return boleto
+
+
+def _linha_digitavel_do_asaas(client, payment_id) -> dict:
+    """Linha digitável, código de barras e nosso número — ou `{}` se não vier.
+
+    Boleto emitido sem linha digitável ainda é boleto (o PDF existe); por isso
+    a falha aqui não derruba a emissão: a verificação ao abrir o documento
+    pergunta de novo.
+    """
+    if not payment_id:
+        return {}
+    try:
+        resposta = client.buscar_linha_digitavel(payment_id) or {}
+    except AsaasAPIError as exc:
+        logger.warning("Asaas não deu a linha digitável de %s: %s", payment_id, exc)
+        return {}
+    return {
+        'linha_digitavel': resposta.get('identificationField') or '',
+        'codigo_barras': resposta.get('barCode') or '',
+        'nosso_numero': resposta.get('nossoNumero') or '',
+    }
 
 
 def cancelar_cobranca_asaas(boleto):
@@ -463,8 +507,9 @@ def verificar_cobranca_asaas(boleto):
             'linha_digitavel': boleto.linha_digitavel or '',
             'mensagem': 'Boleto sem vínculo no gateway — exibindo a versão local.',
         }
+    client = AsaasClient()
     try:
-        pagamento = AsaasClient().buscar_payment(boleto.gateway_id)
+        pagamento = client.buscar_payment(boleto.gateway_id)
     except AsaasAPIError as exc:
         logger.warning("Asaas indisponível ao verificar boleto #%s: %s", boleto.boleto_id, exc)
         return {
@@ -477,12 +522,21 @@ def verificar_cobranca_asaas(boleto):
 
     novo_status = _mapear_status_boleto(pagamento.get('status'))
     url_pdf = pagamento.get('bankSlipUrl') or pagamento.get('invoiceUrl') or boleto.url_pdf or ''
-    linha = pagamento.get('identificationField') or boleto.linha_digitavel or ''
+    linha = boleto.linha_digitavel or ''
     campos = []
+    from moduloerp.models import Boleto
+    if not linha and novo_status in (Boleto.StatusBoleto.EMITIDO, Boleto.StatusBoleto.VENCIDO):
+        # Boleto emitido antes de 01/10/2026 (ou cuja linha não veio na hora):
+        # a primeira abertura completa.
+        extra = _linha_digitavel_do_asaas(client, boleto.gateway_id)
+        linha = extra.get('linha_digitavel', '')
+        for campo in ('codigo_barras', 'nosso_numero'):
+            if extra.get(campo) and not getattr(boleto, campo):
+                setattr(boleto, campo, extra[campo])
+                campos.append(campo)
     if boleto.status != novo_status:
         boleto.status = novo_status
         campos.append('status')
-        from moduloerp.models import Boleto
         if novo_status == Boleto.StatusBoleto.CANCELADO and not boleto.data_cancelamento:
             boleto.data_cancelamento = timezone.now()
             campos.append('data_cancelamento')
@@ -585,8 +639,17 @@ def processar_evento_webhook(*, evento_id, tipo, payload):
         # respeite a RLS do tenant dono do boleto.
         try:
             with tenant_context(boleto.tenant_id):
+                pago = _parse_valor(payment, 'value', conta.saldo_aberto)
+                # Segunda via (item 55): o boleto embutiu multa e juros. Pago o
+                # valor cheio, os encargos entram como encargos — somados ao
+                # principal, a baixa passaria do saldo e iria para revisão.
+                multa = juros = Decimal('0')
+                if (boleto.valor_multa or boleto.valor_juros) and pago >= boleto.valor:
+                    multa, juros = boleto.valor_multa, boleto.valor_juros
                 conta.dar_baixa(
-                    valor=_parse_valor(payment, 'value', conta.saldo_aberto),
+                    valor=pago - multa - juros,
+                    multa=multa,
+                    juros=juros,
                     data=_parse_data_pagamento(payment),
                     meio_pagamento=payment.get('billingType', ''),
                     usuario=None,

@@ -124,6 +124,16 @@ class AsaasClient:
     def buscar_payment(self, payment_id):
         return self._request('GET', f'/payments/{payment_id}')
 
+    def buscar_linha_digitavel(self, payment_id):
+        """`{identificationField, nossoNumero, barCode}` do boleto.
+
+        **Não vem no objeto do pagamento** — nem no `POST /payments`, nem no
+        `GET /payments/{id}`. O SGI lia `identificationField` dali e todo boleto
+        do Asaas ficava "Linha digitável ainda não disponível" para sempre (item
+        55, revisão de 01/10/2026).
+        """
+        return self._request('GET', f'/payments/{payment_id}/identificationField')
+
     def cancelar_payment(self, payment_id):
         return self._request('DELETE', f'/payments/{payment_id}')
 

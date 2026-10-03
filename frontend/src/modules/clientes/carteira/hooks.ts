@@ -78,39 +78,59 @@ export function useGruposCarteira(params: {
  * Abrir um grupo é uma consulta nova com o filtro daquele grupo — é assim que
  * uma carteira de milhares de linhas fica navegável agrupada, sem trazer tudo
  * para a memória do navegador só porque um grupo foi aberto.
+ *
+ * **Cada grupo rola infinito, como a lista plana.** Antes o grupo parava na
+ * primeira página ("Mostrando 200 de 534 — refine o filtro") e não havia como
+ * ver o resto sem filtrar. `paginas` diz quantas páginas de cada grupo a tela
+ * já pediu; cada página é uma consulta própria no cache, então pedir a próxima
+ * não refaz as anteriores.
  */
+export const PAGINA_DO_GRUPO = 200
+
 export function useLinhasDeGrupos(params: {
   visao: Visao
   filtros: FiltrosCarteira
   ordenar: string
   abertos: GrupoEndereçavel[]
+  /** Páginas pedidas por grupo (chave `chaves.join('␟')`); ausente = 1. */
+  paginas: ReadonlyMap<string, number>
 }) {
-  const consultas = useQueries({
-    queries: params.abertos.map(g => {
-      const filtrosDoGrupo: FiltrosCarteira = { ...params.filtros }
-      g.filtros.forEach((campo, i) => {
-        filtrosDoGrupo[campo as keyof FiltrosCarteira] = g.chaves[i]
-      })
-      return {
-        queryKey: [...CHAVE, 'grupo-linhas', params.visao, filtrosDoGrupo, params.ordenar],
-        queryFn: () =>
-          buscarCarteira({
-            visao: params.visao, filtros: filtrosDoGrupo, ordenar: params.ordenar,
-            page: 1, pageSize: 200,
-          }),
-        staleTime: 30_000,
-      }
-    }),
+  const pedidos = params.abertos.flatMap(g => {
+    const chave = g.chaves.join('␟')
+    const filtrosDoGrupo: FiltrosCarteira = { ...params.filtros }
+    g.filtros.forEach((campo, i) => {
+      filtrosDoGrupo[campo as keyof FiltrosCarteira] = g.chaves[i]
+    })
+    const n = params.paginas.get(chave) ?? 1
+    return Array.from({ length: n }, (_, i) => ({ chave, filtrosDoGrupo, page: i + 1 }))
   })
 
-  const porChave = new Map<string, { linhas: PaginaCarteira['results']; total: number; carregando: boolean }>()
-  params.abertos.forEach((g, i) => {
+  const consultas = useQueries({
+    queries: pedidos.map(p => ({
+      queryKey: [...CHAVE, 'grupo-linhas', params.visao, p.filtrosDoGrupo, params.ordenar, p.page],
+      queryFn: () =>
+        buscarCarteira({
+          visao: params.visao, filtros: p.filtrosDoGrupo, ordenar: params.ordenar,
+          page: p.page, pageSize: PAGINA_DO_GRUPO,
+        }),
+      staleTime: 30_000,
+    })),
+  })
+
+  const porChave = new Map<string, {
+    linhas: PaginaCarteira['results']; total: number; carregando: boolean; buscandoMais: boolean
+  }>()
+  pedidos.forEach((p, i) => {
     const c = consultas[i]
-    porChave.set(g.chaves.join('␟'), {
-      linhas: c.data?.results ?? [],
-      total: c.data?.count ?? 0,
-      carregando: c.isLoading,
-    })
+    const atual = porChave.get(p.chave) ?? { linhas: [], total: 0, carregando: false, buscandoMais: false }
+    if (p.page === 1) {
+      atual.total = c.data?.count ?? 0
+      atual.carregando = c.isLoading
+    } else if (c.isLoading) {
+      atual.buscandoMais = true
+    }
+    atual.linhas = atual.linhas.concat(c.data?.results ?? [])
+    porChave.set(p.chave, atual)
   })
   return porChave
 }

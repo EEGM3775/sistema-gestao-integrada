@@ -272,6 +272,20 @@ class FeriadosSyncCommandTests(APITestCase):
         self.assertGreater(sync.total, 0)
         self.assertEqual(sync.detalhes["municipal"], 1)
 
+    @patch("modulocalendar.management.commands.sincronizar_feriados.baixar_municipais", return_value=[])
+    def test_sem_anos_cobre_1900_a_2100_e_rede_fora_nao_apaga_o_municipal(self, _baixar):
+        """Decisão do dono (01/10/2026): a lei de 1900 a 2100; e o dataset fora
+        do ar não pode apagar o municipal que já estava certo."""
+        Feriado.objects.create(data=date(2026, 1, 25), nome="Aniversário de SP",
+                               escopo="municipal", uf="SP", ibge="3550308")
+        call_command("sincronizar_feriados", stdout=StringIO())
+        nacionais = Feriado.objects.filter(escopo="nacional")
+        self.assertTrue(nacionais.filter(data=date(1900, 1, 1)).exists())
+        self.assertTrue(nacionais.filter(data=date(2030, 1, 1)).exists())
+        self.assertTrue(nacionais.filter(data=date(2100, 12, 25)).exists())
+        self.assertTrue(Feriado.objects.filter(escopo="municipal", ibge="3550308").exists())
+        self.assertEqual(FeriadoSync.objects.get(pk=1).anos, "1900–2100")
+
 
 @override_settings(CACHES=DUMMY_CACHE)
 class FeriadosFeedTests(APITestCase):
@@ -314,6 +328,22 @@ class FeriadosFeedTests(APITestCase):
         feriados = self._feriados(uf="SP", ibge="3550308")
         municipais = [f for f in feriados if f["extendedProps"]["scope"] == "municipal"]
         self.assertEqual(len(municipais), 1)
+        self.assertIn("São Paulo", municipais[0]["title"])
+        self.assertFalse(municipais[0]["extendedProps"]["projetado"])
+
+    def test_municipal_aparece_nos_anos_que_o_dataset_nao_tem(self):
+        """Item 61 — o dataset só tem 2026; a agenda de 2028 também mostra o
+        aniversário da cidade, marcado como projetado (mesma fonte do vencimento)."""
+        Feriado.objects.create(data=date(2028, 1, 1), nome="Confraternização", escopo="nacional")
+        self.user.iam_permissions = ["calendario.evento.view"]
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get("/api/calendar/events/", {
+            "start": "2028-01-01T00:00:00-03:00", "end": "2028-01-31T00:00:00-03:00",
+            "uf": "SP", "ibge": "3550308",
+        })
+        municipais = [e for e in resp.json() if e.get("extendedProps", {}).get("scope") == "municipal"]
+        self.assertEqual([m["start"] for m in municipais], ["2028-01-25"])
+        self.assertTrue(municipais[0]["extendedProps"]["projetado"])
         self.assertIn("São Paulo", municipais[0]["title"])
 
     @patch("modulocalendar.views.get_holidays", return_value=[])
@@ -552,17 +582,64 @@ class DiaUtilBancarioTests(TestCase):
         """Título sem vencimento não é motivo para estourar no meio de uma emissão."""
         self.assertIsNone(dias_uteis.AjusteDeVencimento()(None))
 
-    def test_base_vazia_e_um_estado_que_a_tela_precisa_saber(self):
+    def test_base_vazia_ainda_conhece_a_lei(self):
+        """Item 55 (01/10/2026): ano fora da tabela não vira "dia útil por não saber".
+
+        Era o caso do dono — tabela com 2025–2028, parcela em 01/01/2030, boleto
+        no feriado. Sem a tabela, a lei do ano é calculada.
+        """
         Feriado.objects.all().delete()
-        self.assertFalse(dias_uteis.base_sincronizada())
-        # Sem feriados o ajuste ainda existe — só não conhece feriado.
-        self.assertEqual(dias_uteis.AjusteDeVencimento()(date(2026, 10, 12)), date(2026, 10, 12))
-        self.assertEqual(dias_uteis.AjusteDeVencimento()(date(2026, 3, 7)), date(2026, 3, 9))
+        self.assertTrue(dias_uteis.base_sincronizada())
+        ajuste = dias_uteis.AjusteDeVencimento()
+        self.assertEqual(ajuste.explicar(date(2030, 1, 1)), (date(2030, 1, 2), "Confraternização Universal"))
+        self.assertEqual(ajuste(date(2026, 10, 12)), date(2026, 10, 13))
+        self.assertEqual(ajuste(date(2026, 3, 7)), date(2026, 3, 9))
+        self.assertIn(2030, ajuste.anos_calculados)
+
+    def test_de_1900_a_2100_com_a_lei_de_cada_epoca(self):
+        """Decisão do dono: os feriados batem de 1900 a 2100."""
+        Feriado.objects.all().delete()
+        ajuste = dias_uteis.AjusteDeVencimento()
+        # 1900: 1º de maio ainda não era feriado; 13 de maio (Abolição) era.
+        self.assertEqual(ajuste.motivo(date(1900, 5, 1)), "")
+        self.assertEqual(ajuste.motivo(date(1900, 5, 14)), "")
+        self.assertTrue(ajuste.motivo(date(1900, 5, 3)))   # Descobrimento do Brasil, quinta-feira
+        # 2100: Sexta-feira Santa (26/03) e Proclamação da República numa segunda.
+        self.assertEqual(ajuste.motivo(date(2100, 3, 26)), "Sexta-feira Santa")
+        self.assertEqual(ajuste.explicar(date(2100, 11, 15)), (date(2100, 11, 16), "Proclamação da República"))
+
+    def test_carnaval_e_corpus_christi_so_no_calendario_bancario(self):
+        """Sem expediente bancário (ANBIMA), mas não feriado de lei: a CAT do PDCA não anda."""
+        bancario = dias_uteis.AjusteDeVencimento(bancario=True)
+        de_lei = dias_uteis.AjusteDeVencimento()
+        self.assertEqual(bancario.explicar(date(2030, 3, 5)), (date(2030, 3, 6), "Carnaval"))
+        self.assertEqual(bancario.motivo(date(2030, 6, 20)), "Corpus Christi")
+        self.assertEqual(de_lei(date(2030, 3, 5)), date(2030, 3, 5))
+
+    def test_feriado_municipal_projetado_fora_dos_anos_publicados(self):
+        """O dataset municipal só tem alguns anos; nos outros, a regra que eles mostram."""
+        Feriado.objects.create(data=date(2025, 6, 18), nome="Aniversário do município",
+                               escopo="municipal", uf="SC", ibge="4211900")
+        Feriado.objects.create(data=date(2025, 6, 19), nome="Corpus Christi",
+                               escopo="municipal", uf="SC", ibge="4211900")
+        Feriado.objects.create(data=date(2026, 6, 4), nome="Corpus Christi",
+                               escopo="municipal", uf="SC", ibge="4211900")
+        ajuste = dias_uteis.AjusteDeVencimento(uf="SC", ibge="4211900")
+        # Fixo: 18/06/2031 é quarta.
+        self.assertEqual(ajuste.motivo(date(2031, 6, 18)), "Aniversário do município")
+        # Móvel: Corpus Christi de 2031 é 12/06 (Páscoa 13/04 + 60).
+        self.assertEqual(ajuste.motivo(date(2031, 6, 12)), "Corpus Christi")
+        self.assertTrue(ajuste.municipal_projetado)
+        # Ano publicado: vale o que foi publicado, sem projeção.
+        publicado = dias_uteis.AjusteDeVencimento(uf="SC", ibge="4211900")
+        self.assertEqual(publicado.motivo(date(2026, 6, 18)), "Aniversário do município")
+        self.assertFalse(publicado.municipal_projetado)
 
     def test_uma_consulta_por_ano_e_nao_por_parcela(self):
         """O carnê pede o ajuste centenas de vezes; a tabela é lida uma vez por
         ano tocado. Sem o cache, gerar 360 parcelas seriam 360 consultas."""
         ajuste = dias_uteis.AjusteDeVencimento(uf="SC", ibge="4211900")
-        with self.assertNumQueries(2):  # 2026 e 2027, carregados na primeira chamada
+        # 2026 e 2027 (a lei, uma por ano) + o município (uma vez, todos os anos).
+        with self.assertNumQueries(3):
             for mes in range(1, 13):
                 ajuste(date(2026, mes, 10))

@@ -60,6 +60,19 @@ No `initial()` da requisição, o mixin executa
 `current_setting('app.current_tenant')`. Requer `ATOMIC_REQUESTS=True` (o `is_local=true` vale por
 toda a requisição). No SQLite é no-op. Assim, **um bug de aplicação não vaza dados entre clientes**.
 
+A política de toda tabela de negócio chama-se `tenant_isolation`, é **fail-closed** e vale igual no
+`USING` e no `WITH CHECK`:
+
+```sql
+current_setting('app.rls_bypass', true) = 'on'
+OR tenant_id = NULLIF(current_setting('app.current_tenant', true), '')::uuid
+```
+
+A comparação é `uuid` com `uuid`, e não por texto: assim o planejador estima a parte do tenant pelo
+`n_distinct` da coluna e usa o índice de `tenant_id`. Com o cast para texto, ele supunha ~1% das
+linhas em cada tabela, e todo JOIN grande caía em nested loop (D238). Tabela nova copia esta
+expressão (`nucleo/migrations/0029_rls_estimavel.py`); `test_rls_estimavel` recusa a forma antiga.
+
 ## 5. Integridade & cross-DB
 
 - **Constraints no banco:** NOT NULL, UNIQUE, **CHECK** (ex.: `Boleto` exige *exatamente uma* das

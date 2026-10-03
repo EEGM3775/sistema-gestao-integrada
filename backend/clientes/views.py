@@ -55,12 +55,20 @@ class ClienteViewSet(QuotaEnforcedMixin, TenantScopedViewSetMixin, viewsets.Mode
     serializer_class = ClienteSerializer
     filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_class = ClienteFilter
-    search_fields = ['nome_completo', 'cpf_cnpj', 'email', 'telefone', 'bairro', 'cidade', 'cep']
+    search_fields = ['nome_completo', 'email', 'telefone', 'bairro', 'cidade', 'cep']
     ordering_fields = ['nome_completo', 'data_cadastro', 'cidade', 'estado', 'email', 'telefone']
     ordering = ['nome_completo']
     pagination_class = ClientePageNumberPagination
     permission_classes = [permissions.IsAuthenticated, RequirePermission]
     required_resource = "cadastro.cliente"  # GET→.view · escrita→.edit
+
+    def campos_de_busca(self, request):
+        """O CPF/CNPJ só é critério de busca para quem pode lê-lo (LGPD; D257):
+        buscar por ele e ver quem volta é ler o documento que a máscara esconde."""
+        campos = list(self.search_fields)
+        if _pode_documento(request):
+            campos.append('cpf_cnpj')
+        return campos
 
     @action(detail=False, methods=['get'], url_path='divergencias-asaas')
     def divergencias_asaas(self, request):
@@ -160,7 +168,12 @@ class ClienteViewSet(QuotaEnforcedMixin, TenantScopedViewSetMixin, viewsets.Mode
                 'valorPago': str(pago),
                 'parcelasAtraso': em_atraso,
                 'parcelasTotal': len(linhas),
-                'adimplente': em_atraso == 0,
+                # Item 60: sem parcela (cancelada não conta) não há adimplência
+                # a afirmar — `None`, a mesma régua da pílula da carteira.
+                'adimplente': (
+                    em_atraso == 0
+                    if any(l['status'] != StatusConta.CANCELADO for l in linhas) else None
+                ),
             },
             'parcelas': linhas,
         })
@@ -541,6 +554,9 @@ def _estado_do_calendario(ajuste) -> dict:
         'uf': ajuste.uf,
         'municipio': bool(ajuste.ibge),
         'feriadosCarregados': base_sincronizada(),
+        # Lido depois do cálculo: diz se algum feriado da cidade veio da regra
+        # (o dataset municipal só publica alguns anos).
+        'municipalProjetado': ajuste.municipal_projetado,
     }
 
 
@@ -628,7 +644,9 @@ class CarteiraBaseView(TenantScopedAPIViewMixin, APIView):
             qs = carteira_svc.base_clientes(
                 self.scope_qs(Cliente.objects.all()), contas, aquisicoes, hoje
             )
-        return visao, carteira_svc.aplicar_filtros(qs, visao, request.query_params, hoje), hoje
+        return visao, carteira_svc.aplicar_filtros(
+            qs, visao, request.query_params, hoje, pode_documento=_pode_documento(request),
+        ), hoje
 
 
 class CarteiraView(CarteiraBaseView):

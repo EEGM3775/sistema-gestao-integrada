@@ -50,6 +50,7 @@ export function useGerarCobrancaContaAReceber() {
       queryClient.invalidateQueries({ queryKey: erpKeys.contasAReceber.all })
       queryClient.invalidateQueries({ queryKey: erpKeys.boletos.all })
       queryClient.invalidateQueries({ queryKey: erpKeys.dashboard.all })
+    queryClient.invalidateQueries({ queryKey: erpKeys.grade.all })
     },
   })
 }
@@ -66,6 +67,7 @@ export function useCancelarBoleto() {
       queryClient.invalidateQueries({ queryKey: erpKeys.boletos.all })
       queryClient.invalidateQueries({ queryKey: erpKeys.contasAReceber.all })
       queryClient.invalidateQueries({ queryKey: erpKeys.dashboard.all })
+    queryClient.invalidateQueries({ queryKey: erpKeys.grade.all })
     },
   })
 }

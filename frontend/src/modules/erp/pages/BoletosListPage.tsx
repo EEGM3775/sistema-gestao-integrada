@@ -1,285 +1,156 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { ArrowLeft, FileText, FileSearch, Ban } from 'lucide-react'
-import type { ColumnDef, SortingState } from '@tanstack/react-table'
-import { FilterBar, type FilterBarValue } from '../components/shared/FilterBar'
-import { FinanceDataTable } from '../components/shared/FinanceDataTable'
+import { Ban, Building2, FileText } from 'lucide-react'
+import { TelaDaGrade } from '../grade/TelaDaGrade'
+import { estiloFiltro } from '../grade/estilos'
+import { useGrade } from '../grade/useGrade'
+import { filtrosDoGrupo } from '../grade/arvore'
+import type { ColunaGrade, Filtros, NoGrupo } from '../grade/tipos'
 import { MoneyDisplay } from '../components/shared/MoneyDisplay'
 import { StatusBoletoBadge } from '../components/shared/StatusBoletoBadge'
 import { BotaoErroGateway } from '../components/shared/GatewayErro'
-import { useBoletos, useCancelarBoleto, useVerificarDocumentoBoleto } from '../hooks/useBoletos'
+import { LeitorDeBoleto } from '../components/BoletoNaTela'
+import { useCancelarBoleto } from '../hooks/useBoletos'
+import { useEmpreendimentoOptions } from '../hooks/useEntityOptions'
 import { apiDecimalToCents } from '@/utils/money'
 import { dateToBR } from '@/utils/dates'
-import type { Boleto, BoletoFiltros } from '../types'
+import { parseApiErrors } from '@/utils/formErrors'
+import type { BoletoLista } from '../types'
 
-const PAGE_SIZE = 20
-
-type Aba = 'ativos' | 'cancelados'
-
-const ABAS: { id: Aba; label: string }[] = [
-  { id: 'ativos', label: 'Ativos' },
-  { id: 'cancelados', label: 'Cancelados' },
+type Aba = 'ativos' | 'pagos' | 'cancelados'
+const ABAS: { id: Aba; rotulo: string; filtro: Filtros }[] = [
+  { id: 'ativos', rotulo: 'Em aberto', filtro: { excluir_status: 'CANCELADO' } },
+  { id: 'pagos', rotulo: 'Pagos', filtro: { status: 'PAGO' } },
+  { id: 'cancelados', rotulo: 'Cancelados', filtro: { status: 'CANCELADO' } },
 ]
 
 /**
- * Workspace dedicado de Boletos (D.1.2, docs/modulos/moduloerp.md §6):
- * listão paginado/filtrado no servidor das cobranças geradas via Asaas. Duas
- * abas — "Ativos" (exclui cancelados) e "Cancelados" — porque toda informação é
- * útil: um boleto cancelado não some, fica auditável na sua aba. O status "Erro"
- * é clicável (abre os códigos do Asaas), e o documento é aberto verificando o
- * gateway AO VIVO. O clique na linha navega para o detalhe (`/app/erp/boletos/:id`).
+ * Boletos (item 54 do dono): antes, a lista dizia "Conta a receber #172000" e
+ * mais nada. Agora cada boleto diz de quem é, de qual parcela, de qual
+ * empreendimento e lote, e por onde foi emitido (Asaas ou banco) — com a busca,
+ * a ordem e o agrupamento da grade das contas.
  */
 export default function BoletosListPage() {
-  const [aba, setAba] = useState<Aba>('ativos')
-
-  return (
-    <div className="px-6 py-8">
-      <Link
-        to="/app/erp"
-        className="inline-flex items-center gap-1.5 text-xs font-semibold mb-3 transition-colors duration-150"
-        style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-body)', textDecoration: 'none' }}
-        onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-brand)')}
-        onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text-muted)')}
-      >
-        <ArrowLeft size={14} /> ERP Financeiro
-      </Link>
-
-      <div className="flex items-center gap-3 mb-6">
-        <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: '#e0f2fe', color: '#0369a1' }}>
-          <FileText size={20} />
-        </div>
-        <div>
-          <h1 className="text-xl font-bold" style={{ fontFamily: 'var(--font-heading)', color: 'var(--color-brand)' }}>
-            Boletos
-          </h1>
-          <p className="text-xs" style={{ fontFamily: 'var(--font-body)', color: 'var(--color-text-muted)' }}>
-            Cobranças emitidas via Asaas (boleto/PIX) — geração, cancelamento e baixa automática (D.1.2)
-          </p>
-        </div>
-      </div>
-
-      {/* Abas */}
-      <div className="flex items-center gap-1 mb-5 border-b" style={{ borderColor: '#e2e8f0' }}>
-        {ABAS.map(({ id, label }) => {
-          const ativa = aba === id
-          return (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setAba(id)}
-              className="px-4 py-2.5 text-sm font-semibold transition-colors duration-150"
-              style={{
-                fontFamily: 'var(--font-body)',
-                color: ativa ? 'var(--color-brand)' : 'var(--color-text-muted)',
-                borderBottom: ativa ? '2px solid var(--color-brand)' : '2px solid transparent',
-                marginBottom: '-1px',
-                background: 'transparent',
-                cursor: 'pointer',
-              }}
-            >
-              {label}
-            </button>
-          )
-        })}
-      </div>
-
-      <BoletosTab cancelados={aba === 'cancelados'} />
-    </div>
-  )
-}
-
-function BoletosTab({ cancelados }: { cancelados: boolean }) {
   const navigate = useNavigate()
-  const [filtros, setFiltros] = useState<FilterBarValue>({})
-  const [pageIndex, setPageIndex] = useState(0)
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'data_vencimento', desc: false }])
-  const [mensagem, setMensagem] = useState<{ tom: 'ok' | 'erro'; texto: string } | null>(null)
-
+  const [aba, setAba] = useState<Aba>('ativos')
+  const [busca, setBusca] = useState('')
+  const [empreendimento, setEmpreendimento] = useState('')
+  const [lendo, setLendo] = useState<BoletoLista | null>(null)
+  const [aviso, setAviso] = useState<{ tom: 'ok' | 'erro'; texto: string } | null>(null)
+  const [grupoAberto, setGrupoAberto] = useState<Filtros>({})
   const cancelar = useCancelarBoleto()
-  const verificarDoc = useVerificarDocumentoBoleto()
-  const acaoOcupada = cancelar.isPending || verificarDoc.isPending
+  const empreendimentos = useEmpreendimentoOptions(true)
 
-  const ordering = sorting[0] ? `${sorting[0].desc ? '-' : ''}${sorting[0].id}` : undefined
-  const queryFiltros: BoletoFiltros = useMemo(() => ({
-    ...(cancelados ? { status: 'CANCELADO' as const } : { excluir_status: 'CANCELADO' as const }),
-    data_de: filtros.data_de,
-    data_ate: filtros.data_ate,
-    page: pageIndex + 1,
-    page_size: PAGE_SIZE,
-    ordering,
-  }), [cancelados, filtros, pageIndex, ordering])
+  const filtros: Filtros = useMemo(() => ({
+    ...ABAS.find(a => a.id === aba)!.filtro, search: busca, empreendimento, ...grupoAberto,
+  }), [aba, busca, empreendimento, grupoAberto])
+  const grade = useGrade<BoletoLista>({ recurso: 'boletos', filtros, ordenarPadrao: '-vencimento' })
 
-  const { data, isLoading, isFetching } = useBoletos(queryFiltros)
-
-  /** Abre o documento verificando o Asaas AO VIVO (aba aberta no clique p/ não bloquear popup). */
-  function aoVerDocumento(boleto: Boleto) {
-    const win = window.open('', '_blank')
-    verificarDoc.mutate(boleto.boleto_id, {
-      onSuccess: doc => {
-        if (doc.url_pdf && win) win.location.href = doc.url_pdf
-        else if (win) win.close()
-        if (!doc.gateway_online) setMensagem({ tom: 'erro', texto: doc.mensagem })
-        else if (!doc.url_pdf) setMensagem({ tom: 'erro', texto: 'Documento ainda indisponível no Asaas.' })
-      },
-      onError: () => { if (win) win.close(); setMensagem({ tom: 'erro', texto: 'Não foi possível verificar o documento no Asaas.' }) },
+  const aoCancelar = (b: BoletoLista) => {
+    if (!window.confirm(`Cancelar o boleto de ${b.pessoa_nome} (${dateToBR(b.data_vencimento)})? O cancelamento no Asaas não se desfaz.`)) return
+    cancelar.mutate(b.boleto_id, {
+      onSuccess: r => setAviso({ tom: 'ok', texto: r.detail }),
+      onError: e => setAviso({ tom: 'erro', texto: parseApiErrors(e)._form ?? 'Não foi possível cancelar o boleto agora.' }),
     })
   }
 
-  function aoCancelar(boleto: Boleto) {
-    if (!window.confirm(`Cancelar o boleto #${boleto.boleto_id} no Asaas? A ação não pode ser desfeita.`)) return
-    cancelar.mutate(boleto.boleto_id, {
-      onSuccess: r => setMensagem({ tom: 'ok', texto: r.detail }),
-      onError: () => setMensagem({ tom: 'erro', texto: 'Não foi possível cancelar o boleto agora.' }),
-    })
-  }
-
-  const columns = useMemo<ColumnDef<Boleto>[]>(() => [
+  const colunas = useMemo<ColunaGrade<BoletoLista>[]>(() => [
     {
-      accessorKey: 'boleto_id',
-      header: 'Boleto',
-      enableSorting: false,
-      cell: ({ row }) => (
-        <div className="flex flex-col">
-          <span className="font-medium">#{row.original.boleto_id}</span>
-          <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-            {row.original.conta_receber != null
-              ? `Conta a receber #${row.original.conta_receber}`
-              : row.original.conta_pagar != null
-              ? `Conta a pagar #${row.original.conta_pagar}`
-              : '—'}
-          </span>
-        </div>
+      chave: 'cliente', titulo: 'Pagador', largura: 220, ordenar: 'cliente',
+      render: b => b.cliente_id
+        ? <Link to={`/app/clientes/${b.cliente_id}`} onClick={e => e.stopPropagation()} className="truncate font-semibold" style={{ color: 'var(--ink)', textDecoration: 'none' }}>{b.pessoa_nome}</Link>
+        : <span className="truncate font-semibold" style={{ color: 'var(--ink)' }}>{b.pessoa_nome || '—'}</span>,
+      texto: b => b.pessoa_nome,
+    },
+    { chave: 'parcela', titulo: 'Parcela', largura: 210, render: b => <span className="truncate" title={b.conta_descricao}>{b.conta_descricao || '—'}</span>, texto: b => b.conta_descricao },
+    { chave: 'empreendimento', titulo: 'Empreendimento', largura: 180, ordenar: 'empreendimento', render: b => <span className="truncate">{b.empreendimento_nome || '—'}</span>, texto: b => b.empreendimento_nome },
+    { chave: 'unidade', titulo: 'Unidade', largura: 110, ordenar: 'unidade', tipo: 'endereco', render: b => b.unidade || '—', texto: b => b.unidade },
+    { chave: 'vencimento', titulo: 'Vencimento', largura: 110, ordenar: 'vencimento', tipo: 'data', render: b => dateToBR(b.data_vencimento), texto: b => dateToBR(b.data_vencimento) },
+    { chave: 'valor', titulo: 'Valor', largura: 120, ordenar: 'valor', tipo: 'numero', alinhamento: 'right', render: b => <MoneyDisplay cents={apiDecimalToCents(b.valor)} />, texto: b => b.valor },
+    { chave: 'canal', titulo: 'Emitido por', largura: 110, render: b => (b.canal === 'cnab' ? 'Banco (CNAB)' : 'Asaas'), texto: b => b.canal },
+    {
+      chave: 'status', titulo: 'Situação', largura: 130, ordenar: 'status',
+      render: b => (b.status === 'ERRO'
+        ? <span onClick={e => e.stopPropagation()}><BotaoErroGateway dados={b.dados_retorno_api} titulo="Erro na cobrança" /></span>
+        : <StatusBoletoBadge status={b.status} />),
+      texto: b => b.status,
+    },
+    {
+      chave: 'acoes', titulo: '', largura: 96,
+      render: b => (
+        <span className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+          <button type="button" title="Ver o boleto" aria-label="Ver o boleto" onClick={() => setLendo(b)}
+            disabled={!(b.gateway_id || b.linha_digitavel)} style={botaoIcone}><FileText size={14} /></button>
+          {b.canal === 'asaas' && ['EMITIDO', 'VENCIDO', 'AGUARDANDO'].includes(b.status) && (
+            <button type="button" title="Cancelar no Asaas" aria-label="Cancelar no Asaas" onClick={() => aoCancelar(b)}
+              style={{ ...botaoIcone, color: 'var(--danger-ink)' }}><Ban size={14} /></button>
+          )}
+        </span>
       ),
-    },
-    {
-      accessorKey: 'linha_digitavel',
-      header: 'Linha digitável',
-      enableSorting: false,
-      cell: ({ getValue }) => {
-        const linha = getValue<string | null>()
-        return linha ? <span className="font-mono text-xs">{linha}</span> : <span style={{ color: 'var(--color-text-muted)' }}>—</span>
-      },
-    },
-    {
-      accessorKey: 'data_vencimento',
-      header: 'Vencimento',
-      cell: ({ getValue }) => dateToBR(getValue<string>()),
-    },
-    ...(cancelados ? [{
-      accessorKey: 'data_cancelamento',
-      header: 'Cancelado em',
-      enableSorting: false,
-      cell: ({ getValue }: { getValue: () => string | null }) => {
-        const v = getValue()
-        return v ? dateToBR(v) : <span style={{ color: 'var(--color-text-muted)' }}>—</span>
-      },
-    } as ColumnDef<Boleto>] : []),
-    {
-      accessorKey: 'valor',
-      header: 'Valor',
-      cell: ({ getValue }) => <MoneyDisplay cents={apiDecimalToCents(getValue<string>())} />,
-    },
-    {
-      accessorKey: 'status',
-      header: 'Status',
-      cell: ({ row }) => {
-        const b = row.original
-        // "Erro" vira botão → popup com todos os códigos/mensagens do Asaas.
-        return b.status === 'ERRO'
-          ? <BotaoErroGateway dados={b.dados_retorno_api} titulo="Erro na cobrança (Asaas)" />
-          : <StatusBoletoBadge status={b.status} />
-      },
-    },
-    {
-      id: 'acoes',
-      header: 'Ações',
-      enableSorting: false,
-      cell: ({ row }) => {
-        const b = row.original
-        const cancelavel = ['EMITIDO', 'VENCIDO', 'AGUARDANDO'].includes(b.status)
-        return (
-          <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
-            <AcaoBoletoButton
-              titulo="Abrir documento (verifica no Asaas)"
-              onClick={() => aoVerDocumento(b)}
-              disabled={acaoOcupada || !b.gateway_id}
-              icon={<FileSearch size={14} />}
-            />
-            <AcaoBoletoButton
-              titulo="Cancelar boleto no Asaas"
-              onClick={() => aoCancelar(b)}
-              disabled={acaoOcupada || !cancelavel}
-              icon={<Ban size={14} />}
-              perigo
-            />
-          </div>
-        )
-      },
+      texto: () => '',
     },
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [cancelados, acaoOcupada])
+  ], [])
+
+  const abrirSoOGrupo = (no: NoGrupo) => { setGrupoAberto(g => ({ ...g, ...filtrosDoGrupo({}, no) })); grade.setNiveis([]) }
 
   return (
     <>
-      {mensagem && (
-        <div
-          className="text-sm px-4 py-3 rounded-lg mb-4"
-          style={mensagem.tom === 'ok'
-            ? { background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#166534', fontFamily: 'var(--font-body)' }
-            : { background: '#fff5f5', border: '1px solid #fed7d7', color: '#c53030', fontFamily: 'var(--font-body)' }}
-        >
-          {mensagem.texto}
-        </div>
-      )}
-
-      <FilterBar
-        value={filtros}
-        onChange={next => { setFiltros(next); setPageIndex(0) }}
-        fields={['periodo']}
+      <TelaDaGrade<BoletoLista>
+        titulo="Boletos"
+        subtitulo="Cobranças emitidas pelo Asaas e pelo banco — de quem é, de qual parcela e de qual lote"
+        acoes={
+          <Link to="/app/erp/cobranca-bancaria" className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold"
+            style={{ border: '1.5px solid var(--line)', color: 'var(--ink-2)', textDecoration: 'none' }}>
+            <Building2 size={16} /> Cobrança bancária (CNAB)
+          </Link>
+        }
+        abas={
+          <div className="flex items-center gap-1 mb-3" style={{ borderBottom: '1px solid var(--line)' }}>
+            {ABAS.map(a => (
+              <button key={a.id} type="button" onClick={() => { setAba(a.id); setGrupoAberto({}) }}
+                style={{
+                  padding: '8px 14px', fontSize: 13, fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer',
+                  color: aba === a.id ? 'var(--ink)' : 'var(--ink-3)', borderBottom: `2px solid ${aba === a.id ? 'var(--accent)' : 'transparent'}`, marginBottom: -1,
+                }}>
+                {a.rotulo}
+              </button>
+            ))}
+          </div>
+        }
+        busca={busca}
+        onBuscar={setBusca}
+        placeholderBusca="Buscar por cliente, CPF, parcela, lote ou linha digitável"
+        filtros={
+          <>
+            <select aria-label="Empreendimento" value={empreendimento} style={estiloFiltro} onChange={e => setEmpreendimento(e.target.value)}>
+              <option value="">Todos os empreendimentos</option>
+              {(empreendimentos.data ?? []).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+            </select>
+            {Object.keys(grupoAberto).length > 0 && (
+              <button type="button" onClick={() => setGrupoAberto({})} style={{ border: 'none', background: 'none', color: 'var(--ink-3)', fontSize: 12.5, cursor: 'pointer' }}>
+                Voltar a todos os grupos
+              </button>
+            )}
+          </>
+        }
+        extraTotais={aviso && (
+          <span style={{ color: aviso.tom === 'erro' ? 'var(--danger-ink)' : 'var(--good-ink)' }}>{aviso.texto}</span>
+        )}
+        grade={grade}
+        colunas={colunas}
+        onAbrir={b => navigate(`/app/erp/boletos/${b.boleto_id}`)}
+        onAbrirSoOGrupo={abrirSoOGrupo}
+        substantivo={['boleto', 'boletos']}
+        mostrarSaldo={false}
+        vazio={busca ? 'Nenhum boleto para esta busca.' : 'Nenhum boleto aqui. Gere boletos a partir de Contas a receber.'}
       />
-
-      <FinanceDataTable
-        data={data?.results ?? []}
-        columns={columns}
-        count={data?.count ?? 0}
-        pageIndex={pageIndex}
-        pageSize={PAGE_SIZE}
-        onPageChange={setPageIndex}
-        sorting={sorting}
-        onSortingChange={setSorting}
-        getRowId={row => String(row.boleto_id)}
-        isLoading={isLoading}
-        isFetching={isFetching}
-        emptyMessage={cancelados
-          ? 'Nenhum boleto cancelado.'
-          : 'Nenhum boleto encontrado. Gere uma cobrança a partir de uma conta a receber.'}
-        onRowClick={boleto => navigate(`/app/erp/boletos/${boleto.boleto_id}`)}
-      />
+      {lendo && <LeitorDeBoleto boleto={lendo} onFechar={() => setLendo(null)} />}
     </>
   )
 }
 
-function AcaoBoletoButton({ titulo, onClick, disabled, icon, perigo }: {
-  titulo: string; onClick: () => void; disabled?: boolean; icon: React.ReactNode; perigo?: boolean
-}) {
-  const cor = perigo ? '#b91c1c' : 'var(--color-text-muted)'
-  return (
-    <button
-      type="button"
-      title={titulo}
-      aria-label={titulo}
-      onClick={onClick}
-      disabled={disabled}
-      className="p-1.5 rounded-lg transition-colors duration-150"
-      style={{
-        border: '1.5px solid #e2e8f0', background: '#FFFFFF',
-        color: disabled ? '#cbd5e1' : cor,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-      }}
-      onMouseEnter={e => { if (!disabled) e.currentTarget.style.borderColor = perigo ? '#b91c1c' : 'var(--color-brand)' }}
-      onMouseLeave={e => { e.currentTarget.style.borderColor = '#e2e8f0' }}
-    >
-      {icon}
-    </button>
-  )
-}
+const botaoIcone = {
+  border: '1px solid var(--line)', background: 'var(--surface)', borderRadius: 'var(--r-sm)', padding: 5,
+  cursor: 'pointer', color: 'var(--ink-3)', display: 'flex',
+} as const

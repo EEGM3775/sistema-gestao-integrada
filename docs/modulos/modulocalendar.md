@@ -173,7 +173,10 @@ após o estado). O usuário **nunca informa IBGE** (resolvido internamente).
 - **Fontes:** federal + estadual via **`python-holidays`** (offline, pt-BR; estadual = o que a UF
   acrescenta sobre o nacional); municipal via **dataset MIT `joaopbini/feriados-brasil`** (um JSON
   por ano, baixado pela API raw do GitHub; nome da cidade resolvido pelo IBGE). Comando
-  `manage.py sincronizar_feriados [--anos …] [--sem-municipal]`, também **task Celery semanal**
+  `manage.py sincronizar_feriados [--anos …] [--anos-municipais …] [--sem-municipal]`: sem `--anos`,
+  grava nacional e estadual **de 1900 a 2100** (`CALENDARIO_ANO_*` do `planos.py`; a biblioteca aplica
+  a lei de cada época, e o estadual dela começa em 1996) e baixa o municipal de ano−1 a ano+2; o
+  municipal de um ano só é trocado se o download trouxe algo. Também **task Celery semanal**
   (`modulocalendar.tasks`, em `CELERY_BEAT_SCHEDULE`). **Fallback:** sem sync, o feed usa o
   Nager.Date só p/ o nacional.
 - **Feed:** nacional sempre; estadual se `?uf=`; municipal se `?ibge=` (params derivados do seletor).
@@ -248,9 +251,20 @@ a UF; municipal só com o código IBGE. Sem o código, não se afirma feriado mu
 carnê de 360 parcelas é uma consulta, não 360. Por isso o ajuste é injetado como objeto em
 `clientes.plano_pagamento.montar()`, e não resolvido dentro do laço.
 
-**A base nasce vazia.** `base_sincronizada()` existe para as telas dizerem isso: sem
-`manage.py sincronizar_feriados`, o vencimento ainda desvia de fim de semana, mas não de feriado — e
-prometer o contrário é meia verdade que vira boleto pago em atraso. Quem consome:
+**De 1900 a 2100, com ou sem a tabela** ([`feriados.py`](../../backend/modulocalendar/feriados.py)).
+Três camadas, nesta ordem de precedência no nome do dia:
+
+1. **Lei** — da tabela; o ano que faltar nela é calculado pelo `python-holidays` na hora
+   (`anos_calculados`), em vez de virar "dia útil por não saber";
+2. **Município** — da tabela nos anos que o dataset publica; nos outros, **projetado** pela regra que
+   os anos publicados mostram, linha a linha: o mesmo dia/mês em dois anos é fixo, a mesma distância
+   da Páscoa é móvel (Corpus Christi), e o visto num ano só decide pelo nome. O ajuste diz quando uma
+   data projetada decidiu o vencimento (`municipal_projetado`);
+3. **Banco** — só com `bancario=True` (o vencimento de título liga; a CAT do PDCA não): Carnaval
+   (segunda e terça) e Corpus Christi, dias sem expediente bancário do calendário ANBIMA.
+
+`base_sincronizada()` responde sempre sim — a lei nunca falta — e fica porque as telas leem o campo.
+Quem consome:
 [clientes.md](clientes.md) (carnê) e [funcoescobrancas.md](funcoescobrancas.md) (`dueDate` do Asaas).
 
 ---

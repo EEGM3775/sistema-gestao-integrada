@@ -49,8 +49,9 @@ export function AbaFinanceiro({ clienteId }: { clienteId: number }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))' }}>
-        <Indicador rotulo="Situação" valor={resumo.adimplente ? 'Adimplente' : 'Inadimplente'}
-          tom={resumo.adimplente ? 'var(--good-ink)' : 'var(--danger-ink)'} />
+        <Indicador rotulo="Situação"
+          valor={resumo.adimplente === null ? 'Sem parcelas' : resumo.adimplente ? 'Adimplente' : 'Inadimplente'}
+          tom={resumo.adimplente === null ? 'var(--ink-3)' : resumo.adimplente ? 'var(--good-ink)' : 'var(--danger-ink)'} />
         <Indicador rotulo="Em aberto" valor={brl(resumo.valorAberto)} />
         <Indicador rotulo="Em atraso" valor={brl(resumo.valorAtraso)}
           tom={Number(resumo.valorAtraso) > 0 ? 'var(--danger-ink)' : undefined}

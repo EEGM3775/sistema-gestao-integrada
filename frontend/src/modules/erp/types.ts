@@ -41,8 +41,23 @@ export interface Boleto {
   linha_digitavel: string | null
   conta_receber: number | null
   conta_pagar: number | null
+  /** `asaas` (o gateway emite) ou `cnab` (registrado no banco por remessa) — item 52. */
+  canal: 'asaas' | 'cnab'
+  nosso_numero: string
+  /** Multa e juros embutidos numa segunda via (item 55). */
+  valor_multa: string
+  valor_juros: string
   /** Payload cru do Asaas (erro de emissão, cancelamento, verificação) — abre no popup de detalhes. */
   dados_retorno_api: Record<string, unknown> | null
+}
+
+/** O boleto na lista dedicada — com a origem dita por extenso (item 54). */
+export interface BoletoLista extends Boleto {
+  pessoa_nome: string
+  cliente_id: number | null
+  conta_descricao: string
+  empreendimento_nome: string
+  unidade: string
 }
 
 /**
@@ -59,10 +74,13 @@ export interface DocumentoGateway {
   mensagem: string
 }
 
-/** Eixos de filtro do `BoletoFilter` (backend) — sem `search` (o model não tem campo de texto livre). */
+/** Eixos de filtro do `BoletoFilter` (backend). */
 export interface BoletoFiltros {
   status?: StatusBoleto
   excluir_status?: StatusBoleto
+  search?: string
+  cliente?: number
+  empreendimento?: number
   conta_receber?: number
   conta_pagar?: number
   data_de?: string
@@ -89,10 +107,12 @@ export interface EventoWebhookAsaas {
   resultado: string
 }
 
-export interface ContaPagar {
+export interface ContaPagar extends TravaDeEdicao {
   conta_pagar_id: number
   fornecedor: number | null
+  fornecedor_nome: string
   empreendimento: number | null
+  empreendimento_nome: string
   nota_fiscal: number | null
   descricao: string
   valor: string
@@ -128,10 +148,15 @@ export interface ContaPagarPayload {
   rateios?: RateioPayload[]
 }
 
-export interface ContaReceber {
+export interface ContaReceber extends TravaDeEdicao {
   conta_receber_id: number
   cliente: number | null
+  cliente_nome: string
   empreendimento: number | null
+  empreendimento_nome: string
+  cliente_empreendimento: number | null
+  /** "QD 12 · LT 05" — o rótulo da unidade vendida, vazio em título avulso. */
+  unidade: string
   nota_fiscal_recebida: number | null
   nota_fiscal_servico: number | null
   nota_fiscal_produto: number | null
@@ -150,6 +175,11 @@ export interface ContaReceber {
   saldo_aberto: string
   rateios: Rateio[]
   boletos: Boleto[]
+  /**
+   * Por que o boleto vivo não é mais o desta conta (valor ou vencimento
+   * mudaram depois da emissão) — vazio quando ele ainda vale. Só no detalhe.
+   */
+  boleto_desatualizado?: string
 }
 
 /** Payload de escrita de uma `ContaReceber` — mesma regra do `ContaPagarPayload`. */
@@ -165,6 +195,8 @@ export interface ContaReceberPayload {
   data_vencimento: string
   data_agendamento?: string | null
   rateios?: RateioPayload[]
+  /** Com boleto vivo no Asaas: cancelar e reemitir ao mudar valor ou vencimento (item 57). */
+  atualizar_boleto?: boolean
 }
 
 /** Payload de `emitir-nfse`/`emitir-nfe` — campos opcionais (defaults vêm da conta/configuração do tenant). */
@@ -285,6 +317,162 @@ export interface BaixaPayload {
   multa?: string
   desconto?: string
   meio_pagamento?: string
+}
+
+/** O que a baixa trava (item 57) — publicado pela API, lido pela tela. */
+export interface TravaDeEdicao {
+  campos_travados: string[]
+  travado_porque: string
+  pode_estornar: boolean
+  estorno_impedido_porque: string
+}
+
+/** Prévia do boleto antes de emitir (item 55). */
+export interface PreviaCobranca {
+  vencimento_contratual: string
+  vencida: boolean
+  dias_atraso: number
+  vencimento_escolhido: string
+  vencimento_sugerido: string
+  vencimento_bancario: string
+  motivo_ajuste: string
+  calendario: {
+    uf: string
+    municipio: boolean
+    feriados_carregados: boolean
+    /** Um feriado do município foi deduzido pela regra (o dataset não publica o ano). */
+    municipal_projetado?: boolean
+  }
+  saldo: string
+  multa: string
+  juros: string
+  dias_encargos: number
+  multa_percentual: string
+  juros_mes_percentual: string
+  total: string
+  boleto_substituido: { boleto_id: number; vencimento: string; valor: string } | null
+}
+
+/** Prévia do lote de boletos (item 52). */
+export interface PreviaLote {
+  emitir: number
+  segunda_via: number
+  com_boleto_valido: number
+  encerradas: number
+  total_boletos: number
+  valor_total: string
+  encargos_total: string
+  vencimento_segunda_via: string | null
+  teto: number
+  /** Pagadores que o banco recusaria (CNAB exige endereço completo). */
+  cadastro_incompleto: { cliente_id: number; cliente_nome: string; falta: string[] }[]
+  cadastro_incompleto_total: number
+  boletos_sem_cadastro: number
+}
+
+/** Um limite de lote (§5.5u do `planos.py`): o que vale, o escolhido pela empresa e o teto do plano. */
+export interface LimiteDeLote {
+  valor: number
+  /** `null` = a empresa não escolheu: vale o máximo do plano. */
+  escolhido: number | null
+  teto_plano: number
+  teto_infra: number
+}
+
+/** `GET/PUT erp/configuracao/lotes/` — quantos boletos e notas um lote emite nesta empresa. */
+export interface LimitesLote {
+  plano: string
+  pode_editar: boolean
+  atualizado_em: string | null
+  atualizado_por: string
+  boletos_por_lote: LimiteDeLote
+  notas_por_lote: LimiteDeLote
+}
+
+/** Prévia das NFS-e em lote (`previa-lote-nfse`). */
+export interface PreviaLoteNfse {
+  emitir: number
+  com_nota: number
+  canceladas: number
+  sem_cadastro: number
+  cadastro_incompleto: { cliente_id: number; cliente_nome: string; falta: string[] }[]
+  cadastro_incompleto_total: number
+  valor_total: string
+  teto: number
+}
+
+/** O desfecho de `emitir-lote-nfse`: as notas seguem para a NFE.io, cada recusa com a frase. */
+export interface ResultadoLoteNfse {
+  enviadas: number
+  com_nota: number
+  recusadas: { conta_receber_id: number; cliente_id: number; cliente_nome: string; descricao: string; mensagem: string }[]
+  recusadas_total: number
+}
+
+export interface AndamentoLote {
+  lote_id: number
+  canal: 'asaas' | 'cnab'
+  criado_em: string
+  total: number
+  emitidos: number
+  erros: number
+  pendentes: number
+  ignorados: number
+  remessa_id: number | null
+  remessa_nome: string | null
+  falhas: { conta_receber_id: number; cliente_nome: string; descricao: string; mensagem: string }[]
+}
+
+export interface CarteiraCobranca {
+  conta_cobranca_id: number
+  nome: string
+  banco: string
+  banco_nome: string
+  layout: '240' | '400'
+  agencia: string
+  agencia_dv: string
+  conta: string
+  conta_dv: string
+  convenio: string
+  carteira: string
+  variacao_carteira: string
+  beneficiario_nome: string
+  beneficiario_documento: string
+  proximo_nosso_numero: number
+  proximo_sequencial_remessa: number
+  instrucoes: string
+  ativa: boolean
+  problemas: string[]
+}
+
+export interface BancoCnab {
+  codigo: string
+  nome: string
+  layouts: ('240' | '400')[]
+  ajuda: Partial<Record<'convenio' | 'variacao_carteira', string>>
+}
+
+export interface RemessaCnab {
+  remessa_id: number
+  conta_cobranca: number
+  carteira_nome: string
+  sequencial: number
+  nome_arquivo: string
+  quantidade: number
+  valor_total: string
+  criado_em: string
+}
+
+export interface RetornoCnab {
+  retorno_id: number
+  conta_cobranca: number
+  carteira_nome: string
+  nome_arquivo: string
+  recebido_em: string
+  resumo: {
+    layout: string; lidos: number; registrados: number; rejeitados: number; pagos: number; baixados: number
+    ja_processados: number; nao_encontrados: number; em_revisao: number; valor_recebido: string
+  }
 }
 
 /** Resposta paginada padrão do DRF (`ErpPageNumberPagination`). */

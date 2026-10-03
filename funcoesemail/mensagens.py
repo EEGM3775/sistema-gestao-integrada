@@ -73,7 +73,7 @@ _IDENTIDADE = [
         "identidade.aviso_segundo_fator",
         "identidade/aviso_segundo_fator.txt",
         "Segundo fator da sua conta: {assunto}",
-        "Ativar, desativar, redefinir, trocar códigos ou entrar com código de recuperação.",
+        "Ativar, desativar, trocar de celular, redefinir, trocar códigos ou entrar com código de recuperação.",
     ),
 ]
 

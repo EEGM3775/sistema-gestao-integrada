@@ -57,11 +57,13 @@ CATALOGO: tuple[Perm, ...] = (
     Perm("erp.conta_pagar.edit", "Editar conta a pagar", "erp_financeiro"),
     Perm("erp.conta_pagar.delete", "Excluir conta a pagar", "erp_financeiro"),
     Perm("erp.conta_pagar.baixar", "Dar baixa em conta a pagar", "erp_financeiro"),
+    Perm("erp.conta_pagar.estornar", "Estornar a baixa de conta a pagar", "erp_financeiro"),
     Perm("erp.conta_receber.view", "Ver contas a receber", "erp_financeiro"),
     Perm("erp.conta_receber.create", "Lançar conta a receber", "erp_financeiro"),
     Perm("erp.conta_receber.edit", "Editar conta a receber", "erp_financeiro"),
     Perm("erp.conta_receber.delete", "Excluir conta a receber", "erp_financeiro"),
     Perm("erp.conta_receber.baixar", "Dar baixa em conta a receber", "erp_financeiro"),
+    Perm("erp.conta_receber.estornar", "Estornar a baixa de conta a receber", "erp_financeiro"),
     Perm("erp.transacao.view", "Ver o ledger (transações financeiras)", "erp_financeiro"),
     Perm("erp.revisao_baixa.view", "Ver a fila de baixas em revisão", "erp_financeiro"),
     Perm("erp.revisao_baixa.resolver", "Resolver baixa em revisão", "erp_financeiro"),
@@ -78,6 +80,10 @@ CATALOGO: tuple[Perm, ...] = (
     Perm("erp.cobranca.view", "Ver cobranças/boletos", "erp_financeiro"),
     Perm("erp.cobranca.emitir", "Emitir cobrança/boleto (Asaas)", "erp_financeiro"),
     Perm("erp.cobranca.conciliar", "Conciliar retorno/divergências Asaas", "erp_financeiro"),
+    # Recurso próprio, fora de `erp.cobranca.*`: é permissão ESPECIAL (pedido do
+    # dono, 01/10/2026) — nenhum papel padrão a recebe por curinga; o admin a dá
+    # a quem quiser. Ver `payment/planos.py` §5.5u.
+    Perm("erp.lote.configurar", "Definir quantos boletos e notas um lote emite (até o teto do plano)", "erp_financeiro"),
     # --- CRM (módulo 'crm') — recursos reais: campanha, lead, conta, contato,
     #     oportunidade, produto-da-oportunidade (o do S5) e interação/agenda ---
     Perm("crm.campanha.view", "Ver campanhas", "crm"),

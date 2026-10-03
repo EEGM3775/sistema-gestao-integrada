@@ -15,10 +15,17 @@ from .views import (
     CentroCustoViewSet,
     LoteRemessaViewSet,
     AtualizarStatusNFView,
-    ConsultarStatusNFView
+    ConsultarStatusNFView,
+    ConfiguracaoLotesView,
 )
 
+from .views_cnab import ContaCobrancaViewSet, LoteCobrancaViewSet, RemessaViewSet, RetornoViewSet
+
 router = DefaultRouter()
+router.register(r'carteiras-cobranca', ContaCobrancaViewSet)
+router.register(r'remessas-cnab', RemessaViewSet)
+router.register(r'retornos-cnab', RetornoViewSet)
+router.register(r'lotes-cobranca', LoteCobrancaViewSet)
 router.register(r'transacoes', TransacaoViewSet)
 router.register(r'notas-fiscais-servico', NotaFiscalServicoViewSet)
 router.register(r'notas-fiscais-produto', NotaFiscalProdutoViewSet)
@@ -34,6 +41,7 @@ router.register(r'lotes-remessa', LoteRemessaViewSet)
 urlpatterns = [
     path('', include(router.urls)),
     path('dashboard/', ERPDashboardView.as_view(), name='erp-dashboard'),
+    path('configuracao/lotes/', ConfiguracaoLotesView.as_view(), name='erp-configuracao-lotes'),
     path('atualizar-status-nf/', AtualizarStatusNFView.as_view(), name='atualizar-status-nf'),
     path('nf/<int:nf_id>/consultar/', ConsultarStatusNFView.as_view(), name='consultar-status-nf'),
 ]

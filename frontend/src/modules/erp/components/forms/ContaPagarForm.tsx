@@ -8,11 +8,13 @@ import { Field } from './FormField'
 import { inputStyle, selectStyle, buttonPrimaryStyle, buttonSecondaryStyle } from './formStyles'
 import { contaPagarSchema, type ContaPagarFormValues } from './schemas'
 import { useFornecedorOptions, useEmpreendimentoOptions } from '../../hooks/useEntityOptions'
-import { apiDecimalToCents, centsToApiDecimal } from '@/utils/money'
+import { apiDecimalToCents, centsToApiDecimal, formatBRL } from '@/utils/money'
 import { FormErrorBanner, parseApiErrors } from '@/utils/formErrors'
+import { AvisoDeTrava, TextoTravado } from './trava'
+import { distribuirErros, errosSemLugar } from './distribuirErros'
 import type { ContaPagar, ContaPagarPayload } from '../../types'
 
-import { minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
+import { dateToBR, minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
 
 /** Lançamento de conta a pagar — criação e edição (D.1.1 §13). */
 
@@ -50,6 +52,13 @@ export function ContaPagarForm({ initial, onSubmit, onCancel }: ContaPagarFormPr
   const fornecedorOptions = useFornecedorOptions(true)
   const empreendimentoOptions = useEmpreendimentoOptions(true)
   const [apiError, setApiError] = useState<string | null>(null)
+  const travados = new Set(initial?.campos_travados ?? [])
+  // A pessoa da conta pode não estar entre as opções carregadas (a lista vem
+  // limitada): sem ela no select, o valor some e o formulário não salva.
+  const opcoesFornecedor = [...(fornecedorOptions.data ?? [])]
+  if (initial?.fornecedor && !opcoesFornecedor.some(o => o.id === initial.fornecedor)) {
+    opcoesFornecedor.unshift({ id: initial.fornecedor, label: initial.fornecedor_nome || `#${initial.fornecedor}` })
+  }
 
   const methods = useForm<ContaPagarFormValues>({
     resolver: zodResolver(contaPagarSchema),
@@ -71,35 +80,45 @@ export function ContaPagarForm({ initial, onSubmit, onCancel }: ContaPagarFormPr
         rateios: (values.rateios ?? []).map(r => ({ centro_custo: r.centro_custo, valor: centsToApiDecimal(r.valorCents) })),
       })
     } catch (err) {
-      const parsed = parseApiErrors(err)
-      const { _form, ...campo } = parsed
-      for (const [field, msg] of Object.entries(campo)) {
-        if (field in EMPTY_VALUES) setError(field as keyof ContaPagarFormValues, { message: msg })
-      }
-      setApiError(_form ?? (Object.keys(campo).length ? null : 'Não foi possível salvar a conta.'))
+      setApiError(distribuirErros(parseApiErrors(err), Object.keys(EMPTY_VALUES), (campo, msg) =>
+        setError(campo as keyof ContaPagarFormValues, { message: msg })))
     }
-  })
+  }, invalidos => setApiError(errosSemLugar(invalidos)))
 
   return (
     <FormProvider {...methods}>
       <form onSubmit={submit} className="flex flex-col gap-4">
+        <AvisoDeTrava motivo={initial?.travado_porque ?? ''} />
         <Field label="Fornecedor" error={errors.fornecedor?.message}>
-          <select style={selectStyle} disabled={fornecedorOptions.isLoading} defaultValue="" {...register('fornecedor', { valueAsNumber: true })}>
+          {travados.has('fornecedor') ? (
+            <TextoTravado>{opcoesFornecedor.find(o => o.id === initial?.fornecedor)?.label ?? '—'}</TextoTravado>
+          ) : (
+            <select style={selectStyle} disabled={fornecedorOptions.isLoading} defaultValue="" {...register('fornecedor', { valueAsNumber: true })}>
             <option value="" disabled>Selecione um fornecedor…</option>
-            {(fornecedorOptions.data ?? []).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+            {opcoesFornecedor.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
           </select>
+          )}
         </Field>
 
         <Field label="Obra/empreendimento (opcional)">
-          <select
-            style={selectStyle}
-            disabled={empreendimentoOptions.isLoading}
-            defaultValue=""
-            {...register('empreendimento', { setValueAs: v => (v === '' ? null : Number(v)) })}
-          >
-            <option value="">Sem vínculo com obra</option>
-            {(empreendimentoOptions.data ?? []).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-          </select>
+          {/* Controlado, não registrado: o `<select>` nativo devolvia "" para
+              "sem obra" (a validação reprovava sem mensagem — item 57) e perdia a
+              obra gravada quando o valor chegava antes das opções. */}
+          <Controller
+            control={control}
+            name="empreendimento"
+            render={({ field }) => (
+              <select
+                style={selectStyle}
+                value={field.value == null ? '' : String(field.value)}
+                onChange={e => field.onChange(e.target.value === '' ? null : Number(e.target.value))}
+                onBlur={field.onBlur}
+              >
+                <option value="">Sem vínculo com obra</option>
+                {(empreendimentoOptions.data ?? []).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+              </select>
+            )}
+          />
         </Field>
 
         <Field label="Descrição" error={errors.descricao?.message}>
@@ -110,7 +129,9 @@ export function ContaPagarForm({ initial, onSubmit, onCancel }: ContaPagarFormPr
           <Controller
             control={control}
             name="valorCents"
-            render={({ field }) => <MoneyInput valueCents={field.value} onChangeCents={field.onChange} />}
+            render={({ field }) => travados.has('valor')
+              ? <TextoTravado>{formatBRL(field.value)}</TextoTravado>
+              : <MoneyInput valueCents={field.value} onChangeCents={field.onChange} />}
           />
         </Field>
 
@@ -119,7 +140,9 @@ export function ContaPagarForm({ initial, onSubmit, onCancel }: ContaPagarFormPr
             <input type="date" min={minCalendarioISO} max={maxCalendarioISO} style={inputStyle} {...register('data_emissao')} />
           </Field>
           <Field label="Vencimento" error={errors.data_vencimento?.message}>
-            <input type="date" min={minCalendarioISO} max={maxCalendarioISO} style={inputStyle} {...register('data_vencimento')} />
+            {travados.has('data_vencimento')
+              ? <TextoTravado>{dateToBR(initial?.data_vencimento ?? '')}</TextoTravado>
+              : <input type="date" min={minCalendarioISO} max={maxCalendarioISO} style={inputStyle} {...register('data_vencimento')} />}
           </Field>
           <Field label="Agendamento" error={errors.data_agendamento?.message}>
             <input type="date" min={minCalendarioISO} max={maxCalendarioISO} style={inputStyle} {...register('data_agendamento')} />

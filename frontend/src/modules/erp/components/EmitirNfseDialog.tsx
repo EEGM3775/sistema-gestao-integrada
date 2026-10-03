@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { X, ScrollText } from 'lucide-react'
 import { formatBRL, apiDecimalToCents } from '@/utils/money'
 import { dateToBR } from '@/utils/dates'
-import { useContasAReceber } from '../hooks/useContasAReceber'
+import { useContaAReceber, useContasAReceber } from '../hooks/useContasAReceber'
 import { useEmitirNfse } from '../hooks/useNotasFiscais'
+import { CaixaDeBusca } from '../grade/BarraDaGrade'
 import { buttonPrimaryStyle, buttonSecondaryStyle, inputStyle, selectStyle, labelStyle } from './forms/formStyles'
 
 interface Props {
@@ -11,16 +13,19 @@ interface Props {
   onClose: () => void
   /** Chamado quando a emissão foi enfileirada (202) — a página exibe o aviso e vai para "Emitidas". */
   onEmitted: (message: string) => void
+  /** A conta já escolhida — quando o diálogo abre a partir do detalhe dela. */
+  contaInicial?: number
 }
 
-interface ApiErr { response?: { status?: number; data?: { message?: string; detail?: string; error?: string } } }
+interface ApiErr { response?: { status?: number; data?: { message?: string; detail?: string; error?: string; cliente_id?: number } } }
 
-function mensagemDeErro(e: unknown): string {
+/** A frase do erro e, quando falta dado do tomador, o cliente a completar (item 58). */
+function mensagemDeErro(e: unknown): { texto: string; clienteId?: number } {
   const err = e as ApiErr
   const d = err.response?.data
-  if (d?.message || d?.detail || d?.error) return (d.message || d.detail || d.error) as string
-  if (err.response?.status === 403) return 'Seu acesso não permite emitir nota fiscal (erp.nf.emitir).'
-  return 'Não foi possível emitir a NFS-e agora.'
+  if (d?.message || d?.detail || d?.error) return { texto: (d.message || d.detail || d.error) as string, clienteId: d.cliente_id }
+  if (err.response?.status === 403) return { texto: 'Seu acesso não permite emitir nota fiscal.' }
+  return { texto: 'Não foi possível emitir a NFS-e agora.' }
 }
 
 /**
@@ -31,37 +36,55 @@ function mensagemDeErro(e: unknown): string {
  * assíncrona (enfileira na NFE.io): a nota aparece como "Processando" na aba
  * Emitidas e vira "Emitida"/"Erro" quando a NFE.io responder.
  */
-export function EmitirNfseDialog({ open, onClose, onEmitted }: Props) {
+export function EmitirNfseDialog({ open, onClose, onEmitted, contaInicial }: Props) {
   const [contaId, setContaId] = useState<number | ''>('')
   const [cityCode, setCityCode] = useState('010701')
   const [descricao, setDescricao] = useState('')
-  const [erro, setErro] = useState<string | null>(null)
+  const [erro, setErro] = useState<{ texto: string; clienteId?: number } | null>(null)
+  const [busca, setBusca] = useState('')
 
   const emitir = useEmitirNfse()
-  // Contas recentes; filtramos client-side as que ainda não têm NFS-e e não estão canceladas.
-  const { data, isLoading } = useContasAReceber({ page_size: 100, ordering: '-data_vencimento' })
-  const contas = useMemo(
-    () => (data?.results ?? []).filter(c => !c.nota_fiscal_servico && c.status !== 'CANCELADO'),
-    [data],
-  )
+  // A busca vai ao servidor (cliente, lote, descrição): com dezenas de milhares
+  // de contas, uma lista das cem mais recentes não achava quem se procura. Conta
+  // com nota recusada continua na lista — o backend deixa reemitir (item 58) e
+  // recusa, com frase, quem já tem nota válida.
+  const { data, isLoading } = useContasAReceber({ page_size: 50, ordering: '-vencimento', search: busca || undefined })
+  const inicial = useContaAReceber(contaInicial).data
+  const contas = useMemo(() => {
+    const lista = (data?.results ?? []).filter(c => c.status !== 'CANCELADO')
+    return inicial && !lista.some(c => c.conta_receber_id === inicial.conta_receber_id) ? [inicial, ...lista] : lista
+  }, [data, inicial])
 
+  // Zera o formulário **só ao abrir**. Antes o mesmo efeito dependia de
+  // `emitir.isPending` e de `onClose` (uma função nova a cada render do pai):
+  // quando a API recusava, o fim do "emitindo…" rodava o efeito de novo e apagava
+  // a mensagem de erro no mesmo instante — "clico em emitir e nada acontece".
   useEffect(() => {
     if (!open) return
-    setContaId('')
+    setContaId(contaInicial ?? '')
+    setBusca('')
     setCityCode('010701')
     setDescricao('')
     setErro(null)
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !emitir.isPending) onClose() }
+  }, [open, contaInicial])
+
+  const ocupado = useRef(false)
+  ocupado.current = emitir.isPending
+  const fechar = useRef(onClose)
+  fechar.current = onClose
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !ocupado.current) fechar.current() }
     document.addEventListener('keydown', onKey)
     const prev = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = prev }
-  }, [open, onClose, emitir.isPending])
+  }, [open])
 
   if (!open) return null
 
   function emitirAgora() {
-    if (contaId === '') { setErro('Selecione a conta a receber que dará origem à nota.'); return }
+    if (contaId === '') { setErro({ texto: 'Selecione a conta a receber que dará origem à nota.' }); return }
     setErro(null)
     emitir.mutate(
       { contaId: contaId as number, payload: { city_service_code: cityCode || undefined, descricao: descricao || undefined } },
@@ -103,6 +126,11 @@ export function EmitirNfseDialog({ open, onClose, onEmitted }: Props) {
             A nota é emitida a partir de uma conta a receber — o tomador e o valor vêm do título.
           </p>
 
+          {!contaInicial && (
+            <div className="mb-2">
+              <CaixaDeBusca valor={busca} onBuscar={setBusca} buscando={false} placeholder="Buscar conta por cliente, lote ou descrição" />
+            </div>
+          )}
           <div className="mb-3.5">
             <label style={labelStyle} htmlFor="nfse-conta">Conta a receber</label>
             <select id="nfse-conta" style={selectStyle} value={contaId}
@@ -110,13 +138,13 @@ export function EmitirNfseDialog({ open, onClose, onEmitted }: Props) {
               <option value="">{isLoading ? 'Carregando…' : 'Selecione…'}</option>
               {contas.map(c => (
                 <option key={c.conta_receber_id} value={c.conta_receber_id}>
-                  #{c.conta_receber_id} · {c.descricao} · {formatBRL(apiDecimalToCents(c.valor))} · venc {dateToBR(c.data_vencimento)}
+                  {c.cliente_nome} · {c.descricao} · {formatBRL(apiDecimalToCents(c.valor))} · venc {dateToBR(c.data_vencimento)}
                 </option>
               ))}
             </select>
             {!isLoading && contas.length === 0 && (
               <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
-                Nenhuma conta a receber elegível (sem NFS-e). Crie uma em “Contas a receber”.
+                Nenhuma conta encontrada. Mude a busca ou crie a conta em “Contas a receber”.
               </p>
             )}
           </div>
@@ -140,7 +168,12 @@ export function EmitirNfseDialog({ open, onClose, onEmitted }: Props) {
           {erro && (
             <div className="text-sm px-4 py-3 rounded-lg mt-3"
               style={{ background: '#fff5f5', border: '1px solid #fed7d7', color: '#c53030' }}>
-              {erro}
+              {erro.texto}
+              {erro.clienteId && (
+                <Link to={`/app/clientes/${erro.clienteId}`} className="block mt-1 font-semibold" style={{ color: '#c53030' }}>
+                  Abrir o cadastro do cliente →
+                </Link>
+              )}
             </div>
           )}
         </div>

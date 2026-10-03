@@ -55,7 +55,8 @@ def ajuste_do_empreendimento(empreendimento, *, ativo: bool = True) -> AjusteDeV
     if not ativo:
         return SEM_AJUSTE
     uf, ibge = localidade_do_empreendimento(empreendimento)
-    return AjusteDeVencimento(uf=uf, ibge=ibge)
+    # O vencimento é de banco: Carnaval e Corpus Christi também empurram.
+    return AjusteDeVencimento(uf=uf, ibge=ibge, bancario=True)
 
 
 def ajuste_da_aquisicao(aquisicao) -> AjusteDeVencimento:

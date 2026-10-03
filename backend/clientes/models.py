@@ -2,9 +2,22 @@
 from decimal import Decimal
 
 from django.db import models
-from django.core.validators import RegexValidator
+from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
 from nucleo.tenancy import Excluivel, TenantScopedModel
 from django.utils.translation import gettext_lazy as _
+
+from payment import planos
+
+
+def _percentual_padrao(qual: str) -> Decimal:
+    """O encargo por atraso que o contrato cobra quando a venda não disse outro."""
+    return Decimal(planos.ERP_ENCARGOS_MULTA_PADRAO_PERCENTUAL if qual == 'multa'
+                   else planos.ERP_ENCARGOS_JUROS_MES_PADRAO_PERCENTUAL)
+
+
+def _percentual_teto(qual: str) -> Decimal:
+    return Decimal(planos.ERP_ENCARGOS_MULTA_TETO_PERCENTUAL if qual == 'multa'
+                   else planos.ERP_ENCARGOS_JUROS_MES_TETO_PERCENTUAL)
 
 # Reusable validator
 cpf_cnpj_validator = RegexValidator(
@@ -153,6 +166,23 @@ class ClienteEmpreendimento(TenantScopedModel, Excluivel):
     data_base_correcao = models.DateField(
         null=True, blank=True, verbose_name=_("Data-base da correção"),
         help_text=_("De onde o índice começa a contar. Vazio = a data da compra."),
+    )
+
+    # ─── Encargos por atraso (item 55 do dono) ────────────────────────────────
+    # O que o contrato cobra quando a parcela passa do vencimento: multa uma vez,
+    # juros de mora pró-rata por dia. É o que a segunda via de um título vencido
+    # soma ao saldo. O padrão e o teto são do dono (`payment/planos.py` §5.5s).
+    multa_atraso_percentual = models.DecimalField(
+        max_digits=5, decimal_places=2, default=_percentual_padrao('multa'),
+        validators=[MinValueValidator(Decimal('0')), MaxValueValidator(_percentual_teto('multa'))],
+        verbose_name=_("Multa por atraso (%)"),
+        help_text=_("Cobrada uma vez sobre o saldo vencido. Venda a consumidor: até 2% (CDC)."),
+    )
+    juros_mora_mensal_percentual = models.DecimalField(
+        max_digits=5, decimal_places=2, default=_percentual_padrao('juros'),
+        validators=[MinValueValidator(Decimal('0')), MaxValueValidator(_percentual_teto('juros'))],
+        verbose_name=_("Juros de mora (% ao mês)"),
+        help_text=_("Pró-rata por dia de atraso."),
     )
 
     @property

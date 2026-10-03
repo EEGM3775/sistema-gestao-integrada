@@ -118,7 +118,7 @@ export function BarraCarteira({
         <input
           value={busca}
           onChange={e => onBusca(e.target.value)}
-          placeholder={visao === 'unidades' ? 'Buscar por cliente, CPF, quadra ou lote…' : 'Buscar por nome, CPF, e-mail ou telefone…'}
+          placeholder={visao === 'unidades' ? 'Buscar por cliente, CPF ou unidade (QD 14 LT 05)…' : 'Buscar por nome, CPF, e-mail, telefone ou QD 14…'}
           style={{ ...campo, width: '100%', paddingLeft: 28 }}
         />
       </div>

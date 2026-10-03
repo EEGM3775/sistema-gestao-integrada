@@ -10,6 +10,282 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D238 — o filtro de RLS não era estimável, e toda consulta com JOIN supunha 1% das linhas · ✅ corrigido 03/10/2026
+
+Achado no D231. A política `tenant_isolation` das 164 tabelas era
+`current_setting('app.rls_bypass') = 'on' OR tenant_id::text = current_setting('app.current_tenant')`.
+O cast `::text` na coluna tirava o índice de `tenant_id` do jogo, e o planejador, sem estatística para
+a expressão, estimava cada tabela em ~1% das linhas. Medido no banco de dev (86 mil contas a receber
+de um tenant só), num JOIN de três tabelas com `LIMIT 50`: **1 linha estimada contra 86.047 reais**,
+nested loop sobre os 2.004 clientes, **110 ms**. A grade do ERP tinha contornado (paginação em dois
+passos), mas toda outra listagem com JOIN sobre tabela grande caía no mesmo plano.
+
+**Correção:** a migration `nucleo 0029_rls_estimavel` reescreve no lugar (`ALTER POLICY`, com volta)
+toda política ainda na forma antiga para
+`bypass OR tenant_id = NULLIF(current_setting('app.current_tenant', true), '')::uuid`. Comparando
+`uuid` com `uuid`, a estimativa sai do `n_distinct` da coluna e o índice volta a valer: o mesmo JOIN
+estima 86.089, desce pelo índice da chave e para em 50 linhas — **1,3 ms**. A contagem com JOIN foi
+de 36,8 ms para 26,8 ms. A semântica não muda no domínio que o `nucleo.tenancy` escreve (UUID canônico
+ou vazio); um valor que não seja UUID passa a dar erro em vez de zero linhas — falha alta, que nenhum
+caminho produz. Provas em `test_rls_estimavel`: toda política do banco na forma nova (a trava contra a
+migration futura que copiar o texto antigo, como é o padrão da casa); as duas expressões, exatamente
+como a migration as grava, iguais nos 16 casos de tenant (próprio, outro, vazio, nunca definido) ×
+bypass (on, off, vazio, nulo); e a estimativa sob a RLS, com metade da tabela de um tenant, acima da
+metade — a forma antiga dava ~1%. O isolamento em si segue coberto por `test_rls_fail_closed` e
+`test_tenant_isolation`, que passaram a rodar sobre a política nova.
+
+### D241 — "Trocar de celular" deixava o admin protegido só pela senha até o próximo login · ✅ corrigido 03/10/2026
+
+Visto em 01/10/2026, num teste do próprio dono (não foi incidente): às 20:08 de 30/09, o `admin` entrou
+com um código de recuperação e usou **Minha conta › Segurança › Trocar de celular**, com a senha e
+outro código de recuperação (eventos 120 e 121 da trilha). A `DesativarSegundoFatorView` **apagava** o
+fator e deixava o cadastro novo para depois; a tela abria o cadastro na hora, mas quem fechasse ficava
+sem fator. Às 06:29 de 01/10, a senha sozinha levou à tela de cadastro do login, e o fator novo foi
+ativado (evento 122). Durante essas 10 horas, uma conta obrigada a ter 2FA ficou só com a senha, e
+quem a tivesse cadastraria o **próprio** autenticador no primeiro login.
+
+**Correção:** a troca virou duas etapas que nunca passam por "sem fator".
+`POST /auth/segundo-fator/troca/` pede a senha e o código do aparelho atual (ou de recuperação) e
+devolve o QR do novo; o segredo novo espera no cache, cifrado, pelo prazo do desafio do login
+(`SEGUNDO_FATOR_DESAFIO_VALIDADE_S`), e o aparelho atual segue valendo. `.../troca/confirmar/` recebe
+o primeiro código do aparelho novo e troca o segredo **no lugar**, numa transação; gera códigos de
+recuperação novos, derruba as outras sessões, registra `segundo_fator_trocado` e avisa por e-mail. Se
+a troca vencer, o cache cair ou a pessoa fechar a tela, nada muda. O **desativar** recusa (409) quem
+é obrigado. Na mesma passada, a senha do desativar e da troca passou a contar no bloqueio por tentativa
+(`conferir_senha`, o mesmo do step-up): antes, uma sessão roubada tinha ali um adivinhador de senha
+sem freio. IAM 281 testes (9 novos em `TrocaDeCelularTests`).
+
+**Avaliado e mantido:** o cadastro na etapa `cadastro` do login continua pedindo só a senha. Com o
+desativar fechado ao obrigado, essa etapa só aparece para quem já teve fator depois de uma
+**redefinição feita por outra pessoa** (`redefinir-segundo-fator`, nunca na própria conta), que derruba
+as sessões, fica na trilha com o nome de quem fez e manda e-mail ao alvo. É o caminho de quem perdeu
+o celular **e** os códigos, e pedir mais do que a senha ali exigiria um canal fora da conta (e-mail
+com link, por exemplo), que ainda não existe.
+
+### D257 — a busca de clientes procurava no CPF sem a permissão de documento · ✅ corrigido 03/10/2026
+
+Visto ao documentar a busca nova (D254). A carteira mascara o CPF/CNPJ sem `cadastro.cliente_doc.view`
+e trava a **ordenação** por documento pelo mesmo motivo — mas a **busca** procurava em `cpf_cnpj` para
+qualquer um que visse o cadastro: quem não podia ler o CPF perguntava "existe cliente com este CPF?" e
+lia a resposta na grade, um oráculo contra a máscara (LGPD art. 46). O mesmo valia para a busca do
+cadastro (`/api/clientes/?search=`) e para o filtro `?cpf_cnpj=`. O listão do ERP já fechava isso.
+**Correção (pedido do dono: "de acordo com a LGPD"):** o documento só é critério de busca com a
+permissão, nos três caminhos — `BUSCA_DOCUMENTAL` na carteira (`aplicar_filtros(…, pode_documento)`,
+fail-closed por padrão), `campos_de_busca` no `ClienteViewSet` (o gancho subiu do listão para o
+`BuscaSemAcento`, que agora serve aos dois) e `?cpf_cnpj=` respondendo vazio sem a permissão, para
+qualquer valor. Testes nas duas pontas (sem e com a permissão) em `testes/backend/clientes/tests.py`.
+
+
+### D256 — `ponte.sh subir` saía com 141 antes de levantar a ponte · ✅ corrigido 03/10/2026
+
+A senha era gerada por `tr -dc … < /dev/urandom | head -c 20`: quando o `head` fecha o cano, o `tr`
+morre de SIGPIPE, e com `set -o pipefail` o script inteiro saía (141) — nada subia, nada ficava
+exposto, mas a ponte não abria. **Correção:** lê um bloco finito de `/dev/urandom` e corta no bash,
+sem cano que feche cedo.
+
+### D253 — grupo da carteira parava em 200 linhas · ✅ corrigido 03/10/2026
+
+Revisão do dono: agrupada por empreendimento, a carteira mostrava "Mostrando 200 de 534 — refine o
+filtro para ver o restante", sem como ver o resto. O grupo aberto pedia só a 1ª página. **Correção:**
+cada grupo rola infinito como a lista plana — a página seguinte desce quando o fim do grupo entra na
+tela (e por botão "Carregar mais"), cada página é uma consulta própria no cache, e a contagem recomeça
+quando filtro, ordem, visão ou agrupamento mudam.
+
+### D254 — a busca da carteira não achava "QD 14" · ✅ corrigido 03/10/2026
+
+Revisão do dono. A busca comparava a frase inteira com cada campo, e a quadra guarda "14", não
+"QD 14" — que é como a própria tela escreve a unidade. **Correção:** a busca é por palavra (todas casam,
+cada uma em algum campo) e entende o endereço de qualquer tipo de empreendimento: quadra/lote
+(`QD 14 LT 05`, `QD14 LT5`, `quadra 14 lote 05`), bloco/torre/edifício (`Torre A`, `BL B`, `BLA`),
+andar (`3º andar`, `pav 12`) e apto/casa/sala/loja/box/vaga/nº (`apto 302`, `casa 7`, `CS07`). Bloco e
+número são texto livre, então o valor casa no fim do campo com rótulo opcional ("A" acha "Torre A",
+"7" acha "Casa 7"), sem acento, caixa ou zero à esquerda. Número curto solto procura só quadra, lote e
+apto — no CPF ele casaria com quase toda a carteira. Vale nas duas visões (Clientes e Unidades).
+No reteste, dois casos a mais: "Loteamento Demo 1" trazia a QD 1 de todo "Loteamento Demo" (o "1"
+virava quadra) — agora as palavras soltas são tentadas antes **como frase** (palavras inteiras: "Demo 1"
+não acha "Demo 10"); e "Ro" trazia "Ribei**ro**" — agora o texto casa pelo **começo** de uma palavra,
+a régua do D242 (número segue casando em qualquer ponto: CPF, telefone, CEP).
+
+### D255 — grupos em ordem de texto: depois da quadra 19 vinha a 2 · ✅ corrigido 03/10/2026
+
+Revisão do dono. O agrupamento ordenava pelo valor cru: a quadra é texto ("19" < "2") e o
+empreendimento saía pela ordem de cadastro. **Correção:** cada nível tem a sua chave de ordem —
+quadra/lote/bloco na ordem natural da lista (`chave_natural`), nomes em ordem alfabética, faixa e status
+na ordem declarada, "sem informação" por último. Na carteira de clientes e no listão do ERP (Contas a
+receber, a pagar e Boletos), que tinham o mesmo defeito.
+
+### D250 — cliente sem parcela nenhuma aparecia "Adimplente" · ✅ corrigido 01/10/2026
+
+Item 60 do dono. A pílula da carteira e o resumo da aba Financeiro diziam `adimplente = parcelas em
+atraso == 0`, e quem não tem parcela tem zero em atraso: venda sem carnê gerado afirmava um histórico
+de pagamento que não existe. **Correção:** a carteira anota `tem_parcelas` (cancelada não conta) e
+ganha a faixa **Sem parcelas** (filtro, agrupamento e pílula neutra); `adimplente` vem `null` nesse
+caso, na grade e na ficha. "Em dia" passa a ser só quem tem parcela e nada vencido.
+
+### D251 — a agenda só mostrava feriado municipal dos anos do dataset · ✅ corrigido 01/10/2026
+
+Item 61 do dono ("só aparece os feriados municipais do ano corrente"). O feed da agenda lia o
+municipal direto da tabela `Feriado`, que só tem os anos publicados (2025–2026); o vencimento do
+boleto já enxergava os outros anos pela projeção do D247. **Correção:** a agenda pergunta ao mesmo
+`FeriadosMunicipais` — publicado quando há, projetado pela regra nos demais anos — e o projetado vem
+marcado (`projetado`) e diz na descrição que é projeção a confirmar na prefeitura.
+
+### D246 — boleto do Asaas nunca mostrava a linha digitável · ✅ corrigido 01/10/2026
+
+Item 55 do dono, no reteste: "Emitido · Asaas · vence 01/01/2030 · Linha digitável ainda não
+disponível". **Todo** boleto do Asaas era assim. O SGI lia `identificationField` do objeto do
+pagamento, e o Asaas não o devolve ali (nem no `POST /payments`, nem no `GET /payments/{id}`): a linha,
+o código de barras e o nosso número moram em `GET /payments/{id}/identificationField` — conferido no
+sandbox com o boleto do print. **Correção:** `AsaasClient.buscar_linha_digitavel`; a emissão pede logo
+após criar o pagamento (falha ali não derruba o boleto), `verificar_cobranca_asaas` completa o boleto
+antigo, e o `BoletoNaTela` chama a verificação quando a linha falta. A linha aparece formatada como no
+boleto impresso. O CNAB não tinha o defeito: lá a linha é calculada pelo SGI.
+
+### D247 — feriados só de 2025 a 2028: o boleto de 2030 venceu no 1º de janeiro · ✅ corrigido 01/10/2026
+
+Item 55 do dono, no reteste — e o mesmo caso do item 57. A parcela 46/48 (QD 6 · LT 14) vencia em
+01/01/2030; a tabela `Feriado` tinha só 2025–2028 (sincronização padrão ano−1..ano+2), o ajuste não
+conheceu a Confraternização Universal e o boleto saiu no feriado, **sem aviso**: `base_sincronizada()`
+só perguntava se a tabela tinha alguma linha. Valia também para o CNAB (mesmo `planejar`).
+**Correção (decisão do dono: "os feriados têm que bater de 1900 a 2100"):** `sincronizar_feriados`
+grava nacional e estadual de 1900 a 2100 (`CALENDARIO_ANO_*` no `planos.py`; 1.934 + 4.335 linhas,
+11 s, offline); o ajuste calcula a lei do ano que faltar na tabela; o municipal de ano não publicado
+pelo dataset é projetado pela regra dos anos publicados (data fixa ou móvel com a Páscoa) e a prévia
+diz quando foi; o vencimento de título soma os dias sem expediente bancário (Carnaval e Corpus Christi,
+calendário ANBIMA) — o prazo da CAT do PDCA não. O municipal de um ano só é trocado se o download
+trouxe algo. Limites: o estadual do `python-holidays` começa em 1996; o municipal do dataset, em 2025.
+
+### D248 — editar valor ou vencimento deixava o boleto antigo valendo · ✅ corrigido 01/10/2026
+
+Item 57 do dono, no reteste: "posso editar, mas não faz sentido, já que o boleto continua igual". No
+caso do print, a conta foi corrigida de 01/01 para 02/01/2030 depois de emitido o boleto, que seguiu
+registrado no Asaas com a data antiga — e a edição não deixou rastro de quem nem quando.
+**Correção** (desenho de Conta Azul/Omie e TOTVS, `moduloerp/boleto_da_conta.py`): com boleto vivo
+no Asaas, mudar valor ou vencimento exige `atualizar_boleto` e, salvo, cancela o boleto e emite a
+segunda via pela task (feriado e encargos refeitos); com boleto no banco (CNAB), valor, vencimento e
+cliente travam com o caminho; trocar o cliente com boleto vivo trava. O formulário avisa antes
+("Salvar e reemitir o boleto"); o detalhe publica `boleto_desatualizado` e oferece "Emitir boleto
+atualizado" para o boleto que já ficou para trás. Mudança de valor, vencimento ou contraparte, a pagar
+e a receber, vai à auditoria (`editar_financeiro`). Validado no sandbox: boleto 81 cancelado, 82
+emitido em 05/02 com linha digitável, auditoria gravada (conta de teste devolvida ao estado original).
+
+### D249 — NFS-e ficava "Processando" para sempre · ✅ corrigido 01/10/2026
+
+Item 58 do dono, no reteste ("as notas estão dando erro na emissão"). As sete notas com `ERRO` do dev
+eram anteriores ao D237 (tomador sem CEP/IBGE). As de hoje saíam: a NFE.io responde `Created` e emite
+depois, e o SGI gravava "Processando" e não voltava a perguntar — a nota 12 estava **emitida** lá
+(nº 6) e parada aqui. **Correção:** depois da emissão, a task consulta de novo a cada
+`ERP_NFSE_CONSULTA_INTERVALO_S` até a nota sair de "Processando" (até `ERP_NFSE_CONSULTA_TENTATIVAS`;
+a consulta pedida pela tela não encadeia). A nota 12 foi reconciliada: emitida, nº 6, PDF baixado.
+O texto do erro que o dono viu não chegou na mensagem; se for outro, reabrir com ele.
+
+### D242 — a busca do listão casava o termo no meio da palavra · ✅ corrigido 01/10/2026
+
+Itens 51 e 53 do dono, revistos: `ana ro` trazia "Ana Ribei**ro**" e `aco` parecia não achar "Aço" —
+achava, mas junto com toda medição de "Fund**aço**es" da Torre A (46 contas, 8 delas ruído). O
+`unaccent` estava certo; o `icontains` é que casava em qualquer ponto. **Correção:** em
+`moduloerp/listao.py` cada palavra casa pelo **começo** de uma palavra do campo (`\m` do Postgres, ainda
+sem acento nem caixa); número com cara de documento (5+ dígitos) continua casando em qualquer ponto, e
+número curto ignora o zero à esquerda (`5` acha o lote "05"). No dev: `ana ro` → só "Ana Rocha"; `aco`
+→ 38 contas, todas da Aço Forte. Testes em `test_itens_51_58.py`.
+
+### D243 — "Marcar todas do filtro" marcava, mas nenhum quadrado aparecia marcado · ✅ corrigido 01/10/2026
+
+Item 51 do dono. O modo "todas do filtro" zerava o conjunto de marcados e a linha perguntava a esse
+conjunto se estava marcada — a seleção valia para o lote, mas a tela mostrava tudo desmarcado, e não
+havia como tirar uma conta da seleção sem perder as outras. **Correção:** a grade pergunta
+`marcada(linha)`; em "todas do filtro" toda linha elegível aparece marcada, desmarcar uma vai para
+`excluir_ids` (aceito pela prévia e pela geração do lote), e o cabeçalho ganhou a caixa de "marcar
+todas" com estado parcial.
+
+### D244 — a remessa CNAB 240 reprovava no validador do banco · ✅ corrigido 01/10/2026
+
+Item 52 do dono: a remessa de 60 boletos passou no validador CNAB do Sicoob e voltou reprovada, 184 de
+184 linhas. Parte era de banco trocado — a carteira de teste é do **Itaú (341)** e o validador é do
+**Sicoob (756)**: código do banco, nome do banco, versão do layout e agência≠cooperativa só somem com
+uma carteira Sicoob. O resto era defeito do gerador, de qualquer banco: datas de juros (P 119-126) e
+de multa (R 67-74) iguais ao vencimento — o banco exige o dia seguinte —, DV da agência cobradora (P 106)
+"0" em vez de branco, dias para baixa (P 225-227) "000" em vez de branco e o reservado 12-13 do header
+de lote "00". E o Sicoob pede ainda zero no DV agência/conta do header de arquivo (72), branco no
+convênio do header de lote (34-53) e "0 " na forma de cadastramento e tipo de documento (P 59-60).
+**Correção:** `cnab/remessa240.py` e ganchos por banco em `cnab/bancos.py` (o Itaú mantém o "00" do
+manual dele). Na tela de cobrança bancária, as tabelas de remessas e retornos tinham células sem
+respiro (o valor colava na data) e cortavam a data do instante UTC — arquivo gerado depois das 21h
+aparecia com o dia seguinte; agora `dataHoraBR` mostra data e hora locais.
+
+### D231 — Contas a receber levava 2 s por página com 86 mil títulos · ✅ corrigido 30/09/2026
+
+Item 51 do dono ("demora para atualizar quando organiza, pesquisa ou muda a página"). Medido no dev:
+**1,9 s para trazer 20 linhas**, e a contagem, 24 ms. Duas causas empilhadas. (1) A coluna
+`excluido_em` (lixeira, migration 0015) não tinha estatística: o planejador supunha que `excluido_em IS
+NULL` deixava 0,5% das linhas — deixava 100% — e montava um laço aninhado. O autovacuum só reanalisa
+quando 10% da tabela muda, então coluna nova em tabela estável fica cega por meses. (2) A política de
+RLS em cada tabela juntada tem um filtro que o planejador não estima (ver [D238](pendencias.md)), e o
+Postgres juntava as 86 mil contas a seis tabelas antes de ordenar para mostrar cem. **Correção:**
+`ANALYZE` depois de todo `migrate` que aplica algo (`nucleo/apps.py`); índice parcial
+`(tenant, data_vencimento)` das linhas vivas; e a grade pagina em dois passos — os ids da página na
+ordem pedida, só com o JOIN que a ordem usa, depois as linhas inteiras (`moduloerp/listao.py`). A busca
+em outra tabela virou `IN (subconsulta)`. Lista 1,9–4,3 s → 80–150 ms; busca 1 s → 160–290 ms; no
+navegador, 0,45 s da tecla ao resultado.
+
+### D232 — a grade mostrava "Cliente #1234" e a busca só olhava a descrição · ✅ corrigido 30/09/2026
+
+Itens 53 e 54. A API de contas devolvia só o id do cliente; a tela procurava o nome numa lista de
+opções limitada a 300 (o limite do [F2](pendencias.md)) — com 2.004 clientes, a maioria das linhas
+aparecia como "Cliente #1234", e não havia como ordenar por cliente. A lista de boletos dizia "Conta a
+receber #172000" e mais nada. **Correção:** os serializers mandam `cliente_nome`,
+`fornecedor_nome`, `empreendimento_nome` e o rótulo da unidade; os boletos, pagador, parcela,
+empreendimento e lote (`BoletoListaSerializer`). A busca acha por cliente, CPF (só para quem vê o
+documento), empreendimento, quadra, lote, descrição, linha digitável; toda coluna ordena.
+
+### D233 — gerada a cobrança, o painel da conta não mostrava o boleto · ✅ corrigido 30/09/2026
+
+Item 56. O painel lateral guardava a cópia da conta tirada no clique; a lista se atualizava, o painel
+não — sem boleto, botão ativo, e o PDF só por link externo. **Correção:** o painel lê a conta ao vivo
+e, pedida a cobrança, consulta até o boleto chegar; o botão some com boleto válido. O boleto aparece
+com miniatura, linha digitável e leitor de PDF dentro do SGI — o PDF passa pelo backend
+(`boletos/:id/pdf/` e `miniatura/`), só de host do Asaas, com teto de tamanho e relógio.
+
+### D234 — boleto de título vencido saía com vencimento no passado, e a tela não explicava o feriado · ✅ corrigido 30/09/2026
+
+Item 55. A emissão mandava ao Asaas a data do contrato mesmo vencida (o Asaas recusa; virava boleto
+"Erro"), e a tela não dizia que o vencimento andou para o próximo dia útil — a ficha do cliente dizia.
+**Correção (decisão do dono):** título vencido ganha nova data sugerida e o boleto soma **multa e
+juros do contrato** até ela (`funcoescobrancas/segunda_via.py`); os percentuais vivem na venda
+(`multa_atraso_percentual`, `juros_mora_mensal_percentual`, padrão e teto no `planos.py`). A prévia
+mostra data do contrato × data do boleto, o feriado pelo nome e o boleto antigo que será cancelado. A
+emissão é idempotente por data e valor e trava a linha da conta; o webhook e o retorno CNAB lançam os
+encargos como encargos (`Boleto.valor_multa`/`valor_juros`).
+
+### D235 — conta paga com juros ficava "Parcial" para sempre · ✅ corrigido 30/09/2026
+
+Achado ao escrever o D234. `dar_baixa` somava em `valor_pago` só o principal e acrescentava juros e
+multa ao total devido; a `Transacao` já registrava principal + encargos − desconto. Uma baixa com R$ 10
+de juros deixava R$ 10 "em aberto" num título pago. **Correção:** `valor_pago` acumula o que entrou de
+caixa — o mesmo número da `Transacao` —, nos dois lados.
+
+### D236 — editar conta a pagar não fazia nada · ✅ corrigido 30/09/2026
+
+Item 57, reproduzido no navegador: **nenhuma requisição saía**. O seletor "Obra/empreendimento" entregava
+`""` para "sem obra", `z.number().nullable()` reprovava, e o campo nunca teve onde mostrar erro — 38 das
+46 contas a pagar do dev não salvavam. Além disso, o formulário descartava o erro da API em `valor`
+(ele chama o campo de `valorCents`). **Correção:** seletor controlado (vazio vira nulo, e a obra não se
+perde quando chega antes das opções); erro sem lugar vai para a faixa de aviso. E o que o dono pediu
+("poder editar, obviamente não qualquer um"), no desenho de Omie/TOTVS/Conta Azul: com baixa, descrição,
+obra, datas de emissão/agendamento e rateio seguem editáveis; valor, vencimento e fornecedor/cliente
+travam com o motivo; a saída é **estornar a baixa** (`erp.conta_*.estornar`, motivo obrigatório,
+auditoria), que acrescenta uma `Transacao` de estorno e devolve a conta a "Aberto". Conta com baixa não
+se exclui.
+
+### D237 — toda NFS-e dava erro, e a conta ficava presa à nota com erro · ✅ corrigido 30/09/2026
+
+Item 58. As sete notas com erro do dev tinham a mesma causa: nenhum dos 2.004 clientes tinha CEP nem
+código IBGE. A nota era criada e enfileirada, e só a tarefa descobria; depois, a conta respondia "nota
+já existente" e não deixava tentar de novo. **Correção:** o tomador é conferido antes de a nota nascer;
+o código IBGE é completado por cidade/UF (`nucleo.geo`); faltando CEP ou documento, a resposta diz o
+campo e o cliente, e a tela leva ao cadastro. Nota recusada ou cancelada deixa de prender a conta. O
+diálogo de emissão busca a conta no servidor (listava as 100 mais recentes de 86 mil).
+
 ### D229 — o `security-scan` do CI acusava 71 vulnerabilidades com correção, e ninguém via · ✅ corrigido 30/09/2026
 
 Visto no PR do drone (`drone-no-repositorio`). O job ficou sem rodar até o [D212](#) (29/09), e o

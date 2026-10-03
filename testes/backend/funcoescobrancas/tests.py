@@ -232,7 +232,7 @@ class GerarCobrancaEndpointTests(APITestCase):
                     {}, format="json",
                 )
         self.assertEqual(resp.status_code, 202)
-        delay.assert_called_once_with(self.conta.conta_receber_id)
+        delay.assert_called_once_with(self.conta.conta_receber_id, None)
 
 
 class WebhookAsaasTokenTests(SimpleTestCase):
@@ -367,7 +367,10 @@ class VencimentoBancarioDoBoletoTests(APITestCase):
         from nucleo.tenancy import tenant_context
         with patch.object(AsaasClient, "buscar_customer_por_cpf_cnpj", return_value=None), \
              patch.object(AsaasClient, "criar_customer", return_value={"id": "cus_v"}), \
-             patch.object(AsaasClient, "criar_payment", side_effect=_criar_payment):
+             patch.object(AsaasClient, "criar_payment", side_effect=_criar_payment), \
+             patch("funcoescobrancas.segunda_via.timezone.localdate", return_value=date(2026, 7, 1)):
+            # "Hoje" antes dos vencimentos: estes testes são do ajuste de dia
+            # útil, não da segunda via (título vencido ganha nova data — item 55).
             with tenant_context(self.tenant.pk):
                 boleto = services.gerar_cobranca_asaas(conta)
         return conta, boleto, enviados

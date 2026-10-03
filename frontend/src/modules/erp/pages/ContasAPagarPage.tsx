@@ -1,289 +1,210 @@
-import { useMemo, useState, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
-import { ArrowLeft, Plus } from 'lucide-react'
-import type { ColumnDef, SortingState } from '@tanstack/react-table'
-import { FilterBar, type FilterBarValue } from '../components/shared/FilterBar'
-import { FinanceDataTable } from '../components/shared/FinanceDataTable'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Plus, X } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import { TelaDaGrade } from '../grade/TelaDaGrade'
+import { estiloFiltro } from '../grade/estilos'
+import { useGrade } from '../grade/useGrade'
+import { filtrosDoGrupo } from '../grade/arvore'
+import type { ColunaGrade, Filtros, NoGrupo } from '../grade/tipos'
 import { Sheet } from '../components/shared/Sheet'
 import { MoneyDisplay } from '../components/shared/MoneyDisplay'
 import { StatusContaBadge } from '../components/shared/StatusContaBadge'
-import { STATUS_CONTA_OPTIONS } from '../components/shared/statusConta'
+import { STATUS_CONTA_CONFIG } from '../components/shared/statusConta'
 import { ContaPagarForm } from '../components/forms/ContaPagarForm'
 import { BaixaForm } from '../components/forms/BaixaForm'
+import { AvisoDeTrava } from '../components/forms/trava'
 import { buttonPrimaryStyle, buttonSecondaryStyle } from '../components/forms/formStyles'
-import {
-  useContasAPagar, useCreateContaAPagar, useUpdateContaAPagar, useDarBaixaContaAPagar,
-} from '../hooks/useContasAPagar'
-import { useFornecedorOptions, useEmpreendimentoOptions } from '../hooks/useEntityOptions'
+import { EstornarBaixaDialog } from '../components/EstornarBaixaDialog'
+import { erpKeys } from '../api/queryKeys'
+import { fetchContaAPagar } from '../api/endpoints/contasAPagar'
+import { useCreateContaAPagar, useDarBaixaContaAPagar, useUpdateContaAPagar } from '../hooks/useContasAPagar'
+import { useEstornarBaixa } from '../hooks/useCobranca'
+import { useEmpreendimentoOptions } from '../hooks/useEntityOptions'
 import { apiDecimalToCents } from '@/utils/money'
-import { dateToBR } from '@/utils/dates'
-import type { ContaPagar, ContaPagarFiltros, StatusConta } from '../types'
+import { dateToBR, maxCalendarioISO, maxTodayISO, minCalendarioISO } from '@/utils/dates'
+import type { ContaPagar } from '../types'
 
-const PAGE_SIZE = 20
-
-type SheetState =
-  | { mode: 'create' }
-  | { mode: 'view' | 'edit' | 'baixa'; conta: ContaPagar }
+const SITUACOES = [
+  { valor: '', rotulo: 'Todas' },
+  { valor: 'a_vencer', rotulo: 'A vencer' },
+  { valor: 'vencido', rotulo: 'Vencidas' },
+  { valor: 'encerrado', rotulo: 'Pagas e canceladas' },
+]
+const ROTULO_EXTRA: Record<string, string> = { fornecedor: 'Fornecedor', mes: 'Mês', status: 'Status', faixa: 'Situação', empreendimento: 'Empreendimento' }
 
 /**
- * Workspace de Contas a Pagar (D.1.1, docs/modulos/moduloerp.md §5.5):
- * listão paginado/filtrado no servidor + Sheet de lançamento/detalhe/baixa —
- * mesmo arquétipo de "Workspace de lista financeira" usado em Contas a Receber.
+ * Contas a pagar — a mesma grade de Contas a receber (itens 51/53): busca por
+ * fornecedor, CNPJ, descrição, empreendimento e nota; toda coluna ordena;
+ * agrupa por fornecedor, empreendimento, mês e situação. Conta paga continua
+ * editável no que é descrição; o financeiro destrava pelo estorno (item 57).
  */
 export default function ContasAPagarPage() {
-  const [filtros, setFiltros] = useState<FilterBarValue>({})
-  const [pageIndex, setPageIndex] = useState(0)
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'data_vencimento', desc: false }])
-  const [sheet, setSheet] = useState<SheetState | null>(null)
+  const [busca, setBusca] = useState('')
+  const [situacao, setSituacao] = useState('')
+  const [empreendimento, setEmpreendimento] = useState('')
+  const [periodo, setPeriodo] = useState({ de: '', ate: '' })
+  const [extras, setExtras] = useState<{ chave: string; valor: string; rotulo: string }[]>([])
+  const [aberta, setAberta] = useState<number | null>(null)
+  const [criando, setCriando] = useState(false)
+  const [titulo, setTitulo] = useState<{ titulo: string; descricao?: string }>({ titulo: '' })
 
-  const ordering = sorting[0] ? `${sorting[0].desc ? '-' : ''}${sorting[0].id}` : undefined
-  const queryFiltros: ContaPagarFiltros = useMemo(() => ({
-    status: filtros.status as StatusConta | undefined,
-    empreendimento: filtros.empreendimento,
-    fornecedor: filtros.fornecedor,
-    data_de: filtros.data_de,
-    data_ate: filtros.data_ate,
-    search: filtros.search,
-    page: pageIndex + 1,
-    page_size: PAGE_SIZE,
-    ordering,
-  }), [filtros, pageIndex, ordering])
+  const filtros: Filtros = useMemo(() => ({
+    search: busca, faixa: situacao, empreendimento, data_de: periodo.de, data_ate: periodo.ate,
+    ...Object.fromEntries(extras.map(e => [e.chave, e.valor])),
+  }), [busca, situacao, empreendimento, periodo, extras])
+  const grade = useGrade<ContaPagar>({ recurso: 'contas-a-pagar', filtros, ordenarPadrao: 'vencimento' })
+  const empreendimentos = useEmpreendimentoOptions(true)
+  const criar = useCreateContaAPagar()
 
-  const { data, isLoading, isFetching } = useContasAPagar(queryFiltros)
-  const fornecedorOptions = useFornecedorOptions(true)
-  const empreendimentoOptions = useEmpreendimentoOptions(true)
+  const abrirSoOGrupo = (no: NoGrupo) => {
+    const f = filtrosDoGrupo({}, no)
+    setExtras(atual => [
+      ...atual.filter(e => !(e.chave in f)),
+      ...no.filtros.map((chave, i) => ({ chave, valor: no.chaves[i], rotulo: `${ROTULO_EXTRA[chave] ?? chave}: ${no.rotulos[i]}` })),
+    ])
+    grade.setNiveis([])
+  }
 
-  const labelFornecedor = (id: number | null) =>
-    (id != null && fornecedorOptions.data?.find(o => o.id === id)?.label) || (id ? `Fornecedor #${id}` : '—')
-  const labelEmpreendimento = (id: number | null) =>
-    id == null ? '—' : (empreendimentoOptions.data?.find(o => o.id === id)?.label ?? `Obra #${id}`)
+  const colunas = useMemo<ColunaGrade<ContaPagar>[]>(() => [
+    { chave: 'fornecedor', titulo: 'Fornecedor', largura: 230, ordenar: 'fornecedor', render: c => <span className="truncate font-semibold" style={{ color: 'var(--ink)' }}>{c.fornecedor_nome || '—'}</span>, texto: c => c.fornecedor_nome },
+    { chave: 'descricao', titulo: 'Descrição', largura: 240, ordenar: 'descricao', render: c => <span className="truncate" title={c.descricao}>{c.descricao}</span>, texto: c => c.descricao },
+    { chave: 'empreendimento', titulo: 'Empreendimento', largura: 180, ordenar: 'empreendimento', render: c => <span className="truncate">{c.empreendimento_nome || '—'}</span>, texto: c => c.empreendimento_nome },
+    { chave: 'vencimento', titulo: 'Vencimento', largura: 120, ordenar: 'vencimento', tipo: 'data', render: c => dateToBR(c.data_vencimento), texto: c => dateToBR(c.data_vencimento) },
+    { chave: 'valor', titulo: 'Valor', largura: 120, ordenar: 'valor', tipo: 'numero', alinhamento: 'right', render: c => <MoneyDisplay cents={apiDecimalToCents(c.valor)} />, texto: c => c.valor },
+    { chave: 'saldo', titulo: 'Em aberto', largura: 120, ordenar: 'saldo', tipo: 'numero', alinhamento: 'right', render: c => <MoneyDisplay cents={apiDecimalToCents(c.saldo_aberto)} />, texto: c => c.saldo_aberto },
+    { chave: 'pagamento', titulo: 'Pago em', largura: 110, ordenar: 'pagamento', tipo: 'data', render: c => (c.data_pagamento ? dateToBR(c.data_pagamento) : '—'), texto: c => c.data_pagamento ?? '' },
+    { chave: 'status', titulo: 'Situação', largura: 120, ordenar: 'status', render: c => <StatusContaBadge status={c.status} />, texto: c => STATUS_CONTA_CONFIG[c.status]?.label ?? c.status },
+  ], [])
 
-  const createMutation = useCreateContaAPagar()
-  const updateMutation = useUpdateContaAPagar()
-  const baixaMutation = useDarBaixaContaAPagar()
-
-  const columns = useMemo<ColumnDef<ContaPagar>[]>(() => [
-    {
-      accessorKey: 'descricao',
-      header: 'Descrição',
-      enableSorting: false,
-      cell: ({ row }) => (
-        <div className="flex flex-col">
-          <span className="font-medium">{row.original.descricao}</span>
-          <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-            {labelEmpreendimento(row.original.empreendimento)}
-          </span>
-        </div>
-      ),
-    },
-    {
-      accessorKey: 'fornecedor',
-      header: 'Fornecedor',
-      enableSorting: false,
-      cell: ({ getValue }) => labelFornecedor(getValue<number | null>()),
-    },
-    {
-      accessorKey: 'data_vencimento',
-      header: 'Vencimento',
-      cell: ({ getValue }) => dateToBR(getValue<string>()),
-    },
-    {
-      accessorKey: 'valor',
-      header: 'Valor',
-      cell: ({ getValue }) => <MoneyDisplay cents={apiDecimalToCents(getValue<string>())} />,
-    },
-    {
-      accessorKey: 'saldo_aberto',
-      header: 'Saldo em aberto',
-      enableSorting: false,
-      cell: ({ getValue }) => <MoneyDisplay cents={apiDecimalToCents(getValue<string>())} />,
-    },
-    {
-      accessorKey: 'status',
-      header: 'Status',
-      cell: ({ getValue }) => <StatusContaBadge status={getValue<StatusConta>()} />,
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [fornecedorOptions.data, empreendimentoOptions.data])
-
-  const closeSheet = () => setSheet(null)
+  const temFiltro = Boolean(busca || situacao || empreendimento || periodo.de || periodo.ate || extras.length)
+  const fechar = useCallback(() => { setAberta(null); setCriando(false) }, [])
+  const definirTitulo = useCallback((t: string, d?: string) => setTitulo({ titulo: t, descricao: d }), [])
 
   return (
-    <div className="px-6 py-8">
-      <Link
-        to="/app/erp"
-        className="inline-flex items-center gap-1.5 text-xs font-semibold mb-3 transition-colors duration-150"
-        style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-body)', textDecoration: 'none' }}
-        onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-brand)')}
-        onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text-muted)')}
-      >
-        <ArrowLeft size={14} /> ERP Financeiro
-      </Link>
-
-      <div className="flex items-center justify-between gap-3 mb-6 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold" style={{ fontFamily: 'var(--font-heading)', color: 'var(--color-brand)' }}>
-            Contas a pagar
-          </h1>
-          <p className="text-xs" style={{ fontFamily: 'var(--font-body)', color: 'var(--color-text-muted)' }}>
-            Lançamentos, rateios e baixas de obrigações com fornecedores
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setSheet({ mode: 'create' })}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors duration-150"
-          style={{ background: 'var(--color-brand)', color: '#FFFFFF', fontFamily: 'var(--font-body)', cursor: 'pointer' }}
-        >
-          <Plus size={16} /> Nova conta
-        </button>
-      </div>
-
-      <FilterBar
-        value={filtros}
-        onChange={next => { setFiltros(next); setPageIndex(0) }}
-        fields={['search', 'periodo', 'empreendimento', 'fornecedor', 'status']}
-        statusOptions={STATUS_CONTA_OPTIONS}
-        searchPlaceholder="Buscar por descrição…"
-      />
-
-      <FinanceDataTable
-        data={data?.results ?? []}
-        columns={columns}
-        count={data?.count ?? 0}
-        pageIndex={pageIndex}
-        pageSize={PAGE_SIZE}
-        onPageChange={setPageIndex}
-        sorting={sorting}
-        onSortingChange={setSorting}
-        getRowId={row => String(row.conta_pagar_id)}
-        isLoading={isLoading}
-        isFetching={isFetching}
-        emptyMessage="Nenhuma conta a pagar encontrada para os filtros atuais."
-        onRowClick={conta => setSheet({ mode: 'view', conta })}
-      />
-
-      <Sheet
-        open={sheet != null}
-        onClose={closeSheet}
-        width={560}
-        title={
-          sheet?.mode === 'create' ? 'Nova conta a pagar'
-          : sheet?.mode === 'edit' ? 'Editar conta a pagar'
-          : sheet?.mode === 'baixa' ? 'Dar baixa'
-          : sheet?.mode === 'view' ? sheet.conta.descricao
-          : ''
+    <>
+      <TelaDaGrade<ContaPagar>
+        titulo="Contas a pagar"
+        subtitulo="Fornecedores, notas e pagamentos — busque por fornecedor, CNPJ, descrição, obra ou número da nota"
+        acoes={
+          <button type="button" onClick={() => setCriando(true)} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold"
+            style={{ background: 'var(--brand)', color: '#fff', border: 'none', cursor: 'pointer' }}>
+            <Plus size={16} /> Nova conta
+          </button>
         }
-        description={sheet && sheet.mode !== 'create' ? labelFornecedor(sheet.conta.fornecedor) : undefined}
-      >
-        {sheet?.mode === 'create' && (
-          <ContaPagarForm
-            onCancel={closeSheet}
-            onSubmit={async payload => { await createMutation.mutateAsync(payload); closeSheet() }}
-          />
-        )}
+        busca={busca}
+        onBuscar={setBusca}
+        placeholderBusca="Buscar por fornecedor, CNPJ, descrição, obra ou nota"
+        situacoes={SITUACOES}
+        situacao={situacao}
+        onSituacao={setSituacao}
+        filtros={
+          <>
+            <select aria-label="Empreendimento" value={empreendimento} style={estiloFiltro} onChange={e => setEmpreendimento(e.target.value)}>
+              <option value="">Todas as obras</option>
+              {(empreendimentos.data ?? []).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+            </select>
+            <span className="flex items-center gap-1.5" style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>
+              Vencimento
+              <input type="date" aria-label="Vencimento de" min={minCalendarioISO} max={maxCalendarioISO} value={periodo.de} style={estiloFiltro} onChange={e => setPeriodo(p => ({ ...p, de: e.target.value }))} />
+              até
+              <input type="date" aria-label="Vencimento até" min={minCalendarioISO} max={maxCalendarioISO} value={periodo.ate} style={estiloFiltro} onChange={e => setPeriodo(p => ({ ...p, ate: e.target.value }))} />
+            </span>
+            {extras.map(e => (
+              <span key={e.chave} className="flex items-center gap-1" style={{ padding: '3px 6px 3px 10px', borderRadius: 999, background: 'var(--surface-2)', fontSize: 12, fontWeight: 600, color: 'var(--ink-2)' }}>
+                {e.rotulo}
+                <button type="button" aria-label={`Tirar o filtro ${e.rotulo}`} onClick={() => setExtras(x => x.filter(y => y.chave !== e.chave))}
+                  style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'inherit', display: 'flex', padding: 0 }}><X size={13} /></button>
+              </span>
+            ))}
+            {temFiltro && (
+              <button type="button" onClick={() => { setBusca(''); setSituacao(''); setEmpreendimento(''); setPeriodo({ de: '', ate: '' }); setExtras([]) }}
+                style={{ border: 'none', background: 'none', color: 'var(--ink-3)', fontSize: 12.5, cursor: 'pointer' }}>Limpar filtros</button>
+            )}
+          </>
+        }
+        grade={grade}
+        colunas={colunas}
+        onAbrir={c => setAberta(c.conta_pagar_id)}
+        onAbrirSoOGrupo={abrirSoOGrupo}
+        substantivo={['conta', 'contas']}
+        mostrarSaldo
+        vazio={temFiltro ? 'Nenhuma conta para esta busca.' : 'Nenhuma conta a pagar lançada.'}
+      />
 
-        {sheet?.mode === 'edit' && (
-          <ContaPagarForm
-            initial={sheet.conta}
-            onCancel={closeSheet}
-            onSubmit={async payload => {
-              await updateMutation.mutateAsync({ id: sheet.conta.conta_pagar_id, payload })
-              closeSheet()
-            }}
-          />
-        )}
-
-        {sheet?.mode === 'baixa' && (
-          <BaixaForm
-            saldoAberto={sheet.conta.saldo_aberto}
-            onCancel={closeSheet}
-            onSubmit={async payload => {
-              await baixaMutation.mutateAsync({ id: sheet.conta.conta_pagar_id, payload })
-              closeSheet()
-            }}
-          />
-        )}
-
-        {sheet?.mode === 'view' && (
-          <ContaPagarDetail
-            conta={sheet.conta}
-            labelEmpreendimento={labelEmpreendimento}
-            onEditar={() => setSheet({ mode: 'edit', conta: sheet.conta })}
-            onDarBaixa={() => setSheet({ mode: 'baixa', conta: sheet.conta })}
-          />
-        )}
+      <Sheet open={aberta != null || criando} onClose={fechar} width={560}
+        title={criando ? 'Nova conta a pagar' : titulo.titulo} description={criando ? undefined : titulo.descricao}>
+        {criando && <ContaPagarForm onCancel={fechar} onSubmit={async p => { await criar.mutateAsync(p); fechar() }} />}
+        {aberta != null && <DetalheContaPagar key={aberta} contaId={aberta} onTitulo={definirTitulo} />}
       </Sheet>
-    </div>
+    </>
   )
 }
 
-function ContaPagarDetail({ conta, labelEmpreendimento, onEditar, onDarBaixa }: {
-  conta: ContaPagar
-  labelEmpreendimento: (id: number | null) => string
-  onEditar: () => void
-  onDarBaixa: () => void
-}) {
-  const podeBaixar = conta.status === 'ABERTO' || conta.status === 'PARCIAL'
+function DetalheContaPagar({ contaId, onTitulo }: { contaId: number; onTitulo: (t: string, d?: string) => void }) {
+  const [modo, setModo] = useState<'ver' | 'editar' | 'baixa'>('ver')
+  const [estornando, setEstornando] = useState(false)
+  const { data: conta } = useQuery({ queryKey: erpKeys.contasAPagar.detail(contaId), queryFn: () => fetchContaAPagar(contaId) })
+  const atualizar = useUpdateContaAPagar()
+  const baixa = useDarBaixaContaAPagar()
+  const estornar = useEstornarBaixa('pagar')
+
+  useEffect(() => {
+    if (conta) onTitulo(modo === 'editar' ? 'Editar conta a pagar' : modo === 'baixa' ? 'Dar baixa' : conta.descricao, conta.fornecedor_nome)
+  }, [conta, modo, onTitulo])
+
+  if (!conta) return <p className="text-sm" style={{ color: 'var(--ink-3)' }}>Carregando…</p>
+  if (modo === 'editar') {
+    return <ContaPagarForm initial={conta} onCancel={() => setModo('ver')}
+      onSubmit={async p => { await atualizar.mutateAsync({ id: conta.conta_pagar_id, payload: p }); setModo('ver') }} />
+  }
+  if (modo === 'baixa') {
+    return <BaixaForm saldoAberto={conta.saldo_aberto} onCancel={() => setModo('ver')}
+      onSubmit={async p => { await baixa.mutateAsync({ id: conta.conta_pagar_id, payload: p }); setModo('ver') }} />
+  }
+  const aberta = conta.status === 'ABERTO' || conta.status === 'PARCIAL'
+  const vencida = aberta && conta.data_vencimento < maxTodayISO()
+
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-5 text-sm" style={{ color: 'var(--ink-2)' }}>
       <div className="flex items-center justify-between">
         <StatusContaBadge status={conta.status} />
-        <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{labelEmpreendimento(conta.empreendimento)}</span>
+        <span style={{ color: 'var(--ink-3)', fontSize: 12 }}>{conta.empreendimento_nome || 'Sem obra'}</span>
       </div>
-
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm" style={{ fontFamily: 'var(--font-body)' }}>
-        <DetailItem label="Valor" value={<MoneyDisplay cents={apiDecimalToCents(conta.valor)} />} />
-        <DetailItem label="Saldo em aberto" value={<MoneyDisplay cents={apiDecimalToCents(conta.saldo_aberto)} />} />
-        <DetailItem label="Emissão" value={conta.data_emissao ? dateToBR(conta.data_emissao) : '—'} />
-        <DetailItem label="Vencimento" value={dateToBR(conta.data_vencimento)} />
-        <DetailItem label="Agendamento" value={conta.data_agendamento ? dateToBR(conta.data_agendamento) : '—'} />
-        <DetailItem label="Pagamento" value={conta.data_pagamento ? dateToBR(conta.data_pagamento) : '—'} />
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
+        <Item r="Valor" v={<MoneyDisplay cents={apiDecimalToCents(conta.valor)} />} />
+        <Item r="Em aberto" v={<MoneyDisplay cents={apiDecimalToCents(conta.saldo_aberto)} />} />
+        <Item r="Vencimento" v={<span style={{ color: vencida ? 'var(--danger-ink)' : undefined }}>{dateToBR(conta.data_vencimento)}{vencida ? ' · vencida' : ''}</span>} />
+        <Item r="Pago em" v={conta.data_pagamento ? dateToBR(conta.data_pagamento) : '—'} />
+        <Item r="Emissão" v={conta.data_emissao ? dateToBR(conta.data_emissao) : '—'} />
+        <Item r="Agendamento" v={conta.data_agendamento ? dateToBR(conta.data_agendamento) : '—'} />
       </dl>
-
       {conta.rateios.length > 0 && (
-        <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--color-brand)' }}>
-            Rateio por centro de custo
-          </h3>
-          <ul className="flex flex-col gap-1 text-sm">
-            {conta.rateios.map(r => (
-              <li key={r.rateio_id} className="flex items-center justify-between">
-                <span>{r.centro_custo_nome}</span>
-                <MoneyDisplay cents={apiDecimalToCents(r.valor)} />
-              </li>
-            ))}
-          </ul>
-        </div>
+        <ul className="flex flex-col gap-1">
+          {conta.rateios.map(r => <li key={r.rateio_id} className="flex justify-between"><span>{r.centro_custo_nome}</span><MoneyDisplay cents={apiDecimalToCents(r.valor)} /></li>)}
+        </ul>
       )}
-
-      {conta.boletos.length > 0 && (
-        <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--color-brand)' }}>Boletos</h3>
-          <ul className="flex flex-col gap-1 text-sm">
-            {conta.boletos.map(b => (
-              <li key={b.boleto_id} className="flex items-center justify-between">
-                <span>{dateToBR(b.data_vencimento)} · {b.status}</span>
-                <MoneyDisplay cents={apiDecimalToCents(b.valor)} />
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <div className="flex items-center justify-end gap-2 pt-2">
-        <button type="button" onClick={onEditar} style={buttonSecondaryStyle}>Editar</button>
-        {podeBaixar && <button type="button" onClick={onDarBaixa} style={buttonPrimaryStyle}>Dar baixa</button>}
+      <AvisoDeTrava motivo={conta.travado_porque} />
+      {conta.estorno_impedido_porque && <p style={{ fontSize: 12, color: 'var(--ink-3)' }}>{conta.estorno_impedido_porque}</p>}
+      <div className="flex items-center justify-end gap-2 flex-wrap">
+        {conta.pode_estornar && !conta.estorno_impedido_porque && (
+          <button type="button" onClick={() => setEstornando(true)} style={buttonSecondaryStyle}>Estornar baixa</button>
+        )}
+        <button type="button" onClick={() => setModo('editar')} style={buttonSecondaryStyle}>Editar</button>
+        {aberta && <button type="button" onClick={() => setModo('baixa')} style={buttonPrimaryStyle}>Dar baixa</button>}
       </div>
+      {estornando && (
+        <EstornarBaixaDialog valorPago={conta.valor_pago} pendente={estornar.isPending} onFechar={() => setEstornando(false)}
+          onConfirmar={motivo => estornar.mutateAsync({ id: conta.conta_pagar_id, motivo })} />
+      )}
     </div>
   )
 }
 
-function DetailItem({ label, value }: { label: string; value: ReactNode }) {
+function Item({ r, v }: { r: string; v: ReactNode }) {
   return (
     <div>
-      <dt className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{label}</dt>
-      <dd className="font-medium" style={{ color: 'var(--color-text)' }}>{value}</dd>
+      <dt className="text-xs" style={{ color: 'var(--ink-3)' }}>{r}</dt>
+      <dd className="font-medium" style={{ color: 'var(--ink)' }}>{v}</dd>
     </div>
   )
 }

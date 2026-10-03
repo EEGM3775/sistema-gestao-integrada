@@ -136,6 +136,14 @@ vazá-los por engano — e a ordenação por valor/atraso também é recusada, p
 uma forma de lê-la. O documento segue mascarado sem `cadastro.cliente_doc.view`, e não há exportação
 para planilha nesta tela (decisão do dono do produto).
 
+**Ler, ordenar e buscar são a mesma permissão.** Sem `cadastro.cliente_doc.view`, o CPF/CNPJ não é
+critério nem de ordenação (a ordem alfabética reconstrói o dígito escondido) nem de **busca**: buscar um
+CPF e ver quem volta é perguntar "existe cliente com este documento?" e ler a resposta — um oráculo
+contra a máscara (LGPD art. 46). Vale na busca da carteira, na busca do cadastro
+(`/api/clientes/?search=`, via `campos_de_busca` do `BuscaSemAcento`) e no filtro `?cpf_cnpj=`, que sem
+a permissão responde vazio para qualquer valor. É a mesma regra do listão do ERP
+([moduloerp.md §5.9](modulos/moduloerp.md)).
+
 **O que foi decidido conscientemente:** o rótulo binário *é* dado financeiro de pessoa natural e
 aparece para todo usuário do cadastro. A alternativa (esconder também a pílula) foi levantada e
 recusada — quem atende o cliente precisa saber se há pendência antes de prometer entrega ou emitir
@@ -621,6 +629,13 @@ cada papel mora no SpiceDB.
   configuração do próprio perfil**, que explica em linguagem simples por que ativar — e insiste mais
   para quem tem alçada financeira ou vê dado de saúde, porque são as contas que mais interessam a
   um invasor.
+  - **Trocar de celular nunca passa por "sem fator".** Com a senha e o código do aparelho atual (ou
+    um de recuperação), a IAM devolve o QR do aparelho novo e guarda o segredo novo à parte, pelo
+    prazo do desafio do login; o aparelho atual segue valendo. O primeiro código certo do novo troca
+    o segredo no lugar, gera códigos de recuperação novos e derruba as outras sessões
+    (`/auth/segundo-fator/troca/` e `.../troca/confirmar/`). **Desativar** é só para quem não é
+    obrigado; o obrigado perde o fator apenas pela redefinição feita por outra pessoa
+    (`redefinir-segundo-fator`, nunca na própria conta), registrada na trilha e avisada por e-mail.
 - **Step-up para ato crítico** ([RFC 9470](https://www.rfc-editor.org/rfc/rfc9470.html)): atestar
   pagamento, mudar papel ou alçada e exportar dado pessoal exigem autenticação **recente**
   (`auth_time` dentro de uma janela). Fora dela, o serviço responde com o desafio, e a tela pede a

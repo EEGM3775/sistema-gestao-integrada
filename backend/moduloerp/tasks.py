@@ -99,6 +99,27 @@ def _marcar_erro(nf, mensagem, payload=None):
     nf.save(update_fields=['status', 'dados_retorno_api', 'atualizado_em'])
 
 
+def _acompanhar_ate_sair_de_processando(nf_id, tentativa):
+    """Agenda a próxima consulta enquanto a NFE.io não decide a nota.
+
+    **O defeito (item 58, revisão de 01/10/2026).** A NFE.io responde "Created"
+    e emite depois — a prefeitura é que decide, em segundos ou minutos. O SGI
+    gravava "Processando" e não perguntava de novo: a nota 12 do dev estava
+    emitida lá (nº 6) e "Processando" aqui, e a pessoa via nota parada. Agora a
+    consulta volta a cada `ERP_NFSE_CONSULTA_INTERVALO_S` até a nota sair de
+    "Processando" ou as tentativas acabarem (aí fica o botão de consultar).
+    """
+    from payment.planos import ERP_NFSE_CONSULTA_INTERVALO_S, ERP_NFSE_CONSULTA_TENTATIVAS
+
+    if tentativa > ERP_NFSE_CONSULTA_TENTATIVAS:
+        logger.warning("NFS-e %s segue em processamento na NFE.io depois de %s consultas.",
+                       nf_id, ERP_NFSE_CONSULTA_TENTATIVAS)
+        return
+    consultar_nota_fiscal_servico.apply_async(
+        args=[nf_id], kwargs={'tentativa': tentativa}, countdown=ERP_NFSE_CONSULTA_INTERVALO_S,
+    )
+
+
 def _carregar_nfse(nf_id):
     """Retorna (tenant_id, dados imutáveis) da NFS-e sob bypass de RLS.
 
@@ -169,15 +190,24 @@ def emitir_nota_fiscal_servico(self, nf_id):
             raise
 
     with tenant_context(tenant_id):
-        _aplicar_retorno(NotaFiscalServico.objects.get(pk=nf_id), dados)
+        nf = NotaFiscalServico.objects.get(pk=nf_id)
+        _aplicar_retorno(nf, dados)
+        ainda_processando = nf.status == StatusNFE.PROCESSANDO
     logger.info("NFS-e %s emitida na NFE.io (invoice=%s, status=%s).",
                 nf_id, dados.get('nfe_io_id'), dados.get('status'))
+    if ainda_processando:
+        _acompanhar_ate_sair_de_processando(nf_id, 1)
 
 
 @shared_task(bind=True, base=DLQTask, max_retries=3)
-def consultar_nota_fiscal_servico(self, nf_id):
-    """Consulta na NFE.io o status atual da NFS-e e atualiza a NF."""
-    from .models import NotaFiscalServico
+def consultar_nota_fiscal_servico(self, nf_id, tentativa=0):
+    """Consulta na NFE.io o status atual da NFS-e e atualiza a NF.
+
+    `tentativa` > 0 é o acompanhamento automático depois da emissão: ainda em
+    processamento, agenda a próxima. A consulta pedida pela tela vem com 0 e
+    não encadeia.
+    """
+    from .models import NotaFiscalServico, StatusNFE
 
     dados_nf = _carregar_nfse(nf_id)
     if dados_nf is None:
@@ -201,8 +231,12 @@ def consultar_nota_fiscal_servico(self, nf_id):
         raise self.retry(exc=exc, countdown=60)
 
     with tenant_context(tenant_id):
-        _aplicar_retorno(NotaFiscalServico.objects.get(pk=nf_id), dados)
+        nf = NotaFiscalServico.objects.get(pk=nf_id)
+        _aplicar_retorno(nf, dados)
+        ainda_processando = nf.status == StatusNFE.PROCESSANDO
     logger.info("NFS-e %s consultada na NFE.io (status=%s).", nf_id, dados.get('status'))
+    if tentativa and ainda_processando:
+        _acompanhar_ate_sair_de_processando(nf_id, tentativa + 1)
 
 
 @shared_task(bind=True, base=DLQTask, max_retries=3)

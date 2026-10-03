@@ -42,6 +42,7 @@ function useInvalidateContasAReceber() {
     queryClient.invalidateQueries({ queryKey: erpKeys.contasAReceber.all })
     queryClient.invalidateQueries({ queryKey: erpKeys.boletos.all })
     queryClient.invalidateQueries({ queryKey: erpKeys.dashboard.all })
+    queryClient.invalidateQueries({ queryKey: erpKeys.grade.all })
   }
 }
 
