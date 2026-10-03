@@ -693,10 +693,36 @@ tudo, não um lugar do ciclo.
 - **Operações de PDF** (marca d'água, carimbo, juntar/dividir) com `pikepdf`: o produto é uma
   **revisão nova**, que entra pela porta como qualquer arquivo (decisões em
   [modulos-planejados.md](modulos-planejados.md)).
-- **A base referencial fora do dev** (D185): os arquivos-fonte de cada publicação oficial
-  (ZIP/PDF/XLSX) guardados aqui e recarregados em outro ambiente pelo mesmo `carga.executar`
-  (`carregar_base_oficial --arquivo`), em vez de um transporte próprio.
+- ~~**A base referencial fora do dev** (D185)~~ — **feito (DMS.1, 03/10/2026)**, ver abaixo.
 - **Convergência dos documentos com ciclo de vida próprio:** `obras.DocumentoObra` tem um fluxo de
   status (rascunho → aprovado → publicado) que repete o de revisão da Prancheta. Unificá-los é a
   próxima convergência, não um terceiro fluxo.
+
+### 13.1 DMS.1 — o pacote da base referencial (a base fora do dev)
+
+**Decisão (03/10/2026), para um SaaS num servidor:** o que viaja é a base **já carregada e
+conferida**, num arquivo — não os ZIPs da fonte, que a carga lê e descarta, e que a Caixa nem sempre
+devolve (D184). Recarregar da fonte em cada ambiente seria refazer 20 cargas manuais e torcer para a
+fonte ainda ter os meses antigos.
+
+`manage.py pacote_base exportar|conferir|importar <arquivo.tar>`
+([`moduloorcamento/pacote.py`](../../backend/moduloorcamento/pacote.py)):
+
+- **o arquivo:** um `.tar` com um CSV comprimido por tabela (fontes oficiais, bases, insumos,
+  componentes de composição, analítica nacional, índices e valores) e um `manifesto.json` com
+  contagens, colunas, SHA-256 de cada membro e a migration de origem. Recorte por `--fonte` e
+  `--desde AAAA-MM`;
+- **conferir antes de gravar:** somas, colunas iguais às do banco de destino e toda FK com
+  remapeamento conhecido — senão recusa, com a frase;
+- **importar, em lotes e retomável:** cada publicação entra **com os seus insumos** numa transação
+  — inteira ou nada —, casada pela chave natural `(fonte, uf, mês, regime, variante)`; a que já
+  existe é pulada. Os insumos vêm ordenados por base no pacote e são lidos em fluxo, uma publicação
+  por vez; analítica e composições vão em lotes de `ORCAMENTO_PACOTE_LINHAS_POR_LOTE`
+  (`planos.py`), e as composições se resolvem pela chave natural do pai e do filho, não por mapa de
+  ids. Se cair no meio, rodar de novo continua de onde parou. Nulo é `\N` no CSV.
+- **por que em lotes:** a versão 1 importava tudo numa transação com uma temporária do tamanho da
+  base; na carga real (17 milhões de linhas, 03/10/2026) a VM da WSL ficou sem memória e caiu.
+
+A base é catálogo de plataforma (sem tenant): quem leva o arquivo de um ambiente a outro é a
+operação, pela bancada — o mesmo lugar do `carregar_base_oficial`.
 

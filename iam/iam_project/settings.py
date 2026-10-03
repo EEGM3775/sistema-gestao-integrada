@@ -33,10 +33,14 @@ from django.core.exceptions import ImproperlyConfigured
 # que Docker secrets, Vault Agent e o driver CSI do Secrets Manager entregam: o
 # segredo vira um arquivo montado, e não uma linha do `.env` que qualquer
 # `docker inspect` mostra. Roda antes de qualquer `os.getenv`, então todo
-# setting que lê `NOME` passa a aceitar `NOME_FILE` sem mudar. O valor explícito
-# no ambiente vence o arquivo (é o que permite sobrescrever num incidente).
+# setting que lê `NOME` passa a aceitar `NOME_FILE` sem mudar.
+#
+# **O arquivo vence o ambiente**, de propósito: o `base.yml` injeta defaults de
+# dev (`POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-erp_app_senha_dev}`) em toda
+# variável, então "o ambiente vence" faria a senha de dev ganhar do segredo de
+# produção em silêncio. Quem aponta `NOME_FILE` declarou de onde o valor vem.
 for _nome, _caminho in list(os.environ.items()):
-    if _nome.endswith("_FILE") and _caminho and _nome[:-5] not in os.environ:
+    if _nome.endswith("_FILE") and _caminho and _nome != "_FILE":
         os.environ[_nome[:-5]] = Path(_caminho).read_text(encoding="utf-8").strip()
 
 # S4 — segurança por padrão: IAM_DEBUG default = False. Fora do dev a IAM assume

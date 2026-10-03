@@ -1148,6 +1148,14 @@ ORCAMENTO_CARGA_ESPERA_MAXIMA_S: float = 60.0
 ORCAMENTO_CARGA_PAUSA_ENTRE_ARQUIVOS_S: float = 2.0
 ORCAMENTO_CARGA_TETO_PUBLICACOES: int = 120
 
+# DMS.1 — o pacote da base referencial (`moduloorcamento/pacote.py`). Quantas
+# linhas vão a cada `COPY`/commit na importação da analítica e das composições,
+# e o tamanho máximo de um lote de insumos de uma publicação. É o freio de
+# MEMÓRIA da importação: em 03/10/2026 a versão que importava tudo numa
+# transação derrubou a VM da WSL com 17 milhões de linhas. Baixar este número
+# troca velocidade por pico menor; subir faz o contrário.
+ORCAMENTO_PACOTE_LINHAS_POR_LOTE: int = 50_000
+
 # ---------------------------------------------------------------------------
 # 5.5c O esqueleto da obra e a escada que aprova dinheiro (PDCA.0)
 # ---------------------------------------------------------------------------
