@@ -18,6 +18,7 @@ from funcoesimpexp.registro import (
     ArquivoEntregue,
     Coluna,
     EntregaInvalida,
+    Guardado,
     Recurso,
     registrar,
 )
@@ -38,6 +39,8 @@ class NfeDoCustoDoEmpreendimento(Recurso):
     natureza = NATUREZA_ARQUIVO
     permissoes_exigidas = ("obra.empreend_custo.view", "obra.empreend_custo.edit")
     permissoes_entrega = ("obra.empreend_custo.view",)
+    guardados = (Guardado(ESPECIE_XML, CustoEmpreendimento, "arquivo_xml", quando="data_upload",
+                          titulo="chave_acesso", onde="empreendimento__empreendimento"),)
 
     colunas = (
         Coluna("empreendimento", "Empreendimento"),

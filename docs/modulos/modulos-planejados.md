@@ -8,7 +8,7 @@
 
 | App | Nome e escopo |
 |---|---|
-| `modulodms` | DMS — gestão de documentos; é dele a **capacidade de PDF** da plataforma (nota abaixo) |
+| ~~`modulodms`~~ | **Saiu do repositório em 03/10/2026:** o DMS é o [funcoesimpexp](funcoesimpexp.md) §13 (decisão do dono — coordenação de todo arquivo é a mesma porta, não um segundo app). A capacidade de PDF e a base referencial (notas abaixo) passam a ter endereço lá |
 | `modulopdca` | PDCA — **planejamento de obra** (cronograma físico, Gantt, linha de balanço, avanço × previsto), **contrato de empreiteiro: medição, retenção e aditivo** (ver nota abaixo) **e** ciclo de melhoria contínua (FVS, não-conformidades, planos de ação). **Planta escrita: [modulopdca.md](modulopdca.md)** — o app continua vazio |
 | `nucleo.frota` | **Gerência de frota de trabalho pesado** — admissão, fila por plano e preempção das conversões (nota abaixo) |
 
@@ -85,7 +85,7 @@
 
 > 📄 **Capacidade de PDF — endereço reservado, planta ainda não escrita.** As operações de PDF do
 > sistema (remover **marca d'água**, carimbar, juntar/dividir, extrair página, girar) pertencem ao
-> `modulodms`. Esta nota existe para a função ter **endereço antes de ter desenho** — para ninguém a
+> DMS — desde 03/10/2026, o [funcoesimpexp](funcoesimpexp.md) §13. Esta nota existe para a função ter **endereço antes de ter desenho** — para ninguém a
 > implementar avulsa dentro do módulo que precisar dela primeiro, que é como uma capacidade
 > transversal vira quatro cópias divergentes. **Não** é a planta do DMS; quando ela for escrita, é lá
 > que o desenho entra. Três decisões já tomadas, para não se perderem até lá:
@@ -104,13 +104,13 @@
 >   o diagnóstico que escolhe entre elas. O porte para `pikepdf` é trabalho conhecido, não pesquisa; o
 >   que não se reaproveita é a interface Tkinter.
 
-> 📦 **A base referencial fora da máquina de desenvolvimento — dependência do `modulodms`.**
+> 📦 **A base referencial fora da máquina de desenvolvimento — dependência do DMS (o [funcoesimpexp](funcoesimpexp.md) §13).**
 > *Decisão do dono, 30/09/2026.* As tabelas oficiais de preço do [Orçamento](moduloorcamento.md)
 > (SINAPI, ORSE, EMBASA — 1.460 publicações, 5,6 GB) existem hoje **só no banco de desenvolvimento**:
 > chegaram por 20 cargas manuais em 15/09/2026 e não são reprodutíveis a partir do repositório. O
 > staging tem só as 2 bases de fixture do seed, e a produção vai nascer vazia. **Se** e **como** essa
 > base chega a outro ambiente (dump, subconjunto de UFs/meses, carga rodada lá) fica para quando o
-> `modulodms` existir — não se resolve antes, nem de forma avulsa. O que o DMS faz aqui é pergunta
+> DMS guardar os arquivos-fonte de cada publicação — não se resolve antes, nem de forma avulsa. O que o DMS faz aqui é pergunta
 > da planta dele. Até lá, testar o Orçamento com preço real é no dev, e os testes de segurança do
 > staging não dependem de preço. Origem: o [D185](../historico-correcoes.md).
 

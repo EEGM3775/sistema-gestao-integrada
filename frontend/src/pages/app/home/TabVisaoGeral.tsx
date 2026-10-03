@@ -56,20 +56,6 @@ export function TabVisaoGeral({ r }: { r: Resumo }) {
             {kpis.map((k) => (
               <KpiTile key={k.id} label={k.label} valor={k.valor} base={k.base} origem={k.origem} to={k.rota} />
             ))}
-
-            {/* Lacunas assumidas: o número não existe, e a tela diz isso. */}
-            <KpiTile
-              label="Avanço físico × previsto"
-              valor={null}
-              pendente
-              base="depende do módulo de planejamento (PDCA)"
-            />
-            <KpiTile
-              label="DRE por obra"
-              valor={null}
-              pendente
-              base="sub-fase D.1.4 do ERP — cruza SCM, SIL e medições"
-            />
           </div>
         )}
       </section>
@@ -128,6 +114,7 @@ export function TabVisaoGeral({ r }: { r: Resumo }) {
           {fontes.erp && <b style={{ color: 'var(--ink-2)' }}>ERP</b>}
           {fontes.scm && <>, <b style={{ color: 'var(--ink-2)' }}>SCM</b></>}
           {fontes.sil && <>, <b style={{ color: 'var(--ink-2)' }}>SIL</b></>}
+          {fontes.pdca && <>, <b style={{ color: 'var(--ink-2)' }}>PDCA</b></>}
           . Cada módulo calcula o seu agregado no backend.
         </span>
         <Link

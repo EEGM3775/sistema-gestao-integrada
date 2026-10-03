@@ -34,6 +34,8 @@ function refinarRateios<T extends { valorCents: number; rateios?: { centro_custo
 export const contaPagarSchema = z.object({
   fornecedor: z.number({ error: 'Selecione um fornecedor.' }).int().positive(),
   empreendimento: z.number().int().positive().nullable().optional(),
+  obra: z.number().int().positive().nullable().optional(),
+  etapa: z.number().int().positive().nullable().optional(),
   descricao: z.string().min(1, 'Informe uma descrição.').max(255, 'Máximo de 255 caracteres.'),
   valorCents: z.number().int().min(1, 'Informe um valor maior que zero.'),
   data_emissao: z.string().nullable().optional(),
@@ -47,6 +49,7 @@ export type ContaPagarFormValues = z.infer<typeof contaPagarSchema>
 export const contaReceberSchema = z.object({
   cliente: z.number({ error: 'Selecione um cliente.' }).int().positive(),
   empreendimento: z.number().int().positive().nullable().optional(),
+  obra: z.number().int().positive().nullable().optional(),
   descricao: z.string().min(1, 'Informe uma descrição.').max(255, 'Máximo de 255 caracteres.'),
   valorCents: z.number().int().min(1, 'Informe um valor maior que zero.'),
   data_emissao: z.string().nullable().optional(),

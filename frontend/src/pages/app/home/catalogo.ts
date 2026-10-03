@@ -302,11 +302,11 @@ export const CATALOGO: ModuloDef[] = [
   {
     id: 'dms',
     label: 'Gestão de Documentos',
-    descricao: 'Repositório central com versões e validade — absorve os documentos de obra e de pessoal.',
+    descricao: 'Todo arquivo do sistema num lugar só: o que está guardado em cada módulo, o que entrou e o que saiu.',
     icon: FileText,
     estagio: 'plataforma',
-    situacao: 'planejado',
-    modulo: 'dms',
+    situacao: 'pronto',
+    rota: '/app/documentos',
   },
   {
     id: 'admin-papeis',

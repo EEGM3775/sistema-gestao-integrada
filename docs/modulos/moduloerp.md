@@ -740,7 +740,7 @@ Antes de operar com **dinheiro real**, o módulo depende das fases de fundação
 | **D.1.1** ✅ 07/06/2026 | **Contas a pagar/receber** | `Fatura` **consolidada** em `ContaPagar`/`ContaReceber` (status granular, `valor_pago`/juros/multa/desconto, `data_emissao`/`agendamento`); `CentroCusto` + `RateioContaPagar/Receber`; `LoteRemessa`; `Transacao` repontada (CHECK `conta_pagar` xor `conta_receber`); `dar_baixa()` único caminho de baixa (gera `Transacao`, preparado para webhook Asaas D.1.2); `dar-baixa`/`gerar-lote-remessa` (AP) e `dar-baixa`/`emitir-nfse`/`emitir-nfe`/`emitir-lote-nfse` (AR) como actions; `ERPDashboardView` recalculado direto de AP/AR | `Sheet` (slide-over, 1º uso no projeto); `ContaPagarForm`/`ContaReceberForm`/`BaixaForm` (RHF+zod, 1º uso, com `RateioField` em field array); `ContasAPagarPage`/`ContasAReceberPage` (workspace: `FilterBar`+`FinanceDataTable`+`Sheet` p/ criar/editar/ver/baixa); cards de navegação no hub + breadcrumb de volta | ✅ CRUD completo, baixa parcial→total, rateio por centro de custo, lote de remessa e aging do dashboard validados via API/gateway (golden path, 07/06/2026; dados de teste limpos). **Achado corrigido no mesmo dia:** `dar_baixa()` aceitava baixa repetida em título já `QUITADO`/`CANCELADO` — agora detecta e encaminha para revisão do financeiro via `RevisaoBaixa`/`BaixaRequerRevisao` + fila `/api/erp/revisoes-baixa/` (`aprovar`/`rejeitar`); ver "Dívidas técnicas" |
 | **D.1.2** ✅ MVP 08/06/2026 (backend) | **Boletos & Asaas** | Django app Python [funcoescobrancas](funcoescobrancas.md) — `AsaasClient` + `services`/`tasks` Celery + `WebhookAsaasView` idempotente + `EventoWebhookAsaas`; action `gerar-cobranca` em `ContaReceber`; baixa automática via `dar_baixa(origem='asaas')` (reaproveita o guard `RevisaoBaixa` do D.1.1) | ❌ telas de boletos (`BoletosListPage`/`BoletoDetailPage`) ainda não construídas | ✅ sandbox (mockado): emite, gera customer/payment, baixa automática por webhook, idempotência e guard `RevisaoBaixa` validados e2e (08/06/2026). Escopo MVP = golden path (emitir + baixa); cancelar/estornar/QR PIX/parcelamento ficam para slice 2; credencial **global** via `.env` (decisão do usuário) |
 | **D.1.3** ✅ 16/07/2026 | **Notas fiscais** | action `cancelar` na NFS-e (Celery `cancelar_nota_fiscal_servico` → NFE.io) + permissão `erp.nf.cancelar`; `NotaFiscalServicoFilter` (`status`/`excluir_status` p/ as abas); consulta já existia (`nf/<id>/consultar/`) | `NotasFiscaisPage` (rota `/app/erp/notas-fiscais`): abas emitidas/canceladas/recebidas, `StatusNfeBadge`, download PDF/XML, ações consultar/cancelar, **`EmitirNfseDialog`** (emite a partir de uma conta a receber); card no hub | ✅ emitir (via conta a receber) + cancelar + baixar PDF/XML; suíte 35/35 (Postgres) + contrato NFE.io validado ao vivo (auth/payload/erro 4xx→`NFeErro`). **Emissão feliz pende empresa emitente na conta NFE.io.** **Falta:** UI de emissão em lote (`emitir-lote-nfse`) e CC-e |
-| **D.1.4** | **Financeiro por obra** | `CentroCusto`, rateio; **dimensão de obra na `ContaPagar`** (nota abaixo — é a única dívida do ERP com o Orçamento) | DRE da obra, orçado x realizado | financeiro filtrado por obra; a coluna *realizado* do Orçamento deixa de ter cobertura parcial |
+| **D.1.4** ✅ 03/10/2026 | **Financeiro por obra** | `obra` e `etapa` na `ContaPagar`, `obra` na `ContaReceber` e no `CentroCusto`; a baixa leva a obra à `Transacao`; a medição/retenção do PDCA nascem com a obra; `financeiro_obra.py` (atribuição) e `GET obras/financeiro/` · `GET obras/<id>/dre/` | `FinanceiroObraPage` (`/app/erp/obras`): DRE por obra, custo por etapa × orçado, caixa mês a mês; obra/etapa nos formulários; coluna e agrupamento por obra na grade | o realizado do Orçamento lê o ERP inteiro (`realizado_cobertura: "erp"`) |
 | **D.1.5** | **Devoluções/estornos** | `Devolucao`, refund Asaas, NF devolução | tela de devoluções | estorno reflete no caixa |
 | **D.1.6** | **Caixa, bancos & conciliação** | `ContaBancaria`, OFX/webhook | extrato + conciliação | extrato casa com títulos |
 | **D.1.7** | **Fluxo de caixa projetado** | projeção AP/AR + medições | gráfico realizado+projetado | projeção bate com títulos |
@@ -750,7 +750,10 @@ Antes de operar com **dinheiro real**, o módulo depende das fases de fundação
 > 💰 **O que o Orçamento está esperando do ERP — e o que *não* é do ERP.** Registrado ao fechar o
 > ORC.7 (17/08/2026), na comparação com o Sienge.
 >
-> **A dívida é uma só: D.1.4 — dimensão de obra na despesa.** Hoje `ContaPagar` amarra a
+> **Paga em 03/10/2026** — ver "Financeiro por obra" abaixo. O parágrafo seguinte fica como o
+> registro de por que ela existia.
+>
+> **A dívida era uma só: D.1.4 — dimensão de obra na despesa.** Hoje `ContaPagar` amarra a
 > **empreendimento**, e o único vínculo preciso com a obra é pelo SCM
 > (`PedidoCompra.conta_pagar_ref`). Por isso a coluna *realizado* das quatro colunas cobre **só o
 > que passou por pedido de compra**, e diz isso na resposta
@@ -779,6 +782,35 @@ Antes de operar com **dinheiro real**, o módulo depende das fases de fundação
 após revisão deste documento.
 
 ---
+
+### Financeiro por obra (D.1.4)
+
+**A atribuição** ([`financeiro_obra.py`](../../backend/moduloerp/financeiro_obra.py)) — uma conta
+chega à obra por dois caminhos, e só por eles; nada é rateado por aproximação:
+
+1. **rateio a centro de custo com obra** (`CentroCusto.obra`): cada rateio leva à obra dele a fração
+   `rateio.valor / conta.valor`;
+2. **a obra da própria conta** (`obra`, e `etapa` na conta a pagar — validada contra a obra): fica com
+   o que o rateio não atribuiu.
+
+A fração vale para o valor (competência), o pago (caixa) e cada `Transacao` de baixa (o mês). Conta
+sem nenhum dos dois não é de obra nenhuma.
+
+**De onde vem a obra sem ninguém digitar:** a medição e a liberação de retenção do PDCA (contrato de
+obra) criam a conta já com ela; a migration `0021` preencheu o que existia, inclusive o que veio de
+pedido de compra do SCM; a `Transacao` de cada baixa herda a obra da conta.
+
+**A DRE gerencial** (`GET /api/erp/obras/<id>/dre/`, permissão `erp.relatorio.view`): receita
+(faturado, recebido, a receber), custo (apropriado, pago, a pagar), resultado por competência e por
+caixa com margem, **custo por etapa contra o orçado** e o caixa mês a mês. O orçado vem do
+Orçamento (aprovado vigente) **só para quem também usa o módulo `orcamento`** — sem ele, `orcado:
+null` e `orcado_disponivel: false`, nunca zero. `GET /api/erp/obras/financeiro/` dá uma linha por
+obra com movimento.
+
+**Integração:** o *realizado* das quatro colunas do Orçamento passa a ler esta atribuição
+([moduloorcamento](moduloorcamento.md)); o hub da home mostra o resultado das obras e põe obra no
+vermelho na fila de decisão; a grade de contas a pagar e a receber ganhou coluna, ordenação e
+agrupamento por obra, e a DRE abre a grade filtrada pela obra.
 
 ## 14. Decisões registradas
 - **ERP contábil completo** (não só operacional) — alvo de longo prazo, entregue por camadas.

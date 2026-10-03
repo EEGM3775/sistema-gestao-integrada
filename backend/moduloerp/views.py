@@ -1448,3 +1448,48 @@ class ConsultarStatusNFView(TenantScopedAPIViewMixin, views.APIView):
         except Exception as e:
             logger.error(f"Erro inesperado ao consultar status da NF {nf_id}: {e}")
             return Response({'error': 'Erro interno do servidor.'}, status=status_module.HTTP_500_INTERNAL_SERVER_ERROR)
+
+# ---------------------------------------------------------------------------
+# D.1.4 — financeiro por obra
+# ---------------------------------------------------------------------------
+
+
+class FinanceiroObrasView(TenantScopedAPIViewMixin, views.APIView):
+    """`GET /api/erp/obras/financeiro/` — uma linha por obra com movimento
+    financeiro (receita, custo, pago, resultado). A atribuição está em
+    `financeiro_obra.py`."""
+
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
+    required_module = "erp_financeiro"
+    required_resource = "erp.relatorio"
+    throttle_scope = "relatorio"
+
+    def get(self, request):
+        from . import financeiro_obra
+
+        return Response({"obras": financeiro_obra.resumo_das_obras(request.user.tenant_id)})
+
+
+class DreObraView(TenantScopedAPIViewMixin, views.APIView):
+    """`GET /api/erp/obras/<id>/dre/` — a DRE gerencial da obra.
+
+    O orçado vem do `moduloorcamento` (aprovado vigente) só para quem também usa
+    aquele módulo: sem ele, a resposta traz `orcado: None` e a tela diz por quê.
+    """
+
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
+    required_module = "erp_financeiro"
+    required_resource = "erp.relatorio"
+    throttle_scope = "relatorio"
+
+    def get(self, request, obra_id):
+        from django.shortcuts import get_object_or_404
+        from obras.models import Obra
+
+        from . import financeiro_obra
+
+        obra = get_object_or_404(Obra.objects.filter(tenant_id=request.user.tenant_id), pk=obra_id)
+        com_orcado = autorizacao.usa_modulo(request.user, "orcamento")
+        corpo = financeiro_obra.dre(request.user.tenant_id, obra, com_orcado=com_orcado)
+        corpo["orcado_disponivel"] = com_orcado
+        return Response(corpo)

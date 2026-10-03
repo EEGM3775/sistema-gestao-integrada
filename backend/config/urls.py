@@ -76,6 +76,7 @@ from nucleo.health_views import HealthzView, ReadyzView, MetricsView
 
 # Importação/exportação de plataforma (IE.0 + IE.0b)
 from funcoesimpexp.views import (
+    ArquivosView as ImpExpArquivosView,
     EntregarArquivoView as ImpExpEntregarView,
     ExportacaoDetalheView as ImpExpExportacaoView,
     ExportarView as ImpExpExportarView,
@@ -208,6 +209,8 @@ urlpatterns = [
     # todo módulo — o `recurso` vem na URL e o registry resolve. Módulo novo
     # ganha import/export sem rota nova. Planta: docs/modulos/funcoesimpexp.md
     path('api/impexp/recursos/', ImpExpRecursosView.as_view(), name='impexp_recursos'),
+    # DMS: o registro de todo arquivo, dentro e fora (funcoesimpexp/arquivos.py).
+    path('api/impexp/arquivos/', ImpExpArquivosView.as_view(), name='impexp_arquivos'),
     # Coleções fixas antes das genéricas: `<str:recurso_id>` casa qualquer coisa,
     # e um recurso chamado "mapas" passaria a servir de rota de mapa.
     path('api/impexp/importacoes/<int:importacao_id>/', ImpExpDetalheView.as_view(), name='impexp_detalhe'),
@@ -245,7 +248,6 @@ urlpatterns = [
     path('api/calendar/', include('modulocalendar.urls')),
     # Módulos planejados (stub — entitlement aplicado, endpoints de status disponíveis)
     path('api/prancheta/', include('moduloprancheta.urls')),
-    path('api/dms/', include('modulodms.urls')),
     path('api/pdca/', include('modulopdca.urls')),
     path('api/catalogo/', include('catalogo.urls')),
     path('api/scm/', include('moduloscm.urls')),

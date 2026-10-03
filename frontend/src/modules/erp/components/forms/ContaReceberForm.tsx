@@ -11,6 +11,7 @@ import { useClienteOptions, useEmpreendimentoOptions } from '../../hooks/useEnti
 import { apiDecimalToCents, centsToApiDecimal, formatBRL } from '@/utils/money'
 import { FormErrorBanner, parseApiErrors } from '@/utils/formErrors'
 import { AvisoDeTrava, TextoTravado } from './trava'
+import { ObraEtapaFields } from './ObraEtapaFields'
 import { distribuirErros, errosSemLugar } from './distribuirErros'
 import type { ContaReceber, ContaReceberPayload } from '../../types'
 
@@ -26,6 +27,7 @@ import { dateToBR, minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
 const EMPTY_VALUES: ContaReceberFormValues = {
   cliente: undefined as unknown as number,
   empreendimento: null,
+  obra: null,
   descricao: '',
   valorCents: 0,
   data_emissao: '',
@@ -38,6 +40,7 @@ function toFormValues(conta: ContaReceber): ContaReceberFormValues {
   return {
     cliente: conta.cliente ?? (undefined as unknown as number),
     empreendimento: conta.empreendimento,
+    obra: conta.obra,
     descricao: conta.descricao,
     valorCents: apiDecimalToCents(conta.valor),
     data_emissao: conta.data_emissao ?? '',
@@ -87,6 +90,7 @@ export function ContaReceberForm({ initial, onSubmit, onCancel }: ContaReceberFo
       await onSubmit({
         cliente: values.cliente,
         empreendimento: values.empreendimento ?? null,
+        obra: values.obra ?? null,
         descricao: values.descricao,
         valor: centsToApiDecimal(values.valorCents),
         data_emissao: values.data_emissao || null,
@@ -116,7 +120,7 @@ export function ContaReceberForm({ initial, onSubmit, onCancel }: ContaReceberFo
           )}
         </Field>
 
-        <Field label="Obra/empreendimento (opcional)">
+        <Field label="Empreendimento (opcional)">
           {/* Controlado, não registrado: o `<select>` nativo devolvia "" para
               "sem obra" (a validação reprovava sem mensagem — item 57) e perdia a
               obra gravada quando o valor chegava antes das opções. */}
@@ -130,12 +134,14 @@ export function ContaReceberForm({ initial, onSubmit, onCancel }: ContaReceberFo
                 onChange={e => field.onChange(e.target.value === '' ? null : Number(e.target.value))}
                 onBlur={field.onBlur}
               >
-                <option value="">Sem vínculo com obra</option>
+                <option value="">Sem empreendimento</option>
                 {(empreendimentoOptions.data ?? []).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
               </select>
             )}
           />
         </Field>
+
+        <ObraEtapaFields comEtapa={false} />
 
         <Field label="Descrição" error={errors.descricao?.message}>
           <input type="text" style={inputStyle} placeholder="Ex.: Medição 03 — contrato 2025/014" {...register('descricao')} />

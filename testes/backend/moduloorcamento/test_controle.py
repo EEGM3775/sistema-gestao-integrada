@@ -109,7 +109,7 @@ class QuatroColunasTests(PlanilhaTestBase):
 
         linha = controle.quatro_colunas(self.tenant.id, self.obra.pk)[0]
         self.assertEqual(Decimal(linha["realizado"]), Decimal("25000.00"))
-        self.assertEqual(linha["realizado_cobertura"], "pedidos_de_compra")
+        self.assertEqual(linha["realizado_cobertura"], "erp")
 
     def test_obra_sem_orcamento_aprovado_tem_orcado_nulo(self):
         """Zero se leria como 'estourou 100%' — o honesto é não ter régua."""
@@ -291,7 +291,7 @@ class ControleAPITests(PlanilhaTestBase):
 
         self.assertEqual(resp.status_code, 200, resp.content)
         self.assertEqual(Decimal(resp.data["obras"][0]["orcado"]), Decimal("100000.00"))
-        self.assertIn("pedido de compra", resp.data["nota_realizado"])
+        self.assertIn("atribuída à obra", resp.data["nota_realizado"])
 
     def test_controle_exige_permissao_de_relatorio(self):
         self.autenticar(perms=["orcamento.orcamento.view"])

@@ -228,6 +228,13 @@ class ContaPagar(TenantScopedModel, Excluivel):
     conta_pagar_id = models.AutoField(primary_key=True, verbose_name=_("ID da Conta a Pagar"))
     fornecedor = models.ForeignKey('fornecedores.Fornecedor', on_delete=models.CASCADE, related_name='contas_a_pagar', verbose_name=_("Fornecedor"))
     empreendimento = models.ForeignKey('empreendimentos.Empreendimento', on_delete=models.SET_NULL, null=True, blank=True, verbose_name=_("Empreendimento"))
+    # D.1.4 — a dimensão de obra na despesa. Sem ela, o "realizado" do Orçamento
+    # só via o que passou por pedido de compra. A etapa é opcional e afina o
+    # orçado × realizado por etapa; tem de ser da mesma obra. Quem rateia por
+    # centro de custo com obra (`CentroCusto.obra`) atribui a fração rateada —
+    # ver `financeiro_obra.atribuicao`.
+    obra = models.ForeignKey('obras.Obra', on_delete=models.SET_NULL, null=True, blank=True, related_name='contas_a_pagar', verbose_name=_("Obra"))
+    etapa = models.ForeignKey('obras.EtapaObra', on_delete=models.SET_NULL, null=True, blank=True, related_name='contas_a_pagar', verbose_name=_("Etapa da obra"))
     nota_fiscal = models.ForeignKey(NotaFiscal, on_delete=models.SET_NULL, null=True, blank=True, verbose_name=_("Nota Fiscal Associada"))
     descricao = models.TextField(verbose_name=_("Descrição da Conta"))
     valor = models.DecimalField(max_digits=15, decimal_places=2, verbose_name=_("Valor da Conta"))
@@ -322,6 +329,7 @@ class ContaPagar(TenantScopedModel, Excluivel):
                     tenant=self.tenant,
                     conta_pagar=self,
                     empreendimento=self.empreendimento,
+                    obra_id=self.obra_id,  # D.1.4
                     descricao=f"Baixa de pagamento ({origem}) — {self.descricao[:200]}",
                     valor=valor + juros + multa - desconto,
                     tipo=Transacao.TipoTransacao.SAIDA,
@@ -367,6 +375,9 @@ class ContaReceber(TenantScopedModel, Excluivel):
     conta_receber_id = models.AutoField(primary_key=True, verbose_name=_("ID da Conta a Receber"))
     cliente = models.ForeignKey('clientes.Cliente', on_delete=models.CASCADE, related_name='contas_a_receber', verbose_name=_("Cliente"))
     empreendimento = models.ForeignKey('empreendimentos.Empreendimento', on_delete=models.SET_NULL, null=True, blank=True, verbose_name=_("Empreendimento"))
+    # D.1.4 — a receita da obra: a construtora contratada (empreitada,
+    # administração) recebe por obra. A venda de unidade fica no empreendimento.
+    obra = models.ForeignKey('obras.Obra', on_delete=models.SET_NULL, null=True, blank=True, related_name='contas_a_receber', verbose_name=_("Obra"))
     # A parcela aponta para a unidade que ela paga. Sem isto, um cliente com dois
     # lotes no mesmo loteamento tem a inadimplência somada num balaio só e a
     # carteira por unidade seria um número inventado. Opcionais porque parcelas
@@ -484,6 +495,7 @@ class ContaReceber(TenantScopedModel, Excluivel):
                     tenant=self.tenant,
                     conta_receber=self,
                     empreendimento=self.empreendimento,
+                    obra_id=self.obra_id,  # D.1.4
                     descricao=f"Baixa de recebimento ({origem}) — {self.descricao[:200]}",
                     valor=valor + juros + multa - desconto,
                     tipo=Transacao.TipoTransacao.ENTRADA,
@@ -616,7 +628,10 @@ class CentroCusto(TenantScopedModel):
     centro_custo_id = models.AutoField(primary_key=True, verbose_name=_("ID do Centro de Custo"))
     nome = models.CharField(max_length=150, verbose_name=_("Nome"))
     codigo = models.CharField(max_length=30, blank=True, verbose_name=_("Código"))
-    empreendimento = models.ForeignKey('empreendimentos.Empreendimento', on_delete=models.SET_NULL, null=True, blank=True, related_name='centros_custo', verbose_name=_("Empreendimento/Obra"))
+    empreendimento = models.ForeignKey('empreendimentos.Empreendimento', on_delete=models.SET_NULL, null=True, blank=True, related_name='centros_custo', verbose_name=_("Empreendimento"))
+    # D.1.4 — rateio para a obra: a parte da conta rateada a este centro conta
+    # como despesa (ou receita) desta obra.
+    obra = models.ForeignKey('obras.Obra', on_delete=models.SET_NULL, null=True, blank=True, related_name='centros_custo_erp', verbose_name=_("Obra"))
     ativo = models.BooleanField(default=True, verbose_name=_("Ativo"))
 
     class Meta:

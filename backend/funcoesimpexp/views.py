@@ -921,3 +921,30 @@ def _resumo_mapa(mapa: MapaColunas) -> dict:
         "criado_por": mapa.usuario_nome,
         "criado_em": mapa.criado_em,
     }
+
+
+class ArquivosView(_Base):
+    """DMS — `GET /api/impexp/arquivos/?lente=guardados|entraram|sairam`.
+
+    O registro de todo arquivo, dentro e fora do sistema
+    (`funcoesimpexp/arquivos.py`). `busca` e `recurso` recortam os guardados;
+    `page_size` segue o `DmsPageNumberPagination` (padrão e teto do `planos.py`).
+    """
+
+    def get(self, request):
+        from . import arquivos
+        from .pagination import DmsPageNumberPagination
+
+        limite = DmsPageNumberPagination().get_page_size(request)
+        lente = request.query_params.get("lente") or "guardados"
+        if lente == "entraram":
+            return Response({"entraram": arquivos.entraram(request.user, self.tenant_id, limite=limite)})
+        if lente == "sairam":
+            return Response({"sairam": arquivos.sairam(request.user, self.tenant_id, limite=limite)})
+        if lente != "guardados":
+            raise ValidationError({"lente": "Use guardados, entraram ou sairam."})
+        return Response(arquivos.guardados(
+            request.user, self.tenant_id, limite=limite,
+            busca=(request.query_params.get("busca") or "").strip(),
+            recurso_id=request.query_params.get("recurso") or "",
+        ))

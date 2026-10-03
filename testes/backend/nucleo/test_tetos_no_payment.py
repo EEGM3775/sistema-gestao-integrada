@@ -207,6 +207,8 @@ class PaginacaoTests(SimpleTestCase):
     PAGINADORES = {
         "catalogo": "catalogo.pagination:CatalogoPageNumberPagination",
         "clientes": "clientes.pagination:ClientePageNumberPagination",
+        # O registro de arquivos do DMS (funcoesimpexp/arquivos.py).
+        "dms": "funcoesimpexp.pagination:DmsPageNumberPagination",
         "empreendimentos": "empreendimentos.views:UnidadePagination",
         "erp": "moduloerp.pagination:ErpPageNumberPagination",
         # A lixeira (D116) não é módulo vendido e não tem `module_code` — ela é

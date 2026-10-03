@@ -110,7 +110,7 @@ class NotaFiscalSerializer(ArquivoGateadoSerializerMixin, TenantScopedUniqueSeri
 class CentroCustoSerializer(serializers.ModelSerializer):
     class Meta:
         model = CentroCusto
-        fields = ['centro_custo_id', 'nome', 'codigo', 'empreendimento', 'ativo']
+        fields = ['centro_custo_id', 'nome', 'codigo', 'empreendimento', 'obra', 'ativo']
 
 
 class RateioContaPagarSerializer(serializers.ModelSerializer):
@@ -127,6 +127,15 @@ class RateioContaReceberSerializer(serializers.ModelSerializer):
     class Meta:
         model = RateioContaReceber
         fields = ['rateio_id', 'centro_custo', 'centro_custo_nome', 'valor']
+
+
+def _validar_obra_e_etapa(attrs, instance):
+    """D.1.4: a etapa é da obra da conta — senão o orçado × realizado por etapa
+    somaria a despesa de uma obra no orçamento de outra."""
+    obra = attrs['obra'] if 'obra' in attrs else getattr(instance, 'obra', None)
+    etapa = attrs['etapa'] if 'etapa' in attrs else getattr(instance, 'etapa', None)
+    if etapa is not None and (obra is None or etapa.obra_id != obra.pk):
+        raise serializers.ValidationError({'etapa': 'A etapa tem de ser da obra escolhida.'})
 
 
 def _validar_rateios(rateios, valor, campo='rateios'):
@@ -276,11 +285,14 @@ class ContaPagarSerializer(TravaDeEdicaoMixin, serializers.ModelSerializer):
     permissao_estorno = 'erp.conta_pagar.estornar'
     fornecedor_nome = serializers.CharField(source='fornecedor.razao_social', read_only=True, default='')
     empreendimento_nome = serializers.CharField(source='empreendimento.empreendimento', read_only=True, default='')
+    obra_nome = serializers.CharField(source='obra.nome_obra', read_only=True, default='')
+    etapa_nome = serializers.CharField(source='etapa.nome_etapa', read_only=True, default='')
 
     class Meta:
         model = ContaPagar
         fields = [
             'conta_pagar_id', 'fornecedor', 'fornecedor_nome', 'empreendimento', 'empreendimento_nome',
+            'obra', 'obra_nome', 'etapa', 'etapa_nome',
             'nota_fiscal',
             'descricao', 'valor', 'data_emissao', 'data_vencimento', 'data_agendamento',
             'status', 'valor_pago', 'juros', 'multa', 'desconto', 'data_pagamento',
@@ -295,6 +307,7 @@ class ContaPagarSerializer(TravaDeEdicaoMixin, serializers.ModelSerializer):
         self._recusar_campos_travados(attrs)  # item 57: a trava fala primeiro, com a saída
         _validar_rateios(rateios, valor)
         _validar_edicao_valor(self.instance, valor, rateios is not None)  # L6
+        _validar_obra_e_etapa(attrs, self.instance)  # D.1.4
         return attrs
 
     def create(self, validated_data):
@@ -331,6 +344,7 @@ class ContaReceberSerializer(TravaDeEdicaoMixin, serializers.ModelSerializer):
     permissao_estorno = 'erp.conta_receber.estornar'
     cliente_nome = serializers.CharField(source='cliente.nome_completo', read_only=True, default='')
     empreendimento_nome = serializers.CharField(source='empreendimento.empreendimento', read_only=True, default='')
+    obra_nome = serializers.CharField(source='obra.nome_obra', read_only=True, default='')
     unidade = serializers.SerializerMethodField()
     # Item 57 (01/10/2026): com boleto vivo no Asaas, mudar valor ou vencimento
     # cancela o boleto e emite outro — e isso só acontece com a confirmação.
@@ -341,6 +355,7 @@ class ContaReceberSerializer(TravaDeEdicaoMixin, serializers.ModelSerializer):
         model = ContaReceber
         fields = [
             'conta_receber_id', 'cliente', 'cliente_nome', 'empreendimento', 'empreendimento_nome',
+            'obra', 'obra_nome',
             'cliente_empreendimento', 'unidade',
             'nota_fiscal_recebida', 'nota_fiscal_servico', 'nota_fiscal_produto',
             'descricao', 'valor', 'data_emissao', 'data_vencimento', 'data_agendamento',

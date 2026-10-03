@@ -1,4 +1,4 @@
-# funcoesimpexp — importação e exportação de plataforma
+# funcoesimpexp — importação, exportação e coordenação de todo arquivo (o DMS)
 
 > **App-fundação**, como o [catalogo](catalogo.md): não se vende, não tem entitlement próprio e
 > nenhum módulo depende dele para existir. É o **motor** de entrada e saída de dados; cada módulo
@@ -8,6 +8,12 @@
 > Nenhum módulo valida, mede, admite ou entrega arquivo por conta própria: ele *declara*, e o motor
 > *admite* e *entrega*. Duas funções, uma implementação: [`entrada.admitir`](../../backend/funcoesimpexp/entrada.py)
 > e [`entrega.servir`](../../backend/funcoesimpexp/entrega.py).
+
+> **É também o DMS** *(decisão do dono, 03/10/2026)*: o módulo de coordenação de documentos —
+> todos os arquivos, dentro e fora do sistema — **não é um segundo app**. Coordenar documentos é
+> responder, sobre os arquivos que já passam por esta porta, *o que está guardado, o que entrou e o
+> que saiu*; as três respostas moram aqui (§13). O `modulodms`, que era um placeholder vazio, saiu
+> do repositório.
 
 ## 1. O que é e por que é fundação
 
@@ -645,3 +651,52 @@ lote aplicado ontem não tinha por onde ser encontrado, e "desfazível" seria um
 Chamá-lo num teste sem guardar o estado antes apaga as declarações reais de todos os módulos — e o
 estrago não aparece na suíte daquele app, e sim nos testes que rodarem depois, como recurso que "não
 existe" (404). Use sempre `instantaneo()` + `restaurar()`.
+
+## 13. O DMS — coordenação de todo arquivo, dentro e fora do sistema
+
+**Por que aqui, e não num `modulodms`.** A R17 já fazia deste app a porta única de todo arquivo que
+entra (`entrada.admitir`) e sai (`entrega.servir`, exportação). Um módulo de documentos à parte
+teria duas saídas possíveis, e as duas são a divergência que a R17 existe para impedir: **copiar** o
+arquivo para um repositório próprio (dois lugares para o mesmo binário, um deles desatualizado) ou
+**reimplementar** a porta (segunda cópia dos guarda-corpos de tipo, nome, gate e auditoria). O que o
+DMS acrescenta é **leitura e coordenação** sobre os arquivos que já estão aqui — então ele é este app.
+
+**As três lentes** (`GET /api/impexp/arquivos/?lente=…`, [`arquivos.py`](../../backend/funcoesimpexp/arquivos.py)):
+
+| Lente | Pergunta | De onde vem |
+|---|---|---|
+| `guardados` | o que está dentro do sistema, de quem, desde quando | cada `Recurso` declara `guardados` — `Guardado(especie, modelo, campo, quando, titulo, onde, filtro)` —, ao lado do `entregar_arquivo` que já tinha. A `especie` é a mesma: listar e baixar fecham pelo mesmo par `(espécie, chave)` |
+| `entraram` | o que chegou por lote | `Importacao` (§8) |
+| `sairam` | o que deixou o perímetro | `Exportacao` (planilha, PDF) + a entrega de binário auditada (`AuditLog`, `EXPORTAR_DADOS` com `entrega`) |
+
+**O gate é o da entrega** (`acesso.exigir_entrega`): o registro mostra só o que a pessoa poderia
+baixar no módulo dono — entitlement e `permissoes_entrega` do recurso —, e o link de cada linha é a
+própria URL da entrega. Por isso o DMS **não tem entitlement**, como o resto deste app: quem autoriza
+é sempre o dono do dado (§3).
+
+**O invariante** (`test_dms_arquivos`, no molde do D70): todo `FileField` instalado com arquivo do
+cliente está em algum `guardados`. Ficam de fora, declarados no teste, só o que o motor produz
+(derivada, snap e snapshot da Prancheta), as próprias lentes (`Importacao`, `Exportacao`) e o ZIP da
+base-mãe (sem tenant, sem porta). Upload novo sem `Guardado` derruba a suíte com o nome do campo.
+
+**Busca** sem acento no título e no contexto (`__unaccent__icontains`), e no caminho do arquivo.
+Página: `PAGINA_PADRAO/MAXIMA["dms"]` do [`planos.py`](../../payment/planos.py), lida pelo
+`DmsPageNumberPagination`.
+
+**Tela:** `/app/documentos`, na topbar ao lado de Mapas, Prancheta e Calendário — é uma lente sobre
+tudo, não um lugar do ciclo.
+
+**O que o DMS faz a seguir, sobre esta mesma base** (sem segundo armazenamento):
+
+- **Distribuição (GRD — guia de remessa de documentos):** um conjunto de revisões enviado a um
+  destinatário, com confirmação de recebimento. É registro sobre arquivos que já existem.
+- **Operações de PDF** (marca d'água, carimbo, juntar/dividir) com `pikepdf`: o produto é uma
+  **revisão nova**, que entra pela porta como qualquer arquivo (decisões em
+  [modulos-planejados.md](modulos-planejados.md)).
+- **A base referencial fora do dev** (D185): os arquivos-fonte de cada publicação oficial
+  (ZIP/PDF/XLSX) guardados aqui e recarregados em outro ambiente pelo mesmo `carga.executar`
+  (`carregar_base_oficial --arquivo`), em vez de um transporte próprio.
+- **Convergência dos documentos com ciclo de vida próprio:** `obras.DocumentoObra` tem um fluxo de
+  status (rascunho → aprovado → publicado) que repete o de revisão da Prancheta. Unificá-los é a
+  próxima convergência, não um terceiro fluxo.
+

@@ -362,7 +362,8 @@ Arquitetura completa da lixeira: [arquitetura/lixo.md](arquitetura/lixo.md).
 ## 8. Contrato de um módulo novo (vendável isoladamente)
 
 Qualquer módulo futuro — um app Django **ou** um serviço separado (estilo drone), incluindo os hoje
-vazios (`modulodms`) — segue o **mesmo contrato**, sem reimplementar identidade:
+vazios — segue o **mesmo contrato**, sem reimplementar identidade. (O DMS não é um deles: é o
+`funcoesimpexp` e não tem entitlement — o registro de arquivos usa o gate da entrega de cada recurso.)
 
 1. Registrar um `Modulo` (código) no catálogo da IAM.
 2. Tornar-se vendável por `AssinaturaTenant` (empresa) e liberável por `AcessoUsuarioModulo` (usuário).

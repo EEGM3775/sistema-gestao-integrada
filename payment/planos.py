@@ -1066,6 +1066,9 @@ ORCAMENTO_TETO_PASSOS_DESFAZER: int = 50
 # Módulo que ganhar paginador e não aparecer aqui falha no teste do `nucleo`.
 PAGINA_PADRAO: dict[str, int] = {
     "catalogo": 25,
+    # O registro de arquivos do DMS junta as três lentes (guardados, entraram,
+    # saíram) de todos os módulos: 50 é uma tela de conferência.
+    "dms": 50,
     # A lixeira (D116) é lista de conferência, não árvore: 25 basta para quem
     # abriu a página procurando o que apagou por engano hoje. Quem quiser varrer
     # o histórico inteiro pede `?estado=todos&page_size=`.
@@ -1082,6 +1085,7 @@ PAGINA_PADRAO: dict[str, int] = {
 }
 PAGINA_MAXIMA: dict[str, int] = {
     "catalogo": 100,
+    "dms": 200,
     "lixo": 200,
     "clientes": 300,
     "empreendimentos": 300,

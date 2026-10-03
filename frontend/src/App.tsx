@@ -20,6 +20,7 @@ import FornecedoresListPage from './modules/fornecedores/pages/FornecedoresListP
 import FornecedorDetailPage from './modules/fornecedores/pages/FornecedorDetailPage'
 import DiarioObraPage from './modules/diario/pages/DiarioObraPage'
 import CalendarPage from './modules/calendar/pages/CalendarPage'
+import DocumentosPage from './modules/documentos/pages/DocumentosPage'
 import FuncionariosListPage from './modules/rh/pages/FuncionariosListPage'
 import FuncionarioDetailPage from './modules/rh/pages/FuncionarioDetailPage'
 import CargosPage from './modules/rh/pages/CargosPage'
@@ -86,6 +87,10 @@ function App() {
 
           {/* ── Calendário (módulo base — sem entitlement) ── */}
           <Route path="calendario" element={<CalendarPage />} />
+
+          {/* ── Documentos (DMS) — registro de todo arquivo, sem entitlement:
+               o gate é o da entrega de cada recurso (funcoesimpexp/arquivos.py). ── */}
+          <Route path="documentos" element={<DocumentosPage />} />
 
           {/* ── RH (entitlement `rh` — guard de módulo, F4) ── */}
           <Route element={<ModuleRoute module="rh" />}>

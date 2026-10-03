@@ -61,7 +61,7 @@
 
 ## Planejados (placeholders vazios)
 
-`modulodms` — ver [modulos-planejados.md](modulos-planejados.md). (`moduloscm` **saiu** desta lista:
+Nenhum app vazio desde 03/10/2026 — o `modulodms` saiu: o DMS é o [funcoesimpexp](funcoesimpexp.md) §13. (`moduloscm` **saiu** desta lista:
 backend portado — [moduloscm.md](moduloscm.md); `modulosil` **saiu**: porte planejado —
 [modulosil.md](modulosil.md); `modulopdca` **saiu**: tem planta e backend de fundação —
 [modulopdca.md](modulopdca.md).)

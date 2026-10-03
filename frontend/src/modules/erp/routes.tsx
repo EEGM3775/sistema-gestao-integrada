@@ -12,6 +12,7 @@ const BoletoDetailPage = lazy(() => import('./pages/BoletoDetailPage'))
 const NotasFiscaisPage = lazy(() => import('./pages/NotasFiscaisPage'))
 const CobrancaBancariaPage = lazy(() => import('./pages/CobrancaBancariaPage'))
 const ConfiguracoesFinanceiroPage = lazy(() => import('./pages/ConfiguracoesFinanceiroPage'))
+const FinanceiroObraPage = lazy(() => import('./pages/FinanceiroObraPage'))
 
 function ErpFallback() {
   return (
@@ -44,5 +45,7 @@ export const erpRoutes = (
     <Route path="erp/notas-fiscais" element={withErpFallback(<NotasFiscaisPage />)} />
     <Route path="erp/cobranca-bancaria" element={withErpFallback(<CobrancaBancariaPage />)} />
     <Route path="erp/configuracoes" element={withErpFallback(<ConfiguracoesFinanceiroPage />)} />
+    <Route path="erp/obras" element={withErpFallback(<FinanceiroObraPage />)} />
+    <Route path="erp/obras/:obraId" element={withErpFallback(<FinanceiroObraPage />)} />
   </Route>
 )

@@ -40,6 +40,7 @@ from funcoesimpexp.registro import (
     ArquivoEntregue,
     Coluna,
     EntregaInvalida,
+    Guardado,
     Recurso,
     registrar,
 )
@@ -65,6 +66,7 @@ class FotoDoApontamento(Recurso):
     natureza = NATUREZA_ARQUIVO
     permissoes_exigidas = ("pdca.avanco.view", "pdca.avanco.apontar")
     permissoes_entrega = ("pdca.avanco.view",)
+    guardados = (Guardado(ESPECIE_FOTO, ApontamentoAvanco, "foto"),)
 
     colunas = (
         Coluna("atividade", "Atividade"),
@@ -130,6 +132,7 @@ class FotoDaVerificacao(Recurso):
     #: conferindo — fecharia com a régua da escrita um ato que é de leitura. É a
     #: mesma separação que a foto do apontamento precisou fazer.
     permissoes_entrega = ("pdca.verificacao.view",)
+    guardados = (Guardado(ESPECIE_ITEM, ItemVerificacao, "foto"),)
 
     colunas = (
         Coluna("verificacao", "Ficha"),
@@ -160,6 +163,7 @@ class FotoDaNaoConformidade(Recurso):
     natureza = NATUREZA_ARQUIVO
     permissoes_exigidas = ("pdca.nc.view", "pdca.nc.abrir")
     permissoes_entrega = ("pdca.nc.view",)
+    guardados = (Guardado(ESPECIE_NC, NaoConformidade, "foto"), Guardado(ESPECIE_EFICACIA, VerificacaoEficacia, "foto"))
 
     colunas = (
         Coluna("nc", "Não-conformidade"),
@@ -211,6 +215,8 @@ class AnexoDaOcorrencia(Recurso):
     natureza = NATUREZA_ARQUIVO
     permissoes_exigidas = ("pdca.ocorrencia.view", "pdca.ocorrencia.registrar")
     permissoes_entrega = ("pdca.ocorrencia.view",)
+    guardados = (Guardado(ESPECIE_ANEXO, AnexoOcorrencia, "arquivo",
+                          filtro={"especie__in": [e for e in AnexoOcorrencia.Especie.values if e != AnexoOcorrencia.Especie.ATESTADO]}),)
 
     colunas = (
         Coluna("ocorrencia", "Ocorrência"),
@@ -249,6 +255,8 @@ class AtestadoDaOcorrencia(Recurso):
         "pdca.ocorrencia.dado_medico", "pdca.ocorrencia.registrar",
     )
     permissoes_entrega = ("pdca.ocorrencia.dado_medico",)
+    guardados = (Guardado(ESPECIE_ATESTADO, AnexoOcorrencia, "arquivo",
+                          filtro={"especie": AnexoOcorrencia.Especie.ATESTADO}),)
 
     colunas = (
         Coluna("ocorrencia", "Ocorrência"),

@@ -392,6 +392,7 @@ def _anotacoes_receber(hoje: date) -> dict:
     return {
         "cliente_nome": F("cliente__nome_completo"),
         "empreendimento_nome": F("empreendimento__empreendimento"),
+        "obra_nome": F("obra__nome_obra"),  # D.1.4
         "quadra_ord": chave_natural("cliente_empreendimento__unidade__quadra"),
         "lote_ord": chave_natural("cliente_empreendimento__unidade__lote"),
         "apto_ord": chave_natural("cliente_empreendimento__unidade__apto"),
@@ -407,6 +408,7 @@ RECEBER = Fonte(
         "vencimento": ["data_vencimento"],
         "cliente": ["cliente_nome"],
         "empreendimento": ["empreendimento_nome"],
+        "obra": ["obra_nome"],
         "unidade": ["empreendimento_nome", "quadra_ord", "lote_ord", "apto_ord"],
         "descricao": ["descricao"],
         "valor": ["valor"],
@@ -426,6 +428,9 @@ RECEBER = Fonte(
         "quadra": Dimensao(
             campo="cliente_empreendimento__unidade__quadra", rotulo="Quadra", filtro="quadra",
         ),
+        "obra": Dimensao(
+            campo="obra_id", rotulo_campo="obra__nome_obra", rotulo="Obra", filtro="obra",
+        ),
         "mes": _MES,
         "faixa": _FAIXA,
         "status": Dimensao(campo="status", rotulo="Status", filtro="status", rotulos=dict(StatusConta.choices)),
@@ -437,6 +442,7 @@ def _anotacoes_pagar(hoje: date) -> dict:
     return {
         "fornecedor_nome": F("fornecedor__razao_social"),
         "empreendimento_nome": F("empreendimento__empreendimento"),
+        "obra_nome": F("obra__nome_obra"),  # D.1.4
         "saldo": saldo_de(),
         "faixa": faixa_do_titulo(hoje),
         "mes": TruncMonth("data_vencimento"),
@@ -449,6 +455,7 @@ PAGAR = Fonte(
         "vencimento": ["data_vencimento"],
         "fornecedor": ["fornecedor_nome"],
         "empreendimento": ["empreendimento_nome"],
+        "obra": ["obra_nome"],
         "descricao": ["descricao"],
         "valor": ["valor"],
         "saldo": ["saldo"],
@@ -463,6 +470,9 @@ PAGAR = Fonte(
         "empreendimento": Dimensao(
             campo="empreendimento_id", rotulo_campo="empreendimento__empreendimento",
             rotulo="Empreendimento", filtro="empreendimento",
+        ),
+        "obra": Dimensao(
+            campo="obra_id", rotulo_campo="obra__nome_obra", rotulo="Obra", filtro="obra",
         ),
         "mes": _MES,
         "faixa": _FAIXA,

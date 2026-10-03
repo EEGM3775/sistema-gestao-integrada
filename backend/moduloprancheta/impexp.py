@@ -36,6 +36,7 @@ from funcoesimpexp.registro import (
     Coluna,
     ContextoInvalido,
     EntregaInvalida,
+    Guardado,
     Recurso,
     registrar,
 )
@@ -147,6 +148,10 @@ class AcervoDeProjeto(Recurso):
     # módulo foi feito, e fecharia por causa de uma regra escrita para a
     # exportação tabular. Ver `Recurso.permissoes_entrega`.
     permissoes_entrega = ("prancheta.documento.view",)
+    # DMS: só a revisão — o arquivo do cliente. Derivada e snap são do nosso
+    # motor, e o registro lista o que entrou, não o que a plataforma produziu.
+    guardados = (Guardado(ESPECIE_REVISAO, RevisaoDocumento, "arquivo", quando="enviado_em",
+                          titulo="documento__titulo", onde="documento__obra__nome_obra"),)
 
     chave = "hash"
     colunas = (
