@@ -104,7 +104,7 @@
 >   o diagnóstico que escolhe entre elas. O porte para `pikepdf` é trabalho conhecido, não pesquisa; o
 >   que não se reaproveita é a interface Tkinter.
 
-> 📦 **A base referencial fora da máquina de desenvolvimento — ferramenta pronta: o pacote da base (DMS.1, [funcoesimpexp](funcoesimpexp.md) §13.1); a carga real no staging está pendente.** O registro abaixo fica como a origem da decisão.
+> 📦 **A base referencial fora da máquina de desenvolvimento — ✅ resolvida pelo pacote da base (DMS.1, [funcoesimpexp](funcoesimpexp.md) §13.1); a base entrou no staging em 03/10/2026.** O registro abaixo fica como a origem da decisão.
 > *Decisão do dono, 30/09/2026.* As tabelas oficiais de preço do [Orçamento](moduloorcamento.md)
 > (SINAPI, ORSE, EMBASA — 1.460 publicações, 5,6 GB) existem hoje **só no banco de desenvolvimento**:
 > chegaram por 20 cargas manuais em 15/09/2026 e não são reprodutíveis a partir do repositório. O
