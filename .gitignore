@@ -130,3 +130,5 @@ client_secret_*.json
 # (o WSL representa o ':' do ADS como U+F03A, então casa-se pelo sufixo, sem o ':')
 nul
 *Zone.Identifier
+# Worktrees do Claude Code (análises descartáveis): nunca versionar
+.claude/worktrees/
