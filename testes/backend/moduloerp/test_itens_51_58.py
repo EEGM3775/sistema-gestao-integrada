@@ -490,6 +490,69 @@ class CnabTests(_Base):
         self.assertEqual(conta.status, StatusConta.QUITADO)
         self.assertEqual(boleto.status, Boleto.StatusBoleto.PAGO)
 
+    def _boleto_antigo_vencido(self, carteira, conta, status=Boleto.StatusBoleto.VENCIDO):
+        with rls_bypass():
+            return Boleto.objects.create(
+                tenant=self.tenant, conta_receber=conta, canal=Boleto.Canal.CNAB, conta_cobranca=carteira,
+                status=status, valor=conta.valor, data_vencimento=conta.data_vencimento,
+                nosso_numero="12345678", dados_retorno_api={"nosso_numero_impresso": "109/12345678-9"},
+            )
+
+    def _segunda_via(self, carteira, conta):
+        resp = self.client.post("/api/erp/contas-a-receber/gerar-cobrancas-lote/",
+                                {"ids": [conta.pk], "canal": "cnab", "conta_cobranca": carteira.pk}, format="json")
+        self.assertEqual(resp.status_code, 201, resp.data)
+        arquivo = self.client.get(f"/api/erp/remessas-cnab/{resp.data['remessa_id']}/arquivo/").content.decode("latin-1")
+        return arquivo.split("\r\n")[:-1]
+
+    def test_segunda_via_240_pede_a_baixa_do_boleto_antigo(self):
+        """D245: a segunda via sai na mesma remessa que pede a baixa (movimento 02)
+        do boleto vencido — senão o cliente podia pagar os dois."""
+        c = self.carteira(banco="341", layout="240")
+        conta = self.conta(venc=timezone.localdate() - timedelta(days=20))
+        antigo = self._boleto_antigo_vencido(c, conta)
+        linhas = self._segunda_via(c, conta)
+        self.assertEqual({len(l) for l in linhas}, {240})
+        detalhes = [l for l in linhas if l[7] == "3"]
+        self.assertEqual([(l[13], l[15:17]) for l in detalhes], [("P", "01"), ("Q", "01"), ("R", "01"), ("P", "02")])
+        baixa = detalhes[3]
+        self.assertIn("123456789", baixa[37:57])                  # nosso número + DV do antigo
+        self.assertEqual(baixa[195:220].strip(), str(antigo.boleto_id))
+        trailer_lote = linhas[-2]
+        self.assertEqual(trailer_lote[17:23], f"{len(detalhes) + 2:06d}")
+        self.assertEqual(trailer_lote[23:29], "000001")           # só a entrada conta como título
+        with rls_bypass():
+            antigo.refresh_from_db()
+            remessa_valor = ContaCobrancaBancaria.objects.get(pk=c.pk).remessas.get().valor_total
+        self.assertIn("baixa_pedida", antigo.dados_retorno_api)
+        self.assertGreaterEqual(remessa_valor, conta.valor)      # o valor é o da segunda via, não o dobro
+
+    def test_segunda_via_400_pede_a_baixa_e_nao_pede_duas_vezes(self):
+        c = self.carteira(banco="341", layout="400")
+        conta = self.conta(venc=timezone.localdate() - timedelta(days=20))
+        self._boleto_antigo_vencido(c, conta)
+        linhas = self._segunda_via(c, conta)
+        self.assertEqual({len(l) for l in linhas}, {400})
+        self.assertEqual([l[108:110] for l in linhas[1:-1]], ["01", "02"])
+        # A segunda via de agora também vence; uma terceira só pede a baixa dela.
+        with rls_bypass():
+            Boleto.objects.filter(conta_receber=conta, dados_retorno_api__baixa_pedida__isnull=True).update(
+                status=Boleto.StatusBoleto.VENCIDO, data_vencimento=timezone.localdate() - timedelta(days=1),
+            )
+        linhas = self._segunda_via(c, conta)
+        self.assertEqual([l[108:110] for l in linhas[1:-1]], ["01", "02"])
+
+    def test_boleto_antigo_de_outra_carteira_fica_anotado(self):
+        c = self.carteira(banco="341", layout="400")
+        outra = self.carteira(banco="341", layout="400", convenio="7654321")
+        conta = self.conta(venc=timezone.localdate() - timedelta(days=20))
+        self._boleto_antigo_vencido(outra, conta)
+        linhas = self._segunda_via(c, conta)
+        self.assertEqual([l[108:110] for l in linhas[1:-1]], ["01"])
+        with rls_bypass():
+            item = ItemLoteCobranca.objects.get(conta_receber=conta, situacao=ItemLoteCobranca.Situacao.EMITIDO)
+        self.assertIn("outra carteira", item.mensagem)
+
     def test_boleto_do_banco_sai_em_pdf(self):
         c, conta, _ = self._lote_cnab("400")
         with rls_bypass():

@@ -19,6 +19,7 @@ from funcoesimpexp.registro import (
     ArquivoEntregue,
     Coluna,
     EntregaInvalida,
+    Guardado,
     Recurso,
     registrar,
 )
@@ -39,6 +40,8 @@ class DocumentosDaObra(Recurso):
     natureza = NATUREZA_ARQUIVO
     permissoes_exigidas = ("obra.obra.view", "obra.obra.edit")
     permissoes_entrega = ("obra.obra.view",)
+    guardados = (Guardado(ESPECIE_DOCUMENTO, DocumentoObra, "arquivo", quando="data_cadastro",
+                          titulo="nome_documento", onde="obra__nome_obra"),)
 
     colunas = (
         Coluna("obra", "Obra"),

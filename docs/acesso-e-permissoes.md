@@ -289,6 +289,7 @@ lembrada e qual etapa falta; depois de abrir a sessão ele é gasto e não abre 
 | `POST /auth/segundo-fator/codigos/` | sessão + código do app | troca os códigos de recuperação (um código de recuperação não gera outros) |
 | `GET/PATCH /auth/conta/seguranca/` | sessão | estado do fator e a janela de confirmação da pessoa |
 | `POST /usuarios/{id}/redefinir-segundo-fator/` | admin do tenant | celular e códigos perdidos: apaga o fator e derruba as sessões do alvo; não alcança a própria conta nem o supervisor |
+| `manage.py segundo_fator_emergencia <username> --codigos\|--remover --operador --motivo` | shell da IAM | a emergência que nenhuma tela alcança (o supervisor sem celular nem códigos): códigos novos impressos uma vez, ou remoção com as sessões derrubadas — com evento (operador e motivo nos detalhes, `autor` vazio) e e-mail ao dono da conta |
 
 **O que torna o código digno do nome:**
 
@@ -304,8 +305,11 @@ lembrada e qual etapa falta; depois de abrir a sessão ele é gasto e não abre 
   e não quando a última sessão lembrada do admin expirar.
 
 **Nada é silencioso:** ativar, desativar, trocar códigos, entrar com código de recuperação,
-ser bloqueado e ser redefinido pelo admin viram `EventoSeguranca` e e-mail ao dono da conta
-(`identidade.aviso_segundo_fator`), dizendo quem fez.
+ser bloqueado e ser redefinido pelo admin — ou pela operação, pelo comando de emergência — viram
+`EventoSeguranca` e e-mail ao dono da conta (`identidade.aviso_segundo_fator`), dizendo quem fez.
+As funções de serviço (`segundo_fator.gerar_codigos`/`remover`) continuam mudas: quem as chama é que
+registra. Shell no contêiner ou escrita no banco seguem podendo tudo; o comando só dá à emergência um
+caminho com rastro.
 
 **A janela de confirmação** (`Usuario.janela_confirmacao_min`) é escolhida pela pessoa na
 mesma tela, dentro da faixa do dono (`payment/planos.py` §5.5o). Ela fica guardada para o
@@ -358,7 +362,8 @@ Arquitetura completa da lixeira: [arquitetura/lixo.md](arquitetura/lixo.md).
 ## 8. Contrato de um módulo novo (vendável isoladamente)
 
 Qualquer módulo futuro — um app Django **ou** um serviço separado (estilo drone), incluindo os hoje
-vazios (`modulodms`) — segue o **mesmo contrato**, sem reimplementar identidade:
+vazios — segue o **mesmo contrato**, sem reimplementar identidade. (O DMS não é um deles: é o
+`funcoesimpexp` e não tem entitlement — o registro de arquivos usa o gate da entrega de cada recurso.)
 
 1. Registrar um `Modulo` (código) no catálogo da IAM.
 2. Tornar-se vendável por `AssinaturaTenant` (empresa) e liberável por `AcessoUsuarioModulo` (usuário).

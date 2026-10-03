@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { LogOut, ChevronDown, ChevronRight, User, KeyRound, ShieldCheck, CalendarDays, DraftingCompass, Lightbulb, LightbulbOff, Map as MapIcon } from 'lucide-react'
+import { LogOut, ChevronDown, ChevronRight, User, KeyRound, ShieldCheck, CalendarDays, DraftingCompass, FolderOpen, Lightbulb, LightbulbOff, Map as MapIcon } from 'lucide-react'
 import { useAssistente } from '../assistente/contexto'
 
 /** Liga e desliga o assistente, mostrando em qual estado ele está.
@@ -59,6 +59,7 @@ const SEGMENT_LABELS: Record<string, string> = {
   leads: 'Leads',
   diario: 'Diário + IA',
   calendario: 'Calendário',
+  documentos: 'Documentos',
   drone: 'Drone',
   maps: 'Mapas & Território',
   prancheta: 'Prancheta',
@@ -186,6 +187,10 @@ export const AppTopbar: React.FC = () => {
           consultado de qualquer lugar dele — inclusive do celular no canteiro. */}
       <AtalhoTopbar to="/app/prancheta" rotulo="Prancheta — o projeto em campo"><DraftingCompass size={18} /></AtalhoTopbar>
       <AtalhoTopbar to="/app/calendario" rotulo="Calendário"><CalendarDays size={18} /></AtalhoTopbar>
+      {/* Documentos (DMS) — a mesma família: todo arquivo do sistema, de todos os
+          módulos, guardado, que entrou e que saiu. Não tem entitlement: cada
+          pessoa vê só o que poderia baixar no módulo dono. */}
+      <AtalhoTopbar to="/app/documentos" rotulo="Documentos — todo arquivo do sistema"><FolderOpen size={18} /></AtalhoTopbar>
       {/* O assistente é da mesma família: acompanha a pessoa por todo o sistema
           e se consulta sem sair de onde se está. A diferença é que ele não é um
           lugar — é uma chave —, e por isso não navega: liga e desliga ali mesmo,

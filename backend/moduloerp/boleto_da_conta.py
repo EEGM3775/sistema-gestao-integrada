@@ -26,8 +26,9 @@ Daí as regras daqui:
    (`funcoescobrancas.services.gerar_cobranca_asaas`), com feriado e encargos
    recalculados. Sem a confirmação, a API recusa com a frase do que vai
    acontecer — nenhum cliente de API muda um boleto sem querer.
-2. **CNAB:** o SGI ainda não gera remessa de instrução (pendência D245);
-   valor e vencimento travam com o caminho (baixa pelo banco).
+2. **CNAB:** o SGI pede a baixa do boleto antigo só na segunda via; a
+   instrução de alteração (06) ainda não existe (D245, parcial) — valor e
+   vencimento travam com o caminho (baixa pelo banco).
 3. **Cliente:** com boleto vivo, trava — o boleto está no nome de outra pessoa.
 """
 from __future__ import annotations

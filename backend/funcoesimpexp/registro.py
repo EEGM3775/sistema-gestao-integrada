@@ -147,6 +147,34 @@ class ArquivoEntregue:
 
 
 @dataclass(frozen=True)
+class Guardado:
+    """DMS — onde um recurso **guarda** arquivos, para o registro único.
+
+    O `funcoesimpexp` já era a porta única de todo arquivo que entra e sai (R17).
+    Faltava a terceira pergunta de quem coordena documentos — *o que está aqui
+    dentro, de quem é, desde quando* —, e ela se responde com a mesma declaração:
+    o recurso diz em que model e em que `FileField` os arquivos dele moram, e o
+    registro (`funcoesimpexp/arquivos.py`) os lista com o mesmo gate e o mesmo
+    link da entrega. Nenhum arquivo é copiado; nenhum segundo registro existe.
+
+    `especie` é a mesma do `entregar_arquivo` — é ela que fecha o laço entre
+    "listar" e "baixar". Os lookups são do ORM a partir do model.
+    """
+
+    especie: str
+    modelo: object
+    campo: str
+    #: Campo de data para ordenar e mostrar ("desde quando").
+    quando: str = ""
+    #: O texto que identifica o arquivo para quem procura (nome do documento).
+    titulo: str = ""
+    #: O contexto: de qual obra, cliente, funcionário (lookup do ORM).
+    onde: str = ""
+    #: Recorte do model quando ele guarda mais de uma espécie (`{"especie": ...}`).
+    filtro: dict = None
+
+
+@dataclass(frozen=True)
 class Coluna:
     """Uma coluna do arquivo — e, por R2, também do modelo e do validador.
 
@@ -298,6 +326,9 @@ class Recurso:
     # domínio — sem isso o frontend teria um `if recurso == "orcamento.banco"`
     # escrito à mão, que é exatamente o acoplamento que o registry evita.
     contexto_requerido: tuple[str, ...] = ()
+    # DMS — onde moram os arquivos que este recurso guarda (`Guardado`). Vazio
+    # em recurso que não guarda arquivo (planilha, relatório).
+    guardados: tuple = ()
 
     # ------------------------------------------------------------------
     # Ganchos — sobrescreva o que o recurso oferece

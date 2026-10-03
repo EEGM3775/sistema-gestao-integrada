@@ -470,3 +470,57 @@ class RedefinicaoPeloAdminTests(BaseSegundoFator):
     def test_lista_de_usuarios_mostra_quem_tem(self):
         linhas = {u["username"]: u["segundo_fator_ativo"] for u in self.client.get("/usuarios/").data}
         self.assertEqual((linhas["ana"], linhas["adm"]), (True, False))
+
+
+class EmergenciaPeloComandoTests(BaseSegundoFator):
+    """D240 — o shell da IAM troca ou apaga o segundo fator de qualquer conta. O
+    comando de emergência faz isso deixando rastro: evento com operador e motivo,
+    e e-mail ao dono da conta. Supervisor incluído — é para ele que o comando existe."""
+
+    def setUp(self):
+        super().setUp()
+        self.dono = self._usuario("dono", is_superuser=True)
+        self.codigos_antigos = _ativar(self.dono)
+        mail.outbox.clear()
+
+    def _rodar(self, *args):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        saida = StringIO()
+        call_command("segundo_fator_emergencia", *args, stdout=saida)
+        return saida.getvalue()
+
+    def test_codigos_novos_deixam_evento_e_avisam(self):
+        saida = self._rodar("dono", "--codigos", "--operador", "Edison", "--motivo", "perdeu o celular")
+        self.assertIsNotNone(segundo_fator.ativo(self.dono))
+        self.assertEqual(segundo_fator.codigos_restantes(self.dono), planos.SEGUNDO_FATOR_CODIGOS_DE_RECUPERACAO)
+        self.assertNotIn(self.codigos_antigos[0], saida)
+        evento = EventoSeguranca.objects.get(alvo=self.dono, tipo=EventoSeguranca.Tipo.SEGUNDO_FATOR_CODIGOS)
+        self.assertIsNone(evento.autor_id)
+        self.assertEqual(evento.detalhes, {"via": "comando", "operador": "Edison", "motivo": "perdeu o celular"})
+        self.assertEqual(mail.outbox[0].to, [self.dono.email])
+        self.assertIn("operação da plataforma (Edison)", mail.outbox[0].body)
+
+    def test_remover_derruba_as_sessoes_registra_e_avisa(self):
+        sessao = issue_refresh(self.dono, remember=False, amr=["pwd", "otp"])
+        self._rodar("dono", "--remover", "--operador", "Edison", "--motivo", "perdeu tudo")
+        self.assertIsNone(segundo_fator.ativo(self.dono))
+        self.assertTrue(BlacklistedToken.objects.filter(token__jti=sessao["jti"]).exists())
+        evento = EventoSeguranca.objects.get(alvo=self.dono, tipo=EventoSeguranca.Tipo.SEGUNDO_FATOR_REDEFINIDO)
+        self.assertEqual(evento.detalhes["operador"], "Edison")
+        self.assertIn("operação da plataforma (Edison)", mail.outbox[0].body)
+
+    def test_sem_operador_ou_motivo_nao_roda(self):
+        from django.core.management.base import CommandError
+
+        with self.assertRaises(CommandError):
+            self._rodar("dono", "--codigos", "--operador", " ", "--motivo", "x")
+        self.assertFalse(EventoSeguranca.objects.filter(tipo=EventoSeguranca.Tipo.SEGUNDO_FATOR_CODIGOS).exists())
+
+    def test_conta_sem_fator_e_recusada(self):
+        from django.core.management.base import CommandError
+
+        with self.assertRaises(CommandError):
+            self._rodar("ana", "--remover", "--operador", "Edison", "--motivo", "x")

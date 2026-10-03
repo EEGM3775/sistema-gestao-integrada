@@ -1,0 +1,102 @@
+name: Imagens
+
+# Fase 10.5.3 — build e push das imagens a cada merge na main que passou no CI,
+# e a cada tag de versão (`v1.2.3`). Produção não builda: puxa a imagem por tag
+# imutável (`deploy/compose/prod.yml` + `REGISTRY`/`TAG` do prod.env).
+#
+# **Por que `workflow_run` e não `push`:** imagem publicada tem de ser de código
+# que passou no gate. Com `push`, as duas pipelines correriam em paralelo e a
+# imagem de um commit vermelho chegaria ao registry antes de o CI reprovar.
+#
+# Tags de cada imagem: `sha-<curto>` sempre (a imutável, que o deploy usa),
+# `main` no merge e a versão na tag. Nunca `latest`: em produção ela esconde
+# qual código está rodando.
+#
+# Actions de terceiros fixadas pelo SHA do commit (D212), com a versão ao lado
+# para o Dependabot acompanhar.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: imagens-${{ github.event.workflow_run.head_sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  imagem:
+    # Do `workflow_run`, só o CI verde publica.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Um backend só para erp/worker/worker-conversao/beat/pdp-invalidador:
+          # é a mesma imagem com comandos diferentes no compose.
+          - nome: sgi-backend
+            contexto: .
+            dockerfile: backend/Dockerfile
+          # iam e iam-pdp: mesma imagem.
+          - nome: sgi-iam
+            contexto: .
+            dockerfile: iam/Dockerfile
+          - nome: sgi-react
+            contexto: frontend
+            dockerfile: frontend/Dockerfile
+          # O drone (D225) — versionado aqui desde 29/09/2026.
+          - nome: sgi-drone-api
+            contexto: funcoesODM/backend/java-service
+            dockerfile: funcoesODM/backend/java-service/Dockerfile
+          - nome: sgi-drone-web
+            contexto: funcoesODM/frontend
+            dockerfile: funcoesODM/frontend/Dockerfile
+          - nome: sgi-nodeodm
+            contexto: funcoesODM/docker/nodeodm
+            dockerfile: funcoesODM/docker/nodeodm/Dockerfile
+          - nome: sgi-potree
+            contexto: funcoesODM/docker/potree-converter
+            dockerfile: funcoesODM/docker/potree-converter/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # No `workflow_run`, o commit que o CI aprovou — não o topo da main
+          # neste instante, que pode já ser outro.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302  # v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.nome }}
+          flavor: latest=false
+          tags: |
+            type=sha,format=short,prefix=sha-
+            type=raw,value=main,enable=${{ github.event_name == 'workflow_run' }}
+            type=semver,pattern={{version}}
+
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        with:
+          context: ${{ matrix.contexto }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.nome }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.nome }}
+          provenance: true

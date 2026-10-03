@@ -27,6 +27,7 @@ from funcoesimpexp.registro import (
     ArquivoEntregue,
     Coluna,
     EntregaInvalida,
+    Guardado,
     Recurso,
     registrar,
 )
@@ -47,6 +48,8 @@ class MidiaDoDiario(Recurso):
     natureza = NATUREZA_ARQUIVO
     permissoes_exigidas = ("obra.diario.view", "obra.diario.edit")
     permissoes_entrega = ("obra.diario.view",)
+    guardados = (Guardado(ESPECIE_MIDIA, DocumentoDiario, "arquivo", quando="data_criacao",
+                          titulo="descricao", onde="diario_obra__obra__nome_obra"),)
 
     colunas = (
         Coluna("diario_obra", "Diário"),

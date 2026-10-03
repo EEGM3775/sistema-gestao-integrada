@@ -57,6 +57,38 @@ bash testes/seeds/seed_staging.sh             # fixtures demo/acme (uma vez)
 bash infra/staging/validate.sh         # gate automático da leva 8→11 pelos E2E das fases
 ```
 
+## Backup e ensaio de restore (Fase 10.3)
+
+```bash
+bash infra/backup/backup.sh                                   # dev: 4 bancos + arquivos, numa pasta datada em ~/backups/sgi
+bash infra/backup/backup.sh --prefixo sgi-stg --projeto sgi-staging --env deploy/env/staging.env --manter 7
+bash infra/backup/ensaio_restore.sh ~/backups/sgi/<pasta>     # restaura num PostGIS descartável e confere contra o manifesto
+```
+
+O backup grava `pg_dump -Fc` de `erp_db`, `iam_db`, `spicedb_db` e `funcoesodm`, o volume de
+arquivos (`media.tgz`), um `MANIFESTO.tsv` com as linhas de cada tabela e `SHA256SUMS`. O ensaio
+confere as somas, restaura tudo, compara tabela a tabela com o manifesto e grava `ENSAIO.txt` com o
+tempo de cada etapa — a medida do RTO. Em produção o PITR do banco é do provedor; o backup lógico
+continua sendo a cópia independente dele e o único dos arquivos.
+
+## Segredos por arquivo (Fase 10.3)
+
+Backend e IAM aceitam `NOME_FILE=/caminho` para qualquer variável `NOME` (Docker secrets, Vault
+Agent, CSI do Secrets Manager): o segredo é lido do arquivo montado antes de qualquer setting. O valor
+explícito no ambiente vence o arquivo.
+
+## Imagens publicadas (Fase 10.5.3)
+
+O workflow [`Imagens`](../.github/workflows/imagens.yml) publica no GHCR, a cada merge na `main` que
+passou no CI (e a cada tag `v*`), `sgi-backend`, `sgi-iam`, `sgi-react`, `sgi-drone-api`,
+`sgi-drone-web`, `sgi-nodeodm` e `sgi-potree`, com a tag imutável `sha-<commit>`. Produção não builda:
+
+```bash
+REGISTRY=ghcr.io/eegm3775 TAG=sha-abc1234 \
+  docker compose --env-file deploy/env/prod.env -f deploy/compose/base.yml -f deploy/compose/prod.yml --profile full pull
+docker compose ... up -d --no-build
+```
+
 ## Rodar os serviços Python localmente
 
 > A plataforma tem **dois serviços Python**: o **backend** ([backend/](../backend/)) e o **IAM**

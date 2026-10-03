@@ -1,7 +1,8 @@
 """Remessa de cobrança em CNAB 400 — Bradesco e Itaú.
 
 O 400 não é padrão FEBRABAN: cada banco tem o seu. Estes dois são os que as
-carteiras mais antigas ainda usam. Posições no comentário, numeradas de 1.
+carteiras mais antigas ainda usam. A ocorrência (109-110) é 01 na entrada e
+02 no pedido de baixa (D245). Posições no comentário, numeradas de 1.
 """
 from __future__ import annotations
 
@@ -49,7 +50,7 @@ def _bradesco(c, titulos, sequencial, agora):
             dinheiro(t.multa_percentual, 4),                       # 67-70
             t.nosso_numero.numero, t.nosso_numero.dv,              # 71-82
             "0" * 10, "2", "N", " " * 10, " ", "2", "  ",           # 83-108
-            "01", texto(t.seu_numero, 10), data6(t.vencimento),     # 109-126
+            t.movimento, texto(t.seu_numero, 10), data6(t.vencimento),  # 109-126: ocorrência
             dinheiro(t.valor, 13), "000", "00000", "01", "N",       # 127-150
             data6(t.emissao), "00", "00",                           # 151-160
             dinheiro(t.juros_dia, 13), "0" * 6, "0" * 13,           # 161-192
@@ -82,7 +83,7 @@ def _itau(c, titulos, agora):
             texto(t.boleto_id, 25),                                 # 38-62
             t.nosso_numero.numero, "0" * 13,                        # 63-83
             numero(c.carteira, 3), " " * 21, "I",                   # 84-108
-            "01", texto(t.seu_numero, 10), data6(t.vencimento),     # 109-126
+            t.movimento, texto(t.seu_numero, 10), data6(t.vencimento),  # 109-126: ocorrência
             dinheiro(t.valor, 13), "341", "00000", "01", "N",       # 127-150
             data6(t.emissao), "00", "00",                           # 151-160
             dinheiro(t.juros_dia, 13), "0" * 6, "0" * 13,           # 161-192

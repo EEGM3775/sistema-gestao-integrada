@@ -17,7 +17,10 @@
 #   - segredos fora de arquivo .env (Vault / Secrets Manager) — Fase 10.3
 #   - ingress dos webhooks sem ngrok (Cloudflare Tunnel) — Fase 10.3.2
 #   - backup/PITR + ensaio de restore — Fase 10.3
-#   - imagens versionadas por tag (não `build:`) — Fase 10.5.3
+#   - imagens versionadas por tag ✅ 10.5.3: o workflow `Imagens` publica no GHCR
+#     a cada merge verde; aqui cada serviço aponta `${REGISTRY}/<imagem>:${TAG}`.
+#     Subir SEM build: `docker compose ... pull && docker compose ... up -d --no-build`
+#     (o `build:` do base.yml continua lá para dev/staging; `--no-build` o ignora).
 # ============================================================
 
 services:
@@ -26,8 +29,8 @@ services:
   # mailpit: andaime de dev; produção usa SMTP/ESP real (MAIL_HOST).
 
   iam:
-    # Em produção a imagem vem do registry (tag imutável), não de build local.
-    # image: ${REGISTRY}/sgi-iam:${TAG}
+    # Em produção a imagem vem do registry (tag imutável `sha-<commit>`), não de build local.
+    image: ${REGISTRY:?defina REGISTRY}/sgi-iam:${TAG:?defina TAG}
     environment:
       IAM_DEBUG: "False"
       # TLS obrigatório no banco: o achado D14 era exatamente isto ser impossível.
@@ -36,7 +39,7 @@ services:
     restart: always
 
   erp:
-    # image: ${REGISTRY}/sgi-backend:${TAG}
+    image: ${REGISTRY:?defina REGISTRY}/sgi-backend:${TAG:?defina TAG}
     environment:
       DEBUG: "False"
       DB_SSLMODE: ${DB_SSLMODE:-verify-full}
@@ -45,6 +48,7 @@ services:
     restart: always
 
   worker:
+    image: ${REGISTRY:?defina REGISTRY}/sgi-backend:${TAG:?defina TAG}
     environment:
       DEBUG: "False"
       DB_SSLMODE: ${DB_SSLMODE:-verify-full}
@@ -52,10 +56,37 @@ services:
     restart: always
 
   beat:
+    image: ${REGISTRY:?defina REGISTRY}/sgi-backend:${TAG:?defina TAG}
     environment:
       DEBUG: "False"
       DB_SSLMODE: ${DB_SSLMODE:-verify-full}
     restart: always
+
+  # A mesma imagem do backend e da IAM, com outro comando (base.yml).
+  worker-conversao:
+    image: ${REGISTRY:?defina REGISTRY}/sgi-backend:${TAG:?defina TAG}
+    restart: always
+  pdp-invalidador:
+    image: ${REGISTRY:?defina REGISTRY}/sgi-backend:${TAG:?defina TAG}
+    restart: always
+  iam-pdp:
+    image: ${REGISTRY:?defina REGISTRY}/sgi-iam:${TAG:?defina TAG}
+    restart: always
+  react:
+    image: ${REGISTRY:?defina REGISTRY}/sgi-react:${TAG:?defina TAG}
+    restart: always
+  # O drone (D225), publicado pelo mesmo workflow.
+  java-service:
+    image: ${REGISTRY:?defina REGISTRY}/sgi-drone-api:${TAG:?defina TAG}
+    restart: always
+  drone-nginx:
+    image: ${REGISTRY:?defina REGISTRY}/sgi-drone-web:${TAG:?defina TAG}
+    restart: always
+  nodeodm:
+    image: ${REGISTRY:?defina REGISTRY}/sgi-nodeodm:${TAG:?defina TAG}
+    restart: always
+  potree-converter:
+    image: ${REGISTRY:?defina REGISTRY}/sgi-potree:${TAG:?defina TAG}
 
   gateway:
     volumes:

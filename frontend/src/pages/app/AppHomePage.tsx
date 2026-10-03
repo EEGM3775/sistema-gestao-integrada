@@ -60,7 +60,7 @@ export default function AppHomePage() {
     [hasModule, isTenantAdmin],
   )
 
-  const temFonteOperacional = r.fontes.erp || r.fontes.scm || r.fontes.sil
+  const temFonteOperacional = r.fontes.erp || r.fontes.scm || r.fontes.sil || r.fontes.pdca
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100%' }}>

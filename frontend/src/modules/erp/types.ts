@@ -113,6 +113,11 @@ export interface ContaPagar extends TravaDeEdicao {
   fornecedor_nome: string
   empreendimento: number | null
   empreendimento_nome: string
+  /** D.1.4 — a obra (e a etapa) que levam a conta à DRE da obra. */
+  obra: number | null
+  obra_nome: string
+  etapa: number | null
+  etapa_nome: string
   nota_fiscal: number | null
   descricao: string
   valor: string
@@ -139,6 +144,8 @@ export interface ContaPagar extends TravaDeEdicao {
 export interface ContaPagarPayload {
   fornecedor: number | null
   empreendimento: number | null
+  obra?: number | null
+  etapa?: number | null
   nota_fiscal?: number | null
   descricao: string
   valor: string
@@ -154,6 +161,9 @@ export interface ContaReceber extends TravaDeEdicao {
   cliente_nome: string
   empreendimento: number | null
   empreendimento_nome: string
+  /** D.1.4 — a obra que recebe (empreitada, administração). */
+  obra: number | null
+  obra_nome: string
   cliente_empreendimento: number | null
   /** "QD 12 · LT 05" — o rótulo da unidade vendida, vazio em título avulso. */
   unidade: string
@@ -186,6 +196,7 @@ export interface ContaReceber extends TravaDeEdicao {
 export interface ContaReceberPayload {
   cliente: number | null
   empreendimento: number | null
+  obra?: number | null
   nota_fiscal_recebida?: number | null
   nota_fiscal_servico?: number | null
   nota_fiscal_produto?: number | null
@@ -519,4 +530,38 @@ export interface ErpDashboardData {
   agingContasAReceber: AgingFaixa[]
   agingContasAPagar: AgingFaixa[]
   fluxoDeCaixaMensal: FluxoCaixaMes[]
+}
+
+
+// --- D.1.4 — financeiro por obra ----------------------------------------------
+
+export interface FinanceiroObraLinha {
+  obra: number
+  obra_nome: string
+  receita: string
+  recebido: string
+  custo: string
+  pago: string
+  resultado: string
+}
+
+export interface DreObra {
+  obra: number
+  obra_nome: string
+  empreendimento: number | null
+  receita: { faturado: string; recebido: string; a_receber: string; contas: number }
+  custo: { apropriado: string; pago: string; a_pagar: string; contas: number }
+  resultado: { competencia: string; caixa: string; margem_pct: string | null }
+  /** `null` sem orçamento aprovado ou sem o módulo — nunca zero. */
+  orcado: { custo_direto: string; com_bdi: string; orcamento: number; versao: number } | null
+  orcado_disponivel: boolean
+  por_etapa: {
+    etapa: number | null
+    etapa_nome: string
+    orcado: string | null
+    apropriado: string
+    pago: string
+    consumido_pct: string | null
+  }[]
+  mensal: { mes: string; entradas: string; saidas: string; saldo_acumulado: string }[]
 }

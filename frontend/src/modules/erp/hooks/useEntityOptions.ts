@@ -69,3 +69,39 @@ export function useFornecedorOptions(enabled: boolean): EntityOptionsResult {
   })
   return { data: q.data, isLoading: q.isLoading }
 }
+
+
+/** D.1.4 — obras do tenant (o select de obra da conta). */
+export function useObraOptions(enabled: boolean): EntityOptionsResult {
+  const q = useQuery({
+    queryKey: ['erp', 'filter-options', 'obras'],
+    queryFn: async () => {
+      const { data } = await apiClient.get<{ results?: { obra_id: number; nome_obra: string }[] } | { obra_id: number; nome_obra: string }[]>(
+        '/obras/', { params: { page_size: 300 } },
+      )
+      const list = Array.isArray(data) ? data : (data.results ?? [])
+      return list.map((o): EntityOption => ({ id: o.obra_id, label: o.nome_obra }))
+    },
+    enabled,
+    staleTime: 30_000,
+    refetchOnMount: 'always',
+  })
+  return { data: q.data, isLoading: q.isLoading }
+}
+
+/** D.1.4 — etapas de uma obra (o select de etapa só lista as da obra escolhida). */
+export function useEtapaOptions(obraId: number | null): EntityOptionsResult {
+  const q = useQuery({
+    queryKey: ['erp', 'filter-options', 'etapas', obraId],
+    queryFn: async () => {
+      const { data } = await apiClient.get<{ results?: { etapa_id: number; nome_etapa: string }[] } | { etapa_id: number; nome_etapa: string }[]>(
+        '/etapas-obras/', { params: { obra: obraId, page_size: 300 } },
+      )
+      const list = Array.isArray(data) ? data : (data.results ?? [])
+      return list.map((e): EntityOption => ({ id: e.etapa_id, label: e.nome_etapa }))
+    },
+    enabled: obraId != null,
+    staleTime: 30_000,
+  })
+  return { data: q.data, isLoading: q.isLoading }
+}

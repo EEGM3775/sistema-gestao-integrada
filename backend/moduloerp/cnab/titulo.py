@@ -60,6 +60,21 @@ class Titulo:
     juros_dia: Decimal
     multa_percentual: Decimal
     pagador: Pagador
+    # Código de movimento da remessa: 01 = entrada (registrar o boleto),
+    # 02 = pedido de baixa (D245). Os mesmos no 240 FEBRABAN e no 400 de
+    # Bradesco e Itaú.
+    movimento: str = "01"
+
+    @property
+    def entrada(self) -> bool:
+        return self.movimento == "01"
+
+
+ENTRADA, PEDIDO_DE_BAIXA = "01", "02"
+
+SEM_PAGADOR = Pagador(documento="", nome="", endereco="", bairro="", cep="00000000", cidade="", uf="")
+"""Para a instrução: o banco localiza o título pelo nosso número, e o pagador
+já está registrado com ele."""
 
 
 def pagador_do_cliente(cliente) -> tuple[Pagador | None, list[str]]:

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Plus, X } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { TelaDaGrade } from '../grade/TelaDaGrade'
@@ -30,7 +31,7 @@ const SITUACOES = [
   { valor: 'vencido', rotulo: 'Vencidas' },
   { valor: 'encerrado', rotulo: 'Pagas e canceladas' },
 ]
-const ROTULO_EXTRA: Record<string, string> = { fornecedor: 'Fornecedor', mes: 'Mês', status: 'Status', faixa: 'Situação', empreendimento: 'Empreendimento' }
+const ROTULO_EXTRA: Record<string, string> = { fornecedor: 'Fornecedor', mes: 'Mês', status: 'Status', faixa: 'Situação', empreendimento: 'Empreendimento', obra: 'Obra' }
 
 /**
  * Contas a pagar — a mesma grade de Contas a receber (itens 51/53): busca por
@@ -43,7 +44,12 @@ export default function ContasAPagarPage() {
   const [situacao, setSituacao] = useState('')
   const [empreendimento, setEmpreendimento] = useState('')
   const [periodo, setPeriodo] = useState({ de: '', ate: '' })
-  const [extras, setExtras] = useState<{ chave: string; valor: string; rotulo: string }[]>([])
+  // A DRE da obra abre esta grade já filtrada (`?obra=&obra_nome=`, D.1.4).
+  const [params] = useSearchParams()
+  const [extras, setExtras] = useState<{ chave: string; valor: string; rotulo: string }[]>(() => {
+    const obra = params.get('obra')
+    return obra ? [{ chave: 'obra', valor: obra, rotulo: `Obra: ${params.get('obra_nome') || `#${obra}`}` }] : []
+  })
   const [aberta, setAberta] = useState<number | null>(null)
   const [criando, setCriando] = useState(false)
   const [titulo, setTitulo] = useState<{ titulo: string; descricao?: string }>({ titulo: '' })
@@ -69,6 +75,7 @@ export default function ContasAPagarPage() {
     { chave: 'fornecedor', titulo: 'Fornecedor', largura: 230, ordenar: 'fornecedor', render: c => <span className="truncate font-semibold" style={{ color: 'var(--ink)' }}>{c.fornecedor_nome || '—'}</span>, texto: c => c.fornecedor_nome },
     { chave: 'descricao', titulo: 'Descrição', largura: 240, ordenar: 'descricao', render: c => <span className="truncate" title={c.descricao}>{c.descricao}</span>, texto: c => c.descricao },
     { chave: 'empreendimento', titulo: 'Empreendimento', largura: 180, ordenar: 'empreendimento', render: c => <span className="truncate">{c.empreendimento_nome || '—'}</span>, texto: c => c.empreendimento_nome },
+    { chave: 'obra', titulo: 'Obra', largura: 170, ordenar: 'obra', render: c => <span className="truncate" title={c.etapa_nome ? `${c.obra_nome} · ${c.etapa_nome}` : c.obra_nome}>{c.obra_nome || '—'}</span>, texto: c => c.obra_nome },
     { chave: 'vencimento', titulo: 'Vencimento', largura: 120, ordenar: 'vencimento', tipo: 'data', render: c => dateToBR(c.data_vencimento), texto: c => dateToBR(c.data_vencimento) },
     { chave: 'valor', titulo: 'Valor', largura: 120, ordenar: 'valor', tipo: 'numero', alinhamento: 'right', render: c => <MoneyDisplay cents={apiDecimalToCents(c.valor)} />, texto: c => c.valor },
     { chave: 'saldo', titulo: 'Em aberto', largura: 120, ordenar: 'saldo', tipo: 'numero', alinhamento: 'right', render: c => <MoneyDisplay cents={apiDecimalToCents(c.saldo_aberto)} />, texto: c => c.saldo_aberto },

@@ -195,7 +195,7 @@ Não são telas a copiar — é **o que cada cockpit precisa resolver** e **onde
 | **Obras / Diário / Drone** | o dia da obra num relance, pendências, avanço × previsto, ortofoto | Página pública da obra + feed de marcos ([10](expansão/10-rede-social-do-setor.md)) |
 | **Clientes** | a carteira e o que cada cliente precisa (2ª via, andamento) | **Portal do cliente** (H1) |
 | **SIL — estoque** (`modulosil`) | saldo por local, mínimos, o que repor | Estoque mínimo → **RFQ automática** no SCM (E6) |
-| **DMS** (`modulodms`) | o que vence/falta assinar, versões, documento por obra | Documento espelhado + assinatura por doc (receita medida) |
+| **DMS** (`/app/documentos`, o `funcoesimpexp`) | todo arquivo: guardado, que entrou e que saiu, só o que a pessoa pode baixar | Distribuição (GRD) e operações de PDF sobre a mesma porta |
 | **PDCA** (`modulopdca`) | cronograma vs. real, não-conformidades a tratar | IA de previsão de atraso / detecção em foto do diário |
 | **Prancheta** (`moduloprancheta`) | o projeto da obra aberto em campo; revisão vigente × anterior | Marcação BCF devolvida ao projetista · modelo 4D/5D |
 | **MAPS / Terrenos** (`modulomaps`) | terrenos por status, viabilidade, camadas GIS | Marketplace de terrenos · banco de terrenos |
@@ -488,6 +488,8 @@ Utiliza `createBrowserRouter` com rotas aninhadas.
   /app/erp/contas-a-receber   → ContasAReceberPage ✅    (idem, espelhado p/ cliente/NF — D.1.1 07/06/2026)
   /app/erp/cobranca-bancaria  → CobrancaBancariaPage     (carteiras CNAB, remessas e retornos)
   /app/erp/configuracoes      → ConfiguracoesFinanceiroPage (limite dos lotes: o plano dá o teto, a empresa escolhe o dela)
+  /app/erp/obras[/:obraId]    → FinanceiroObraPage        (D.1.4: DRE por obra — receita, custo por etapa × orçado, caixa mês a mês)
+  /app/documentos             → DocumentosPage            (DMS: todo arquivo — guardados, entraram, saíram; lente na topbar)
   /app/erp/boletos            → BoletosListPage ✅       (rota-irmã, D.1.2 08/06/2026 — telas dedicadas, somente leitura)
   /app/erp/boletos/:id        → BoletoDetailPage ✅      (gateway + timeline de eventos do webhook Asaas)
   /app/rh               → RHPage               (hasModule: rh)
@@ -994,6 +996,9 @@ andamento das obras do empreendimento comprado, com o percentual declarado como
 - **`ConfiguracoesFinanceiroPage`** (`/app/erp/configuracoes`) — o limite dos lotes de boletos e de notas:
   o teto do plano e o número da empresa. Quem tem `pode_editar` (admin ou `erp.lote.configurar`) edita;
   os outros veem o número e quem pode mudá-lo.
+- **`FinanceiroObraPage`** (`/app/erp/obras`, D.1.4) — lista de obras com movimento e a DRE da escolhida: receita, custo, resultado por competência e por caixa, custo por etapa contra o orçado (o orçado só para quem usa o Orçamento; senão a tela diz por quê) e o caixa mês a mês. Abre a grade de contas a pagar já filtrada pela obra. A obra e a etapa entram pelos formulários de conta (`ObraEtapaFields`).
+- **`DocumentosPage`** (`/app/documentos`, o DMS) — todo arquivo do sistema em três lentes sobre a porta única do `funcoesimpexp`: guardados (com busca e filtro por tipo; abrir e baixar pela mesma entrega gateada), entraram (lotes) e saíram (exportações e downloads). Sem entitlement: cada pessoa vê só o que poderia baixar.
+- **Hub (C.1)** — os KPIs "em breve" de DRE por obra e avanço viraram número: resultado das obras, avanço físico médio e obras atrasadas (carteira do PDCA); obra no vermelho e prazo estourado entram na fila de decisão.
 - **`Sheet`** (slide-over) ✅ — **1º uso no projeto**; `open/onClose/title/description/footer/width`
 - **Formulários RHF+zod** ✅ — **1ª adoção de `react-hook-form`+`zod` no projeto** (ver
   [moduloerp.md §5.3](modulos/moduloerp.md#53-stack-adicional-estende-o-do-projeto)):

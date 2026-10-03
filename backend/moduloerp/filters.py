@@ -59,7 +59,7 @@ class ContaPagarFilter(_FiltrosDoListao):
 
     class Meta:
         model = ContaPagar
-        fields = ['fornecedor', 'empreendimento', 'status', 'data_de', 'data_ate']
+        fields = ['fornecedor', 'empreendimento', 'obra', 'etapa', 'status', 'data_de', 'data_ate']
 
 
 class ContaReceberFilter(_FiltrosDoListao):
@@ -69,7 +69,7 @@ class ContaReceberFilter(_FiltrosDoListao):
 
     class Meta:
         model = ContaReceber
-        fields = ['cliente', 'empreendimento', 'status', 'data_de', 'data_ate']
+        fields = ['cliente', 'empreendimento', 'obra', 'status', 'data_de', 'data_ate']
 
 
 class CobrancaClienteFilter(filters.FilterSet):

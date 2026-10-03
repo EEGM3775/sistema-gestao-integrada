@@ -1750,8 +1750,8 @@ class ControleDeCustoView(views.APIView):
             # A tela precisa saber o que a coluna cobre para não apresentar um
             # número parcial como total — ver a nota em controle.py.
             "nota_realizado": (
-                "Realizado cobre despesa originada de pedido de compra (SCM → ERP). "
-                "Lançamento feito direto no ERP ainda não tem dimensão de obra."
+                "Realizado cobre toda despesa do ERP atribuída à obra — pela obra da conta "
+                "ou pelo rateio a centro de custo da obra. Conta sem obra fica de fora."
             ),
         })
 

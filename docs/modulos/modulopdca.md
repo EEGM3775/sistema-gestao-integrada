@@ -623,7 +623,7 @@ os limites que ela assume de olhos abertos.
 - **Não** compõe custo. Composição, BDI e preço são do [Orçamento](moduloorcamento.md); aqui o custo
   entra pelo vínculo com `ItemOrcado`.
 - **Não** extrai quantitativo de modelo BIM. É da Central BIM com a [Prancheta](moduloprancheta.md).
-- **Não** guarda projeto (Prancheta) nem documento de gestão (`modulodms`).
+- **Não** guarda projeto (Prancheta) nem documento de gestão (o DMS, [funcoesimpexp](funcoesimpexp.md) §13).
 - **Não** cadastra pessoa (RH) nem fornecedor (`fornecedores`) — usa os que existem.
 - **Não** substitui o [Diário](modulodiario.md): escreve e lê nele.
 
@@ -808,7 +808,7 @@ que é o irmão do teto de pontos da curva S.
 3. **PWA com offline de verdade** — manifest, service worker, fila de sincronização e resolução de
    conflito. **É fatia de plataforma, não do PDCA**, e o endereço fica reservado aqui para ninguém a
    implementar avulsa dentro deste módulo — o mesmo cuidado que a capacidade de PDF recebeu no
-   `modulodms`.
+   DMS ([funcoesimpexp](funcoesimpexp.md) §13).
 
 ## 10. Seams de expansão (inertes no desenho)
 

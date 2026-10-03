@@ -35,6 +35,7 @@ from funcoesimpexp.registro import (
     ArquivoEntregue,
     Coluna,
     EntregaInvalida,
+    Guardado,
     Recurso,
     registrar,
 )
@@ -76,6 +77,11 @@ class DocumentosDoFuncionario(Recurso):
     natureza = NATUREZA_ARQUIVO
     permissoes_exigidas = ("rh.documento.view", "rh.documento.edit")
     permissoes_entrega = ("rh.documento.view",)
+    guardados = (
+        Guardado(ESPECIE_DOCUMENTO, DocumentoFuncionario, "arquivo", quando="data_upload",
+                 titulo="nome_documento", onde="funcionario__nome_completo"),
+        Guardado(ESPECIE_CTPS, Funcionario, "carteira_trabalho", onde="nome_completo"),
+    )
 
     colunas = (
         Coluna("funcionario", "Funcionário"),
@@ -111,6 +117,8 @@ class ASOsDoFuncionario(Recurso):
     natureza = NATUREZA_ARQUIVO
     permissoes_exigidas = ("rh.dado_medico.view", "rh.dado_medico.edit")
     permissoes_entrega = ("rh.dado_medico.view",)
+    guardados = (Guardado(ESPECIE_ASO, ASOFuncionario, "arquivo", quando="data_exame",
+                          titulo="tipo_exame", onde="funcionario__nome_completo"),)
 
     colunas = (
         Coluna("funcionario", "Funcionário"),
@@ -135,6 +143,8 @@ class HoleritesDaFolha(Recurso):
     natureza = NATUREZA_ARQUIVO
     permissoes_exigidas = ("rh.folha.view", "rh.folha.edit")
     permissoes_entrega = ("rh.folha.view",)
+    guardados = (Guardado(ESPECIE_HOLERITE, FolhaPagamento, "holerite", quando="mes_referencia",
+                          onde="funcionario__nome_completo"),)
 
     colunas = (
         Coluna("funcionario", "Funcionário"),

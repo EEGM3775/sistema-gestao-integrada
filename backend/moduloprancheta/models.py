@@ -16,7 +16,7 @@ separação entre elas é a resposta à pergunta do canteiro — *"esta é a úl
   DWG coexistirem — subir de plano reconverte com o motor melhor sem invalidar
   nada, descer não apaga o que já foi convertido (planta §4.1).
 
-O app não é um segundo DMS: a Prancheta **abre**, e o `modulodms` governará
+O app não é um segundo DMS: a Prancheta **abre**, e o DMS (o `funcoesimpexp`) governará
 versão formal, aprovação e assinatura (planta §7).
 """
 import uuid

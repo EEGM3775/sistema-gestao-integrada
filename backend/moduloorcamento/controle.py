@@ -21,19 +21,15 @@ pagar; realizado acima do aplicado é adiantamento a fornecedor.
 contra o que efetivamente aconteceu, mês a mês. O nome vem do formato — obra
 começa devagar, acelera no miolo e desacelera no acabamento.
 
-### Limite honesto da coluna "realizado"
+### A coluna "realizado"
 
-O `moduloerp` amarra despesa a **empreendimento**, não a obra: `ContaPagar` tem
-FK de empreendimento e o `CentroCusto` do ERP também. O único caminho preciso
-até a obra hoje é pelo SCM — `PedidoCompra.conta_pagar_ref` → `ContaPagar`, com
-a obra vindo do centro de custo do pedido.
-
-Então **realizado cobre o que passou por pedido de compra**. Despesa lançada
-direto no ERP (medição de empreiteiro, conta de energia do canteiro) ainda não
-tem dimensão de obra, e por isso não entra — em vez de ser rateada por
-aproximação. A resposta traz `realizado_cobertura` dizendo isso, para a tela
-não apresentar um número parcial como se fosse total. Fechar essa lacuna é a
-fatia **D.1.4** do ERP (financeiro por obra).
+Desde a fatia **D.1.4** do ERP, a despesa tem dimensão de obra: a `ContaPagar`
+tem `obra` (e `etapa`), e o rateio a um `CentroCusto` com obra atribui a fração
+rateada. O realizado lê essa atribuição (`moduloerp.financeiro_obra`) — medição
+de empreiteiro, conta de energia do canteiro e compra entram igual. O caminho
+antigo pelo SCM (`PedidoCompra.conta_pagar_ref`) segue somando só a conta que
+ainda não tem obra. Conta sem obra nenhuma fica de fora, em vez de ser rateada
+por aproximação, e `realizado_cobertura` (`"erp"`) diz de onde o número vem.
 """
 from decimal import Decimal
 
@@ -101,13 +97,17 @@ def _aplicado_por_obra(tenant_id, obra_id=None) -> dict[int, Decimal]:
 
 
 def _realizado_por_obra(tenant_id, obra_id=None) -> dict[int, Decimal]:
-    """Dinheiro que saiu do caixa, pelo caminho SCM → ERP.
+    """Dinheiro que saiu do caixa, pela dimensão de obra do ERP (D.1.4).
 
-    Ver a nota sobre cobertura no topo do módulo: só entra despesa que nasceu
-    de pedido de compra, porque é o único vínculo preciso com a obra hoje.
+    Lê `moduloerp.financeiro_obra` (obra da conta e rateio por centro de custo
+    com obra). O caminho antigo — pedido de compra do SCM — continua somando a
+    conta que ainda não tem obra, para não perder o que já se via.
     """
+    from moduloerp.financeiro_obra import realizado_por_obra
     from moduloerp.models import ContaPagar
     from moduloscm.models import PedidoCompra
+
+    realizado = dict(realizado_por_obra(tenant_id, obra_id))
 
     pedidos = PedidoCompra.objects.filter(
         tenant_id=tenant_id, centro_custo__obra__isnull=False, conta_pagar_ref__isnull=False,
@@ -117,13 +117,13 @@ def _realizado_por_obra(tenant_id, obra_id=None) -> dict[int, Decimal]:
 
     por_conta = dict(pedidos.values_list("conta_pagar_ref", "centro_custo__obra_id"))
     if not por_conta:
-        return {}
+        return realizado
 
+    # Só as contas sem dimensão de obra: as que têm já entraram acima.
     pagos = ContaPagar.objects.filter(
-        tenant_id=tenant_id, pk__in=list(por_conta.keys())
-    ).values_list("pk", "valor_pago")
+        tenant_id=tenant_id, pk__in=list(por_conta.keys()), obra__isnull=True,
+    ).exclude(rateios__centro_custo__obra__isnull=False).values_list("pk", "valor_pago")
 
-    realizado: dict[int, Decimal] = {}
     for conta_id, valor_pago in pagos:
         obra = por_conta.get(conta_id)
         if obra is not None:
@@ -175,7 +175,7 @@ def quatro_colunas(tenant_id, obra_id=None) -> list[dict]:
                 if orcado and orcado > 0 else None
             ),
             "estourado": bool(orcado is not None and comp > orcado),
-            "realizado_cobertura": "pedidos_de_compra",
+            "realizado_cobertura": "erp",
         })
     return linhas
 

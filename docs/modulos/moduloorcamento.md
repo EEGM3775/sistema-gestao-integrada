@@ -326,7 +326,7 @@ um gráfico convincente e errado se ela não estivesse lá.
 > (`ContaPagar.empreendimento`, `CentroCusto` do ERP idem). O único vínculo preciso com a obra é
 > pelo SCM (`PedidoCompra.conta_pagar_ref`), então *realizado* cobre **o que passou por pedido de
 > compra**; lançamento feito direto no ERP não é rateado por aproximação. A resposta declara isso em
-> `realizado_cobertura`/`nota_realizado`. Fechar a lacuna é a fatia **D.1.4** do ERP.
+> `realizado_cobertura` (desde o D.1.4 do ERP, 03/10/2026, `"erp"`: o realizado lê toda conta atribuída à obra — pela obra da conta ou pelo rateio ao centro de custo da obra)/`nota_realizado`. Fechar a lacuna é a fatia **D.1.4** do ERP.
 
 ## 6. Integrações (o "tudo se conecta")
 

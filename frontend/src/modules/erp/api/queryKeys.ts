@@ -15,6 +15,14 @@ import type {
 export const erpKeys = {
   all: ['erp'] as const,
 
+  /** D.1.4 — sem invalidação própria: a DRE é lida ao abrir a página
+   *  (staleTime 0), e qualquer conta lançada antes já entra. */
+  financeiroObra: {
+    all: ['erp', 'financeiro-obra'] as const,
+    lista: () => ['erp', 'financeiro-obra', 'lista'] as const,
+    dre: (obraId: number) => ['erp', 'financeiro-obra', 'dre', obraId] as const,
+  },
+
   contasAPagar: {
     all: ['erp', 'contas-a-pagar'] as const,
     list: (filtros: ContaPagarFiltros = {}) => ['erp', 'contas-a-pagar', 'list', filtros] as const,

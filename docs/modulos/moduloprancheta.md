@@ -81,7 +81,7 @@ como o Maps tem a dele.
 | BIM 3D | **IFC** (2x3/4/4.3), RVT, NWD/NWC, DGN, SKP | IfcOpenShell + That Open (IFC) · APS (RVT/NWD) | **Prancheta** |
 | Geo | KML/KMZ, SHP, GeoJSON, GPKG, QGZ/QGS, GeoTIFF | GDAL/OGR → camada | [Maps](modulomaps.md) — a Prancheta abre, o Maps guarda |
 | Nuvem de pontos | LAS/LAZ, COPC, E57 | Potree/PDAL (já no stack) | [drone](../arquitetura/migracao-v01.md) |
-| Documento | PDF, imagem | render nativo do browser | `modulodms` (ciclo de vida) |
+| Documento | PDF, imagem | render nativo do browser | o DMS — [funcoesimpexp](funcoesimpexp.md) §13 (ciclo de vida) |
 | Colaboração | **BCF** | — (não converte: vira marcação, §13) | **Prancheta** |
 
 **BCF é o que fecha o laço** e merece destaque: é o padrão aberto para marcar um problema no modelo
@@ -1484,7 +1484,7 @@ seria trocar um palpite por outro. Nota completa em
 | [Orçamento](moduloorcamento.md) | horizonte 4D/5D: linha orçada ↔ elemento do modelo (quantitativo extraído do BIM). **O ponto de pouso já existe do lado de lá desde o ORC.7:** `LinhaMedicao` guarda a parcial do quantitativo com `referencia_projeto` — a extração do modelo entra como mais uma parcial, ao lado das digitadas, e não pede model novo. É o que o Arquimedes/CYPE faz a partir de DWG/DXF e Revit, e é a única lacuna do orçamento que depende de um módulo que ainda não existe |
 | [PDCA](modulos-planejados.md) | o 4D depende do cronograma físico de lá; a FVS aponta para o ponto do modelo |
 | [funcoesimpexp](funcoesimpexp.md) | carga em lote de acervo, com conferência e desfazer |
-| `modulodms` | a Prancheta **abre**; o DMS governa versão, aprovação e assinatura — decisão a confirmar. É dele também a **capacidade de PDF** (marca d'água, carimbo, juntar/dividir), cujo endereço já está reservado em [modulos-planejados.md](modulos-planejados.md) |
+| DMS ([funcoesimpexp](funcoesimpexp.md) §13) | a Prancheta **abre**; o DMS registra e coordena (guardados, entraram, saíram) e governará distribuição, aprovação e assinatura. É dele também a **capacidade de PDF** (marca d'água, carimbo, juntar/dividir), cujo endereço já está reservado em [modulos-planejados.md](modulos-planejados.md) |
 
 ## 7.1 A porta de leitura do acervo — por que não `/media/`
 

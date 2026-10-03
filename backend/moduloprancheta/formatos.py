@@ -184,7 +184,7 @@ SEM_ASSINATURA_CONHECIDA: frozenset[str] = frozenset({"nwd", "skp"})
 FORMATOS: tuple[Formato, ...] = (
     # --- Documento: o que já se abre hoje, e por isso o degrau de entrada ---
     Formato("pdf", "PDF", FAMILIA_DOCUMENTO, (".pdf",), ("application/pdf",), ("pdf_nativo",),
-            assinaturas=(b"%PDF-",), dono="modulodms"),
+            assinaturas=(b"%PDF-",), dono="funcoesimpexp"),
     Formato(
         "imagem", "Imagem (JPG/PNG/WebP)", FAMILIA_DOCUMENTO,
         (".jpg", ".jpeg", ".png", ".webp"),
@@ -192,7 +192,7 @@ FORMATOS: tuple[Formato, ...] = (
         ("pdf_nativo",),
         # RIFF é o contêiner do WebP (e de AVI/WAV, que o sufixo descarta).
         assinaturas=(b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"RIFF"),
-        dono="modulodms",
+        dono="funcoesimpexp",
     ),
     # --- CAD 2D ---
     # DXF é TEXTO — a prova é o marcador do próprio formato, não uma assinatura

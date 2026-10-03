@@ -3385,6 +3385,7 @@ def gerar_titulo_de_medicao(medicao: Medicao) -> int | None:
         tenant_id=medicao.tenant_id,
         fornecedor_id=contrato.fornecedor_id,
         empreendimento_id=getattr(contrato.obra, "empreendimento_id", None),
+        obra_id=contrato.obra_id,  # D.1.4: a medição já sabe de qual obra é
         descricao=(
             f"Medição {medicao.numero} · contrato {contrato.numero} · "
             f"{contrato.obra.nome_obra} · período "
@@ -3975,6 +3976,7 @@ def _gerar_titulo_de_liberacao(liberacao: LiberacaoRetencao) -> int | None:
         tenant_id=liberacao.tenant_id,
         fornecedor_id=contrato.fornecedor_id,
         empreendimento_id=getattr(contrato.obra, "empreendimento_id", None),
+        obra_id=contrato.obra_id,  # D.1.4: a medição já sabe de qual obra é
         descricao=(
             f"Liberação de retenção ({contrato.get_retencao_natureza_display()}) · "
             f"contrato {contrato.numero} · {contrato.obra.nome_obra} · "

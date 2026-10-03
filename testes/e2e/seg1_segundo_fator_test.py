@@ -172,6 +172,26 @@ try:
     check("e diz quantos restam", (r or {}).get("codigos_restantes") == 9)
 
     # ------------------------------------------------------------------
+    print("\n2b. Trocar de celular — nunca sem fator (D241)")
+    # ------------------------------------------------------------------
+    st, r = req(nav, "POST", "/auth/segundo-fator/desativar/", {"senha": "admin123", "codigo": codigo_demo(1)})
+    check(f"o admin, obrigado, não desativa ({st})", st == 409)
+    st, troca = req(nav_demo, "POST", "/auth/segundo-fator/troca/", {"senha": "demo123", "codigo": totp(segredo, 1)})
+    check(f"a troca começa com senha + código e devolve o QR novo ({st})",
+          st == 200 and troca["qr"].startswith("data:image/svg+xml") and troca["segredo"] != segredo)
+    st, seg = req(nav_demo, "GET", "/auth/conta/seguranca/")
+    check("entre as duas etapas, o celular antigo continua sendo o fator", st == 200 and seg["segundo_fator"]["ativo"])
+    novo = troca["segredo"] if st == 200 else segredo
+    st, fim_troca = req(nav_demo, "POST", "/auth/segundo-fator/troca/confirmar/", {"codigo": totp(novo)})
+    check(f"o código do celular novo troca o aparelho ({st})", st == 200 and len((fim_troca or {}).get("codigos", [])) == 10)
+    check("e a sessão segue, com código", amr_de(nav_demo) == ["pwd", "otp"])
+    st, corpo = req(navegador(), "POST", "/auth/login/", {"username": "demo", "password": "demo123"})
+    antigo = totp(segredo, 1)
+    if antigo != totp(novo, 1):
+        st, r = req(navegador(), "POST", "/auth/login/segundo-fator/", {"desafio": corpo["desafio"], "codigo": antigo})
+        check(f"o código do celular antigo não entra mais ({st})", st == 400)
+
+    # ------------------------------------------------------------------
     print("\n3. A redefinição pelo admin — e a limpeza")
     # ------------------------------------------------------------------
     st, usuarios = req(nav, "GET", "/iam/usuarios/")

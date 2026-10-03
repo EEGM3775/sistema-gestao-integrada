@@ -26,6 +26,7 @@ from funcoesimpexp.registro import (
     ArquivoEntregue,
     Coluna,
     EntregaInvalida,
+    Guardado,
     Recurso,
     registrar,
 )
@@ -56,6 +57,9 @@ class ArquivosDeNotaFiscal(Recurso):
     natureza = NATUREZA_ARQUIVO
     permissoes_exigidas = ("erp.nf.view", "erp.nf.edit")
     permissoes_entrega = ("erp.nf.view",)
+    guardados = tuple(
+        Guardado(especie, modelo, campo) for especie, (modelo, campo, _) in _ARQUIVOS.items()
+    )
 
     colunas = (
         Coluna("numero", "Número da nota"),

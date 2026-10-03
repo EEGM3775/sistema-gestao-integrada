@@ -29,6 +29,16 @@ if any((BASE_DIR.parent / pacote).is_dir() for pacote in ("funcoesemail", "payme
 
 from django.core.exceptions import ImproperlyConfigured
 
+# Fase 10.3 — segredo por ARQUIVO (`NOME_FILE=/run/secrets/nome`). É a convenção
+# que Docker secrets, Vault Agent e o driver CSI do Secrets Manager entregam: o
+# segredo vira um arquivo montado, e não uma linha do `.env` que qualquer
+# `docker inspect` mostra. Roda antes de qualquer `os.getenv`, então todo
+# setting que lê `NOME` passa a aceitar `NOME_FILE` sem mudar. O valor explícito
+# no ambiente vence o arquivo (é o que permite sobrescrever num incidente).
+for _nome, _caminho in list(os.environ.items()):
+    if _nome.endswith("_FILE") and _caminho and _nome[:-5] not in os.environ:
+        os.environ[_nome[:-5]] = Path(_caminho).read_text(encoding="utf-8").strip()
+
 # S4 — segurança por padrão: IAM_DEBUG default = False. Fora do dev a IAM assume
 # PRODUÇÃO e se recusa a subir sem configuração, em vez de subir com segredos
 # conhecidos. A IAM é a autoridade de identidade: um segredo previsível aqui

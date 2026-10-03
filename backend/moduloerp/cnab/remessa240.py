@@ -1,7 +1,8 @@
 """Remessa de cobrança em CNAB 240 — o layout FEBRABAN.
 
 Um arquivo = header de arquivo, um lote (header, segmentos P/Q/R de cada
-título, trailer) e trailer de arquivo. Toda linha tem 240 posições; a posição
+título, trailer) e trailer de arquivo. A instrução (pedido de baixa, D245) vai
+no mesmo lote, só com o segmento P — o banco acha o título pelo nosso número. Toda linha tem 240 posições; a posição
 de cada campo está no comentário, na numeração do manual (começando em 1).
 O que é de cada banco vem de `bancos.py`.
 """
@@ -64,9 +65,9 @@ def gerar(carteira, titulos: list[Titulo], sequencial: int, agora: datetime) -> 
     valor_total = 0
     for t in titulos:
         pag = t.pagador
-        for segmento in ("P", "Q", "R"):
+        for segmento in ("P", "Q", "R") if t.entrada else ("P",):
             registro += 1
-            comum = [b, "0001", "3", f"{registro:05d}", segmento, " ", "01"]   # 1-17
+            comum = [b, "0001", "3", f"{registro:05d}", segmento, " ", t.movimento]   # 1-17
             if segmento == "P":
                 corpo = [
                     conta,                                   # 18-37 (20)
@@ -89,7 +90,8 @@ def gerar(carteira, titulos: list[Titulo], sequencial: int, agora: datetime) -> 
                     "0", "   ",                              # 224-227: baixa (dias em branco)
                     "09", "0" * 10, " ",                     # 228-240
                 ]
-                valor_total += t.valor
+                if t.entrada:
+                    valor_total += t.valor
             elif segmento == "Q":
                 corpo = [
                     pag.tipo, numero(pag.documento, 15),     # 18-33
@@ -116,7 +118,8 @@ def gerar(carteira, titulos: list[Titulo], sequencial: int, agora: datetime) -> 
                 ]
             linhas.append(_linha(comum + corpo))
 
-    qtd_titulos = len(titulos)
+    # O trailer soma a cobrança que entra; a baixa não é título novo.
+    qtd_titulos = sum(1 for t in titulos if t.entrada)
     linhas.append(_linha([
         b, "0001", "5", " " * 9,                             # 1-17
         f"{registro + 2:06d}",                               # 18-23: registros do lote

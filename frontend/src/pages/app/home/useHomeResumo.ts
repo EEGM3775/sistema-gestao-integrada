@@ -8,6 +8,8 @@ import type { AgingFaixa, ErpDashboardData } from '@/modules/erp/types'
 import type { ScmDashboard } from '@/modules/scm/types'
 import type { SilDashboard } from '@/modules/sil/types'
 import type { CalendarFeedEvent } from '@/modules/calendar/types'
+import type { FinanceiroObraLinha } from '@/modules/erp/types'
+import type { PayloadCarteira } from '@/modules/pdca/types'
 
 /**
  * Camada de dados do hub.
@@ -104,6 +106,10 @@ export function useHomeResumo() {
   const podeErp = hasModule('erp_financeiro') && hasPermission('erp.relatorio.view')
   const podeScm = hasModule('scm')
   const podeSil = hasModule('sil')
+  // C.1 — as duas lacunas que o hub declarava "em breve" ganharam fonte: a DRE
+  // por obra (D.1.4, mesma permissão de relatório do ERP) e o avanço × prazo da
+  // carteira do PDCA (B1, que já recorta por permissão e diz o que não mostra).
+  const podePdca = hasModule('pdca')
 
   const plano = useQuery<PlanoResumo>({
     queryKey: ['home', 'plano'],
@@ -122,6 +128,20 @@ export function useHomeResumo() {
     queryKey: ['home', 'scm'],
     queryFn: async () => (await apiClient.get<ScmDashboard>('scm/dashboard/')).data,
     enabled: podeScm,
+    staleTime: 60_000,
+  })
+
+  const obrasErp = useQuery<{ obras: FinanceiroObraLinha[] }>({
+    queryKey: ['home', 'erp-obras'],
+    queryFn: async () => (await apiClient.get<{ obras: FinanceiroObraLinha[] }>('erp/obras/financeiro/')).data,
+    enabled: podeErp,
+    staleTime: 60_000,
+  })
+
+  const carteira = useQuery<PayloadCarteira>({
+    queryKey: ['home', 'pdca-carteira'],
+    queryFn: async () => (await apiClient.get<PayloadCarteira>('pdca/carteira/')).data,
+    enabled: podePdca,
     staleTime: 60_000,
   })
 
@@ -219,8 +239,37 @@ export function useHomeResumo() {
       })
     }
 
+    const obras = obrasErp.data?.obras ?? []
+    if (obras.length) {
+      const resultado = obras.reduce((acc, o) => acc + apiDecimalToCents(o.resultado), 0)
+      out.push({
+        id: 'erp-obras', label: 'Resultado das obras', valor: brl(resultado),
+        base: `${plural(obras.length, 'obra', 'obras')} com lançamento · receita − custo`,
+        origem: 'ERP', rota: '/app/erp/obras',
+      })
+    }
+
+    const linhas = carteira.data?.obras ?? []
+    const apuradas = linhas.filter(l => l.avanco?.fisico != null)
+    if (apuradas.length) {
+      const media = apuradas.reduce((acc, l) => acc + (l.avanco?.fisico ?? 0), 0) / apuradas.length
+      out.push({
+        id: 'pdca-avanco', label: 'Avanço físico médio', valor: `${media.toFixed(1).replace('.', ',')}%`,
+        base: `de ${plural(apuradas.length, 'obra apurada', 'obras apuradas')}`,
+        origem: 'PDCA', rota: '/app/pdca',
+      })
+    }
+    const comPrazo = linhas.filter(l => l.prazo?.desvio_dias != null)
+    if (comPrazo.length) {
+      const atrasadas = comPrazo.filter(l => (l.prazo?.desvio_dias ?? 0) > 0).length
+      out.push({
+        id: 'pdca-prazo', label: 'Obras atrasadas', valor: `${atrasadas} de ${comPrazo.length}`,
+        base: 'término previsto além da linha de base', origem: 'PDCA', rota: '/app/pdca',
+      })
+    }
+
     return out
-  }, [plano.data, quotas, erp.data, scm.data, sil.data])
+  }, [plano.data, quotas, erp.data, scm.data, sil.data, obrasErp.data, carteira.data])
 
   // ── Fila "requer sua decisão" ──────────────────────────────────────────────
   const decisoes = useMemo<Decisao[]>(() => {
@@ -270,6 +319,17 @@ export function useHomeResumo() {
         add({ id: 'sil-inv', titulo: 'Inventários abertos', medida: plural(d.inventariosAbertos, 'inventário', 'inventários'), detalhe: 'fechar para destravar o saldo', urgencia: 'media', rota: '/app/sil', origem: 'SIL' })
     }
 
+    for (const o of obrasErp.data?.obras ?? []) {
+      const resultado = apiDecimalToCents(o.resultado)
+      if (resultado < 0)
+        add({ id: `erp-obra-${o.obra}`, titulo: `Obra no vermelho: ${o.obra_nome}`, medida: brl(resultado), detalhe: 'custo acima da receita lançada — ver a DRE', urgencia: 'alta', rota: `/app/erp/obras/${o.obra}`, origem: 'ERP' })
+    }
+    for (const l of carteira.data?.obras ?? []) {
+      const desvio = l.prazo?.desvio_dias ?? 0
+      if (desvio > 0)
+        add({ id: `pdca-prazo-${l.obra}`, titulo: `Prazo estourado: ${l.nome}`, medida: plural(desvio, 'dia', 'dias'), detalhe: 'término previsto além da linha de base', urgencia: desvio > 30 ? 'alta' : 'media', rota: '/app/pdca', origem: 'PDCA' })
+    }
+
     // Quota estourada é decisão de verdade: trava cadastro novo (402 no backend).
     for (const q of quotas) {
       if (q.excedido) {
@@ -279,7 +339,7 @@ export function useHomeResumo() {
 
     const peso = { alta: 0, media: 1 }
     return out.sort((a, b) => peso[a.urgencia] - peso[b.urgencia])
-  }, [erp.data, scm.data, sil.data, quotas])
+  }, [erp.data, scm.data, sil.data, quotas, obrasErp.data, carteira.data])
 
   // ── Feed de fatos (reais, vindos dos módulos) ──────────────────────────────
   const atividade = useMemo<FatoRecente[]>(() => {
@@ -304,7 +364,8 @@ export function useHomeResumo() {
     decisoes,
     atividade,
     /** Módulos que de fato alimentam este hub — usado para explicar a procedência. */
-    fontes: { erp: podeErp, scm: podeScm, sil: podeSil },
-    carregando: plano.isLoading || erp.isLoading || scm.isLoading || sil.isLoading,
+    fontes: { erp: podeErp, scm: podeScm, sil: podeSil, pdca: podePdca },
+    carregando: plano.isLoading || erp.isLoading || scm.isLoading || sil.isLoading
+      || obrasErp.isLoading || carteira.isLoading,
   }
 }

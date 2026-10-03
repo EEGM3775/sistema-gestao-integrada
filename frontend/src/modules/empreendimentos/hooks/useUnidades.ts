@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import apiClient from '@/api/apiClient'
 import type { Unidade, UnidadeFormData } from '@/types'
 
@@ -27,9 +27,14 @@ export function useUnidades(empreendimentoId: number | null, filtros: FiltrosUni
   const [error, setError] = useState<string | null>(null)
 
   const { situacao, quadra, busca, ordering } = filtros
+  // Só a resposta do último pedido vale (D252): trocar o filtro com o pedido
+  // anterior no ar deixava a resposta atrasada — de outro filtro — sobrescrever
+  // a lista, e "Vendidas" mostrava lote disponível.
+  const ultimoPedido = useRef(0)
 
   const buscar = useCallback(async (paginaAlvo: number, acumular: boolean) => {
     if (!empreendimentoId) return
+    const pedido = ++ultimoPedido.current
     setLoading(true)
     setError(null)
     try {
@@ -44,14 +49,15 @@ export function useUnidades(empreendimentoId: number | null, filtros: FiltrosUni
           ...(ordering ? { ordering } : {}),
         },
       })
+      if (pedido !== ultimoPedido.current) return
       const linhas: Unidade[] = data.results ?? data
       setTotal(data.count ?? linhas.length)
       setUnidades(anteriores => (acumular ? [...anteriores, ...linhas] : linhas))
       setPagina(paginaAlvo)
     } catch {
-      setError('Erro ao carregar as unidades')
+      if (pedido === ultimoPedido.current) setError('Erro ao carregar as unidades')
     } finally {
-      setLoading(false)
+      if (pedido === ultimoPedido.current) setLoading(false)
     }
   }, [empreendimentoId, situacao, quadra, busca, ordering])
 
