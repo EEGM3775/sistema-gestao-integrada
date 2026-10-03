@@ -621,6 +621,13 @@ cada papel mora no SpiceDB.
   configuração do próprio perfil**, que explica em linguagem simples por que ativar — e insiste mais
   para quem tem alçada financeira ou vê dado de saúde, porque são as contas que mais interessam a
   um invasor.
+  - **Trocar de celular nunca passa por "sem fator".** Com a senha e o código do aparelho atual (ou
+    um de recuperação), a IAM devolve o QR do aparelho novo e guarda o segredo novo à parte, pelo
+    prazo do desafio do login; o aparelho atual segue valendo. O primeiro código certo do novo troca
+    o segredo no lugar, gera códigos de recuperação novos e derruba as outras sessões
+    (`/auth/segundo-fator/troca/` e `.../troca/confirmar/`). **Desativar** é só para quem não é
+    obrigado; o obrigado perde o fator apenas pela redefinição feita por outra pessoa
+    (`redefinir-segundo-fator`, nunca na própria conta), registrada na trilha e avisada por e-mail.
 - **Step-up para ato crítico** ([RFC 9470](https://www.rfc-editor.org/rfc/rfc9470.html)): atestar
   pagamento, mudar papel ou alçada e exportar dado pessoal exigem autenticação **recente**
   (`auth_time` dentro de uma janela). Fora dela, o serviço responde com o desafio, e a tela pede a

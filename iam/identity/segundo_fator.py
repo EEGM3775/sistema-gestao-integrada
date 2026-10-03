@@ -311,6 +311,62 @@ def confirmar_cadastro(usuario, codigo, *, request=None) -> list[str]:
     return codigos
 
 
+# --- trocar de celular (D241) -----------------------------------------------------
+# A troca não passa por um estado "sem fator": o aparelho novo é lido e confirmado
+# **antes** de o antigo sair, e a troca do segredo é um único update. O segredo
+# novo espera no cache, cifrado, pelo mesmo prazo do desafio do login — se ele
+# vencer (ou o cache cair), nada mudou: o aparelho antigo continua valendo.
+def _chave_troca(usuario) -> str:
+    return f"segundo_fator:troca:{usuario.pk}"
+
+
+def iniciar_troca(usuario) -> tuple[str, str]:
+    """Segredo novo para o aparelho novo; o atual segue ativo até `confirmar_troca`.
+    Quem chama já conferiu a senha e o código do aparelho antigo (ou de
+    recuperação). Recomeçar troca o segredo pendente. Devolve `(segredo, uri)`."""
+    if ativo(usuario) is None:
+        raise ValueError("Esta conta não tem segundo fator para trocar.")
+    segredo = novo_segredo()
+    cache.set(_chave_troca(usuario), cifrar(segredo), SEGUNDO_FATOR_DESAFIO_VALIDADE_S)
+    return segredo, uri_otpauth(usuario, segredo)
+
+
+@transaction.atomic
+def confirmar_troca(usuario, codigo, *, request=None) -> list[str]:
+    """O primeiro código certo do aparelho novo troca o segredo, no lugar, e
+    entrega códigos de recuperação novos. Levanta `CodigoRecusado`; com a troca
+    vencida, `ValueError`."""
+    if bloqueado(usuario):
+        raise CodigoRecusado("bloqueado")
+    pendente = cache.get(_chave_troca(usuario))
+    segredo = decifrar(pendente) if pendente else None
+    fator = SegundoFator.objects.select_for_update().filter(
+        usuario=usuario, confirmado_em__isnull=False,
+    ).first()
+    if segredo is None or fator is None:
+        raise ValueError("A troca venceu. Comece de novo.")
+    limpo = _normalizar(codigo)
+    passo = _passo_que_casa(segredo, limpo) if limpo.isdigit() else None
+    if passo is None:
+        _registrar_falha(usuario, request)
+        raise CodigoRecusado("invalido")
+    fator.segredo_cifrado = pendente
+    fator.confirmado_em = timezone.now()
+    fator.ultimo_passo = passo
+    fator.save(update_fields=["segredo_cifrado", "confirmado_em", "ultimo_passo"])
+    cache.delete(_chave_troca(usuario))
+    _zerar_falhas(usuario)
+    codigos = gerar_codigos(usuario)
+    recuperacao.registrar_evento(
+        EventoSeguranca.Tipo.SEGUNDO_FATOR_TROCADO, alvo=usuario, autor=usuario,
+        request=request, metodo=fator.metodo,
+    )
+    from . import emails
+
+    emails.enviar_aviso_segundo_fator(usuario, "trocado")
+    return codigos
+
+
 def gerar_codigos(usuario) -> list[str]:
     """Troca todos os códigos de recuperação. Os antigos, usados ou não, somem."""
     CodigoRecuperacao.objects.filter(usuario=usuario).delete()
@@ -337,6 +393,7 @@ def remover(usuario) -> bool:
     havia = ativo(usuario) is not None
     SegundoFator.objects.filter(usuario=usuario).delete()
     CodigoRecuperacao.objects.filter(usuario=usuario).delete()
+    cache.delete(_chave_troca(usuario))
     _zerar_falhas(usuario)
     return havia
 

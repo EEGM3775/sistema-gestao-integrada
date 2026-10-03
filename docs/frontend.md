@@ -666,7 +666,8 @@ direita com o formulário. Mobile: só o formulário com logo no topo.
 
 Aberta pelo menu do usuário na barra de cima ("Minha conta e segurança"). Três cartões:
 **Segundo fator** (estado, por que ativar nesta conta, ativar / gerar códigos novos /
-desativar — "trocar de celular" para quem é obrigado), **Confirmação de atos graves** (a
+trocar de celular / desativar — este só para quem não é obrigado; a troca confirma o celular
+novo antes de o antigo sair, no mesmo `CadastroSegundoFator` com a prop `troca`), **Confirmação de atos graves** (a
 janela em minutos, com a faixa e o aviso ao passar do padrão; pílula "em breve" até o
 step-up existir) e **Senha** (o `ChangePasswordModal`). Na lista de usuários do admin, a
 marca "2º fator" e a ação de redefinir para quem perdeu o celular.

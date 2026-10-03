@@ -655,25 +655,94 @@ class ConfirmarCadastroSegundoFatorView(APIView):
         )
 
 
-class DesativarSegundoFatorView(APIView):
-    """Tira o segundo fator. Pede **os dois**: a senha e um código — quem tem os
-    dois já é dono da conta, então exigi-los não enfraquece nada.
+def _conferir_senha_e_codigo(request):
+    """A senha e um código do aparelho atual (ou de recuperação) — quem tem os
+    dois já é dono da conta. A senha conta no mesmo bloqueio do código: uma
+    sessão roubada não ganha aqui um adivinhador de senha sem freio. Devolve a
+    resposta de recusa, ou `None` se os dois abriram."""
+    user = request.user
+    try:
+        segundo_fator.conferir_senha(user, request.data.get("senha"), request=request)
+    except segundo_fator.CodigoRecusado as erro:
+        if erro.motivo == "bloqueado":
+            return _resposta_recusa(erro)
+        return Response({"detail": "Senha incorreta."}, status=400)
+    try:
+        segundo_fator.verificar(user, request.data.get("codigo"), request=request)
+    except segundo_fator.CodigoRecusado as erro:
+        return _resposta_recusa(erro)
+    return None
 
-    Vale também para o obrigado a ter: é o "trocar de celular". A sessão atual
-    segue (ela provou os dois fatores), e o próximo login pede o cadastro de
-    novo; a tela leva direto a ele."""
+
+class TrocaSegundoFatorView(APIView):
+    """Trocar de celular, primeira etapa (D241): com a senha e o código do
+    aparelho antigo (ou um de recuperação), devolve o QR do aparelho novo. O
+    antigo **continua valendo** até a confirmação — a conta nunca fica só com a
+    senha, nem por um instante."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        _bloqueia_origem_estranha(request)
+        if segundo_fator.ativo(request.user) is None:
+            return Response({"detail": "Esta conta não tem segundo fator para trocar."}, status=409)
+        recusa = _conferir_senha_e_codigo(request)
+        if recusa is not None:
+            return recusa
+        segredo, uri = segundo_fator.iniciar_troca(request.user)
+        return Response({"segredo": segredo, "uri": uri, "qr": segundo_fator.qr_svg(uri)})
+
+
+class ConfirmarTrocaSegundoFatorView(APIView):
+    """Trocar de celular, segunda etapa: o primeiro código certo do aparelho novo
+    troca o segredo no lugar e devolve os códigos de recuperação novos.
+
+    As **outras** sessões caem, como na troca de senha: quem troca de celular
+    muitas vezes perdeu o antigo. Esta segue, numa sessão nova com `otp`."""
 
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         _bloqueia_origem_estranha(request)
         user = request.user
-        if not user.check_password(request.data.get("senha") or ""):
-            return Response({"detail": "Senha incorreta."}, status=400)
         try:
-            segundo_fator.verificar(user, request.data.get("codigo"), request=request)
+            codigos = segundo_fator.confirmar_troca(user, request.data.get("codigo"), request=request)
         except segundo_fator.CodigoRecusado as erro:
             return _resposta_recusa(erro)
+        except ValueError as erro:
+            return Response({"detail": str(erro)}, status=409)
+        remember = _lembrar_da_sessao(request)
+        revoke_all_sessions(user, motivo="segundo_fator_trocado")
+        bump_session_epoch(user.id)  # antes de reemitir: o access novo sobrevive
+        return _abrir_sessao(
+            user, remember=remember, amr=_AMR_COM_SEGUNDO_FATOR, extra={"codigos": codigos},
+        )
+
+
+class DesativarSegundoFatorView(APIView):
+    """Tira o segundo fator. Pede **os dois**: a senha e um código.
+
+    Só para quem **não** é obrigado a ter (D241). Para o obrigado, desativar e
+    cadastrar depois deixava a conta só com a senha até o próximo login — e quem
+    a tivesse cadastraria o próprio autenticador. O caminho dele é o "trocar de
+    celular", em que o aparelho novo entra antes de o antigo sair."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        _bloqueia_origem_estranha(request)
+        user = request.user
+        if segundo_fator.obrigatorio(user):
+            return Response(
+                {"detail": (
+                    "Nesta conta o segundo fator é obrigatório e não pode ser desligado. "
+                    "Para usar outro celular, use Trocar de celular."
+                )},
+                status=409,
+            )
+        recusa = _conferir_senha_e_codigo(request)
+        if recusa is not None:
+            return recusa
         segundo_fator.remover(user)
         recuperacao.registrar_evento(
             EventoSeguranca.Tipo.SEGUNDO_FATOR_DESATIVADO, alvo=user, autor=user, request=request,

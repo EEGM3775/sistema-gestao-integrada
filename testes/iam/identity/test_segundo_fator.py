@@ -334,6 +334,108 @@ class TelaDePerfilTests(BaseSegundoFator):
         self.assertEqual(r.data["janela_confirmacao"]["minutos"], 30)
 
 
+class TrocaDeCelularTests(BaseSegundoFator):
+    """D241 — a troca de celular nunca deixa a conta só com a senha: o aparelho
+    novo é confirmado antes de o antigo sair, e o obrigado não desativa."""
+
+    def setUp(self):
+        super().setUp()
+        self.codigos = _ativar(self.admin)
+        self.segredo_antigo = segundo_fator.decifrar(SegundoFator.objects.get(usuario=self.admin).segredo_cifrado)
+        self._bearer(self.admin)
+
+    def _iniciar(self, codigo=None, senha="senha-forte-1"):
+        return self.client.post(
+            "/auth/segundo-fator/troca/",
+            {"senha": senha, "codigo": codigo or _codigo(self.admin, 1)}, format="json",
+        )
+
+    def _confirmar(self, codigo):
+        return self.client.post("/auth/segundo-fator/troca/confirmar/", {"codigo": codigo}, format="json")
+
+    def _segredo_guardado(self):
+        return segundo_fator.decifrar(SegundoFator.objects.get(usuario=self.admin).segredo_cifrado)
+
+    def test_obrigatorio_nao_desativa(self):
+        r = self.client.post(
+            "/auth/segundo-fator/desativar/",
+            {"senha": "senha-forte-1", "codigo": _codigo(self.admin, 1)}, format="json",
+        )
+        self.assertEqual(r.status_code, 409)
+        self.assertIn("Trocar de celular", r.data["detail"])
+        self.assertIsNotNone(segundo_fator.ativo(self.admin))
+
+    def test_a_troca_nao_passa_por_estado_sem_fator(self):
+        outra = issue_refresh(self.admin, remember=False, amr=["pwd", "otp"])
+        inicio = self._iniciar()
+        self.assertEqual(inicio.status_code, 200, inicio.data)
+        self.assertTrue(inicio.data["qr"].startswith("data:image/svg+xml"))
+        # Entre as duas etapas, o aparelho antigo continua sendo o fator da conta.
+        self.assertIsNotNone(segundo_fator.ativo(self.admin))
+        self.assertEqual(self._segredo_guardado(), self.segredo_antigo)
+        self.assertEqual(self._login("adm").data["segundo_fator"], "codigo")
+
+        mail.outbox.clear()
+        novo = inicio.data["segredo"]
+        r = self._confirmar(segundo_fator.codigo_do_passo(novo, segundo_fator.passo_atual()))
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(self._segredo_guardado(), novo)
+        self.assertEqual(carga(access_do_bff(self.client))["amr"], ["pwd", "otp"])
+        self.assertEqual(len(r.data["codigos"]), planos.SEGUNDO_FATOR_CODIGOS_DE_RECUPERACAO)
+        self.assertFalse(set(r.data["codigos"]) & set(self.codigos))  # os antigos saíram
+        self.assertTrue(BlacklistedToken.objects.filter(token__jti=outra["jti"]).exists())
+        self.assertTrue(
+            EventoSeguranca.objects.filter(
+                alvo=self.admin, tipo=EventoSeguranca.Tipo.SEGUNDO_FATOR_TROCADO,
+            ).exists()
+        )
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn("celular novo", mail.outbox[0].body)
+
+    def test_o_aparelho_antigo_para_de_valer_depois_da_troca(self):
+        novo = self._iniciar().data["segredo"]
+        self._confirmar(segundo_fator.codigo_do_passo(novo, segundo_fator.passo_atual()))
+        desafio = self._login("adm").data["desafio"]
+        antigo = segundo_fator.codigo_do_passo(self.segredo_antigo, segundo_fator.passo_atual() + 1)
+        if antigo != segundo_fator.codigo_do_passo(novo, segundo_fator.passo_atual() + 1):
+            self.assertEqual(self._segunda_etapa(desafio, antigo).status_code, 400)
+
+    def test_comeca_com_codigo_de_recuperacao(self):
+        """Quem perdeu o celular troca com um código de recuperação."""
+        self.assertEqual(self._iniciar(codigo=self.codigos[0]).status_code, 200)
+
+    def test_pede_senha_e_codigo(self):
+        self.assertEqual(self._iniciar(senha="errada").status_code, 400)
+        errado = "000000" if _codigo(self.admin, 1) != "000000" else "111111"
+        self.assertEqual(self._iniciar(codigo=errado).status_code, 400)
+        self.assertIsNone(cache.get(segundo_fator._chave_troca(self.admin)))
+
+    def test_codigo_errado_do_aparelho_novo_nao_troca(self):
+        novo = self._iniciar().data["segredo"]
+        certo = segundo_fator.codigo_do_passo(novo, segundo_fator.passo_atual())
+        r = self._confirmar("000000" if certo != "000000" else "111111")
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(self._segredo_guardado(), self.segredo_antigo)
+
+    def test_troca_vencida_nao_muda_nada(self):
+        novo = self._iniciar().data["segredo"]
+        cache.delete(segundo_fator._chave_troca(self.admin))  # o prazo passou (ou o cache caiu)
+        r = self._confirmar(segundo_fator.codigo_do_passo(novo, segundo_fator.passo_atual()))
+        self.assertEqual(r.status_code, 409)
+        self.assertEqual(self._segredo_guardado(), self.segredo_antigo)
+
+    def test_senha_errada_conta_no_bloqueio(self):
+        for _ in range(planos.SEGUNDO_FATOR_TENTATIVAS):
+            self._iniciar(senha="errada")
+        r = self._iniciar()
+        self.assertEqual(r.status_code, 429)
+        self.assertTrue(r.data["bloqueado"])
+
+    def test_sem_segundo_fator_nao_ha_troca(self):
+        self._bearer(self.comum, amr=("pwd",))
+        self.assertEqual(self._iniciar().status_code, 409)
+
+
 class RedefinicaoPeloAdminTests(BaseSegundoFator):
     def setUp(self):
         super().setUp()

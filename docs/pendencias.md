@@ -38,21 +38,6 @@ contêiner que faltava na frota geral — foi fechado em 07/08/2026, também no 
 
 ## 🟠 Altas
 
-### D241 — "Trocar de celular" deixa o admin protegido só pela senha até o próximo login · 🟠 aberto 01/10/2026
-
-Visto em 01/10/2026, num teste do próprio dono (não foi incidente): às 20:08 de 30/09, o `admin` entrou com um código de recuperação e usou **Minha conta
-› Segurança › Trocar de celular** ([MinhaContaPage.tsx](../frontend/src/pages/app/MinhaContaPage.tsx)),
-com a senha e outro código de recuperação (eventos 120 e 121 da trilha). A
-[`DesativarSegundoFatorView`](../iam/identity/views.py) **apaga** o fator e deixa o cadastro novo para o
-próximo login. Às 06:29 de 01/10, a senha sozinha levou à tela de cadastro, e o fator novo foi
-ativado (evento 122). Não houve contorno: os dois passos exigiram o que o desenho exige. A falha está
-na **janela**: durante essas 10 horas, uma conta obrigada a ter 2FA ficou só com a senha, e quem a
-tivesse cadastraria o **próprio** autenticador no primeiro login. O único alarme é o e-mail de
-"ativado". **Correção:** a troca de celular deve ser atômica, na sessão que provou os dois fatores:
-cadastrar e confirmar o aparelho novo **antes** de apagar o antigo, sem passar por um estado "sem
-fator". O "desativar" puro fica só para quem não é obrigado. Avaliar também se o cadastro na etapa do
-login (desafio `cadastro`) deve exigir algo além da senha para quem **já teve** um fator.
-
 ### D238 — o filtro de RLS não é estimável, e toda consulta com JOIN supõe 1% das linhas · 🟠 aberto 30/09/2026
 
 Achado no [D231](historico-correcoes.md). A política `tenant_isolation` é

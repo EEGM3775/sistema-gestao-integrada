@@ -10,6 +10,34 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D241 — "Trocar de celular" deixava o admin protegido só pela senha até o próximo login · ✅ corrigido 03/10/2026
+
+Visto em 01/10/2026, num teste do próprio dono (não foi incidente): às 20:08 de 30/09, o `admin` entrou
+com um código de recuperação e usou **Minha conta › Segurança › Trocar de celular**, com a senha e
+outro código de recuperação (eventos 120 e 121 da trilha). A `DesativarSegundoFatorView` **apagava** o
+fator e deixava o cadastro novo para depois; a tela abria o cadastro na hora, mas quem fechasse ficava
+sem fator. Às 06:29 de 01/10, a senha sozinha levou à tela de cadastro do login, e o fator novo foi
+ativado (evento 122). Durante essas 10 horas, uma conta obrigada a ter 2FA ficou só com a senha, e
+quem a tivesse cadastraria o **próprio** autenticador no primeiro login.
+
+**Correção:** a troca virou duas etapas que nunca passam por "sem fator".
+`POST /auth/segundo-fator/troca/` pede a senha e o código do aparelho atual (ou de recuperação) e
+devolve o QR do novo; o segredo novo espera no cache, cifrado, pelo prazo do desafio do login
+(`SEGUNDO_FATOR_DESAFIO_VALIDADE_S`), e o aparelho atual segue valendo. `.../troca/confirmar/` recebe
+o primeiro código do aparelho novo e troca o segredo **no lugar**, numa transação; gera códigos de
+recuperação novos, derruba as outras sessões, registra `segundo_fator_trocado` e avisa por e-mail. Se
+a troca vencer, o cache cair ou a pessoa fechar a tela, nada muda. O **desativar** recusa (409) quem
+é obrigado. Na mesma passada, a senha do desativar e da troca passou a contar no bloqueio por tentativa
+(`conferir_senha`, o mesmo do step-up): antes, uma sessão roubada tinha ali um adivinhador de senha
+sem freio. IAM 281 testes (9 novos em `TrocaDeCelularTests`).
+
+**Avaliado e mantido:** o cadastro na etapa `cadastro` do login continua pedindo só a senha. Com o
+desativar fechado ao obrigado, essa etapa só aparece para quem já teve fator depois de uma
+**redefinição feita por outra pessoa** (`redefinir-segundo-fator`, nunca na própria conta), que derruba
+as sessões, fica na trilha com o nome de quem fez e manda e-mail ao alvo. É o caminho de quem perdeu
+o celular **e** os códigos, e pedir mais do que a senha ali exigiria um canal fora da conta (e-mail
+com link, por exemplo), que ainda não existe.
+
 ### D256 — `ponte.sh subir` saía com 141 antes de levantar a ponte · ✅ corrigido 03/10/2026
 
 A senha era gerada por `tr -dc … < /dev/urandom | head -c 20`: quando o `head` fecha o cano, o `tr`

@@ -10,8 +10,8 @@ import { CadastroSegundoFator } from '@/components/seguranca/CadastroSegundoFato
 import { CampoCodigo } from '@/components/seguranca/CampoCodigo'
 import { CodigosDeRecuperacao } from '@/components/seguranca/CodigosDeRecuperacao'
 import {
-  desativarSegundoFator, escolherJanela, lerSeguranca, trocarCodigos,
-  type MotivoSegundoFator, type SegurancaDaConta,
+  desativarSegundoFator, escolherJanela, iniciarTroca, lerSeguranca, trocarCodigos,
+  type InicioCadastro, type MotivoSegundoFator, type SegurancaDaConta,
 } from '@/api/segundoFator'
 
 const POR_QUE: Record<MotivoSegundoFator, string> = {
@@ -64,10 +64,15 @@ function ModalTrocarCodigos({ conta, aoFechar }: { conta: string; aoFechar: () =
   )
 }
 
-function ModalDesativar({ obrigatorio, aoFechar, aoDesativar }: {
-  obrigatorio: boolean
+/** A senha e um código do celular atual (ou de recuperação) — o que desativar e
+ *  trocar de celular pedem antes de mexer no segundo fator. */
+function ProvaDosDoisFatores({ id, texto, rotulo, perigo, aoProvar, aoFechar }: {
+  id: string
+  texto: string
+  rotulo: string
+  perigo?: boolean
+  aoProvar: (senha: string, codigo: string) => Promise<void>
   aoFechar: () => void
-  aoDesativar: () => void
 }) {
   const [senha, setSenha] = useState('')
   const [codigo, setCodigo] = useState('')
@@ -80,8 +85,7 @@ function ModalDesativar({ obrigatorio, aoFechar, aoDesativar }: {
     setErros({})
     setEnviando(true)
     try {
-      await desativarSegundoFator(senha, codigo)
-      aoDesativar()
+      await aoProvar(senha, codigo)
     } catch (err) {
       setErros(parseApiErrors(err))
       setCodigo('')
@@ -91,30 +95,72 @@ function ModalDesativar({ obrigatorio, aoFechar, aoDesativar }: {
   }
 
   return (
-    <Modal titulo={obrigatorio ? 'Trocar de celular' : 'Desativar o segundo fator'} onClose={aoFechar}>
-      <form onSubmit={confirmar} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <p style={{ fontSize: 13, color: 'var(--ink-2)', margin: 0, lineHeight: 1.5 }}>
-          {obrigatorio
-            ? 'O cadastro atual sai, e em seguida você lê um QR novo com o celular novo. Confirme com a senha e com o código do celular antigo — ou com um código de recuperação.'
-            : 'Sem o segundo fator, quem descobrir sua senha entra na sua conta. Confirme com a senha e com o código do app — ou com um código de recuperação.'}
-        </p>
-        <FormErrorBanner errors={erros} />
-        <PasswordField label="Sua senha" value={senha} onChange={setSenha} autoComplete="current-password" autoFocus />
-        <CampoCodigo id="codigo-desativar" valor={codigo} aoMudar={setCodigo} recuperacao={recuperacao} focar={false} />
-        <button
-          type="button"
-          onClick={() => { setRecuperacao(v => !v); setCodigo('') }}
-          style={{ fontSize: 12, color: 'var(--brand)', background: 'none', border: 'none', cursor: 'pointer', alignSelf: 'flex-start' }}
-        >
-          {recuperacao ? 'Usar o código do app' : 'Estou sem o celular — usar um código de recuperação'}
-        </button>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <Btn type="button" onClick={aoFechar}>Cancelar</Btn>
-          <Btn type="submit" variant={obrigatorio ? 'brand' : 'perigo'} disabled={!senha || !codigo || enviando}>
-            {enviando ? 'Conferindo…' : obrigatorio ? 'Continuar' : 'Desativar'}
-          </Btn>
+    <form onSubmit={confirmar} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <p style={{ fontSize: 13, color: 'var(--ink-2)', margin: 0, lineHeight: 1.5 }}>{texto}</p>
+      <FormErrorBanner errors={erros} />
+      <PasswordField label="Sua senha" value={senha} onChange={setSenha} autoComplete="current-password" autoFocus />
+      <CampoCodigo id={id} valor={codigo} aoMudar={setCodigo} recuperacao={recuperacao} focar={false} />
+      <button
+        type="button"
+        onClick={() => { setRecuperacao(v => !v); setCodigo('') }}
+        style={{ fontSize: 12, color: 'var(--brand)', background: 'none', border: 'none', cursor: 'pointer', alignSelf: 'flex-start' }}
+      >
+        {recuperacao ? 'Usar o código do app' : 'Estou sem o celular — usar um código de recuperação'}
+      </button>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+        <Btn type="button" onClick={aoFechar}>Cancelar</Btn>
+        <Btn type="submit" variant={perigo ? 'perigo' : 'brand'} disabled={!senha || !codigo || enviando}>
+          {enviando ? 'Conferindo…' : rotulo}
+        </Btn>
+      </div>
+    </form>
+  )
+}
+
+/** Só para quem não é obrigado a ter segundo fator: o obrigado troca de celular (D241). */
+function ModalDesativar({ aoFechar, aoDesativar }: { aoFechar: () => void; aoDesativar: () => void }) {
+  return (
+    <Modal titulo="Desativar o segundo fator" onClose={aoFechar}>
+      <ProvaDosDoisFatores
+        id="codigo-desativar"
+        texto="Sem o segundo fator, quem descobrir sua senha entra na sua conta. Confirme com a senha e com o código do app — ou com um código de recuperação."
+        rotulo="Desativar"
+        perigo
+        aoProvar={async (senha, codigo) => { await desativarSegundoFator(senha, codigo); aoDesativar() }}
+        aoFechar={aoFechar}
+      />
+    </Modal>
+  )
+}
+
+/** D241: o celular novo é lido e confirmado antes de o antigo sair — a conta
+ *  nunca fica só com a senha. Fechar no meio não muda nada. */
+function ModalTrocarCelular({ conta, aoFechar, aoTrocar }: {
+  conta: string
+  aoFechar: () => void
+  aoTrocar: () => void
+}) {
+  const [inicio, setInicio] = useState<InicioCadastro | null>(null)
+
+  return (
+    <Modal titulo="Trocar de celular" onClose={aoFechar}>
+      {inicio ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <p style={{ fontSize: 13, color: 'var(--ink-2)', margin: 0, lineHeight: 1.5 }}>
+            Até você digitar o código do celular novo, o antigo continua valendo. Se fechar agora,
+            nada muda.
+          </p>
+          <CadastroSegundoFator conta={conta} troca={inicio} aoConcluir={aoTrocar} aoCancelar={aoFechar} />
         </div>
-      </form>
+      ) : (
+        <ProvaDosDoisFatores
+          id="codigo-trocar-celular"
+          texto="Primeiro, confirme que é você: a senha e o código do celular atual — ou um código de recuperação, se você está sem ele. Em seguida, você lê um QR com o celular novo."
+          rotulo="Continuar"
+          aoProvar={async (senha, codigo) => setInicio(await iniciarTroca(senha, codigo))}
+          aoFechar={aoFechar}
+        />
+      )}
     </Modal>
   )
 }
@@ -127,6 +173,7 @@ function CartaoSegundoFator({ seguranca, conta, aoMudar }: {
   const sf = seguranca.segundo_fator
   const [cadastrando, setCadastrando] = useState(false)
   const [trocandoCodigos, setTrocandoCodigos] = useState(false)
+  const [trocandoCelular, setTrocandoCelular] = useState(false)
   const [desativando, setDesativando] = useState(false)
 
   return (
@@ -176,9 +223,8 @@ function CartaoSegundoFator({ seguranca, conta, aoMudar }: {
           </p>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <Btn onClick={() => setTrocandoCodigos(true)}>Gerar códigos novos</Btn>
-            <Btn variant={sf.obrigatorio ? 'ghost' : 'perigo'} onClick={() => setDesativando(true)}>
-              {sf.obrigatorio ? 'Trocar de celular' : 'Desativar'}
-            </Btn>
+            <Btn onClick={() => setTrocandoCelular(true)}>Trocar de celular</Btn>
+            {!sf.obrigatorio && <Btn variant="perigo" onClick={() => setDesativando(true)}>Desativar</Btn>}
           </div>
         </div>
       ) : (
@@ -188,11 +234,17 @@ function CartaoSegundoFator({ seguranca, conta, aoMudar }: {
       {trocandoCodigos && (
         <ModalTrocarCodigos conta={conta} aoFechar={() => { setTrocandoCodigos(false); aoMudar() }} />
       )}
+      {trocandoCelular && (
+        <ModalTrocarCelular
+          conta={conta}
+          aoFechar={() => setTrocandoCelular(false)}
+          aoTrocar={() => { setTrocandoCelular(false); aoMudar() }}
+        />
+      )}
       {desativando && (
         <ModalDesativar
-          obrigatorio={sf.obrigatorio}
           aoFechar={() => setDesativando(false)}
-          aoDesativar={() => { setDesativando(false); if (sf.obrigatorio) setCadastrando(true); aoMudar() }}
+          aoDesativar={() => { setDesativando(false); aoMudar() }}
         />
       )}
     </Card>
