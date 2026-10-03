@@ -144,19 +144,22 @@ _SEGUNDO_FATOR = {
     "ativado": ("ativado", "O segundo fator foi ativado"),
     "desativado": ("desativado", "O segundo fator foi desativado"),
     "trocado": ("trocado de aparelho", "O segundo fator passou para um celular novo"),
-    "codigos": ("códigos trocados", "Os códigos de recuperação foram trocados"),
+    "codigos": ("códigos trocados", "Os códigos de recuperação foram trocados {por_quem}"),
     "recuperacao": ("código de recuperação usado", "Um código de recuperação foi usado para entrar"),
     "redefinido": ("redefinido", "O segundo fator foi redefinido {por_quem}"),
 }
 
 
 def enviar_aviso_segundo_fator(usuario, evento, *, por_quem=None, restantes=None):
+    """`por_quem` é o admin que fez (um usuário) ou, no caminho de emergência
+    do shell (D240), o nome do operador da plataforma (um texto)."""
     assunto, frase = _SEGUNDO_FATOR[evento]
-    quem = (
-        f"pelo administrador {por_quem.get_full_name() or por_quem.username}"
-        if por_quem
-        else ""
-    )
+    if isinstance(por_quem, str):
+        quem = f"pela operação da plataforma ({por_quem})"
+    elif por_quem:
+        quem = f"pelo administrador {por_quem.get_full_name() or por_quem.username}"
+    else:
+        quem = ""
     return enviar(
         "identidade.aviso_segundo_fator",
         usuario.email,
