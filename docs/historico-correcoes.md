@@ -10,6 +10,24 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D259 — pela ponte, a sessão caía a cada recarga de página · ✅ corrigido 03/10/2026
+
+Relato do dono, no celular: "toda ação volta pra área de login". O log do porteiro mostrou o padrão —
+login e telas em 200, e todo `POST /auth/refresh/` (que o app faz ao recarregar a página) em **403**.
+O porteiro reescreve o `Host` para `localhost`, mas repassava o `Origin: https://<ponte>` do
+navegador; o `_bloqueia_origem_estranha` da IAM compara os dois e recusava ("Origem não permitida").
+**Só na ponte:** em produção `Host` e `Origin` são o mesmo domínio, e em casa os dois são `localhost`.
+**Correção:** o porteiro reescreve o `Origin` para `http://localhost` quando — e só quando — ele é a
+origem da própria ponte; origem estranha segue intacta e continua em 403 (conferido pela ponte: a da
+ponte passa da checagem, `site-estranho.example` não). Junto: o `subir` limpa os containers parados que
+uma queda do Docker Desktop deixa (o nome ocupado faria o `docker run` falhar), e a ponte ganhou o
+**link fixo** opcional pelo domínio estático do ngrok ([ponte.md](ponte.md)).
+**Produção, conferida no staging** (`nginx.staging.conf`, o mesmo de produção, por HTTPS): o refresh da
+mesma origem passa e o de origem estranha cai em 403 — o defeito não existe lá, porque o gateway é a
+borda e repassa o `Host` real. O único jeito de reaparecer é um proxy ou balanceador **na frente** do
+gateway trocar o `Host`; para isso não depender só do `Host`, o compose passou a repassar
+`IAM_CORS_ORIGINS` à IAM e o `prod.env.example` traz o domínio público nele.
+
 ### D115 · D153 · D196 — a demo usava além do plano que assina · ✅ corrigido 03/10/2026
 
 **Decisão do dono (03/10/2026):** a demo **não sobe de plano** — fica no `profissional` e se

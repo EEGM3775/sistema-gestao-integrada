@@ -78,6 +78,13 @@ HORAS_PADRAO=4
 #: Teto duro. Acima disto não é mais "temporária" — é hospedagem de um stack de
 #: desenvolvimento na internet, e aí a conversa é outra (staging de verdade).
 HORAS_MAXIMO=12
+#: Endereço fixo (opcional). O trycloudflare sorteia uma URL a cada subida; com
+#: o domínio estático do ngrok gravado aqui (`./ponte.sh dominio <nome>`), a
+#: ponte sobe sempre no mesmo link. O domínio é da conta do ngrok já configurada
+#: nesta máquina (a do webhook do Asaas) e precisa ser reservado uma vez no
+#: painel dela — o script não cria domínio.
+DOMINIO_FIXO="$DIR/dominio"
+NGROK_CONF="$HOME/.config/ngrok/ngrok.yml"
 
 vermelho() { printf '\033[31m%s\033[0m\n' "$*"; }
 verde()    { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -117,7 +124,27 @@ arma_vigia() {
 
 url_do_tunel() {
   docker logs "$TUNEL" 2>&1 \
-    | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | tail -1
+    | grep -oE 'https://[a-z0-9.-]+\.(trycloudflare\.com|ngrok-free\.app|ngrok-free\.dev|ngrok\.app|ngrok\.dev)' \
+    | tail -1
+}
+
+# O túnel: ngrok no domínio fixo, se houver um gravado; senão, trycloudflare.
+sobe_tunel() {
+  if [ -s "$DOMINIO_FIXO" ]; then
+    if [ ! -f "$NGROK_CONF" ]; then
+      vermelho "Há domínio fixo gravado, mas não há conta ngrok em $NGROK_CONF."
+      exit 1
+    fi
+    docker run -d --name "$TUNEL" --network "$REDE" \
+      -v "$NGROK_CONF:/etc/ngrok/ngrok.yml:ro" \
+      ngrok/ngrok:latest \
+      http "http://$PORTA:80" --url "https://$(cat "$DOMINIO_FIXO")" \
+      --config /etc/ngrok/ngrok.yml --log stdout --log-format logfmt >/dev/null
+  else
+    docker run -d --name "$TUNEL" --network "$REDE" \
+      cloudflare/cloudflared:latest \
+      tunnel --no-autoupdate --url "http://$PORTA:80" >/dev/null
+  fi
 }
 
 # --- subir -------------------------------------------------------------------
@@ -139,6 +166,9 @@ subir() {
   fi
 
   mkdir -p "$DIR"
+  # Sobra de uma queda do Docker Desktop: os containers param (não somem) e o
+  # nome ocupado faria o `docker run` abaixo falhar.
+  docker rm -f "$TUNEL" "$PORTA" >/dev/null 2>&1 || true
 
   # A senha vive poucas horas e trafega em Basic auth (protegido pelo TLS do
   # túnel). Gerada, e não escolhida: senha reaproveitada de outra coisa é o que
@@ -163,9 +193,7 @@ subir() {
     nginx:alpine \
     sh -c "timeout $segundos nginx -g 'daemon off;'" >/dev/null
 
-  docker run -d --name "$TUNEL" --network "$REDE" \
-    cloudflare/cloudflared:latest \
-    tunnel --no-autoupdate --url "http://$PORTA:80" >/dev/null
+  sobe_tunel
 
   local expira_em
   expira_em="$(date -d "+$horas hours" '+%F %T')"
@@ -278,7 +306,35 @@ derrubar() {
   docker rm -f "$TUNEL" "$PORTA" >/dev/null 2>&1 || true
   rm -f "$DIR/htpasswd" "$DIR/expira-em"
   echo "$(date '+%F %T') ponte derrubada à mão" >> "$DIR/prazo.log"
-  verde "Ponte fechada. A URL morreu — o trycloudflare sorteia outra na próxima."
+  if [ -s "$DOMINIO_FIXO" ]; then
+    verde "Ponte fechada. O link fixo ($(cat "$DOMINIO_FIXO")) volta na próxima subida."
+  else
+    verde "Ponte fechada. A URL morreu — o trycloudflare sorteia outra na próxima."
+  fi
+}
+
+# --- dominio -----------------------------------------------------------------
+
+dominio() {
+  local nome="${1:-}"
+  mkdir -p "$DIR"
+  if [ -z "$nome" ]; then
+    if [ -s "$DOMINIO_FIXO" ]; then echo "Link fixo: https://$(cat "$DOMINIO_FIXO")"
+    else echo "Sem link fixo — a ponte sobe no trycloudflare, com URL nova a cada vez."; fi
+    return 0
+  fi
+  if [ "$nome" = "-" ]; then
+    rm -f "$DOMINIO_FIXO"
+    verde "Link fixo apagado. A próxima subida volta ao trycloudflare."
+    return 0
+  fi
+  nome="${nome#https://}"; nome="${nome%%/*}"
+  if ! printf '%s' "$nome" | grep -qE '^[a-z0-9-]+(\.[a-z0-9-]+)*\.(ngrok-free\.app|ngrok-free\.dev|ngrok\.app|ngrok\.dev)$'; then
+    vermelho "Isso não parece um domínio do ngrok: '$nome' (ex.: fulano.ngrok-free.app)."
+    exit 1
+  fi
+  echo "$nome" > "$DOMINIO_FIXO"
+  verde "Link fixo gravado: https://$nome — vale a partir da próxima subida."
 }
 
 # --- despacho ----------------------------------------------------------------
@@ -288,6 +344,7 @@ case "${1:-}" in
   status)    status ;;
   prorrogar) shift; prorrogar "${1:-}" ;;
   derrubar)  derrubar ;;
+  dominio)   shift; dominio "${1:-}" ;;
   *)
     cat <<AJUDA
 ponte.sh — a ponte temporária do SGI, com prazo de validade
@@ -296,6 +353,7 @@ ponte.sh — a ponte temporária do SGI, com prazo de validade
   ./ponte.sh status             o que está no ar e quanto falta
   ./ponte.sh prorrogar [horas]  estica o prazo; URL e senha não mudam
   ./ponte.sh derrubar           fecha agora
+  ./ponte.sh dominio [nome|-]   mostra, grava ou apaga (-) o link fixo do ngrok
 
 A ponte expira sozinha. Esquecê-la a fecha — é o conserto do D146.
 AJUDA
