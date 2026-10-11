@@ -176,6 +176,10 @@ class Demanda(TenantScopedModel):
         # dizer "esta cotação está segurando a obra" em vez de tratá-la como
         # mais uma linha da fila.
         RESTRICAO = "restricao", _("Restrição de obra (PDCA)")
+        # O cronograma puxa a compra: a fila "comprar até DD/MM" do plano vira
+        # demanda (`modulopdca.suprimentos`). A origem diz ao comprador que a
+        # data vem do plano — e que atrasar a cotação atrasa uma atividade.
+        PLANO = "plano", _("Cronograma da obra (PDCA)")
 
     demanda_id = models.AutoField(primary_key=True)
     # Id estável do documento na rede (o gêmeo espelhado referencia por cópia, não

@@ -1263,7 +1263,16 @@ PDCA_TETO_NIVEIS_APROVACAO: int = 6
 #     atividades são 250 mil linhas de uma obra só. 50 é muito além da prática
 #     (replanejar é ato caro, mensal na obra mal comportada) e é o freio contra
 #     o botão clicado em laço.
+#   - `PDCA_TETO_LIGACOES_EXPANDIDAS` — quantas setas **entre folhas** a rede
+#     pode virar depois de expandir as ligações de fase. Ligar a etapa
+#     "Estrutura" à etapa "Alvenaria" é uma seta na tela e, no grafo do CPM,
+#     uma seta de cada folha de uma para cada folha da outra (40 × 60 = 2.400).
+#     O custo do CPM é O(V+E), e é o E que a ligação de fase multiplica sem o
+#     planejador ver. 50.000 cobre dezenas de ligações de fase entre etapas
+#     grandes e ainda roda em fração de segundo; passar disso é sinal de rede
+#     desenhada no nível errado (ligar a obra inteira à obra inteira).
 PDCA_TETO_ATIVIDADES_POR_CRONOGRAMA: int = 5_000
+PDCA_TETO_LIGACOES_EXPANDIDAS: int = 50_000
 PDCA_PROFUNDIDADE_MAXIMA_WBS: int = 12
 PDCA_TETO_CPM_SINCRONO: int = 5_000
 PDCA_CPM_SEGUNDOS: int = 60

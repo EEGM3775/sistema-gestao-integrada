@@ -10,6 +10,273 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D283 — a retificação seguia errada: duas medições aprovadas, diferença como documento e aditivo sem tela · ✅ corrigido 11/10/2026
+
+Achado pelo dono depois do D282: a retificação ainda não chegava ao Contas a pagar, o contrato mostrava **duas
+medições aprovadas** para o mesmo período, a tela não explicava por que o contrato "não fechava" com R$ 600 a
+menos, o contrato só se via medição a medição, e o aditivo nascia sem ter como pôr linha nenhuma (a tela lia
+`valor_total`, campo que o servidor não manda — o valor vem em `resumo`). Retificadoras retiradas ficavam no
+banco como "canceladas". **Causa:** a retificadora guardava só a **diferença** e somava à original, que
+continuava aprovada; o líquido derivado dependia das duas. **Correção:** a retificadora nasce como cópia
+inteira e guarda a medição corrigida; aprovada, a original vira `retificada` (fora de toda soma; enquanto a
+retificadora sobe a escada, a original sai do acumulado). Título: em aberto → cancelado e reemitido pelo
+líquido inteiro; já pago → **título da diferença** (complemento, ou abatimento do saldo em aberto e devolução
+contra a mesma contraparte por CNPJ/CPF) e aviso **nível 3** (`Notificacao.nivel`, sino com "Agir já"). Retirar
+uma retificadora que não valeu a **apaga** (a migration 0034 apagou as canceladas sem título e converteu as
+existentes para a medição inteira); a aprovada não se cancela. Tela: quadro original | corrigido | diferença e
+conciliação com o efeito no saldo e no ERP; lista com "substituída pela nº X". Parada **Contrato** com a ficha
+inteira (`contratos/{id}/ficha/`). Aditivo: `EditorDeAditivo` (termo, itens existentes, itens novos, antes →
+depois), `cabecalho/`, editar/excluir/retirar, e retenção nova do contrato + retenção própria por item
+(migration 0035). Testes em `RetificacaoTests` e `AditivoTests`.
+
+---
+### D282 — a retificação de medição não chegava ao Contas a pagar e mostrava a diferença como líquido · ✅ corrigido 11/10/2026
+
+Achado pelo dono: retificadora aprovada (bruto R$ 2.600, descontos R$ 600) não gerou título, o título da
+medição antiga seguia aberto e o "Líquido a pagar" mostrava −R$ 600 (a diferença). **Causa:**
+`gerar_titulo_de_medicao` pulava líquido ≤ 0 e `totais_da_medicao` devolvia só o líquido da diferença.
+**Correção:** `totais_da_medicao` passa a devolver `liquido` = líquido da medição corrigida (original +
+diferença; `liquido_diferenca` guarda a parte da retificadora). Ao aprovar a retificadora,
+`_substituir_titulo_da_original` cancela o título da antiga (se sem baixa) e `gerar_titulo_de_medicao` emite o
+novo pelo líquido corrigido; **se a antiga já tinha baixa**, nada é cancelado nem gerado e `Notificacao` vai a
+quem tem `erp.conta_pagar.baixar` (ou `conta_receber`), com o pago × o corrigido. A tela do boletim explica a
+conta (líquido anterior + retificação = corrigido; descontos não devolvem saldo ao contrato); a carteira mostra
+"líquido a pagar" sob o medido; a retificadora deixou de contar como medição a mais na trava da planilha e no
+"N boletins"; a lista de boletins mostra "retificadora da nº X / corrigida pela nº Y" e a composição do
+número. Testes em `RetificacaoTests`.
+
+---
+### D267 — o prazo do plano ignorava feriado: só a tabela, e sem o lugar da obra · ✅ corrigido 09/10/2026
+
+Achado pelo dono no staging (*"o expediente não está considerando feriados"* e, na volta, *"os feriados
+estão em calendário; tem que ser os da localização da obra"*). Dois defeitos somados: o PDCA lia **só a
+tabela** `Feriado` — vazia no staging, porque o `sincronizar_feriados` do beat roda a cada 7 dias contados
+da subida — e, sem UF/IBGE digitados no expediente, só o **nacional**; a obra em Nazaré/BA perdia o 2 de
+Julho que a Agenda mostrava. **Correção:** `feriados_do_periodo` usa a mesma fonte da Agenda e do
+vencimento (`modulocalendar.dias_uteis.feriados_da_localidade`: lei da tabela ou calculada, municipal
+publicado ou projetado) e o lugar vem de `localidade_dos_feriados` — o UF/IBGE do expediente ou o
+endereço da obra pelo `nucleo.geo`. O painel Expediente diz de onde são ("de Nazaré/BA (endereço da
+obra)"); o aviso de base vazia saiu da tela (decisão do dono). O municipal ainda depende do dataset na
+tabela (sem ele, nem publicado nem projetado). Testes em `VersionamentoTests`.
+
+---
+### D268 — "cadastre em Locais" levava a um painel só de leitura · ✅ corrigido 09/10/2026
+
+Achado pelo dono (*"não entendi esses locais"*). O seletor de local do Inspetor, vazio, dizia "cadastre
+em Locais", e o painel Locais só listava — o beco da convenção §12, sem dizer o que é um local.
+**Correção:** o painel explica (onde na obra o serviço acontece; opcional; serve à linha de balanço e a
+apontar por frente), cadastra no topo ou dentro, um por vez ou em série, e exclui; o Inspetor explica e
+leva direto (`?vista=locais`).
+
+---
+### D269 — a esteira e as dependências: destravada sumia, lista em ordem de código · ✅ corrigido 09/10/2026
+
+Achados pelo dono. Na Semana, a trava destravada sumia da esteira e não havia como desfazer; no Inspetor,
+"Depende de" e "Libera" (e as opções de ligar) vinham na ordem do código ("1.10" antes de "1.2"), não na
+da grade. **Correção:** a esteira mantém as destravadas embaixo, riscadas, com reabrir (`reabrir/`); as
+listas seguem a ordem da árvore (`linhasVisiveis`).
+
+---
+### D271 — o feriado lançado depois do cálculo seguia contando como dia de obra, calado · ✅ corrigido 10/10/2026
+
+Achado pelo dono (*"mesmo dia 12 sendo feriado ainda tá contando como obra… tem que ter pelo menos um
+aviso"*). O CPM grava as datas; a exceção nova no expediente só invalidava a lista de expedientes, e a
+versão vigente ou substituída não recalcula — a barra continuava cobrindo o 12/10 sem dizer nada.
+**Correção:** o `gantt/` traz `fora_do_expediente` (`services.datas_fora_do_expediente`): pela invariante
+do CPM, toda folha tem exatamente `duracao_dias` úteis entre início e término; se hoje a conta dá outra,
+o expediente mudou dentro da barra, e os dias que fogem da regra da semana dizem qual feriado/exceção.
+A faixa do Plano cita os dias e as atividades: no rascunho, "Recalcular o prazo"; na versão congelada,
+diz que ela não muda sozinha e que replanejar é o caminho. Mexer numa exceção invalida o Gantt.
+
+---
+### D272 — as parcelas de peso em % não fechavam 100% · ✅ corrigido 10/10/2026
+
+Achado pelo dono. Cada parcela era arredondada sozinha (inteiro acima de 10%): três etapas iguais davam
+33% + 33% + 33%. **Correção:** `pesos.ts` reparte pelo **maior resto**, em décimos, descendo a árvore
+(`fatiasDaObra`): as raízes somam 100,0% e as filhas somam a mãe; a composição da etapa no Inspetor ganhou
+a linha de total.
+
+---
+### D273 — a versão nova do replanejamento abria com o Gantt zerado · ✅ corrigido 10/10/2026
+
+Achado pelo dono (*"o Gantt aparece zerado antes de alguns tipos de alteração"*). `replanejar` (e
+`aplicar_modelo`) copiavam a árvore sem rodar o CPM; as datas só apareciam no primeiro gesto que
+recalculava. **Correção:** `_calcular_se_der` roda o CPM na cópia; se ele recusa (sem expediente), a
+versão nasce assim mesmo e a tela diz por quê.
+
+---
+### D274 — "Excluir" e "Gravar" na planilha contratual davam "Não encontrado." · ✅ corrigido 10/10/2026
+
+Achado pelo dono. O serializer manda a PK como `item_contrato_id` (`fields="__all__"`) e a tela usava
+`item.item_id` — `undefined` — e chamava `/pdca/itens-contrato/undefined/`. **Correção:** tipo e tela
+usam `item_contrato_id`. De quebra, contrato global/administração cuja planilha soma diferente do valor
+fechado ganhou aviso (era o "R$ 7.000 contratados" ao lado de uma linha de R$ 187.500).
+
+---
+### D280 — lançar desconto na medição dava "[object Object]" · ✅ corrigido 10/10/2026
+
+Achado pelo dono. A tela oferecia os tipos `imposto` e `outro`, que o servidor não conhece (`inss`,
+`iss`, `irrf`, `adiantamento`, `material`, `multa`, `outros`): todo desconto voltava recusado, e a
+recusa de uma lista chega como lista de objetos, que virava "[object Object]". **Correção:** tipos
+alinhados ao servidor; a mensagem de erro da Medição achata listas e objetos em texto; "Lançar
+desconto" abre já com uma linha.
+
+---
+### D281 — o Suprimentos não tinha caminho para comprar · ✅ corrigido 10/10/2026
+
+Achado pelo dono (*"continuo sem poder comprar"*). Pedido só nascia de oferta publicada no catálogo
+ou de cotação adjudicada, e o "Compra direta" da aba Pedidos abria sem oferta — sempre "Sem oferta".
+**Correção:** `pedidos/compra_avulsa/` (fornecedor, itens do catálogo ou texto, quantidade, preço →
+pedido aprovado) e o botão "Nova compra" no cockpit e em Pedidos. De quebra, gerar demanda pelo
+orçamento abre sozinha as composições que faltavam (`explodir_pendentes`, sem mexer no preço) — antes
+era ir ao Orçamento explodir linha a linha e voltar.
+
+---
+### D275 — o contrato de medição ficava em rascunho para sempre · ✅ corrigido 10/10/2026
+
+Achado pelo dono. O status do contrato só mudava pela API, e contrato em rascunho não aceita medição:
+a tela não tinha caminho nenhum até o boletim. **Correção:** `contratos/{id}/ativar/`
+(`services.ativar_contrato`: unitário exige planilha; global/administração, valor fechado) e a parada
+**Vigente** no mapa do contrato, com o botão.
+
+---
+### D276 — a planilha contratual: fora de ordem, sem vínculo e meio editável · ✅ corrigido 10/10/2026
+
+Achado pelo dono (*"não aparece em ordem — 01 04 03 02; não vi onde vincular; não dá para editar
+tudo"*). A lista vinha na ordem de criação, a linha só editava quantidade e preço, e o vínculo com a
+atividade ou o item orçado não tinha tela. **Correção:** ordem natural por código, linha editável
+inteira com o vínculo escolhido na própria linha, e entrada do orçamento, do plano, colada do Excel
+ou avulsa (`fontes-da-planilha/`, `incluir-na-planilha/`). "Deixar para depois" virou "Cancelar".
+
+---
+### D277 — inventário sem excluir contagem nem reabrir · ✅ corrigido 10/10/2026
+
+Achado pelo dono. Fechar era um caminho sem volta, e o ledger guarda o ajuste só em valor absoluto —
+reabrir não saberia o que estornar. **Correção:** `ItemInventario.ajuste_aplicado` (com sinal) gravado
+no fechamento; `reabrir/` estorna sobre o saldo de hoje e recusa saldo negativo; excluir contagem e
+linha só com o inventário aberto (recusa no backend, botões na tela).
+
+---
+### D278 — não havia onde cadastrar a conta da NFE.io · ✅ corrigido 10/10/2026
+
+Achado pelo dono (*"como vou cadastrar minha API?"*, com a NFS-e parada em "Processando"). A chave era
+global, do ambiente, e não havia tela: sem ela a emissão tenta três vezes e vira erro (ou fica em
+"Processando" se nenhum worker consome a fila). **Correção:** `IntegracaoFiscal` por empresa, chave
+cifrada (`nucleo.cifra`), tela em ERP › Configurações, e emissão/consulta/cancelamento usando a conta
+da empresa (`cliente_do_tenant`).
+
+---
+### D279 — número de NF de entrada era único por empresa, não por fornecedor · ✅ corrigido 10/10/2026
+
+Achado ao abrir a entrada de NF-e pelo XML: a constraint `nf_numero_unico_por_tenant` recusaria a NF
+1234 de um segundo fornecedor. Numeração de nota é do emitente. **Correção:** unicidade por
+(empresa, fornecedor, número) — migration ERP 0022.
+
+---
+### D264 — replanejar abria rascunho que a tela não mostrava, e a obra juntava rascunhos · ✅ corrigido 09/10/2026
+
+Achado pelo dono no staging (*"continua aparecendo a v1, quando já mudei 3 vezes"*): a obra 4 tinha a v1
+vigente e **v2, v3 e v4 em rascunho**. `usePlanoCorrente` sempre preferia o vigente, então depois de
+replanejar o posto Plano continuava na v1 congelada; a pessoa replanejava de novo e nascia outra cópia.
+O que se editava (restrição) e o que não (estrutura) parecia arbitrário. **Correção:** o posto Plano usa
+`usePlanoEmEdicao` (o rascunho mais novo que o vigente, ou a versão escolhida no seletor), replanejar
+leva a tela à versão nova, faixa diz o que cada versão é (ver o vigente, descartar rascunho, abrir o
+rascunho), e o servidor recusa replanejar com rascunho aberto. As sobras do staging (v2, v3) aparecem
+no seletor como "sobra — pode descartar". Testes em `VersionamentoTests`.
+
+---
+### D266 — restrição não atravessava versões: publicar deixava o make-ready preso à anterior · ✅ corrigido 09/10/2026
+
+Visto ao corrigir o D264. A restrição pende da atividade, e o replanejamento copia a árvore com ids
+novos: publicar a v2 deixava as travas abertas na v1 — a semana da v2 não as via e comprometia o que
+estava travado. **Correção:** `publicar` leva as **abertas** à atividade gêmea (mesmo código EAP) da
+versão nova (`_levar_restricoes_abertas`); a resolvida fica onde nasceu. No rascunho, o Inspetor e o
+Gantt mostram as da gêmea vigente. Teste `test_publicar_leva_as_restricoes_abertas_para_a_versao_nova`.
+
+---
+### D263 — data digitada no Inspetor dava erro · ✅ corrigido 09/10/2026
+
+Achado pelo dono. O `<input type="date">` gravava a cada `onChange`, e quem digita o ano manda
+"0002-…", "0020-…", "0202-…" antes de "2026-…": cada um ia ao servidor (fora da faixa) e disparava o
+CPM. **Correção:** `CampoData` grava só data inteira e na faixa (o clique no calendário continua
+imediato); pela metade ao sair, volta ao valor gravado. Usado na data mínima do Inspetor e no início
+do plano.
+
+---
+### D265 — seta FS sem folga voltava por cima da barra e chegava ao contrário · ✅ corrigido 09/10/2026
+
+Achado pelo dono. Com a sucessora começando logo após a antecessora, a rota (`H` além do fim, `V`,
+`H` de volta) fazia a seta entrar no início **pela direita**. **Correção:** `rotaDaSeta` — entra por
+trás no início (FS, SS) e pela frente no término (FF, SF); sem vertical única possível, cruza pela
+fronteira entre as linhas.
+
+---
+### D262 — recolher uma etapa jogava as filhas para o fim do plano · ✅ corrigido 09/10/2026
+
+Achado pelo dono no staging, no mesmo dia da montagem nova. `linhasVisiveis` (`arvore.ts`) tinha uma
+rede de segurança para atividade órfã (pai fora da lista): tudo que não tinha sido **mostrado** voltava
+no fim, no nível zero. Só que a filha de uma etapa recolhida também não é mostrada — e passava por
+órfã. Recolher, em vez de esconder, mudava as filhas de lugar. **Correção:** a árvore conta as
+atividades **alcançadas** a partir da raiz (mostradas ou escondidas), e só a não alcançada é órfã. O
+estado de recolhido passou a ser guardado por plano. Coberto pelo E2E `pdca_plano_montagem_browser`.
+
+---
+### D260 — o plano não calculava prazo e não havia onde cadastrar o expediente · ✅ corrigido 09/10/2026
+
+Achado ao refazer a montagem do plano (queixa do dono: *"hoje só consigo criar tarefa e mais nada"*).
+O CPM recusa calcular sem `CalendarioTrabalho` — e a tela **não tinha cadastro de expediente em lugar
+nenhum**: o painel Expediente só listava, e com a lista vazia dizia "esta empresa ainda não cadastrou
+expediente" sem botão (o beco da [convenção §12](frontend-convencoes.md)). Numa empresa nova, como a
+EEGM no staging, o plano nascia sem prazo e não havia como dar prazo a ele.
+**Correção:** `FormularioDeExpediente` (dias, jornada, feriados, da obra ou da empresa) no painel
+Expediente e no passo 1 do assistente; exceções (recesso, chuva, mutirão) se cadastram e removem no
+cartão do expediente; o topo do posto escolhe o expediente do plano, com "+ Cadastrar expediente…".
+Coberto pelo E2E `pdca_plano_montagem_browser_test.py`.
+
+---
+### D261 — o motivo da exceção do calendário nunca aparecia · ✅ corrigido 09/10/2026
+
+`ExcecaoCalendario` grava `motivo`; o tipo do frontend dizia `descricao`, e o painel lia
+`e.descricao` — sempre `undefined`. A lista de exceções mostrava data e "para/trabalha" sem dizer por
+quê. **Correção:** o tipo e o painel passaram a ler `motivo`.
+
+---
+### D192 — o ranking de causas não tinha causa de segurança, e a semana perdida por interdição caía em "externo" · ✅ corrigido 07/10/2026
+
+`CausaNaoCumprimento.Categoria` é lista fechada (planejamento, mão de obra, material, equipamento,
+projeto, externo, qualidade) e o catálogo de fábrica não tinha causa de segurança. Com a PDCA.8, a
+frente interditada por risco sai do quadro da semana, e o não cumprimento ia para a causa mais próxima
+— `EXTERNO`, ao lado de "chuva". O ranking, que existe para apontar o que a empresa tem de consertar,
+empurrava para "não foi culpa nossa" exatamente o caso em que foi.
+**Correção:** causa de fábrica nova, `SEG-INTERD — Frente interditada por risco de segurança`, na
+categoria **planejamento** (liberar a frente com segurança é trabalho do make-ready). Sem nono valor no
+enum, sem migration e sem mexer no eixo dos gráficos de PPC já publicados. Como `semear_causas_de_fabrica`
+é idempotente e roda a cada semana aberta, a empresa que já tinha o catálogo ganha a causa na próxima
+programação. Testes novos em `TetosDoLastPlannerNoServicoTests`: a causa existe, é de fábrica e não é
+`EXTERNO`; a empresa antiga a recebe na semeadura seguinte.
+
+### D193 — `obra_nome` sempre nulo em cinco recursos do SIL · ✅ corrigido 07/10/2026
+
+Achado ao construir o seam do EPI da PDCA.8, registrado só para `EntregaEPISerializer` — mas o mesmo
+`source="obra.nome"` estava em **cinco** serializers de `modulosil/serializers.py`: local de estoque,
+movimentação, requisição, entrega de EPI e empréstimo de ferramenta. `Obra` tem `nome_obra`, não
+`nome`; o DRF engolia o `AttributeError` e, com `default=None`, devolvia `null` em toda linha. **Na
+tela:** a gestão do SIL agrupava todo local em "— sem obra —" e a operação mostrava "—" na coluna de
+obra das movimentações e requisições, inclusive das que tinham obra.
+**Correção:** `source="obra.nome_obra"` nos cinco. Teste novo: `ObraNomeTests` busca o detalhe dos
+cinco recursos com obra e exige o nome dela.
+
+### D191 — encerrar a não-conformidade não removia a restrição que ela abriu · ✅ corrigido 03/10/2026
+
+`services.encerrar_nc` só mudava status e carimbos. NC crítica travava a atividade, alguém tratava,
+verificava a eficácia e encerrava — **e a frente seguia fora do quadro da semana**, sem nada na tela
+explicando por quê; com o tempo o teto de restrições abertas por obra (500) estouraria por entulho.
+**Correção:** `encerrar_nc` passou a **recusar** fechar enquanto a restrição que a NC abriu estiver
+aberta, e diz qual é — a mesma trava que `encerrar_ocorrencia` já tinha. Remover em cascata seria pior:
+declarar que o risco cessou libera o serviço, e isso é ato de quem responde pela obra
+(`pdca.restricao.remover`). Teste novo: `SeamDoLastPlannerTests.test_nao_encerra_por_cima_de_frente_interditada`
+(recusa, a NC segue aberta; removida a restrição, encerra).
+
 ### D259 — pela ponte, a sessão caía a cada recarga de página · ✅ corrigido 03/10/2026
 
 Relato do dono, no celular: "toda ação volta pra área de login". O log do porteiro mostrou o padrão —

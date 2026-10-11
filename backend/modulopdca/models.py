@@ -55,6 +55,7 @@ Planta: docs/modulos/modulopdca.md §4.1, §4.2, §4.3, §4.4 e §4.5.
 from __future__ import annotations
 
 from django.contrib.contenttypes.fields import GenericRelation
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
@@ -384,6 +385,17 @@ class Cronograma(TenantScopedModel):
     #: Quando o CPM rodou pela última vez sobre esta versão. Nulo = as datas das
     #: atividades ainda não são resultado de cálculo nenhum, e a tela precisa
     #: dizer isso em vez de desenhar barras que parecem calculadas.
+    #: De qual versão do orçamento as etapas deste plano vieram, e o carimbo do
+    #: cronograma dela naquele momento. Versão nova ou carimbo mais novo lá =
+    #: "o cronograma do orçamento mudou" (decisão do dono: copia e avisa).
+    orcamento_origem = models.ForeignKey(
+        "moduloorcamento.Orcamento", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="planos_pdca", verbose_name=_("Orçamento de origem"),
+    )
+    cronograma_orcamento_em = models.DateTimeField(
+        null=True, blank=True, editable=False,
+        verbose_name=_("Carimbo do cronograma do orçamento"),
+    )
     calculado_em = models.DateTimeField(
         null=True, blank=True, editable=False, verbose_name=_("Calculado em"),
     )
@@ -575,10 +587,24 @@ class Atividade(TenantScopedModel):
         max_digits=14, decimal_places=4, null=True, blank=True,
         verbose_name=_("Peso informado"),
     )
+    #: A atividade **é a etapa do orçamento** (decisão do dono, 10/10/2026: do
+    #: orçamento vêm só etapas). O `peso_informado` dela é o valor da etapa no
+    #: cronograma do orçamento, em reais — e por isso conta no avanço financeiro
+    #: como orçado, e não como peso digitado. `atualizar_do_orcamento` o refaz.
+    peso_do_orcamento = models.BooleanField(
+        default=False, verbose_name=_("Peso vem do orçamento"),
+    )
 
     responsavel = models.ForeignKey(
         "rh.Funcionario", null=True, blank=True, on_delete=models.SET_NULL,
         related_name="atividades_pdca", verbose_name=_("Responsável"),
+    )
+
+    #: Quantos dias antes do início **todo o material desta atividade** tem de
+    #: estar na obra — a exceção do planejador que vence o padrão da obra e o do
+    #: insumo (`AntecedenciaDeCompra`). Nulo = segue o cadastro.
+    antecedencia_compra_dias = models.PositiveSmallIntegerField(
+        null=True, blank=True, verbose_name=_("Antecedência de compra (dias)"),
     )
 
     # --- Derivados do CPM (services.calcular_cpm) ---------------------------
@@ -624,6 +650,104 @@ class Atividade(TenantScopedModel):
         `tipo_linha` divergiria da árvore no dia em que alguém pendurasse um
         filho numa analítica."""
         return not self.filhos.exists()
+
+
+class AntecedenciaDeCompra(TenantScopedModel):
+    """Quantos dias antes da atividade o material tem de **chegar** à obra.
+
+    *(Decisão do dono, 09/10/2026: "quem define é o planejador, com padrão e
+    alteração por item".)* Uma linha com `item` nulo é o **padrão da obra**; uma
+    linha com `item` é a exceção daquele insumo (aço 20 d, areia 3 d). Acima das
+    duas, a atividade pode sobrepor (`Atividade.antecedencia_compra_dias`).
+
+    **Pende da obra, e não do cronograma**: replanejar gera ids novos de plano,
+    e o prazo de reposição do aço não muda porque o plano mudou de versão. Sem
+    cadastro nenhum, vale zero — o material chega no dia do início — e a tela
+    pede o padrão em vez de inventar um.
+    """
+
+    antecedencia_id = models.AutoField(primary_key=True)
+    obra = models.ForeignKey(
+        "obras.Obra", on_delete=models.CASCADE, related_name="antecedencias_compra",
+        verbose_name=_("Obra"),
+    )
+    item = models.ForeignKey(
+        "catalogo.Item", null=True, blank=True, on_delete=models.CASCADE,
+        related_name="+", verbose_name=_("Insumo (vazio = padrão da obra)"),
+    )
+    dias = models.PositiveSmallIntegerField(verbose_name=_("Dias de antecedência"))
+    atualizado_em = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _("Antecedência de compra")
+        verbose_name_plural = _("Antecedências de compra")
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "obra", "item"], condition=models.Q(item__isnull=False),
+                name="pdca_antecedencia_unica_por_insumo",
+            ),
+            models.UniqueConstraint(
+                fields=["tenant", "obra"], condition=models.Q(item__isnull=True),
+                name="pdca_antecedencia_padrao_unico",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.dias} d · obra {self.obra_id} · {'padrão' if self.item_id is None else self.item_id}"
+
+
+class MaterialDaAtividade(TenantScopedModel):
+    """O material que a atividade consome, **informado no plano** — sem orçamento.
+
+    *Pergunta do dono, 10/10/2026:* "se eu um dia não tiver orçamento, quer dizer
+    que não posso fazer pedido?". O cronograma puxava a compra só pelas
+    composições do orçamento; obra sem orçamento (ou serviço que ficou fora dele)
+    não gerava necessidade nenhuma. Aqui o planejador diz "esta atividade gasta
+    120 sacos de cimento", e a necessidade de compra (`suprimentos.py`) trata a
+    linha como trata a do orçamento: data pelo início, abatida pelo avanço, pelo
+    estoque e pelo que já foi pedido.
+
+    O item do catálogo é opcional (o texto basta para pedir), mas só com ele o
+    estoque e os pedidos abatem a quantidade.
+    """
+
+    class Categoria(models.TextChoices):
+        MATERIAL = "material", _("Material")
+        EQUIPAMENTO = "equipamento", _("Equipamento")
+
+    material_id = models.AutoField(primary_key=True)
+    atividade = models.ForeignKey(
+        "Atividade", on_delete=models.CASCADE, related_name="materiais",
+        verbose_name=_("Atividade"),
+    )
+    item = models.ForeignKey(
+        "catalogo.Item", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="+", verbose_name=_("Item do catálogo"),
+    )
+    descricao = models.CharField(max_length=255, verbose_name=_("Descrição"))
+    unidade = models.CharField(max_length=20, verbose_name=_("Unidade"))
+    categoria = models.CharField(
+        max_length=12, choices=Categoria.choices, default=Categoria.MATERIAL,
+        verbose_name=_("Categoria"),
+    )
+    #: O total da atividade inteira; o que já foi executado sai da conta.
+    quantidade = models.DecimalField(max_digits=14, decimal_places=3, verbose_name=_("Quantidade"))
+    custo_unitario = models.DecimalField(
+        max_digits=15, decimal_places=4, null=True, blank=True, verbose_name=_("Custo unitário"),
+    )
+
+    class Meta:
+        verbose_name = _("Material da atividade")
+        verbose_name_plural = _("Materiais das atividades")
+        ordering = ["atividade_id", "descricao"]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(quantidade__gt=0), name="pdca_material_atividade_qtd_positiva",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.descricao} · {self.quantidade} {self.unidade}"
 
 
 class Precedencia(TenantScopedModel):
@@ -917,6 +1041,22 @@ class NaturezaRetencao(models.TextChoices):
     TECNICA = "tecnica", _("Retenção técnica")
 
 
+class LadoContrato(models.TextChoices):
+    """De que lado da obra o contrato está (decisão do dono, 10/10/2026).
+
+    - **custo** — com o **empreiteiro**: a medição gera conta a pagar;
+    - **receita** — com o **contratante** (cliente público ou privado que
+      encomendou a obra): a medição gera conta a receber.
+
+    É o mesmo documento — itens, aditivos, medição, retenção, reajuste —, e por
+    isso é o mesmo modelo: duplicar a máquina de medição para o lado da receita
+    criaria duas regras para a mesma conta, que divergiriam no primeiro ajuste.
+    """
+
+    CUSTO = "custo", _("Empreiteiro (custo)")
+    RECEITA = "receita", _("Contratante (receita)")
+
+
 class ContratoObra(TenantScopedModel, Excluivel):
     """O que foi combinado com o empreiteiro — e a régua contra a qual toda
     medição desta obra é conferida.
@@ -954,9 +1094,29 @@ class ContratoObra(TenantScopedModel, Excluivel):
         "obras.Obra", on_delete=models.PROTECT, related_name="contratos_pdca",
         verbose_name=_("Obra"),
     )
+    lado = models.CharField(
+        max_length=8, choices=LadoContrato.choices, default=LadoContrato.CUSTO,
+        verbose_name=_("Lado"),
+    )
+    #: Do lado do **custo**, o empreiteiro; do lado da **receita**, vazio — a
+    #: parte é o `cliente`. A constraint `pdca_contrato_parte_conforme_lado`
+    #: cobra que exista exatamente uma das duas.
     fornecedor = models.ForeignKey(
-        "fornecedores.Fornecedor", on_delete=models.PROTECT,
-        related_name="contratos_pdca", verbose_name=_("Empreiteiro"),
+        "fornecedores.Fornecedor", on_delete=models.PROTECT, related_name="contratos_pdca",
+        null=True, blank=True, verbose_name=_("Empreiteiro"),
+    )
+    cliente = models.ForeignKey(
+        "clientes.Cliente", on_delete=models.PROTECT, related_name="contratos_pdca",
+        null=True, blank=True, verbose_name=_("Contratante"),
+    )
+
+    #: **Medição × compra de serviço** *(decisão do dono, 09/10/2026)*: a
+    #: empreitada ou locação que o Suprimentos contratou (o pedido de serviço)
+    #: conversa com o que a medição paga — pedido × medido × saldo, nos dois
+    #: módulos. `SET_NULL` porque o pedido é documento do Suprimentos.
+    pedido_scm = models.ForeignKey(
+        "moduloscm.PedidoCompra", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="contratos_pdca", verbose_name=_("Pedido de serviço (Suprimentos)"),
     )
 
     #: O número do contrato **da empresa**, não o nosso id. É por ele que o
@@ -1031,6 +1191,26 @@ class ContratoObra(TenantScopedModel, Excluivel):
         default=30, verbose_name=_("Prazo de pagamento (dias)"),
     )
 
+    # --- Reajuste por fórmula paramétrica (decisão do dono, 10/10/2026) ------
+    #
+    # Saiu do Orçamento: reajuste é cláusula de contrato. Sem parcelas
+    # (`ParcelaReajusteContrato`) o contrato é a preço fixo e nada se reajusta.
+    # O motor é `nucleo/reajuste.py`, sobre a série única de índices.
+    reajuste_data_base = models.DateField(
+        null=True, blank=True, verbose_name=_("Data-base do reajuste"),
+        help_text=_("Em regra a data da proposta. O primeiro aniversário conta daqui."),
+    )
+    reajuste_periodicidade_meses = models.PositiveSmallIntegerField(
+        default=12, verbose_name=_("Periodicidade do reajuste (meses)"),
+    )
+    reajuste_parcela_fixa = models.DecimalField(
+        max_digits=7, decimal_places=6, default=0,
+        verbose_name=_("Parcela não reajustável (a)"),
+    )
+    reajuste_casas = models.PositiveSmallIntegerField(
+        default=4, verbose_name=_("Casas do fator (truncado)"),
+    )
+
     status = models.CharField(
         max_length=10, choices=Status.choices, default=Status.RASCUNHO,
         verbose_name=_("Status"),
@@ -1071,6 +1251,13 @@ class ContratoObra(TenantScopedModel, Excluivel):
             # nulo ali é divisão por nada no meio de um cálculo de dinheiro.
             models.CheckConstraint(
                 condition=(
+                    models.Q(lado=LadoContrato.CUSTO, fornecedor__isnull=False, cliente__isnull=True)
+                    | models.Q(lado=LadoContrato.RECEITA, cliente__isnull=False, fornecedor__isnull=True)
+                ),
+                name="pdca_contrato_parte_conforme_lado",
+            ),
+            models.CheckConstraint(
+                condition=(
                     models.Q(regime=RegimeContrato.UNITARIO, valor_global__isnull=True)
                     | models.Q(regime=RegimeContrato.GLOBAL, valor_global__isnull=False)
                     | models.Q(
@@ -1087,6 +1274,53 @@ class ContratoObra(TenantScopedModel, Excluivel):
 
     def __str__(self):
         return f"{self.numero} · {self.objeto[:40]}"
+
+    @property
+    def parte(self):
+        """Com quem é o contrato: o empreiteiro ou o contratante."""
+        return self.cliente if self.lado == LadoContrato.RECEITA else self.fornecedor
+
+    @property
+    def parte_nome(self) -> str:
+        parte = self.parte
+        if parte is None:
+            return ""
+        return (getattr(parte, "razao_social", "") or getattr(parte, "nome", "")
+                or getattr(parte, "nome_completo", "") or str(parte))
+
+
+class ParcelaReajusteContrato(TenantScopedModel):
+    """Uma parcela `pᵢ × Iᵢ` da fórmula de reajuste do contrato.
+
+    O índice é o da série **única** (`nucleo.IndiceEconomico`) — o mesmo INCC
+    que corrige o saldo do comprador corrige a medição do empreiteiro.
+    """
+
+    parcela_id = models.AutoField(primary_key=True)
+    contrato = models.ForeignKey(
+        ContratoObra, on_delete=models.CASCADE, related_name="parcelas_reajuste",
+        verbose_name=_("Contrato"),
+    )
+    indice = models.ForeignKey(
+        "nucleo.IndiceEconomico", on_delete=models.PROTECT, related_name="+",
+        verbose_name=_("Índice"),
+    )
+    peso = models.DecimalField(max_digits=7, decimal_places=6, verbose_name=_("Peso (p)"))
+    rotulo = models.CharField(max_length=80, blank=True, verbose_name=_("Rótulo"),
+                              help_text=_("Mão de obra, materiais, equipamentos…"))
+
+    class Meta:
+        verbose_name = _("Parcela de reajuste")
+        verbose_name_plural = _("Parcelas de reajuste")
+        ordering = ["contrato", "parcela_id"]
+        constraints = [
+            models.UniqueConstraint(fields=["contrato", "indice"], name="pdca_reajuste_indice_unico"),
+            models.CheckConstraint(condition=models.Q(peso__gt=0) & models.Q(peso__lte=1),
+                                   name="pdca_reajuste_peso_entre_zero_e_um"),
+        ]
+
+    def __str__(self):
+        return f"{self.rotulo or self.indice_id}: {self.peso}"
 
 
 class ItemContrato(TenantScopedModel):
@@ -1159,6 +1393,16 @@ class ItemContrato(TenantScopedModel):
     )
     preco_unitario = models.DecimalField(
         max_digits=15, decimal_places=4, verbose_name=_("Preço unitário"),
+    )
+    #: **Retenção própria do item** *(decisão do dono, 11/10/2026)* — o aditivo
+    #: pode trazer item com regra de caução diferente da do contrato. Nula =
+    #: vale a do contrato. A medição copia o número para a linha no dia em que
+    #: nasce (`ItemMedicao.retencao_percentual`), pelo mesmo motivo do
+    #: percentual geral: mudar a regra depois não reescreve medição paga.
+    retencao_percentual = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        verbose_name=_("Retenção própria (%)"),
     )
 
     observacao = models.TextField(blank=True, verbose_name=_("Observação"))
@@ -1286,6 +1530,14 @@ class AditivoContrato(TenantScopedModel, Excluivel):
     nova_data_fim = models.DateField(
         null=True, blank=True, verbose_name=_("Nova data de fim"),
     )
+    #: **Nova retenção do contrato** *(decisão do dono, 11/10/2026)*. Aprovado o
+    #: aditivo, ela passa a ser a cláusula — e vale para as medições que nascem
+    #: depois. Nula = o aditivo não mexe na retenção.
+    retencao_percentual_nova = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        verbose_name=_("Nova retenção do contrato (%)"),
+    )
 
     status = models.CharField(
         max_length=12, choices=Status.choices, default=Status.RASCUNHO,
@@ -1392,6 +1644,13 @@ class ItemAditivo(TenantScopedModel):
     unidade_nova = models.CharField(
         max_length=20, blank=True, verbose_name=_("Unidade do item novo"),
     )
+    #: A retenção própria que esta linha dá ao item (`ItemContrato.retencao_percentual`),
+    #: escrita quando o aditivo é aprovado. Nula = não mexe.
+    retencao_percentual = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        verbose_name=_("Retenção própria do item (%)"),
+    )
 
     observacao = models.TextField(blank=True, verbose_name=_("Observação"))
 
@@ -1475,6 +1734,10 @@ class Medicao(TenantScopedModel, Excluivel):
         APROVADA = "aprovada", _("Aprovada")
         REPROVADA = "reprovada", _("Reprovada")
         CANCELADA = "cancelada", _("Cancelada")
+        #: A aprovada que uma retificadora **substituiu** *(decisão do dono,
+        #: 11/10/2026)*. Fica legível, fora de toda soma; a que vale é a
+        #: retificadora, que guarda a medição corrigida inteira.
+        RETIFICADA = "retificada", _("Retificada")
 
     medicao_id = models.AutoField(primary_key=True)
 
@@ -1530,6 +1793,20 @@ class Medicao(TenantScopedModel, Excluivel):
     #: O seam frouxo para o ERP — id da `ContaPagar` gerada na aprovação.
     conta_pagar_ref = models.PositiveIntegerField(
         null=True, blank=True, verbose_name=_("Ref. da conta a pagar (ERP)"),
+    )
+    #: Do lado da receita, o título é a receber (`moduloerp.ContaReceber`).
+    conta_receber_ref = models.PositiveIntegerField(
+        null=True, blank=True, verbose_name=_("Ref. da conta a receber (ERP)"),
+    )
+    #: O acréscimo do reajuste sobre o bruto do período — **guardado**, ao
+    #: contrário do bruto, porque depende do índice publicado no dia: a medição
+    #: aprovada não pode mudar de valor quando o IBGE revisa a série.
+    valor_reajuste = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0, verbose_name=_("Reajuste do período"),
+    )
+    reajuste_memoria = models.JSONField(default=dict, blank=True, verbose_name=_("Memória do reajuste"))
+    reajuste_provisorio = models.BooleanField(
+        default=False, verbose_name=_("Reajuste com índice provisório"),
     )
 
     #: Rótulos duráveis, no molde do `ApontamentoAvanco.apontado_por`: o
@@ -1596,6 +1873,7 @@ class Medicao(TenantScopedModel, Excluivel):
         reaproveitar número de medição, que é o que uma auditoria procura."""
         return self.status in (
             self.Status.APROVADA, self.Status.REPROVADA, self.Status.CANCELADA,
+            self.Status.RETIFICADA,
         )
 
 
@@ -1669,6 +1947,13 @@ class ItemMedicao(TenantScopedModel):
         max_length=8, choices=Origem.choices, default=Origem.AVANCO,
         verbose_name=_("Origem da linha"),
     )
+    #: A retenção própria do item **no dia em que a linha nasceu** — nula = a
+    #: da medição (`Medicao.retencao_percentual_aplicado`).
+    retencao_percentual = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        verbose_name=_("Retenção própria (%)"),
+    )
     observacao = models.TextField(blank=True, verbose_name=_("Observação"))
 
     class Meta:
@@ -1683,9 +1968,9 @@ class ItemMedicao(TenantScopedModel):
                 fields=["medicao", "item_contrato"],
                 name="pdca_item_medicao_unico_por_medicao",
             ),
-            # Quantidade negativa **é** permitida, e só aqui: é como a
-            # retificadora devolve quantidade medida a mais. O piso de zero mora
-            # no acumulado, que o serviço confere — não nesta linha isolada.
+            # A quantidade negativa é recusada no serviço (`reescrever_linhas`):
+            # desde 11/10/2026 a retificadora guarda a medição corrigida
+            # inteira, e medir para menos é escrever o número certo.
             models.CheckConstraint(
                 condition=models.Q(preco_unitario__gte=0),
                 name="pdca_item_medicao_preco_nao_negativo",
@@ -1874,6 +2159,10 @@ class LiberacaoRetencao(TenantScopedModel, Excluivel):
     conta_pagar_ref = models.PositiveIntegerField(
         null=True, blank=True, verbose_name=_("Ref. da conta a pagar (ERP)"),
     )
+    #: Do lado da receita, a caução que o contratante devolve vira conta a receber.
+    conta_receber_ref = models.PositiveIntegerField(
+        null=True, blank=True, verbose_name=_("Ref. da conta a receber (ERP)"),
+    )
     solicitada_por = models.CharField(
         max_length=150, blank=True, verbose_name=_("Solicitada por"),
     )
@@ -2054,6 +2343,23 @@ class Restricao(TenantScopedModel, Excluivel):
     #: que transforma o log de restrição em memória da obra.
     nota_remocao = models.TextField(
         blank=True, verbose_name=_("Como foi removida"),
+    )
+
+    #: --- A volta atrás: a trava que voltou ---------------------------------
+    #:
+    #: O material "chegou" e era o errado; o clique em *Resolvida* foi na linha
+    #: de baixo. A restrição removida volta a ser aberta — **registrada, não
+    #: apagada**, a mesma régua da semana reaberta: quem lê o log vê que ela
+    #: voltou e quantas vezes. A nota da última remoção fica (é a história),
+    #: e o tempo de destravar passa a contar de novo a partir da reabertura.
+    reaberta_em = models.DateTimeField(
+        null=True, blank=True, verbose_name=_("Reaberta em"),
+    )
+    reaberta_por = models.CharField(
+        max_length=150, blank=True, verbose_name=_("Reaberta por"),
+    )
+    vezes_reaberta = models.PositiveSmallIntegerField(
+        default=0, verbose_name=_("Vezes reaberta"),
     )
 
     class Meta:
@@ -2326,6 +2632,59 @@ class ProgramacaoSemanal(TenantScopedModel, Excluivel):
         return self.status == self.Status.RASCUNHO
 
 
+class EquipeObra(TenantScopedModel):
+    """A equipe que assume compromissos no quadro da semana — **uma composição**.
+
+    *Decisão do dono, 09/10/2026:* "a equipe na semana deveria ser uma
+    composição (fornecedores e funcionários), não uma escrita". Até aqui a
+    coluna do quadro era o texto que alguém digitou: "Equipe do Zé" não dizia
+    quem é o Zé, nem que empreiteira estava junto — e o mesmo time virava duas
+    colunas na semana em que alguém escreveu "Eq. Zé".
+
+    É da **obra**, não da semana: a composição atravessa as semanas, e o quadro
+    novo já nasce com as colunas de quem trabalha ali. Funcionário é do RH;
+    fornecedor é a empreiteira (o mesmo cadastro do contrato de medição).
+
+    O **nome** continua existindo e é o rótulo que viaja no cartão
+    (`ItemProgramacao.responsavel`): é ele que o encarregado procura no celular.
+    Vazio, nasce dos membros ("Zé Silva + Construtora X").
+    """
+
+    equipe_id = models.AutoField(primary_key=True)
+    obra = models.ForeignKey(
+        "obras.Obra", on_delete=models.CASCADE, related_name="equipes_pdca",
+        verbose_name=_("Obra"),
+    )
+    #: `default=""` não é enfeite: `nome` está numa `UniqueConstraint`, e o DRF
+    #: torna obrigatório todo campo de constraint sem default — e o nome vazio
+    #: é o que pede ao serializer para compô-lo dos membros.
+    nome = models.CharField(max_length=150, default="", verbose_name=_("Nome"))
+    funcionarios = models.ManyToManyField(
+        "rh.Funcionario", blank=True, related_name="equipes_pdca",
+        verbose_name=_("Funcionários"),
+    )
+    fornecedores = models.ManyToManyField(
+        "fornecedores.Fornecedor", blank=True, related_name="equipes_pdca",
+        verbose_name=_("Fornecedores"),
+    )
+    ativa = models.BooleanField(default=True, verbose_name=_("Ativa"))
+    criado_em = models.DateTimeField(auto_now_add=True)
+    atualizado_em = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _("Equipe da obra")
+        verbose_name_plural = _("Equipes da obra")
+        ordering = ["nome"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "obra", "nome"], name="pdca_equipe_nome_unico_por_obra",
+            ),
+        ]
+
+    def __str__(self):
+        return self.nome
+
+
 class ItemProgramacao(TenantScopedModel):
     """Um **compromisso** da semana — uma atividade, num local, com um dono.
 
@@ -2373,6 +2732,13 @@ class ItemProgramacao(TenantScopedModel):
     responsavel = models.CharField(
         max_length=150, blank=True, verbose_name=_("Responsável"),
     )
+    #: A composição que assume (funcionários e fornecedores). Com ela, o
+    #: `responsavel` é o nome dela — o serializer mantém os dois juntos.
+    #: `SET_NULL`: desfazer a equipe não apaga a aposta que ela fez.
+    equipe = models.ForeignKey(
+        EquipeObra, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="compromissos", verbose_name=_("Equipe"),
+    )
 
     #: **Quanto** o time se compromete a avançar nesta semana, em pontos
     #: percentuais da atividade. É delta, não acumulado — a mesma régua do
@@ -2384,6 +2750,14 @@ class ItemProgramacao(TenantScopedModel):
     percentual_previsto = models.DecimalField(
         max_digits=6, decimal_places=2, null=True, blank=True,
         verbose_name=_("Avanço previsto na semana (%)"),
+    )
+
+    #: A requisição de material que o compromisso pediu ao almoxarifado
+    #: (`suprimentos.pedir_material_da_semana`) — uma por cartão. `SET_NULL`
+    #: porque a requisição é documento do Estoque e pode ser apagada lá.
+    requisicao_sil = models.ForeignKey(
+        "modulosil.Requisicao", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="compromissos_pdca", verbose_name=_("Requisição de material"),
     )
 
     #: --- O peso do compromisso, e de onde ele veio ---------------------------
@@ -2446,6 +2820,18 @@ class ItemProgramacao(TenantScopedModel):
     )
     vezes_arrastado = models.PositiveSmallIntegerField(
         default=0, verbose_name=_("Semanas arrastado"),
+    )
+
+    #: **Quanto da atividade está concluído no fim da semana** — acumulado, em
+    #: %, dito no julgamento. *Decisão do dono, 09/10/2026:* "em julgar semana
+    #: era para colocar a porcentagem concluída, não se saiu ou não". O número
+    #: faz duas coisas (`services.julgar_itens`): vira **apontamento de avanço**
+    #: (a diferença para o que o campo já apontou — o físico da obra anda com o
+    #: julgamento) e decide o `cumprido` do PPC, comparado à meta da semana. O
+    #: PPC continua binário, que é a definição dele; só deixou de ser digitado.
+    percentual_concluido = models.DecimalField(
+        max_digits=6, decimal_places=2, null=True, blank=True,
+        verbose_name=_("Concluído no fim da semana (%)"),
     )
 
     #: `None` até o encerramento — ver a docstring da classe.

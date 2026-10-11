@@ -23,6 +23,20 @@
 
 ---
 
+## ⏸ Adiados para o final do desenvolvimento
+
+**Não trabalhar agora** — são pré-produção ou decisão comercial, e o projeto está em dev. Os relatos
+continuam abaixo, onde estão; a ordem do que fazer agora está em [roadmap.md](roadmap.md#foco-atual--desenvolvimento).
+
+| Achado | Natureza |
+| --- | --- |
+| D258 (contêiner como root) · D113 (manual de produção) · D230 (HarfBuzz-Subset) | Endurecimento e operação |
+| D239 · D245 (CNAB homologado em banco; instrução 06) | Homologação bancária |
+| D86 · D103 · D104 · D105 · D114 · D124 | Número de plano, preço e capacidade do servidor |
+| D39 (formatos geo vendidos sem motor) | Decisão do dono: manter |
+
+---
+
 ## 🔴 Críticos
 
 Nenhum em aberto. O **D76** — o orçamento de memória que media o processo e matava toda importação em
@@ -224,56 +238,6 @@ Contando as constantes escalares de `planos.py`: **27 são fiscalizadas de verda
 prova de procedência por AST em `TetosDaSsmaTests` — o nome tem de chegar ao `services` por
 `ImportFrom` de `payment.planos` e não pode existir como atribuição no módulo. **Falta estender isso
 aos outros 44**, de preferência como uma varredura única que dispense o par escrito à mão.
-
----
-### D191 — encerrar a não-conformidade não remove a restrição que ela abriu · 🟡 aberto 20/09/2026
-
-`services.encerrar_nc` só muda status e carimbos da NC. Não há signal nem chamada em cascata para
-`remover_restricao`, e o único chamador de produção dela é a ação manual do `RestricaoViewSet`. O teste
-`test_nc_encerrada_nao_trava_mais_nada` prova apenas que uma NC encerrada não gera restrição **nova** —
-não que a antiga saiu.
-
-Na prática: NC crítica trava a atividade, alguém trata, verifica a eficácia e encerra — **e a frente
-continua fora do quadro da semana**, sem nada na tela explicando por quê. Com o tempo o
-`PDCA_TETO_RESTRICOES_ABERTAS_POR_OBRA` (500) passa a estourar por entulho, que é o oposto do que ele
-existe para evitar.
-
-**A PDCA.8 não repetiu o padrão**: `encerrar_ocorrencia` **recusa** fechar enquanto a restrição
-estiver aberta, e diz qual é. Remover automaticamente seria pior — declarar que o risco cessou libera o
-serviço, e isso é ato de quem responde pela obra (`pdca.restricao.remover`), não efeito colateral de um
-encerramento. **A NC deveria fazer o mesmo**, e a mudança é pequena; fica aberta porque mexe no
-comportamento de uma fatia já entregue e validada.
-
----
-### D192 — o ranking de causas não tem categoria de segurança, e a semana perdida por acidente cai em "externo" · 🟡 aberto 20/09/2026
-
-`CausaNaoCumprimento.Categoria` é lista fechada com sete valores (planejamento, mão de obra, material,
-equipamento, projeto, externo, qualidade). Nenhum de segurança. Com a PDCA.8 no ar, a frente interditada
-por risco **sai do quadro da semana** e o não cumprimento é atribuído à causa que o time escolher — e
-hoje a mais próxima é `EXTERNO`, que é onde mora "chuva" e "falta de energia da concessionária".
-
-O efeito é que o ranking de causas, que existe para apontar o que a empresa tem de consertar, empurra
-para "não foi culpa nossa" exatamente o caso em que foi.
-
-**Duas saídas, e a segunda é muito mais barata:** acrescentar `SEGURANCA` ao enum (mexe em lista
-fechada, migration, e no eixo de todo gráfico de PPC já publicado), ou **semear uma causa de fábrica**
-(`SEG-INTERD — frente interditada por risco`) na categoria que fizer sentido — o catálogo é extensível
-por tenant e reversível por `ativo=False`. A escolha é de produto.
-
----
-### D193 — `EntregaEPISerializer.obra_nome` sempre vem nulo · 🟡 aberto 20/09/2026
-
-Achado ao construir o seam do EPI da PDCA.8. Em [`modulosil/serializers.py`](../backend/modulosil/serializers.py),
-`obra_nome = serializers.CharField(source="obra.nome", read_only=True, default=None)` — e `Obra` não
-tem campo `nome`: tem **`nome_obra`**. O DRF captura o `AttributeError` em `Field.get_attribute` e, como
-há `default`, devolve o default: a chave `obra_nome` sai `null` para **toda** entrega de EPI, inclusive
-as que têm obra.
-
-Não trava nada e não vaza nada — é campo de rótulo. Fica aberto porque é a espécie de defeito que
-sobrevive anos: a chave existe, o JSON é válido, e quem lê conclui que a entrega não tem obra.
-
-**A PDCA.8 não o consertou de propósito**: é defeito do SIL, e corrigi-lo de dentro da fatia do PDCA
-seria conserto silencioso em módulo alheio. A leitura da SSMA resolve a obra por `obra_id`.
 
 ---
 ### D183 — a carga real herda o rótulo da publicação que substituiu · 🟠 aberto 16/09/2026
@@ -881,6 +845,15 @@ o que resolve na tela — mas deixa as duas trilhas contando histórias diferent
 | F12 | **A convenção de estilo escrita não é a praticada** — [frontend-convencoes.md](frontend-convencoes.md) manda "Tailwind classes inline; `cn()` para condicionais; sem arquivos `.css` por componente", mas **todo** o código nascido na Malha (sidebar, topbar, hub da home, SCM, SIL, Orçamento) é escrito com objetos `style={{}}` inline, sem Tailwind e sem `cn()`. Some-se a isso **quatro kits de UI paralelos** (`components/malha/` + kit local do SCM + `sil/ui.tsx` + `orcamento/ui.tsx`, cada um com seu `Card`/`Pill`/`Btn`/`Modal`) — a dívida dos kits já está declarada em [frontend.md §2](frontend.md), a da convenção não. Quem ler o documento antes de escrever a próxima tela vai escrever no padrão errado. → decidir o padrão de fato (inline `style` + tokens parece ser o vencedor) e reescrever a regra; e datar a migração dos kits locais para `components/malha/`. | 🔴 aberto                                                          |
 
 ## 🟢 Baixas
+
+### D270 — devolução ao fornecedor com obra preenchida reduz o "aplicado" da etapa · 🟢 aberto 09/10/2026
+
+Visto ao montar o custo no plano e o consumo a baixar (`modulopdca/suprimentos.py`). O ledger do SIL
+usa o mesmo `tipo=devolucao` para a volta ao estoque (estorno de requisição, entrada) e para a devolução
+ao fornecedor (saída). As duas leituras tratam toda `devolucao` com obra como **volta da obra** e a
+subtraem do aplicado; uma devolução ao fornecedor que leve obra/etapa faria o aplicado da etapa cair e o
+"a baixar" subir. Hoje a devolução ao fornecedor não apropria obra, então o caso não aparece.
+**Caminho:** distinguir pela origem (`Devolucao.tipo`) ou por sinal da movimentação ao ler o ledger.
 
 ### D230 — a imagem do backend não tem HarfBuzz-Subset, que o WeasyPrint vai passar a exigir · 🟢 aberto 30/09/2026
 

@@ -126,7 +126,17 @@ janeiro passaria a recontar dezembro.
 **`Cronograma`** — o plano da obra, **versionado** no mesmo padrão do orçamento: rascunho → vigente, e
 replanejar cria a versão seguinte com motivo obrigatório, rebaixando a anterior. Toda versão anterior
 continua legível: é a **linha de base**. O P6 vende "linhas de base ilimitadas" como diferencial sobre
-o MS Project; aqui elas caem de graça do versionamento que o projeto já pratica.
+o MS Project; aqui elas caem de graça do versionamento que o projeto já pratica. **Um rascunho por
+vez**: replanejar com um rascunho aberto é recusado (continue nele, ou descarte-o — `DELETE` vale para
+rascunho, nunca para o vigente). Ao **publicar**, as restrições **abertas** do vigente que sai passam à
+atividade gêmea (mesmo código EAP) da versão que entra — o mesmo pareamento do avanço; a resolvida fica
+na versão em que nasceu. O `gantt/` leva o bloco `expedientes`: a regra da semana, os feriados da
+localidade e as exceções de cada expediente em uso, numa janela em volta do plano — é com ele que o
+Gantt corta a barra nos dias parados. **Os feriados são os do lugar da obra**, os mesmos da Agenda
+(`localidade_dos_feriados` + `modulocalendar.dias_uteis.feriados_da_localidade`): o UF/IBGE digitado no
+expediente vence; sem ele, vale o endereço da obra (do expediente, ou do plano que usa o expediente da
+empresa), resolvido pelo `nucleo.geo`; a lei é calculada quando a tabela não tem o ano, e o municipal
+vem do dataset ou da projeção.
 
 **`Atividade`** — a WBS **própria do PDCA**, recursiva (sintético × analítico), com dois vínculos
 **opcionais** que são o coração da integração:
@@ -143,6 +153,27 @@ orçado quando houver vínculo, informado quando não.
 
 **`Precedencia`** — origem, destino, tipo (`FS`/`SS`/`FF`/`SF`) e *lag*. O CPM roda sobre isso e
 devolve datas cedo/tarde, folga total e livre, e o **caminho crítico**.
+
+**Ligação de fase** *(decisão do dono, 09/10/2026: "dependências de fases")*: origem ou destino pode
+ser uma **sintética** (a etapa). O CPM continua só com folhas — `services.ligacoes_das_folhas` expande a
+seta de fase com a semântica de tarefa-resumo do MS Project: sai do término (FS/FF) de **todas** as
+folhas da origem, sai do início (SS/SF) das folhas que **abrem** a etapa; chega no início (FS/SS) de
+**todas** as folhas do destino, no término (FF/SF) das que a **fecham**. O ciclo é conferido no grafo
+expandido (`verificar_rede`), e uma etapa não se liga ao que ela contém. O número de setas expandidas
+tem teto do dono (`PDCA_TETO_LIGACOES_EXPANDIDAS`). *Limite declarado:* "abre" e "fecha" se leem pela
+rede gravada, não pelas datas.
+
+**A montagem é por verbos de árvore**, todos em rascunho e todos terminando numa `renumerar_eap` (o
+código é posição na árvore, e nenhum gesto o calcula à mão):
+
+| Rota | O que faz |
+|---|---|
+| `cronogramas/{id}/inserir-atividade/` | cria a linha **na posição** (abaixo de `depois_de`, ou no fim de `pai`) |
+| `atividades/{id}/mover/` | leva a linha com a subárvore para `pai`/`posicao` — arrastar, recuar, avançar, subir |
+| `cronogramas/{id}/importar-linhas/` | muitas linhas com nível, duração, marco, data mínima, peso e predecessoras (por código ou pelo Id da linha do Project), numa transação |
+| `cronogramas/{id}/orcamentos/` · `gerar-do-orcamento/` | a EAP nasce da planilha orçamentária da obra, folhas ligadas ao item; corte de profundidade; `simular` |
+| `cronogramas/{id}/anexar-modelo/` | traz um modelo para o **fim** de um rascunho que já existe (`aplicar-modelo/` cria o primeiro plano) |
+| `cronogramas/{id}/restaurar-linhas/` | o desfazer da exclusão: recria a subárvore fotografada pela tela, no mesmo lugar e com as ligações, e devolve o mapa de ids antigos → novos; vínculo que não é desta obra volta vazio; restrições e apontamentos não voltam |
 
 **`Risco`** — o terceiro modelo que a v01 tinha, ampliado: categoria, probabilidade, impacto,
 severidade derivada, mitigação, dono (`rh.Funcionario`) e atividade opcional.
@@ -188,11 +219,17 @@ simultâneos da mesma frente leriam o mesmo acumulado e os dois passariam na con
 
 **`Restricao`** — o *make-ready* do Last Planner: tipo (projeto, material, mão de obra, equipamento,
 área, licença, decisão, clima), responsável, prazo e status. **Atividade com restrição aberta não
-entra na programação** — é a regra que separa o LPS de uma lista de tarefas.
+entra na programação** — é a regra que separa o LPS de uma lista de tarefas. A removida (resolvida)
+**volta** por `reabrir/` (`pdca.restricao.remover`): carimbada (`reaberta_em/por`, `vezes_reaberta`),
+com a nota da remoção preservada e o teto de abertas conferido. Viram compra no SCM as que se destravam
+comprando (`TIPOS_QUE_VIRAM_COMPRA`): material → demanda de material; equipamento (locação) e mão de
+obra (empreitada) → demanda de serviço.
 
 **`ProgramacaoSemanal`** / **`ItemProgramacao`** — o que a equipe **se comprometeu** a fazer na semana.
 No fim do ciclo cada item é cumprido ou não; o não-cumprido exige **causa**, escolhida de um catálogo
-(`CausaNaoCumprimento`, de fábrica e extensível por tenant). O **PPC** é a razão entre os dois,
+(`CausaNaoCumprimento`, de fábrica e extensível por tenant — a frente interditada por risco tem causa
+própria, `SEG-INTERD`, em **planejamento**: liberar a frente com segurança é make-ready, e o ranking
+não pode mandá-la para "externo", ao lado da chuva). O **PPC** é a razão entre os dois,
 **ponderada pelo peso do compromisso** (§11.11), e o ranking de causas é o que alimenta o "Act".
 
 Três colunas do cartão sustentam a §11.11: `peso`/`peso_origem` (quanto ele vale no índice e de onde
@@ -272,6 +309,14 @@ documento, o saldo e o prazo a ele.
 > contratado **original** e o limite **digitado** no contrato (25% + 25% são 56% do assinado, não
 > 50% — conferir contra o valor já aditado é o erro que a lei existe para impedir); e aditivo em
 > rascunho ou na escada **não move saldo nenhum**, como o rascunho de medição.
+>
+> **O aditivo se monta como um contrato.** O rascunho tem cabeçalho editável (`cabecalho/`: objeto,
+> justificativa, assinatura, prorrogação e **nova retenção do contrato**) e linhas reescritas de uma vez
+> (`itens/`). A retenção anda em dois níveis: `retencao_percentual_nova` muda a cláusula do contrato na
+> aprovação; `ItemAditivo.retencao_percentual` dá **retenção própria** ao item que a linha traz ou mexe
+> (`ItemContrato.retencao_percentual`). A medição copia a do item para a linha no dia em que nasce
+> (`ItemMedicao.retencao_percentual`), e a retenção do boletim é `base × geral + Σ valor da linha ×
+> (própria − geral)`. Aditivo só de retenção é aditivo válido.
 
 **`DeducaoMedicao`** — o que sai do bruto **além** da retenção contratual, tipado (INSS, ISS, IRRF,
 amortização de adiantamento, material fornecido pela contratante, multa, outros). A diferença entre
@@ -347,6 +392,20 @@ sem reinterpretar o passado.)*
 (§11.5): engenheiro → gerente de contrato → fiscal, cada nível exigindo uma permissão e registrando
 atesto com autor, data e observação. Aprovada no último nível, a medição **congela**; correção exige
 medição **retificadora**, nunca edição.
+
+> **A retificadora substitui a original, não soma a ela.** Nasce como cópia inteira da aprovada
+> (linhas, estoque, descontos, retenção e taxa do dia) e guarda a medição **corrigida inteira**.
+> Aprovada, a original vira `retificada` — legível, fora de toda soma — e só uma medição vale por
+> período. Enquanto a retificadora sobe a escada, a original sai do acumulado (`_fora_da_conta`) para o
+> período não contar duas vezes; para o estoque de material, a retificadora ocupa o lugar da original
+> na corrente (`posicao_da_medicao`). **O título acompanha** (`_fechar_retificacao`): título da original
+> em aberto → cancelado, e nasce o do líquido inteiro da corrigida; título já pago (inteiro ou em
+> parte) → nasce o **título da diferença** (complemento a pagar; ou, se a corrigida é menor, o saldo em
+> aberto do título cai primeiro e o resto vira devolução contra a mesma contraparte, achada pelo
+> CNPJ/CPF do outro lado do cadastro) e o ERP recebe aviso de **nível 3** ([funcoesnotificacoes](funcoesnotificacoes.md)).
+> Retificadora retirada antes de valer é **apagada** (não fica "cancelada" no contrato); a aprovada não
+> se cancela — corrige-se retificando de novo. A tela mostra o quadro original | corrigido | diferença
+> e a conciliação do líquido, com o efeito no saldo do contrato e no ERP.
 
 > **Onde essa máquina mora.** Fluxo de aprovação não é assunto de obra — é da plataforma, e o ERP e o
 > SCM vão pedi-lo. Nasce em **`nucleo`**, com o PDCA como **primeiro cliente**, pelo mesmo raciocínio
@@ -486,6 +545,7 @@ atravessam** — registradas à mão em `urls.py` porque não têm dono:
 | `GET /api/pdca/busca/?q=` | As sete espécies do módulo, sem acento, cortadas por espécie. `?obra=N` restringe | idem |
 | `GET /api/pdca/minhas-frentes/` | **O que está no nome de quem pede**, na semana corrente: compromisso, trava, conserto e ficha. `?obra=N` recorta; `?como=` troca o nome procurado | idem |
 | `GET /api/pdca/medicao/?obra=N` | **Os contratos com saldo + a fila do dinheiro**, numa leitura (B3): boletim parado em rascunho, boletim esperando atesto, retenção pedida e aditivo sem decisão | idem |
+| `GET /api/pdca/contratos/{id}/ficha/` | **A ficha do contrato**: os títulos do ERP (emitido, pago, em aberto — um título contado uma vez), os itens com medido e saldo, e a linha do tempo (medições, inclusive a retificada, aditivos e liberações) | `pdca.contrato.view` |
 | `GET /api/pdca/qualidade/?obra=N` | **O laço aberto + o painel de conformidade** (B8). A fila é a das quatro faixas de retrabalho da fila do dia (`faixas_da_qualidade`); o painel vem nulo, com a permissão nomeada, para quem não vê NC. `?desde=&ate=` recortam o painel | idem |
 | `GET /api/pdca/seguranca/?obra=N` | **A fila da SSMA + os indicadores + as frentes interditadas** (B9). A fila é a das três faixas de prazo legal e segurança (`faixas_da_seguranca`); as taxas de frequência e de gravidade voltam nulas com a frase. O EPI vencido **não** vem aqui — exige a permissão do SIL, e fica em `ocorrencias/epi-vencido/` | idem |
 
@@ -604,8 +664,8 @@ os limites que ela assume de olhos abertos.
 | Com quem | O que atravessa |
 |---|---|
 | [Orçamento](moduloorcamento.md) | Régua orçada por etapa/atividade; a **curva S financeira passa a derivar do cronograma físico**, em vez de a distribuição por competência ser digitada; aditivo ↔ `RevisaoOrcamento` |
-| [SIL](modulosil.md) | Aplicado de material por `(obra, etapa)` ao lado do avanço físico — consumo × produção |
-| [SCM](moduloscm.md) | Restrição de material vira **demanda** (✅ PDCA.5 — `Demanda.origem = restricao`, uma por restrição); item de serviço contratado conversa com o pedido |
+| [SIL](modulosil.md) | Aplicado de material por `(obra, etapa)` ao lado do avanço físico — consumo × produção; o compromisso da semana pede o material (requisição) e o apontamento avisa a baixa que falta (§6.1) |
+| [SCM](moduloscm.md) | Restrição de material, equipamento ou mão de obra vira **demanda** (✅ PDCA.5 — `Demanda.origem = restricao`, uma por restrição; equipamento e mão de obra como serviço) e acompanha o pedido; o cronograma puxa a compra (`origem = plano`); o contrato de empreitada mede o pedido de serviço (§6.1) |
 | [ERP](moduloerp.md) | Medição aprovada → **título líquido** → `ContaPagar`. O ERP decide quando sai do caixa. **E a fronteira anda nos dois sentidos**: cancelar a medição aprovada cancela o título junto, na mesma transação — a menos que ele já tenha recebido baixa, e aí a recusa manda retificar (§11.12) |
 | RH | Responsável, equipe, efetivo, DDS, EPI |
 | [Diário](modulodiario.md) | Apontamento e NC podem **nascer no diário do dia**, inclusive por WhatsApp; e o diário passa a mostrar o que estava programado |
@@ -615,13 +675,105 @@ os limites que ela assume de olhos abertos.
 | [funcoesia](funcoesia.md) | Causa de não-cumprimento sugerida; foto de NC classificada — o módulo é **consumidor**, sem cliente de IA próprio |
 | [funcoesimpexp](funcoesimpexp.md) | Importar cronograma de MS Project/P6 e exportar medição, verificação e curva S |
 
+### 6.1 PDCA × Orçamento × Suprimentos × Estoque — o cronograma puxa a compra
+
+*(Decisão do dono, 09/10/2026: "quero que o PDCA, o orçamento, os pedidos e o estoque se conversem".)*
+O motor mora em [`modulopdca/suprimentos.py`](../../backend/modulopdca/suprimentos.py) e importa os
+outros três tarde (o plano carrega sem eles).
+
+- **Quem consome quanto** (`consumo_do_plano`, a regra única): atividade ligada a item orçado → a linha
+  dividida entre as atividades que a citam, pela duração; sem vínculo, os itens do orçamento vigente da
+  **etapa** que nenhuma atividade cita caem na atividade da etapa que começa primeiro. Atividade ligada a
+  item de **revisão anterior** é lida pelo item de mesmo código EAP na vigente (`religar-orcamento/`
+  grava o vínculo — só rascunho — e o peso do avanço acompanha). O executado sai da conta (`1 − avanço`).
+- **Quando**: chegar até = início − antecedência; antecedência da **atividade**
+  (`Atividade.antecedencia_compra_dias`) > do **insumo** > **padrão da obra** (`AntecedenciaDeCompra`,
+  por obra, item nulo = padrão) > zero. *Pedir até* desconta o menor prazo de entrega das ofertas.
+- **Quanto falta**: por insumo e na ordem das datas, abate o saldo livre do canteiro da obra, o que os
+  pedidos em aberto do centro de custo da obra ainda devem e o que as demandas sem pedido pedem. Saldo em
+  outro almoxarifado (central, outra obra) **não abate** — vira o aviso "transfira antes de comprar".
+- **A fila** (`GET cronogramas/{id}/suprimentos/`; o Suprimentos lê a mesma por insumo juntando as obras
+  vigentes) vira **demanda em rascunho** (`suprimentos/gerar-demanda/`, exige `scm.demanda.edit`;
+  `Demanda.origem = plano`; centro de custo da obra criado se faltar). Gerar duas vezes não compra duas.
+- **Restrição acompanha a compra**: o serializer traz `compra` (demanda → cotação → pedido → recebido) e
+  `sugerir_destravar` quando tudo o que foi pedido chegou; destravar segue da pessoa.
+- **Semana → almoxarifado**: `itens-programacao/{id}/pedir-material/` (exige `sil.requisicao.edit`)
+  cria a requisição em rascunho do canteiro, apropriada à obra e à etapa, com a quantidade da semana
+  (total × % previsto, sem passar do que falta); `ItemProgramacao.requisicao_sil` guarda o vínculo.
+- **Apontamento avisa o estoque**: não baixa nada; `consumo_a_baixar` (teórico = avanço × material,
+  contra as saídas da obra/etapa) alimenta a fila do almoxarife no SIL.
+- **Custo no plano** (`GET cronogramas/{id}/custo/`): por etapa e atividade, orçado × comprometido
+  (pedidos) × recebido × aplicado (saídas, só por etapa) × medido (medições aprovadas). Pedido e recebido
+  são **rateados** por insumo (declarado); pedido de serviço ligado a contrato rateia pelas atividades do
+  contrato; o que não acha dono vai para `nao_alocado`.
+- **Medição × compra de serviço**: `ContratoObra.pedido_scm` liga a empreitada ao pedido de serviço do
+  Suprimentos — o contrato mostra pedido × medido × saldo, e o pedido mostra o medido no PDCA.
+
+### 6.2 Etapas da obra, equipe, julgamento por % e avanço físico-financeiro
+
+- **As etapas da obra são as raízes do plano em vigor** (`modulopdca/etapas.py`). Governa o vigente; sem
+  ele, o rascunho. Raiz nova → `EtapaObra` (ou a de mesmo nome, ligada); renomear, reordenar e as datas
+  previstas seguem a raiz; raiz excluída → etapa na **lixeira** (volta com o desfazer). O rascunho do
+  replanejamento não mexe na obra até publicar. Roda no `on_commit` dos sinais de `Atividade` (raiz) e
+  `Cronograma`, e no fim do CPM — uma vez por obra por transação. Do lado da Obra: etapa cadastrada entra
+  como raiz do plano em montagem; excluir uma etapa que o plano tem é recusado com o caminho (pelo PDCA).
+- **`EquipeObra`** — a equipe é uma **composição** de funcionários (RH) e fornecedores (empreiteiras), da
+  obra e não da semana (`/api/pdca/equipes/`, `pdca.programacao.view|comprometer`). Nome vazio nasce dos
+  membros. O cartão (`ItemProgramacao.equipe`) liga-se a ela pelo nome, e o `responsavel` continua sendo o
+  rótulo que o campo procura. RLS fail-closed na tabela.
+- **Julgamento por %** — `julgar/` aceita `percentual_concluido` (acumulado da atividade). O servidor lança
+  a diferença como `ApontamentoAvanco` (menor que o apontado é recusado: corrigir é estorno) e deriva o
+  `cumprido` contra a meta da semana (`andamento_dos_itens`: início + prometido, ou 100% sem promessa). A
+  causa segue obrigatória abaixo da meta; o PPC continua binário. A linha sem % segue o caminho antigo.
+- **Avanço físico-financeiro** — `cronogramas/{id}/avanco-fisico-financeiro/`: por etapa (raiz) e da obra,
+  previsto até hoje pelas datas do CPM × realizado apontado, em % do físico e em R$ (valor orçado ×
+  avanço), e contra o **planejado** do Orçamento (as `ParcelaEtapa` até hoje, mês corrente pro rata), mais
+  a curva S mensal. O **cronograma** físico-financeiro (o planejado por competência) continua sendo do
+  Orçamento; o PDCA só o lê.
+- **Feriado depois do cálculo** — o `gantt/` traz `fora_do_expediente`: as folhas cujos dias úteis entre
+  início e término já não batem com a duração, e os feriados/exceções que caem nelas.
+- **Material sem orçamento** — `MaterialDaAtividade` (`/api/pdca/materiais-atividade/`): o planejador
+  informa na atividade o que ela consome (item do catálogo ou texto, quantidade). A necessidade de
+  compra (`suprimentos.py`) trata a linha como a do orçamento (`origem="informado"`): data pelo início,
+  executado fora da conta, abatida por estoque e pedido. Vai junto no replanejamento e no modelo.
+- **Contrato de medição** — `contratos/{id}/ativar/` (rascunho → vigente), `fontes-da-planilha/`
+  (itens analíticos do orçamento vigente e atividades folha do plano em vigor, marcando o que já
+  está no contrato) e `incluir-na-planilha/` (várias linhas, tudo ou nada, recusa citando a linha).
+
+### 6.3 O Orçamento planeja, o PDCA executa e controla
+
+O **cronograma físico-financeiro por etapa** nasce no [Orçamento](moduloorcamento.md) (`PlanoEtapa`).
+`gerar-do-orcamento` traz **só etapas** para o plano: cada uma vira atividade com `nao_comecar_antes_de`
+(início), duração em dias úteis do expediente do plano, `peso_informado` = valor da etapa
+(`peso_do_orcamento`, conta como orçado no avanço financeiro) e o Hh orçado na observação. O plano
+guarda `orcamento_origem` e `cronograma_orcamento_em`; `situacao-do-orcamento` avisa quando há versão
+nova ou cronograma editado, e `atualizar-do-orcamento` traz a mudança (etapa que saiu do orçamento não
+é apagada — pode ter avanço).
+
+O posto **Controle** (`controle.py`, `GET /api/pdca/controle/custo|materiais/`) absorve o Hoje e a Semana
+e lê a execução: orçado × comprometido (pedidos + contratos de empreiteiro sem pedido de serviço) ×
+aplicado (menos devoluções) × medido × realizado; **valor agregado** (`VA = % físico × orçado`,
+`IDC = VA ÷ CR`, `IDP = VA ÷ VP`, custo a incorrer `(ONT − VA) ÷ IDC`, custo final projetado
+`CR + a incorrer`; nulo sem avanço ou sem custo incorrido) e o material orçado × aplicado × esperado
+pelo avanço.
+
+### 6.4 Contrato dos dois lados e reajuste
+
+`ContratoObra.lado`: **custo** (empreiteiro → `ContaPagar`) ou **receita** (contratante, `cliente` →
+`ContaReceber`); o mesmo documento, itens, aditivos, medição e retenção. A fórmula paramétrica
+(`reajuste_data_base`, periodicidade, parcela fixa, `ParcelaReajusteContrato` com peso e índice da série
+única `nucleo`) é aplicada por `recalcular_reajuste` sobre o bruto do período: vale só depois do
+aniversário (período que o atravessa divide pelos dias), com número-índice ou variações compostas, fator
+**truncado**, índice não publicado → **provisório** (marcado). O reajuste fica **gravado** na medição
+(`valor_reajuste`, `reajuste_memoria`) e soma ao bruto antes de retenção e deduções.
+
 ## 7. Fronteira do módulo (o que ele **não** faz)
 
 - **Não** paga. Medição vira título; caixa é do [ERP](moduloerp.md).
 - **Não** compra nem cota. Restrição vira demanda; compra é do [SCM](moduloscm.md).
 - **Não** movimenta estoque. Consumo e EPI são do [SIL](modulosil.md).
 - **Não** compõe custo. Composição, BDI e preço são do [Orçamento](moduloorcamento.md); aqui o custo
-  entra pelo vínculo com `ItemOrcado`.
+  entra pelo vínculo com `ItemOrcado` ou pelo valor da **etapa** que veio do cronograma do orçamento.
 - **Não** extrai quantitativo de modelo BIM. É da Central BIM com a [Prancheta](moduloprancheta.md).
 - **Não** guarda projeto (Prancheta) nem documento de gestão (o DMS, [funcoesimpexp](funcoesimpexp.md) §13).
 - **Não** cadastra pessoa (RH) nem fornecedor (`fornecedores`) — usa os que existem.

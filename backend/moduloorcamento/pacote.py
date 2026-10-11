@@ -56,17 +56,19 @@ from django.utils import timezone
 
 from payment import planos
 
+from nucleo.models import IndiceEconomico, ValorIndice
+
 from .models import (
     AnaliticaNacional,
     BaseReferencial,
     ComposicaoReferenciaItem,
     FonteOficial,
-    IndiceEconomico,
     InsumoReferencia,
-    ValorIndice,
 )
 
-VERSAO = 2
+#: 3 desde 10/10/2026: os índices passaram à série única do `nucleo`
+#: (pk `id`, variação e número-índice opcionais).
+VERSAO = 3
 MANIFESTO = "manifesto.json"
 NULO = r"\N"
 OPCOES_CSV = f"FORMAT csv, HEADER true, NULL '{NULO}'"
@@ -326,8 +328,8 @@ def _pequenas(c, tar, t: dict, resumo: dict) -> None:
         resto = [x for x in _sem_pk(ValorIndice) if x != "indice_id"]
         cols = ", ".join(_q(x) for x in resto)
         c.execute(f"INSERT INTO {t['valores_indice']} (indice_id, {cols}) "
-                  f"SELECT d.indice_id, {', '.join('v.' + _q(x) for x in resto)} FROM {tmp_val} v "
-                  f"JOIN {tmp_ind} o ON v.indice_id = o.indice_id "
+                  f"SELECT d.id, {', '.join('v.' + _q(x) for x in resto)} FROM {tmp_val} v "
+                  f"JOIN {tmp_ind} o ON v.indice_id = o.id "
                   f"JOIN {t['indices']} d ON d.codigo = o.codigo ON CONFLICT DO NOTHING")
         resumo["valores_indice"] = c.rowcount
 

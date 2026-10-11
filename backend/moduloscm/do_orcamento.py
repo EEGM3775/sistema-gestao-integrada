@@ -62,6 +62,12 @@ def demanda_do_orcamento(
     o catálogo ser único no SGI.
     """
     from moduloorcamento.insumos import relacao_de_insumos
+    from moduloorcamento.precificacao import explodir_pendentes
+
+    # Sem ida e volta (achado do dono, 10/10/2026): as linhas que ainda não
+    # tinham a composição aberta são abertas aqui, sem mexer no preço — antes
+    # o comprador tinha de ir ao Orçamento explodir linha a linha e voltar.
+    explodir_pendentes(orcamento)
 
     categorias = _CATEGORIAS_MATERIAL if tipo == Demanda.Tipo.MATERIAL else _CATEGORIAS_SERVICO
     relacao = relacao_de_insumos(orcamento)
@@ -70,8 +76,8 @@ def demanda_do_orcamento(
     if not linhas:
         if not relacao["itens"]:
             raise GeracaoInvalida(
-                "Nenhuma composição explodida neste orçamento — sem insumos, não há "
-                "o que comprar. Explodir as linhas é o passo que falta."
+                "As linhas deste orçamento não têm composição no catálogo, então não "
+                "há insumo para comprar por aqui. Faça a demanda direto no Suprimentos."
             )
         raise GeracaoInvalida(
             f"Este orçamento não tem insumo da natureza '{tipo}' entre os explodidos."

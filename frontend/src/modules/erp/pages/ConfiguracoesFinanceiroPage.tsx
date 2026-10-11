@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft, Files, Loader2, Lock, ScrollText } from 'lucide-react'
+import { ArrowLeft, Files, KeyRound, Loader2, Lock, ScrollText } from 'lucide-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import apiClient from '@/api/apiClient'
 import { buttonPrimaryStyle, inputStyle } from '../components/forms/formStyles'
 import { useLimitesLote, useSalvarLimitesLote } from '../hooks/useCobranca'
 import { dataHoraBR } from '@/utils/dates'
@@ -35,8 +37,88 @@ export default function ConfiguracoesFinanceiroPage() {
 
       {limites.isLoading && <p className="flex items-center gap-2 text-sm"><Loader2 size={15} className="animate-spin" /> Carregando…</p>}
       {limites.error && <p className="text-sm" style={{ color: 'var(--danger-ink)' }}>{parseApiErrors(limites.error)._form ?? 'Não foi possível carregar a configuração.'}</p>}
+      {d && <IntegracaoNfeIo podeEditar={d.pode_editar} />}
       {d && <LimitesDosLotes dados={d} />}
     </div>
+  )
+}
+
+interface ResumoIntegracao {
+  company_id: string
+  tem_chave: boolean
+  chave_final: string
+  origem: 'empresa' | 'ambiente' | 'nenhuma'
+  atualizado_em: string | null
+}
+
+/** **A conta da empresa na NFE.io** (achado do dono, 10/10/2026: "como vou
+ *  cadastrar minha API?"). Sem ela a NFS-e não sai — fica em "Processando" e
+ *  vira erro. A chave vai cifrada e nunca volta: a tela mostra só o final. */
+function IntegracaoNfeIo({ podeEditar }: { podeEditar: boolean }) {
+  const qc = useQueryClient()
+  const { data } = useQuery({
+    queryKey: ['erp', 'integracao-fiscal'],
+    queryFn: async () => (await apiClient.get<ResumoIntegracao>('erp/configuracao/integracao-fiscal/')).data,
+  })
+  const [companyId, setCompanyId] = useState('')
+  const [chave, setChave] = useState('')
+  const [estado, setEstado] = useState<'' | 'salvando' | 'salvo'>('')
+  const [erro, setErro] = useState('')
+  useEffect(() => { if (data) setCompanyId(data.company_id) }, [data])
+
+  async function salvar() {
+    setEstado('salvando'); setErro('')
+    try {
+      await apiClient.put('erp/configuracao/integracao-fiscal/', { company_id: companyId, ...(chave ? { api_key: chave } : {}) })
+      setChave('')
+      await qc.invalidateQueries({ queryKey: ['erp', 'integracao-fiscal'] })
+      setEstado('salvo')
+    } catch (e) {
+      setErro(parseApiErrors(e)._form ?? 'Não foi possível salvar.'); setEstado('')
+    }
+  }
+
+  const situacao = !data ? '' : data.origem === 'empresa'
+    ? `Emitindo pela conta da empresa${data.chave_final ? ` (chave terminada em ${data.chave_final})` : ''}.`
+    : data.origem === 'ambiente'
+      ? 'Emitindo pela conta padrão da plataforma. Cadastre a da empresa para emitir em nome dela.'
+      : 'Nenhuma conta cadastrada: as notas não saem até a empresa cadastrar a sua.'
+
+  return (
+    <section style={{ border: '1px solid var(--line)', borderRadius: 'var(--r-lg)', background: 'var(--surface)', padding: 20 }}>
+      <h2 className="text-base font-bold flex items-center gap-2" style={{ color: 'var(--ink)' }}><KeyRound size={16} /> Emissão de NFS-e (NFE.io)</h2>
+      <p className="text-sm mt-1" style={{ lineHeight: 1.5 }}>
+        A conta da empresa na NFE.io: o ID da empresa e a chave da API, os dois no painel da NFE.io
+        (Conta › Chaves de acesso). {situacao}
+      </p>
+      {podeEditar ? (
+        <div className="grid gap-4 mt-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>ID da empresa</span>
+            <input value={companyId} onChange={e => setCompanyId(e.target.value)} style={inputStyle} autoComplete="off" />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>Chave da API</span>
+            <input type="password" value={chave} onChange={e => setChave(e.target.value)} style={inputStyle} autoComplete="new-password"
+              placeholder={data?.tem_chave ? `•••• ${data.chave_final} (deixe em branco para manter)` : 'Cole a chave da NFE.io'} />
+          </label>
+        </div>
+      ) : (
+        <p className="flex items-start gap-2 text-sm mt-4" style={{ padding: '10px 12px', borderRadius: 'var(--r-md)', background: 'var(--surface-2)', color: 'var(--ink-3)' }}>
+          <Lock size={15} style={{ flex: 'none', marginTop: 2 }} />
+          Quem cadastra a conta é o administrador da empresa, ou quem tem a permissão das configurações do financeiro.
+        </p>
+      )}
+      {podeEditar && (
+        <div className="flex items-center justify-end gap-3 mt-4">
+          {estado === 'salvo' && <span className="text-sm" style={{ color: 'var(--good-ink)' }}>Salvo.</span>}
+          {erro && <span className="text-sm" style={{ color: 'var(--danger-ink)' }}>{erro}</span>}
+          <button type="button" onClick={() => void salvar()} disabled={estado === 'salvando'} style={{ ...buttonPrimaryStyle, opacity: estado === 'salvando' ? 0.7 : 1 }}>
+            {estado === 'salvando' ? 'Salvando…' : 'Salvar conta da NFE.io'}
+          </button>
+        </div>
+      )}
+    </section>
   )
 }
 

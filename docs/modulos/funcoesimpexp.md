@@ -694,6 +694,10 @@ tudo, não um lugar do ciclo.
   **revisão nova**, que entra pela porta como qualquer arquivo (decisões em
   [modulos-planejados.md](modulos-planejados.md)).
 - ~~**A base referencial fora do dev** (D185)~~ — **feito (DMS.1, 03/10/2026)**, ver abaixo.
+- **Ler o conteúdo na conferência** — `Recurso.dados_do_conteudo(arquivo, conteudo)`: o gancho
+  opcional do recurso cujo arquivo é documento estruturado pequeno (o XML da NF-e, `erp.nota_entrada`)
+  devolve o que o conteúdo diz, para a conferência mostrar antes do sim (R1). O padrão não abre nada;
+  o motor devolve o ponteiro ao início. O formato `nfe_xml` é reconhecido pelo bloco `infNFe`.
 - **Convergência dos documentos com ciclo de vida próprio:** `obras.DocumentoObra` tem um fluxo de
   status (rascunho → aprovado → publicado) que repete o de revisão da Prancheta. Unificá-los é a
   próxima convergência, não um terceiro fluxo.

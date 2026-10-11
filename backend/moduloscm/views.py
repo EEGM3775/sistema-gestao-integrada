@@ -120,7 +120,45 @@ class DemandaViewSet(BaseScmViewSet):
     action_permission_map = {
         "publicar": "scm.demanda.publicar",
         "do_orcamento": "scm.demanda.edit",
+        "do_cronograma": "scm.demanda.view",
+        "do_cronograma_gerar": "scm.demanda.edit",
     }
+
+    @action(detail=False, methods=["get"], url_path="do-cronograma")
+    def do_cronograma(self, request):
+        """A fila "comprar até DD/MM" das obras — a mesma do posto Plano do PDCA,
+        aqui por insumo, juntando as obras (`modulopdca.suprimentos`).
+
+        Import tardio e tolerante, como o `do-orcamento`: sem o PDCA, 409."""
+        try:
+            from modulopdca.suprimentos import fila_de_compras_das_obras
+        except ImportError:
+            return Response({"detail": "O módulo PDCA não está disponível nesta instalação."},
+                            status=status.HTTP_409_CONFLICT)
+        return Response(fila_de_compras_das_obras(request.user.tenant_id))
+
+    @action(detail=False, methods=["post"], url_path="do-cronograma/gerar")
+    def do_cronograma_gerar(self, request):
+        """O que falta de uma obra (ou dos insumos escolhidos) vira demanda em rascunho."""
+        try:
+            from modulopdca.models import Cronograma
+            from modulopdca.suprimentos import gerar_demandas_do_plano
+        except ImportError:
+            return Response({"detail": "O módulo PDCA não está disponível nesta instalação."},
+                            status=status.HTTP_409_CONFLICT)
+        plano = Cronograma.objects.filter(
+            tenant_id=request.user.tenant_id, pk=request.data.get("cronograma"),
+        ).select_related("obra").first()
+        if plano is None:
+            return Response({"cronograma": "Informe o cronograma da obra."}, status=status.HTTP_400_BAD_REQUEST)
+        insumos = request.data.get("insumos") or None
+        if insumos is not None and not isinstance(insumos, list):
+            return Response({"insumos": "Lista de insumos."}, status=status.HTTP_400_BAD_REQUEST)
+        criadas = gerar_demandas_do_plano(plano, insumos=insumos, solicitante=request.user)
+        if not criadas:
+            return Response({"detail": "Nada a comprar: estoque, pedidos e demandas da obra já cobrem."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        return Response({"demandas": criadas}, status=status.HTTP_201_CREATED)
 
     def perform_create(self, serializer):
         # Solicitante default = usuário do request (se não veio no payload).
@@ -319,7 +357,74 @@ class PedidoCompraViewSet(BaseScmViewSet):
     action_permission_map = {
         "comprar_direto": "scm.pedido.criar",
         "gerar_de_cotacao": "scm.pedido.criar",
+        "compra_avulsa": "scm.pedido.criar",
     }
+
+    @action(detail=False, methods=["post"])
+    def compra_avulsa(self, request):
+        """**Comprar sem catálogo e sem cotação** — fornecedor, itens, preço.
+
+        *Achado do dono, 10/10/2026:* "continuo sem poder comprar". As duas vias
+        que existiam pediam algo prévio: uma oferta publicada no catálogo
+        (compra direta) ou uma demanda que virasse cotação. Obra comprando areia
+        do depósito da esquina não tem nem um nem outro. Esta via grava o pedido
+        como a obra o faz: fornecedor, o que se comprou (item do catálogo ou
+        texto), quantidade e preço — e daí segue igual aos outros (recebimento
+        entra no estoque, avaliação do fornecedor).
+        """
+        from fornecedores.models import Fornecedor
+
+        tid = self._tenant_id()
+        fornecedor = Fornecedor.objects.filter(pk=request.data.get("fornecedor") or 0, tenant_id=tid).first()
+        if fornecedor is None:
+            return Response({"detail": "Escolha o fornecedor."}, status=status.HTTP_400_BAD_REQUEST)
+        itens = request.data.get("itens") or []
+        if not isinstance(itens, list) or not itens:
+            return Response({"detail": "Inclua ao menos um item."}, status=status.HTTP_400_BAD_REQUEST)
+
+        linhas, problemas = [], []
+        for n, linha in enumerate(itens, start=1):
+            produto = None
+            if linha.get("produto"):
+                produto = Item.objects.filter(pk=linha["produto"], tenant_id=tid).first()
+                if produto is None:
+                    problemas.append(f"Item {n}: produto não encontrado.")
+                    continue
+            descricao = (linha.get("descricao") or "").strip()[:255]
+            if produto is None and not descricao:
+                problemas.append(f"Item {n}: diga o que está sendo comprado.")
+                continue
+            try:
+                quantidade = Decimal(str(linha.get("quantidade")).replace(",", "."))
+                preco = Decimal(str(linha.get("preco_unitario") or "0").replace(",", "."))
+            except (InvalidOperation, TypeError):
+                problemas.append(f"Item {n}: quantidade ou preço inválido.")
+                continue
+            if quantidade <= 0 or preco < 0:
+                problemas.append(f"Item {n}: quantidade precisa ser positiva e preço não pode ser negativo.")
+                continue
+            linhas.append((produto, descricao, quantidade, preco))
+        if problemas:
+            return Response({"detail": " ".join(problemas)}, status=status.HTTP_400_BAD_REQUEST)
+
+        centro_custo = None
+        if request.data.get("centro_custo"):
+            centro_custo = CentroCusto.objects.filter(pk=request.data["centro_custo"], tenant_id=tid).first()
+
+        with transaction.atomic():
+            pedido = PedidoCompra.objects.create(
+                tenant_id=tid, origem=PedidoCompra.Origem.MANUAL, fornecedor=fornecedor,
+                centro_custo=centro_custo, status=PedidoCompra.Status.APROVADO,
+                data_entrega_prevista=request.data.get("data_entrega_prevista") or None,
+                observacao=(request.data.get("observacao") or "")[:2000],
+                valor_total=sum((q * p for _, _, q, p in linhas), Decimal("0")).quantize(Decimal("0.01")),
+            )
+            ItemPedido.objects.bulk_create([
+                ItemPedido(tenant_id=tid, pedido=pedido, produto=produto, descricao=descricao,
+                           quantidade=quantidade, preco_unitario=preco)
+                for produto, descricao, quantidade, preco in linhas
+            ])
+        return Response(self.get_serializer(pedido).data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["post"])
     def comprar_direto(self, request):

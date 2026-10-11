@@ -7,7 +7,7 @@ export type NivelLocal =
 export type TipoPrecedencia = 'FS' | 'SS' | 'FF' | 'SF'
 
 export type CodigoPosto =
-  | 'hoje' | 'semana' | 'plano' | 'medicao' | 'qualidade' | 'seguranca'
+  | 'controle' | 'plano' | 'medicao' | 'qualidade' | 'seguranca'
 
 export interface StatusModulo {
   modulo: string
@@ -37,7 +37,7 @@ export interface ExcecaoCalendario {
   calendario: number
   data: string
   trabalha: boolean
-  descricao: string
+  motivo: string
 }
 
 export interface CalendarioTrabalho {
@@ -55,6 +55,16 @@ export interface CalendarioTrabalho {
   trabalha_domingo: boolean
   considera_feriados: boolean
   excecoes: ExcecaoCalendario[]
+  /** De onde são os feriados: o UF/IBGE digitado no expediente, o lugar da
+   *  obra (pelo endereço) ou só o nacional. */
+  localidade_feriados?: LocalidadeDosFeriados | null
+}
+
+export interface LocalidadeDosFeriados {
+  uf: string
+  ibge: string
+  cidade: string
+  fonte: 'expediente' | 'obra' | 'nacional'
 }
 
 export interface Cronograma {
@@ -77,6 +87,7 @@ export interface Cronograma {
   nome_modelo: string | null
   origem: number | null
   base_versao?: number
+  motivo_replanejamento?: string
 }
 
 export interface Atividade {
@@ -87,9 +98,11 @@ export interface Atividade {
   nome: string
   ordem: number
   profundidade: number
-  duracao_dias: number
+  duracao_dias: number | null
   eh_marco: boolean
   nao_comecar_antes_de: string | null
+  /** Exceção do planejador: quantos dias antes do início o material chega. */
+  antecedencia_compra_dias?: number | null
   inicio_cedo: string | null
   termino_cedo: string | null
   inicio_tarde: string | null
@@ -111,6 +124,7 @@ export interface Atividade {
   peso: string | null
   peso_origem: string
   peso_informado?: string | null
+  observacao?: string
 }
 
 export interface Precedencia {
@@ -168,6 +182,38 @@ export interface PayloadGantt {
   base: ComparacaoComBase
   cobertura_orcamento: CoberturaOrcamento
   avanco: AvancoDoCronograma
+  /** Os dias parados de cada expediente em uso — o Gantt corta a barra neles. */
+  expedientes?: ExpedientesDoPlano
+  /** As barras que o expediente de hoje não sustenta — o feriado ou a parada
+   *  que entrou depois do último cálculo. */
+  fora_do_expediente?: ForaDoExpediente
+}
+
+export interface ForaDoExpediente {
+  total: number
+  atividades: {
+    atividade: number
+    codigo: string
+    nome: string
+    duracao_dias: number
+    uteis_hoje: number
+    dias: { data: string; motivo: string }[]
+  }[]
+}
+
+export interface ExpedienteDoGantt {
+  nome: string
+  considera_feriados: boolean
+  localidade: LocalidadeDosFeriados | null
+  /** Segunda a domingo (0 = segunda), como o `date.weekday()` do servidor. */
+  dias_da_semana: boolean[]
+  feriados: { data: string; nome: string }[]
+  excecoes: { data: string; trabalha: boolean; motivo: string }[]
+}
+
+export interface ExpedientesDoPlano {
+  calendario_do_plano: number | null
+  calendarios: Record<string, ExpedienteDoGantt>
 }
 
 export interface PontoDeBalanco {
@@ -518,6 +564,23 @@ export interface Restricao {
   removida_em: string | null
   removida_por: string
   nota_remocao: string
+  /** A trava que voltou: resolvida → aberta de novo, carimbada e contada. */
+  reaberta_em: string | null
+  reaberta_por: string
+  vezes_reaberta: number
+  /** O andamento da compra que a trava abriu (nulo sem demanda). */
+  compra?: CompraDaRestricao | null
+}
+
+export interface CompraDaRestricao {
+  demanda: number
+  demanda_status: string
+  cotacao: number | null
+  cotacao_status: string | null
+  pedidos: { pedido: number; status: string; status_rotulo: string; entrega_prevista: string | null }[]
+  etapa: 'demanda' | 'cotacao' | 'pedido' | 'recebido_parcial' | 'recebido'
+  /** Tudo o que foi pedido chegou: a tela oferece destravar (a pessoa confirma). */
+  sugerir_destravar: boolean
 }
 
 export type CategoriaDaCausa =
@@ -576,6 +639,11 @@ export interface ItemProgramacao {
   /** Quanto o campo apontou nesta semana. **Não entra no PPC** — é a prova ao
    *  lado dele. `null` é "ninguém apontou", que é diferente de zero. */
   percentual_apontado: string | null
+  /** O julgamento por %: o concluído dito no fim da semana, o acumulado da
+   *  atividade agora e a meta (início + prometido, ou 100% sem promessa). */
+  percentual_concluido?: string | null
+  avanco_atual?: string | null
+  meta_da_semana?: string | null
   cumprido: boolean | null
   causa: number | null
   causa_codigo?: string
@@ -590,6 +658,9 @@ export interface ItemProgramacao {
   peso_origem: string
   arrastado_de: number | null
   vezes_arrastado: number
+  /** A requisição de material que o cartão pediu ao almoxarifado. */
+  requisicao_sil?: number | null
+  requisicao_sil_status?: string | null
 }
 
 /** A área de rascunho: o que o plano diz que é desta semana. Sugestão, nunca
@@ -668,6 +739,7 @@ export interface JulgamentoDeItem {
   cumprido: boolean | null
   causa?: number | null
   nota?: string
+  percentual_concluido?: string | null
 }
 
 /* --------------------------------------------------------------------------
@@ -808,12 +880,14 @@ export type NaturezaRetencao = 'nenhuma' | 'caucao' | 'garantia' | 'tecnica'
 
 export type StatusMedicao =
   | 'rascunho' | 'em_aprovacao' | 'aprovada' | 'reprovada' | 'cancelada'
+  /** A aprovada que uma retificadora substituiu — legível, fora de toda soma. */
+  | 'retificada'
 
 export type StatusAditivo =
   | 'rascunho' | 'em_aprovacao' | 'aprovado' | 'reprovado' | 'cancelado'
 
 export type TipoDeducao =
-  | 'imposto' | 'adiantamento' | 'multa' | 'material' | 'outro'
+  | 'inss' | 'iss' | 'irrf' | 'adiantamento' | 'multa' | 'material' | 'outros'
 
 /** Retido − liberado, e as três parcelas juntas.
  *
@@ -854,6 +928,8 @@ export interface SaldoDoContrato {
   valor_original: string
   valor_aditivado: string
   medido_aprovado: string
+  /** Líquido das aprovadas (já com retenção, descontos e retificações). */
+  liquido_aprovado: string
   medido_em_aprovacao: string
   medido_rascunho: string
   deducoes_aprovadas: string
@@ -886,6 +962,45 @@ export interface LinhaDeContrato {
   planilha_editavel: boolean
   planilha_fechada_porque: string
   saldo: SaldoDoContrato
+  /** O pedido de serviço do Suprimentos que este contrato mede. */
+  pedido_scm?: { pedido: number; status: string; status_rotulo: string; valor_pedido: string } | null
+}
+
+/** Um acontecimento do contrato, na ordem em que aconteceu. */
+export interface EventoDoContrato {
+  tipo: 'medicao' | 'aditivo' | 'liberacao'
+  id: number
+  numero: number | null
+  data: string
+  rotulo: string
+  detalhe: string
+  status: string
+  status_rotulo: string
+  bruto: string
+  liquido: string
+  titulo: TituloDoErp | null
+}
+
+/** A ficha do contrato — o financeiro do ERP, os itens com o medido e a
+ *  linha do tempo (`contratos/{id}/ficha/`). */
+export interface FichaDoContrato {
+  contrato_id: number
+  lado: LadoContrato
+  itens: {
+    item_contrato_id: number
+    codigo: string
+    descricao: string
+    unidade: string
+    preco_unitario: string
+    contratado: string
+    medido: string
+    saldo: string
+    percentual: string | null
+    valor_contratado: string
+    valor_medido: string
+  }[]
+  financeiro: { titulos: number; emitido: string; pago: string; em_aberto: string }
+  linha_do_tempo: EventoDoContrato[]
 }
 
 export interface CarteiraDeContratos {
@@ -928,12 +1043,51 @@ export interface PayloadPostoMedicao {
   fila: FilaDaMedicao
 }
 
+/** Custo = empreiteiro (conta a pagar); receita = contratante (conta a receber). */
+export type LadoContrato = 'custo' | 'receita'
+
+export interface ParcelaDeReajuste {
+  parcela_id: number
+  contrato: number
+  indice: number
+  indice_codigo: string
+  indice_nome: string
+  peso: string
+  rotulo: string
+}
+
+/** O fator da fórmula do contrato numa data, com a memória que a outra parte
+ *  vai refazer. */
+export interface FatorDeReajuste {
+  reajustavel: boolean
+  motivo?: string
+  data?: string
+  ciclo?: number
+  fator?: string
+  competencia?: string | null
+  provisorio?: boolean
+  proximo_aniversario?: string
+  parcelas?: {
+    indice: string; rotulo: string; peso: string; razao: string
+    competencia_usada: string; provisorio: boolean; metodo: string; contribuicao: string
+  }[]
+}
+
 export interface ContratoObra {
   contrato_id: number
   obra: number
   obra_nome: string
-  fornecedor: number
+  lado: LadoContrato
+  lado_rotulo: string
+  fornecedor: number | null
+  cliente: number | null
+  /** O nome da parte: o empreiteiro no custo, o contratante na receita. */
   fornecedor_nome: string
+  reajuste_data_base: string | null
+  reajuste_periodicidade_meses: number
+  reajuste_parcela_fixa: string
+  reajuste_casas: number
+  parcelas_reajuste: ParcelaDeReajuste[]
   numero: string
   objeto: string
   regime: RegimeContrato
@@ -960,7 +1114,7 @@ export interface ContratoObra {
 }
 
 export interface ItemContrato {
-  item_id: number
+  item_contrato_id: number
   contrato: number
   codigo: string
   descricao: string
@@ -981,6 +1135,8 @@ export interface ItemContrato {
   quantidade_atual: string
   quantidade_aditivada: string
   aditivo_origem: number | null
+  /** Retenção própria do item (regra de aditivo); `null` = a do contrato. */
+  retencao_percentual: string | null
 }
 
 /** Uma assinatura da escada — quem decidiu, quando e com que autoridade. */
@@ -1010,10 +1166,26 @@ export interface TotaisDaMedicao {
   executado: string
   material_estocado: string
   bruto: string
+  /** O reajuste do período pela fórmula do contrato (zero se preço fixo). */
+  reajuste: string
+  reajuste_provisorio: boolean
+  bruto_reajustado: string
   retencao: string
   retencao_percentual: string
   total_deducoes: string
+  /** O valor líquido da medição (na retificadora, a medição corrigida inteira). */
   liquido: string
+  /** Na retificadora: os números da medição que ela substitui; `null` fora dela. */
+  original: {
+    medicao_id: number
+    numero: number
+    bruto_reajustado: string
+    retencao: string
+    total_deducoes: string
+    liquido: string
+  } | null
+  /** `liquido − original.liquido`; `null` fora de retificadora. */
+  diferenca_liquido: string | null
   deducoes: {
     deducao_id: number
     tipo: TipoDeducao
@@ -1064,6 +1236,8 @@ export interface ItemMedicao {
  *  alguém clicar: com o título aberto ele cancela os dois; com baixa em cima,
  *  a medição só se conserta por retificadora. */
 export interface TituloDoErp {
+  /** Receita = conta a receber; custo = conta a pagar. */
+  lado?: LadoContrato
   conta_pagar: number
   status: string
   status_rotulo: string
@@ -1082,6 +1256,7 @@ export interface Medicao {
   contrato_numero: string
   contrato_obra: number
   fornecedor_nome: string
+  lado: LadoContrato
   obra_nome: string
   regime: RegimeContrato
   numero: number
@@ -1147,6 +1322,9 @@ export interface LinhaDaGradeDeMedicao {
   quantidade_medida: string
   quantidade_estocada: string
   estocado_anterior: string
+  /** O que a medição que esta retifica mediu nesta linha; `null` fora de retificadora. */
+  quantidade_na_original: string | null
+  estocada_na_original: string | null
   origem: string | null
   observacao: string
 }
@@ -1181,19 +1359,51 @@ export interface ContextoDeMedicao extends PropostaDeMedicao {
   escada: EscadaDoDocumento | null
 }
 
+export type AcaoAditivo = 'acrescimo' | 'supressao' | 'preco' | 'inclusao'
+
+/** A linha do aditivo como o servidor a devolve (`ItemAditivoSerializer`). */
 export interface ItemAditivo {
   item_aditivo_id: number
   aditivo: number
   item_contrato: number | null
-  item_contrato_codigo: string | null
-  acao: string
+  acao: AcaoAditivo
   acao_rotulo: string
   codigo: string
   descricao: string
   unidade: string
-  quantidade: string
-  preco_unitario: string
-  valor: string
+  quantidade_delta: string
+  preco_unitario: string | null
+  preco_unitario_anterior: string | null
+  codigo_novo: string
+  descricao_nova: string
+  unidade_nova: string
+  retencao_percentual: string | null
+  observacao: string
+  /** O contratado da linha hoje — o denominador do delta. */
+  quantidade_atual: string | null
+}
+
+/** A linha que a tela manda (`LinhaDeAditivoSerializer`). */
+export interface LinhaDeAditivoEntrada {
+  acao: AcaoAditivo
+  item_contrato_id?: number | null
+  quantidade_delta?: string
+  preco_unitario?: string | null
+  codigo_novo?: string
+  descricao_nova?: string
+  unidade_nova?: string
+  retencao_percentual?: string | null
+  observacao?: string
+}
+
+export interface ResumoDoAditivo {
+  acrescimo: string
+  supressao: string
+  revisao_de_preco: string
+  liquido: string
+  contratado_original: string
+  percentual_sobre_original: string | null
+  itens: number
 }
 
 export interface AditivoContrato {
@@ -1205,10 +1415,11 @@ export interface AditivoContrato {
   justificativa: string
   data_assinatura: string | null
   nova_data_fim: string | null
+  /** A nova retenção do contrato; `null` = o aditivo não mexe nela. */
+  retencao_percentual_nova: string | null
   status: StatusAditivo
   status_rotulo: string
-  valor_total: string
-  percentual_sobre_original: string | null
+  resumo: ResumoDoAditivo
   criado_por: string
   criado_em: string
   aplicado_em: string | null
@@ -1653,4 +1864,90 @@ export interface EpiVencido {
   }[]
   total?: number
   observacao?: string
+}
+
+/** A equipe da obra — **uma composição** de funcionários (RH) e fornecedores
+ *  (empreiteiras), não um nome digitado. O nome é o rótulo que viaja no cartão
+ *  e que o encarregado procura no campo. */
+export interface EquipeObra {
+  equipe_id: number
+  obra: number
+  nome: string
+  funcionarios: number[]
+  fornecedores: number[]
+  membros: { tipo: 'funcionario' | 'fornecedor'; id: number; nome: string }[]
+  ativa: boolean
+}
+
+/** Previsto × realizado de uma etapa (ou da obra), em % do físico e em R$. */
+export interface LinhaDoAvanco {
+  previsto_pct: number | null
+  realizado_pct: number | null
+  desvio_pct: number | null
+  valor_orcado: string
+  valor_previsto: string
+  valor_realizado: string
+  valor_desvio: string
+  /** Contra o cronograma do Orçamento — nulo quando ele não tem a etapa. */
+  valor_planejado: string | null
+  valor_desvio_planejado: string | null
+}
+
+/** O avanço físico-financeiro do plano — o `avanco-fisico-financeiro/`. */
+export interface AvancoFisicoFinanceiro {
+  cronograma: number
+  status: string
+  hoje: string
+  linhas: (LinhaDoAvanco & { atividade: number; codigo: string; nome: string; etapa: number | null })[]
+  obra: LinhaDoAvanco
+  tem_dinheiro: boolean
+  folhas_sem_peso: number
+  folhas_sem_data: number
+  folhas_sem_orcamento: number
+  /** O cronograma físico-financeiro do Orçamento — nulo quando não há. */
+  planejado: {
+    orcamento: number
+    total: string
+    ate_hoje: string
+    mensal: { mes: string; valor: string; acumulado: string; pct_acumulado: number }[]
+  } | null
+  curva: {
+    base_financeira: string | null
+    ultimo_apontamento: string | null
+    pontos: {
+      iso: string
+      rotulo: string
+      previsto: number
+      realizado: number | null
+      previsto_reais: string | null
+      realizado_reais: string | null
+    }[]
+  } | null
+}
+
+/** De onde a planilha contratual pode puxar itens (fontes-da-planilha/). */
+export interface FontesDaPlanilha {
+  orcamento: { id: number; descricao: string } | null
+  itens_orcados: {
+    item_orcado: number
+    codigo: string
+    descricao: string
+    unidade: string
+    quantidade: string
+    preco_unitario: string
+    ja_no_contrato: boolean
+  }[]
+  plano: { id: number; versao: number } | null
+  atividades: { atividade: number; codigo: string; nome: string; ja_no_contrato: boolean }[]
+}
+
+/** Uma linha para incluir na planilha de uma vez (incluir-na-planilha/). */
+export interface LinhaParaPlanilha {
+  codigo: string
+  descricao: string
+  unidade: string
+  quantidade_contratada: string
+  preco_unitario: string
+  item_orcado?: number | null
+  atividade?: number | null
 }

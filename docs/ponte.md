@@ -24,7 +24,15 @@ No WSL (`wsl -d Ubuntu`), com o stack de pé:
 cd ~/projetos/02sistema_gestao_integrada
 ./infra/ponte/ponte.sh subir          # 4 horas (padrão)
 ./infra/ponte/ponte.sh subir 2        # ou o prazo que você quiser, até 12h
+./infra/ponte/ponte.sh subir stg      # o staging (8443) em vez do dev (8090)
 ```
+
+No PowerShell, na pasta `infra\ponte`: `wsl ./ponte.sh subir` — sem o `wsl` na frente o Windows
+só abre o `.sh` e nada sobe.
+
+No `stg` o porteiro fala TLS com o gateway do staging (o `:80` de lá só redireciona) e repassa a
+origem `https://localhost:8443`; a cópia do `nginx.conf` com essas duas trocas é gerada na subida.
+O staging tem dado real (tenant EEGM) — a senha da ponte é o que o separa da internet.
 
 Ele imprime a **URL**, o **usuário** (`sgi`), a **senha** — gerada na hora — e a
 **hora em que expira**. No celular: abra a URL, o navegador pede usuário e
@@ -32,7 +40,7 @@ senha, e depois você cai no login normal do SGI.
 
 | Comando | O que faz |
 | --- | --- |
-| `subir [horas]` | Levanta a ponte. Padrão 4h, teto 12h. |
+| `subir [horas] [stg]` | Levanta a ponte. Padrão 4h no dev, teto 12h; `stg` aponta para o staging. |
 | `status` | O que está no ar, quanto falta, e se o vigia está vivo. |
 | `prorrogar [horas]` | Estica o prazo. **A URL e a senha não mudam.** |
 | `derrubar` | Fecha agora, sem esperar o prazo. |

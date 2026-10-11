@@ -24,6 +24,10 @@ interface AuthContextType {
   user: User | null
   modules: string[]
   permissions: string[]
+  /** Os nomes dos papéis da pessoa (`roles` do `/auth/me/`). **Não decidem
+   *  acesso** — isso é das permissões; servem para a tela escolher a porta
+   *  (o planejador abre a obra no plano, §3.3 da planta do PDCA). */
+  roles: string[]
   isTenantAdmin: boolean
   /** Supervisor da plataforma (`is_superuser` na IAM). Diferente de
    *  `isTenantAdmin`: aquele manda na empresa dele, este atravessa o
@@ -48,18 +52,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [user, setUser] = useState<User | null>(null)
   const [modules, setModules] = useState<string[]>([])
   const [permissions, setPermissions] = useState<string[]>([])
+  const [roles, setRoles] = useState<string[]>([])
   const [isTenantAdmin, setIsTenantAdmin] = useState(false)
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false)
   const [loading, setLoading] = useState(true)
 
   const aplicarMe = (d: {
     id: string; username: string; email: string
-    modules?: string[]; permissions?: string[]
+    modules?: string[]; permissions?: string[]; roles?: string[]
     is_tenant_admin?: boolean; is_platform_admin?: boolean
   }) => {
     setUser({ id: d.id, username: d.username, email: d.email })
     setModules(Array.isArray(d.modules) ? d.modules : [])
     setPermissions(Array.isArray(d.permissions) ? d.permissions : [])
+    setRoles(Array.isArray(d.roles) ? d.roles : [])
     setIsTenantAdmin(!!d.is_tenant_admin)
     setIsPlatformAdmin(!!d.is_platform_admin)
   }
@@ -70,6 +76,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setUser(null)
     setModules([])
     setPermissions([])
+    setRoles([])
     setIsTenantAdmin(false)
     setIsPlatformAdmin(false)
   }, [])
@@ -170,6 +177,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     try {
       const me = await iamClient.get('me/')
       setPermissions(Array.isArray(me.data.permissions) ? me.data.permissions : [])
+      setRoles(Array.isArray(me.data.roles) ? me.data.roles : [])
       // `me` é a fonte mais fresca dos dois flags — o payload do login pode ser
       // anterior a uma promoção feita enquanto a sessão já existia.
       if (typeof me.data.is_platform_admin === 'boolean') {
@@ -177,6 +185,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
     } catch {
       setPermissions([])
+      setRoles([])
     }
   }
 
@@ -195,7 +204,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   return (
     <AuthContext.Provider value={{
-      isAuthenticated: !!user, user, modules, permissions, isTenantAdmin, isPlatformAdmin,
+      isAuthenticated: !!user, user, modules, permissions, roles, isTenantAdmin, isPlatformAdmin,
       loading, login, concluirLogin, changePassword, logout, hasModule, hasPermission,
     }}>
       {children}

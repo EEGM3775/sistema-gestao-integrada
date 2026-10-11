@@ -31,13 +31,14 @@ from __future__ import annotations
 
 import logging
 
-from django.db.models.signals import pre_delete
+from django.db.models.signals import post_delete, post_save, pre_delete
 from django.dispatch import receiver
 
 from nucleo.aprovacao import aprovacao_concluida
 from nucleo.lixo import antes_de_purgar
 from obras.models import Obra
 
+from . import etapas
 from .models import (
     AditivoContrato, Atividade, ContratoObra, Cronograma, LiberacaoRetencao,
     Medicao,
@@ -277,3 +278,41 @@ def recusar_purga_de_contrato_com_titulo(sender, alvo, item, **kwargs):
             f"título no financeiro. Contrato com pagamento não é apagado — "
             f"encerre-o em vez de excluí-lo."
         )
+
+
+# ---------------------------------------------------------------------------
+# As etapas da obra seguem as raízes do plano em vigor (`modulopdca/etapas.py`)
+# ---------------------------------------------------------------------------
+
+
+def _obra_do_cronograma(cronograma_id):
+    linha = (Cronograma.objects.filter(pk=cronograma_id)
+             .values_list("obra_id", "tenant_id", "eh_modelo").first())
+    if not linha or not linha[0] or linha[2]:
+        return None, None
+    return linha[0], linha[1]
+
+
+@receiver(post_save, sender=Atividade, dispatch_uid="pdca_etapas_raiz_gravada")
+@receiver(post_delete, sender=Atividade, dispatch_uid="pdca_etapas_raiz_excluida")
+def raiz_mudou(sender, instance, **kwargs):
+    """Só a raiz é etapa. A filha só interessa quando o `pai` pode ter mudado
+    (deixou de ser raiz, ou virou): o resto dela chega pela raiz, no fim do CPM."""
+    if instance.pai_id is not None:
+        # A filha que sai junto com a etapa (a cascata) não diz nada novo.
+        if kwargs.get("signal") is post_delete:
+            return
+        campos = kwargs.get("update_fields")
+        if campos is not None and "pai" not in campos:
+            return
+    obra_id, tenant_id = _obra_do_cronograma(instance.cronograma_id)
+    solta = instance.etapa_id if kwargs.get("signal") is post_delete and instance.pai_id is None else None
+    etapas.agendar(obra_id, tenant_id, solta=solta)
+
+
+@receiver(post_save, sender=Cronograma, dispatch_uid="pdca_etapas_cronograma_gravado")
+@receiver(post_delete, sender=Cronograma, dispatch_uid="pdca_etapas_cronograma_excluido")
+def cronograma_mudou(sender, instance, **kwargs):
+    """Publicar troca o plano em vigor; descartar o rascunho também."""
+    if etapas.cronograma_da_obra(instance):
+        etapas.agendar(instance.obra_id, instance.tenant_id)

@@ -605,6 +605,13 @@ class Orcamento(TenantScopedModel, Excluivel):
         help_text=_("Rótulo durável de quem aprovou (não é FK — o registro sobrevive ao usuário)."),
     )
     observacao = models.TextField(blank=True, verbose_name=_("Observação"))
+    #: Quando o cronograma físico-financeiro (as etapas planejadas) mudou pela
+    #: última vez. É o carimbo que o PDCA compara com o do plano que gerou dele:
+    #: mais novo aqui = "o cronograma do orçamento mudou", e o planejador decide
+    #: se traz a mudança (decisão do dono, 10/10/2026 — "copia e avisa").
+    cronograma_atualizado_em = models.DateTimeField(
+        null=True, blank=True, editable=False, verbose_name=_("Cronograma atualizado em"),
+    )
     criado_em = models.DateTimeField(auto_now_add=True, verbose_name=_("Criado em"))
     atualizado_em = models.DateTimeField(auto_now=True, verbose_name=_("Atualizado em"))
 
@@ -631,6 +638,17 @@ class Orcamento(TenantScopedModel, Excluivel):
         permissão, o documento é que não está mais aberto."""
         return self.status == self.Status.RASCUNHO
 
+    @property
+    def cronograma_editavel(self) -> bool:
+        """O cronograma aceita escrita no rascunho **e no aprovado**.
+
+        Datas não mexem em preço: replanejar quando a fundação começa não é
+        aditivo, e obrigar uma revisão para isso faria o cronograma não ser
+        mantido. O que protege o PDCA é o carimbo `cronograma_atualizado_em`, não
+        a trava. Superado e cancelado continuam história.
+        """
+        return self.status in (self.Status.RASCUNHO, self.Status.APROVADO)
+
 
 class ItemOrcado(TenantScopedModel):
     """Linha da planilha — nó da árvore EAP.
@@ -643,8 +661,11 @@ class ItemOrcado(TenantScopedModel):
     A FK `item` continua ali para navegar (e para o SCM/SIL casarem o que foi
     comprado com o que foi orçado), mas quem manda no número é o snapshot.
 
-    `etapa` é o que faz o orçado casar com o **aplicado** do SIL, que apropria
-    movimentação por `obras.EtapaObra` — mesma dimensão, comparação direta.
+    `etapa` é o vínculo **opcional** com a `obras.EtapaObra`: o que faz o orçado
+    casar com o **aplicado** do SIL, que apropria movimentação por etapa da
+    obra. O cronograma do orçamento **não depende dele** — é por grupo da
+    planilha (`PlanoEtapa.grupo`). Quem liga é o usuário, no grupo de 1º nível
+    (`cronograma.vincular_etapa_da_obra`), e o vínculo desce para as linhas dele.
 
     **A linha carrega a sua procedência (ORC.10a).** `fonte_referencia`,
     `codigo_referencia` e `data_base_preco` descrevem a publicação de onde o
@@ -986,7 +1007,7 @@ class ParcelaEtapa(TenantScopedModel):
 
     Guardamos **percentual e valor**: o percentual é o que o planejador digita
     e o que sobrevive a uma mudança de preço; o valor é derivado
-    (`controle.recalcular_parcelas`) e existe para a leitura não precisar
+    (`cronograma.recalcular_parcelas`) e existe para a leitura não precisar
     recalcular a grade inteira a cada abertura de tela.
 
     `etapa` nula significa "o orçamento inteiro" — útil para obra pequena, que
@@ -997,9 +1018,9 @@ class ParcelaEtapa(TenantScopedModel):
     orcamento = models.ForeignKey(
         Orcamento, on_delete=models.CASCADE, related_name="parcelas", verbose_name=_("Orçamento"),
     )
-    etapa = models.ForeignKey(
-        "obras.EtapaObra", on_delete=models.CASCADE, null=True, blank=True,
-        related_name="parcelas_orcamento", verbose_name=_("Etapa"),
+    grupo = models.ForeignKey(
+        "ItemOrcado", on_delete=models.CASCADE, null=True, blank=True,
+        related_name="parcelas_cronograma", verbose_name=_("Etapa do orçamento"),
     )
     competencia = models.DateField(
         verbose_name=_("Competência"), help_text=_("Dia 1 do mês da parcela."),
@@ -1015,19 +1036,19 @@ class ParcelaEtapa(TenantScopedModel):
     class Meta:
         verbose_name = _("Parcela do cronograma")
         verbose_name_plural = _("Parcelas do cronograma")
-        ordering = ["orcamento", "etapa", "competencia"]
+        ordering = ["orcamento", "grupo", "competencia"]
         constraints = [
             models.UniqueConstraint(
-                fields=["orcamento", "etapa", "competencia"],
+                fields=["orcamento", "grupo", "competencia"],
                 name="orcamento_parcela_unica_por_mes",
             ),
-            # A de cima não cobre `etapa IS NULL`: no Postgres NULL ≠ NULL, então
+            # A de cima não cobre `grupo IS NULL`: no Postgres NULL ≠ NULL, então
             # duas parcelas "do orçamento inteiro" no mesmo mês passariam. Esta
             # constraint parcial fecha o caso, sem depender do `nulls_distinct`
             # (que exige PG 15+).
             models.UniqueConstraint(
                 fields=["orcamento", "competencia"],
-                condition=models.Q(etapa__isnull=True),
+                condition=models.Q(grupo__isnull=True),
                 name="orcamento_parcela_unica_sem_etapa",
             ),
         ]
@@ -1037,6 +1058,58 @@ class ParcelaEtapa(TenantScopedModel):
 
     def __str__(self):
         return f"{self.competencia:%m/%Y} — {self.percentual}%"
+
+
+class PlanoEtapa(TenantScopedModel):
+    """A etapa no tempo: quando começa, quando termina e **como** o custo se
+    distribui entre as duas datas.
+
+    *Decisão do dono, 10/10/2026:* o cronograma físico-financeiro nasce do
+    orçamento e **só por etapa** — o detalhe (serviço, frente, sequência) é do
+    PDCA, que gera as atividades a partir daqui. Antes o planejador digitava um
+    percentual por célula; agora informa três coisas por etapa e a grade
+    `ParcelaEtapa` é **calculada** (`cronograma.distribuir_etapa`), pelos dias
+    úteis de cada mês. `MANUAL` é a saída para quem quer ajustar célula a
+    célula: a curva para de ser recalculada e as células passam a ser a verdade.
+    """
+
+    class Curva(models.TextChoices):
+        LINEAR = "linear", _("Linear")
+        S = "s", _("Curva S")
+        INICIO = "inicio", _("Carregada no início")
+        FIM = "fim", _("Carregada no fim")
+        MANUAL = "manual", _("Manual (célula a célula)")
+
+    plano_id = models.AutoField(primary_key=True)
+    orcamento = models.ForeignKey(
+        Orcamento, on_delete=models.CASCADE, related_name="planos_etapa", verbose_name=_("Orçamento"),
+    )
+    grupo = models.ForeignKey(
+        "ItemOrcado", on_delete=models.CASCADE, related_name="plano_cronograma",
+        verbose_name=_("Etapa do orçamento"),
+    )
+    inicio = models.DateField(verbose_name=_("Início"))
+    termino = models.DateField(verbose_name=_("Término"))
+    curva = models.CharField(
+        max_length=8, choices=Curva.choices, default=Curva.LINEAR, verbose_name=_("Curva"),
+    )
+    observacao = models.CharField(max_length=255, blank=True, verbose_name=_("Observação"))
+    atualizado_em = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _("Etapa planejada")
+        verbose_name_plural = _("Etapas planejadas")
+        ordering = ["orcamento", "grupo__ordem", "grupo_id"]
+        constraints = [
+            models.UniqueConstraint(fields=["orcamento", "grupo"], name="orcamento_plano_etapa_unico"),
+            models.CheckConstraint(
+                check=models.Q(termino__gte=models.F("inicio")),
+                name="orcamento_plano_etapa_periodo_valido",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.grupo_id}: {self.inicio:%d/%m/%Y} → {self.termino:%d/%m/%Y}"
 
 
 # ---------------------------------------------------------------------------
@@ -1958,149 +2031,6 @@ class LinhaMedicao(TenantScopedModel):
         return f"{self.descricao or 'parcial'} = {self.total}"
 
 
-class IndiceEconomico(models.Model):
-    """Um índice de reajuste — INCC-M, IPCA, IGP-M, CUB.
-
-    **Global, sem tenant**, pela mesma razão da `BaseReferencial` (§11.1): o
-    INCC-M de julho/2026 é o mesmo número para todo mundo, é publicado por
-    terceiro (FGV, IBGE, Sinduscon) e replicá-lo por empresa seria copiar dado
-    público. Escrita por comando/job; a API é read-only e gateada pelo
-    entitlement `orcamento`.
-    """
-
-    indice_id = models.AutoField(primary_key=True)
-    codigo = models.CharField(max_length=20, unique=True, verbose_name=_("Código"))
-    nome = models.CharField(max_length=120, verbose_name=_("Nome"))
-    fonte = models.CharField(
-        max_length=80, blank=True, verbose_name=_("Fonte"),
-        help_text=_("FGV, IBGE, Sinduscon/UF — quem publica."),
-    )
-    uf = models.CharField(
-        max_length=2, blank=True, verbose_name=_("UF"),
-        help_text=_("Só para índices regionais, como o CUB."),
-    )
-    ativo = models.BooleanField(default=True, verbose_name=_("Ativo"))
-
-    class Meta:
-        verbose_name = _("Índice econômico")
-        verbose_name_plural = _("Índices econômicos")
-        ordering = ["codigo"]
-
-    def __str__(self):
-        return f"{self.codigo} — {self.nome}"
-
-
-class ValorIndice(models.Model):
-    """O número do índice numa competência.
-
-    Guarda o **número-índice** (a série encadeada), não só a variação: reajuste
-    contratual é razão entre dois pontos da série (``I_t / I_0``), e reconstituir
-    isso somando variações mês a mês acumula erro de arredondamento que aparece
-    como centavo de diferença num contrato de milhões. A variação fica junto
-    porque é o que a imprensa publica e o que o usuário confere.
-    """
-
-    valor_id = models.AutoField(primary_key=True)
-    indice = models.ForeignKey(
-        IndiceEconomico, on_delete=models.CASCADE, related_name="valores", verbose_name=_("Índice"),
-    )
-    competencia = models.DateField(
-        verbose_name=_("Competência"), help_text=_("Sempre o dia 1º do mês de referência."),
-    )
-    numero_indice = models.DecimalField(
-        max_digits=16, decimal_places=6, verbose_name=_("Número-índice"),
-    )
-    variacao_percentual = models.DecimalField(
-        max_digits=8, decimal_places=4, null=True, blank=True, verbose_name=_("Variação no mês (%)"),
-    )
-
-    class Meta:
-        verbose_name = _("Valor de índice")
-        verbose_name_plural = _("Valores de índice")
-        ordering = ["indice", "-competencia"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["indice", "competencia"], name="orcamento_indice_competencia_unica",
-            ),
-        ]
-
-    def __str__(self):
-        return f"{self.indice.codigo} {self.competencia:%m/%Y} = {self.numero_indice}"
-
-
-class FormulaReajuste(TenantScopedModel):
-    """A **fórmula paramétrica de reajuste** do contrato, como o edital a define::
-
-        R = V × [ a + Σ pᵢ × (Iᵢ,t / Iᵢ,0) ]
-
-    onde `a` é a parcela **não reajustável** e cada `pᵢ` é o peso de um índice
-    setorial. Contratos de obra pública quase sempre usam uma cesta (mão de
-    obra, materiais, equipamentos) em vez de um índice único, e é por isso que a
-    fórmula é uma tabela de parcelas e não um campo.
-
-    **Reajustar não é reprecificar.** A reprecificação (`Reprecificacao`) troca o
-    preço unitário pela cotação de outra publicação, item a item — muda a
-    *composição* do custo. O reajuste multiplica tudo por um fator contratual,
-    sem tocar em composição, e é ato de contrato: em orçamento aprovado ele
-    exige revisão, que é onde o histórico mora.
-    """
-
-    formula_id = models.AutoField(primary_key=True)
-    orcamento = models.ForeignKey(
-        Orcamento, on_delete=models.CASCADE, related_name="formulas_reajuste",
-        verbose_name=_("Orçamento"),
-    )
-    nome = models.CharField(max_length=120, default="Reajuste contratual", verbose_name=_("Nome"))
-    data_base = models.DateField(
-        verbose_name=_("Data-base (I₀)"),
-        help_text=_("A competência do denominador — normalmente a data-base do orçamento."),
-    )
-    parcela_fixa = models.DecimalField(
-        max_digits=6, decimal_places=4, default=Decimal("0"),
-        verbose_name=_("Parcela não reajustável (a)"),
-        help_text=_("Fração de 0 a 1. A soma de 'a' com os pesos precisa fechar em 1."),
-        validators=[MinValueValidator(Decimal("0"))],
-    )
-    observacao = models.TextField(blank=True, verbose_name=_("Observação"))
-
-    class Meta:
-        verbose_name = _("Fórmula de reajuste")
-        verbose_name_plural = _("Fórmulas de reajuste")
-        ordering = ["orcamento", "nome"]
-
-    def __str__(self):
-        return f"{self.nome} (base {self.data_base:%m/%Y})"
-
-
-class ParcelaFormulaReajuste(TenantScopedModel):
-    """Uma parcela da cesta: índice × peso."""
-
-    parcela_id = models.AutoField(primary_key=True)
-    formula = models.ForeignKey(
-        FormulaReajuste, on_delete=models.CASCADE, related_name="parcelas", verbose_name=_("Fórmula"),
-    )
-    indice = models.ForeignKey(
-        IndiceEconomico, on_delete=models.PROTECT, related_name="+", verbose_name=_("Índice"),
-    )
-    peso = models.DecimalField(
-        max_digits=6, decimal_places=4, default=Decimal("0"), verbose_name=_("Peso (p)"),
-        help_text=_("Fração de 0 a 1."),
-        validators=[MinValueValidator(Decimal("0"))],
-    )
-    rotulo = models.CharField(
-        max_length=80, blank=True, verbose_name=_("Rótulo"),
-        help_text=_("'Mão de obra', 'Materiais' — como o edital nomeia a parcela."),
-    )
-
-    class Meta:
-        verbose_name = _("Parcela da fórmula de reajuste")
-        verbose_name_plural = _("Parcelas da fórmula de reajuste")
-        ordering = ["formula", "parcela_id"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["formula", "indice"], name="orcamento_formula_indice_unico",
-            ),
-        ]
-
-    def __str__(self):
-        return f"{self.rotulo or self.indice.codigo}: {self.peso}"
+# O índice econômico e a fórmula de reajuste saíram daqui (decisão do dono,
+# 10/10/2026): a série é única em `nucleo.ValorIndice` e o reajuste é ato de
+# contrato — `nucleo/reajuste.py` e o `ContratoObra` do PDCA.

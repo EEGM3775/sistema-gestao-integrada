@@ -220,10 +220,13 @@ export function TrilhoQuatroColunas({ orcado, comprometido, aplicado, realizado 
   )
 }
 
-/** Curva S: previsto acumulado (referência tracejada) × realizado acumulado. */
-export function CurvaSGrafico({ serie, altura = 220 }: {
+/** Curva S: previsto acumulado (referência tracejada) × realizado acumulado.
+ *  `soPrevisto` desenha só o planejado — o cronograma do orçamento não tem
+ *  realizado (o executado é do PDCA), e uma linha zerada leria como "nada feito". */
+export function CurvaSGrafico({ serie, altura = 220, soPrevisto = false }: {
   serie: { competencia: string; previstoPct: number; realizadoPct: number; previsto: number; realizado: number }[]
   altura?: number
+  soPrevisto?: boolean
 }) {
   const [dica, setDica] = useState<{ x: number; y: number; conteudo: ReactNode } | null>(null)
   const [foco, setFoco] = useState<number | null>(null)
@@ -254,8 +257,8 @@ export function CurvaSGrafico({ serie, altura = 220 }: {
               conteudo: (
                 <>
                   <b>{p.competencia}</b><br />
-                  previsto {pct(p.previstoPct, 1)} · {brl(p.previsto)}<br />
-                  realizado {pct(p.realizadoPct, 1)} · {brl(p.realizado)}
+                  previsto {pct(p.previstoPct, 1)} · {brl(p.previsto)}
+                  {!soPrevisto && <><br />realizado {pct(p.realizadoPct, 1)} · {brl(p.realizado)}</>}
                 </>
               ),
             })
@@ -266,7 +269,7 @@ export function CurvaSGrafico({ serie, altura = 220 }: {
             <line key={y} x1="0" y1={y} x2="100" y2={y} stroke="var(--g-grade)" strokeWidth="0.3" vectorEffect="non-scaling-stroke" />
           ))}
           <path d={caminho('previstoPct')} fill="none" stroke="var(--ink-3)" strokeWidth="2" strokeDasharray="5 4" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
-          <path d={caminho('realizadoPct')} fill="none" stroke="var(--accent)" strokeWidth="2.5" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+          {!soPrevisto && <path d={caminho('realizadoPct')} fill="none" stroke="var(--accent)" strokeWidth="2.5" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />}
           {foco !== null && (
             <line x1={foco * passo} y1="0" x2={foco * passo} y2="100" stroke="var(--ink-3)" strokeWidth="1" vectorEffect="non-scaling-stroke" opacity="0.55" />
           )}
@@ -279,7 +282,7 @@ export function CurvaSGrafico({ serie, altura = 220 }: {
       <div style={{ marginTop: 8 }}>
         <Legenda itens={[
           { cor: 'var(--ink-3)', rotulo: 'Previsto acumulado', tracejada: true },
-          { cor: 'var(--accent)', rotulo: 'Realizado acumulado' },
+          ...(soPrevisto ? [] : [{ cor: 'var(--accent)', rotulo: 'Realizado acumulado' }]),
         ]} />
       </div>
       {dica && <Dica x={dica.x} y={dica.y}>{dica.conteudo}</Dica>}

@@ -1,10 +1,10 @@
 import apiClient from '@/api/apiClient'
 import type { Obra } from '@/types'
 import type {
-  AditivoContrato, AnexoOcorrencia, ApontamentoAvanco, Atividade,
-  CalendarioTrabalho, CandidatoDaSemana, CausaNaoCumprimento,
+  AditivoContrato, FatorDeReajuste, AnexoOcorrencia, ApontamentoAvanco, Atividade, AvancoFisicoFinanceiro,
+  CalendarioTrabalho, CandidatoDaSemana, CausaNaoCumprimento, EquipeObra,
   ClassificacaoOcorrencia, ConclusaoDaVerificacao, ContextoDeMedicao,
-  ContratoObra, Cronograma, DialogoSeguranca, DominioVerificacao, EpiVencido,
+  ContratoObra, Cronograma, DialogoSeguranca, DominioVerificacao, EpiVencido, FontesDaPlanilha, LinhaParaPlanilha,
   EspecieAnexo, GravidadeNc, ItemContrato, ItemModeloVerificacao,
   ItemProgramacao, ItemVerificacao, JulgamentoDeItem, LiberacaoRetencao,
   LocalObra, Medicao, ModeloVerificacao, NaoConformidade, Ocorrencia,
@@ -13,7 +13,7 @@ import type {
   PayloadPostoQualidade, PayloadPostoSeguranca, PeriodoSugerido, PlanoAcao,
   ProgramacaoSemanal, PropostaDeMedicao, RankingDeCausas, Restricao,
   ResultadoDoArrasto, ResultadoItem, ResumoDoPpc, RetencaoDoContrato,
-  SaldoDoContrato, StatusModulo, TipoCat, TipoOcorrencia, TipoPlanoAcao,
+  FichaDoContrato, LinhaDeAditivoEntrada, SaldoDoContrato, StatusModulo, TipoCat, TipoOcorrencia, TipoPlanoAcao,
   Verificacao,
 } from '../types'
 
@@ -98,6 +98,19 @@ export const restricoes = {
     })
     return lista<Restricao>(data)
   },
+  /** Abertas e resolvidas de uma atividade: a resolvida fica na lista, com a
+   *  nota, e pode voltar a ser aberta. */
+  async daAtividade(atividadeId: number): Promise<Restricao[]> {
+    const { data } = await apiClient.get('/pdca/restricoes/', {
+      params: { atividade: atividadeId, page_size: 300, ordering: 'status' },
+    })
+    return lista<Restricao>(data).filter((r) => r.status !== 'cancelada')
+  },
+  /** A trava que voltou — resolvida → aberta, carimbada no histórico. */
+  async reabrir(id: number): Promise<Restricao> {
+    const { data } = await apiClient.post(`/pdca/restricoes/${id}/reabrir/`, {})
+    return data
+  },
   async criar(corpo: Partial<Restricao>): Promise<Restricao> {
     const { data } = await apiClient.post('/pdca/restricoes/', corpo)
     return data
@@ -129,6 +142,20 @@ export const causas = {
   },
   async criar(corpo: Partial<CausaNaoCumprimento>): Promise<CausaNaoCumprimento> {
     const { data } = await apiClient.post('/pdca/causas/', corpo)
+    return data
+  },
+}
+
+/** As equipes da obra — a composição que assume compromissos na semana. */
+export const equipes = {
+  async daObra(obraId: number): Promise<EquipeObra[]> {
+    const { data } = await apiClient.get('/pdca/equipes/', {
+      params: { obra: obraId, ativa: true, page_size: 200, ordering: 'nome' },
+    })
+    return lista<EquipeObra>(data)
+  },
+  async criar(corpo: Pick<EquipeObra, 'obra' | 'nome' | 'funcionarios' | 'fornecedores'>): Promise<EquipeObra> {
+    const { data } = await apiClient.post('/pdca/equipes/', corpo)
     return data
   },
 }
@@ -229,6 +256,11 @@ export const itensProgramacao = {
   async remover(id: number): Promise<void> {
     await apiClient.delete(`/pdca/itens-programacao/${id}/`)
   },
+  /** O compromisso pede o material da semana ao almoxarifado (requisição em rascunho). */
+  async pedirMaterial(id: number): Promise<{ requisicao: number; status: string; itens: number }> {
+    const { data } = await apiClient.post(`/pdca/itens-programacao/${id}/pedir-material/`, {})
+    return data
+  },
 }
 
 /** O livro-razão do avanço — **nasce e estorna; não edita nem apaga**. É o que
@@ -288,6 +320,9 @@ export const cronogramas = {
     const { data } = await apiClient.post('/pdca/cronogramas/', corpo)
     return data
   },
+  async descartar(id: number): Promise<void> {
+    await apiClient.delete(`/pdca/cronogramas/${id}/`)
+  },
   /** Árvore, setas, linha de base, cobertura e avanço numa chamada só. */
   async gantt(id: number): Promise<PayloadGantt> {
     const { data } = await apiClient.get(`/pdca/cronogramas/${id}/gantt/`)
@@ -307,6 +342,11 @@ export const cronogramas = {
   },
   async linhaDeBalanco(id: number): Promise<PayloadBalanco> {
     const { data } = await apiClient.get(`/pdca/cronogramas/${id}/linha-de-balanco/`)
+    return data
+  },
+  /** Previsto × realizado por etapa e a curva S mensal (o avanço é do PDCA). */
+  async avancoFisicoFinanceiro(id: number): Promise<AvancoFisicoFinanceiro> {
+    const { data } = await apiClient.get(`/pdca/cronogramas/${id}/avanco-fisico-financeiro/`)
     return data
   },
   async curvaS(id: number, granularidade = 'semana'): Promise<unknown> {
@@ -337,6 +377,13 @@ export const locais = {
       params: { obra: obraId, page_size: 500 },
     })
     return lista<LocalObra>(data)
+  },
+  async criar(corpo: Partial<LocalObra>): Promise<LocalObra> {
+    const { data } = await apiClient.post('/pdca/locais/', corpo)
+    return data
+  },
+  async remover(id: number): Promise<void> {
+    await apiClient.delete(`/pdca/locais/${id}/`)
   },
 }
 
@@ -680,11 +727,47 @@ export const contratos = {
    *  ele não tem a escada de verbos da medição. A segregação que importa está
    *  do outro lado: quem monta o contrato pode não ser quem ateste. */
   async criar(corpo: Record<string, unknown>): Promise<ContratoObra> {
-    const { data } = await apiClient.post('/pdca/contratos/', corpo)
+    // As parcelas da fórmula de reajuste são filhas do contrato: nascem depois
+    // dele. Falhar numa não desfaz o contrato (ele já existe e é editável) —
+    // o erro sobe e a tela diz qual parcela faltou.
+    const { parcelas_reajuste: parcelas, ...contrato } = corpo as {
+      parcelas_reajuste?: { indice: number; peso: string; rotulo: string }[]
+    } & Record<string, unknown>
+    const { data } = await apiClient.post('/pdca/contratos/', contrato)
+    for (const p of parcelas ?? []) {
+      await apiClient.post('/pdca/parcelas-reajuste/', { contrato: data.contrato_id, ...p })
+    }
+    return data
+  },
+  /** O fator da fórmula numa data, com a memória de cada parcela. */
+  async fatorDeReajuste(id: number, data?: string): Promise<FatorDeReajuste> {
+    const { data: corpo } = await apiClient.get(`/pdca/contratos/${id}/fator-de-reajuste/`, {
+      params: data ? { data } : undefined,
+    })
+    return corpo
+  },
+  /** O contrato inteiro numa leitura: financeiro do ERP, itens e linha do tempo. */
+  async ficha(id: number): Promise<FichaDoContrato> {
+    const { data } = await apiClient.get(`/pdca/contratos/${id}/ficha/`)
     return data
   },
   async saldo(id: number): Promise<SaldoDoContrato> {
     const { data } = await apiClient.get(`/pdca/contratos/${id}/saldo/`)
+    return data
+  },
+  /** Rascunho → vigente (achado do dono: "fica em rascunho eternamente"). */
+  async ativar(id: number): Promise<ContratoObra> {
+    const { data } = await apiClient.post(`/pdca/contratos/${id}/ativar/`)
+    return data
+  },
+  /** Itens do orçamento e atividades do plano, prontos para a planilha. */
+  async fontesDaPlanilha(id: number): Promise<FontesDaPlanilha> {
+    const { data } = await apiClient.get(`/pdca/contratos/${id}/fontes-da-planilha/`)
+    return data
+  },
+  /** Várias linhas de uma vez — do orçamento, do plano ou coladas do Excel. */
+  async incluirNaPlanilha(id: number, linhas: LinhaParaPlanilha[]): Promise<ItemContrato[]> {
+    const { data } = await apiClient.post(`/pdca/contratos/${id}/incluir-na-planilha/`, { linhas })
     return data
   },
   async periodoSugerido(id: number): Promise<PeriodoSugerido> {
@@ -858,6 +941,14 @@ export const medicoes = {
   },
 }
 
+export interface CabecalhoDoAditivo {
+  objeto: string
+  justificativa: string
+  data_assinatura?: string | null
+  nova_data_fim?: string | null
+  retencao_percentual_nova?: string | null
+}
+
 export const aditivos = {
   async doContrato(contratoId: number): Promise<AditivoContrato[]> {
     const { data } = await apiClient.get('/pdca/aditivos/', {
@@ -871,12 +962,25 @@ export const aditivos = {
   },
   async abrir(corpo: {
     contrato: number
-    objeto: string
-    justificativa: string
-    data_assinatura?: string | null
-    nova_data_fim?: string | null
-  }): Promise<AditivoContrato> {
+  } & CabecalhoDoAditivo & { itens?: LinhaDeAditivoEntrada[] }): Promise<AditivoContrato> {
     const { data } = await apiClient.post('/pdca/aditivos/abrir/', corpo)
+    return data
+  },
+  /** O cabeçalho do rascunho — só o que vier no corpo muda. */
+  async cabecalho(id: number, corpo: Partial<CabecalhoDoAditivo>): Promise<AditivoContrato> {
+    const { data } = await apiClient.post(`/pdca/aditivos/${id}/cabecalho/`, corpo)
+    return data
+  },
+  /** As linhas do rascunho — substitui, não soma. */
+  async itens(id: number, itens: LinhaDeAditivoEntrada[]): Promise<unknown> {
+    const { data } = await apiClient.post(`/pdca/aditivos/${id}/itens/`, { itens })
+    return data
+  },
+  async excluir(id: number): Promise<void> {
+    await apiClient.delete(`/pdca/aditivos/${id}/`)
+  },
+  async cancelar(id: number, motivo: string): Promise<AditivoContrato> {
+    const { data } = await apiClient.post(`/pdca/aditivos/${id}/cancelar/`, { motivo })
     return data
   },
   async submeter(id: number): Promise<unknown> {

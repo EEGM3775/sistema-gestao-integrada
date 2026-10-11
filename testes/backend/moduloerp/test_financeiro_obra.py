@@ -12,7 +12,8 @@ from clientes.models import Cliente
 from fornecedores.models import Fornecedor
 from moduloerp import financeiro_obra
 from moduloerp.models import CentroCusto, ContaPagar, ContaReceber, RateioContaPagar, Transacao
-from moduloorcamento import controle, planilha
+from moduloorcamento import planilha
+from modulopdca import controle
 from obras.models import Obra
 
 from ..moduloorcamento.test_planilha import PlanilhaTestBase
@@ -67,15 +68,14 @@ class FinanceiroPorObraTests(PlanilhaTestBase):
         conta = self._pagar("800", pago="800", obra=self.obra)
         self.assertEqual(Transacao.objects.get(conta_pagar=conta).obra_id, self.obra.pk)
 
-    def test_realizado_do_orcamento_le_o_erp(self):
+    def test_realizado_do_controle_le_o_erp(self):
         """A medição de empreiteiro lançada direto no ERP — invisível antes do D.1.4."""
         orc = self._orcamento()
         self._linha(orc, "Estrutura", quantidade="1", custo="100000", etapa=self.fundacao)
         planilha.aprovar_orcamento(orc)
         self._pagar("30000", pago="12000", obra=self.obra)
-        linha = controle.quatro_colunas(self.tenant.id, self.obra.pk)[0]
-        self.assertEqual(Decimal(linha["realizado"]), Decimal("12000.00"))
-        self.assertEqual(linha["realizado_cobertura"], "erp")
+        colunas = controle.custo_da_obra(obra=self.obra, tenant_id=self.tenant.id)["colunas"]
+        self.assertEqual(Decimal(colunas["realizado"]), Decimal("12000.00"))
 
     def test_dre_da_obra(self):
         orc = self._orcamento()

@@ -8,6 +8,7 @@ geração de Demanda (origem=estoque) quando o item cai abaixo do mínimo.
 """
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
@@ -224,12 +225,58 @@ def fechar_inventario(inventario):
             return inventario
         tenant_id = inventario.tenant_id
         for it in inventario.itens.all():
+            antes = _saldo(tenant_id, it.item_id, inventario.local_id).quantidade
             aplicar_ajuste(
                 tenant_id, it.item_id, inventario.local_id, it.quantidade_contada,
                 inventario=inventario, observacao=f"Inventário #{inventario.inventario_id}",
             )
+            # O ledger não guarda o sentido do ajuste; reabrir precisa dele.
+            it.ajuste_aplicado = _dec(it.quantidade_contada) - antes
+            it.save(update_fields=["ajuste_aplicado"])
         inventario.status = Inventario.Status.FECHADO
         inventario.fechado_em = timezone.now()
+        inventario.save(update_fields=["status", "fechado_em"])
+    return inventario
+
+
+def reabrir_inventario(inventario):
+    """Volta a contagem para aberta **estornando** o que o fechamento ajustou.
+
+    O estorno é o ajuste ao contrário, aplicado sobre o saldo de **hoje** — e
+    não "volta ao saldo de antes": o que entrou e saiu depois do fechamento é
+    real e fica. Recusa se o estorno deixaria algum saldo negativo (o material
+    já foi consumido). Contagem fechada antes de o ajuste ser guardado volta a
+    abrir sem estorno; refechar acerta o saldo, porque o fechamento leva o saldo
+    à quantidade contada.
+    """
+    with transaction.atomic():
+        if inventario.status != Inventario.Status.FECHADO:
+            raise ValidationError("Só um inventário fechado se reabre.")
+        tenant_id = inventario.tenant_id
+        itens = list(inventario.itens.select_related("item").exclude(ajuste_aplicado=None))
+        for it in itens:
+            if not it.ajuste_aplicado:
+                continue
+            saldo = _saldo(tenant_id, it.item_id, inventario.local_id)
+            if saldo.quantidade - it.ajuste_aplicado < 0:
+                raise ValidationError(
+                    f"{it.item.descricao}: estornar o ajuste deixaria o saldo negativo — "
+                    f"o material já saiu depois do inventário."
+                )
+        for it in itens:
+            if it.ajuste_aplicado:
+                saldo = _saldo(tenant_id, it.item_id, inventario.local_id)
+                saldo.quantidade -= it.ajuste_aplicado
+                saldo.save(update_fields=["quantidade"])
+                _registrar(
+                    tenant_id, it.item_id, inventario.local_id, Tipo.AJUSTE,
+                    abs(it.ajuste_aplicado), saldo.custo_medio, inventario=inventario,
+                    observacao=f"Estorno do inventário #{inventario.inventario_id} (reaberto)",
+                )
+            it.ajuste_aplicado = None
+            it.save(update_fields=["ajuste_aplicado"])
+        inventario.status = Inventario.Status.ABERTO
+        inventario.fechado_em = None
         inventario.save(update_fields=["status", "fechado_em"])
     return inventario
 

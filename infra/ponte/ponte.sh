@@ -61,7 +61,7 @@
 # -----------------------------------------------------------------------------
 # USO
 # -----------------------------------------------------------------------------
-#   ./ponte.sh subir [horas]      # padrão: 4h
+#   ./ponte.sh subir [horas] [stg] # padrão: 4h, no dev (8090); `stg` = staging (8443)
 #   ./ponte.sh status             # o que está no ar e quanto falta
 #   ./ponte.sh prorrogar [horas]  # re-arma o prazo (não mexe na senha nem na URL)
 #   ./ponte.sh derrubar           # agora, sem esperar o prazo
@@ -69,9 +69,11 @@
 set -euo pipefail
 
 REPO="/home/eegm/projetos/02sistema_gestao_integrada"
-REDE="02sistema_gestao_integrada_sgi"
 DIR="$HOME/ponte-temporaria"
 CONF="$REPO/infra/ponte/nginx.conf"
+#: Para que stack a ponte aponta — `dev` (8090) ou `stg` (8443). Fica gravado
+#: aqui enquanto ela vive, para o `prorrogar` recriar o porteiro no mesmo alvo.
+ALVO_ARQ="$DIR/alvo"
 PORTA="sgi-ponte-porta"
 TUNEL="sgi-ponte-tunel"
 HORAS_PADRAO=4
@@ -93,6 +95,35 @@ amarelo()  { printf '\033[33m%s\033[0m\n' "$*"; }
 # --- utilitários -------------------------------------------------------------
 
 no_ar() { docker ps --filter "name=$1" --format '{{.Names}}' | grep -q "^$1$"; }
+
+define_alvo() {
+  case "$1" in
+    dev) REDE="02sistema_gestao_integrada_sgi"; GATEWAY="sgi-gateway"
+         COMO_SUBIR="docker compose --profile full up -d" ;;
+    stg) REDE="sgi-staging_sgi"; GATEWAY="sgi-stg-gateway"
+         COMO_SUBIR="bash infra/staging/up.sh" ;;
+    *)   vermelho "Alvo inválido: '$1'. Use dev ou stg."; exit 1 ;;
+  esac
+  ALVO="$1"
+}
+
+# O nginx.conf versionado aponta para o dev. O gateway do staging só atende de
+# verdade no :443 (o :80 de lá redireciona), e a IAM de lá espera a origem
+# `https://localhost:8443` — então, para `stg`, o porteiro usa uma cópia derivada
+# na hora, e o arquivo versionado continua um só. Se a troca não pegar (o texto
+# do nginx.conf mudou), para aqui em vez de subir um porteiro apontado para o dev.
+gera_conf() {
+  if [ "$ALVO" = dev ]; then CONF_USADO="$CONF"; return; fi
+  CONF_USADO="$DIR/nginx.$ALVO.conf"
+  sed -e 's#http://sgi-gateway:80#https://sgi-stg-gateway:443#g' \
+      -e 's#"http://localhost"#"https://localhost:8443"#' "$CONF" > "$CONF_USADO"
+  if grep -q 'sgi-gateway:80' "$CONF_USADO" || ! grep -q 'https://localhost:8443' "$CONF_USADO"; then
+    vermelho "Não consegui derivar o nginx do staging de $CONF (o texto mudou?)."
+    exit 1
+  fi
+}
+
+alvo_gravado() { cat "$ALVO_ARQ" 2>/dev/null || echo dev; }
 
 valida_horas() {
   local h="$1"
@@ -116,7 +147,7 @@ arma_vigia() {
   mata_vigia
   nohup sh -c "sleep $segundos; \
     docker rm -f $TUNEL $PORTA >/dev/null 2>&1; \
-    rm -f '$DIR/htpasswd' '$DIR/expira-em' '$DIR/vigia.pid'; \
+    rm -f '$DIR/htpasswd' '$DIR/expira-em' '$DIR/vigia.pid' '$ALVO_ARQ'; \
     echo \"\$(date '+%F %T') ponte derrubada pelo prazo\" >> '$DIR/prazo.log'" \
     </dev/null >>"$DIR/prazo.log" 2>&1 &
   echo $! > "$DIR/vigia.pid"
@@ -150,22 +181,35 @@ sobe_tunel() {
 # --- subir -------------------------------------------------------------------
 
 subir() {
-  local horas="${1:-$HORAS_PADRAO}"
+  # `subir`, `subir 6`, `subir stg`, `subir 6 stg` — a ordem não importa.
+  local horas='' alvo=dev a
+  for a in "$@"; do
+    case "$a" in
+      dev|stg) alvo="$a" ;;
+      '')      ;;
+      *)       horas="$a" ;;
+    esac
+  done
+  horas="${horas:-$HORAS_PADRAO}"
   valida_horas "$horas"
+  define_alvo "$alvo"
   local segundos=$(( horas * 3600 ))
 
   if no_ar "$TUNEL" || no_ar "$PORTA"; then
     amarelo "A ponte já está no ar. Use 'status' para ver o prazo, ou"
     amarelo "'prorrogar' para esticá-lo — subir de novo trocaria a URL."
+    amarelo "Para trocar de alvo (dev ↔ stg): 'derrubar' e subir de novo."
     exit 1
   fi
-  if ! docker ps --filter 'name=sgi-gateway' --format '{{.Names}}' | grep -q .; then
-    vermelho "O stack não está de pé (sgi-gateway não responde)."
-    vermelho "Suba-o primeiro: docker compose --profile full up -d"
+  if ! no_ar "$GATEWAY"; then
+    vermelho "O stack não está de pé ($GATEWAY não responde)."
+    vermelho "Suba-o primeiro: $COMO_SUBIR"
     exit 1
   fi
 
   mkdir -p "$DIR"
+  gera_conf
+  echo "$ALVO" > "$ALVO_ARQ"
   # Sobra de uma queda do Docker Desktop: os containers param (não somem) e o
   # nome ocupado faria o `docker run` abaixo falhar.
   docker rm -f "$TUNEL" "$PORTA" >/dev/null 2>&1 || true
@@ -188,7 +232,7 @@ subir() {
   # O porteiro morre sozinho no prazo — a 2ª trava. `timeout` é o busybox do
   # nginx:alpine; quando ele dispara, o container sai e a URL passa a dar 502.
   docker run -d --name "$PORTA" --network "$REDE" \
-    -v "$CONF:/etc/nginx/conf.d/default.conf:ro" \
+    -v "$CONF_USADO:/etc/nginx/conf.d/default.conf:ro" \
     -v "$DIR/htpasswd:/etc/nginx/htpasswd:ro" \
     nginx:alpine \
     sh -c "timeout $segundos nginx -g 'daemon off;'" >/dev/null
@@ -235,6 +279,7 @@ status() {
   fi
 
   amarelo "A ponte está NO AR."
+  echo "  alvo:     $(alvo_gravado)"
   [ "$t" -eq 1 ] && echo "  túnel:    no ar  ($(url_do_tunel || echo 'URL ainda não anunciada'))"
   [ "$t" -eq 0 ] && echo "  túnel:    FORA — a URL já morreu"
   [ "$p" -eq 1 ] && echo "  porteiro: no ar"
@@ -284,10 +329,12 @@ prorrogar() {
     vermelho "Derrube e suba de novo (a URL vai mudar)."
     exit 1
   fi
+  define_alvo "$(alvo_gravado)"
+  gera_conf
   local segundos=$(( horas * 3600 ))
   docker rm -f "$PORTA" >/dev/null 2>&1 || true
   docker run -d --name "$PORTA" --network "$REDE" \
-    -v "$CONF:/etc/nginx/conf.d/default.conf:ro" \
+    -v "$CONF_USADO:/etc/nginx/conf.d/default.conf:ro" \
     -v "$senha_atual:/etc/nginx/htpasswd:ro" \
     nginx:alpine \
     sh -c "timeout $segundos nginx -g 'daemon off;'" >/dev/null
@@ -304,7 +351,7 @@ prorrogar() {
 derrubar() {
   mata_vigia
   docker rm -f "$TUNEL" "$PORTA" >/dev/null 2>&1 || true
-  rm -f "$DIR/htpasswd" "$DIR/expira-em"
+  rm -f "$DIR/htpasswd" "$DIR/expira-em" "$ALVO_ARQ"
   echo "$(date '+%F %T') ponte derrubada à mão" >> "$DIR/prazo.log"
   if [ -s "$DOMINIO_FIXO" ]; then
     verde "Ponte fechada. O link fixo ($(cat "$DOMINIO_FIXO")) volta na próxima subida."
@@ -340,7 +387,7 @@ dominio() {
 # --- despacho ----------------------------------------------------------------
 
 case "${1:-}" in
-  subir)     shift; subir "${1:-}" ;;
+  subir)     shift; subir "$@" ;;
   status)    status ;;
   prorrogar) shift; prorrogar "${1:-}" ;;
   derrubar)  derrubar ;;
@@ -349,7 +396,7 @@ case "${1:-}" in
     cat <<AJUDA
 ponte.sh — a ponte temporária do SGI, com prazo de validade
 
-  ./ponte.sh subir [horas]      levanta (padrão ${HORAS_PADRAO}h, teto ${HORAS_MAXIMO}h)
+  ./ponte.sh subir [horas] [stg] levanta (padrão ${HORAS_PADRAO}h no dev, teto ${HORAS_MAXIMO}h; stg = staging)
   ./ponte.sh status             o que está no ar e quanto falta
   ./ponte.sh prorrogar [horas]  estica o prazo; URL e senha não mudam
   ./ponte.sh derrubar           fecha agora

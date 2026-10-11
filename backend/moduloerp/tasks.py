@@ -65,7 +65,7 @@ def _aplicar_retorno(nf, dados):
     # a 1ª emissão às vezes ainda não tem o arquivo pronto e uma consulta posterior
     # completa.
     if nf.status == StatusNFE.EMITIDA and nf.nfe_io_id and not (nf.arquivo_pdf and nf.arquivo_xml):
-        client = nfe_client.NFeClient()
+        client = nfe_client.cliente_do_tenant(nf.tenant_id)
         url_pdf = None if nf.arquivo_pdf else (dados.get('url_pdf') or client.resolver_url_arquivo(nf.nfe_io_id, 'pdf'))
         url_xml = None if nf.arquivo_xml else (dados.get('url_xml') or client.resolver_url_arquivo(nf.nfe_io_id, 'xml'))
         if url_pdf or url_xml:
@@ -77,7 +77,7 @@ def _aplicar_retorno(nf, dados):
     # arquivo emitido — para que o documento guardado como fallback já seja o
     # cancelado (o caminho ao vivo `documento` refaz isso na hora da abertura).
     if nf.status == StatusNFE.CANCELADA and nf.nfe_io_id and status_anterior != StatusNFE.CANCELADA:
-        client = nfe_client.NFeClient()
+        client = nfe_client.cliente_do_tenant(nf.tenant_id)
         url_pdf = dados.get('url_pdf') or client.resolver_url_arquivo(nf.nfe_io_id, 'pdf')
         url_xml = dados.get('url_xml') or client.resolver_url_arquivo(nf.nfe_io_id, 'xml')
         if url_pdf or url_xml:
@@ -172,7 +172,7 @@ def emitir_nota_fiscal_servico(self, nf_id):
         NotaFiscalServico.objects.filter(pk=nf_id).update(status=StatusNFE.PROCESSANDO)
 
     try:
-        dados = nfe_client.NFeClient().emitir_nfse(payload)
+        dados = nfe_client.cliente_do_tenant(tenant_id).emitir_nfse(payload)
     except NFeErro as exc:
         logger.warning("NFE.io recusou a emissão da NFS-e %s: %s", nf_id, exc)
         with tenant_context(tenant_id):
@@ -219,7 +219,7 @@ def consultar_nota_fiscal_servico(self, nf_id, tentativa=0):
     tenant_id = dados_nf['tenant_id']
 
     try:
-        dados = nfe_client.NFeClient().consultar_nfse(dados_nf['nfe_io_id'])
+        dados = nfe_client.cliente_do_tenant(tenant_id).consultar_nfse(dados_nf['nfe_io_id'])
     except NFeErro as exc:
         logger.warning("NFE.io recusou a consulta da NFS-e %s: %s", nf_id, exc)
         with tenant_context(tenant_id):
@@ -254,7 +254,7 @@ def cancelar_nota_fiscal_servico(self, nf_id):
     tenant_id = dados_nf['tenant_id']
 
     try:
-        dados = nfe_client.NFeClient().cancelar_nfse(dados_nf['nfe_io_id'])
+        dados = nfe_client.cliente_do_tenant(tenant_id).cancelar_nfse(dados_nf['nfe_io_id'])
     except NFeErro as exc:
         logger.warning("NFE.io recusou o cancelamento da NFS-e %s: %s", nf_id, exc)
         with tenant_context(tenant_id):

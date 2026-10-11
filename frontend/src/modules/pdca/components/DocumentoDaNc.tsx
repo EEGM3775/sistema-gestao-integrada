@@ -184,7 +184,7 @@ function RestricaoDaNc({
   if (nc.restricao) {
     const aberta = nc.restricao_status === 'aberta'
     return (
-      <Link to={`/app/pdca/o/${obraId}/semana`} style={linkDeIntegracao}>
+      <Link to={`/app/pdca/o/${obraId}/controle?aba=semana`} style={linkDeIntegracao}>
         <Lock size={14} />
         {aberta ? 'Parou a frente no quadro da semana' : 'Parou a frente — já liberada'}
         <ArrowUpRight size={13} />

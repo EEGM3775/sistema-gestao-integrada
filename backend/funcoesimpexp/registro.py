@@ -398,6 +398,18 @@ class Recurso:
             "formato": arquivo.formato,
         }
 
+    def dados_do_conteudo(self, arquivo: "ArquivoRecebido", conteudo) -> dict:
+        """O que o **conteúdo** diz, para a conferência mostrar antes do sim (R1).
+
+        Só para `natureza = "arquivo"`, e só no recurso cujo arquivo é um
+        documento estruturado pequeno — o XML da NF-e traz número, emitente e
+        valor, e a conferência que mostrasse só o nome do arquivo pediria ao
+        operador que confirmasse às cegas. O padrão não abre nada (o acervo de
+        300 MB da Prancheta não pode virar RAM). O retorno se soma ao de
+        `dados_do_arquivo`; o motor devolve o ponteiro ao início depois.
+        """
+        return {}
+
     def teto_mb_do_formato(self, codigo: str) -> int:
         """PRA.5a — teto deste recurso para este formato, em MB. 0 = o do plano.
 

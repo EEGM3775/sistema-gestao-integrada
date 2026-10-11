@@ -890,7 +890,7 @@ def seed_orcamento(tenant, obras, usuario):
         ComposicaoReferenciaItem, Fonte, InsumoReferencia, ItemBancoPreco, ItemOrcado,
         MemorialNBR, Orcamento, ParametroObra, PavimentoObra, UnidadeAutonoma,
     )
-    from moduloorcamento import controle as orc_controle
+    from moduloorcamento import cronograma as orc_cronograma
     from moduloorcamento import planilha as orc_planilha
     from moduloorcamento import precificacao as orc_precificacao
     from moduloorcamento import services as orc_services
@@ -1140,7 +1140,7 @@ def seed_orcamento(tenant, obras, usuario):
         inicio = mes_base
         fim = (mes_base + datetime.timedelta(days=170)).replace(day=1)
         try:
-            orc_controle.distribuir_linear(orcamento, inicio=inicio, fim=fim)
+            orc_cronograma.planejar_todas(orcamento, inicio=inicio, termino=fim)
             print(f"    Cronograma distribuído: {inicio:%m/%Y} → {fim:%m/%Y}")
         except Exception as exc:
             print(f"    (cronograma não distribuído: {exc})")

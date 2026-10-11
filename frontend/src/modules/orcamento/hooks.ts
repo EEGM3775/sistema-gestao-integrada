@@ -5,9 +5,9 @@ import * as api from './api/orcamentoApi'
 import { orcKeys } from './api/queryKeys'
 import type {
   ArvoreResposta, BancoPreco as Banco, ItemBancoPreco as ItemBanco, ItemOrcado, Orcamento,
-  ParcelaEtapa, PastaComposicao as Pasta,
+  CurvaEtapa, ParcelaEtapa, PastaComposicao as Pasta,
   // ORC.7
-  ComposicaoEncargos, FormulaReajuste, LinhaMedicao, ParcelaFormulaReajuste,
+  ComposicaoEncargos, LinhaMedicao,
   RegimeEncargos, RubricaEncargos, TipoMaoDeObra,
   // ORC.9
   TipoItemProprio,
@@ -185,23 +185,6 @@ export function useCronograma(id: number | undefined) {
   })
 }
 
-export function useCurvaS(id: number | undefined) {
-  return useQuery({
-    queryKey: orcKeys.curvaS(id ?? 0),
-    queryFn: () => api.getCurvaS(id as number),
-    enabled: id != null,
-    placeholderData: keepPreviousData,
-  })
-}
-
-export function useControle(obra?: number) {
-  return useQuery({
-    queryKey: orcKeys.controle(obra),
-    queryFn: () => api.getControle(obra),
-    placeholderData: keepPreviousData,
-  })
-}
-
 export function useMemoria(itemOrcadoId: number | undefined) {
   return useQuery({
     queryKey: orcKeys.memoria(itemOrcadoId ?? 0),
@@ -331,8 +314,22 @@ export const useAdotar = () => useVerbo((id: number) => api.adotarReferencia(id)
 export const useAdotarLote = () => useVerbo((ids: number[]) => api.adotarLote(ids))
 
 export const useDistribuirCronograma = () =>
-  useVerbo((v: { id: number; inicio: string; fim: string; etapa?: number | null }) =>
-    api.distribuirCronograma(v.id, { inicio: v.inicio, fim: v.fim, etapa: v.etapa }))
+  useVerbo((v: { id: number; inicio: string; fim: string; curva?: CurvaEtapa; so_sem_plano?: boolean }) =>
+    api.distribuirCronograma(v.id, { inicio: v.inicio, fim: v.fim, curva: v.curva, so_sem_plano: v.so_sem_plano }))
+export const usePlanejarEtapa = () =>
+  useVerbo((v: { id: number; grupo: number; inicio: string; termino: string; curva?: CurvaEtapa }) =>
+    api.planejarEtapa(v.id, { grupo: v.grupo, inicio: v.inicio, termino: v.termino, curva: v.curva }))
+export const useRemoverEtapaDoCronograma = () =>
+  useVerbo((v: { id: number; grupo: number }) => api.removerEtapaDoCronograma(v.id, v.grupo))
+export const useVincularEtapa = () =>
+  useVerbo((v: { id: number; grupo: number; etapa: number | null }) => api.vincularEtapaDaObra(v.id, v.grupo, v.etapa))
+export function useEtapasDaObra(obraId: number | undefined) {
+  return useQuery({
+    queryKey: ['orcamento', 'etapas-da-obra', obraId ?? 0],
+    queryFn: () => api.getEtapasDaObra(obraId as number),
+    enabled: obraId != null,
+  })
+}
 export const useAtualizarParcela = () =>
   useVerbo((v: { id: number; payload: Partial<ParcelaEtapa> }) => api.parcelas.atualizar(v.id, v.payload))
 
@@ -419,7 +416,7 @@ export const useAplicarReprecificacao = () =>
   useVerbo((v: { lote: number; linhas?: number[] }) => api.aplicarReprecificacao(v.lote, v.linhas))
 export const useDesfazerReprecificacao = () => useVerbo((lote: number) => api.desfazerReprecificacao(lote))
 
-// --- ORC.7: encargos analíticos, memória do quantitativo e reajuste ---
+// --- ORC.7: encargos analíticos e memória do quantitativo ---
 
 export function useQuadrosEncargos(orcamento: number | undefined) {
   return useQuery({
@@ -487,32 +484,8 @@ export function useDesembolsoInsumos(orcamento: number | undefined, categoria?: 
   })
 }
 
-export function useIndices() {
-  return useQuery({
-    queryKey: orcKeys.indices.list({ ativo: true }),
-    queryFn: () => api.indices.todos({ ativo: true }),
-  })
-}
-
-export function useFormulasReajuste(orcamento: number | undefined) {
-  return useQuery({
-    queryKey: orcKeys.formulas.list({ orcamento }),
-    queryFn: () => api.formulasReajuste.todos({ orcamento }),
-    enabled: orcamento != null,
-  })
-}
-
 /** A prévia só corre com competência escolhida — pedir sem ela devolveria 400 e
  *  encheria a tela de erro enquanto o usuário ainda está escolhendo o mês. */
-export function usePreviaReajuste(formula: number | undefined, competencia: string) {
-  return useQuery({
-    queryKey: orcKeys.previaReajuste(formula ?? 0, competencia),
-    queryFn: () => api.getPreviaReajuste(formula as number, competencia),
-    enabled: formula != null && !!competencia,
-    retry: false,
-  })
-}
-
 export const useCriarQuadroEncargos = () =>
   useVerbo((v: { orcamento: number; tipo_mao_de_obra: TipoMaoDeObra; regime?: RegimeEncargos }) =>
     api.criarQuadroEncargos(v))
@@ -534,14 +507,6 @@ export const useMedicoesEmLote = () =>
   useVerbo((v: { item_orcado: number; linhas: Partial<LinhaMedicao>[]; substituir?: boolean }) =>
     api.salvarMedicoesEmLote(v))
 
-export const useCriarFormulaReajuste = () =>
-  useVerbo((v: Partial<FormulaReajuste>) => api.formulasReajuste.criar(v))
-export const useCriarParcelaReajuste = () =>
-  useVerbo((v: Partial<ParcelaFormulaReajuste>) => api.parcelasReajuste.criar(v))
-export const useRemoverParcelaReajuste = () => useVerbo((id: number) => api.parcelasReajuste.remover(id))
-export const useAplicarReajuste = () =>
-  useVerbo((v: { formula: number; competencia: string; motivo?: string }) =>
-    api.aplicarReajuste(v.formula, { competencia: v.competencia, motivo: v.motivo }))
 
 export const useGerarDemandaDoOrcamento = () =>
   useVerbo((v: { orcamento: number; tipo?: 'material' | 'servico'; observacao?: string }) =>

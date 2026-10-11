@@ -86,7 +86,7 @@ const NAV_SECTIONS: NavSection[] = [
       // e o dono decidiu o contrário: o módulo é um, e a medição é uma das
       // ferramentas dele. Ela é alcançada pela obra, dentro de `/app/pdca`, que
       // é a unidade de trabalho declarada do módulo (§5.1).
-      { label: 'Planejamento (PDCA)', icon: <GanttChartSquare />, to: '/app/pdca',   module: 'pdca',           implemented: true },
+      { label: 'Planejamento & Execução (PDCA)', icon: <GanttChartSquare />, to: '/app/pdca',   module: 'pdca',           implemented: true },
       { label: 'Drone',            icon: <Plane />,       to: '/app/drone',      module: 'drone',          implemented: false },
     ],
   },

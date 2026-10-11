@@ -2,6 +2,10 @@ import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowLeft, FileText, RefreshCw, Ban, FileDown, FileCode2, Plus, FileSearch } from 'lucide-react'
 import type { ColumnDef } from '@tanstack/react-table'
+import { useQueryClient } from '@tanstack/react-query'
+import { WizardArquivos } from '@/components/malha/impexp/WizardArquivos'
+import { erpKeys } from '../api/queryKeys'
+import { useEmpreendimentoOptions } from '../hooks/useEntityOptions'
 import { FinanceDataTable } from '../components/shared/FinanceDataTable'
 import { MoneyDisplay } from '../components/shared/MoneyDisplay'
 import { StatusNfeBadge } from '../components/shared/StatusNfeBadge'
@@ -64,6 +68,11 @@ export default function NotasFiscaisPage() {
             </p>
           </div>
         </div>
+        <div className="flex items-center gap-3">
+        <Link to="/app/erp/configuracoes" className="text-sm font-semibold"
+          style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-body)', textDecoration: 'none' }}>
+          Conta da NFE.io
+        </Link>
         <button
           type="button"
           onClick={() => setEmitirOpen(true)}
@@ -72,6 +81,7 @@ export default function NotasFiscaisPage() {
         >
           <Plus size={16} /> Emitir NFS-e
         </button>
+        </div>
       </div>
 
       {avisoEmissao && (
@@ -308,11 +318,20 @@ function NotasServicoTab({ canceladas }: { canceladas: boolean }) {
   )
 }
 
-/** Aba de NF recebidas de fornecedor (upload/lançamento de entrada — só leitura + download). */
+/** Aba de NF recebidas de fornecedor.
+ *
+ *  **A NF-e entra pelo XML, sem API** (pergunta do dono, 10/10/2026). O XML vai
+ *  pela porta única de arquivos — por isso aparece também em Documentos (DMS) —,
+ *  a conferência mostra o que ele diz (número, emitente, valor, parcelas) e,
+ *  confirmada, a nota é lançada com uma conta a pagar por duplicata. */
 function NotasRecebidasTab() {
   const [pageIndex, setPageIndex] = useState(0)
   const filtros = useMemo(() => ({ page: pageIndex + 1, page_size: PAGE_SIZE }), [pageIndex])
   const { data, isLoading, isFetching } = useNotasFiscaisRecebidas(filtros)
+  const qc = useQueryClient()
+  const empreendimentos = useEmpreendimentoOptions(true)
+  const [empreendimento, setEmpreendimento] = useState<number | ''>('')
+  const destino = empreendimento === '' ? (empreendimentos.data?.length === 1 ? empreendimentos.data[0].id : '') : empreendimento
 
   const columns = useMemo<ColumnDef<NotaFiscalRecebida>[]>(() => [
     {
@@ -357,20 +376,48 @@ function NotasRecebidasTab() {
   ], [])
 
   return (
-    <FinanceDataTable
-      data={data?.results ?? []}
-      columns={columns}
-      count={data?.count ?? 0}
-      pageIndex={pageIndex}
-      pageSize={PAGE_SIZE}
-      onPageChange={setPageIndex}
-      sorting={[]}
-      onSortingChange={() => {}}
-      getRowId={row => String(row.nota_fiscal_id)}
-      isLoading={isLoading}
-      isFetching={isFetching}
-      emptyMessage="Nenhuma nota fiscal recebida lançada."
-    />
+    <>
+      <div className="flex items-center gap-3 mb-4 flex-wrap" style={{ fontFamily: 'var(--font-body)' }}>
+        <label className="flex items-center gap-2 text-sm" style={{ color: 'var(--color-text-muted)' }}>
+          Empreendimento
+          <select
+            value={destino}
+            onChange={e => setEmpreendimento(e.target.value ? Number(e.target.value) : '')}
+            className="rounded-lg text-sm"
+            style={{ padding: '7px 10px', border: '1.5px solid #e2e8f0', background: '#fff', color: 'var(--color-text)' }}
+          >
+            <option value="">Escolha…</option>
+            {(empreendimentos.data ?? []).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+          </select>
+        </label>
+        {destino !== '' && (
+          <WizardArquivos
+            recurso="erp.nota_entrada"
+            contexto={{ empreendimento: destino }}
+            rotulo="Importar XML de NF-e"
+            onConcluida={() => void qc.invalidateQueries({ queryKey: erpKeys.notasFiscaisRecebidas.all })}
+            ajuda={<>Cada XML vira a nota de entrada do fornecedor (casado pelo CNPJ) e uma conta a pagar por duplicata. Os arquivos ficam também em Documentos.</>}
+          />
+        )}
+        <Link to="/app/documentos" className="text-sm font-semibold" style={{ color: 'var(--color-brand)', textDecoration: 'none' }}>
+          Ver em Documentos ↗
+        </Link>
+      </div>
+      <FinanceDataTable
+        data={data?.results ?? []}
+        columns={columns}
+        count={data?.count ?? 0}
+        pageIndex={pageIndex}
+        pageSize={PAGE_SIZE}
+        onPageChange={setPageIndex}
+        sorting={[]}
+        onSortingChange={() => {}}
+        getRowId={row => String(row.nota_fiscal_id)}
+        isLoading={isLoading}
+        isFetching={isFetching}
+        emptyMessage="Nenhuma nota recebida ainda. Escolha o empreendimento e importe os XMLs que os fornecedores mandaram."
+      />
+    </>
   )
 }
 

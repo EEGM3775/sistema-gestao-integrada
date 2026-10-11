@@ -230,6 +230,45 @@ class CompraDiretaTests(ScmTestBase):
         self.assertEqual(resp.status_code, 403)
 
 
+class CompraAvulsaTests(ScmTestBase):
+    """10/10/2026 — "continuo sem poder comprar": comprar sem catálogo e sem cotação."""
+
+    def setUp(self):
+        self.produto = Item.objects.create(tenant=self.tenant, codigo_interno="P1", descricao="Cimento", unidade="sc")
+        self.fornecedor = Fornecedor.objects.create(tenant=self.tenant, razao_social="Depósito da Esquina", email="d@ex.com")
+
+    def test_pedido_com_item_do_catalogo_e_item_em_texto(self):
+        self.autenticar()
+        resp = self.client.post("/api/scm/pedidos/compra_avulsa/", {
+            "fornecedor": self.fornecedor.pk,
+            "itens": [
+                {"produto": self.produto.pk, "quantidade": "10", "preco_unitario": "32.50"},
+                {"descricao": "Areia média (caçamba)", "quantidade": "2", "preco_unitario": "450"},
+            ],
+        }, format="json")
+        self.assertEqual(resp.status_code, 201, resp.content)
+        pedido = PedidoCompra.objects.get(pk=resp.data["pedido_id"])
+        self.assertEqual(pedido.origem, PedidoCompra.Origem.MANUAL)
+        self.assertEqual(pedido.status, PedidoCompra.Status.APROVADO)
+        self.assertEqual(pedido.valor_total, Decimal("1225.00"))
+        self.assertEqual(pedido.itens.count(), 2)
+
+    def test_recusa_sem_fornecedor_ou_sem_item(self):
+        self.autenticar()
+        self.assertEqual(self.client.post("/api/scm/pedidos/compra_avulsa/", {"itens": []}, format="json").status_code, 400)
+        resp = self.client.post("/api/scm/pedidos/compra_avulsa/", {
+            "fornecedor": self.fornecedor.pk, "itens": [{"quantidade": "1", "preco_unitario": "1"}],
+        }, format="json")
+        self.assertEqual(resp.status_code, 400)
+
+    def test_exige_permissao_criar(self):
+        self.autenticar(perms=["scm.pedido.view", "scm.pedido.edit"])
+        resp = self.client.post("/api/scm/pedidos/compra_avulsa/", {
+            "fornecedor": self.fornecedor.pk, "itens": [{"descricao": "Areia", "quantidade": "1", "preco_unitario": "1"}],
+        }, format="json")
+        self.assertEqual(resp.status_code, 403)
+
+
 class GerarPedidoDeCotacaoTests(ScmTestBase):
     def setUp(self):
         self.produto = Item.objects.create(tenant=self.tenant, codigo_interno="P1", descricao="Cimento", unidade="sc")

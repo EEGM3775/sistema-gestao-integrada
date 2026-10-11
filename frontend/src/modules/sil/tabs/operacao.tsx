@@ -11,15 +11,16 @@ import {
   transferenciasHooks, devolucoesHooks,
   inventariosHooks, itensInventarioHooks, locaisHooks, itensHooks, useObras, useFornecedores, useEtapas,
   useRegistrarMov, useDefinirMinimo, useGerarDemanda, useAprovarRequisicao, useAtenderRequisicao,
-  useExecutarTransferencia, useExecutarDevolucao, useFecharInventario,
+  useExecutarTransferencia, useExecutarDevolucao, useFecharInventario, useReabrirInventario,
 } from '../hooks'
 import {
   requisicoes as requisicoesApi, itensRequisicao as itensRequisicaoApi,
   transferencias as transferenciasApi, itensTransferencia as itensTransferenciaApi,
   devolucoes as devolucoesApi, itensDevolucao as itensDevolucaoApi,
-  itensInventario as itensInventarioApi,
+  itensInventario as itensInventarioApi, inventarios as inventariosApi,
 } from '../api/silApi'
 import { silKeys } from '../api/queryKeys'
+import { ConsumoApontado } from '../ConsumoApontado'
 import {
   brl, qty, dataBR, num, movEstado, requisicaoEstado, transferenciaEstado, devolucaoEstado, inventarioEstado,
   type Kind,
@@ -89,6 +90,8 @@ export function Cockpit({ go, say }: { go: (t: string) => void; say: Say }) {
           </button>
         ))}
       </div>
+
+      <ConsumoApontado aoRegistrar={() => go('movimentacoes')} />
 
       <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: 18, marginTop: 14, alignItems: 'start' }}>
         <Card pad={false} style={{ overflow: 'hidden' }}>
@@ -699,10 +702,25 @@ function InventarioDetail({ id, onBack, say }: { id: number; onBack: () => void;
   const { data: linhas } = itensInventarioHooks.useAll({ inventario: id })
   const { data: itens } = itensHooks.useAll({ estocavel: true })
   const fechar = useFecharInventario()
+  const reabrir = useReabrirInventario()
   const [add, setAdd] = useState(false)
+  const [erro, setErro] = useState('')
   if (isLoading || !inv) return <Loading />
   const linhasL = (linhas ?? []) as ItemInventario[]
   const aberto = inv.status === 'aberto'
+  const detalhe = (e: unknown) =>
+    (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Não foi possível concluir.'
+  async function agir(acao: () => Promise<unknown>, recado: string) {
+    setErro('')
+    try { await acao(); say(recado) } catch (e) { setErro(detalhe(e)) }
+  }
+  async function excluirContagem() {
+    if (!window.confirm(`Excluir o inventário #${inv!.inventario_id} e as ${linhasL.length} linha(s) contadas?`)) return
+    await agir(async () => { await inventariosApi.remove(inv!.inventario_id); await qc.invalidateQueries({ queryKey: silKeys.all }); onBack() }, 'Inventário excluído')
+  }
+  async function tirarLinha(id: number) {
+    await agir(async () => { await itensInventarioApi.remove(id); await qc.invalidateQueries({ queryKey: silKeys.all }) }, 'Linha removida da contagem')
+  }
   return (
     <div style={{ maxWidth: 900 }}>
       <button onClick={onBack} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--ink-3)', background: 'none', border: 'none', cursor: 'pointer', marginBottom: 6 }}><ArrowLeft size={13} /> Todos os inventários</button>
@@ -711,18 +729,22 @@ function InventarioDetail({ id, onBack, say }: { id: number; onBack: () => void;
         <EstadoPill e={inventarioEstado[inv.status]} /><span style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>{inv.local_nome}</span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 9 }}>
           {aberto && podeInv && <Btn onClick={() => setAdd(true)}><ClipboardCheck size={14} /> Adicionar contagem</Btn>}
-          {aberto && podeFechar && linhasL.length > 0 && <Btn variant="primary" disabled={fechar.isPending} onClick={async () => { await fechar.mutateAsync(inv.inventario_id); say('Inventário fechado (ajustes gerados)') }}><Check size={14} /> Fechar (gera ajustes)</Btn>}
+          {aberto && podeInv && <Btn onClick={() => void excluirContagem()}><Trash2 size={14} /> Excluir</Btn>}
+          {aberto && podeFechar && linhasL.length > 0 && <Btn variant="primary" disabled={fechar.isPending} onClick={() => void agir(() => fechar.mutateAsync(inv.inventario_id), 'Inventário fechado (ajustes gerados)')}><Check size={14} /> Fechar (gera ajustes)</Btn>}
+          {!aberto && podeFechar && <Btn disabled={reabrir.isPending} onClick={() => void agir(() => reabrir.mutateAsync(inv.inventario_id), 'Inventário reaberto (ajustes estornados)')}><RotateCcw size={14} /> Reabrir</Btn>}
         </div>
       </div>
+      {erro && <div style={{ ...errBox, marginBottom: 12 }}>{erro}</div>}
       {linhasL.length === 0 ? <Empty>Nenhuma linha contada. Adicione itens à contagem.</Empty> : (
         <Card pad={false} style={{ overflow: 'hidden' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead><tr>{['Item', 'Sistema', 'Contado', 'Diferença'].map((h, i) => <th key={i} style={th(h, i, n => n >= 1)}>{h}</th>)}</tr></thead>
+          <thead><tr>{['Item', 'Sistema', 'Contado', 'Diferença', ''].map((h, i) => <th key={i} style={th(h, i, n => n >= 1)}>{h}</th>)}</tr></thead>
           <tbody>{linhasL.map((l, i) => { const dif = num(l.diferenca) ?? 0; return (
             <tr key={l.item_inventario_id} style={{ borderBottom: i < linhasL.length - 1 ? '1px solid var(--line-2)' : undefined }}>
               <td style={{ padding: '11px 16px', color: 'var(--ink)' }}>{l.item_descricao ?? `#${l.item}`}</td>
               <td style={{ ...mono, padding: '11px 16px', textAlign: 'right', color: 'var(--ink-2)' }}>{qty(l.quantidade_sistema)}</td>
               <td style={{ ...mono, padding: '11px 16px', textAlign: 'right', fontWeight: 600, color: 'var(--ink)' }}>{qty(l.quantidade_contada)}</td>
               <td style={{ ...mono, padding: '11px 16px', textAlign: 'right', fontWeight: 600, color: dif === 0 ? 'var(--ink-3)' : dif > 0 ? 'var(--good-ink)' : 'var(--danger-ink)' }}>{dif > 0 ? '+' : ''}{qty(l.diferenca)}</td>
+              <td style={{ padding: '6px 12px', textAlign: 'right', width: 40 }}>{aberto && podeInv && <button type="button" title="Tirar da contagem" aria-label={`Tirar ${l.item_descricao ?? l.item} da contagem`} onClick={() => void tirarLinha(l.item_inventario_id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-3)', display: 'inline-flex' }}><Trash2 size={14} /></button>}</td>
             </tr>
           ) })}</tbody>
         </table></Card>

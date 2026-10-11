@@ -194,6 +194,12 @@ function LinhaDaCarteira({
         >
           {linha.objeto}
         </div>
+        {linha.pedido_scm && (
+          <div style={{ fontSize: 10.5, color: 'var(--ink-3)', marginTop: 2 }} title="Medição × compra de serviço: o pedido do Suprimentos que este contrato mede">
+            pedido #{linha.pedido_scm.pedido} no Suprimentos · {formatBRL(apiDecimalToCents(linha.pedido_scm.valor_pedido))}
+            {' · '}{linha.pedido_scm.status_rotulo.toLowerCase()}
+          </div>
+        )}
       </td>
 
       <td style={{ padding: '10px 12px', fontSize: 12, color: 'var(--ink-3)', whiteSpace: 'nowrap' }}>
@@ -220,6 +226,14 @@ function LinhaDaCarteira({
         <div style={{ fontSize: 10.5, color: 'var(--ink-3)', marginTop: 2 }}>
           {proporcao ? `${proporcao} do contratado` : 'sem planilha'}
         </div>
+        {apiDecimalToCents(saldo.liquido_aprovado) !== apiDecimalToCents(saldo.medido_aprovado) && (
+          <div
+            style={{ fontSize: 10.5, color: 'var(--ink-3)', marginTop: 2 }}
+            title="O que se paga: o medido menos retenção e descontos. O saldo do contrato é consumido pelo medido, não pelo líquido."
+          >
+            líquido a pagar {formatBRL(apiDecimalToCents(saldo.liquido_aprovado))}
+          </div>
+        )}
       </td>
 
       <td style={{ padding: '10px 12px', textAlign: 'right', whiteSpace: 'nowrap' }}>

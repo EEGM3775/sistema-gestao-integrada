@@ -87,6 +87,17 @@ some da fila interna e aparece clicável na UI). `data_cancelamento` na NFS-e/NF
 Emissão de NF chama o microsserviço Node [funcoesnf](funcoesnf.md) (NFE.io) em `localhost:3003`; em dev,
 se o serviço não responde, a NF é criada em modo simulação (status `AGUARDANDO`) sem falhar.
 
+**A conta da NFE.io é por empresa** (`IntegracaoFiscal`, ERP › Configurações,
+`/api/erp/configuracao/integracao-fiscal/`): ID da empresa e chave da API, a chave **cifrada**
+(`nucleo.cifra`, Fernet; `CHAVE_CIFRA_SEGREDOS` ou derivada da `SECRET_KEY`) e nunca devolvida — só
+o final. `nfe_client.cliente_do_tenant` usa a da empresa; sem cadastro, a do ambiente.
+
+**NF-e de entrada pelo XML** (recurso `erp.nota_entrada`, porta única do `funcoesimpexp`): o XML entra
+pelo wizard de arquivos na aba "Recebidas", a conferência mostra chave, número, emitente (casado
+pelo CNPJ com Fornecedores), valor e parcelas lidos do XML (`nfe_xml.py`), e aplicar grava a
+`NotaFiscal` com o XML e **uma conta a pagar por duplicata**. Desfazer leva as duas. O arquivo
+aparece em Documentos (DMS). Número de nota é único **por fornecedor**.
+
 ### Dívidas técnicas conhecidas
 - `unique=True` ainda **global** (ex.: `NotaFiscal.numero_nota`, `chave_acesso`) → vira `unique` por
   tenant na Fase 8 (risco de vazamento/colisão entre empresas).

@@ -8,16 +8,19 @@ export function ProvedorPdca(
 ) {
   const [selecao, setSelecao] = useState<Selecao>(null)
   const [paletaAberta, setPaletaAberta] = useState(false)
+  const [planoEscolhido, setPlanoEscolhido] = useState<number | null>(null)
 
   const valor = useMemo<ContextoPdca>(() => ({
     obraId,
     obra,
     selecao,
     selecionar: setSelecao,
+    planoEscolhido,
+    escolherPlano: setPlanoEscolhido,
     paletaAberta,
     abrirPaleta: () => setPaletaAberta(true),
     fecharPaleta: () => setPaletaAberta(false),
-  }), [obraId, obra, selecao, paletaAberta])
+  }), [obraId, obra, selecao, planoEscolhido, paletaAberta])
 
   return <Contexto.Provider value={valor}>{children}</Contexto.Provider>
 }

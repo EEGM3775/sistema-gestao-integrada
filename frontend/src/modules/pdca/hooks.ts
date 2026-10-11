@@ -1,9 +1,12 @@
+import { useMemo } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as api from './api/pdcaApi'
+import * as montagem from './api/montagemApi'
+import { antecedencias, suprimentos, type AntecedenciaDeCompra } from './api/suprimentosApi'
 import { pdcaKeys } from './api/queryKeys'
 import type {
   Atividade, CausaNaoCumprimento, Cronograma, ItemContrato, ItemProgramacao,
-  JulgamentoDeItem, Restricao,
+  JulgamentoDeItem, LocalObra, Restricao,
 } from './types'
 
 export function useStatusModulo() {
@@ -69,6 +72,27 @@ export function usePlanoCorrente(obraId: number | undefined) {
   return { ...consulta, plano: vigente ?? rascunho, planos: lista }
 }
 
+/** O plano que o posto **Plano** abre — que não é o mesmo da execução.
+ *
+ *  A Semana e o Hoje trabalham sobre o vigente (o combinado). Quem planeja
+ *  trabalha sobre o **rascunho em montagem**: depois de replanejar, abrir o
+ *  vigente congelado fazia a pessoa achar que a versão nova não existia,
+ *  replanejar de novo e juntar rascunhos (achado no teste do dono, 09/10/2026).
+ *  Padrão: o rascunho mais novo, se for mais novo que o vigente; senão, o
+ *  vigente. `escolhido` (do seletor de versão) vence o padrão. */
+export function usePlanoEmEdicao(obraId: number | undefined, escolhido: number | null) {
+  const consulta = useCronogramasDaObra(obraId)
+  const lista = useMemo(
+    () => [...(consulta.data ?? [])].sort((a, b) => b.versao - a.versao),
+    [consulta.data],
+  )
+  const vigente = lista.find((c) => c.status === 'vigente')
+  const rascunho = lista.find((c) => c.status === 'rascunho')
+  const padrao = rascunho && (!vigente || rascunho.versao > vigente.versao) ? rascunho : (vigente ?? rascunho)
+  const plano = lista.find((c) => c.cronograma_id === escolhido) ?? padrao
+  return { ...consulta, plano, vigente, rascunho, planos: lista }
+}
+
 export function useGantt(cronogramaId: number | undefined) {
   return useQuery({
     queryKey: pdcaKeys.cronogramas.gantt(cronogramaId ?? 0),
@@ -91,6 +115,76 @@ export function useLocais(obraId: number | undefined, ativo = true) {
     queryKey: pdcaKeys.locais(obraId ?? 0),
     queryFn: () => api.locais.listar(obraId as number),
     enabled: obraId != null && ativo,
+  })
+}
+
+/** Criar locais em lote (um, ou "Trecho 1…N") e remover — a árvore e o Gantt
+ *  (local da atividade) recarregam juntos. */
+export function useEditarLocais(obraId: number) {
+  const qc = useQueryClient()
+  const recarregar = () => {
+    qc.invalidateQueries({ queryKey: pdcaKeys.locais(obraId) })
+    qc.invalidateQueries({ queryKey: pdcaKeys.cronogramas.raiz() })
+  }
+  return {
+    criar: useMutation({
+      mutationFn: async (lista: Partial<LocalObra>[]) => {
+        for (const corpo of lista) await api.locais.criar({ ...corpo, obra: obraId })
+      },
+      onSettled: recarregar,
+    }),
+    remover: useMutation({ mutationFn: (id: number) => api.locais.remover(id), onSettled: recarregar }),
+  }
+}
+
+/** A fila "comprar até DD/MM" do plano — insumo, quantidade, a comprar. */
+export function useNecessidadeDeMaterial(cronogramaId: number | undefined, ativo = true) {
+  return useQuery({
+    queryKey: pdcaKeys.cronogramas.suprimentos(cronogramaId ?? 0),
+    queryFn: () => suprimentos.necessidade(cronogramaId as number),
+    enabled: cronogramaId != null && ativo,
+  })
+}
+
+/** O dinheiro dos quatro módulos dentro do plano, por etapa e atividade. */
+export function useCustoDoPlano(cronogramaId: number | undefined, ativo = true) {
+  return useQuery({
+    queryKey: pdcaKeys.cronogramas.custo(cronogramaId ?? 0),
+    queryFn: () => suprimentos.custo(cronogramaId as number),
+    enabled: cronogramaId != null && ativo,
+  })
+}
+
+/** Gerar a demanda muda o "em demanda" da fila — e a fila do Suprimentos. */
+export function useGerarDemandaDoPlano(cronogramaId: number | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (corpo: { insumos?: string[]; ate?: string | null }) =>
+      suprimentos.gerarDemanda(cronogramaId as number, corpo),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: pdcaKeys.cronogramas.raiz() })
+      qc.invalidateQueries({ queryKey: ['scm'] })
+    },
+  })
+}
+
+export function useAntecedencias(obraId: number | undefined) {
+  return useQuery({
+    queryKey: pdcaKeys.antecedencias(obraId ?? 0),
+    queryFn: () => antecedencias.listar(obraId as number),
+    enabled: obraId != null,
+  })
+}
+
+export function useDefinirAntecedencia(obraId: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ item, dias, existente }: { item: number | null; dias: number | null; existente?: AntecedenciaDeCompra }) =>
+      antecedencias.definir(obraId, item, dias, existente),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: pdcaKeys.antecedencias(obraId) })
+      qc.invalidateQueries({ queryKey: pdcaKeys.cronogramas.raiz() })
+    },
   })
 }
 
@@ -147,6 +241,15 @@ export function useReplanejar(cronogramaId: number | undefined) {
   })
 }
 
+/** Descarta um rascunho (o vigente o servidor recusa — é substituído, não apagado). */
+export function useDescartarRascunho() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => api.cronogramas.descartar(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: pdcaKeys.cronogramas.raiz() }),
+  })
+}
+
 export function useCriarPlano() {
   const qc = useQueryClient()
   return useMutation({
@@ -196,6 +299,14 @@ export function useRestricoes(obraId: number | undefined, status = 'aberta') {
     queryKey: pdcaKeys.restricoes(obraId ?? 0, status),
     queryFn: () => api.restricoes.listar(obraId as number, status),
     enabled: obraId != null,
+  })
+}
+
+export function useRestricoesDaAtividade(atividadeId: number | undefined) {
+  return useQuery({
+    queryKey: pdcaKeys.restricoesDaAtividade(atividadeId ?? 0),
+    queryFn: () => api.restricoes.daAtividade(atividadeId as number),
+    enabled: atividadeId != null,
   })
 }
 
@@ -346,6 +457,23 @@ export function useRemoverRestricao(obraId: number | undefined) {
   })
 }
 
+export function usePedirMaterialDaSemana(obraId: number | undefined) {
+  const invalidar = useInvalidarSemana(obraId)
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (itemId: number) => api.itensProgramacao.pedirMaterial(itemId),
+    onSuccess: () => { invalidar(); qc.invalidateQueries({ queryKey: ['sil'] }) },
+  })
+}
+
+export function useReabrirRestricao(obraId: number | undefined) {
+  const invalidar = useInvalidarSemana(obraId)
+  return useMutation({
+    mutationFn: (id: number) => api.restricoes.reabrir(id),
+    onSuccess: invalidar,
+  })
+}
+
 export function useGerarDemandaDeCompra(obraId: number | undefined) {
   const invalidar = useInvalidarSemana(obraId)
   return useMutation({
@@ -459,6 +587,24 @@ export function useItensDoContrato(contratoId: number | undefined, ativo = true)
   return useQuery({
     queryKey: pdcaKeys.medicao.itensDoContrato(contratoId ?? 0),
     queryFn: () => api.itensDeContrato.listar(contratoId as number),
+    enabled: contratoId != null && ativo,
+  })
+}
+
+/** A ficha do contrato. Mora sob a raiz da medição: todo gesto do dinheiro a
+ *  invalida junto (`useInvalidarDinheiro`). */
+export function useFichaDoContrato(contratoId: number | undefined, ativo = true) {
+  return useQuery({
+    queryKey: pdcaKeys.medicao.ficha(contratoId ?? 0),
+    queryFn: () => api.contratos.ficha(contratoId as number),
+    enabled: contratoId != null && ativo,
+  })
+}
+
+export function useContratoObra(contratoId: number | undefined, ativo = true) {
+  return useQuery({
+    queryKey: [...pdcaKeys.medicao.ficha(contratoId ?? 0), 'cadastro'] as const,
+    queryFn: () => api.contratos.obter(contratoId as number),
     enabled: contratoId != null && ativo,
   })
 }
@@ -655,6 +801,43 @@ export function useAbrirAditivo(obraId: number | undefined) {
   return useMutation({
     mutationFn: (corpo: Parameters<typeof api.aditivos.abrir>[0]) =>
       api.aditivos.abrir(corpo),
+    onSuccess: invalidar,
+  })
+}
+
+/** **Grava o aditivo inteiro** — abre (novo) ou reescreve cabeçalho e linhas
+ *  (rascunho). Um gesto só na tela, como salvar um contrato. */
+export function useSalvarAditivo(obraId: number | undefined) {
+  const invalidar = useInvalidarDinheiro(obraId)
+  return useMutation({
+    mutationFn: async ({ id, contrato, cabecalho, itens }: {
+      id: number | null
+      contrato: number
+      cabecalho: import('./api/pdcaApi').CabecalhoDoAditivo
+      itens: import('./types').LinhaDeAditivoEntrada[]
+    }) => {
+      if (id == null) return api.aditivos.abrir({ contrato, ...cabecalho, itens })
+      await api.aditivos.cabecalho(id, cabecalho)
+      await api.aditivos.itens(id, itens)
+      return api.aditivos.obter(id)
+    },
+    onSuccess: invalidar,
+  })
+}
+
+export function useExcluirAditivo(obraId: number | undefined) {
+  const invalidar = useInvalidarDinheiro(obraId)
+  return useMutation({
+    mutationFn: (id: number) => api.aditivos.excluir(id),
+    onSuccess: invalidar,
+  })
+}
+
+export function useCancelarAditivo(obraId: number | undefined) {
+  const invalidar = useInvalidarDinheiro(obraId)
+  return useMutation({
+    mutationFn: ({ id, motivo }: { id: number; motivo: string }) =>
+      api.aditivos.cancelar(id, motivo),
     onSuccess: invalidar,
   })
 }
@@ -960,3 +1143,75 @@ export const useRegistrarPresenca = () =>
 export const useEncerrarDds = () =>
   useVerboDaSeguranca(({ id, publicar }: { id: number; publicar: boolean }) =>
     api.dds.encerrar(id, publicar))
+
+
+/* --- PLANO: as etapas da obra (a montagem em si mora em `montagem.ts`) --- */
+
+
+export function useEtapasDaObra(obraId: number | undefined) {
+  return useQuery({
+    queryKey: [...pdcaKeys.raiz, 'etapas', obraId ?? 0],
+    queryFn: () => montagem.etapasDaObra.listar(obraId as number),
+    enabled: obraId != null,
+  })
+}
+
+export function useCriarEtapa(obraId: number | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ nome, ordem }: { nome: string; ordem: number }) =>
+      montagem.etapasDaObra.criar(obraId as number, nome, ordem),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [...pdcaKeys.raiz, 'etapas', obraId ?? 0] }),
+  })
+}
+
+/** As equipes da obra — as colunas do quadro da semana. */
+export function useEquipesDaObra(obraId: number | undefined) {
+  return useQuery({
+    queryKey: pdcaKeys.equipes(obraId ?? 0),
+    queryFn: () => api.equipes.daObra(obraId as number),
+    enabled: obraId != null,
+  })
+}
+
+export function useCriarEquipe(obraId: number | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (corpo: Parameters<typeof api.equipes.criar>[0]) => api.equipes.criar(corpo),
+    onSuccess: () => {
+      if (obraId != null) qc.invalidateQueries({ queryKey: pdcaKeys.equipes(obraId) })
+    },
+  })
+}
+
+/** O avanço físico-financeiro do plano — previsto × realizado × planejado. */
+export function useAvancoFisicoFinanceiro(cronogramaId: number | undefined) {
+  return useQuery({
+    queryKey: pdcaKeys.cronogramas.avanco(cronogramaId ?? 0),
+    queryFn: () => api.cronogramas.avancoFisicoFinanceiro(cronogramaId as number),
+    enabled: cronogramaId != null,
+  })
+}
+
+/** Rascunho → vigente. */
+export function useAtivarContrato(obraId: number | undefined) {
+  const invalidar = useInvalidarDinheiro(obraId)
+  return useMutation({ mutationFn: (id: number) => api.contratos.ativar(id), onSuccess: invalidar })
+}
+
+export function useFontesDaPlanilha(contratoId: number | undefined, ativo = true) {
+  return useQuery({
+    queryKey: [...pdcaKeys.medicao.raiz(), 'fontes-da-planilha', contratoId ?? 0],
+    queryFn: () => api.contratos.fontesDaPlanilha(contratoId as number),
+    enabled: contratoId != null && ativo,
+  })
+}
+
+export function useIncluirNaPlanilha(obraId: number | undefined) {
+  const invalidar = useInvalidarDinheiro(obraId)
+  return useMutation({
+    mutationFn: (v: { id: number; linhas: import('./types').LinhaParaPlanilha[] }) =>
+      api.contratos.incluirNaPlanilha(v.id, v.linhas),
+    onSuccess: invalidar,
+  })
+}

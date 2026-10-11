@@ -36,6 +36,13 @@ consome a relação consolidada de insumos do [Orçamento](moduloorcamento.md) e
 com a quantidade **da obra inteira** — o mesmo aço que aparece em nove serviços entra uma vez,
 somado, apontando o mesmo `catalogo.Item` que foi orçado.
 
+**A compra que nasce do cronograma** (`GET /api/scm/demandas/do-cronograma/`, `scm.demanda.view`;
+`POST .../do-cronograma/gerar/`, `scm.demanda.edit`): a mesma fila "comprar até" do posto Plano do
+[PDCA](modulopdca.md), por insumo juntando as obras com plano vigente — já descontado estoque, pedido e
+demanda —, com a obra e a data de cada pedaço; vira demanda em rascunho (`origem = plano`). No cockpit,
+card "Comprar pelo cronograma". O pedido mostra `medicao_pdca` — o que os contratos de empreitada do PDCA
+já mediram dele.
+
 O arquivo mora **aqui**, e não no orçamento, porque quem sabe explodir composição é aquele
 módulo e quem sabe o que é uma demanda é este. Três decisões do domínio: nasce **rascunho**
 (planilha de mil linhas viraria RFQ com centenas de itens indo direto para cotação); **material
@@ -110,6 +117,7 @@ mapa comparativo itens × propostas numa chamada).
 | `POST demandas/{id}/publicar/` | — | `visibilidade=rede`; rascunho→aberta | `scm.demanda.publicar` |
 | `POST cotacoes/{id}/adjudicar/` | `{ proposta_id }` | marca a vencedora, recusa as demais, cotação→adjudicada | `scm.cotacao.adjudicar` |
 | `POST pedidos/comprar_direto/` | `{ oferta, quantidade, centro_custo? }` | via **direta**: pedido `aprovado` (origem=compra_direta) + item a `preco_direto`. Recusa oferta sem `compra_direta` (400) | `scm.pedido.criar` |
+| `POST pedidos/compra_avulsa/` | `{ fornecedor, centro_custo?, data_entrega_prevista?, observacao?, itens: [{ produto? \| descricao, quantidade, preco_unitario }] }` | **compra sem catálogo e sem cotação** ("Nova compra"): pedido `aprovado` (origem=manual) com os itens; segue igual aos outros (recebimento, avaliação) | `scm.pedido.criar` |
 | `POST pedidos/gerar_de_cotacao/` | `{ cotacao }` | via **cotação**: pedido da proposta vencedora (copia itens) + demanda→atendida. Sem vencedora → 400 | `scm.pedido.criar` |
 
 `GET status/` — health do módulo (só exige `scm`).

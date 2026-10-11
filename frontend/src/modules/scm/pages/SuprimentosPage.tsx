@@ -6,13 +6,14 @@ import {
   Boxes, Star, Zap, Inbox, Lock,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   useScmDashboard, cotacoesHooks, pedidosHooks, ofertasHooks, centrosCustoHooks,
   demandasHooks, itensDemandaHooks, propostasHooks, itensPropostaHooks, itensPedidoHooks,
-  recebimentosHooks, avaliacoesHooks, useAdjudicar, useComprarDireto, useGerarDeCotacao,
+  recebimentosHooks, avaliacoesHooks, useAdjudicar, useComprarDireto, useGerarDeCotacao, useCompraAvulsa,
 } from '../hooks'
 import { scmKeys } from '../api/queryKeys'
+import { CompraPeloCronograma } from '../components/CompraPeloCronograma'
 import { recebimentos as recebimentosApi, avaliacoes as avaliacoesApi } from '../api/scmApi'
 import { brl, qty, dataBR, num, cotacaoEstado, pedidoEstado, propostaEstado, origemPedido, type Kind, type Estado } from '../lib'
 import { minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
@@ -20,6 +21,7 @@ import type {
   OfertaFornecedor, Cotacao, Proposta, ItemDemanda, ItemProposta,
   ItemPedido, Recebimento, AvaliacaoFornecedor, CentroCusto, TipoRecebimento,
 } from '../types'
+import apiClient from '@/api/apiClient'
 
 /* ─── primitivos ─── */
 const mono: CSSProperties = { fontFamily: 'var(--mono)', fontVariantNumeric: 'tabular-nums' }
@@ -126,6 +128,8 @@ const ATIV: Record<string, { icon: ReactNode; kind: Kind }> = {
 function Cockpit({ go, openCot }: { go: (t: TabId) => void; openCot: (id: number) => void }) {
   const { data: d, isLoading } = useScmDashboard()
   const { data: cots } = cotacoesHooks.useList({ status: 'aberta' })
+  const { hasPermission } = useAuth()
+  const [novaCompra, setNovaCompra] = useState(false)
   if (isLoading || !d) return <Loading />
   const aDecidir = (cots?.results ?? []).slice(0, 6)
   const rail = [
@@ -136,6 +140,12 @@ function Cockpit({ go, openCot }: { go: (t: TabId) => void; openCot: (id: number
   ]
   return (
     <>
+      {hasPermission('scm.pedido.criar') && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
+          <Btn variant="primary" onClick={() => setNovaCompra(true)}><ShoppingCart size={14} /> Nova compra</Btn>
+        </div>
+      )}
+      {novaCompra && <NovaCompraModal onClose={() => setNovaCompra(false)} onDone={() => { setNovaCompra(false); go('pedidos') }} />}
       <Card pad={false} style={{ marginBottom: 14, overflow: 'hidden' }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)' }}>
           {rail.map((s, i) => (
@@ -159,6 +169,8 @@ function Cockpit({ go, openCot }: { go: (t: TabId) => void; openCot: (id: number
         <Kpi icon={<Clock size={14} />} label="Prazo médio de entrega" value={d.prazoMedioEntregaDias != null ? <>{d.prazoMedioEntregaDias.toLocaleString('pt-BR')} <small style={{ fontSize: 15, fontWeight: 600, color: 'var(--ink-3)' }}>dias</small></> : '—'}
           foot={<span style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>{d.prazoMedioEntregaDias != null ? 'do pedido ao recebimento total' : 'sem recebimentos ainda'}</span>} />
       </div>
+
+      <CompraPeloCronograma />
 
       <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: 18, marginTop: 22, alignItems: 'start' }}>
         <Card pad={false} style={{ overflow: 'hidden' }}>
@@ -394,8 +406,8 @@ function PedidoList({ onOpen, say, onComprou }: { onOpen: (id: number) => void; 
   const rows = data?.results ?? []
   return (
     <>
-      <SectHead right={podeComprar ? <Btn variant="primary" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => setComprar(true)}><Zap size={14} /> Compra direta</Btn> : undefined}>Pedidos de compra</SectHead>
-      {isLoading ? <Loading /> : rows.length === 0 ? <Empty>Nenhum pedido. Compre direto no catálogo ou gere de uma cotação adjudicada.</Empty> : (
+      <SectHead right={podeComprar ? <Btn variant="primary" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => setComprar(true)}><Zap size={14} /> Nova compra</Btn> : undefined}>Pedidos de compra</SectHead>
+      {isLoading ? <Loading /> : rows.length === 0 ? <Empty>Nenhum pedido ainda.</Empty> : (
         <Card pad={false} style={{ overflow: 'hidden' }}>
           <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5, minWidth: 720 }}>
             <thead><tr>{['Pedido', 'Via', 'Fornecedor', 'Centro de custo', 'Valor', 'Data', 'Estado'].map((h, i) => <th key={i} style={{ ...CAPS, fontSize: 10.5, textAlign: i === 4 ? 'right' : 'left', padding: '11px 16px', borderBottom: '1px solid var(--line)', background: 'var(--surface-2)' }}>{h}</th>)}</tr></thead>
@@ -413,7 +425,7 @@ function PedidoList({ onOpen, say, onComprou }: { onOpen: (id: number) => void; 
           </table></div>
         </Card>
       )}
-      {comprar && <ComprarModal onClose={() => setComprar(false)} onDone={id => { setComprar(false); say('Pedido gerado'); onComprou(id) }} />}
+      {comprar && <NovaCompraModal onClose={() => setComprar(false)} onDone={id => { setComprar(false); say('Pedido gerado'); onComprou(id) }} />}
     </>
   )
 }
@@ -449,6 +461,9 @@ function PedidoDetail({ id, onBack, say }: { id: number; onBack: () => void; say
           <Info k="Data do pedido" v={dataBR(p.data_pedido)} mono />
           {p.demanda && <Info k="Origem" v={`Demanda #${p.demanda}`} />}
           {p.oferta_origem && <Info k="Origem" v={`Oferta #${p.oferta_origem}`} />}
+          {(p.medicao_pdca ?? []).map(m => (
+            <Info key={m.contrato} k={`Medido no PDCA · contrato ${m.numero}`} v={`${brl(m.medido_aprovado)} de ${brl(p.valor_total)}`} mono />
+          ))}
         </div></Card>
 
         <div>
@@ -526,6 +541,105 @@ function ComprarModal({ oferta, onClose, onDone }: { oferta?: OfertaFornecedor; 
     <Field label="Centro de custo"><select style={inp} value={centro} onChange={e => setCentro(e.target.value)}><option value="">— nenhum —</option>{centros.map(c => <option key={c.centro_custo_id} value={c.centro_custo_id}>{c.nome}</option>)}</select></Field>
   </Modal>
 }
+interface ItemCatalogo { item_id: number; codigo_interno: string; descricao: string; unidade: string }
+interface LinhaDeCompra { chave: number; produto: number | null; descricao: string; unidade: string; quantidade: string; preco: string }
+
+/** **Nova compra** — fornecedor, o que se compra, quantidade e preço. Sem
+ *  oferta no catálogo e sem cotação: é a compra do depósito da esquina, que a
+ *  obra faz todo dia (achado do dono, 10/10/2026: "continuo sem poder
+ *  comprar"). Item do catálogo é procurado pelo nome; o que não está no
+ *  catálogo vai como texto. Nasce pedido aprovado e segue igual aos outros. */
+function NovaCompraModal({ onClose, onDone }: { onClose: () => void; onDone: (id: number) => void }) {
+  const comprar = useCompraAvulsa()
+  const { data: cc } = centrosCustoHooks.useAll({ ativo: true })
+  const centros = (cc ?? []) as CentroCusto[]
+  const { data: fornecedores = [] } = useQuery({
+    queryKey: ['scm', 'fornecedores-da-compra'],
+    queryFn: async () => {
+      const { data } = await apiClient.get<{ results?: { fornecedor_id: number; razao_social: string }[] } | { fornecedor_id: number; razao_social: string }[]>('/fornecedores/', { params: { page_size: 500 } })
+      return Array.isArray(data) ? data : (data.results ?? [])
+    },
+  })
+  const [fornecedor, setFornecedor] = useState('')
+  const [centro, setCentro] = useState('')
+  const [entrega, setEntrega] = useState('')
+  const [linhas, setLinhas] = useState<LinhaDeCompra[]>([{ chave: 1, produto: null, descricao: '', unidade: '', quantidade: '', preco: '' }])
+  const [busca, setBusca] = useState<{ chave: number; termo: string } | null>(null)
+  const sugestoes = useQuery({
+    queryKey: ['scm', 'produtos-busca', busca?.termo ?? ''],
+    queryFn: async () => (await apiClient.get<{ results?: ItemCatalogo[] } | ItemCatalogo[]>('catalogo/itens/', { params: { search: busca!.termo, page_size: 10 } })).data,
+    enabled: (busca?.termo.trim().length ?? 0) >= 2,
+  })
+  const listaSugestoes = Array.isArray(sugestoes.data) ? sugestoes.data : (sugestoes.data?.results ?? [])
+  const [err, setErr] = useState('')
+  const mudar = (chave: number, patch: Partial<LinhaDeCompra>) => setLinhas(ls => ls.map(l => l.chave === chave ? { ...l, ...patch } : l))
+  const total = linhas.reduce((t, l) => t + (num(l.quantidade) ?? 0) * (num(l.preco) ?? 0), 0)
+
+  const salvar = async () => {
+    setErr('')
+    if (!fornecedor) return setErr('Escolha o fornecedor.')
+    const itens = linhas.filter(l => l.descricao.trim() || l.produto).map(l => ({
+      produto: l.produto, descricao: l.produto ? '' : l.descricao.trim(),
+      quantidade: (l.quantidade || '0').replace(',', '.'), preco_unitario: (l.preco || '0').replace(',', '.'),
+    }))
+    if (itens.length === 0) return setErr('Inclua ao menos um item.')
+    try {
+      const p = await comprar.mutateAsync({
+        fornecedor: Number(fornecedor), centro_custo: centro ? Number(centro) : null,
+        data_entrega_prevista: entrega || null, itens,
+      })
+      onDone(p.pedido_id)
+    } catch (e) {
+      const ax = e as { response?: { data?: { detail?: string } } }
+      setErr(ax.response?.data?.detail ?? 'Falha ao gerar o pedido.')
+    }
+  }
+
+  return <Modal title="Nova compra" onClose={onClose} footer={<><Btn onClick={onClose}>Cancelar</Btn><Btn variant="primary" onClick={salvar} disabled={comprar.isPending}>{comprar.isPending ? 'Gerando…' : `Gerar pedido · ${brl(total.toFixed(2))}`}</Btn></>}>
+    {err && <div style={{ background: 'var(--danger-soft)', color: 'var(--danger-ink)', padding: '9px 12px', borderRadius: 'var(--r-sm)', fontSize: 12.5, marginBottom: 12 }}>{err}</div>}
+    <Field label="Fornecedor">
+      <select style={inp} value={fornecedor} onChange={e => setFornecedor(e.target.value)}>
+        <option value="">— escolha —</option>
+        {fornecedores.map(f => <option key={f.fornecedor_id} value={f.fornecedor_id}>{f.razao_social}</option>)}
+      </select>
+    </Field>
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+      <Field label="Centro de custo"><select style={inp} value={centro} onChange={e => setCentro(e.target.value)}><option value="">— nenhum —</option>{centros.map(c => <option key={c.centro_custo_id} value={c.centro_custo_id}>{c.nome}</option>)}</select></Field>
+      <Field label="Entrega prevista"><input style={inp} type="date" min={minCalendarioISO} max={maxCalendarioISO} value={entrega} onChange={e => setEntrega(e.target.value)} /></Field>
+    </div>
+    <div style={{ ...CAPS, fontSize: 10.5, marginBottom: 6 }}>Itens</div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 8 }}>
+      {linhas.map(l => (
+        <div key={l.chave} style={{ display: 'grid', gridTemplateColumns: '1fr 90px 110px 28px', gap: 6, alignItems: 'start' }}>
+          <div style={{ position: 'relative' }}>
+            <input
+              style={inp} value={l.descricao} placeholder="O que comprar (procura no catálogo)"
+              onChange={e => { mudar(l.chave, { descricao: e.target.value, produto: null }); setBusca({ chave: l.chave, termo: e.target.value }) }}
+            />
+            {busca?.chave === l.chave && l.produto == null && listaSugestoes.length > 0 && (
+              <div style={{ position: 'absolute', zIndex: 5, top: '100%', left: 0, right: 0, background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 'var(--r-sm)', boxShadow: 'var(--shadow-md)', maxHeight: 180, overflowY: 'auto' }}>
+                {listaSugestoes.map(p => (
+                  <button key={p.item_id} type="button"
+                    onClick={() => { mudar(l.chave, { produto: p.item_id, descricao: p.descricao, unidade: p.unidade }); setBusca(null) }}
+                    style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 9px', fontSize: 12.5, background: 'none', border: 'none', borderBottom: '1px solid var(--line-2)', cursor: 'pointer', color: 'var(--ink)' }}>
+                    <span style={{ ...mono, color: 'var(--ink-3)' }}>{p.codigo_interno}</span> {p.descricao} · {p.unidade}
+                  </button>
+                ))}
+              </div>
+            )}
+            {l.produto != null && <div style={{ fontSize: 10.5, color: 'var(--good-ink)', marginTop: 2 }}>do catálogo · {l.unidade}</div>}
+          </div>
+          <input style={{ ...inp, ...mono }} inputMode="decimal" placeholder="Qtd" value={l.quantidade} onChange={e => mudar(l.chave, { quantidade: e.target.value })} />
+          <input style={{ ...inp, ...mono }} inputMode="decimal" placeholder="Preço un." value={l.preco} onChange={e => mudar(l.chave, { preco: e.target.value })} />
+          <button type="button" aria-label="Tirar item" disabled={linhas.length === 1} onClick={() => setLinhas(ls => ls.filter(x => x.chave !== l.chave))}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-3)', paddingTop: 8 }}>×</button>
+        </div>
+      ))}
+    </div>
+    <Btn onClick={() => setLinhas(ls => [...ls, { chave: Date.now(), produto: null, descricao: '', unidade: '', quantidade: '', preco: '' }])}>+ Outro item</Btn>
+  </Modal>
+}
+
 function RecebimentoModal({ pedidoId, onClose, onDone }: { pedidoId: number; onClose: () => void; onDone: () => void }) {
   const qc = useQueryClient()
   const [tipo, setTipo] = useState<TipoRecebimento>('total')

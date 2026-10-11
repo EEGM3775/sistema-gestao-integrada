@@ -16,6 +16,12 @@ function tempoRelativo(iso: string): string {
   return `há ${d} dia${d > 1 ? 's' : ''}`
 }
 
+const COR_DO_NIVEL: Record<number, string> = {
+  1: 'var(--color-text-muted)',
+  2: 'var(--color-warning, #d97706)',
+  3: 'var(--color-danger)',
+}
+
 export const NotificationBell: React.FC = () => {
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
@@ -40,6 +46,10 @@ export const NotificationBell: React.FC = () => {
   }
 
   const badge = unread > 99 ? '99+' : String(unread)
+  // "Agir já" fica no topo: é o que não pode esperar (funcoesnotificacoes §2).
+  const ordenadas = [...notificacoes].sort(
+    (a, b) => Number(b.nivel === 3 && !b.lida) - Number(a.nivel === 3 && !a.lida),
+  )
 
   return (
     <div className="relative" ref={ref}>
@@ -94,7 +104,7 @@ export const NotificationBell: React.FC = () => {
                 <p className="text-sm" style={{ fontFamily: 'var(--font-body)' }}>Nenhuma notificação</p>
               </div>
             ) : (
-              notificacoes.map((n) => (
+              ordenadas.map((n) => (
                 <button
                   key={n.id}
                   onClick={() => onClickItem(n)}
@@ -104,9 +114,17 @@ export const NotificationBell: React.FC = () => {
                   onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = n.lida ? '#FFFFFF' : '#f5f8ff')}
                 >
                   {!n.lida && (
-                    <span className="mt-1.5 w-2 h-2 rounded-full shrink-0" style={{ background: 'var(--color-brand-app)' }} />
+                    <span
+                      className="mt-1.5 w-2 h-2 rounded-full shrink-0"
+                      style={{ background: COR_DO_NIVEL[n.nivel] ?? COR_DO_NIVEL[1] }}
+                    />
                   )}
                   <span className={`flex-1 min-w-0 ${n.lida ? 'pl-[18px]' : ''}`}>
+                    {n.nivel === 3 && (
+                      <span className="block text-[10px] font-bold uppercase tracking-wide" style={{ color: COR_DO_NIVEL[3] }}>
+                        Agir já
+                      </span>
+                    )}
                     <span className="block text-sm font-semibold truncate" style={{ color: 'var(--color-text)', fontFamily: 'var(--font-body)' }}>
                       {n.titulo}
                     </span>

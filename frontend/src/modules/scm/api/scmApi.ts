@@ -49,3 +49,10 @@ export const comprarDireto = (body: { oferta: number; quantidade: string; centro
   apiClient.post<{ pedido_id: number }>('scm/pedidos/comprar_direto/', body).then(r => r.data)
 export const gerarDeCotacao = (cotacao: number) =>
   apiClient.post<{ pedido_id: number }>('scm/pedidos/gerar_de_cotacao/', { cotacao }).then(r => r.data)
+
+/** Compra sem catálogo e sem cotação — fornecedor, itens, preço (dono, 10/10/2026). */
+export interface ItemDeCompraAvulsa { produto?: number | null; descricao?: string; quantidade: string; preco_unitario: string }
+export const compraAvulsa = (body: {
+  fornecedor: number; centro_custo?: number | null; data_entrega_prevista?: string | null
+  observacao?: string; itens: ItemDeCompraAvulsa[]
+}) => apiClient.post<{ pedido_id: number }>('scm/pedidos/compra_avulsa/', body).then(r => r.data)

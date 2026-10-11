@@ -90,6 +90,7 @@ export const atenderRequisicao = (id: number) => apiClient.post(`sil/requisicoes
 export const executarTransferencia = (id: number) => apiClient.post(`sil/transferencias/${id}/executar/`)
 export const executarDevolucao = (id: number) => apiClient.post(`sil/devolucoes/${id}/executar/`)
 export const fecharInventario = (id: number) => apiClient.post(`sil/inventarios/${id}/fechar/`)
+export const reabrirInventario = (id: number) => apiClient.post(`sil/inventarios/${id}/reabrir/`)
 export const devolverEpi = (id: number) => apiClient.post(`sil/entregas-epi/${id}/devolver/`)
 export const alterarEstadoFerramenta = (id: number, body: { estado: string; proxima_calibracao?: string | null; proxima_manutencao?: string | null }) =>
   apiClient.post(`sil/ferramentas/${id}/alterar_estado/`, body)

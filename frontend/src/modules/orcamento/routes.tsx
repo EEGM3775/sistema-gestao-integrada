@@ -1,12 +1,13 @@
 import { lazy, Suspense, type ReactNode } from 'react'
 import { Route } from 'react-router-dom'
 import ModuleRoute from '@/components/ModuleRoute'
+import { ParaAnalisar } from './components/ParaAnalisar'
 
 const HubPage = lazy(() => import('./pages/HubPage'))
 const ObrasOrcamentosPage = lazy(() => import('./pages/ObrasOrcamentosPage'))
 const OrcarPage = lazy(() => import('./pages/OrcarPage'))
 const EncargosPage = lazy(() => import('./pages/EncargosPage'))
-const ControlarPage = lazy(() => import('./pages/ControlarPage'))
+const AnalisarPage = lazy(() => import('./pages/AnalisarPage'))
 const CronogramaPage = lazy(() => import('./pages/CronogramaPage'))
 const BasesPage = lazy(() => import('./pages/BasesPage'))
 const IncorporacaoPage = lazy(() => import('./pages/IncorporacaoPage'))
@@ -32,7 +33,8 @@ export const orcamentoRoutes = (
     <Route path="orcamento/orcar/obra/:obraId" element={w(<ObrasOrcamentosPage />)} />
     <Route path="orcamento/orcar/orcamento/:orcamentoId" element={w(<OrcarPage />)} />
     <Route path="orcamento/encargos" element={w(<EncargosPage />)} />
-    <Route path="orcamento/controlar" element={w(<ControlarPage />)} />
+    <Route path="orcamento/analisar" element={w(<AnalisarPage />)} />
+    <Route path="orcamento/controlar" element={<ParaAnalisar />} />
     <Route path="orcamento/cronograma" element={w(<CronogramaPage />)} />
     <Route path="orcamento/bases" element={w(<BasesPage />)} />
     <Route path="orcamento/incorporacao" element={w(<IncorporacaoPage />)} />

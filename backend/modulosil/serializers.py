@@ -23,7 +23,7 @@ from .models import (
 
 
 class LocalEstoqueSerializer(TenantScopedModelSerializer):
-    obra_nome = serializers.CharField(source="obra.nome", read_only=True, default=None)
+    obra_nome = serializers.CharField(source="obra.nome_obra", read_only=True, default=None)
 
     class Meta:
         model = LocalEstoque
@@ -63,7 +63,7 @@ class MovimentacaoEstoqueSerializer(TenantScopedModelSerializer):
     local_nome = serializers.CharField(source="local.nome", read_only=True)
     tipo_display = serializers.CharField(source="get_tipo_display", read_only=True)
     usuario_nome = serializers.CharField(source="usuario.username", read_only=True, default=None)
-    obra_nome = serializers.CharField(source="obra.nome", read_only=True, default=None)
+    obra_nome = serializers.CharField(source="obra.nome_obra", read_only=True, default=None)
     etapa_nome = serializers.CharField(source="etapa.nome_etapa", read_only=True, default=None)
 
     class Meta:
@@ -85,7 +85,7 @@ class ItemRequisicaoSerializer(TenantScopedModelSerializer):
 
 class RequisicaoSerializer(TenantScopedModelSerializer):
     local_nome = serializers.CharField(source="local.nome", read_only=True)
-    obra_nome = serializers.CharField(source="obra.nome", read_only=True, default=None)
+    obra_nome = serializers.CharField(source="obra.nome_obra", read_only=True, default=None)
     etapa_nome = serializers.CharField(source="etapa.nome_etapa", read_only=True, default=None)
     solicitante_nome = serializers.CharField(source="solicitante.username", read_only=True, default=None)
     itens_count = serializers.IntegerField(source="itens.count", read_only=True)
@@ -143,7 +143,7 @@ class ItemInventarioSerializer(TenantScopedModelSerializer):
     class Meta:
         model = ItemInventario
         fields = "__all__"
-        read_only_fields = ["tenant"]
+        read_only_fields = ["tenant", "ajuste_aplicado"]
 
     def get_diferenca(self, obj):
         return obj.quantidade_contada - obj.quantidade_sistema
@@ -163,7 +163,7 @@ class EntregaEPISerializer(TenantScopedModelSerializer):
     item_descricao = serializers.CharField(source="item.descricao", read_only=True)
     item_codigo = serializers.CharField(source="item.codigo_interno", read_only=True)
     colaborador_label = serializers.SerializerMethodField()
-    obra_nome = serializers.CharField(source="obra.nome", read_only=True, default=None)
+    obra_nome = serializers.CharField(source="obra.nome_obra", read_only=True, default=None)
     local_nome = serializers.CharField(source="local.nome", read_only=True, default=None)
     vencido = serializers.BooleanField(read_only=True)
 
@@ -201,7 +201,7 @@ class EmprestimoFerramentaSerializer(TenantScopedModelSerializer):
     ferramenta_nome = serializers.CharField(source="ferramenta.nome", read_only=True)
     ferramenta_patrimonio = serializers.CharField(source="ferramenta.patrimonio", read_only=True, default=None)
     colaborador_label = serializers.SerializerMethodField()
-    obra_nome = serializers.CharField(source="obra.nome", read_only=True, default=None)
+    obra_nome = serializers.CharField(source="obra.nome_obra", read_only=True, default=None)
     atrasada = serializers.BooleanField(read_only=True)
 
     class Meta:

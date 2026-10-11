@@ -59,9 +59,9 @@ from payment.planos import (
 
 from . import services
 from .models import (
-    AditivoContrato, ApontamentoAvanco, Atividade, CalendarioTrabalho,
-    CausaNaoCumprimento, ItemProgramacao, ProgramacaoSemanal, Restricao,
-    ContratoObra, Cronograma, ExcecaoCalendario, ItemContrato,
+    AditivoContrato, AntecedenciaDeCompra, ApontamentoAvanco, Atividade, CalendarioTrabalho,
+    CausaNaoCumprimento, EquipeObra, ItemProgramacao, MaterialDaAtividade, ProgramacaoSemanal, Restricao,
+    ContratoObra, Cronograma, ExcecaoCalendario, ItemContrato, ParcelaReajusteContrato,
     LiberacaoRetencao, LocalObra, Medicao, Precedencia,
     ItemModeloVerificacao, ItemVerificacao, ModeloVerificacao,
     NaoConformidade, PlanoAcao, Verificacao,
@@ -69,13 +69,18 @@ from .models import (
 )
 from .pagination import PdcaPageNumberPagination
 from .serializers import (
+    AntecedenciaDeCompraSerializer,
+    GerarDemandaDoPlanoSerializer,
     AbrirAditivoSerializer,
+    EditarAditivoSerializer,
     AbrirMedicaoSerializer,
     AbrirProgramacaoSerializer,
     GerarRitmoSerializer,
     AditivoContratoSerializer,
     AtestarSerializer,
     CausaNaoCumprimentoSerializer,
+    EquipeObraSerializer,
+    MaterialDaAtividadeSerializer,
     EncerrarSerializer,
     GerarDemandaSerializer,
     ItemProgramacaoSerializer,
@@ -94,6 +99,7 @@ from .serializers import (
     AtividadeSerializer,
     CalendarioTrabalhoSerializer,
     ContratoObraSerializer,
+    ParcelaReajusteContratoSerializer,
     CronogramaSerializer,
     ExcecaoCalendarioSerializer,
     GeracaoEmLoteSerializer,
@@ -102,6 +108,13 @@ from .serializers import (
     LinhaDeMedicaoSerializer,
     LocalObraSerializer,
     LoteSerializer,
+    AnexarModeloSerializer,
+    AtualizarDoOrcamentoSerializer,
+    GerarDoOrcamentoSerializer,
+    ImportarLinhasSerializer,
+    InserirAtividadeSerializer,
+    MoverAtividadeSerializer,
+    RestaurarLinhasSerializer,
     EstornoSerializer,
     MarcarModeloSerializer,
     MedicaoSerializer,
@@ -535,6 +548,16 @@ class ExcecaoCalendarioViewSet(BasePdcaViewSet):
 # ---------------------------------------------------------------------------
 
 
+class AntecedenciaDeCompraViewSet(BasePdcaViewSet):
+    """Quantos dias antes da atividade o material chega: padrão da obra (item
+    vazio) e exceção por insumo. Do planejador — `pdca.cronograma.edit`."""
+
+    queryset = AntecedenciaDeCompra.objects.select_related("item").all()
+    serializer_class = AntecedenciaDeCompraSerializer
+    required_resource = "pdca.cronograma"
+    filterset_fields = ["obra", "item"]
+
+
 class CronogramaViewSet(BasePdcaViewSet):
     """O plano da obra e seus verbos: calcular, publicar, replanejar.
 
@@ -549,6 +572,8 @@ class CronogramaViewSet(BasePdcaViewSet):
     required_resource = "pdca.cronograma"
     action_permission_map = {
         "publicar": "pdca.cronograma.publicar",
+        # Ler o plano basta; abrir a demanda exige "scm.demanda.edit" na ação.
+        "suprimentos_gerar_demanda": "pdca.cronograma.view",
         "replanejar": "pdca.cronograma.replanejar",
         # Marcar um padrão da empresa e aplicá-lo numa obra nova são atos da
         # mesma classe de quem monta o plano — quem edita, edita. Publicar
@@ -559,6 +584,15 @@ class CronogramaViewSet(BasePdcaViewSet):
         "aplicar_modelo": "pdca.cronograma.edit",
         "lote": "pdca.cronograma.edit",
         "renumerar_eap": "pdca.cronograma.edit",
+        "inserir_atividade": "pdca.cronograma.edit",
+        "importar_linhas": "pdca.cronograma.edit",
+        "gerar_do_orcamento": "pdca.cronograma.edit",
+        "atualizar_do_orcamento": "pdca.cronograma.edit",
+        "situacao_do_orcamento": "pdca.cronograma.view",
+        "anexar_modelo": "pdca.cronograma.edit",
+        "restaurar_linhas": "pdca.cronograma.edit",
+        "orcamentos": "pdca.cronograma.view",
+        "avanco_fisico_financeiro": "pdca.cronograma.view",
     }
     filterset_fields = ["obra", "status", "versao", "eh_modelo"]
     search_fields = ["descricao", "nome_modelo"]
@@ -694,11 +728,11 @@ class CronogramaViewSet(BasePdcaViewSet):
         payload é grande de propósito, e é o cliente que virtualiza (planta §5.2).
         """
         cronograma = self.get_object()
-        atividades = (cronograma.atividades
-                      .select_related("local", "etapa", "item_orcado", "calendario",
-                                      "responsavel")
-                      .prefetch_related("filhos")
-                      .order_by("ordem", "codigo", "atividade_id"))
+        atividades = list(cronograma.atividades
+                          .select_related("local", "etapa", "item_orcado", "calendario",
+                                          "responsavel")
+                          .prefetch_related("filhos")
+                          .order_by("ordem", "codigo", "atividade_id"))
         ligacoes = Precedencia.objects.filter(origem__cronograma=cronograma)
         contexto = self.get_serializer_context()
         return Response({
@@ -712,7 +746,86 @@ class CronogramaViewSet(BasePdcaViewSet):
             # numa segunda chamada faria a grade desenhar duas vezes, a segunda
             # com as barras mudando de cor na frente de quem olha.
             "avanco": services.avanco_do_cronograma(cronograma),
+            # Os dias parados (fim de semana, feriado, recesso) de cada
+            # expediente em uso — o Gantt corta a barra neles.
+            "expedientes": services.expedientes_do_plano(cronograma, atividades),
+            # As barras que o expediente de hoje não sustenta mais — o feriado
+            # que entrou depois do cálculo, numa versão que não recalcula.
+            "fora_do_expediente": services.datas_fora_do_expediente(cronograma, atividades),
         })
+
+    @action(detail=True, methods=["get"])
+    def suprimentos(self, request, pk=None):
+        """O cronograma puxa a compra: insumo, quantidade, chegar até, a comprar.
+
+        Leitura do plano (`pdca.cronograma.view`): o planejador e o comprador
+        olham a mesma fila — aqui por atividade e data, no Suprimentos por
+        insumo juntando as obras (`modulopdca.suprimentos`).
+        """
+        from . import suprimentos as sup
+
+        return Response(sup.necessidade_de_material(self.get_object()))
+
+    @action(detail=True, methods=["get"])
+    def custo(self, request, pk=None):
+        """O dinheiro dos quatro módulos dentro do plano — por etapa e atividade:
+        orçado × comprometido (pedido) × recebido × aplicado (estoque) × medido.
+        Pedido e recebido são **rateados** por insumo (a resposta diz)."""
+        from . import suprimentos as sup
+
+        return Response(sup.custo_do_plano(self.get_object()))
+
+    @action(detail=True, methods=["get"], url_path="avanco-fisico-financeiro")
+    def avanco_fisico_financeiro(self, request, pk=None):
+        """Previsto × realizado por etapa, em % e em reais, e a curva S mensal.
+        O **cronograma** físico-financeiro (o planejado por competência) é do
+        Orçamento; o **avanço** é daqui (decisão do dono, 10/10/2026)."""
+        cronograma = self.get_object()
+        dados = services.avanco_fisico_financeiro(cronograma)
+        try:
+            dados["curva"] = services.curva_s(cronograma, granularidade="mes")
+        except DjangoValidationError:
+            dados["curva"] = None
+        return Response(services.str_decimais(dados))
+
+    @action(detail=True, methods=["post"], url_path="religar-orcamento")
+    def religar_orcamento(self, request, pk=None):
+        """Revisão do orçamento: religa as atividades ao item de mesmo código
+        EAP na versão vigente (só rascunho — `pdca.cronograma.edit`)."""
+        from . import suprimentos as sup
+
+        try:
+            mudaram = sup.religar_ao_orcamento_vigente(self.get_object())
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        return Response({"atividades": mudaram})
+
+    @action(detail=True, methods=["post"], url_path="suprimentos/gerar-demanda")
+    def suprimentos_gerar_demanda(self, request, pk=None):
+        """A fila vira demanda em rascunho no Suprimentos — o que falta, nada além.
+
+        Exige a permissão de comprar (`scm.demanda.edit`), como a demanda da
+        restrição: abrir documento no Suprimentos é gesto de quem compra.
+        """
+        from . import suprimentos as sup
+
+        cronograma = self.get_object()
+        _exige(request, "scm.demanda.edit", (
+            "Gerar demanda a partir do cronograma abre um documento no Suprimentos, "
+            "e isso exige 'scm.demanda.edit'. Peça ao administrador ou ao comprador."
+        ))
+        entrada = GerarDemandaDoPlanoSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        criadas = sup.gerar_demandas_do_plano(
+            cronograma, insumos=entrada.validated_data.get("insumos") or None,
+            ate=entrada.validated_data.get("ate"), solicitante=request.user,
+        )
+        if not criadas:
+            raise ValidationError({"detail": [
+                "Nada a comprar no que foi escolhido: o estoque, os pedidos e as "
+                "demandas abertas da obra já cobrem."
+            ]})
+        return Response({"demandas": criadas}, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["get"], url_path="linha-de-base")
     def linha_de_base(self, request, pk=None):
@@ -856,6 +969,136 @@ class CronogramaViewSet(BasePdcaViewSet):
             raise ValidationError({"edicoes": erro.messages})
         return Response(resultado)
 
+    # -- A montagem dentro do posto (09/10/2026) ---------------------------
+
+    def _atividade_do_plano(self, cronograma, atividade_id, campo):
+        if atividade_id in (None, ""):
+            return None
+        atividade = cronograma.atividades.filter(pk=atividade_id).first()
+        if atividade is None:
+            raise ValidationError({campo: "Esta atividade não é deste plano."})
+        return atividade
+
+    @action(detail=True, methods=["post"], url_path="inserir-atividade")
+    def inserir_atividade(self, request, pk=None):
+        """Cria a linha **na posição** (logo abaixo de `depois_de`, ou no fim de
+        `pai`) e renumera a EAP — o Enter da grade."""
+        cronograma = self.get_object()
+        entrada = InserirAtividadeSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        dados = entrada.validated_data
+        pai = self._atividade_do_plano(cronograma, dados.get("pai"), "pai")
+        depois_de = self._atividade_do_plano(cronograma, dados.get("depois_de"), "depois_de")
+        etapa_id = dados.get("etapa")
+        if etapa_id is not None:
+            from obras.models import EtapaObra
+            if not EtapaObra.objects.filter(
+                pk=etapa_id, obra_id=cronograma.obra_id,
+                tenant_id=request.user.tenant_id,
+            ).exists():
+                raise ValidationError({"etapa": "Esta etapa não é da obra deste plano."})
+        try:
+            nova = services.inserir_atividade(
+                cronograma, pai=pai, depois_de=depois_de, nome=dados.get("nome", ""),
+                duracao_dias=dados.get("duracao_dias"), eh_marco=dados.get("eh_marco", False),
+                etapa_id=etapa_id,
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"cronograma": erro.messages})
+        return Response(
+            AtividadeSerializer(nova, context=self.get_serializer_context()).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["post"], url_path="importar-linhas")
+    def importar_linhas(self, request, pk=None):
+        """Muitas linhas com hierarquia e rede — colar do Excel, abrir o XML do
+        MS Project. Uma transação: ciclo ou linha inválida desfaz o bloco."""
+        cronograma = self.get_object()
+        entrada = ImportarLinhasSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        try:
+            return Response(services.importar_linhas(
+                cronograma, entrada.validated_data["linhas"],
+                referencia=entrada.validated_data["referencia"],
+            ))
+        except DjangoValidationError as erro:
+            raise ValidationError({"linhas": erro.messages})
+
+    @action(detail=True, methods=["get"])
+    def orcamentos(self, request, pk=None):
+        """Os orçamentos da obra que podem virar a EAP deste plano."""
+        return Response(services.orcamentos_da_obra(self.get_object()))
+
+    @action(detail=True, methods=["post"], url_path="gerar-do-orcamento")
+    def gerar_do_orcamento(self, request, pk=None):
+        """As etapas do plano nascem do cronograma físico-financeiro do
+        Orçamento (só etapas). `{"simular": true}` conta sem escrever."""
+        cronograma = self.get_object()
+        entrada = GerarDoOrcamentoSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        dados = entrada.validated_data
+        try:
+            return Response(services.gerar_do_orcamento(
+                cronograma, orcamento_id=dados["orcamento"],
+                duracao_padrao=dados.get("duracao_padrao", 5),
+                simular=dados.get("simular", False),
+            ))
+        except DjangoValidationError as erro:
+            raise ValidationError({"orcamento": erro.messages})
+
+    @action(detail=True, methods=["get"], url_path="situacao-do-orcamento")
+    def situacao_do_orcamento(self, request, pk=None):
+        """O aviso do "copia e avisa": o cronograma do orçamento mudou?"""
+        return Response(services.situacao_do_orcamento(self.get_object()))
+
+    @action(detail=True, methods=["post"], url_path="atualizar-do-orcamento")
+    def atualizar_do_orcamento(self, request, pk=None):
+        """Traz as datas e os valores novos das etapas do orçamento."""
+        cronograma = self.get_object()
+        entrada = AtualizarDoOrcamentoSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        try:
+            return Response(services.atualizar_do_orcamento(
+                cronograma, orcamento_id=entrada.validated_data.get("orcamento"),
+                duracao_padrao=entrada.validated_data.get("duracao_padrao", 5),
+            ))
+        except DjangoValidationError as erro:
+            raise ValidationError({"orcamento": erro.messages})
+
+    @action(detail=True, methods=["post"], url_path="restaurar-linhas")
+    def restaurar_linhas(self, request, pk=None):
+        """O desfazer da exclusão: recria a subárvore fotografada, no mesmo lugar,
+        e devolve o mapa de ids antigos para novos."""
+        cronograma = self.get_object()
+        entrada = RestaurarLinhasSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        dados = entrada.validated_data
+        try:
+            return Response(services.restaurar_linhas(
+                cronograma, pai_id=dados.get("pai"), posicao=dados.get("posicao"),
+                atividades=dados["atividades"], ligacoes=dados.get("ligacoes", []),
+            ))
+        except DjangoValidationError as erro:
+            raise ValidationError({"atividades": erro.messages})
+
+    @action(detail=True, methods=["post"], url_path="anexar-modelo")
+    def anexar_modelo(self, request, pk=None):
+        """Traz um plano modelo para o fim deste rascunho, sem apagar nada."""
+        cronograma = self.get_object()
+        entrada = AnexarModeloSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        modelo = (Cronograma.objects
+                  .filter(pk=entrada.validated_data["modelo"],
+                          tenant_id=request.user.tenant_id, eh_modelo=True)
+                  .first())
+        if modelo is None:
+            raise ValidationError({"modelo": "Modelo não encontrado na biblioteca."})
+        try:
+            return Response(services.anexar_modelo(modelo, cronograma))
+        except DjangoValidationError as erro:
+            raise ValidationError({"modelo": erro.messages})
+
     @action(detail=True, methods=["get"])
     def cobertura(self, request, pk=None):
         """Quantas atividades têm régua de custo — vínculo que não existe não é
@@ -914,6 +1157,27 @@ class AtividadeViewSet(BasePdcaViewSet):
                 "Este cronograma não é mais rascunho. Para mudar o plano, replaneje."
             )
         super().perform_destroy(instance)
+
+    @action(detail=True, methods=["post"])
+    def mover(self, request, pk=None):
+        """Arrastar a linha, recuar (Tab), avançar (Shift+Tab), subir e descer:
+        leva a atividade com o que está dentro e renumera a EAP."""
+        atividade = self.get_object()
+        entrada = MoverAtividadeSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        pai_id = entrada.validated_data.get("pai")
+        pai = None
+        if pai_id is not None:
+            pai = atividade.cronograma.atividades.filter(pk=pai_id).first()
+            if pai is None:
+                raise ValidationError({"pai": "Esta atividade não é deste plano."})
+        try:
+            movida = services.mover_atividade(
+                atividade, pai=pai, posicao=entrada.validated_data.get("posicao"),
+            )
+        except DjangoValidationError as erro:
+            raise ValidationError({"pai": erro.messages})
+        return Response(AtividadeSerializer(movida, context=self.get_serializer_context()).data)
 
     @action(detail=True, methods=["post"])
     def reprogramar(self, request, pk=None):
@@ -1251,11 +1515,16 @@ class ContratoObraViewSet(BasePdcaViewSet):
     contrato pode não ser quem ateste a medição que nasce dele.
     """
 
-    queryset = ContratoObra.objects.select_related("obra", "fornecedor")
+    queryset = ContratoObra.objects.select_related("obra", "fornecedor", "cliente").prefetch_related(
+        "parcelas_reajuste__indice",
+    )
     serializer_class = ContratoObraSerializer
     permission_map = {"view": "pdca.contrato.view", "write": "pdca.contrato.edit"}
     action_permission_map = {
         "saldo": "pdca.contrato.view",
+        "fontes_da_planilha": "pdca.contrato.view",
+        "ativar": "pdca.contrato.edit",
+        "incluir_na_planilha": "pdca.contrato.edit",
         "proposta_de_medicao": "pdca.medicao.view",
         "periodo_sugerido": "pdca.medicao.view",
         "retencao": "pdca.contrato.view",
@@ -1265,10 +1534,82 @@ class ContratoObraViewSet(BasePdcaViewSet):
         # mesma pessoa definindo o valor retido e mandando-o de volta. É a
         # segregação da §8 aplicada ao dinheiro que estava parado.
         "liberar_retencao": "pdca.medicao.atestar",
+        "fator_de_reajuste": "pdca.contrato.view",
+        "ficha": "pdca.contrato.view",
     }
-    filterset_fields = ["obra", "fornecedor", "status", "regime", "regime_publico"]
-    search_fields = ["numero", "objeto", "fornecedor__razao_social"]
+    filterset_fields = ["obra", "lado", "fornecedor", "cliente", "status", "regime", "regime_publico"]
+    search_fields = ["numero", "objeto", "fornecedor__razao_social", "cliente__nome_completo"]
+
+    @action(detail=True, methods=["get"])
+    def ficha(self, request, pk=None):
+        """O contrato inteiro numa leitura: o financeiro do ERP e a linha do
+        tempo (medições, aditivos, liberações) — `services.ficha_do_contrato`."""
+        return Response(_str_decimais(services.ficha_do_contrato(self.get_object())))
+
+    @action(detail=True, methods=["get"], url_path="fator-de-reajuste")
+    def fator_de_reajuste(self, request, pk=None):
+        """O fator da fórmula do contrato numa data, com a memória de cada
+        parcela — a conferência que a outra parte vai refazer.
+        `?data=AAAA-MM-DD` (padrão: hoje)."""
+        from datetime import date
+
+        from django.utils import timezone
+
+        from nucleo import reajuste as motor
+
+        contrato = self.get_object()
+        bruto = request.query_params.get("data")
+        try:
+            quando = date.fromisoformat(bruto) if bruto else timezone.localdate()
+        except ValueError:
+            raise ValidationError({"data": "Informe a data como AAAA-MM-DD."})
+        parcelas = [(p.indice, p.peso, p.rotulo) for p in contrato.parcelas_reajuste.select_related("indice")]
+        if not parcelas or contrato.reajuste_data_base is None:
+            return Response({"reajustavel": False, "motivo": "Contrato sem fórmula de reajuste (preço fixo)."})
+        periodo = contrato.reajuste_periodicidade_meses or 12
+        ciclo = motor.ciclos_completos(contrato.reajuste_data_base, quando, periodo)
+        try:
+            memoria = motor.fator(
+                parcela_fixa=contrato.reajuste_parcela_fixa, parcelas=parcelas,
+                data_base=contrato.reajuste_data_base, ciclo=ciclo,
+                periodicidade_meses=periodo, casas=contrato.reajuste_casas or 4,
+            )
+        except motor.ReajusteInvalido as erro:
+            raise ValidationError({"detail": str(erro)})
+        return Response({
+            "reajustavel": True, "data": quando.isoformat(), **memoria,
+            "proximo_aniversario": motor.aniversario(contrato.reajuste_data_base, ciclo + 1, periodo).isoformat(),
+        })
     ordering_fields = ["criado_em", "numero", "data_inicio"]
+
+    @action(detail=True, methods=["post"])
+    def ativar(self, request, pk=None):
+        """Rascunho → vigente (achado do dono: "fica em rascunho eternamente")."""
+        try:
+            contrato = services.ativar_contrato(self.get_object())
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        return Response(self.get_serializer(contrato).data)
+
+    @action(detail=True, methods=["get"], url_path="fontes-da-planilha")
+    def fontes_da_planilha(self, request, pk=None):
+        """Itens do orçamento e atividades do plano, prontos para a planilha."""
+        return Response(_str_decimais(services.fontes_da_planilha(self.get_object())))
+
+    @action(detail=True, methods=["post"], url_path="incluir-na-planilha")
+    def incluir_na_planilha(self, request, pk=None):
+        """Várias linhas de uma vez (orçamento, plano, Excel). Tudo ou nada."""
+        linhas = request.data.get("linhas")
+        if not isinstance(linhas, list):
+            raise ValidationError({"linhas": "Envie a lista de linhas."})
+        try:
+            criados = services.incluir_na_planilha(self.get_object(), linhas)
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        return Response(
+            ItemContratoSerializer(criados, many=True, context=self.get_serializer_context()).data,
+            status=status.HTTP_201_CREATED,
+        )
 
     @action(detail=True, methods=["get"])
     def saldo(self, request, pk=None):
@@ -1354,6 +1695,18 @@ class ContratoObraViewSet(BasePdcaViewSet):
             },
             status=status.HTTP_201_CREATED,
         )
+
+
+class ParcelaReajusteContratoViewSet(BasePdcaViewSet):
+    """As parcelas `pᵢ × Iᵢ` da fórmula de reajuste do contrato (decisão do
+    dono, 10/10/2026: o reajuste saiu do Orçamento para o contrato). Mexer na
+    fórmula de contrato que já tem medição aprovada não reescreve a medição — o
+    reajuste dela está gravado —, mas vale para as próximas."""
+
+    queryset = ParcelaReajusteContrato.objects.select_related("contrato", "indice")
+    serializer_class = ParcelaReajusteContratoSerializer
+    permission_map = {"view": "pdca.contrato.view", "write": "pdca.contrato.edit"}
+    filterset_fields = ["contrato", "indice"]
 
 
 class ItemContratoViewSet(BasePdcaViewSet):
@@ -1573,6 +1926,12 @@ class MedicaoViewSet(TenantScopedViewSetMixin,
             campos.append("observacao")
         if campos:
             medicao.save(update_fields=campos)
+        if "custo_reembolsavel" in campos:
+            # O bruto mudou: o reajuste do período muda junto.
+            try:
+                services.recalcular_reajuste(medicao)
+            except DjangoValidationError as erro:
+                raise ValidationError({"detail": erro.messages})
         return Response(self.get_serializer(medicao).data)
 
     @action(detail=True, methods=["post"])
@@ -1773,8 +2132,13 @@ class MedicaoViewSet(TenantScopedViewSetMixin,
             )
         except DjangoValidationError as erro:
             raise ValidationError({"detail": erro.messages})
+        #: A retificadora retirada antes de valer é apagada (não fica "cancelada"
+        #: no contrato) — não há documento para devolver.
         return Response({
-            **resultado, "medicao_dados": self.get_serializer(medicao).data,
+            **resultado,
+            "medicao_dados": (
+                None if resultado.get("excluida") else self.get_serializer(medicao).data
+            ),
         })
 
     def perform_destroy(self, instance):
@@ -1829,6 +2193,7 @@ class AditivoContratoViewSet(TenantScopedViewSetMixin,
     permission_map = {"view": "pdca.contrato.view", "write": "pdca.aditivo.edit"}
     action_permission_map = {
         "abrir": "pdca.aditivo.edit",
+        "cabecalho": "pdca.aditivo.edit",
         "itens": "pdca.aditivo.edit",
         "submeter": "pdca.aditivo.edit",
         "cancelar": "pdca.aditivo.edit",
@@ -1852,6 +2217,7 @@ class AditivoContratoViewSet(TenantScopedViewSetMixin,
                 justificativa=dados["justificativa"],
                 data_assinatura=dados.get("data_assinatura"),
                 nova_data_fim=dados.get("nova_data_fim"),
+                retencao_percentual_nova=dados.get("retencao_percentual_nova"),
                 por=_quem_e(request),
                 itens=[dict(linha) for linha in dados.get("itens", [])],
             )
@@ -1860,6 +2226,18 @@ class AditivoContratoViewSet(TenantScopedViewSetMixin,
         return Response(
             self.get_serializer(aditivo).data, status=status.HTTP_201_CREATED,
         )
+
+    @action(detail=True, methods=["post"])
+    def cabecalho(self, request, pk=None):
+        """O cabeçalho do rascunho: objeto, justificativa, datas, retenção nova."""
+        aditivo = self.get_object()
+        entrada = EditarAditivoSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        try:
+            aditivo = services.editar_aditivo(aditivo=aditivo, **entrada.validated_data)
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        return Response(self.get_serializer(aditivo).data)
 
     @action(detail=True, methods=["post"])
     def itens(self, request, pk=None):
@@ -2027,11 +2405,14 @@ class RestricaoViewSet(BasePdcaViewSet):
 
     queryset = Restricao.objects.select_related(
         "atividade", "atividade__cronograma", "local", "demanda_scm",
-    ).all()
+    ).prefetch_related("demanda_scm__pedidos", "demanda_scm__cotacoes").all()
     serializer_class = RestricaoSerializer
     required_resource = "pdca.restricao"
     action_permission_map = {
         "remover": "pdca.restricao.remover",
+        # Desfazer a remoção é do mesmo nível de quem remove: é o mesmo ato,
+        # corrigido.
+        "reabrir": "pdca.restricao.remover",
         "gerar_demanda": "pdca.restricao.edit",
     }
     filterset_fields = {
@@ -2082,6 +2463,16 @@ class RestricaoViewSet(BasePdcaViewSet):
             raise ValidationError({"detail": erro.messages})
         return Response(self.get_serializer(restricao).data)
 
+    @action(detail=True, methods=["post"])
+    def reabrir(self, request, pk=None):
+        """A trava que voltou — resolvida → aberta, carimbada e contada."""
+        restricao = self.get_object()
+        try:
+            services.reabrir_restricao(restricao=restricao, por=_quem_e(request))
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        return Response(self.get_serializer(restricao).data)
+
     @action(detail=True, methods=["post"], url_path="gerar-demanda")
     def gerar_demanda(self, request, pk=None):
         """O seam do SCM, vivo: restrição de material → demanda de compra.
@@ -2112,6 +2503,61 @@ class RestricaoViewSet(BasePdcaViewSet):
              "restricao": self.get_serializer(restricao).data},
             status=status.HTTP_201_CREATED,
         )
+
+
+class MaterialDaAtividadeViewSet(BasePdcaViewSet):
+    """O material informado na atividade — a necessidade de compra sem orçamento.
+
+    É dado de planejamento, da mesma classe da restrição de material: vale no
+    plano vigente também (comprar não espera replanejar)."""
+
+    queryset = MaterialDaAtividade.objects.select_related("atividade", "item")
+    serializer_class = MaterialDaAtividadeSerializer
+    required_resource = "pdca.cronograma"
+    filterset_fields = ["atividade", "item"]
+    search_fields = ["descricao"]
+    ordering_fields = ["descricao"]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        cronograma = self.request.query_params.get("cronograma")
+        if cronograma:
+            qs = qs.filter(atividade__cronograma_id=cronograma)
+        return qs
+
+
+class EquipeObraViewSet(BasePdcaViewSet):
+    """As equipes da obra — a composição que assume compromissos na semana.
+
+    Gateada por `pdca.programacao.*` pelo mesmo motivo da causa: a equipe nasce
+    na montagem do quadro, e quem monta (`comprometer`) é quem precisa poder
+    compor a que faltou na hora em que ela faltou.
+    """
+
+    queryset = EquipeObra.objects.select_related("obra").prefetch_related(
+        "funcionarios", "fornecedores",
+    )
+    serializer_class = EquipeObraSerializer
+    required_resource = "pdca.programacao"
+    permission_map = {
+        "view": "pdca.programacao.view",
+        "write": "pdca.programacao.comprometer",
+    }
+    filterset_fields = ["obra", "ativa"]
+    search_fields = ["nome"]
+    ordering_fields = ["nome"]
+
+    def perform_update(self, serializer):
+        """Renomear a equipe renomeia os cartões **abertos** dela — o campo
+        procura pelo nome. O cartão de semana encerrada é história e fica."""
+        antes = serializer.instance.nome
+        super().perform_update(serializer)
+        depois = serializer.instance.nome
+        if antes != depois:
+            (ItemProgramacao.objects
+             .filter(equipe=serializer.instance)
+             .exclude(programacao__status=ProgramacaoSemanal.Status.ENCERRADA)
+             .update(responsavel=depois))
 
 
 class CausaNaoCumprimentoViewSet(BasePdcaViewSet):
@@ -2173,7 +2619,7 @@ class ItemProgramacaoViewSet(BasePdcaViewSet):
     a parede é quem assina embaixo dela."""
 
     queryset = ItemProgramacao.objects.select_related(
-        "atividade", "local", "causa", "programacao",
+        "atividade", "local", "causa", "programacao", "requisicao_sil",
     ).all()
     serializer_class = ItemProgramacaoSerializer
     required_resource = "pdca.programacao"
@@ -2181,6 +2627,33 @@ class ItemProgramacaoViewSet(BasePdcaViewSet):
         "view": "pdca.programacao.view",
         "write": "pdca.programacao.comprometer",
     }
+    action_permission_map = {
+        # Quem vê o quadro pode pedir o material; abrir a requisição exige a
+        # permissão do Estoque (`sil.requisicao.edit`), conferida na ação.
+        "pedir_material": "pdca.programacao.view",
+    }
+
+    @action(detail=True, methods=["post"], url_path="pedir-material")
+    def pedir_material(self, request, pk=None):
+        """O compromisso pede o material da semana ao almoxarifado — requisição
+        em rascunho, do canteiro da obra, apropriada à obra e à etapa."""
+        from . import suprimentos as sup
+
+        item = self.get_object()
+        _exige(request, "sil.requisicao.edit", (
+            "Pedir material abre uma requisição no Estoque, e isso exige "
+            "'sil.requisicao.edit'. Peça ao almoxarife ou ao administrador."
+        ))
+        try:
+            requisicao = sup.pedir_material_da_semana(item, solicitante=request.user)
+        except DjangoValidationError as erro:
+            raise ValidationError({"detail": erro.messages})
+        item.refresh_from_db()
+        return Response(
+            {"requisicao": requisicao.pk, "status": requisicao.status,
+             "itens": requisicao.itens.count(), "compromisso": self.get_serializer(item).data},
+            status=status.HTTP_201_CREATED,
+        )
     filterset_fields = ["programacao", "atividade", "cumprido", "causa"]
     ordering_fields = ["ordem", "item_programacao_id"]
 
@@ -2216,6 +2689,9 @@ class ItemProgramacaoViewSet(BasePdcaViewSet):
                 if prog is not None:
                     contexto["apontado_por_item"] = (
                         services.avanco_apontado_dos_itens(prog)
+                    )
+                    contexto["andamento_por_item"] = (
+                        services.andamento_dos_itens(prog)
                     )
         return contexto
 
@@ -2332,6 +2808,7 @@ class ProgramacaoSemanalViewSet(TenantScopedViewSetMixin,
                     dict(linha)
                     for linha in entrada.validated_data["julgamentos"]
                 ],
+                por=_quem_e(request),
             )
         except DjangoValidationError as erro:
             raise ValidationError({"detail": erro.messages})
@@ -3547,3 +4024,40 @@ def _inteiro(bruto, padrao: int, *, campo: str) -> int:
         return int(bruto)
     except (TypeError, ValueError):
         raise ValidationError({campo: "Informe um número inteiro de dias."})
+
+
+class _LeituraDoControle(LeituraDoCockpit):
+    """O posto **Controle** (decisão do dono, 10/10/2026): o custo e o material
+    da obra contra o plano. Mesma régua de leitura do custo do plano
+    (`pdca.cronograma.view`), cobrada aqui porque `APIView` não tem o mapa de
+    permissão do `ViewSet`."""
+
+    permissao = "pdca.cronograma.view"
+
+    def _obra(self, request):
+        if not _leitor(request)(self.permissao):
+            raise PermissionDenied(f"Requer a permissão {self.permissao}.")
+        return _minha_obra(request, request.query_params.get("obra"))
+
+
+class ControleDeCustoView(_LeituraDoControle):
+    """`GET /api/pdca/controle/custo/?obra=N` — as colunas (orçado,
+    comprometido com contratos, aplicado, medido, realizado), o valor agregado e
+    a projeção do custo final, da obra e de cada etapa."""
+
+    def get(self, request):
+        from . import controle
+
+        obra = self._obra(request)
+        return Response(controle.custo_da_obra(obra=obra, tenant_id=request.user.tenant_id))
+
+
+class ControleDeMateriaisView(_LeituraDoControle):
+    """`GET /api/pdca/controle/materiais/?obra=N` — cada insumo: orçado ×
+    aplicado e o aplicado contra o esperado pelo avanço físico."""
+
+    def get(self, request):
+        from . import controle
+
+        obra = self._obra(request)
+        return Response(controle.materiais_da_obra(obra=obra, tenant_id=request.user.tenant_id))

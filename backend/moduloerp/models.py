@@ -213,7 +213,8 @@ class NotaFiscal(TenantScopedModel, Excluivel):
         db_table = 'financeiro_notafiscal'
         # Número e chave de acesso únicos por-tenant (Fase 8.3).
         constraints = [
-            models.UniqueConstraint(fields=['tenant', 'numero_nota'], condition=models.Q(excluido_em__isnull=True), name='nf_numero_unico_por_tenant'),
+            # Número é por FORNECEDOR: a NF 1234 de duas empreiteiras são duas notas.
+            models.UniqueConstraint(fields=['tenant', 'fornecedor', 'numero_nota'], condition=models.Q(excluido_em__isnull=True), name='nf_numero_unico_por_fornecedor'),
             models.UniqueConstraint(fields=['tenant', 'chave_acesso'], condition=models.Q(excluido_em__isnull=True), name='nf_chave_acesso_unica_por_tenant'),
         ]
 
@@ -1001,3 +1002,40 @@ class ConfiguracaoFinanceiro(TenantScopedModel):
         constraints = [
             models.UniqueConstraint(fields=['tenant'], name='configuracao_financeiro_por_tenant'),
         ]
+
+
+class IntegracaoFiscal(TenantScopedModel):
+    """A conta da empresa na NFE.io — **por empresa**, cadastrada pela tela.
+
+    *Achado do dono, 10/10/2026:* "como vou cadastrar minha API?". A chave era
+    uma só, do ambiente, para todos os tenants (a decisão da Fase 11.1), e não
+    havia tela nenhuma: a NFS-e ficava em "Processando" até virar erro. Agora
+    cada empresa cadastra a sua conta em ERP › Configurações; sem cadastro, vale
+    a chave do ambiente (quem opera a plataforma para todos).
+
+    A chave da API é guardada **cifrada** (`nucleo.cifra`) e nunca volta para a
+    tela — só os últimos quatro caracteres, para a pessoa reconhecer qual é.
+    """
+    company_id = models.CharField(_("ID da empresa na NFE.io"), max_length=80, blank=True)
+    api_key_cifrada = models.TextField(_("Chave da API (cifrada)"), blank=True)
+    api_key_final = models.CharField(_("Final da chave"), max_length=8, blank=True)
+    atualizado_em = models.DateTimeField(auto_now=True)
+    atualizado_por = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+
+    class Meta:
+        verbose_name = _("Integração fiscal (NFE.io)")
+        verbose_name_plural = _("Integrações fiscais (NFE.io)")
+        constraints = [
+            models.UniqueConstraint(fields=['tenant'], name='integracao_fiscal_por_tenant'),
+        ]
+
+    @property
+    def api_key(self) -> str:
+        from nucleo.cifra import decifrar
+        return decifrar(self.api_key_cifrada)
+
+    def definir_api_key(self, valor: str) -> None:
+        from nucleo.cifra import cifrar
+        valor = (valor or "").strip()
+        self.api_key_cifrada = cifrar(valor)
+        self.api_key_final = valor[-4:] if valor else ""

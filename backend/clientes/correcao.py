@@ -97,6 +97,7 @@ def serie(indice, de: date, ate: date) -> dict[date, Decimal]:
         return {}
     linhas = ValorIndice.objects.filter(
         indice=indice, competencia__gte=primeiro_do_mes(de), competencia__lte=primeiro_do_mes(ate),
+        variacao_percentual__isnull=False,
     ).values_list("competencia", "variacao_percentual")
     return {competencia: Decimal(variacao) for competencia, variacao in linhas}
 

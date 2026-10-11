@@ -233,6 +233,45 @@ class InventarioTests(SilTestBase):
         self.assertEqual(inv.status, Inventario.Status.FECHADO)
         self.assertTrue(MovimentacaoEstoque.objects.filter(inventario=inv, tipo="ajuste").exists())
 
+    def _fechado(self, contada="92"):
+        item, local = self._item(), self._local()
+        services.aplicar_entrada(self.tenant.id, item.item_id, local.local_id, 100, 10)
+        inv = Inventario.objects.create(tenant=self.tenant, local=local)
+        ItemInventario.objects.create(tenant=self.tenant, inventario=inv, item=item, quantidade_sistema=Decimal("100"), quantidade_contada=Decimal(contada))
+        services.fechar_inventario(inv)
+        return item, local, inv
+
+    def test_reabrir_estorna_o_ajuste_sobre_o_saldo_de_hoje(self):
+        """O que entrou depois do fechamento fica; só o ajuste volta."""
+        item, local, inv = self._fechado("92")
+        services.aplicar_entrada(self.tenant.id, item.item_id, local.local_id, 10, 10)  # 102
+        self.autenticar()
+        resp = self.client.post(f"/api/sil/inventarios/{inv.inventario_id}/reabrir/")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(SaldoEstoque.objects.get(item=item, local=local).quantidade, Decimal("110.000"))
+        inv.refresh_from_db()
+        self.assertEqual(inv.status, Inventario.Status.ABERTO)
+        self.assertIsNone(inv.itens.get().ajuste_aplicado)
+
+    def test_reabrir_recusa_saldo_negativo(self):
+        item, local, inv = self._fechado("150")  # ajuste +50
+        services.aplicar_saida(self.tenant.id, item.item_id, local.local_id, 120)  # saldo 30
+        self.autenticar()
+        resp = self.client.post(f"/api/sil/inventarios/{inv.inventario_id}/reabrir/")
+        self.assertEqual(resp.status_code, 400, resp.content)
+        self.assertEqual(SaldoEstoque.objects.get(item=item, local=local).quantidade, Decimal("30.000"))
+
+    def test_excluir_so_a_contagem_aberta(self):
+        _item, _local, inv = self._fechado()
+        self.autenticar()
+        self.assertEqual(self.client.delete(f"/api/sil/inventarios/{inv.inventario_id}/").status_code, 400)
+        linha = inv.itens.get()
+        self.assertEqual(self.client.delete(f"/api/sil/itens-inventario/{linha.pk}/").status_code, 400)
+        self.client.post(f"/api/sil/inventarios/{inv.inventario_id}/reabrir/")
+        self.assertEqual(self.client.delete(f"/api/sil/itens-inventario/{linha.pk}/").status_code, 204)
+        self.assertEqual(self.client.delete(f"/api/sil/inventarios/{inv.inventario_id}/").status_code, 204)
+        self.assertFalse(Inventario.objects.filter(pk=inv.pk).exists())
+
 
 class GerarDemandaTests(SilTestBase):
     def test_gerar_demanda_cria_demanda_de_estoque_no_scm(self):
@@ -272,6 +311,38 @@ class ApropriacaoEtapaTests(SilTestBase):
         linha = next(r for r in resp.data if r["etapa"] == etapa.etapa_id)
         self.assertEqual(Decimal(linha["aplicado"]), Decimal("400.0000"))  # 40 * 10
         self.assertIsNone(linha["orcado"])  # módulo Orçamento (em breve)
+
+
+class ObraNomeTests(SilTestBase):
+    """D193 — `obra_nome` lia `obra.nome`, que não existe (o campo é `nome_obra`).
+    O DRF engolia o AttributeError e devolvia o default: a chave saía nula em
+    toda linha, e a tela do SIL mostrava a obra em branco ("— sem obra —")."""
+
+    def test_os_cinco_recursos_devolvem_o_nome_da_obra(self):
+        from empreendimentos.models import Empreendimento
+        from modulosil.models import EmprestimoFerramenta, EntregaEPI, Ferramenta
+        from obras.models import Obra
+        emp = Empreendimento.objects.create(tenant=self.tenant, empreendimento="E1", razao_social="E1 Ltda", cnpj="11111111000191")
+        obra = Obra.objects.create(tenant=self.tenant, empreendimento=emp, nome_obra="Residencial Aurora")
+        item = self._item()
+        local = LocalEstoque.objects.create(tenant=self.tenant, nome="Canteiro Aurora", tipo=LocalEstoque.Tipo.CANTEIRO, obra=obra)
+        mov = MovimentacaoEstoque.objects.create(tenant=self.tenant, item=item, local=local, tipo="entrada", quantidade=Decimal("1"), obra=obra)
+        req = Requisicao.objects.create(tenant=self.tenant, local=local, obra=obra)
+        epi = EntregaEPI.objects.create(tenant=self.tenant, item=item, colaborador_nome="José", obra=obra)
+        ferramenta = Ferramenta.objects.create(tenant=self.tenant, nome="Furadeira")
+        emp_f = EmprestimoFerramenta.objects.create(tenant=self.tenant, ferramenta=ferramenta, colaborador_nome="Ana", obra=obra)
+        self.autenticar()
+        for rota in (
+            f"/api/sil/locais/{local.local_id}/",
+            f"/api/sil/movimentacoes/{mov.pk}/",
+            f"/api/sil/requisicoes/{req.requisicao_id}/",
+            f"/api/sil/entregas-epi/{epi.entrega_epi_id}/",
+            f"/api/sil/emprestimos/{emp_f.emprestimo_id}/",
+        ):
+            with self.subTest(rota=rota):
+                resp = self.client.get(rota)
+                self.assertEqual(resp.status_code, 200, resp.content)
+                self.assertEqual(resp.data["obra_nome"], "Residencial Aurora")
 
 
 class CurvaABCTests(SilTestBase):

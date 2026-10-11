@@ -94,6 +94,7 @@ export default function SemanaPage() {
       const item = linhas.find((l) => l.item_programacao_id === Number(id))
       if (!item) return false
       return j.cumprido !== item.cumprido || j.causa !== item.causa || j.nota !== item.nota
+        || (j.percentual_concluido ?? null) !== (item.percentual_concluido ?? null)
     }),
     [julgamentos, linhas],
   )
@@ -120,6 +121,7 @@ export default function SemanaPage() {
       cumprido: j.cumprido,
       causa: j.causa,
       nota: j.nota,
+      percentual_concluido: j.percentual_concluido ?? null,
     }))
   }
 

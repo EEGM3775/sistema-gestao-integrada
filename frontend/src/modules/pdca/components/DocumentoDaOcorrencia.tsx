@@ -396,7 +396,7 @@ function Tratamento({
         )}
 
         {ocorrencia.restricao ? (
-          <Link to={`/app/pdca/o/${obraId}/semana`} style={link}>
+          <Link to={`/app/pdca/o/${obraId}/controle?aba=semana`} style={link}>
             <Lock size={14} />
             {ocorrencia.restricao_status === 'aberta'
               ? 'Frente interditada no quadro da semana'

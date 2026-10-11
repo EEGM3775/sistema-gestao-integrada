@@ -27,6 +27,14 @@ Padrão de status nas tabelas
 Antes de documentar um campo, verificar se o modelo Python reflete o estado atual do banco
 (última migration aplicada). Se divergirem, corrigir o `models.py` primeiro.
 
+## Estamos em desenvolvimento — nada de pré-produção
+
+*(decisão do dono, 03/10/2026)* O projeto **não está no ar**. Ao indicar o próximo passo ou escolher
+trabalho, ficar em **funcionalidade**: módulos, telas, defeitos, Fase 7. **Não sugerir** preço ou limite
+de plano, servidor, pentest, ingress, Grafana/alertas, homologação bancária, contêiner sem root nem manual
+de produção — isso é do **final do desenvolvimento** e está listado em
+[docs/roadmap.md](docs/roadmap.md#foco-atual--desenvolvimento). Só tratar desses itens se o dono pedir.
+
 ## Arquitetura e documentação do projeto
 
 - Planta baixa: [docs/arquitetura.md](docs/arquitetura.md)

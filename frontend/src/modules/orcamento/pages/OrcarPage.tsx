@@ -7,6 +7,7 @@ import {
   Sigma, Trash2, TrendingUp,
   Undo2, Unlock, Upload, X,
 } from 'lucide-react'
+import { createPortal } from 'react-dom'
 import { useAuth } from '@/hooks/useAuth'
 import PaginaShell from '../components/PaginaShell'
 import MedicaoDrawer from '../components/MedicaoDrawer'
@@ -30,7 +31,7 @@ import {
   // ORC.10
   useAplicarPercentual, useArredondarItens, useCriarInsumo, useDestravarOrcamento,
   useDuplicarItens, useEditarInsumo, useExcluirItens, useMoverItens, usePromoverComposicao,
-  useRemoverInsumo, useRestaurarItens, useSubstituirTexto,
+  useRemoverInsumo, useRestaurarItens, useSubstituirTexto, useEtapasDaObra, useVincularEtapa,
 } from '../hooks'
 import { useHistorico } from '../historico'
 import type {
@@ -180,6 +181,7 @@ export default function OrcarPage() {
   const [memoriaDe, setMemoriaDe] = useState<ItemOrcado | null>(null)
   const [medicaoDe, setMedicaoDe] = useState<ItemOrcado | null>(null)
   const [precoDe, setPrecoDe] = useState<ItemOrcado | null>(null)
+  const [vinculoDe, setVinculoDe] = useState<ItemOrcado | null>(null)
   const [recado, setRecado] = useState('')
   const [duplicando, setDuplicando] = useState(false)
   const [reprecificando, setReprecificando] = useState(false)
@@ -901,8 +903,8 @@ export default function OrcarPage() {
             <Link to={`/app/obras/${orcamento.obra}`} style={{ color: 'var(--net-ink)', fontSize: 11.5, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
               ficha da obra <ExternalLink size={11} />
             </Link>
-            <Link to={`/app/orcamento/controlar?obra=${orcamento.obra}`} style={{ color: 'var(--net-ink)', fontSize: 11.5, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              quatro colunas <ExternalLink size={11} />
+            <Link to={`/app/orcamento/analisar?obra=${orcamento.obra}&orcamento=${orcamento.orcamento_id}`} style={{ color: 'var(--net-ink)', fontSize: 11.5, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              análise do orçado <ExternalLink size={11} />
             </Link>
             {!orcamento.editavel && (
               <Pill kind="slate" title="Orçamento congelado: crie uma revisão para alterar"><Lock size={11} />somente leitura</Pill>
@@ -1006,8 +1008,20 @@ export default function OrcarPage() {
         </>
       )}
 
-      {menu && (
+      {menu && createPortal(
         <div
+          // Vai para o <body>: dentro da tela há ancestral com transform/animação, que
+          // vira o referencial do `position: fixed` e deslocava o menu para fora da janela.
+          // Mede o menu depois de montado e o puxa para dentro da janela: o botão
+          // ⋮ fica na ponta direita da grade e, em linha baixa, o menu passava do rodapé.
+          ref={el => {
+            if (!el) return
+            const r = el.getBoundingClientRect()
+            const esq = Math.min(Math.max(8, menu.x), window.innerWidth - r.width - 8)
+            const topo = Math.min(menu.y, window.innerHeight - r.height - 8)
+            el.style.left = `${Math.max(8, esq)}px`
+            el.style.top = `${Math.max(8, topo)}px`
+          }}
           onClick={e => e.stopPropagation()}
           style={{
             position: 'fixed', left: Math.max(8, menu.x), top: menu.y, zIndex: 60, minWidth: 218,
@@ -1065,6 +1079,14 @@ export default function OrcarPage() {
               },
             },
             {
+              // Opcional, e só na etapa do orçamento (linha de 1º nível). Não muda
+              // custo, então vale também com o orçamento aprovado.
+              rotulo: 'Ligar à etapa da obra', icone: <GitBranch size={13} />,
+              off: menu.item.pai !== null || !hasPermission('orcamento.orcamento.edit')
+                || !['rascunho', 'aprovado'].includes(orcamento?.status ?? ''),
+              acao: () => setVinculoDe(menu.item),
+            },
+            {
               rotulo: 'Descrição detalhada', icone: <FileSpreadsheet size={13} />, off: !podeEditar,
               acao: () => setTextoLongoDe(menu.item),
             },
@@ -1103,7 +1125,8 @@ export default function OrcarPage() {
               }}
             >{op.icone}{op.rotulo}</button>
           ))}
-        </div>
+        </div>,
+        document.body,
       )}
 
       {inserindo && (
@@ -1123,6 +1146,13 @@ export default function OrcarPage() {
           unidade={medicaoDe.unidade}
           podeEditar={podeEditar}
           onClose={() => setMedicaoDe(null)}
+        />
+      )}
+      {vinculoDe && orcamento && (
+        <VinculoEtapaModal
+          item={vinculoDe} orcamentoId={orcamento.orcamento_id} obraId={orcamento.obra}
+          onFechar={() => setVinculoDe(null)}
+          onFeito={texto => { setVinculoDe(null); setRecado(texto) }}
         />
       )}
       {precoDe && (
@@ -1684,6 +1714,51 @@ function DrawerMemoria({ item, onFechar }: { item: ItemOrcado; onFechar: () => v
         </>
       )}
     </Drawer>
+  )
+}
+
+/** Liga a etapa do orçamento (a linha de 1º nível) a uma etapa da obra — ou desliga.
+ *  Opcional: o cronograma funciona sem isto; o vínculo serve para o orçado casar
+ *  com o aplicado do SIL e com o plano do PDCA. O mesmo gesto existe no Cronograma. */
+function VinculoEtapaModal({ item, orcamentoId, obraId, onFechar, onFeito }: {
+  item: ItemOrcado; orcamentoId: number; obraId: number; onFechar: () => void; onFeito: (texto: string) => void
+}) {
+  const { data: etapas } = useEtapasDaObra(obraId)
+  const vincular = useVincularEtapa()
+  const [etapa, setEtapa] = useState<number | ''>(item.etapa ?? '')
+  const [erro, setErro] = useState('')
+  return (
+    <Modal
+      titulo={`Etapa da obra — ${item.descricao}`}
+      onClose={onFechar}
+      rodape={
+        <>
+          <Btn onClick={onFechar}>Cancelar</Btn>
+          <Btn variant="primary" disabled={vincular.isPending} onClick={async () => {
+            try {
+              await vincular.mutateAsync({ id: orcamentoId, grupo: item.item_orcado_id, etapa: etapa === '' ? null : etapa })
+              onFeito(etapa === '' ? 'Etapa sem ligação com a obra.' : 'Etapa ligada à etapa da obra.')
+            } catch (e) {
+              const detalhe = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
+              setErro(detalhe ?? 'Não foi possível salvar o vínculo.')
+            }
+          }}>Salvar</Btn>
+        </>
+      }
+    >
+      {erro && <Aviso tom="danger">{erro}</Aviso>}
+      <Aviso>
+        Ligar é opcional — o cronograma funciona sem isso. O vínculo vale para esta etapa e todas as linhas dela,
+        e é o que faz o orçado casar com o aplicado do SIL e com o plano do PDCA.
+      </Aviso>
+      <div style={{ height: 12 }} />
+      <Field label="Etapa da obra">
+        <Select value={etapa} onChange={e => setEtapa(e.target.value ? Number(e.target.value) : '')}>
+          <option value="">— sem vínculo —</option>
+          {(etapas ?? []).map(o => <option key={o.etapa_id} value={o.etapa_id}>{o.nome_etapa}</option>)}
+        </Select>
+      </Field>
+    </Modal>
   )
 }
 

@@ -16,6 +16,7 @@ por máquina.
 """
 from __future__ import annotations
 
+import re
 import time
 from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
@@ -32,6 +33,7 @@ from payment.planos import (
     PDCA_PROFUNDIDADE_MAXIMA_LOCAL,
     PDCA_PROFUNDIDADE_MAXIMA_WBS,
     PDCA_TETO_ATIVIDADES_POR_CRONOGRAMA,
+    PDCA_TETO_LIGACOES_EXPANDIDAS,
     PDCA_TETO_CAUSAS_POR_TENANT,
     PDCA_TETO_CONFLITOS_REPORTADOS,
     PDCA_TETO_LINHAS_DE_BALANCO,
@@ -71,7 +73,7 @@ from .models import (
     ItemVerificacao, ModeloVerificacao, NaoConformidade, PlanoAcao,
     ResultadoItem, Verificacao, VerificacaoEficacia,
     ExcecaoCalendario, ItemAditivo, ItemContrato, ItemMedicao, ItemProgramacao,
-    LiberacaoRetencao, LocalObra, Medicao, NivelLocal, OrigemCusto,
+    LadoContrato, LiberacaoRetencao, LocalObra, Medicao, NivelLocal, OrigemCusto,
     Precedencia, ProgramacaoSemanal, RegimeContrato, Restricao, TipoDeducao,
     TipoRestricao,
     AnexoOcorrencia, ClassificacaoOcorrencia, DialogoSeguranca, Ocorrencia,
@@ -261,30 +263,46 @@ def gerar_em_lote(*, obra, tenant_id: int, receita: list[dict],
 _MAXIMO_DIAS_CAMINHADOS = 365 * 5
 
 
-def feriados_do_periodo(calendario: CalendarioTrabalho, inicio: date, fim: date) -> dict:
-    """`{data: nome}` no período, na localidade do calendário.
+def localidade_dos_feriados(calendario: CalendarioTrabalho, obra=None) -> dict:
+    """De **onde** são os feriados deste expediente: `{uf, ibge, cidade, fonte}`.
 
-    Nacional sempre; estadual só com `uf`; municipal só com `ibge`. Afirmar um
-    feriado municipal sem saber o município seria inventar dia parado — a mesma
-    régua de dado honesto do resto da casa.
+    O UF/IBGE digitado no expediente vence. Sem eles, vale **o lugar da obra** —
+    a do próprio expediente ou, para o expediente da empresa, a do plano que o
+    usa —, resolvido pelo endereço como a Agenda resolve (`nucleo.geo`). Era o
+    defeito do teste do dono (09/10/2026): o expediente "respeita feriados" mas
+    sem UF/IBGE só via o nacional, e a obra em Nazaré/BA perdia o estadual e o
+    municipal que a Agenda mostrava. Sem endereço resolvível, só o nacional —
+    afirmar feriado de um lugar que não se sabe seria inventar dia parado.
+    """
+    if calendario.uf or calendario.ibge:
+        return {"uf": calendario.uf, "ibge": calendario.ibge, "cidade": "", "fonte": "expediente"}
+    obra = getattr(calendario, "obra", None) or obra
+    endereco = (getattr(obra, "endereco", "") or "").strip()
+    if endereco:
+        from nucleo import geo
+
+        achado = geo.resolver(endereco=endereco) or {}
+        if achado.get("uf"):
+            return {
+                "uf": achado.get("uf", ""), "ibge": achado.get("ibge", ""),
+                "cidade": achado.get("cidade", ""), "fonte": "obra",
+            }
+    return {"uf": "", "ibge": "", "cidade": "", "fonte": "nacional"}
+
+
+def feriados_do_periodo(calendario: CalendarioTrabalho, inicio: date, fim: date,
+                        *, obra=None) -> dict:
+    """`{data: nome}` no período, no lugar do expediente (ou da obra).
+
+    Os mesmos da Agenda (`modulocalendar.dias_uteis.feriados_da_localidade`):
+    lei calculada mesmo com a tabela vazia, município publicado ou projetado.
     """
     if not calendario.considera_feriados:
         return {}
+    from modulocalendar.dias_uteis import feriados_da_localidade
 
-    from django.db.models import Q
-
-    from modulocalendar.models import Feriado
-
-    escopo = Q(escopo="nacional")
-    if calendario.uf:
-        escopo |= Q(escopo="estadual", uf=calendario.uf)
-    if calendario.ibge:
-        escopo |= Q(escopo="municipal", ibge=calendario.ibge)
-
-    return {
-        f.data: f.nome
-        for f in Feriado.objects.filter(escopo, data__gte=inicio, data__lte=fim)
-    }
+    lugar = localidade_dos_feriados(calendario, obra)
+    return feriados_da_localidade(inicio, fim, uf=lugar["uf"], ibge=lugar["ibge"])
 
 
 def base_de_feriados_sincronizada() -> bool:
@@ -342,6 +360,53 @@ def dias_uteis(calendario: CalendarioTrabalho, inicio: date, fim: date) -> int:
             total += 1
         dia += timedelta(days=1)
     return total
+
+
+def expedientes_do_plano(cronograma: Cronograma, atividades) -> dict:
+    """Os dias em que **não** se trabalha, para o Gantt desenhar o corte.
+
+    O CPM já pula sábado, domingo, feriado e recesso; a barra é que não
+    mostrava. Vai ao cliente a regra da semana de cada expediente em uso (o do
+    plano e os que alguma atividade escolheu) e as datas avulsas — feriados da
+    localidade e exceções — numa janela folgada em volta do plano. O cliente
+    resolve "este dia é útil?" com a mesma precedência do `eh_dia_util`:
+    exceção > feriado > regra da semana. Os feriados são os do lugar da obra
+    (`localidade_dos_feriados`), os mesmos da Agenda.
+    """
+    ids = {cronograma.calendario_id} | {a.calendario_id for a in atividades}
+    ids.discard(None)
+    datas = [d for a in atividades for d in (a.inicio_cedo, a.termino_cedo) if d]
+    if cronograma.data_inicio:
+        datas.append(cronograma.data_inicio)
+    resposta = {
+        "calendario_do_plano": cronograma.calendario_id,
+        "calendarios": {},
+    }
+    if not ids or not datas:
+        return resposta
+    # Folga dos dois lados: o Gantt deixa arrastar a barra para fora do plano.
+    inicio = min(datas) - timedelta(days=60)
+    fim = max(datas) + timedelta(days=180)
+    for cal in CalendarioTrabalho.objects.select_related("obra").filter(pk__in=ids):
+        lugar = localidade_dos_feriados(cal, cronograma.obra) if cal.considera_feriados else None
+        resposta["calendarios"][str(cal.pk)] = {
+            "nome": cal.nome,
+            "considera_feriados": cal.considera_feriados,
+            "localidade": lugar,
+            "dias_da_semana": list(cal.dias_da_semana),
+            "feriados": [
+                {"data": d, "nome": nome}
+                for d, nome in sorted(
+                    feriados_do_periodo(cal, inicio, fim, obra=cronograma.obra).items())
+            ],
+            "excecoes": [
+                {"data": e.data, "trabalha": e.trabalha, "motivo": e.motivo}
+                for e in ExcecaoCalendario.objects.filter(
+                    calendario=cal, data__gte=inicio, data__lte=fim,
+                ).order_by("data")
+            ],
+        }
+    return resposta
 
 
 def proximo_dia_util(calendario: CalendarioTrabalho, dia: date) -> date:
@@ -428,9 +493,10 @@ class CalendarioEmMemoria:
     por **data**, que é a única linguagem comum aos dois.
     """
 
-    def __init__(self, calendario: CalendarioTrabalho, ancora: date):
+    def __init__(self, calendario: CalendarioTrabalho, ancora: date, obra=None):
         self.calendario = calendario
         self.ancora = ancora
+        self.obra = obra
         self._dias: list[date] = []
         self._indice: dict[date, int] = {}
         self._cursor = ancora
@@ -445,7 +511,7 @@ class CalendarioEmMemoria:
             return
         inicio = self._cursor if self._carregado_ate is None else self._carregado_ate + timedelta(days=1)
         fim = max(limite, inicio + timedelta(days=_JANELA_DE_CARGA))
-        self._feriados.update(feriados_do_periodo(self.calendario, inicio, fim))
+        self._feriados.update(feriados_do_periodo(self.calendario, inicio, fim, obra=self.obra))
         self._excecoes.update(_excecoes(self.calendario, inicio, fim))
         self._carregado_ate = fim
 
@@ -523,6 +589,14 @@ class CalendarioEmMemoria:
             return 0
         return self.indice_atras(fim) - self.indice_adiante(inicio) + 1
 
+    def porque_muda(self, dia: date) -> str | None:
+        """Por que este dia foge da regra da semana — o feriado ou a exceção.
+        `None` quando quem decide é a própria semana (sábado, domingo)."""
+        self._carregar_ate(dia)
+        if dia in self._excecoes:
+            return "exceção: trabalha" if self._excecoes[dia] else "exceção: parado"
+        return self._feriados.get(dia)
+
 
 def _calendarios_do_cronograma(cronograma: Cronograma,
                                atividades: list[Atividade]) -> dict[int, CalendarioEmMemoria]:
@@ -544,7 +618,178 @@ def _calendarios_do_cronograma(cronograma: Cronograma,
     for a in atividades:
         if a.calendario_id and a.calendario_id not in usados:
             usados[a.calendario_id] = a.calendario
-    return {cid: CalendarioEmMemoria(cal, ancora) for cid, cal in usados.items()}
+    return {cid: CalendarioEmMemoria(cal, ancora, obra=cronograma.obra) for cid, cal in usados.items()}
+
+
+def datas_fora_do_expediente(cronograma: Cronograma, atividades: list[Atividade]) -> dict:
+    """As barras que o expediente **de hoje** já não sustenta.
+
+    O CPM grava as datas; o expediente pode mudar depois — o feriado que entrou,
+    o recesso, o mutirão de sábado. No rascunho o próximo recálculo resolve; na
+    versão vigente ou substituída as datas estão congeladas, e o Gantt seguia
+    contando o 12/10 como dia de obra sem dizer nada (achado do dono,
+    09/10/2026).
+
+    A conferência é a invariante do próprio CPM: logo depois do cálculo, toda
+    folha tem **exatamente** `duracao_dias` dias úteis entre início e término.
+    Se hoje a conta dá outra, o expediente mudou dentro daquela barra — e os
+    dias que fogem da regra da semana dizem qual feriado ou exceção foi.
+    """
+    vazio = {"total": 0, "atividades": []}
+    if cronograma.calculado_em is None:
+        return vazio
+    com_filhos = {a.pai_id for a in atividades if a.pai_id}
+    folhas = [
+        a for a in atividades
+        if a.atividade_id not in com_filhos and not a.eh_marco
+        and a.inicio_cedo and a.termino_cedo and a.duracao_dias
+        and (a.calendario_id or cronograma.calendario_id)
+    ]
+    if not folhas:
+        return vazio
+    try:
+        calendarios = _calendarios_do_cronograma(cronograma, folhas)
+        achadas = []
+        for a in folhas:
+            cal = calendarios[a.calendario_id or cronograma.calendario_id]
+            uteis_hoje = cal.entre(a.inicio_cedo, a.termino_cedo)
+            if uteis_hoje == a.duracao_dias:
+                continue
+            dias = []
+            dia = a.inicio_cedo
+            while dia <= a.termino_cedo:
+                motivo = cal.porque_muda(dia)
+                if motivo:
+                    dias.append({"data": dia, "motivo": motivo})
+                dia += timedelta(days=1)
+            achadas.append({
+                "atividade": a.atividade_id, "codigo": a.codigo, "nome": a.nome,
+                "duracao_dias": a.duracao_dias, "uteis_hoje": uteis_hoje, "dias": dias,
+            })
+    except ValidationError:
+        # Expediente sem dia útil: o recálculo já diz isso com endereço.
+        return vazio
+    return {"total": len(achadas), "atividades": achadas}
+
+
+class LigacaoEntreFolhas:
+    """Uma seta do grafo do CPM — a gravada, ou uma das que a ligação de fase
+    produz. Tem a mesma cara de `Precedencia` para o CPM não distinguir as duas;
+    as expandidas levam id negativo, que nunca colide com o do banco."""
+
+    __slots__ = ("precedencia_id", "origem_id", "destino_id", "tipo", "atraso_dias")
+
+    def __init__(self, precedencia_id, origem_id, destino_id, tipo, atraso_dias):
+        self.precedencia_id = precedencia_id
+        self.origem_id = origem_id
+        self.destino_id = destino_id
+        self.tipo = tipo
+        self.atraso_dias = atraso_dias
+
+
+def ligacoes_das_folhas(atividades: list[Atividade], precedencias) -> list:
+    """A rede como o CPM a enxerga: só setas entre folhas.
+
+    **A ligação de fase** (decisão do dono, 09/10/2026: *"dependências de fases"*)
+    é a seta que sai de uma etapa ou chega nela — "a alvenaria começa depois que
+    a estrutura termina". No grafo ela vira setas entre as folhas das duas, com a
+    semântica do MS Project para tarefa-resumo:
+
+    - **sai do término** (FS, FF): de **todas** as folhas da origem — a etapa só
+      termina quando a última termina;
+    - **sai do início** (SS, SF): das folhas que **abrem** a etapa (nenhuma
+      predecessora dentro dela) — são elas que dão a data de começo;
+    - **chega no início** (FS, SS): em **todas** as folhas do destino — nenhuma
+      começa antes de a fase anterior liberar;
+    - **chega no término** (FF, SF): nas folhas que **fecham** o destino (nenhuma
+      sucessora dentro dele).
+
+    *Limite declarado:* "abre" e "fecha" se leem pela rede gravada, não pelas
+    datas — uma folha sem predecessora interna mas com restrição de data tardia
+    continua contando como abertura.
+    """
+    filhos: dict[int | None, list[int]] = {}
+    for a in atividades:
+        filhos.setdefault(a.pai_id, []).append(a.atividade_id)
+    ids = {a.atividade_id for a in atividades}
+
+    folhas_de: dict[int, list[int]] = {}
+
+    def folhas(no: int) -> list[int]:
+        if no in folhas_de:
+            return folhas_de[no]
+        pilha, saida = [no], []
+        while pilha:
+            atual = pilha.pop()
+            debaixo = filhos.get(atual)
+            if debaixo:
+                pilha.extend(debaixo)
+            else:
+                saida.append(atual)
+        folhas_de[no] = saida
+        return saida
+
+    precedencias = [p for p in precedencias if p.origem_id in ids and p.destino_id in ids]
+
+    def internas(no: int):
+        dentro = set(folhas(no))
+        return [
+            p for p in precedencias
+            if set(folhas(p.origem_id)) <= dentro and set(folhas(p.destino_id)) <= dentro
+        ]
+
+    def abertura(no: int) -> list[int]:
+        dentro = folhas(no)
+        presas = {f for p in internas(no) for f in folhas(p.destino_id)}
+        return [f for f in dentro if f not in presas] or dentro
+
+    def fechamento(no: int) -> list[int]:
+        dentro = folhas(no)
+        presas = {f for p in internas(no) for f in folhas(p.origem_id)}
+        return [f for f in dentro if f not in presas] or dentro
+
+    saida: list = []
+    proximo = -1
+    for p in precedencias:
+        origem_folha = not filhos.get(p.origem_id)
+        destino_folha = not filhos.get(p.destino_id)
+        if origem_folha and destino_folha:
+            saida.append(p)
+            continue
+        sai_do_fim = p.tipo in (Precedencia.Tipo.FS, Precedencia.Tipo.FF)
+        chega_no_inicio = p.tipo in (Precedencia.Tipo.FS, Precedencia.Tipo.SS)
+        origens = folhas(p.origem_id) if sai_do_fim else abertura(p.origem_id)
+        destinos = folhas(p.destino_id) if chega_no_inicio else fechamento(p.destino_id)
+        for o in origens:
+            for d in destinos:
+                if o == d:
+                    continue
+                saida.append(LigacaoEntreFolhas(proximo, o, d, p.tipo, p.atraso_dias))
+                proximo -= 1
+        if len(saida) > PDCA_TETO_LIGACOES_EXPANDIDAS:
+            raise ValidationError(
+                f"As ligações de fase viram mais de {PDCA_TETO_LIGACOES_EXPANDIDAS} setas "
+                "entre atividades. Ligue etapas menores, ou as atividades que de fato "
+                "seguram a seguinte."
+            )
+    return saida
+
+
+def verificar_rede(cronograma: Cronograma, *, nova=None, ignorar: int | None = None) -> None:
+    """Recusa a ligação que fecharia um ciclo — conferido no grafo **expandido**,
+    porque com ligação de fase o laço pode passar por dentro de uma etapa sem
+    nenhuma seta gravada fechá-lo diretamente."""
+    atividades = list(cronograma.atividades.only("atividade_id", "pai_id", "codigo", "nome"))
+    gravadas = [
+        p for p in Precedencia.objects.filter(origem__cronograma=cronograma)
+        .only("precedencia_id", "origem_id", "destino_id", "tipo", "atraso_dias")
+        if p.pk != ignorar
+    ]
+    if nova is not None:
+        gravadas.append(nova)
+    com_filhos = {a.pai_id for a in atividades if a.pai_id}
+    folhas = [a for a in atividades if a.atividade_id not in com_filhos]
+    _ordem_topologica(folhas, ligacoes_das_folhas(atividades, gravadas))
 
 
 def _ordem_topologica(folhas: list[Atividade],
@@ -592,9 +837,10 @@ def calcular_cpm(cronograma: Cronograma, *, gravar: bool = True) -> dict:
     mesmo trabalho várias vezes por segundo para um resultado que não mudou.
 
     **Só a folha entra no grafo.** A sintética é o intervalo dos filhos, apurado
-    depois, de baixo para cima. Precedência ligada a uma sintética é recusada na
-    escrita (serializer), e não aqui: erro barrado na entrada tem endereço; erro
-    barrado no cálculo vira "o cronograma não calcula".
+    depois, de baixo para cima. A ligação **de fase** — a seta que sai de uma
+    etapa ou chega nela — é expandida antes, em setas entre folhas
+    (`ligacoes_das_folhas`); o ciclo e a ligação de uma etapa com o que está
+    dentro dela são recusados na escrita (serializer), onde o erro tem endereço.
 
     A aritmética interna usa **término exclusivo** — a atividade ocupa
     `[inicio, inicio + duração)`. É o que faz o marco (duração zero) ser um
@@ -619,13 +865,12 @@ def calcular_cpm(cronograma: Cronograma, *, gravar: bool = True) -> dict:
     sinteticas = [a for a in atividades if a.atividade_id in com_filhos]
     por_id = {a.atividade_id: a for a in atividades}
 
-    ids_folha = {a.atividade_id for a in folhas}
-    ligacoes = [
-        lig for lig in Precedencia.objects.filter(
+    ligacoes = ligacoes_das_folhas(
+        atividades,
+        list(Precedencia.objects.filter(
             origem__cronograma=cronograma
-        ).only("origem_id", "destino_id", "tipo", "atraso_dias")
-        if lig.origem_id in ids_folha and lig.destino_id in ids_folha
-    ]
+        ).only("precedencia_id", "origem_id", "destino_id", "tipo", "atraso_dias")),
+    )
 
     if cronograma.calendario_id is None and any(a.calendario_id is None for a in folhas):
         raise ValidationError(
@@ -810,6 +1055,10 @@ def calcular_cpm(cronograma: Cronograma, *, gravar: bool = True) -> dict:
             )
             cronograma.calculado_em = timezone.now()
             cronograma.termino_calculado = fim_do_projeto
+        # As datas previstas das etapas da obra são as das raízes.
+        from . import etapas
+        if etapas.cronograma_da_obra(cronograma):
+            etapas.agendar(cronograma.obra_id, cronograma.tenant_id)
 
     return {
         "atividades": len(atividades),
@@ -872,10 +1121,16 @@ def publicar(cronograma: Cronograma, *, por: str = "") -> dict:
     resultado = calcular_cpm(cronograma)
 
     with transaction.atomic():
+        anteriores = list(
+            Cronograma.objects
+            .filter(tenant_id=cronograma.tenant_id, obra_id=cronograma.obra_id,
+                    status=Cronograma.Status.VIGENTE)
+            .exclude(pk=cronograma.pk)
+            .values_list("pk", flat=True)
+        )
+        _levar_restricoes_abertas(anteriores, cronograma)
         (Cronograma.objects
-         .filter(tenant_id=cronograma.tenant_id, obra_id=cronograma.obra_id,
-                 status=Cronograma.Status.VIGENTE)
-         .exclude(pk=cronograma.pk)
+         .filter(pk__in=anteriores)
          .update(status=Cronograma.Status.SUBSTITUIDO))
         cronograma.status = Cronograma.Status.VIGENTE
         cronograma.publicado_em = timezone.now()
@@ -883,6 +1138,35 @@ def publicar(cronograma: Cronograma, *, por: str = "") -> dict:
         cronograma.save(update_fields=["status", "publicado_em", "publicado_por"])
 
     return resultado
+
+
+def _levar_restricoes_abertas(de_cronogramas: list[int], para: Cronograma) -> int:
+    """As travas **abertas** do plano que sai passam ao plano que entra.
+
+    A restrição pende da atividade, e o replanejamento copia a árvore com ids
+    novos: sem isto, publicar a v2 deixava o make-ready inteiro preso à v1 —
+    a semana montada sobre a v2 não via trava nenhuma e comprometia o que
+    estava travado. O pareamento é **pelo código da EAP**, o mesmo com que o
+    avanço atravessa as versões. A resolvida fica onde nasceu (é história
+    daquela versão); a aberta sem gêmea na versão nova também fica — continua
+    na esteira da obra, e quem a resolve é quem sabe que ela morreu.
+    """
+    if not de_cronogramas:
+        return 0
+    gemeas = dict(
+        Atividade.objects.filter(cronograma=para).values_list("codigo", "atividade_id")
+    )
+    levadas = 0
+    for r in (Restricao.objects
+              .filter(atividade__cronograma_id__in=de_cronogramas,
+                      status=Restricao.Status.ABERTA)
+              .select_related("atividade")):
+        destino = gemeas.get(r.atividade.codigo) if r.atividade.codigo else None
+        if destino:
+            r.atividade_id = destino
+            r.save(update_fields=["atividade"])
+            levadas += 1
+    return levadas
 
 
 def replanejar(cronograma: Cronograma, *, motivo: str) -> Cronograma:
@@ -908,6 +1192,21 @@ def replanejar(cronograma: Cronograma, *, motivo: str) -> Cronograma:
             "Este cronograma ainda é rascunho: edite-o em vez de criar outra versão."
         )
 
+    #: **Um rascunho por vez.** A tela abria o vigente depois de replanejar, a
+    #: pessoa não via a versão nova, replanejava de novo — e a obra juntava três
+    #: rascunhos órfãos, cada um cópia do vigente, nenhum com o trabalho do
+    #: outro. Quem já tem um rascunho continua nele (ou o descarta).
+    em_aberto = (Cronograma.objects
+                 .filter(tenant_id=cronograma.tenant_id, obra_id=cronograma.obra_id,
+                         status=Cronograma.Status.RASCUNHO, eh_modelo=False,
+                         versao__gt=cronograma.versao)
+                 .order_by("-versao").first())
+    if em_aberto is not None:
+        raise ValidationError(
+            f"Já existe a versão {em_aberto.versao} em rascunho para esta obra. "
+            f"Continue nela — ou descarte-a — antes de abrir outra."
+        )
+
     ultima = (Cronograma.objects
               .filter(tenant_id=cronograma.tenant_id, obra_id=cronograma.obra_id)
               .order_by("-versao").first())
@@ -929,15 +1228,31 @@ def replanejar(cronograma: Cronograma, *, motivo: str) -> Cronograma:
             calendario_id=cronograma.calendario_id,
             origem=cronograma,
             motivo_replanejamento=motivo,
+            orcamento_origem_id=cronograma.orcamento_origem_id,
+            cronograma_orcamento_em=cronograma.cronograma_orcamento_em,
         )
 
         copiar_estrutura(cronograma, nova, manter_vinculos_da_obra=True)
 
+    _calcular_se_der(nova)
     return nova
 
 
+def _calcular_se_der(cronograma: Cronograma) -> None:
+    """A cópia nasce **com datas**. Sem isto a versão nova abria com o Gantt
+    vazio e só ganhava barras no primeiro gesto que recalculasse — o dono viu o
+    plano "zerado antes de alguns tipos de alteração" (09/10/2026). Se o CPM
+    recusa (sem expediente, rede grande demais), a versão nasce mesmo assim e a
+    tela diz por que o prazo não foi calculado, como diria em qualquer edição."""
+    try:
+        calcular_cpm(cronograma)
+    except ValidationError:
+        pass
+
+
 def copiar_estrutura(origem: Cronograma, destino: Cronograma, *,
-                     manter_vinculos_da_obra: bool) -> dict[int, int]:
+                     manter_vinculos_da_obra: bool,
+                     anexando: bool = False) -> dict[int, int]:
     """Copia a WBS inteira e a rede de `origem` para `destino`.
 
     Existe em função separada porque tem **dois** clientes com necessidades
@@ -955,11 +1270,19 @@ def copiar_estrutura(origem: Cronograma, destino: Cronograma, *,
     obra. O `calendario` da atividade só sobrevive quando é da empresa (sem obra)
     ou da obra de destino — expediente de outra obra é dado de outra obra.
 
+    `anexando=True` é o terceiro cliente (`anexar_modelo`): o destino já tem
+    linhas, então a cópia nasce com código temporário e as raízes depois das
+    que já existem — quem chama renumera no fim.
+
     Devolve o mapa `id antigo -> id novo`, que é o que a rede precisa para ser
     religada.
     """
     antigas = list(origem.atividades.all().order_by("profundidade", "atividade_id"))
     traducao: dict[int, int] = {}
+    deslocamento = 0
+    if anexando:
+        maior = destino.atividades.filter(pai__isnull=True).aggregate(m=Max("ordem"))["m"]
+        deslocamento = 0 if maior is None else maior + 1
     for velha in antigas:
         calendario_id = velha.calendario_id
         if calendario_id and not manter_vinculos_da_obra:
@@ -972,7 +1295,8 @@ def copiar_estrutura(origem: Cronograma, destino: Cronograma, *,
             tenant_id=destino.tenant_id,
             cronograma=destino,
             pai_id=traducao.get(velha.pai_id) if velha.pai_id else None,
-            codigo=velha.codigo, nome=velha.nome, ordem=velha.ordem,
+            codigo=_temporario() if anexando else velha.codigo, nome=velha.nome,
+            ordem=velha.ordem + (deslocamento if anexando and not velha.pai_id else 0),
             profundidade=velha.profundidade,
             duracao_dias=velha.duracao_dias, eh_marco=velha.eh_marco,
             nao_comecar_antes_de=(
@@ -983,6 +1307,8 @@ def copiar_estrutura(origem: Cronograma, destino: Cronograma, *,
             etapa_id=velha.etapa_id if manter_vinculos_da_obra else None,
             item_orcado_id=velha.item_orcado_id if manter_vinculos_da_obra else None,
             peso_informado=velha.peso_informado,
+            peso_do_orcamento=velha.peso_do_orcamento and manter_vinculos_da_obra,
+            antecedencia_compra_dias=velha.antecedencia_compra_dias,
             responsavel_id=velha.responsavel_id,
             observacao=velha.observacao,
         )
@@ -997,6 +1323,19 @@ def copiar_estrutura(origem: Cronograma, destino: Cronograma, *,
         )
         for lig in Precedencia.objects.filter(origem__cronograma=origem)
         if lig.origem_id in traducao and lig.destino_id in traducao
+    ], batch_size=500)
+
+    # O material informado na atividade é parte do plano: vai junto.
+    from .models import MaterialDaAtividade
+
+    MaterialDaAtividade.objects.bulk_create([
+        MaterialDaAtividade(
+            tenant_id=destino.tenant_id, atividade_id=traducao[m.atividade_id],
+            item_id=m.item_id, descricao=m.descricao, unidade=m.unidade,
+            categoria=m.categoria, quantidade=m.quantidade, custo_unitario=m.custo_unitario,
+        )
+        for m in MaterialDaAtividade.objects.filter(atividade__cronograma=origem)
+        if m.atividade_id in traducao
     ], batch_size=500)
 
     return traducao
@@ -1083,7 +1422,8 @@ def peso_de(atividade: Atividade) -> tuple[Decimal | None, str]:
     if atividade.item_orcado_id and atividade.item_orcado is not None:
         return (atividade.item_orcado.total_com_bdi, "orcado")
     if atividade.peso_informado is not None:
-        return (atividade.peso_informado, "informado")
+        # A etapa que veio do cronograma do orçamento vale o que a etapa vale lá.
+        return (atividade.peso_informado, "orcado" if atividade.peso_do_orcamento else "informado")
     return (None, "")
 
 
@@ -1250,6 +1590,7 @@ def aplicar_modelo(modelo: Cronograma, *, obra, descricao: str, data_inicio,
         )
         copiar_estrutura(modelo, novo, manter_vinculos_da_obra=False)
 
+    _calcular_se_der(novo)
     return novo
 
 
@@ -1396,6 +1737,678 @@ def renumerar_eap(cronograma: Cronograma, *, simular: bool = False) -> dict:
             Atividade.objects.filter(pk=atividade.pk).update(codigo=codigo)
 
     return {"mudancas": len(novos), "aplicadas": len(novos), "simulado": False}
+
+
+# ---------------------------------------------------------------------------
+# 6b. A montagem dentro do posto — inserir, mover, colar, importar, orçamento
+# ---------------------------------------------------------------------------
+#
+# *Decisão do dono, 09/10/2026:* **"hoje só consigo criar tarefa e mais nada.
+# Quero fazer tudo."** — começar do orçamento, de um modelo, colando do Excel ou
+# do MS Project, ou digitando; arrastar para qualquer lugar; ligar e desligar
+# dependências no desenho.
+#
+# Toda operação daqui cria ou move linhas com **código temporário** e termina
+# numa `renumerar_eap`: o código é posição na árvore, e calculá-lo à mão em cada
+# gesto é como `1.2` acaba aparecendo duas vezes. A renumeração já tem as duas
+# passadas que fazem a troca caber na trava de unicidade.
+
+
+def _temporario() -> str:
+    from uuid import uuid4
+    return f"~{uuid4().hex[:16]}"
+
+
+def _exigir_rascunho(cronograma: Cronograma) -> None:
+    if not cronograma.editavel:
+        raise ValidationError(
+            "Este cronograma não é mais rascunho. Para mudar o plano, replaneje."
+        )
+
+
+def _altura(atividade: Atividade) -> int:
+    """Quantos níveis a subárvore ocupa, contando a própria atividade."""
+    filhos = list(atividade.filhos.all())
+    return 1 + max((_altura(f) for f in filhos), default=0)
+
+
+def _reprofundar(no: Atividade) -> None:
+    for filho in no.filhos.all():
+        filho.profundidade = no.profundidade + 1
+        filho.save(update_fields=["profundidade"])
+        _reprofundar(filho)
+
+
+def mover_atividade(atividade: Atividade, *, pai: Atividade | None,
+                    posicao: int | None = None) -> Atividade:
+    """Leva a atividade (com tudo o que está dentro) para debaixo de `pai`, na
+    `posicao` entre as irmãs (fim, se omitida) — o gesto de arrastar a linha, de
+    recuar com Tab e de subir com Alt+↑. Termina renumerando a EAP."""
+    cronograma = atividade.cronograma
+    _exigir_rascunho(cronograma)
+    if pai is not None:
+        if pai.cronograma_id != cronograma.pk:
+            raise ValidationError("A atividade de destino é de outro cronograma.")
+        if pai.eh_marco:
+            raise ValidationError("Um marco é um instante e não agrupa atividades.")
+        no = pai
+        while no is not None:
+            if no.pk == atividade.pk:
+                raise ValidationError(
+                    "Uma atividade não pode ir para dentro dela mesma."
+                )
+            no = no.pai
+    validar_profundidade_wbs(pai, quantos_niveis=_altura(atividade))
+
+    with transaction.atomic():
+        antigo_pai_id = atividade.pai_id
+        irmas = list(
+            cronograma.atividades.filter(pai=pai).exclude(pk=atividade.pk)
+            .order_by("ordem", "codigo", "atividade_id")
+        )
+        if posicao is None or posicao > len(irmas):
+            posicao = len(irmas)
+        irmas.insert(max(posicao, 0), atividade)
+        for indice, irma in enumerate(irmas):
+            if irma.pk != atividade.pk and irma.ordem != indice:
+                Atividade.objects.filter(pk=irma.pk).update(ordem=indice)
+        atividade.pai = pai
+        atividade.ordem = irmas.index(atividade)
+        atividade.profundidade = 1 if pai is None else pai.profundidade + 1
+        atividade.save(update_fields=["pai", "ordem", "profundidade", "atualizado_em"])
+        _reprofundar(atividade)
+
+        # O pai que ficou sem filhos volta a ser folha — e folha precisa de duração.
+        if antigo_pai_id and antigo_pai_id != getattr(pai, "pk", None):
+            antigo = Atividade.objects.get(pk=antigo_pai_id)
+            if (not antigo.filhos.exists() and not antigo.eh_marco
+                    and not antigo.duracao_dias):
+                antigo.duracao_dias = 1
+                antigo.save(update_fields=["duracao_dias"])
+
+        renumerar_eap(cronograma)
+    atividade.refresh_from_db()
+    return atividade
+
+
+def inserir_atividade(cronograma: Cronograma, *, pai: Atividade | None,
+                      depois_de: Atividade | None = None, nome: str,
+                      duracao_dias: int | None = None, eh_marco: bool = False,
+                      etapa_id: int | None = None) -> Atividade:
+    """Cria uma linha **na posição** — logo abaixo de `depois_de`, ou no fim de
+    `pai`. É o Enter da grade: a linha nova nasce onde o olho está."""
+    _exigir_rascunho(cronograma)
+    validar_teto_de_atividades(cronograma)
+    validar_profundidade_wbs(pai)
+    if pai is not None and pai.eh_marco:
+        raise ValidationError("Um marco é um instante e não agrupa atividades.")
+    if depois_de is not None and depois_de.pai_id != getattr(pai, "pk", None):
+        raise ValidationError("A linha de referência não está sob o mesmo pai.")
+    nome = (nome or "").strip()[:200] or ("Novo marco" if eh_marco else "Nova atividade")
+    if not eh_marco and (duracao_dias is None or duracao_dias < 1):
+        duracao_dias = 1
+
+    with transaction.atomic():
+        nova = Atividade.objects.create(
+            tenant_id=cronograma.tenant_id, cronograma=cronograma, pai=pai,
+            codigo=_temporario(), nome=nome, ordem=0,
+            profundidade=1 if pai is None else pai.profundidade + 1,
+            duracao_dias=None if eh_marco else duracao_dias, eh_marco=eh_marco,
+            etapa_id=etapa_id,
+        )
+        irmas = list(
+            cronograma.atividades.filter(pai=pai).exclude(pk=nova.pk)
+            .order_by("ordem", "codigo", "atividade_id")
+        )
+        posicao = len(irmas)
+        if depois_de is not None:
+            for indice, irma in enumerate(irmas):
+                if irma.pk == depois_de.pk:
+                    posicao = indice + 1
+                    break
+        irmas.insert(posicao, nova)
+        for indice, irma in enumerate(irmas):
+            if irma.ordem != indice:
+                Atividade.objects.filter(pk=irma.pk).update(ordem=indice)
+        renumerar_eap(cronograma)
+    nova.refresh_from_db()
+    return nova
+
+
+#: MS Project em português escreve os tipos como TI/II/TT/IT.
+_TIPO_EM_PORTUGUES = {"TI": "FS", "II": "SS", "TT": "FF", "IT": "SF"}
+
+_PREDECESSORA = re.compile(
+    r"^\s*(?P<ref>[^\s;,+]+?)\s*(?P<tipo>FS|SS|FF|SF|TI|II|TT|IT)?\s*"
+    r"(?:(?P<lag>[+-]\s*\d+)\s*(?:d|du|dias?|ed)?)?\s*$",
+    re.IGNORECASE,
+)
+
+
+def ler_predecessoras(texto: str) -> list[tuple[str, str, int]]:
+    """`"1.2FS+3d; 1.4SS"` → `[("1.2", "FS", 3), ("1.4", "SS", 0)]`.
+
+    Aceita a grafia do MS Project em inglês e em português (`TI+2 dias`), com
+    `;` ou `,` entre as ligações. O que não se lê volta como referência com tipo
+    vazio, para quem chamou dizer **qual** pedaço não entendeu.
+    """
+    saida = []
+    for pedaco in re.split(r"[;,]", texto or ""):
+        if not pedaco.strip():
+            continue
+        casou = _PREDECESSORA.match(pedaco)
+        if not casou:
+            saida.append((pedaco.strip(), "", 0))
+            continue
+        tipo = (casou.group("tipo") or "FS").upper()
+        tipo = _TIPO_EM_PORTUGUES.get(tipo, tipo)
+        lag = int(casou.group("lag").replace(" ", "")) if casou.group("lag") else 0
+        saida.append((casou.group("ref"), tipo, lag))
+    return saida
+
+
+def importar_linhas(cronograma: Cronograma, linhas: list[dict], *,
+                    referencia: str = "codigo") -> dict:
+    """Cria muitas linhas de uma vez, com hierarquia e rede — o gesto de colar
+    uma planilha do Excel e o de abrir um XML do MS Project.
+
+    Cada linha traz `nome` e, opcionais, `nivel` (1 é a raiz; sem ele, o nível
+    sai dos pontos do `codigo`), `codigo` (o do arquivo, só para as
+    predecessoras se acharem), `duracao_dias`, `eh_marco`, `predecessoras`
+    (`"1.2FS+3d; 1.4"`), `nao_comecar_antes_de` e `peso`.
+
+    `referencia="linha"` faz as predecessoras apontarem para o **número da
+    linha** colada (a coluna "Predecessoras" do MS Project usa o Id da linha,
+    não o código da EAP). As linhas entram **no fim** do plano, e a EAP é
+    renumerada no fim — os códigos colados não sobrevivem, as ligações sim.
+    Tudo numa transação: ciclo ou linha inválida desfaz o bloco inteiro.
+    """
+    _exigir_rascunho(cronograma)
+    if not linhas:
+        raise ValidationError("Nenhuma linha foi enviada.")
+    validar_teto_de_atividades(cronograma, acrescentando=len(linhas))
+
+    avisos: list[str] = []
+    existentes = {a.codigo: a for a in cronograma.atividades.all()}
+    ordem_raiz = (cronograma.atividades.filter(pai__isnull=True)
+                  .aggregate(m=Max("ordem"))["m"])
+    ordem_raiz = -1 if ordem_raiz is None else ordem_raiz
+
+    criadas: list[tuple[Atividade, dict]] = []
+    por_codigo: dict[str, Atividade] = {}
+    pilha: list[tuple[int, Atividade]] = []
+    contagem_filhos: dict[int, int] = {}
+
+    with transaction.atomic():
+        for numero, linha in enumerate(linhas, start=1):
+            nome = str(linha.get("nome") or "").strip()[:200]
+            if not nome:
+                avisos.append(f"Linha {numero}: sem nome, ficou de fora.")
+                continue
+            codigo_original = str(linha.get("codigo") or "").strip()
+            nivel = linha.get("nivel")
+            try:
+                nivel = int(nivel) if nivel not in (None, "") else None
+            except (TypeError, ValueError):
+                nivel = None
+            if nivel is None:
+                nivel = codigo_original.count(".") + 1 if codigo_original else 1
+            nivel = max(1, nivel)
+            while pilha and pilha[-1][0] >= nivel:
+                pilha.pop()
+            pai = pilha[-1][1] if pilha else None
+            nivel = (pilha[-1][0] + 1) if pilha else 1
+            if nivel > PDCA_PROFUNDIDADE_MAXIMA_WBS:
+                raise ValidationError(
+                    f"Linha {numero} ('{nome}'): a WBS vai até "
+                    f"{PDCA_PROFUNDIDADE_MAXIMA_WBS} níveis."
+                )
+
+            eh_marco = bool(linha.get("eh_marco"))
+            duracao = linha.get("duracao_dias")
+            try:
+                duracao = int(round(float(str(duracao).replace(",", ".")))) \
+                    if duracao not in (None, "") else None
+            except (TypeError, ValueError):
+                avisos.append(f"Linha {numero}: duração '{duracao}' não é número.")
+                duracao = None
+            if duracao == 0 and not eh_marco and linha.get("eh_marco") is None:
+                eh_marco = True  # duração zero é marco, como no MS Project
+            inicio_minimo = linha.get("nao_comecar_antes_de") or None
+            if inicio_minimo:
+                try:
+                    inicio_minimo = date.fromisoformat(str(inicio_minimo)[:10])
+                except ValueError:
+                    avisos.append(f"Linha {numero}: data '{inicio_minimo}' ignorada.")
+                    inicio_minimo = None
+            peso = linha.get("peso")
+            try:
+                peso = Decimal(str(peso).replace(",", ".")) if peso not in (None, "") else None
+            except Exception:
+                avisos.append(f"Linha {numero}: peso '{peso}' ignorado.")
+                peso = None
+
+            if pai is None:
+                ordem_raiz += 1
+                ordem = ordem_raiz
+            else:
+                ordem = contagem_filhos.get(pai.pk, 0)
+                contagem_filhos[pai.pk] = ordem + 1
+
+            nova = Atividade.objects.create(
+                tenant_id=cronograma.tenant_id, cronograma=cronograma, pai=pai,
+                codigo=_temporario(), nome=nome, ordem=ordem, profundidade=nivel,
+                eh_marco=eh_marco,
+                duracao_dias=None if eh_marco else (duracao if duracao and duracao > 0 else None),
+                nao_comecar_antes_de=inicio_minimo, peso_informado=peso,
+            )
+            criadas.append((nova, {"numero": numero, **linha}))
+            if codigo_original:
+                por_codigo[codigo_original] = nova
+            pilha.append((nivel, nova))
+
+        com_filhos = {a.pai_id for a, _ in criadas if a.pai_id}
+        for atividade, _linha in criadas:
+            if (atividade.pk not in com_filhos and not atividade.eh_marco
+                    and not atividade.duracao_dias):
+                atividade.duracao_dias = 1
+                atividade.save(update_fields=["duracao_dias"])
+
+        por_numero = {linha["numero"]: a for a, linha in criadas}
+        ligacoes: list[Precedencia] = []
+        vistas: set[tuple[int, int]] = set()
+        for atividade, linha in criadas:
+            for ref, tipo, lag in ler_predecessoras(str(linha.get("predecessoras") or "")):
+                if not tipo:
+                    avisos.append(f"Linha {linha['numero']}: '{ref}' não é uma predecessora legível.")
+                    continue
+                if referencia == "linha":
+                    origem = por_numero.get(int(ref)) if ref.isdigit() else None
+                else:
+                    origem = por_codigo.get(ref) or existentes.get(ref)
+                if origem is None:
+                    avisos.append(f"Linha {linha['numero']}: a predecessora '{ref}' não existe.")
+                    continue
+                if origem.pk == atividade.pk or (origem.pk, atividade.pk) in vistas:
+                    continue
+                vistas.add((origem.pk, atividade.pk))
+                ligacoes.append(Precedencia(
+                    tenant_id=cronograma.tenant_id, origem=origem, destino=atividade,
+                    tipo=tipo, atraso_dias=lag,
+                ))
+        Precedencia.objects.bulk_create(ligacoes, batch_size=500)
+        verificar_rede(cronograma)
+        renumerar_eap(cronograma)
+
+    return {
+        "criadas": len(criadas),
+        "ligacoes": len(ligacoes),
+        "avisos": avisos[:50],
+        "avisos_total": len(avisos),
+    }
+
+
+def orcamentos_da_obra(cronograma: Cronograma) -> list[dict]:
+    """Os orçamentos que podem dar as etapas deste plano — os da mesma obra,
+    fora os cancelados, o aprovado primeiro — com quantas etapas cada um já tem
+    no tempo (o cronograma físico-financeiro do Orçamento)."""
+    from moduloorcamento.models import Orcamento
+
+    if not cronograma.obra_id:
+        return []
+    ordem = {Orcamento.Status.APROVADO: 0, Orcamento.Status.RASCUNHO: 1,
+             Orcamento.Status.SUPERADO: 2}
+    lista = (Orcamento.objects
+             .filter(tenant_id=cronograma.tenant_id, obra_id=cronograma.obra_id)
+             .exclude(status=Orcamento.Status.CANCELADO)
+             .annotate(itens_count=Count("itens"), etapas_no_tempo=Count("planos_etapa", distinct=True)))
+    ja = cronograma.orcamento_origem_id if cronograma.atividades.filter(peso_do_orcamento=True).exists() else None
+    saida = [
+        {
+            "orcamento_id": o.orcamento_id, "descricao": o.descricao, "versao": o.versao,
+            "status": o.status, "status_rotulo": o.get_status_display(),
+            "itens": o.itens_count, "etapas_no_tempo": o.etapas_no_tempo,
+            "valor_total": o.valor_total,
+            "ja_no_plano": o.orcamento_id == ja,
+        }
+        for o in lista
+    ]
+    saida.sort(key=lambda o: (ordem.get(o["status"], 9), -o["versao"]))
+    return saida
+
+
+def _etapas_do_orcamento(cronograma: Cronograma, orcamento, duracao_padrao: int) -> list[dict]:
+    """As etapas do cronograma do Orçamento, já traduzidas para o plano: a
+    duração em dias úteis **do expediente deste plano** (o mesmo do CPM) e o
+    início como restrição "não começar antes de"."""
+    from moduloorcamento import cronograma as cronograma_do_orcamento
+
+    quadro = cronograma_do_orcamento.etapas_planejadas(orcamento)
+    calendario = cronograma.calendario or calendario_da_obra(cronograma.obra, tenant_id=cronograma.tenant_id)
+    saida = []
+    for etapa in quadro["etapas"]:
+        inicio = date.fromisoformat(etapa["inicio"]) if etapa["inicio"] else None
+        termino = date.fromisoformat(etapa["termino"]) if etapa["termino"] else None
+        if inicio and termino:
+            duracao = (dias_uteis(calendario, inicio, termino) if calendario is not None
+                       else etapa["dias_uteis"]) or 1
+        else:
+            duracao = duracao_padrao
+        horas = etapa["horas_mao_de_obra"]
+        saida.append({
+            # `etapa` é a EtapaObra ligada no orçamento — opcional. Sem ela a
+            # atividade nasce sem etapa da obra, e o planejador liga aqui.
+            "etapa": etapa["etapa"], "nome": etapa["etapa_nome"][:200], "ordem": etapa["ordem"],
+            "valor": Decimal(etapa["valor"]), "inicio": inicio, "duracao": max(int(duracao), 1),
+            "planejada": etapa["planejada"],
+            "observacao": f"Orçado: {horas} Hh de mão de obra." if horas else "",
+        })
+    return saida
+
+
+def gerar_do_orcamento(cronograma: Cronograma, *, orcamento_id: int,
+                       duracao_padrao: int = 5, simular: bool = False) -> dict:
+    """As **etapas** do plano nascem do cronograma físico-financeiro do Orçamento.
+
+    *Decisão do dono, 10/10/2026:* do orçamento vêm **só etapas** — a etapa da
+    obra, quando começa (vira "não começar antes de"), quanto dura (os dias
+    úteis do período, no expediente deste plano), quanto vale (o peso, em reais,
+    marcado `peso_do_orcamento` para contar no avanço financeiro) e o Hh orçado.
+    O detalhe — serviços, frentes, sequência — o planejador monta aqui como
+    quiser, ligado ou não à planilha. Etapa com valor e ainda sem datas no
+    Orçamento entra com `duracao_padrao` e sem restrição de início, e a resposta
+    as conta (`sem_plano`).
+    """
+    from moduloorcamento.models import Orcamento
+
+    _exigir_rascunho(cronograma)
+    orcamento = (Orcamento.objects
+                 .filter(pk=orcamento_id, tenant_id=cronograma.tenant_id).first())
+    if orcamento is None or orcamento.obra_id != cronograma.obra_id:
+        raise ValidationError("Este orçamento não é da obra deste plano.")
+    if cronograma.atividades.filter(peso_do_orcamento=True).exists():
+        raise ValidationError(
+            "As etapas do orçamento já estão neste plano. Para trazer uma mudança do "
+            "cronograma do orçamento, use \"atualizar do orçamento\"."
+        )
+    etapas = _etapas_do_orcamento(cronograma, orcamento, max(int(duracao_padrao or 1), 1))
+    if not etapas:
+        raise ValidationError(
+            "Este orçamento não tem etapa com valor. Crie as etapas (grupos de 1º nível) "
+            "na planilha do Orçamento."
+        )
+    resumo = {
+        "orcamento": orcamento.orcamento_id, "versao": orcamento.versao,
+        "linhas": len(etapas), "planejadas": sum(1 for e in etapas if e["planejada"]),
+        "sem_plano": sum(1 for e in etapas if not e["planejada"]),
+    }
+    if simular:
+        return {**resumo, "simulado": True}
+
+    validar_teto_de_atividades(cronograma, acrescentando=len(etapas))
+    ordem_raiz = cronograma.atividades.filter(pai__isnull=True).aggregate(m=Max("ordem"))["m"]
+    ordem_raiz = -1 if ordem_raiz is None else ordem_raiz
+    with transaction.atomic():
+        for etapa in etapas:
+            ordem_raiz += 1
+            Atividade.objects.create(
+                tenant_id=cronograma.tenant_id, cronograma=cronograma, pai=None,
+                codigo=_temporario(), nome=etapa["nome"], ordem=ordem_raiz, profundidade=1,
+                duracao_dias=etapa["duracao"], nao_comecar_antes_de=etapa["inicio"],
+                etapa_id=etapa["etapa"], peso_informado=etapa["valor"], peso_do_orcamento=True,
+                observacao=etapa["observacao"],
+            )
+        Cronograma.objects.filter(pk=cronograma.pk).update(
+            orcamento_origem=orcamento, cronograma_orcamento_em=orcamento.cronograma_atualizado_em,
+        )
+        cronograma.orcamento_origem = orcamento
+        cronograma.cronograma_orcamento_em = orcamento.cronograma_atualizado_em
+        renumerar_eap(cronograma)
+    return {**resumo, "simulado": False, "criadas": len(etapas)}
+
+
+def situacao_do_orcamento(cronograma: Cronograma) -> dict:
+    """O aviso do "copia e avisa": o cronograma do orçamento mudou desde que
+    este plano trouxe as etapas?
+
+    Duas causas, ditas separadamente porque pedem leituras diferentes: **versão
+    nova** do orçamento (uma revisão aprovada substituiu a de origem) e
+    **cronograma editado** na mesma versão (o planejador mudou datas lá). O
+    plano não muda sozinho — quem decide trazer é o planejador.
+    """
+    from moduloorcamento.models import Orcamento
+    from moduloorcamento.planilha import orcamento_vigente
+
+    # Do banco, e não do cache da relação: o carimbo é justamente o que muda.
+    origem = (Orcamento.objects.filter(pk=cronograma.orcamento_origem_id).first()
+              if cronograma.orcamento_origem_id else None)
+    tem_etapas = cronograma.atividades.filter(peso_do_orcamento=True).exists()
+    vigente = orcamento_vigente(cronograma.tenant_id, cronograma.obra_id) if cronograma.obra_id else None
+    motivo = None
+    if origem is not None and tem_etapas:
+        if vigente is not None and vigente.pk != origem.pk and vigente.versao > origem.versao:
+            motivo = "nova_versao"
+        elif (origem.cronograma_atualizado_em and
+              (cronograma.cronograma_orcamento_em is None
+               or origem.cronograma_atualizado_em > cronograma.cronograma_orcamento_em)):
+            motivo = "cronograma_editado"
+    alvo = vigente if motivo == "nova_versao" else origem
+    return {
+        "tem_etapas_do_orcamento": tem_etapas,
+        "origem": origem.pk if origem else None,
+        "origem_versao": origem.versao if origem else None,
+        "origem_status": origem.status if origem else None,
+        "vigente": vigente.pk if vigente else None,
+        "vigente_versao": vigente.versao if vigente else None,
+        "mudou": motivo is not None,
+        "motivo": motivo,
+        "atualizar_de": alvo.pk if (motivo and alvo) else None,
+        "pode_atualizar": motivo is not None and cronograma.status == Cronograma.Status.RASCUNHO,
+    }
+
+
+def atualizar_do_orcamento(cronograma: Cronograma, *, orcamento_id: int | None = None,
+                           duracao_padrao: int = 5) -> dict:
+    """Traz para o plano o que mudou no cronograma do orçamento.
+
+    Para cada etapa: a atividade-etapa que já existe recebe o início, a duração
+    (se ainda for folha — etapa já detalhada dura o que as filhas duram) e o
+    valor novos; a etapa nova entra no fim. A etapa que **saiu** do orçamento
+    não é apagada: pode ter avanço apontado, e apagar histórico não é atualizar.
+    Ela é devolvida em `fora_do_orcamento` para o planejador decidir.
+    """
+    from moduloorcamento.models import Orcamento
+
+    _exigir_rascunho(cronograma)
+    if orcamento_id is None:
+        orcamento_id = situacao_do_orcamento(cronograma)["atualizar_de"] or cronograma.orcamento_origem_id
+    orcamento = Orcamento.objects.filter(pk=orcamento_id, tenant_id=cronograma.tenant_id).first()
+    if orcamento is None or orcamento.obra_id != cronograma.obra_id:
+        raise ValidationError("Este orçamento não é da obra deste plano.")
+
+    etapas = _etapas_do_orcamento(cronograma, orcamento, max(int(duracao_padrao or 1), 1))
+    # A atividade-etapa casa pela etapa da obra quando o orçamento a ligou, e
+    # pelo nome quando não (etapa só do orçamento).
+    existentes = {
+        (a.etapa_id or a.nome): a for a in cronograma.atividades.filter(peso_do_orcamento=True)
+    }
+    com_filhos = set(cronograma.atividades.filter(pai__isnull=False).values_list("pai_id", flat=True))
+    atualizadas = criadas = 0
+    with transaction.atomic():
+        ordem_raiz = cronograma.atividades.filter(pai__isnull=True).aggregate(m=Max("ordem"))["m"]
+        ordem_raiz = -1 if ordem_raiz is None else ordem_raiz
+        for etapa in etapas:
+            atividade = existentes.pop(etapa["etapa"] or etapa["nome"], None)
+            if atividade is None:
+                ordem_raiz += 1
+                validar_teto_de_atividades(cronograma, acrescentando=1)
+                Atividade.objects.create(
+                    tenant_id=cronograma.tenant_id, cronograma=cronograma, pai=None,
+                    codigo=_temporario(), nome=etapa["nome"], ordem=ordem_raiz, profundidade=1,
+                    duracao_dias=etapa["duracao"], nao_comecar_antes_de=etapa["inicio"],
+                    etapa_id=etapa["etapa"], peso_informado=etapa["valor"], peso_do_orcamento=True,
+                    observacao=etapa["observacao"],
+                )
+                criadas += 1
+                continue
+            atividade.nao_comecar_antes_de = etapa["inicio"]
+            atividade.peso_informado = etapa["valor"]
+            campos = ["nao_comecar_antes_de", "peso_informado", "atualizado_em"]
+            if atividade.atividade_id not in com_filhos:
+                atividade.duracao_dias = etapa["duracao"]
+                campos.append("duracao_dias")
+            atividade.save(update_fields=campos)
+            atualizadas += 1
+        Cronograma.objects.filter(pk=cronograma.pk).update(
+            orcamento_origem=orcamento, cronograma_orcamento_em=orcamento.cronograma_atualizado_em,
+        )
+        cronograma.orcamento_origem = orcamento
+        cronograma.cronograma_orcamento_em = orcamento.cronograma_atualizado_em
+        if criadas:
+            renumerar_eap(cronograma)
+    _calcular_se_der(cronograma)
+    return {
+        "orcamento": orcamento.pk, "versao": orcamento.versao,
+        "atualizadas": atualizadas, "criadas": criadas,
+        "fora_do_orcamento": [{"atividade": a.pk, "nome": a.nome} for a in existentes.values()],
+    }
+
+
+def restaurar_linhas(cronograma: Cronograma, *, pai_id: int | None, posicao: int | None,
+                     atividades: list[dict], ligacoes: list[dict]) -> dict:
+    """Desfaz uma exclusão: recria a subárvore que a tela fotografou antes de
+    apagar, no mesmo lugar, com as ligações — e devolve o mapa `id antigo → id
+    novo`, que a pilha de desfazer usa para continuar apontando certo.
+
+    *Decisão do dono, 09/10/2026:* o Ctrl+Z tem de valer "até eu finalizar o
+    plano" — e excluir era o gesto que não voltava. Os vínculos que vêm da tela
+    (local, etapa, item orçado, expediente, responsável) são **conferidos**
+    contra esta obra e esta empresa: o que não é dela volta vazio, e não vira
+    referência atravessando a fronteira. *Limite declarado:* as restrições e os
+    apontamentos que a exclusão levou não voltam — eles são histórico, e o
+    histórico apagado não se reescreve.
+    """
+    from obras.models import EtapaObra
+    from moduloorcamento.models import ItemOrcado
+    from rh.models import Funcionario
+
+    _exigir_rascunho(cronograma)
+    if not atividades:
+        raise ValidationError("Nada para restaurar.")
+    validar_teto_de_atividades(cronograma, acrescentando=len(atividades))
+    pai = cronograma.atividades.filter(pk=pai_id).first() if pai_id else None
+    if pai_id and pai is None:
+        raise ValidationError("O lugar de onde a linha saiu não existe mais neste plano.")
+
+    def validos(modelo, ids, **filtro):
+        ids = {i for i in ids if i}
+        if not ids:
+            return set()
+        return set(modelo.objects.filter(pk__in=ids, **filtro).values_list("pk", flat=True))
+
+    tenant = cronograma.tenant_id
+    locais = validos(LocalObra, [a.get("local") for a in atividades], tenant_id=tenant, obra_id=cronograma.obra_id)
+    etapas = validos(EtapaObra, [a.get("etapa") for a in atividades], tenant_id=tenant, obra_id=cronograma.obra_id)
+    itens = validos(ItemOrcado, [a.get("item_orcado") for a in atividades],
+                    tenant_id=tenant, orcamento__obra_id=cronograma.obra_id)
+    calendarios = set(
+        CalendarioTrabalho.objects.filter(
+            Q(obra__isnull=True) | Q(obra_id=cronograma.obra_id),
+            pk__in={a.get("calendario") for a in atividades if a.get("calendario")},
+            tenant_id=tenant,
+        ).values_list("pk", flat=True)
+    )
+    pessoas = validos(Funcionario, [a.get("responsavel") for a in atividades], tenant_id=tenant)
+
+    ids_antigos = {int(a["id"]) for a in atividades}
+    raizes = [a for a in atividades if a.get("pai") not in ids_antigos]
+    if len(raizes) != 1:
+        raise ValidationError("A restauração traz uma linha e o que está dentro dela.")
+
+    mapa: dict[int, int] = {}
+    with transaction.atomic():
+        pendentes = list(atividades)
+        while pendentes:
+            proximos = []
+            for a in pendentes:
+                pai_antigo = a.get("pai")
+                if a is raizes[0]:
+                    novo_pai = pai
+                elif pai_antigo in mapa:
+                    novo_pai = Atividade.objects.get(pk=mapa[pai_antigo])
+                else:
+                    proximos.append(a)
+                    continue
+                duracao = a.get("duracao_dias")
+                nova = Atividade.objects.create(
+                    tenant_id=tenant, cronograma=cronograma, pai=novo_pai,
+                    codigo=_temporario(), nome=str(a.get("nome") or "Atividade")[:200],
+                    ordem=int(a.get("ordem") or 0),
+                    profundidade=1 if novo_pai is None else novo_pai.profundidade + 1,
+                    eh_marco=bool(a.get("eh_marco")),
+                    duracao_dias=None if a.get("eh_marco") else (int(duracao) if duracao else 1),
+                    nao_comecar_antes_de=(date.fromisoformat(str(a["nao_comecar_antes_de"])[:10])
+                                          if a.get("nao_comecar_antes_de") else None),
+                    local_id=a.get("local") if a.get("local") in locais else None,
+                    etapa_id=a.get("etapa") if a.get("etapa") in etapas else None,
+                    item_orcado_id=a.get("item_orcado") if a.get("item_orcado") in itens else None,
+                    calendario_id=a.get("calendario") if a.get("calendario") in calendarios else None,
+                    responsavel_id=a.get("responsavel") if a.get("responsavel") in pessoas else None,
+                    peso_informado=(Decimal(str(a["peso_informado"]))
+                                    if a.get("peso_informado") not in (None, "") else None),
+                    antecedencia_compra_dias=(int(a["antecedencia_compra_dias"])
+                                              if a.get("antecedencia_compra_dias") not in (None, "") else None),
+                    observacao=str(a.get("observacao") or ""),
+                )
+                mapa[int(a["id"])] = nova.pk
+            if len(proximos) == len(pendentes):
+                raise ValidationError("A árvore enviada não fecha: há linha sem pai.")
+            pendentes = proximos
+
+        # A linha de cima volta à posição de onde saiu, entre as irmãs.
+        raiz = Atividade.objects.get(pk=mapa[int(raizes[0]["id"])])
+        irmas = list(cronograma.atividades.filter(pai=pai).exclude(pk=raiz.pk)
+                     .order_by("ordem", "codigo", "atividade_id"))
+        irmas.insert(min(max(posicao or 0, 0), len(irmas)), raiz)
+        for indice, irma in enumerate(irmas):
+            Atividade.objects.filter(pk=irma.pk).update(ordem=indice)
+
+        existentes = set(cronograma.atividades.values_list("pk", flat=True))
+        novas_ligacoes = []
+        for lig in ligacoes:
+            origem = mapa.get(lig.get("origem"), lig.get("origem"))
+            destino = mapa.get(lig.get("destino"), lig.get("destino"))
+            if origem in existentes and destino in existentes and origem != destino:
+                novas_ligacoes.append(Precedencia(
+                    tenant_id=tenant, origem_id=origem, destino_id=destino,
+                    tipo=lig.get("tipo") or Precedencia.Tipo.FS,
+                    atraso_dias=int(lig.get("atraso_dias") or 0),
+                ))
+        Precedencia.objects.bulk_create(novas_ligacoes, batch_size=500)
+        verificar_rede(cronograma)
+        renumerar_eap(cronograma)
+
+    return {"mapa": {str(k): v for k, v in mapa.items()}, "ligacoes": len(novas_ligacoes)}
+
+
+def anexar_modelo(modelo: Cronograma, destino: Cronograma) -> dict:
+    """Traz a estrutura de um plano modelo para **dentro** de um rascunho que já
+    existe — no fim, sem apagar o que está lá. `aplicar_modelo` cria o primeiro
+    plano; este é o caso da obra que já começou a montar e quer o padrão da
+    fundação, ou da torre, sem recomeçar."""
+    if not modelo.eh_modelo:
+        raise ValidationError("Este cronograma não está marcado como modelo.")
+    if modelo.pk == destino.pk:
+        raise ValidationError("Um plano não se anexa a si mesmo.")
+    _exigir_rascunho(destino)
+    quantas = modelo.atividades.count()
+    validar_teto_de_atividades(destino, acrescentando=quantas)
+    with transaction.atomic():
+        traducao = copiar_estrutura(
+            modelo, destino, manter_vinculos_da_obra=False, anexando=True,
+        )
+        renumerar_eap(destino)
+    return {"criadas": len(traducao)}
 
 
 # ---------------------------------------------------------------------------
@@ -2026,6 +3039,214 @@ def curva_s(cronograma: Cronograma, *, granularidade: str = "semana") -> dict:
 
 
 # ---------------------------------------------------------------------------
+# 8b. O avanço físico-financeiro é do plano (decisão do dono, 09-10/10/2026)
+# ---------------------------------------------------------------------------
+#
+# *"O cronograma físico-financeiro é do Orçamento; o **avanço** físico-
+# financeiro é do PDCA."* O Orçamento planeja quanto cai em cada mês (a grade
+# etapa × competência) e acompanha o **custo** consumido. Quanto da obra foi
+# **executado** — e quanto isso vale — é o avanço apontado no plano: o previsto
+# até hoje pelas datas do CPM, o realizado pelos apontamentos, em % e em reais
+# (o valor orçado de cada atividade × o avanço dela).
+
+
+def _dias_uteis_da_folha(atividade, calendarios, cronograma) -> list[date]:
+    calendario = calendarios.get(atividade.calendario_id or cronograma.calendario_id)
+    dias: list[date] = []
+    if calendario is not None and not atividade.eh_marco:
+        comeco = calendario.indice_adiante(atividade.inicio_cedo)
+        fim = calendario.indice_atras(atividade.termino_cedo)
+        dias = [calendario.data(i) for i in range(comeco, max(fim, comeco) + 1)]
+    # Marco e plano sem expediente: o peso inteiro no término, como a curva S.
+    return dias or [atividade.termino_cedo]
+
+
+def avanco_fisico_financeiro(cronograma: Cronograma, *, hoje: date | None = None) -> dict:
+    """Etapa a etapa (raiz do plano): previsto até hoje × realizado, em % do
+    físico e em reais do orçado, com o desvio. A linha da obra fecha embaixo.
+
+    - **previsto** — cada folha contribui com a fração dos dias úteis dela que
+      já passaram (as datas do CPM), ponderada pelo peso;
+    - **realizado** — o avanço apontado da folha (a cadeia de versões, a mesma
+      leitura do Gantt), ponderado pelo peso;
+    - **em reais** — só as folhas ligadas ao orçamento, pelo valor do item. A
+      folha sem vínculo pesa no físico e fica fora do dinheiro, e a resposta
+      conta quantas são — um R$ que ignorasse 40% do serviço sem dizer seria
+      número inventado.
+    """
+    hoje = hoje or timezone.localdate()
+    atividades = list(cronograma.atividades
+                      .select_related("item_orcado", "calendario")
+                      .order_by("ordem", "codigo", "atividade_id"))
+    por_id = {a.atividade_id: a for a in atividades}
+    com_filhos = {a.pai_id for a in atividades if a.pai_id}
+    folhas = [a for a in atividades if a.atividade_id not in com_filhos]
+    calendarios = _calendarios_do_cronograma(cronograma, atividades) if atividades else {}
+    avanco = avanco_do_cronograma(cronograma)["por_atividade"] if atividades else {}
+
+    def raiz_de(a):
+        vistos = 0
+        while a.pai_id and a.pai_id in por_id and vistos < 64:
+            a = por_id[a.pai_id]
+            vistos += 1
+        return a
+
+    zero = Decimal("0")
+    contas: dict[int, dict[str, Decimal]] = {}
+    sem_peso = sem_data = sem_orcamento = 0
+    for a in folhas:
+        p, de_onde = peso_de(a)
+        if p is None or p <= 0:
+            sem_peso += 1
+            continue
+        conta = contas.setdefault(raiz_de(a).atividade_id, {
+            "peso": zero, "previsto": zero, "realizado": zero,
+            "valor": zero, "valor_previsto": zero, "valor_realizado": zero,
+        })
+        if a.inicio_cedo and a.termino_cedo:
+            dias = _dias_uteis_da_folha(a, calendarios, cronograma)
+            passou = Decimal(sum(1 for d in dias if d <= hoje)) / Decimal(len(dias))
+        else:
+            sem_data += 1
+            passou = zero
+        feito = Decimal(str((avanco.get(a.atividade_id) or {}).get("avanco") or 0)) / 100
+        conta["peso"] += p
+        conta["previsto"] += p * passou
+        conta["realizado"] += p * feito
+        if de_onde == "orcado":
+            conta["valor"] += p
+            conta["valor_previsto"] += p * passou
+            conta["valor_realizado"] += p * feito
+        else:
+            sem_orcamento += 1
+
+    def linha(conta: dict[str, Decimal]) -> dict:
+        def pct(parte):
+            return float(round(parte / conta["peso"] * 100, 2)) if conta["peso"] > 0 else None
+
+        def reais(v):
+            return str(v.quantize(Decimal("0.01")))
+
+        return {
+            "previsto_pct": pct(conta["previsto"]),
+            "realizado_pct": pct(conta["realizado"]),
+            "desvio_pct": (None if conta["peso"] <= 0 else
+                           float(round((conta["realizado"] - conta["previsto"]) / conta["peso"] * 100, 2))),
+            "valor_orcado": reais(conta["valor"]),
+            "valor_previsto": reais(conta["valor_previsto"]),
+            "valor_realizado": reais(conta["valor_realizado"]),
+            "valor_desvio": reais(conta["valor_realizado"] - conta["valor_previsto"]),
+        }
+
+    linhas = []
+    obra = {k: zero for k in ("peso", "previsto", "realizado", "valor", "valor_previsto", "valor_realizado")}
+    planejado = _planejado_do_orcamento(
+        cronograma.orcamento_origem_id or _orcamento_das_folhas(folhas), hoje,
+    )
+
+    def contra_o_planejado(etapa_id, realizado: Decimal) -> dict:
+        if planejado is None or (etapa_id is not None and etapa_id not in planejado["por_etapa"]):
+            return {"valor_planejado": None, "valor_desvio_planejado": None}
+        valor = (planejado["ate_hoje"] if etapa_id is None
+                 else planejado["por_etapa"][etapa_id])
+        return {
+            "valor_planejado": str(valor.quantize(Decimal("0.01"))),
+            "valor_desvio_planejado": str((realizado - valor).quantize(Decimal("0.01"))),
+        }
+
+    for raiz in (a for a in atividades if a.pai_id is None):
+        conta = contas.get(raiz.atividade_id)
+        if conta is None:
+            continue
+        for k in obra:
+            obra[k] += conta[k]
+        linhas.append({
+            "atividade": raiz.atividade_id, "codigo": raiz.codigo, "nome": raiz.nome,
+            "etapa": raiz.etapa_id, **linha(conta),
+            **contra_o_planejado(raiz.etapa_id or -1, conta["valor_realizado"]),
+        })
+
+    return {
+        "cronograma": cronograma.pk,
+        "status": cronograma.status,
+        "hoje": hoje,
+        "linhas": linhas,
+        "obra": {**linha(obra), **contra_o_planejado(None, obra["valor_realizado"])},
+        "tem_dinheiro": obra["valor"] > 0,
+        "folhas_sem_peso": sem_peso,
+        "folhas_sem_data": sem_data,
+        "folhas_sem_orcamento": sem_orcamento,
+        #: O **planejado** é o cronograma físico-financeiro do Orçamento (as
+        #: parcelas etapa × competência). Nulo quando o orçamento não tem
+        #: cronograma — e a tela diz isso, em vez de comparar com zero.
+        "planejado": None if planejado is None else {
+            "orcamento": planejado["orcamento"],
+            "total": str(planejado["total"].quantize(Decimal("0.01"))),
+            "ate_hoje": str(planejado["ate_hoje"].quantize(Decimal("0.01"))),
+            "mensal": planejado["mensal"],
+        },
+    }
+
+
+def _orcamento_das_folhas(folhas) -> int | None:
+    """O orçamento que o plano usa — o dos itens ligados, pelo maior valor."""
+    valor: dict[int, Decimal] = {}
+    for a in folhas:
+        if a.item_orcado_id and a.item_orcado is not None:
+            chave = a.item_orcado.orcamento_id
+            valor[chave] = valor.get(chave, Decimal("0")) + (a.item_orcado.total_com_bdi or 0)
+    return max(valor, key=valor.get) if valor else None
+
+
+def _planejado_do_orcamento(orcamento_id, hoje: date) -> dict | None:
+    """O cronograma físico-financeiro do Orçamento até hoje, por etapa e por mês.
+
+    A competência inteira conta quando já passou; a corrente conta **pro rata**
+    pelos dias corridos — comparar no dia 5 com o mês inteiro planejado diria
+    que a obra está atrasada só porque o mês não acabou.
+    """
+    if orcamento_id is None:
+        return None
+    from calendar import monthrange
+
+    from moduloorcamento.models import ParcelaEtapa
+
+    # A parcela é do grupo do orçamento; a etapa da obra é o vínculo opcional
+    # dele. Grupo sem vínculo conta no total e no mês, mas não em etapa alguma.
+    parcelas = list(ParcelaEtapa.objects.filter(orcamento_id=orcamento_id)
+                    .values("grupo__etapa_id", "competencia", "valor_previsto"))
+    for p in parcelas:
+        p["etapa_id"] = p.pop("grupo__etapa_id")
+    if not parcelas:
+        return None
+    este_mes = hoje.replace(day=1)
+    fracao = Decimal(hoje.day) / Decimal(monthrange(hoje.year, hoje.month)[1])
+    por_etapa: dict[int, Decimal] = {}
+    por_mes: dict[date, Decimal] = {}
+    total = ate_hoje = Decimal("0")
+    for p in parcelas:
+        valor = p["valor_previsto"] or Decimal("0")
+        mes = p["competencia"].replace(day=1)
+        vale = valor if mes < este_mes else (valor * fracao if mes == este_mes else Decimal("0"))
+        total += valor
+        ate_hoje += vale
+        if p["etapa_id"] is not None:
+            por_etapa[p["etapa_id"]] = por_etapa.get(p["etapa_id"], Decimal("0")) + vale
+        por_mes[mes] = por_mes.get(mes, Decimal("0")) + valor
+    mensal, acumulado = [], Decimal("0")
+    for mes in sorted(por_mes):
+        acumulado += por_mes[mes]
+        mensal.append({
+            "mes": mes,
+            "valor": str(por_mes[mes].quantize(Decimal("0.01"))),
+            "acumulado": str(acumulado.quantize(Decimal("0.01"))),
+            "pct_acumulado": float(round(acumulado / total * 100, 2)) if total > 0 else 0.0,
+        })
+    return {"orcamento": orcamento_id, "por_etapa": por_etapa, "total": total,
+            "ate_hoje": ate_hoje, "mensal": mensal}
+
+
+# ---------------------------------------------------------------------------
 # 9. A tomada do percentual da etapa (planta §11.2)
 # ---------------------------------------------------------------------------
 #
@@ -2353,11 +3574,49 @@ def medido_por_item(contrato: ContratoObra, *,
     linhas = (
         ItemMedicao.objects
         .filter(medicao__contrato=contrato, medicao__status__in=_EM_VOO)
-        .exclude(medicao_id=excluir_medicao_id)
+        .exclude(medicao_id__in=_fora_da_conta(contrato, excluir_medicao_id))
         .values("item_contrato_id")
         .annotate(total=Sum("quantidade"))
     )
     return {linha["item_contrato_id"]: linha["total"] or _ZERO for linha in linhas}
+
+
+def _fora_da_conta(contrato: ContratoObra, excluir_medicao_id: int | None) -> set[int]:
+    """As medições que **não** somam no acumulado, além das que o status já tira.
+
+    A retificadora guarda a medição corrigida **inteira** *(decisão do dono,
+    11/10/2026)*: ela substitui a original, não soma a ela. Enquanto sobe a
+    escada, a original ainda está aprovada — e contar as duas mediria o mesmo
+    período duas vezes. Por isso a original de toda retificadora em aprovação
+    sai da conta, e a de quem está sendo calculado também (a retificadora é
+    medida contra o contrato **sem** a medição que ela corrige).
+    """
+    fora = set(
+        contrato.medicoes
+        .filter(status=Medicao.Status.EM_APROVACAO, retifica__isnull=False)
+        .values_list("retifica_id", flat=True)
+    )
+    if excluir_medicao_id is not None:
+        fora.add(excluir_medicao_id)
+        original = (
+            Medicao.todos.filter(pk=excluir_medicao_id)
+            .values_list("retifica_id", flat=True).first()
+        )
+        if original:
+            fora.add(original)
+    return fora
+
+
+def posicao_da_medicao(medicao: Medicao) -> int:
+    """O lugar da medição na corrente do contrato.
+
+    A retificadora nasce com o próximo número livre, mas fala do período da que
+    corrige — e é esse o lugar dela para o estoque de material ("o que a
+    anterior declarava"). Retificadora de retificadora sobe a corrente.
+    """
+    while medicao.retifica_id is not None:
+        medicao = medicao.retifica
+    return medicao.numero
 
 
 def estocado_ate(contrato: ContratoObra, *, antes_de: int | None = None,
@@ -2376,16 +3635,30 @@ def estocado_ate(contrato: ContratoObra, *, antes_de: int | None = None,
     consulta = (
         ItemMedicao.objects
         .filter(medicao__contrato=contrato, medicao__status__in=_EM_VOO)
-        .exclude(medicao_id=excluir_medicao_id)
+        .exclude(medicao_id__in=_fora_da_conta(contrato, excluir_medicao_id))
     )
-    if antes_de is not None:
-        consulta = consulta.filter(medicao__numero__lt=antes_de)
+    # A posição de cada medição na corrente — a retificadora ocupa a da que
+    # corrige (`posicao_da_medicao`), resolvida aqui de uma vez por contrato.
+    corrente = {
+        pk: (numero, retifica_id)
+        for pk, numero, retifica_id in Medicao.todos.filter(contrato=contrato)
+        .values_list("pk", "numero", "retifica_id")
+    }
+
+    def posicao(pk: int) -> int:
+        numero, original = corrente[pk]
+        while original is not None and original in corrente:
+            numero, original = corrente[original]
+        return numero
 
     saldo: dict[int, Decimal] = {}
     ultimo: dict[int, int] = {}
-    for item_id, numero, estocada in consulta.values_list(
-        "item_contrato_id", "medicao__numero", "quantidade_estocada",
+    for item_id, medicao_id, estocada in consulta.values_list(
+        "item_contrato_id", "medicao_id", "quantidade_estocada",
     ):
+        numero = posicao(medicao_id)
+        if antes_de is not None and numero >= antes_de:
+            continue
         if numero >= ultimo.get(item_id, -1):
             ultimo[item_id] = numero
             saldo[item_id] = estocada or _ZERO
@@ -2527,13 +3800,20 @@ def propor_medicao(contrato: ContratoObra, *, inicio: date, fim: date,
     aditado = aditivo_por_item(contrato)
     estoque_anterior = estocado_ate(
         contrato,
-        antes_de=medicao.numero if medicao is not None else None,
+        antes_de=posicao_da_medicao(medicao) if medicao is not None else None,
         excluir_medicao_id=excluir,
     )
     gravado = {
         linha.item_contrato_id: linha
         for linha in (medicao.itens.all() if medicao is not None else [])
     }
+    # A retificadora grava a medição corrigida **inteira**; a tela mostra, ao
+    # lado, o que a original mediu — o quadro original | corrigido | diferença.
+    # `None` fora de retificadora.
+    na_original = (
+        {l.item_contrato_id: l for l in medicao.retifica.itens.all()}
+        if medicao is not None and medicao.retifica_id is not None else None
+    )
 
     linhas = []
     for item in itens:
@@ -2604,6 +3884,17 @@ def propor_medicao(contrato: ContratoObra, *, inicio: date, fim: date,
                 else estocado_antes
             ),
             "estocado_anterior": estocado_antes,
+            "quantidade_na_original": (
+                None if na_original is None else (
+                    na_original[item.pk].quantidade if item.pk in na_original else _ZERO
+                )
+            ),
+            "estocada_na_original": (
+                None if na_original is None else (
+                    na_original[item.pk].quantidade_estocada
+                    if item.pk in na_original else _ZERO
+                )
+            ),
             "origem": (
                 linha_gravada.origem if linha_gravada is not None else None
             ),
@@ -2667,7 +3958,7 @@ def sugerir_periodo(contrato: ContratoObra) -> dict:
     dois meses depois).
     """
     ultima = (
-        contrato.medicoes.filter(status__in=_VIVAS, retifica__isnull=True)
+        contrato.medicoes.filter(status__in=(*_VIVAS, Medicao.Status.RETIFICADA), retifica__isnull=True)
         .order_by("-periodo_fim", "-numero")
         .first()
     )
@@ -2709,7 +4000,7 @@ def _conflito_de_periodo(contrato: ContratoObra, *, inicio: date, fim: date,
     """
     return (
         contrato.medicoes
-        .filter(status__in=_EM_VOO, retifica__isnull=True)
+        .filter(status__in=(*_EM_VOO, Medicao.Status.RETIFICADA), retifica__isnull=True)
         .filter(periodo_inicio__lte=fim, periodo_fim__gte=inicio)
         .exclude(pk=excluir_medicao_id)
         .order_by("numero")
@@ -2731,6 +4022,58 @@ def valor_da_deducao(deducao: "DeducaoMedicao", bruto: Decimal) -> Decimal:
         return _dinheiro(deducao.valor)
     base = deducao.base_calculo if deducao.base_calculo is not None else bruto
     return _dinheiro(base * (deducao.percentual or _ZERO) / Decimal("100"))
+
+
+def _bruto_sem_reajuste(medicao: Medicao) -> Decimal:
+    contrato = medicao.contrato
+    if contrato.regime == RegimeContrato.ADMINISTRACAO:
+        custo = medicao.custo_reembolsavel or _ZERO
+        taxa = medicao.taxa_administracao_aplicada or _ZERO
+        return _dinheiro(custo + (custo * taxa / Decimal("100")))
+    anterior = estocado_ate(contrato, antes_de=posicao_da_medicao(medicao), excluir_medicao_id=medicao.pk)
+    total = _ZERO
+    for item in medicao.itens.all():
+        delta = item.quantidade_estocada - anterior.get(item.item_contrato_id, _ZERO)
+        total += (item.quantidade + delta) * item.preco_unitario
+    return _dinheiro(total)
+
+
+def recalcular_reajuste(medicao: Medicao) -> Medicao:
+    """Aplica a fórmula paramétrica do contrato ao bruto do período e **grava**.
+
+    *Decisão do dono, 10/10/2026:* reajuste é ato de contrato — o mesmo motor
+    (`nucleo/reajuste.py`) para o empreiteiro e para o contratante. Grava em vez
+    de derivar na leitura porque depende do índice publicado no dia: a medição
+    aprovada não muda de valor quando a série é revisada. Roda ao criar, ao
+    reescrever a grade e de novo no último degrau da aprovação — que é quando o
+    índice provisório pode já ter virado definitivo.
+
+    Contrato sem parcelas de reajuste é a preço fixo: zero, sem memória.
+    """
+    from nucleo import reajuste as motor
+
+    contrato = medicao.contrato
+    parcelas = [(p.indice, p.peso, p.rotulo)
+                for p in contrato.parcelas_reajuste.select_related("indice")]
+    if not parcelas or contrato.reajuste_data_base is None:
+        valor, memoria, provisorio = _ZERO, {}, False
+    else:
+        try:
+            memoria = motor.reajuste_do_periodo(
+                valor=_bruto_sem_reajuste(medicao), inicio=medicao.periodo_inicio,
+                fim=medicao.periodo_fim, parcela_fixa=contrato.reajuste_parcela_fixa,
+                parcelas=parcelas, data_base=contrato.reajuste_data_base,
+                periodicidade_meses=contrato.reajuste_periodicidade_meses or 12,
+                casas=contrato.reajuste_casas or 4,
+            )
+        except motor.ReajusteInvalido as erro:
+            raise ValidationError(str(erro))
+        valor, provisorio = Decimal(memoria["valor"]), memoria["provisorio"]
+    Medicao.objects.filter(pk=medicao.pk).update(
+        valor_reajuste=valor, reajuste_memoria=memoria, reajuste_provisorio=provisorio,
+    )
+    medicao.valor_reajuste, medicao.reajuste_memoria, medicao.reajuste_provisorio = valor, memoria, provisorio
+    return medicao
 
 
 def totais_da_medicao(medicao: Medicao) -> dict:
@@ -2762,6 +4105,11 @@ def totais_da_medicao(medicao: Medicao) -> dict:
     contrato = medicao.contrato
     executado = _ZERO
     estoque = _ZERO
+    geral = medicao.retencao_percentual_aplicado
+    #: Σ valor da linha × (retenção própria − geral): o que a retenção por item
+    #: muda sobre a conta geral. Zero quando nenhum item tem regra própria — e
+    #: aí a retenção é exatamente a de sempre (`base × geral`).
+    ajuste_por_item = _ZERO
 
     if contrato.regime == RegimeContrato.ADMINISTRACAO:
         custo = medicao.custo_reembolsavel or _ZERO
@@ -2769,7 +4117,7 @@ def totais_da_medicao(medicao: Medicao) -> dict:
         bruto = custo + (custo * taxa / Decimal("100"))
     else:
         anterior = estocado_ate(
-            contrato, antes_de=medicao.numero, excluir_medicao_id=medicao.pk,
+            contrato, antes_de=posicao_da_medicao(medicao), excluir_medicao_id=medicao.pk,
         )
         for item in medicao.itens.all():
             executado += item.quantidade * item.preco_unitario
@@ -2777,15 +4125,24 @@ def totais_da_medicao(medicao: Medicao) -> dict:
                 item.item_contrato_id, _ZERO,
             )
             estoque += delta * item.preco_unitario
+            if item.retencao_percentual is not None and item.retencao_percentual != geral:
+                ajuste_por_item += (
+                    (item.quantidade + delta) * item.preco_unitario
+                    * (item.retencao_percentual - geral)
+                )
         bruto = executado + estoque
 
     bruto = _dinheiro(bruto)
-    retencao = _dinheiro(bruto * medicao.retencao_percentual_aplicado / Decimal("100"))
+    # O reajuste soma ao bruto antes da retenção e das deduções: a caução e o
+    # imposto incidem sobre o que o período vale **reajustado**.
+    reajuste = _dinheiro(medicao.valor_reajuste or _ZERO)
+    base = bruto + reajuste
+    retencao = _dinheiro((base * geral + ajuste_por_item) / Decimal("100"))
 
     deducoes = []
     total_deducoes = _ZERO
     for deducao in medicao.deducoes.all():
-        valor = valor_da_deducao(deducao, bruto)
+        valor = valor_da_deducao(deducao, base)
         total_deducoes += valor
         deducoes.append({
             "deducao_id": deducao.pk,
@@ -2797,15 +4154,41 @@ def totais_da_medicao(medicao: Medicao) -> dict:
             "valor": valor,
         })
 
+    liquido = base - retencao - _dinheiro(total_deducoes)
+    #: **O líquido é o valor líquido da medição, não a diferença** *(achado do
+    #: dono, 11/10/2026)*. A retificadora guarda a medição corrigida inteira, então
+    #: o líquido dela já é o que vale; a original viaja ao lado só para a tela
+    #: montar a conciliação (antes | corrigido | diferença).
+    original = None
+    if medicao.retifica_id is not None:
+        antes = totais_da_medicao(medicao.retifica)
+        original = {
+            "medicao_id": medicao.retifica_id,
+            "numero": medicao.retifica.numero,
+            "bruto_reajustado": antes["bruto_reajustado"],
+            "retencao": antes["retencao"],
+            "total_deducoes": antes["total_deducoes"],
+            "liquido": antes["liquido"],
+        }
+
     return {
         "executado": _dinheiro(executado),
         "material_estocado": _dinheiro(estoque),
         "bruto": bruto,
+        "reajuste": reajuste,
+        "reajuste_provisorio": bool(medicao.reajuste_provisorio),
+        "bruto_reajustado": base,
         "retencao": retencao,
         "retencao_percentual": medicao.retencao_percentual_aplicado,
+        #: Algum item reteve diferente do percentual geral (regra do aditivo).
+        "retencao_por_item": ajuste_por_item != 0,
         "deducoes": deducoes,
         "total_deducoes": _dinheiro(total_deducoes),
-        "liquido": bruto - retencao - _dinheiro(total_deducoes),
+        "liquido": liquido,
+        "original": original,
+        "diferenca_liquido": (
+            None if original is None else liquido - original["liquido"]
+        ),
     }
 
 
@@ -2895,6 +4278,7 @@ def criar_medicao(*, contrato: ContratoObra, inicio: date, fim: date,
     )
 
     a_gravar = []
+    retencao_do_item = dict(contrato.itens.values_list("pk", "retencao_percentual"))
     for item_id, linha in proposta.items():
         escolhida = escolhidas.get(item_id) if escolhidas is not None else linha
         if escolhida is None:
@@ -2919,6 +4303,7 @@ def criar_medicao(*, contrato: ContratoObra, inicio: date, fim: date,
             quantidade_proposta=linha["quantidade_proposta"],
             preco_unitario=linha["preco_unitario"],
             percentual_avanco_periodo=linha["percentual_avanco_periodo"],
+            retencao_percentual=retencao_do_item.get(item_id),
             origem=(
                 ItemMedicao.Origem.AVANCO
                 if escolhidas is None or quantidade == linha["quantidade_proposta"]
@@ -2927,7 +4312,7 @@ def criar_medicao(*, contrato: ContratoObra, inicio: date, fim: date,
         ))
     if a_gravar:
         ItemMedicao.objects.bulk_create(a_gravar)
-    return medicao
+    return recalcular_reajuste(medicao)
 
 
 @transaction.atomic
@@ -2974,7 +4359,7 @@ def reescrever_linhas(*, medicao: Medicao, linhas: list[dict]) -> dict:
     memoria = {
         linha.item_contrato_id: (
             linha.quantidade_proposta, linha.percentual_avanco_periodo,
-            linha.preco_unitario, linha.observacao,
+            linha.preco_unitario, linha.observacao, linha.retencao_percentual,
         )
         for linha in medicao.itens.all()
     }
@@ -2984,11 +4369,19 @@ def reescrever_linhas(*, medicao: Medicao, linhas: list[dict]) -> dict:
     for linha in linhas:
         quantidade = Decimal(str(linha.get("quantidade", 0) or 0))
         estocada = Decimal(str(linha.get("quantidade_estocada", 0) or 0))
+        item_id = linha["item_contrato_id"]
+        if quantidade < 0:
+            # A retificadora guarda a medição corrigida inteira (11/10/2026):
+            # medir para menos é escrever o número certo, não uma linha negativa.
+            raise ValidationError(
+                f"Item {validos[item_id].codigo}: quantidade negativa. Para "
+                f"corrigir uma medição aprovada, retifique-a e escreva a "
+                f"quantidade certa."
+            )
         if quantidade == 0 and estocada == 0:
             continue
-        item_id = linha["item_contrato_id"]
-        proposta, percentual, preco, observacao = memoria.get(
-            item_id, (None, None, None, ""),
+        proposta, percentual, preco, observacao, retencao = memoria.get(
+            item_id, (None, None, None, "", validos[item_id].retencao_percentual),
         )
         a_gravar.append(ItemMedicao(
             tenant_id=contrato.tenant_id,
@@ -3005,6 +4398,7 @@ def reescrever_linhas(*, medicao: Medicao, linhas: list[dict]) -> dict:
                 preco if preco is not None else validos[item_id].preco_unitario
             ),
             percentual_avanco_periodo=percentual,
+            retencao_percentual=retencao,
             observacao=linha.get("observacao", observacao) or "",
             origem=(
                 ItemMedicao.Origem.AVANCO
@@ -3016,6 +4410,7 @@ def reescrever_linhas(*, medicao: Medicao, linhas: list[dict]) -> dict:
         ItemMedicao.objects.bulk_create(a_gravar)
 
     medicao.refresh_from_db()
+    recalcular_reajuste(medicao)
     return {"linhas": len(a_gravar), "totais": totais_da_medicao(medicao)}
 
 
@@ -3114,7 +4509,16 @@ def validar_medicao(medicao: Medicao) -> dict:
         # pede ação nenhuma é ruído: ensina a ignorar a faixa de avisos, onde um
         # dia vai aparecer algo que importa.
     else:
-        if not medicao.itens.exists():
+        if medicao.retifica_id is not None:
+            # A retificadora guarda a medição corrigida inteira: ela corrige
+            # alguma coisa quando as linhas ou os descontos diferem dos da
+            # original. Zerar tudo é correção válida (a medição não devia existir).
+            if not _retificadora_muda_algo(medicao):
+                problemas.append(
+                    "A retificadora não corrige nada: quantidades e descontos "
+                    "estão iguais aos da medição original."
+                )
+        elif not medicao.itens.exists():
             problemas.append("A medição não tem nenhuma linha com quantidade.")
 
     if contrato.regime == RegimeContrato.GLOBAL:
@@ -3136,7 +4540,7 @@ def validar_medicao(medicao: Medicao) -> dict:
     # --- a trava do acumulado -------------------------------------------------
     ja_medido = medido_por_item(contrato, excluir_medicao_id=medicao.pk)
     estoque_anterior = estocado_ate(
-        contrato, antes_de=medicao.numero, excluir_medicao_id=medicao.pk,
+        contrato, antes_de=posicao_da_medicao(medicao), excluir_medicao_id=medicao.pk,
     )
     atual = contratado_atual_por_item(contrato)
     codigos = {item.pk: item.codigo for item in contrato.itens.all()}
@@ -3189,11 +4593,9 @@ def validar_medicao(medicao: Medicao) -> dict:
 
     # --- o líquido precisa existir -------------------------------------------
     #
-    # **Só quando o bruto é positivo.** A retificadora que devolve quantidade
-    # tem bruto negativo por natureza (é uma devolução), e ali o líquido
-    # negativo é o resultado certo — `gerar_titulo_de_medicao` não emite título
-    # nenhum para ela. Aplicar a trava sem esta condição proibiria exatamente o
-    # documento que a §11.5 criou para corrigir uma medição paga a mais.
+    # **Só quando o bruto é positivo.** O bruto negativo é o período em que o
+    # material estocado foi aplicado ou devolvido — ali o líquido negativo é o
+    # resultado certo, e `gerar_titulo_de_medicao` não emite título nenhum.
     totais = totais_da_medicao(medicao)
     if totais["bruto"] > 0 and totais["liquido"] < 0:
         problemas.append(
@@ -3206,6 +4608,27 @@ def validar_medicao(medicao: Medicao) -> dict:
     if problemas:
         raise ValidationError(problemas)
     return {"avisos": avisos}
+
+
+def _retificadora_muda_algo(retificadora: Medicao) -> bool:
+    def linhas(m: Medicao) -> dict:
+        return {
+            l.item_contrato_id: (l.quantidade, l.quantidade_estocada)
+            for l in m.itens.all() if l.quantidade or l.quantidade_estocada
+        }
+
+    def descontos(m: Medicao) -> list:
+        return sorted(
+            tuple(str(x) for x in (d.tipo, d.descricao, d.percentual, d.base_calculo, d.valor))
+            for d in m.deducoes.all()
+        )
+
+    original = retificadora.retifica
+    return (
+        linhas(retificadora) != linhas(original)
+        or descontos(retificadora) != descontos(original)
+        or retificadora.custo_reembolsavel != original.custo_reembolsavel
+    )
 
 
 @transaction.atomic
@@ -3270,6 +4693,7 @@ def _congelar_medicao(medicao: Medicao, *, aprovada: bool) -> Medicao:
     de milissegundos.
     """
     if aprovada:
+        recalcular_reajuste(medicao)
         validar_medicao(medicao)
 
     medicao.status = (
@@ -3279,13 +4703,231 @@ def _congelar_medicao(medicao: Medicao, *, aprovada: bool) -> Medicao:
     campos = ["status", "congelada_em"]
 
     if aprovada:
-        conta_id = gerar_titulo_de_medicao(medicao)
-        if conta_id is not None:
-            medicao.conta_pagar_ref = conta_id
-            campos.append("conta_pagar_ref")
+        if medicao.retifica_id is not None:
+            campos += _fechar_retificacao(medicao)
+        else:
+            conta_id = gerar_titulo_de_medicao(medicao)
+            if conta_id is not None:
+                campo = _campo_do_titulo(medicao)
+                setattr(medicao, campo, conta_id)
+                campos.append(campo)
 
     medicao.save(update_fields=campos)
     return medicao
+
+
+def _campo_do_titulo(medicao: Medicao) -> str:
+    return ("conta_receber_ref" if medicao.contrato.lado == LadoContrato.RECEITA
+            else "conta_pagar_ref")
+
+
+def _fechar_retificacao(retificadora: Medicao) -> list[str]:
+    """A retificadora aprovada **substitui** a original — e o título vai junto.
+
+    *Decisões do dono, 11/10/2026:*
+
+    - a original vira `RETIFICADA` (legível, fora de toda soma): só a
+      retificadora vale, e o contrato nunca mostra duas medições aprovadas para
+      o mesmo período;
+    - **título da original em aberto** → cancelado, e nasce o da retificadora
+      com o líquido **inteiro** da medição corrigida;
+    - **título já pago (inteiro ou em parte)** → nada se apaga, porque existe uma
+      `Transacao` em cima dele. Nasce o **título da diferença** e o ERP recebe um
+      aviso de **nível 3** (`funcoesnotificacoes`):
+        * corrigida maior → complemento a pagar (a receber, na receita);
+        * corrigida menor e o título ainda tem saldo → o saldo cai primeiro (não
+          se paga o que não é devido);
+        * o que sobra pago a mais → devolução, no título do sentido inverso,
+          contra a mesma contraparte — quando ela existe dos dois lados do
+          cadastro (fornecedor ↔ cliente, pelo CNPJ/CPF). Sem ela, o aviso diz
+          quanto cobrar e de quem.
+
+    Devolve os campos da retificadora que mudaram.
+    """
+    from nucleo.auditoria import registrar_auditoria
+
+    original = retificadora.retifica
+    Medicao.objects.filter(pk=original.pk).update(status=Medicao.Status.RETIFICADA)
+    original.status = Medicao.Status.RETIFICADA
+
+    campo = _campo_do_titulo(retificadora)
+    titulo = titulo_da_medicao(original)
+    pago = titulo is not None and (
+        titulo.valor_pago > 0 or titulo.status in ("QUITADO", "PARCIAL")
+    )
+
+    if not pago:
+        if titulo is not None and titulo.status != "CANCELADO":
+            titulo.status = "CANCELADO"
+            titulo.save(update_fields=["status"])
+            registrar_auditoria(
+                acao="cancelar", instance=titulo, usuario=None,
+                detalhes={
+                    "origem": "pdca.medicao.retificar",
+                    "medicao": original.pk,
+                    "retificadora": retificadora.pk,
+                    "valor": str(titulo.valor),
+                },
+            )
+        conta_id = gerar_titulo_de_medicao(retificadora)
+        if conta_id is None:
+            return []
+        setattr(retificadora, campo, conta_id)
+        return [campo]
+
+    corrigido = totais_da_medicao(retificadora)["liquido"]
+    diferenca = _dinheiro(corrigido - titulo.valor)
+    abatido = _ZERO
+    complemento_id = devolucao_id = None
+    resto = _ZERO
+    if diferenca > 0:
+        complemento_id = gerar_titulo_de_medicao(
+            retificadora, valor=diferenca,
+            rotulo=f"complemento da retificação da medição {original.numero}",
+        )
+    elif diferenca < 0:
+        abatido = min(-diferenca, max(_dinheiro(titulo.saldo_aberto), _ZERO))
+        if abatido > 0:
+            valor_antes = titulo.valor
+            titulo.valor = titulo.valor - abatido
+            mudou = ["valor"]
+            if titulo.saldo_aberto <= 0:
+                titulo.status = "QUITADO"
+                mudou.append("status")
+            titulo.save(update_fields=mudou)
+            registrar_auditoria(
+                acao="editar", instance=titulo, usuario=None,
+                detalhes={
+                    "origem": "pdca.medicao.retificar",
+                    "medicao": original.pk,
+                    "retificadora": retificadora.pk,
+                    "valor_antes": str(valor_antes),
+                    "valor_depois": str(titulo.valor),
+                },
+            )
+        resto = -diferenca - abatido
+        if resto > 0:
+            devolucao_id = _gerar_devolucao(retificadora, resto)
+
+    # O título que fala por esta medição: o complemento, ou o original mantido.
+    setattr(retificadora, campo, complemento_id or titulo.pk)
+    campos = [campo]
+    if devolucao_id is not None:
+        inverso = ("conta_pagar_ref" if campo == "conta_receber_ref"
+                   else "conta_receber_ref")
+        setattr(retificadora, inverso, devolucao_id)
+        campos.append(inverso)
+
+    _avisar_erp_de_retificacao_paga(
+        retificadora, titulo, corrigido=corrigido, diferenca=diferenca,
+        abatido=abatido, resto=resto, complemento_id=complemento_id,
+        devolucao_id=devolucao_id,
+    )
+    return campos
+
+
+def _gerar_devolucao(retificadora: Medicao, valor: Decimal) -> int | None:
+    """O pago a mais, no título do sentido inverso — ou `None` sem contraparte.
+
+    Fornecedor e cliente são cadastros diferentes; o elo é o documento (CNPJ/CPF).
+    Inventar um cadastro do outro lado criaria um cliente sem e-mail nem
+    endereço, que é pior do que o aviso pedindo o lançamento.
+    """
+    import re
+
+    from moduloerp.models import ContaPagar, ContaReceber
+
+    def digitos(texto) -> str:
+        return re.sub(r"\D", "", texto or "")
+
+    contrato = retificadora.contrato
+    comum = _comum_do_titulo(
+        retificadora, valor=valor,
+        descricao=(
+            f"Devolução · medição {retificadora.retifica.numero} retificada pela "
+            f"{retificadora.numero} · contrato {contrato.numero} · "
+            f"{contrato.obra.nome_obra}"
+        ),
+    )
+    if contrato.lado == LadoContrato.RECEITA:
+        from fornecedores.models import Fornecedor
+
+        doc = digitos(getattr(contrato.cliente, "cpf_cnpj", ""))
+        alvo = next((
+            f for f in Fornecedor.objects.filter(tenant_id=contrato.tenant_id)
+            .only("pk", "cnpj").iterator()
+            if doc and digitos(f.cnpj) == doc
+        ), None)
+        if alvo is None:
+            return None
+        return ContaPagar.objects.create(fornecedor=alvo, **comum).pk
+
+    from clientes.models import Cliente
+
+    doc = digitos(getattr(contrato.fornecedor, "cnpj", ""))
+    alvo = next((
+        c for c in Cliente.objects.filter(tenant_id=contrato.tenant_id)
+        .only("pk", "cpf_cnpj").iterator()
+        if doc and digitos(c.cpf_cnpj) == doc
+    ), None)
+    if alvo is None:
+        return None
+    return ContaReceber.objects.create(cliente=alvo, **comum).pk
+
+
+def _avisar_erp_de_retificacao_paga(retificadora: Medicao, titulo, *, corrigido,
+                                    diferenca, abatido, resto, complemento_id,
+                                    devolucao_id) -> None:
+    """Aviso de **nível 3** ao financeiro: a medição já paga foi corrigida.
+
+    Vai a quem tem `baixar` no título — a permissão que decide o que fazer com
+    ele. Cada frase diz o que **já foi lançado** e o que falta fazer; o link
+    abre as contas no ERP.
+    """
+    from nucleo import autorizacao
+    from nucleo.models import Notificacao, Usuario
+    from nucleo.notificacoes import criar_notificacao
+
+    receita = retificadora.contrato.lado == LadoContrato.RECEITA
+    pago = "recebidos" if receita else "pagos"
+    partes = [
+        f"A medição {retificadora.retifica.numero} do contrato "
+        f"{retificadora.contrato.numero} já tinha R$ {titulo.valor_pago} {pago} "
+        f"e foi retificada pela medição {retificadora.numero}. Líquido corrigido: "
+        f"R$ {corrigido} (o título {titulo.pk} era de R$ {titulo.valor + abatido})."
+    ]
+    if diferenca == 0:
+        partes.append("O valor do título confere — nada a lançar.")
+    if complemento_id is not None:
+        partes.append(
+            f"Gerado o título {complemento_id} de R$ {diferenca}: complemento a "
+            f"{'receber' if receita else 'pagar'}."
+        )
+    if abatido > 0:
+        partes.append(
+            f"O título {titulo.pk} caiu R$ {abatido} — o saldo em aberto não é mais devido."
+        )
+    if resto > 0:
+        if devolucao_id is not None:
+            partes.append(
+                f"Gerado o título {devolucao_id} de R$ {resto}: devolução a "
+                f"{'pagar ao cliente' if receita else 'receber do fornecedor'}."
+            )
+        else:
+            partes.append(
+                f"R$ {resto} {pago} a mais: a contraparte não está cadastrada como "
+                f"{'fornecedor' if receita else 'cliente'} — cadastre e lance a devolução."
+            )
+    codigo = "erp.conta_receber.baixar" if receita else "erp.conta_pagar.baixar"
+    for usuario in Usuario.objects.filter(tenant_id=retificadora.tenant_id, is_active=True):
+        if autorizacao.pode(usuario, codigo):
+            criar_notificacao(
+                user=usuario, tenant_id=retificadora.tenant_id,
+                titulo="Medição paga foi retificada — conferir no financeiro",
+                mensagem=" ".join(partes),
+                url="/app/erp/contas-a-receber" if receita else "/app/erp/contas-a-pagar",
+                nivel=Notificacao.Nivel.AGIR_JA,
+            )
 
 
 def titulo_da_medicao(medicao: Medicao):
@@ -3300,15 +4942,16 @@ def titulo_da_medicao(medicao: Medicao):
     real: a `ContaPagar` herda `Excluivel` e pode ter ido para a lixeira por
     fora. Quem chama trata como "não há título", que é a verdade.
     """
-    if not medicao.conta_pagar_ref:
+    receita = medicao.contrato.lado == LadoContrato.RECEITA
+    ref = medicao.conta_receber_ref if receita else medicao.conta_pagar_ref
+    if not ref:
         return None
     try:
-        from moduloerp.models import ContaPagar
+        from moduloerp.models import ContaPagar, ContaReceber
     except ImportError:  # instalação sem o módulo financeiro
         return None
-    return ContaPagar.objects.filter(
-        tenant_id=medicao.tenant_id, pk=medicao.conta_pagar_ref,
-    ).first()
+    modelo = ContaReceber if receita else ContaPagar
+    return modelo.objects.filter(tenant_id=medicao.tenant_id, pk=ref).first()
 
 
 def estado_do_titulo(medicao: Medicao) -> dict | None:
@@ -3325,6 +4968,8 @@ def estado_do_titulo(medicao: Medicao) -> dict | None:
         return None
     return {
         "conta_pagar": conta.pk,
+        #: Do lado da receita o título é a receber — a tela muda o rótulo.
+        "lado": medicao.contrato.lado,
         "status": conta.status,
         "status_rotulo": conta.get_status_display(),
         "valor": conta.valor,
@@ -3340,7 +4985,8 @@ def estado_do_titulo(medicao: Medicao) -> dict | None:
     }
 
 
-def gerar_titulo_de_medicao(medicao: Medicao) -> int | None:
+def gerar_titulo_de_medicao(medicao: Medicao, *, valor: Decimal | None = None,
+                           rotulo: str = "") -> int | None:
     """Medição aprovada → `ContaPagar` no ERP. O líquido, não o bruto.
 
     **Importa tarde, de propósito.** O `moduloerp` é importado aqui dentro e não
@@ -3356,47 +5002,62 @@ def gerar_titulo_de_medicao(medicao: Medicao) -> int | None:
     conciliar com o boleto do empreiteiro, que é a razão de a descrição abaixo
     listar as parcelas em vez de só o valor.
     """
-    from moduloerp.models import ContaPagar
+    from moduloerp.models import ContaPagar, ContaReceber
 
     totais = totais_da_medicao(medicao)
-    if totais["liquido"] <= 0:
+    if (totais["liquido"] if valor is None else valor) <= 0:
         # Medição que não paga nada não gera título. É caso real — a
         # retificadora que zera uma medição anterior —, e um `ContaPagar` de
         # R$ 0,00 seria documento que ninguém consegue baixar nem explicar.
         return None
 
     contrato = medicao.contrato
-    vencimento = timezone.localdate() + timedelta(
-        days=contrato.prazo_pagamento_dias or 0
-    )
-    parcelas = ""
-    if totais["retencao"] > 0:
+    parcelas = f" · {rotulo}" if rotulo else ""
+    if medicao.retifica_id is not None and not rotulo:
+        parcelas += f" · retifica a medição {medicao.retifica.numero}"
+    if valor is None and totais["retencao"] > 0:
         parcelas += (
             f" · retenção R$ {totais['retencao']} "
             f"({medicao.retencao_percentual_aplicado}%)"
         )
-    if totais["total_deducoes"] > 0:
+    if valor is None and totais["total_deducoes"] > 0:
         rotulos = ", ".join(
             sorted({d["tipo_rotulo"] for d in totais["deducoes"]})
         )
         parcelas += f" · deduções R$ {totais['total_deducoes']} ({rotulos})"
+    if valor is None and totais["reajuste"] != 0:
+        parcelas = (f" · reajuste R$ {totais['reajuste']}"
+                    + (" (índice provisório)" if totais["reajuste_provisorio"] else "") + parcelas)
 
-    conta = ContaPagar.objects.create(
-        tenant_id=medicao.tenant_id,
-        fornecedor_id=contrato.fornecedor_id,
-        empreendimento_id=getattr(contrato.obra, "empreendimento_id", None),
-        obra_id=contrato.obra_id,  # D.1.4: a medição já sabe de qual obra é
+    comum = _comum_do_titulo(
+        medicao,
+        valor=totais["liquido"] if valor is None else valor,
         descricao=(
             f"Medição {medicao.numero} · contrato {contrato.numero} · "
             f"{contrato.obra.nome_obra} · período "
             f"{medicao.periodo_inicio:%d/%m/%Y}–{medicao.periodo_fim:%d/%m/%Y}"
             + parcelas
         ),
-        valor=totais["liquido"],
-        data_emissao=timezone.localdate(),
-        data_vencimento=vencimento,
     )
-    return conta.pk
+    # Do lado da receita a medição é faturada ao contratante: conta a receber.
+    if contrato.lado == LadoContrato.RECEITA:
+        return ContaReceber.objects.create(cliente_id=contrato.cliente_id, **comum).pk
+    return ContaPagar.objects.create(fornecedor_id=contrato.fornecedor_id, **comum).pk
+
+
+def _comum_do_titulo(medicao: Medicao, *, valor: Decimal, descricao: str) -> dict:
+    contrato = medicao.contrato
+    return {
+        "tenant_id": medicao.tenant_id,
+        "empreendimento_id": getattr(contrato.obra, "empreendimento_id", None),
+        "obra_id": contrato.obra_id,  # D.1.4: a medição já sabe de qual obra é
+        "descricao": descricao,
+        "valor": valor,
+        "data_emissao": timezone.localdate(),
+        "data_vencimento": timezone.localdate() + timedelta(
+            days=contrato.prazo_pagamento_dias or 0
+        ),
+    }
 
 
 # --- Aditivo: o contrato mudando por escrito (PDCA.4) -----------------------
@@ -3462,6 +5123,7 @@ def resumo_do_aditivo(aditivo: "AditivoContrato") -> dict:
 def criar_aditivo(*, contrato: ContratoObra, objeto: str, justificativa: str,
                   por: str = "", data_assinatura: date | None = None,
                   nova_data_fim: date | None = None,
+                  retencao_percentual_nova: Decimal | None = None,
                   itens: list[dict] | None = None) -> AditivoContrato:
     """Abre o aditivo em rascunho. **Não muda saldo nenhum** até ser aprovado."""
     if contrato.status not in (
@@ -3500,10 +5162,42 @@ def criar_aditivo(*, contrato: ContratoObra, objeto: str, justificativa: str,
         justificativa=justificativa,
         data_assinatura=data_assinatura,
         nova_data_fim=nova_data_fim,
+        retencao_percentual_nova=retencao_percentual_nova,
         criado_por=por or "",
     )
     if itens:
         reescrever_itens_do_aditivo(aditivo=aditivo, itens=itens)
+    return aditivo
+
+
+#: O que o cabeçalho do aditivo em rascunho aceita mudar.
+_CAMPOS_DO_CABECALHO = (
+    "objeto", "justificativa", "data_assinatura", "nova_data_fim",
+    "retencao_percentual_nova",
+)
+
+
+def editar_aditivo(*, aditivo: AditivoContrato, **campos) -> AditivoContrato:
+    """O cabeçalho do rascunho — objeto, justificativa, datas e a retenção nova.
+
+    *Achado do dono, 11/10/2026:* o aditivo nascia só com objeto e
+    justificativa, e depois "não tinha como fazer nada". Agora ele se monta
+    como um contrato: o cabeçalho aqui, as linhas em `reescrever_itens_do_aditivo`.
+    """
+    if aditivo.status != AditivoContrato.Status.RASCUNHO:
+        raise ValidationError(
+            f"Só o rascunho se edita (este aditivo está "
+            f"{aditivo.get_status_display().lower()})."
+        )
+    mudou = []
+    for campo in _CAMPOS_DO_CABECALHO:
+        if campo in campos:
+            setattr(aditivo, campo, campos[campo])
+            mudou.append(campo)
+    if "justificativa" in campos and not (aditivo.justificativa or "").strip():
+        raise ValidationError("O aditivo exige justificativa.")
+    if mudou:
+        aditivo.save(update_fields=mudou)
     return aditivo
 
 
@@ -3590,6 +5284,10 @@ def reescrever_itens_do_aditivo(*, aditivo: AditivoContrato,
             codigo_novo=(linha.get("codigo_novo") or "").strip(),
             descricao_nova=(linha.get("descricao_nova") or "").strip(),
             unidade_nova=(linha.get("unidade_nova") or "").strip(),
+            retencao_percentual=(
+                None if linha.get("retencao_percentual") is None
+                else Decimal(str(linha["retencao_percentual"]))
+            ),
             observacao=linha.get("observacao", "") or "",
         ))
 
@@ -3621,9 +5319,9 @@ def validar_aditivo(aditivo: AditivoContrato) -> dict:
     avisos: list[str] = []
 
     linhas = list(aditivo.itens.select_related("item_contrato").all())
-    if not linhas and aditivo.nova_data_fim is None:
+    if not linhas and aditivo.nova_data_fim is None and aditivo.retencao_percentual_nova is None:
         problemas.append(
-            "O aditivo não muda nada: sem linhas e sem nova data de fim."
+            "O aditivo não muda nada: sem linhas, sem nova data de fim e sem nova retenção."
         )
 
     medido = medido_por_item(contrato)
@@ -3791,6 +5489,7 @@ def aplicar_aditivo(aditivo: AditivoContrato) -> dict:
                 ordem=ordem,
                 quantidade_contratada=_ZERO,
                 preco_unitario=linha.preco_unitario or _ZERO,
+                retencao_percentual=linha.retencao_percentual,
             )
             linha.item_contrato = item
             linha.save(update_fields=["item_contrato"])
@@ -3802,10 +5501,25 @@ def aplicar_aditivo(aditivo: AditivoContrato) -> dict:
             item.preco_unitario = linha.preco_unitario or item.preco_unitario
             item.save(update_fields=["preco_unitario", "atualizado_em"])
             precos += 1
+        # A regra de retenção própria da linha vale para qualquer ação — o item
+        # novo já nasceu com ela, acima.
+        if (linha.retencao_percentual is not None
+                and linha.acao != AcaoAditivo.INCLUSAO and linha.item_contrato_id):
+            ItemContrato.objects.filter(pk=linha.item_contrato_id).update(
+                retencao_percentual=linha.retencao_percentual,
+            )
 
+    mudou = []
     if aditivo.nova_data_fim is not None:
         contrato.data_fim = aditivo.nova_data_fim
-        contrato.save(update_fields=["data_fim", "atualizado_em"])
+        mudou.append("data_fim")
+    if aditivo.retencao_percentual_nova is not None:
+        # A cláusula muda daqui para frente: a medição copia o percentual no
+        # dia em que nasce, então as já abertas seguem com o de antes.
+        contrato.retencao_percentual = aditivo.retencao_percentual_nova
+        mudou.append("retencao_percentual")
+    if mudou:
+        contrato.save(update_fields=[*mudou, "atualizado_em"])
 
     return {"itens_criados": criados, "precos_revisados": precos}
 
@@ -3952,8 +5666,10 @@ def _congelar_liberacao(liberacao: LiberacaoRetencao, *,
     if aprovada:
         conta_id = _gerar_titulo_de_liberacao(liberacao)
         if conta_id is not None:
-            liberacao.conta_pagar_ref = conta_id
-            campos.append("conta_pagar_ref")
+            campo = ("conta_receber_ref" if liberacao.contrato.lado == LadoContrato.RECEITA
+                     else "conta_pagar_ref")
+            setattr(liberacao, campo, conta_id)
+            campos.append(campo)
 
     liberacao.save(update_fields=campos)
     return liberacao
@@ -3969,24 +5685,26 @@ def _gerar_titulo_de_liberacao(liberacao: LiberacaoRetencao) -> int | None:
     vencimento próprio. O extrato do empreiteiro mostra duas entradas porque
     houve dois pagamentos.
     """
-    from moduloerp.models import ContaPagar
+    from moduloerp.models import ContaPagar, ContaReceber
 
     contrato = liberacao.contrato
-    conta = ContaPagar.objects.create(
-        tenant_id=liberacao.tenant_id,
-        fornecedor_id=contrato.fornecedor_id,
-        empreendimento_id=getattr(contrato.obra, "empreendimento_id", None),
-        obra_id=contrato.obra_id,  # D.1.4: a medição já sabe de qual obra é
-        descricao=(
+    comum = {
+        "tenant_id": liberacao.tenant_id,
+        "empreendimento_id": getattr(contrato.obra, "empreendimento_id", None),
+        "obra_id": contrato.obra_id,  # D.1.4: a medição já sabe de qual obra é
+        "descricao": (
             f"Liberação de retenção ({contrato.get_retencao_natureza_display()}) · "
             f"contrato {contrato.numero} · {contrato.obra.nome_obra} · "
             f"{liberacao.condicao_atendida[:120]}"
         ),
-        valor=liberacao.valor,
-        data_emissao=timezone.localdate(),
-        data_vencimento=liberacao.data,
-    )
-    return conta.pk
+        "valor": liberacao.valor,
+        "data_emissao": timezone.localdate(),
+        "data_vencimento": liberacao.data,
+    }
+    # Do lado da receita é a caução que o contratante devolve: a receber.
+    if contrato.lado == LadoContrato.RECEITA:
+        return ContaReceber.objects.create(cliente_id=contrato.cliente_id, **comum).pk
+    return ContaPagar.objects.create(fornecedor_id=contrato.fornecedor_id, **comum).pk
 
 
 # --- Cancelamento: retirar o documento E o título que ele gerou -------------
@@ -4030,6 +5748,23 @@ def cancelar_medicao(*, medicao: Medicao, motivo: str = "", por: str = "",
         )
 
     era_aprovada = medicao.status == Medicao.Status.APROVADA
+    if medicao.retifica_id is not None:
+        if era_aprovada:
+            raise ValidationError(
+                f"A medição {medicao.numero} já substituiu a medição "
+                f"{medicao.retifica.numero} e mexeu no financeiro. Para corrigir de "
+                f"novo, retifique esta — a correção da correção também é documento."
+            )
+        # *Decisão do dono, 11/10/2026:* retificadora retirada antes de valer não
+        # deixa rastro — nunca produziu título nem efeito, e guardá-la como
+        # "cancelada" era só lixo no contrato. A escada dela vai junto (a
+        # `GenericRelation` apaga os pedidos).
+        pk, numero = medicao.pk, medicao.numero
+        medicao.delete()
+        return {
+            "medicao": pk, "numero": numero, "status": "excluida",
+            "excluida": True, "titulo_cancelado": None, "era_aprovada": False,
+        }
     titulo = titulo_da_medicao(medicao) if era_aprovada else None
     motivo = (motivo or "").strip()
 
@@ -4096,27 +5831,26 @@ def cancelar_medicao(*, medicao: Medicao, motivo: str = "", por: str = "",
 
 @transaction.atomic
 def retificar(*, medicao: Medicao, motivo: str, por: str = "") -> Medicao:
-    """Abre a medição que corrige uma congelada (§11.5).
+    """Abre a medição que corrige uma aprovada (§11.5) — **a medição inteira**.
 
-    **Nasce vazia, e é de propósito.** Copiar as linhas da original com sinal
-    trocado pareceria conveniência e seria uma armadilha: a retificação quase
-    nunca é "estorna tudo" — é "o item 4.2 mediu 120 e eram 95". Uma grade
-    pré-preenchida com o estorno completo convida a submeter sem ler, e o que se
-    submete aqui vira título a pagar.
+    *Decisão do dono, 11/10/2026:* a retificadora **substitui** a original. Nasce
+    como cópia dela — linhas, estoque, descontos, custo, retenção e taxa do dia
+    em que a original foi feita (a correção é do mesmo período) — e o gestor
+    corrige o que estava errado. Aprovada, a original vira `RETIFICADA` e sai de
+    toda soma (`_fechar_retificacao`); só uma medição vale por período.
 
-    O que a retificadora traz da original é o **período** (é o mesmo que está
-    sendo corrigido) e o vínculo `retifica`, que é o que mantém as duas
-    legíveis lado a lado — o mesmo desenho do estorno do apontamento.
+    Enquanto a retificadora não é aprovada, a original continua valendo — e se
+    ela for retirada antes disso, é apagada de vez (`cancelar_medicao`).
     """
     if medicao.status != Medicao.Status.APROVADA:
         raise ValidationError(
             "Só medição aprovada se retifica. Rascunho se edita; medição "
-            "reprovada ou cancelada já não produz efeito."
+            "reprovada, cancelada ou já retificada não vale mais."
         )
     if not (motivo or "").strip():
         raise ValidationError("A retificação exige motivo.")
     ja_existe = Medicao.objects.filter(retifica=medicao).exclude(
-        status=Medicao.Status.CANCELADA
+        status__in=(Medicao.Status.CANCELADA, Medicao.Status.REPROVADA)
     ).first()
     if ja_existe is not None:
         raise ValidationError(
@@ -4128,7 +5862,7 @@ def retificar(*, medicao: Medicao, motivo: str, por: str = "") -> Medicao:
     proximo = (
         Medicao.todos.filter(contrato=contrato).aggregate(m=Max("numero"))["m"] or 0
     ) + 1
-    return Medicao.objects.create(
+    nova = Medicao.objects.create(
         tenant_id=contrato.tenant_id,
         contrato=contrato,
         numero=proximo,
@@ -4136,10 +5870,40 @@ def retificar(*, medicao: Medicao, motivo: str, por: str = "") -> Medicao:
         periodo_fim=medicao.periodo_fim,
         retifica=medicao,
         retencao_percentual_aplicado=medicao.retencao_percentual_aplicado,
+        custo_reembolsavel=medicao.custo_reembolsavel,
         taxa_administracao_aplicada=medicao.taxa_administracao_aplicada,
+        custo_origem=medicao.custo_origem,
+        valor_reajuste=medicao.valor_reajuste,
+        reajuste_memoria=medicao.reajuste_memoria,
+        reajuste_provisorio=medicao.reajuste_provisorio,
         apurada_por=por or "",
         observacao=f"Retifica a medição {medicao.numero}: {motivo}",
     )
+    ItemMedicao.objects.bulk_create([
+        ItemMedicao(
+            tenant_id=nova.tenant_id, medicao=nova,
+            item_contrato_id=linha.item_contrato_id,
+            quantidade=linha.quantidade,
+            quantidade_estocada=linha.quantidade_estocada,
+            quantidade_proposta=linha.quantidade_proposta,
+            preco_unitario=linha.preco_unitario,
+            percentual_avanco_periodo=linha.percentual_avanco_periodo,
+            retencao_percentual=linha.retencao_percentual,
+            origem=linha.origem,
+            observacao=linha.observacao,
+        )
+        for linha in medicao.itens.all()
+    ])
+    DeducaoMedicao.objects.bulk_create([
+        DeducaoMedicao(
+            tenant_id=nova.tenant_id, medicao=nova, tipo=d.tipo,
+            descricao=d.descricao, base_calculo=d.base_calculo,
+            percentual=d.percentual, valor=d.valor,
+        )
+        for d in medicao.deducoes.all()
+    ])
+
+    return nova
 
 
 def saldo_do_contrato(contrato: ContratoObra) -> dict:
@@ -4156,14 +5920,21 @@ def saldo_do_contrato(contrato: ContratoObra) -> dict:
 
     por_status: dict[str, Decimal] = {}
     deducoes_aprovadas = _ZERO
+    liquido_aprovado = _ZERO
     estocado_valor = _ZERO
     for medicao in contrato.medicoes.all():
         totais = totais_da_medicao(medicao)
-        por_status[medicao.status] = (
-            por_status.get(medicao.status, _ZERO) + totais["bruto"]
-        )
+        bruto = totais["bruto"]
+        if medicao.retifica_id is not None and medicao.status != Medicao.Status.APROVADA:
+            # A retificadora que ainda não vale só **muda** o que a original
+            # mede — somar a corrigida inteira contaria o período duas vezes.
+            bruto -= totais_da_medicao(medicao.retifica)["bruto"]
+        por_status[medicao.status] = por_status.get(medicao.status, _ZERO) + bruto
         if medicao.status == Medicao.Status.APROVADA:
             deducoes_aprovadas += totais["total_deducoes"]
+            # A retificada está fora (status próprio): a retificadora já é a
+            # medição corrigida inteira.
+            liquido_aprovado += totais["liquido"]
 
     aprovado = por_status.get(Medicao.Status.APROVADA, _ZERO)
     em_escada = por_status.get(Medicao.Status.EM_APROVACAO, _ZERO)
@@ -4193,6 +5964,7 @@ def saldo_do_contrato(contrato: ContratoObra) -> dict:
         "valor_original": original,
         "valor_aditivado": aditivado,
         "medido_aprovado": aprovado,
+        "liquido_aprovado": liquido_aprovado,
         "medido_em_aprovacao": em_escada,
         "medido_rascunho": rascunho,
         "deducoes_aprovadas": _dinheiro(deducoes_aprovadas),
@@ -4205,12 +5977,133 @@ def saldo_do_contrato(contrato: ContratoObra) -> dict:
         "retencao": retencao_disponivel(contrato),
         "itens": len(itens),
         "itens_fechados": fechados,
-        "medicoes": contrato.medicoes.count(),
+        "medicoes": contrato.medicoes.filter(retifica__isnull=True).count(),
         "aditivos": contrato.aditivos.filter(
             status=AditivoContrato.Status.APROVADO,
         ).count(),
         "aditivos_abertos": abertos,
         "periodo_sugerido": sugerir_periodo(contrato),
+    }
+
+
+def ficha_do_contrato(contrato: ContratoObra) -> dict:
+    """**A ficha do contrato** — tudo o que aconteceu com ele, numa leitura.
+
+    *Achado do dono, 11/10/2026:* "deveria poder ver os detalhes do contrato,
+    não só uma medição". O saldo já vem na carteira; o que faltava é o que mora
+    fora do PDCA e o que é história:
+
+    - **o financeiro** — os títulos que as medições geraram no ERP, quanto já
+      saiu e quanto falta (um título é contado uma vez, mesmo quando a
+      retificadora aponta para o da original já pago);
+    - **a linha do tempo** — medições (inclusive a retificada, que aponta para
+      a que a substituiu), aditivos e liberações de retenção, em ordem.
+    """
+    eventos: list[dict] = []
+    titulos: dict[int, dict] = {}
+    substituta: dict[int, int] = {}
+    medicoes = list(contrato.medicoes.select_related("retifica").order_by("numero"))
+    for m in medicoes:
+        if m.retifica_id is not None and m.status in _EM_VOO:
+            substituta[m.retifica_id] = m.numero
+
+    for m in medicoes:
+        totais = totais_da_medicao(m)
+        titulo = None
+        if m.status in (Medicao.Status.APROVADA, Medicao.Status.RETIFICADA):
+            titulo = estado_do_titulo(m)
+            if titulo is not None:
+                titulos[titulo["conta_pagar"]] = titulo
+        eventos.append({
+            "tipo": "medicao",
+            "id": m.pk,
+            "numero": m.numero,
+            "data": (m.congelada_em or m.apurada_em).date(),
+            "rotulo": f"Medição {m.numero}",
+            "detalhe": (
+                f"{m.periodo_inicio:%d/%m/%Y} a {m.periodo_fim:%d/%m/%Y}"
+                + (f" · retifica a {m.retifica.numero}" if m.retifica_id else "")
+                + (f" · substituída pela {substituta[m.pk]}" if m.pk in substituta else "")
+            ),
+            "status": m.status,
+            "status_rotulo": m.get_status_display(),
+            "bruto": totais["bruto"],
+            "liquido": totais["liquido"],
+            "titulo": titulo,
+        })
+
+    for a in contrato.aditivos.all():
+        resumo = resumo_do_aditivo(a)
+        eventos.append({
+            "tipo": "aditivo",
+            "id": a.pk,
+            "numero": a.numero,
+            "data": a.data_assinatura or a.criado_em.date(),
+            "rotulo": f"Aditivo {a.numero}",
+            "detalhe": a.objeto[:140],
+            "status": a.status,
+            "status_rotulo": a.get_status_display(),
+            "bruto": resumo["liquido"],
+            "liquido": resumo["liquido"],
+            "titulo": None,
+        })
+
+    for lib in contrato.liberacoes.all():
+        eventos.append({
+            "tipo": "liberacao",
+            "id": lib.pk,
+            "numero": None,
+            "data": lib.data,
+            "rotulo": "Liberação de retenção",
+            "detalhe": lib.condicao_atendida[:140],
+            "status": lib.status,
+            "status_rotulo": lib.get_status_display(),
+            "bruto": lib.valor,
+            "liquido": lib.valor,
+            "titulo": None,
+        })
+
+    eventos.sort(key=lambda e: (e["data"], e["tipo"] != "aditivo", e["numero"] or 0))
+    vivos = [t for t in titulos.values() if t["status"] != "CANCELADO"]
+
+    # Os itens com o medido de cada um — o mesmo acumulado da trava da medição
+    # (aprovadas e em escada, a retificada fora).
+    itens = list(contrato.itens.all())
+    atual = contratado_atual_por_item(contrato, itens)
+    medido = medido_por_item(contrato)
+    linhas = []
+    for item in sorted(itens, key=lambda i: (i.ordem, i.codigo)):
+        contratado = atual.get(item.pk, item.quantidade_contratada)
+        ja = medido.get(item.pk, _ZERO)
+        linhas.append({
+            "item_contrato_id": item.pk,
+            "codigo": item.codigo,
+            "descricao": item.descricao,
+            "unidade": item.unidade,
+            "preco_unitario": item.preco_unitario,
+            "contratado": contratado,
+            "medido": ja,
+            "saldo": contratado - ja,
+            "percentual": (
+                _dinheiro(ja * Decimal("100") / contratado) if contratado else None
+            ),
+            "valor_contratado": _dinheiro(contratado * item.preco_unitario),
+            "valor_medido": _dinheiro(ja * item.preco_unitario),
+        })
+
+    return {
+        "contrato_id": contrato.pk,
+        "lado": contrato.lado,
+        "itens": linhas,
+        "financeiro": {
+            "titulos": len(vivos),
+            "emitido": _dinheiro(sum((t["valor"] for t in vivos), _ZERO)),
+            "pago": _dinheiro(sum((t["valor_pago"] for t in vivos), _ZERO)),
+            "em_aberto": _dinheiro(sum(
+                (max(t["saldo_aberto"], _ZERO) for t in vivos), _ZERO,
+            )),
+        },
+        "linha_do_tempo": eventos,
     }
 
 
@@ -4244,7 +6137,8 @@ def planilha_editavel(contrato: ContratoObra) -> tuple[bool, str]:
             f"O contrato está {contrato.get_status_display().lower()} — a "
             f"planilha contratual não muda mais."
         )
-    em_voo = contrato.medicoes.filter(status__in=_EM_VOO).count()
+    # A retificadora corrige uma medição; não é uma medição a mais.
+    em_voo = contrato.medicoes.filter(status__in=_EM_VOO, retifica__isnull=True).count()
     if em_voo:
         return False, (
             f"Este contrato já tem {em_voo} medição(ões) aprovada(s) ou em "
@@ -4264,6 +6158,152 @@ def validar_teto_de_itens(contrato: ContratoObra, *, acrescentando: int = 1) -> 
             f"O contrato já tem {_milhar(atual)} itens e o teto do seu plano é "
             f"{_milhar(PDCA_TETO_ITENS_POR_CONTRATO)}."
         )
+
+
+def ativar_contrato(contrato: ContratoObra) -> ContratoObra:
+    """Rascunho → vigente. *Achado do dono, 10/10/2026:* "o contrato de
+    medição fica em rascunho eternamente" — o status só mudava pela API, e
+    contrato em rascunho não aceita medição.
+
+    Vigente precisa do que a medição usa: no **unitário**, ao menos um item na
+    planilha; no **global** e na **administração**, o valor fechado (a
+    constraint do model já o exige). A planilha continua editável depois — a
+    trava dela é a primeira medição, não o status (`planilha_editavel`).
+    """
+    if contrato.status != ContratoObra.Status.RASCUNHO:
+        raise ValidationError(
+            f"O contrato já está {contrato.get_status_display().lower()}."
+        )
+    if contrato.regime == RegimeContrato.UNITARIO and not contrato.itens.exists():
+        raise ValidationError(
+            "O contrato por preço unitário mede item a item: monte a planilha antes "
+            "de torná-lo vigente."
+        )
+    if contrato.regime != RegimeContrato.UNITARIO and not contrato.valor_global:
+        raise ValidationError("Informe o valor fechado do contrato antes de torná-lo vigente.")
+    contrato.status = ContratoObra.Status.VIGENTE
+    contrato.save(update_fields=["status", "atualizado_em"])
+    return contrato
+
+
+def fontes_da_planilha(contrato: ContratoObra) -> dict:
+    """De onde a planilha contratual pode puxar itens — **pronto para escolher**.
+
+    *Decisão do dono, 10/10/2026:* os itens vêm "do orçamento, das atividades do
+    plano, colar do Excel ou digitar". Aqui vão as duas primeiras listas: os
+    itens analíticos do orçamento vigente da obra (descrição, unidade,
+    quantidade e preço unitário com BDI) e as atividades folha do plano em
+    vigor. O que já está no contrato vem marcado, para a tela não oferecer de
+    novo. As mesmas listas servem ao seletor de vínculo de cada linha.
+    """
+    from moduloorcamento.models import ItemOrcado
+    from moduloorcamento.planilha import orcamento_vigente
+
+    from .etapas import plano_em_vigor
+
+    ja_orcados = set(contrato.itens.exclude(item_orcado=None).values_list("item_orcado_id", flat=True))
+    ja_atividades = set(contrato.itens.exclude(atividade=None).values_list("atividade_id", flat=True))
+
+    orcamento = orcamento_vigente(contrato.tenant_id, contrato.obra_id)
+    itens_orcados = []
+    if orcamento is not None:
+        for item in (ItemOrcado.objects
+                     .filter(orcamento=orcamento, tipo_linha=ItemOrcado.TipoLinha.ANALITICO)
+                     .order_by("ordem", "codigo_eap", "item_orcado_id")):
+            quantidade = item.quantidade or _ZERO
+            preco = (item.total_com_bdi / quantidade) if quantidade else _ZERO
+            itens_orcados.append({
+                "item_orcado": item.pk, "codigo": item.codigo_eap, "descricao": item.descricao,
+                "unidade": item.unidade, "quantidade": quantidade,
+                "preco_unitario": preco.quantize(Decimal("0.0001")),
+                "ja_no_contrato": item.pk in ja_orcados,
+            })
+
+    plano = plano_em_vigor(contrato.obra_id, contrato.tenant_id)
+    atividades = []
+    if plano is not None:
+        com_filhos = set(plano.atividades.exclude(pai=None).values_list("pai_id", flat=True))
+        for a in plano.atividades.filter(eh_marco=False).order_by("ordem", "codigo"):
+            if a.pk in com_filhos:
+                continue
+            atividades.append({
+                "atividade": a.pk, "codigo": a.codigo, "nome": a.nome,
+                "ja_no_contrato": a.pk in ja_atividades,
+            })
+    return {
+        "orcamento": None if orcamento is None else {"id": orcamento.pk, "descricao": str(orcamento)},
+        "itens_orcados": itens_orcados,
+        "plano": None if plano is None else {"id": plano.pk, "versao": plano.versao},
+        "atividades": atividades,
+    }
+
+
+@transaction.atomic
+def incluir_na_planilha(contrato: ContratoObra, linhas: list[dict]) -> list[ItemContrato]:
+    """Muitas linhas de uma vez — do orçamento, do plano ou coladas do Excel.
+
+    Tudo ou nada, e a recusa diz a linha: um código repetido (no contrato ou no
+    próprio lote), quantidade zero, vínculo de outra obra. O teto do plano vale
+    para o lote inteiro.
+    """
+    aberta, motivo = planilha_editavel(contrato)
+    if not aberta:
+        raise ValidationError(motivo)
+    if not linhas:
+        raise ValidationError("Nenhuma linha para incluir.")
+    validar_teto_de_itens(contrato, acrescentando=len(linhas))
+
+    existentes = set(contrato.itens.values_list("codigo", flat=True))
+    vistos: set[str] = set()
+    problemas: list[str] = []
+    ordem = (contrato.itens.aggregate(m=Max("ordem"))["m"] or 0)
+    novos = []
+    from moduloorcamento.models import ItemOrcado
+
+    for n, linha in enumerate(linhas, start=1):
+        codigo = str(linha.get("codigo") or "").strip()[:40]
+        descricao = str(linha.get("descricao") or "").strip()[:255]
+        try:
+            quantidade = Decimal(str(linha.get("quantidade_contratada") or "0").replace(",", "."))
+            preco = Decimal(str(linha.get("preco_unitario") or "0").replace(",", "."))
+        except Exception:  # noqa: BLE001 — número ilegível vira recusa com a linha
+            problemas.append(f"Linha {n}: quantidade ou preço ilegível.")
+            continue
+        if not codigo or not descricao:
+            problemas.append(f"Linha {n}: falta o código ou a descrição.")
+            continue
+        if codigo in existentes or codigo in vistos:
+            problemas.append(f"Linha {n}: o item {codigo} já está na planilha.")
+            continue
+        if quantidade <= 0:
+            problemas.append(f"Linha {n} ({codigo}): a quantidade precisa ser maior que zero.")
+            continue
+        if preco < 0:
+            problemas.append(f"Linha {n} ({codigo}): preço negativo não é item — é aditivo de supressão.")
+            continue
+        item_orcado_id = linha.get("item_orcado") or None
+        atividade_id = linha.get("atividade") or None
+        if item_orcado_id and not ItemOrcado.objects.filter(
+            pk=item_orcado_id, orcamento__obra_id=contrato.obra_id,
+        ).exists():
+            problemas.append(f"Linha {n} ({codigo}): o item orçado não é desta obra.")
+            continue
+        if atividade_id and not Atividade.objects.filter(
+            pk=atividade_id, cronograma__obra_id=contrato.obra_id,
+        ).exists():
+            problemas.append(f"Linha {n} ({codigo}): a atividade não é desta obra.")
+            continue
+        vistos.add(codigo)
+        ordem += 1
+        novos.append(ItemContrato(
+            tenant_id=contrato.tenant_id, contrato=contrato, codigo=codigo,
+            descricao=descricao, unidade=str(linha.get("unidade") or "").strip()[:20],
+            quantidade_contratada=quantidade, preco_unitario=preco, ordem=ordem,
+            item_orcado_id=item_orcado_id, atividade_id=atividade_id,
+        ))
+    if problemas:
+        raise ValidationError(problemas)
+    return ItemContrato.objects.bulk_create(novos)
 
 
 # ---------------------------------------------------------------------------
@@ -4289,6 +6329,12 @@ CAUSAS_DE_FABRICA: tuple[tuple[str, str, str], ...] = (
     ("PLAN-MAL-DIM", "Serviço mal dimensionado no plano", "planejamento"),
     ("PLAN-PRE-REQ", "Pré-requisito não concluído", "planejamento"),
     ("PLAN-MUDANCA", "Mudança de prioridade na semana", "planejamento"),
+    # D192 — a semana perdida por interdição de segurança caía em `EXTERNO`, ao
+    # lado da chuva, e o ranking empurrava para "não foi culpa nossa" o caso em
+    # que foi. Liberar a frente com segurança é trabalho do make-ready, e por
+    # isso a causa mora em planejamento — e não num nono valor de categoria,
+    # que mexeria no eixo de todo gráfico de PPC já publicado.
+    ("SEG-INTERD", "Frente interditada por risco de segurança", "planejamento"),
     ("MO-FALTA", "Falta de efetivo", "mao_de_obra"),
     ("MO-PRODUT", "Produtividade abaixo da prevista", "mao_de_obra"),
     ("MO-ABSENT", "Absenteísmo", "mao_de_obra"),
@@ -4416,6 +6462,46 @@ def remover_restricao(*, restricao: Restricao, por: str = "",
 
 
 @transaction.atomic
+def reabrir_restricao(*, restricao: Restricao, por: str = "") -> Restricao:
+    """A trava que voltou: removida → **aberta de novo**.
+
+    O material que "chegou" era o errado, o clique em *Resolvida* foi na linha
+    errada. Desfazer a remoção é corrigir o log, não reescrevê-lo: a reabertura
+    fica carimbada (quem, quando, quantas vezes) e a nota da remoção anterior
+    continua lá — é ela que explica por que alguém achou que estava resolvida.
+
+    Só a **removida** volta. A cancelada foi declarada "não era restrição";
+    trazê-la de volta é registrar uma nova.
+    """
+    if restricao.status != Restricao.Status.REMOVIDA:
+        raise ValidationError(
+            f"Esta restrição está {restricao.get_status_display().lower()} — só "
+            f"uma restrição resolvida pode voltar a ser aberta."
+        )
+    obra_id = getattr(getattr(restricao.atividade, "cronograma", None), "obra_id", None)
+    if obra_id:
+        validar_teto_de_restricoes(obra_id, tenant_id=restricao.tenant_id)
+    restricao.status = Restricao.Status.ABERTA
+    restricao.reaberta_em = timezone.now()
+    restricao.reaberta_por = por or ""
+    restricao.vezes_reaberta = (restricao.vezes_reaberta or 0) + 1
+    restricao.save(update_fields=[
+        "status", "reaberta_em", "reaberta_por", "vezes_reaberta",
+    ])
+    return restricao
+
+
+#: Os tipos de restrição que se destravam **comprando** — e o tipo de demanda
+#: que cada um abre no Suprimentos. Equipamento é quase sempre locação e mão de
+#: obra é empreitada: as duas são contratação de serviço, não compra de insumo.
+TIPOS_QUE_VIRAM_COMPRA = {
+    TipoRestricao.MATERIAL: "material",
+    TipoRestricao.EQUIPAMENTO: "servico",
+    TipoRestricao.MAO_DE_OBRA: "servico",
+}
+
+
+@transaction.atomic
 def gerar_demanda_scm(*, restricao: Restricao, quantidade=None,
                       unidade: str = "", solicitante=None) -> int:
     """Restrição de material → **`Demanda` no SCM**. O seam da §6, vivo.
@@ -4425,9 +6511,10 @@ def gerar_demanda_scm(*, restricao: Restricao, quantidade=None,
     deixar de carregar numa instalação que não contrate o SCM — e o seam existe
     para ser atravessável nos dois sentidos, ou em nenhum.
 
-    **Só material e equipamento.** Restrição de projeto não vira compra (vira
-    RFI, que é da Prancheta), e restrição de clima não vira nada. Oferecer o
-    botão em todas faria a demanda virar lixeira de pendência.
+    **Só o que se destrava comprando** (`TIPOS_QUE_VIRAM_COMPRA`): material,
+    equipamento (locação) e mão de obra (empreitada). Restrição de projeto não
+    vira compra (vira RFI, que é da Prancheta), e restrição de clima não vira
+    nada. Oferecer o botão em todas faria a demanda virar lixeira de pendência.
 
     **Uma restrição gera uma demanda.** Chamar de novo devolve a que já existe:
     o botão fica na tela e alguém clica duas vezes, e duas demandas para a mesma
@@ -4437,13 +6524,13 @@ def gerar_demanda_scm(*, restricao: Restricao, quantidade=None,
 
     if restricao.demanda_scm_id:
         return restricao.demanda_scm_id
-    if restricao.tipo not in (TipoRestricao.MATERIAL, TipoRestricao.EQUIPAMENTO):
+    if restricao.tipo not in TIPOS_QUE_VIRAM_COMPRA:
         raise ValidationError(
             f"Restrição de {restricao.get_tipo_display().lower()} não vira "
-            f"compra. Só material e equipamento geram demanda no Suprimentos — "
-            f"o resto se destrava com projeto, decisão ou licença, e forçar uma "
-            f"demanda aqui encheria a fila de compras de pendência que ninguém "
-            f"compra."
+            f"compra. Só material, equipamento e mão de obra geram demanda no "
+            f"Suprimentos — o resto se destrava com projeto, decisão ou licença, "
+            f"e forçar uma demanda aqui encheria a fila de compras de pendência "
+            f"que ninguém compra."
         )
     if restricao.status != Restricao.Status.ABERTA:
         raise ValidationError(
@@ -4455,7 +6542,7 @@ def gerar_demanda_scm(*, restricao: Restricao, quantidade=None,
     obra = getattr(getattr(atividade, "cronograma", None), "obra", None)
     demanda = Demanda.objects.create(
         tenant_id=restricao.tenant_id,
-        tipo=Demanda.Tipo.MATERIAL,
+        tipo=TIPOS_QUE_VIRAM_COMPRA[restricao.tipo],
         status=Demanda.Status.RASCUNHO,
         origem=Demanda.Origem.RESTRICAO,
         solicitante=solicitante if getattr(solicitante, "pk", None) else None,
@@ -5360,9 +7447,53 @@ def candidatos_da_semana(*, programacao: ProgramacaoSemanal) -> list[dict]:
     ]
 
 
+def andamento_dos_itens(programacao: ProgramacaoSemanal) -> dict[int, dict]:
+    """`{item: {atual, inicio, meta}}` — o que o julgamento por % precisa saber.
+
+    - `atual`: o acumulado da atividade hoje (a cadeia de versões, pelo código,
+      a mesma conta do `avanco_da_atividade`);
+    - `inicio`: o acumulado quando a semana começou — o atual menos o que se
+      apontou dentro dela;
+    - `meta`: onde a atividade tinha de chegar. Com avanço prometido, início +
+      prometido; sem ele, o compromisso era **concluir** — 100%.
+
+    Uma consulta por versão do plano, não uma por cartão.
+    """
+    itens = list(programacao.itens.select_related("atividade__cronograma"))
+    if not itens:
+        return {}
+    por_cronograma: dict[int, list] = {}
+    for item in itens:
+        por_cronograma.setdefault(item.atividade.cronograma_id, []).append(item)
+
+    resposta: dict[int, dict] = {}
+    for grupo in por_cronograma.values():
+        cadeia = _cadeia_de_versoes(grupo[0].atividade.cronograma)
+        codigos = {i.atividade.codigo for i in grupo}
+        base = ApontamentoAvanco.objects.filter(
+            atividade__cronograma_id__in=cadeia, atividade__codigo__in=codigos,
+        )
+        atual = dict(base.values("atividade__codigo")
+                     .annotate(t=Sum("percentual")).values_list("atividade__codigo", "t"))
+        na_semana = dict(base.filter(data__gte=programacao.semana_inicio,
+                                     data__lte=programacao.semana_fim)
+                         .values("atividade__codigo")
+                         .annotate(t=Sum("percentual")).values_list("atividade__codigo", "t"))
+        for item in grupo:
+            codigo = item.atividade.codigo
+            agora = atual.get(codigo) or _ZERO
+            inicio = agora - (na_semana.get(codigo) or _ZERO)
+            if item.percentual_previsto is not None:
+                meta = min(Decimal("100"), inicio + item.percentual_previsto)
+            else:
+                meta = Decimal("100")
+            resposta[item.pk] = {"atual": agora, "inicio": inicio, "meta": meta}
+    return resposta
+
+
 @transaction.atomic
 def julgar_itens(*, programacao: ProgramacaoSemanal,
-                 julgamentos: list[dict]) -> dict:
+                 julgamentos: list[dict], por: str = "") -> dict:
     """Julga vários compromissos numa transação — o gesto do fim da semana.
 
     Vem em lote porque é assim que a reunião acontece: percorre-se o quadro
@@ -5372,6 +7503,19 @@ def julgar_itens(*, programacao: ProgramacaoSemanal,
     A regra de causa é conferida **aqui e no banco** (a `CheckConstraint` do
     modelo): aqui para a mensagem ser legível, lá porque o comando de bancada e
     a importação entram por outras portas.
+
+    **Pelo % concluído** *(decisão do dono, 09/10/2026)*. Quem julga diz quanto
+    da atividade está pronto; o servidor:
+
+    1. lança a **diferença** para o acumulado como apontamento de avanço — o
+       físico da obra anda com o julgamento, sem digitar duas vezes. Menor que
+       o acumulado é recusado: o livro é append-only, e corrigir apontamento é
+       estorno com motivo;
+    2. decide o `cumprido` do PPC contra a meta da semana
+       (`andamento_dos_itens`). O "saiu / não saiu" deixa de ser digitado.
+
+    A linha sem `percentual_concluido` segue o caminho binário de antes — é o
+    que o comando de bancada e a tela antiga mandam.
     """
     if programacao.status != ProgramacaoSemanal.Status.COMPROMETIDA:
         raise ValidationError(
@@ -5389,6 +7533,10 @@ def julgar_itens(*, programacao: ProgramacaoSemanal,
     )
     erros: list[str] = []
     a_gravar: list[ItemProgramacao] = []
+    a_apontar: list[tuple[ItemProgramacao, Decimal]] = []
+    andamento = (andamento_dos_itens(programacao)
+                 if any(l.get("percentual_concluido") is not None for l in julgamentos)
+                 else {})
     for linha in julgamentos:
         item = por_id.get(linha.get("item"))
         if item is None:
@@ -5398,12 +7546,41 @@ def julgar_itens(*, programacao: ProgramacaoSemanal,
             continue
         cumprido = linha.get("cumprido")
         causa_id = linha.get("causa")
+        concluido = linha.get("percentual_concluido")
+        if concluido is not None:
+            concluido = Decimal(str(concluido))
+            conta = andamento.get(item.pk, {"atual": _ZERO, "meta": Decimal("100")})
+            if concluido < 0 or concluido > 100:
+                erros.append(f"«{item.atividade.nome}»: o concluído vai de 0 a 100%.")
+                continue
+            if concluido < conta["atual"]:
+                erros.append(
+                    f"«{item.atividade.nome}» já tem {conta['atual']:.2f}% apontado — o "
+                    f"concluído não pode ser menor. Se o apontamento está errado, "
+                    f"estorne-o no avanço da atividade."
+                )
+                continue
+            if item.atividade.eh_marco and concluido not in (_ZERO, Decimal("100")):
+                erros.append(
+                    f"«{item.atividade.nome}» é um marco: 0% (não aconteceu) ou 100%."
+                )
+                continue
+            cumprido = concluido >= conta["meta"]
+            if cumprido:
+                causa_id = None
+            if concluido > conta["atual"]:
+                a_apontar.append((item, concluido - conta["atual"]))
+            item.percentual_concluido = concluido
         if cumprido is None:
             erros.append(f"Diga se «{item.atividade.nome}» saiu ou não.")
             continue
         if not cumprido and not causa_id:
             erros.append(
-                f"«{item.atividade.nome}» não saiu e não tem causa. É a "
+                f"«{item.atividade.nome}» "
+                + (f"ficou em {concluido:.0f}%, abaixo da meta de "
+                   f"{andamento[item.pk]['meta']:.0f}%, "
+                   if concluido is not None and item.pk in andamento else "não saiu ")
+                + f"e não tem causa. É a "
                 f"resposta de onde sai o ranking que muda a obra — sem ela, o "
                 f"Last Planner vira marcar caixinha."
             )
@@ -5424,11 +7601,35 @@ def julgar_itens(*, programacao: ProgramacaoSemanal,
     if erros:
         raise ValidationError(erros)
 
+    # O avanço que o julgamento disse — a diferença, com a data dentro da
+    # semana para entrar na prova "apontou" do cartão. Dois cartões da mesma
+    # atividade (locais diferentes) não lançam a mesma diferença duas vezes.
+    lancado: dict[str, Decimal] = {}
+    data = min(timezone.localdate(), programacao.semana_fim)
+    apontamentos = 0
+    for item, delta in a_apontar:
+        codigo = item.atividade.codigo
+        delta -= lancado.get(codigo, _ZERO)
+        if delta <= 0:
+            continue
+        registrar_apontamento(
+            atividade=item.atividade, percentual=delta, data=data,
+            local=item.local, observacao=(
+                f"Julgamento da semana {programacao.semana_inicio:%d/%m}: "
+                f"{item.percentual_concluido:.0f}% concluído."
+            ),
+            por=por, sincronizar=False,
+        )
+        lancado[codigo] = lancado.get(codigo, _ZERO) + delta
+        apontamentos += 1
+    if apontamentos:
+        sincronizar_percentual_das_etapas(a_apontar[0][0].atividade.cronograma)
+
     if a_gravar:
         ItemProgramacao.objects.bulk_update(
-            a_gravar, ["cumprido", "causa", "nota"]
+            a_gravar, ["cumprido", "causa", "nota", "percentual_concluido"]
         )
-    return {"julgados": len(a_gravar), "por_julgar": (
+    return {"julgados": len(a_gravar), "apontamentos": apontamentos, "por_julgar": (
         programacao.itens.filter(cumprido__isnull=True).count()
     )}
 
@@ -6548,6 +8749,20 @@ def encerrar_nc(*, nc: "NaoConformidade", por: str = "",
             f"novo e verifique de novo — encerrar agora registraria como "
             f"resolvido um defeito que a própria empresa constatou que continua "
             f"lá."
+        )
+
+    # D191 — a mesma trava de `encerrar_ocorrencia`: encerrar por cima de uma
+    # restrição aberta deixaria a frente fora do quadro da semana sem nada
+    # explicando por quê. Remover a trava é ato de quem responde pela obra
+    # (`pdca.restricao.remover`), e não efeito colateral de um encerramento.
+    restricao = nc.restricao
+    if restricao is not None and restricao.status == Restricao.Status.ABERTA:
+        raise ValidationError(
+            f"A frente continua interditada pela restrição #{restricao.pk}, "
+            f"aberta por esta não-conformidade. Encerrar aqui deixaria o "
+            f"serviço travado sem nada explicando por quê. Declare que o "
+            f"risco cessou removendo a restrição — é ato de quem responde "
+            f"pela obra."
         )
 
     nc.status = NaoConformidade.Status.ENCERRADA
@@ -7756,6 +9971,19 @@ def _escadas_de(modelo, objetos, *, tenant_id) -> dict:
 
 # --- B3: o posto da medição — a carteira de contratos e a fila do dinheiro ---
 
+def _pedido_do_contrato(contrato) -> dict | None:
+    """O pedido de serviço do Suprimentos ligado ao contrato, com o valor pedido."""
+    pedido = contrato.pedido_scm
+    if pedido is None:
+        return None
+    valor = pedido.valor_total
+    if valor is None:
+        valor = sum(((i.quantidade or Decimal("0")) * (i.preco_unitario or Decimal("0"))
+                     for i in pedido.itens.all()), Decimal("0"))
+    return {"pedido": pedido.pk, "status": pedido.status, "status_rotulo": pedido.get_status_display(),
+            "valor_pedido": str(Decimal(valor).quantize(Decimal("0.01")))}
+
+
 def carteira_de_contratos(*, obra_id, tenant_id, pode=_pode_tudo) -> dict:
     """**Os contratos da obra com o saldo resolvido** — a leitura de cima do
     posto da medição.
@@ -7795,8 +10023,8 @@ def carteira_de_contratos(*, obra_id, tenant_id, pode=_pode_tudo) -> dict:
     ))
     total = vivos.count()
     contratos = list(
-        vivos.select_related("fornecedor")
-        .prefetch_related("itens", "medicoes", "medicoes__itens", "aditivos")
+        vivos.select_related("fornecedor", "cliente", "pedido_scm")
+        .prefetch_related("itens", "medicoes", "medicoes__itens", "aditivos", "pedido_scm__itens")
         .order_by("numero")[:PDCA_TETO_CONTRATOS_NO_POSTO]
     )
 
@@ -7809,7 +10037,8 @@ def carteira_de_contratos(*, obra_id, tenant_id, pode=_pode_tudo) -> dict:
             "numero": contrato.numero,
             "objeto": contrato.objeto[:200],
             "fornecedor": contrato.fornecedor_id,
-            "fornecedor_nome": contrato.fornecedor.razao_social,
+            "fornecedor_nome": contrato.parte_nome,
+            "lado": contrato.lado,
             "regime": contrato.regime,
             "regime_rotulo": contrato.get_regime_display(),
             "status": contrato.status,
@@ -7824,6 +10053,9 @@ def carteira_de_contratos(*, obra_id, tenant_id, pode=_pode_tudo) -> dict:
             "planilha_editavel": aberta,
             "planilha_fechada_porque": motivo,
             "saldo": saldo,
+            # Medição × compra de serviço: o pedido do Suprimentos que este
+            # contrato mede (o medido já está no saldo, ao lado).
+            "pedido_scm": _pedido_do_contrato(contrato),
         })
 
     return {
@@ -7878,7 +10110,7 @@ def fila_da_medicao(*, obra_id, tenant_id, pode=_pode_tudo) -> dict:
         )
         total_rascunhos = paradas.count()
         for m in (
-            paradas.select_related("contrato", "contrato__fornecedor")
+            paradas.select_related("contrato", "contrato__fornecedor", "contrato__cliente")
             .order_by("periodo_fim", "numero")[:teto]
         ):
             totais = totais_da_medicao(m)
@@ -7889,7 +10121,7 @@ def fila_da_medicao(*, obra_id, tenant_id, pode=_pode_tudo) -> dict:
                     f"Período de {m.periodo_inicio:%d/%m/%Y} a "
                     f"{m.periodo_fim:%d/%m/%Y}"
                 ),
-                onde=m.contrato.fornecedor.razao_social,
+                onde=m.contrato.parte_nome,
                 desde=m.apurada_em,
                 extra={
                     "contrato": m.contrato_id,
@@ -7911,7 +10143,7 @@ def fila_da_medicao(*, obra_id, tenant_id, pode=_pode_tudo) -> dict:
         )
         total_a_atestar = em_atesto.count()
         esperando = list(
-            em_atesto.select_related("contrato", "contrato__fornecedor")
+            em_atesto.select_related("contrato", "contrato__fornecedor", "contrato__cliente")
             .order_by("periodo_fim", "numero")[:teto]
         )
         escadas = _escadas_de(Medicao, esperando, tenant_id=tenant_id)
@@ -7925,7 +10157,7 @@ def fila_da_medicao(*, obra_id, tenant_id, pode=_pode_tudo) -> dict:
                     f"Período de {m.periodo_inicio:%d/%m/%Y} a "
                     f"{m.periodo_fim:%d/%m/%Y}"
                 ),
-                onde=m.contrato.fornecedor.razao_social,
+                onde=m.contrato.parte_nome,
                 desde=escada.get("desde") or m.apurada_em,
                 extra={
                     "contrato": m.contrato_id,
@@ -7955,7 +10187,7 @@ def fila_da_medicao(*, obra_id, tenant_id, pode=_pode_tudo) -> dict:
         )
         total_retencoes = pedidas.count()
         lista_retencoes = list(
-            pedidas.select_related("contrato", "contrato__fornecedor")
+            pedidas.select_related("contrato", "contrato__fornecedor", "contrato__cliente")
             .order_by("data")[:teto]
         )
         escadas = _escadas_de(
@@ -7967,7 +10199,7 @@ def fila_da_medicao(*, obra_id, tenant_id, pode=_pode_tudo) -> dict:
                 tipo="liberacao", id_=lib.pk,
                 titulo=f"Retenção do contrato {lib.contrato.numero}",
                 detalhe=lib.condicao_atendida[:160],
-                onde=lib.contrato.fornecedor.razao_social,
+                onde=lib.contrato.parte_nome,
                 desde=escada.get("desde") or lib.criado_em,
                 extra={
                     "contrato": lib.contrato_id,
@@ -7986,7 +10218,7 @@ def fila_da_medicao(*, obra_id, tenant_id, pode=_pode_tudo) -> dict:
         )
         total_aditivos = abertos.count()
         lista_aditivos = list(
-            abertos.select_related("contrato", "contrato__fornecedor")
+            abertos.select_related("contrato", "contrato__fornecedor", "contrato__cliente")
             .order_by("criado_em")[:teto]
         )
         escadas = _escadas_de(
@@ -7998,7 +10230,7 @@ def fila_da_medicao(*, obra_id, tenant_id, pode=_pode_tudo) -> dict:
                 tipo="aditivo", id_=ad.pk,
                 titulo=f"Aditivo {ad.numero} · contrato {ad.contrato.numero}",
                 detalhe=ad.justificativa[:160],
-                onde=ad.contrato.fornecedor.razao_social,
+                onde=ad.contrato.parte_nome,
                 desde=escada.get("desde") or ad.criado_em,
                 extra={
                     "contrato": ad.contrato_id,
@@ -9124,8 +11356,9 @@ def busca_unica(*, tenant_id, termo: str, pode=_pode_tudo,
             ContratoObra.objects.filter(tenant_id=tenant_id).filter(
                 Q(numero__unaccent__icontains=termo)
                 | Q(objeto__unaccent__icontains=termo)
-                | Q(fornecedor__razao_social__unaccent__icontains=termo),
-            ).select_related("obra", "fornecedor").order_by("-criado_em"),
+                | Q(fornecedor__razao_social__unaccent__icontains=termo)
+                | Q(cliente__nome_completo__unaccent__icontains=termo),
+            ).select_related("obra", "fornecedor", "cliente").order_by("-criado_em"),
         ),
         lambda c: {
             "chave": f"contrato:{c.pk}", "id": c.pk,

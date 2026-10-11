@@ -13,7 +13,8 @@ from __future__ import annotations
 from .models import Notificacao
 
 
-def criar_notificacao(*, user, tenant_id, titulo, mensagem="", tipo=Notificacao.Tipo.SISTEMA, url=""):
+def criar_notificacao(*, user, tenant_id, titulo, mensagem="", tipo=Notificacao.Tipo.SISTEMA, url="",
+                      nivel=Notificacao.Nivel.SABER):
     """Cria uma `Notificacao` para `user`. `tenant_id` é obrigatório e deve vir
     da origem (ex.: `evento.tenant_id`). Deve ser chamado dentro de um contexto
     RLS válido — `rls_bypass()` nas tasks/jobs, ou a RLS do request."""
@@ -24,4 +25,5 @@ def criar_notificacao(*, user, tenant_id, titulo, mensagem="", tipo=Notificacao.
         mensagem=mensagem,
         tipo=tipo,
         url=url,
+        nivel=nivel,
     )

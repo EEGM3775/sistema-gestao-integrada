@@ -10,12 +10,17 @@ export const pdcaKeys = {
     detalhe: (id: number) => [...pdcaKeys.cronogramas.raiz(), id] as const,
     gantt: (id: number) => [...pdcaKeys.cronogramas.raiz(), id, 'gantt'] as const,
     balanco: (id: number) => [...pdcaKeys.cronogramas.raiz(), id, 'balanco'] as const,
+    /** Sob o cronograma: editar o plano (datas, item orçado) muda a necessidade. */
+    suprimentos: (id: number) => [...pdcaKeys.cronogramas.raiz(), id, 'suprimentos'] as const,
+    custo: (id: number) => [...pdcaKeys.cronogramas.raiz(), id, 'custo'] as const,
+    avanco: (id: number) => [...pdcaKeys.cronogramas.raiz(), id, 'avanco-ff'] as const,
     curvaS: (id: number, granularidade: string) =>
       [...pdcaKeys.cronogramas.raiz(), id, 'curva-s', granularidade] as const,
   },
 
   locais: (obraId: number) => [...pdcaKeys.raiz, 'locais', obraId] as const,
   calendarios: (obraId: number) => [...pdcaKeys.raiz, 'calendarios', obraId] as const,
+  antecedencias: (obraId: number) => [...pdcaKeys.raiz, 'antecedencias', obraId] as const,
 
   semana: {
     raiz: () => [...pdcaKeys.raiz, 'semana'] as const,
@@ -31,7 +36,12 @@ export const pdcaKeys = {
   },
   restricoes: (obraId: number, status: string) =>
     [...pdcaKeys.raiz, 'restricoes', obraId, status] as const,
+  /** Todas as de uma atividade — abertas **e** resolvidas (sob o mesmo prefixo,
+   *  para o invalidador da semana alcançá-las). */
+  restricoesDaAtividade: (atividadeId: number) =>
+    [...pdcaKeys.raiz, 'restricoes', 'atividade', atividadeId] as const,
   catalogoDeCausas: () => [...pdcaKeys.raiz, 'catalogo-causas'] as const,
+  equipes: (obraId: number) => [...pdcaKeys.raiz, 'equipes', obraId] as const,
 
   minhasFrentes: (quem: string, obraId: number | undefined) =>
     [...pdcaKeys.raiz, 'minhas-frentes', quem, obraId ?? 'todas'] as const,
@@ -55,6 +65,8 @@ export const pdcaKeys = {
       [...pdcaKeys.raiz, 'medicao', 'documento', medicaoId] as const,
     aditivos: (contratoId: number) =>
       [...pdcaKeys.raiz, 'medicao', 'aditivos', contratoId] as const,
+    ficha: (contratoId: number) =>
+      [...pdcaKeys.raiz, 'medicao', 'ficha', contratoId] as const,
     liberacoes: (contratoId: number) =>
       [...pdcaKeys.raiz, 'medicao', 'liberacoes', contratoId] as const,
     previa: (contratoId: number, inicio: string, fim: string) =>
@@ -98,6 +110,10 @@ export const pdcaKeys = {
 
   carteira: () => [...pdcaKeys.raiz, 'carteira'] as const,
   hoje: (obraId: number) => [...pdcaKeys.raiz, 'hoje', obraId] as const,
+  controle: {
+    custo: (obraId: number) => [...pdcaKeys.raiz, 'controle', 'custo', obraId] as const,
+    materiais: (obraId: number) => [...pdcaKeys.raiz, 'controle', 'materiais', obraId] as const,
+  },
   busca: (termo: string, obraId: number | undefined) =>
     [...pdcaKeys.raiz, 'busca', termo, obraId ?? 'todas'] as const,
 }

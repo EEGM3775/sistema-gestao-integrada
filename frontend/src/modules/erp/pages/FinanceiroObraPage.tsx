@@ -84,9 +84,9 @@ function Dre({ obraId }: { obraId: number }) {
         <h2 className="text-lg font-bold" style={{ color: 'var(--ink)' }}>{d.obra_nome}</h2>
         <div className="flex gap-3 text-xs font-semibold">
           <Link to={`/app/erp/contas-a-pagar?obra=${d.obra}&obra_nome=${encodeURIComponent(d.obra_nome)}`} style={{ color: 'var(--ink-3)' }}>Contas a pagar da obra</Link>
-          {hasModule('orcamento') && (
-            <Link to="/app/orcamento/controlar" className="inline-flex items-center gap-1" style={{ color: 'var(--ink-3)' }}>
-              Quatro colunas no Orçamento <ArrowUpRight size={12} />
+          {hasModule('pdca') && (
+            <Link to={`/app/pdca/o/${d.obra}/controle?aba=custo`} className="inline-flex items-center gap-1" style={{ color: 'var(--ink-3)' }}>
+              Custo da obra no Controle (PDCA) <ArrowUpRight size={12} />
             </Link>
           )}
         </div>

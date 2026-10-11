@@ -205,3 +205,17 @@ class NFeClient:
         """Cancela uma NFS-e emitida pelo id da NFE.io."""
         invoice = self._request('DELETE', self._company_path(f'/{invoice_id}'))
         return _extrair_dados(invoice)
+
+
+def cliente_do_tenant(tenant_id) -> NFeClient:
+    """O cliente com a conta **desta empresa** na NFE.io, se ela cadastrou uma;
+    senão o da conta do ambiente. Lido dentro do contexto do tenant (RLS)."""
+    from nucleo.tenancy import tenant_context
+
+    from .models import IntegracaoFiscal
+
+    with tenant_context(tenant_id):
+        cadastro = IntegracaoFiscal.objects.filter(tenant_id=tenant_id).first()
+    if cadastro is not None and cadastro.api_key and cadastro.company_id:
+        return NFeClient(api_key=cadastro.api_key, company_id=cadastro.company_id)
+    return NFeClient()

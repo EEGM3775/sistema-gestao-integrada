@@ -38,6 +38,7 @@ from unittest.mock import patch
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APITestCase
@@ -918,6 +919,85 @@ class VersionamentoTests(BaseCronograma):
         self.cronograma.refresh_from_db()
         self.assertFalse(self.cronograma.editavel)
 
+    def test_replanejar_com_rascunho_aberto_e_recusado(self):
+        """A tela abria o vigente depois de replanejar; a pessoa replanejava de
+        novo e a obra juntava rascunhos órfãos (achado no teste do dono)."""
+        self.atividade("1", duracao=2)
+        services.publicar(self.cronograma)
+        services.replanejar(self.cronograma, motivo="Chuva")
+        with self.assertRaises(ValidationError) as ctx:
+            services.replanejar(self.cronograma, motivo="De novo")
+        self.assertIn("versão 2 em rascunho", str(ctx.exception))
+        self.assertEqual(
+            Cronograma.objects.filter(obra=self.obra, status=Cronograma.Status.RASCUNHO).count(), 1,
+        )
+
+    def test_os_feriados_sao_os_do_lugar_da_obra_mesmo_com_a_tabela_vazia(self):
+        """Achado do dono: o expediente sem UF/IBGE só via o nacional, e a obra
+        na Bahia perdia o 2 de Julho que a Agenda mostrava. Agora vale o lugar
+        da obra (pelo endereço) e a lei é calculada se a tabela não tem o ano."""
+        self.assertFalse(Feriado.objects.exists())
+        lugar = {"cidade": "Nazaré", "uf": "BA", "ibge": "2922508", "fonte": "ibge_nome"}
+        with patch("nucleo.geo.resolver", return_value=lugar):
+            self.assertEqual(services.localidade_dos_feriados(self.calendario)["uf"], "BA")
+            feriados = services.feriados_do_periodo(self.calendario, date(2026, 7, 1), date(2026, 7, 31))
+        self.assertIn(date(2026, 7, 2), feriados)  # Independência da Bahia (estadual)
+        # Sem lugar resolvível, só o nacional — e o 7 de setembro vem do cálculo.
+        with patch("nucleo.geo.resolver", return_value=None):
+            feriados = services.feriados_do_periodo(self.calendario, date(2026, 7, 1), date(2026, 9, 30))
+        self.assertNotIn(date(2026, 7, 2), feriados)
+        self.assertIn(date(2026, 9, 7), feriados)
+
+    def test_uf_digitado_no_expediente_vence_o_endereco_da_obra(self):
+        cal = CalendarioTrabalho.objects.create(tenant=self.tenant, nome="Turno SP", uf="SP")
+        with patch("nucleo.geo.resolver") as resolver:
+            self.assertEqual(services.localidade_dos_feriados(cal, self.obra)["fonte"], "expediente")
+        resolver.assert_not_called()
+
+    def test_publicar_leva_as_restricoes_abertas_para_a_versao_nova(self):
+        """Sem isto o make-ready ficava preso à v1 e a semana da v2 não via trava."""
+        a = self.atividade("1", duracao=2)
+        services.publicar(self.cronograma)
+        aberta = Restricao.objects.create(
+            tenant=self.tenant, atividade=a, tipo=TipoRestricao.MATERIAL, descricao="Aço",
+        )
+        resolvida = Restricao.objects.create(
+            tenant=self.tenant, atividade=a, tipo=TipoRestricao.PROJETO, descricao="Planta",
+        )
+        services.remover_restricao(restricao=resolvida, por="Ana", nota="liberada")
+        nova = services.replanejar(self.cronograma, motivo="Chuva")
+        services.publicar(nova)
+        aberta.refresh_from_db()
+        resolvida.refresh_from_db()
+        self.assertEqual(aberta.atividade.cronograma_id, nova.pk)
+        self.assertEqual(aberta.atividade.codigo, "1")
+        self.assertEqual(resolvida.atividade_id, a.pk)
+
+    def test_descartado_o_rascunho_replaneja_de_novo(self):
+        self.atividade("1", duracao=2)
+        services.publicar(self.cronograma)
+        services.replanejar(self.cronograma, motivo="Chuva").delete()
+        nova = services.replanejar(self.cronograma, motivo="Agora sim")
+        self.assertEqual(nova.status, Cronograma.Status.RASCUNHO)
+
+    def test_o_gantt_leva_os_dias_parados_do_expediente(self):
+        """O CPM pulava o feriado e a barra não mostrava; o Gantt recebe a
+        regra da semana e as datas avulsas para cortar a barra nelas."""
+        Feriado.objects.create(data=date(2026, 6, 4), nome="Corpus Christi", escopo="nacional")
+        ExcecaoCalendario.objects.create(
+            tenant=self.tenant, calendario=self.calendario, data=date(2026, 6, 5),
+            trabalha=False, motivo="Recesso",
+        )
+        a = self.atividade("1", duracao=5)
+        services.calcular_cpm(self.cronograma)
+        a.refresh_from_db()
+        bloco = services.expedientes_do_plano(self.cronograma, [a])
+        self.assertEqual(bloco["calendario_do_plano"], self.calendario.pk)
+        cal = bloco["calendarios"][str(self.calendario.pk)]
+        self.assertEqual(cal["dias_da_semana"], [True] * 5 + [False] * 2)
+        self.assertEqual(cal["feriados"], [{"data": date(2026, 6, 4), "nome": "Corpus Christi"}])
+        self.assertEqual(cal["excecoes"][0]["motivo"], "Recesso")
+
 
 class LinhaDeBaseTests(BaseCronograma):
     def test_sem_origem_nao_ha_base_e_a_resposta_diz_isso(self):
@@ -1179,9 +1259,11 @@ class ApiDoCronogramaTests(APITestCase):
         self.assertEqual(resposta.status_code, 400)
         self.assertIn("ciclo", str(resposta.json()))
 
-    def test_a_seta_para_uma_sintetica_e_recusada(self):
+    def test_a_seta_de_fase_entre_etapas_e_aceita(self):
+        """Desde 09/10/2026 a etapa se liga (decisão do dono: "dependências de
+        fases") — o CPM a expande nas folhas."""
         self._autenticar(permissions=("pdca.cronograma.view", "pdca.cronograma.edit"))
-        filho = Atividade.objects.create(
+        Atividade.objects.create(
             tenant=self.tenant, cronograma=self.cronograma, pai=self.a,
             codigo="1.1", nome="Sapata", duracao_dias=2, profundidade=2,
         )
@@ -1189,12 +1271,22 @@ class ApiDoCronogramaTests(APITestCase):
             tenant=self.tenant, cronograma=self.cronograma, codigo="2",
             nome="Estrutura", duracao_dias=3, profundidade=1,
         )
-        self.assertTrue(filho.pk)
         resposta = self.client.post("/api/pdca/precedencias/", {
             "origem": self.a.pk, "destino": outra.pk, "tipo": "FS",
         }, format="json")
+        self.assertEqual(resposta.status_code, 201, resposta.content)
+
+    def test_a_etapa_nao_se_liga_ao_que_ela_contem(self):
+        self._autenticar(permissions=("pdca.cronograma.view", "pdca.cronograma.edit"))
+        filho = Atividade.objects.create(
+            tenant=self.tenant, cronograma=self.cronograma, pai=self.a,
+            codigo="1.1", nome="Sapata", duracao_dias=2, profundidade=2,
+        )
+        resposta = self.client.post("/api/pdca/precedencias/", {
+            "origem": self.a.pk, "destino": filho.pk, "tipo": "FS",
+        }, format="json")
         self.assertEqual(resposta.status_code, 400)
-        self.assertIn("sintética", str(resposta.json()))
+        self.assertIn("dentro", str(resposta.json()))
 
     def test_a_listagem_de_cronogramas_nao_atravessa_a_empresa(self):
         obra_vizinha = Obra.objects.create(
@@ -3320,7 +3412,163 @@ class RegimesDeContratoTests(BaseContrato):
 
 
 class RetificacaoTests(BaseContrato):
-    """§11.5 — aprovada congela; a correção é um documento novo."""
+    """§11.5 — aprovada congela; a correção é um documento novo que **substitui**
+    a original *(decisão do dono, 11/10/2026)*."""
+
+    def _aprovada(self):
+        """300 × R$ 80 = R$ 24.000, aprovada, com título no ERP."""
+        self.apontar(self.alvenaria, "30", date(2026, 6, 15))
+        original = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        services._congelar_medicao(original, aprovada=True)
+        original.refresh_from_db()
+        return original
+
+    def _retificada_com_desconto(self, *, pagar: Decimal | None):
+        """Original de R$ 24.000 e retificadora com R$ 600 de multa."""
+        from moduloerp.models import ContaPagar
+
+        original = self._aprovada()
+        antigo = ContaPagar.objects.get(pk=original.conta_pagar_ref)
+        if pagar is not None:
+            antigo.dar_baixa(valor=pagar, data=date(2026, 7, 5))
+        nova = services.retificar(medicao=original, motivo="Multa não lançada.")
+        services.reescrever_deducoes(medicao=nova, deducoes=[
+            {"tipo": "multa", "valor": Decimal("600")},
+        ])
+        return original, antigo, nova
+
+    def test_a_retificadora_nasce_como_copia_inteira_da_original(self):
+        original = self._aprovada()
+        nova = services.retificar(
+            medicao=original, motivo="O item 1.1 mediu 300 e eram 250.",
+        )
+        self.assertEqual(nova.retifica_id, original.pk)
+        self.assertEqual(
+            [(l.item_contrato_id, l.quantidade) for l in nova.itens.all()],
+            [(l.item_contrato_id, l.quantidade) for l in original.itens.all()],
+        )
+        self.assertEqual(nova.periodo_inicio, original.periodo_inicio)
+        self.assertEqual(nova.retencao_percentual_aplicado, original.retencao_percentual_aplicado)
+        self.assertIn("mediu 300", nova.observacao)
+
+    def test_o_liquido_e_o_da_medicao_corrigida_e_nao_a_diferenca(self):
+        original, _antigo, nova = self._retificada_com_desconto(pagar=None)
+        liquido_original = services.totais_da_medicao(original)["liquido"]
+        totais = services.totais_da_medicao(nova)
+        self.assertEqual(totais["liquido"], liquido_original - Decimal("600.00"))
+        self.assertEqual(totais["diferenca_liquido"], Decimal("-600.00"))
+        self.assertEqual(totais["original"]["liquido"], liquido_original)
+
+    def test_sem_correcao_nenhuma_a_retificadora_nao_sobe(self):
+        original = self._aprovada()
+        nova = services.retificar(medicao=original, motivo="nada")
+        with self.assertRaises(ValidationError) as erro:
+            services.validar_medicao(nova)
+        self.assertIn("não corrige nada", str(erro.exception))
+
+    def test_aprovada_a_retificadora_a_original_vira_retificada_e_so_uma_vale(self):
+        original = self._aprovada()
+        nova = services.retificar(medicao=original, motivo="eram 250")
+        services.reescrever_linhas(medicao=nova, linhas=[
+            {"item_contrato_id": self.item_alv.pk, "quantidade": Decimal("250")},
+        ])
+        services._congelar_medicao(nova, aprovada=True)
+        original.refresh_from_db()
+        self.assertEqual(original.status, Medicao.Status.RETIFICADA)
+        self.assertEqual(
+            self.contrato.medicoes.filter(status=Medicao.Status.APROVADA).count(), 1,
+        )
+        self.assertEqual(
+            services.medido_por_item(self.contrato)[self.item_alv.pk], Decimal("250"),
+        )
+
+    def test_em_aprovacao_a_retificadora_nao_soma_com_a_original(self):
+        original = self._aprovada()
+        nova = services.retificar(medicao=original, motivo="eram 250")
+        services.reescrever_linhas(medicao=nova, linhas=[
+            {"item_contrato_id": self.item_alv.pk, "quantidade": Decimal("250")},
+        ])
+        Medicao.objects.filter(pk=nova.pk).update(status=Medicao.Status.EM_APROVACAO)
+        self.assertEqual(
+            services.medido_por_item(self.contrato)[self.item_alv.pk], Decimal("250"),
+        )
+
+    def test_titulo_em_aberto_cancela_o_antigo_e_gera_o_do_liquido_inteiro(self):
+        from moduloerp.models import ContaPagar
+
+        _original, antigo, nova = self._retificada_com_desconto(pagar=None)
+        liquido = services.totais_da_medicao(nova)["liquido"]
+        services._congelar_medicao(nova, aprovada=True)
+        nova.refresh_from_db()
+        antigo.refresh_from_db()
+        self.assertEqual(antigo.status, "CANCELADO")
+        novo = ContaPagar.objects.get(pk=nova.conta_pagar_ref)
+        self.assertEqual(novo.valor, liquido)
+        self.assertEqual(novo.status, "ABERTO")
+
+    def test_paga_a_maior_gera_complemento_e_aviso_de_nivel_3(self):
+        from moduloerp.models import ContaPagar
+        from nucleo.models import Notificacao
+
+        original = self._aprovada()
+        antigo = ContaPagar.objects.get(pk=original.conta_pagar_ref)
+        antigo.dar_baixa(valor=antigo.valor, data=date(2026, 7, 5))
+        nova = services.retificar(medicao=original, motivo="eram 350")
+        services.reescrever_linhas(medicao=nova, linhas=[
+            {"item_contrato_id": self.item_alv.pk, "quantidade": Decimal("350")},
+        ])
+        services._congelar_medicao(nova, aprovada=True)
+        nova.refresh_from_db()
+        complemento = ContaPagar.objects.get(pk=nova.conta_pagar_ref)
+        self.assertNotEqual(complemento.pk, antigo.pk)
+        self.assertEqual(complemento.valor, Decimal("4000.00"))
+        self.assertIn("complemento", complemento.descricao)
+        for aviso in Notificacao.objects.filter(titulo__icontains="retificada"):
+            self.assertEqual(aviso.nivel, Notificacao.Nivel.AGIR_JA)
+
+    def test_paga_inteira_e_corrigida_para_menos_avisa_a_devolucao(self):
+        from nucleo.models import Notificacao
+
+        original, antigo, nova = self._retificada_com_desconto(pagar=Decimal("24000"))
+        services._congelar_medicao(nova, aprovada=True)
+        nova.refresh_from_db()
+        antigo.refresh_from_db()
+        self.assertEqual(antigo.status, "QUITADO")
+        self.assertEqual(nova.conta_pagar_ref, antigo.pk)
+        for aviso in Notificacao.objects.filter(titulo__icontains="retificada"):
+            self.assertIn("600", aviso.mensagem)
+
+    def test_paga_em_parte_e_corrigida_para_menos_abate_o_saldo_do_titulo(self):
+        _original, antigo, nova = self._retificada_com_desconto(pagar=Decimal("10000"))
+        services._congelar_medicao(nova, aprovada=True)
+        antigo.refresh_from_db()
+        self.assertEqual(antigo.valor, Decimal("23400.00"))
+        self.assertEqual(antigo.status, "PARCIAL")
+
+    def test_retificadora_retirada_antes_de_valer_e_apagada(self):
+        original = self._aprovada()
+        nova = services.retificar(medicao=original, motivo="engano")
+        resultado = services.cancelar_medicao(medicao=nova, por="Ana")
+        self.assertTrue(resultado["excluida"])
+        self.assertFalse(Medicao.todos.filter(pk=nova.pk).exists())
+        original.refresh_from_db()
+        self.assertEqual(original.status, Medicao.Status.APROVADA)
+        # E a original pode ser retificada de novo.
+        services.retificar(medicao=original, motivo="agora sim")
+
+    def test_retificadora_aprovada_nao_se_cancela(self):
+        original = self._aprovada()
+        nova = services.retificar(medicao=original, motivo="eram 250")
+        services.reescrever_linhas(medicao=nova, linhas=[
+            {"item_contrato_id": self.item_alv.pk, "quantidade": Decimal("250")},
+        ])
+        services._congelar_medicao(nova, aprovada=True)
+        nova.refresh_from_db()
+        with self.assertRaises(ValidationError) as erro:
+            services.cancelar_medicao(medicao=nova, motivo="desfazer", por="Ana")
+        self.assertIn("retifique esta", str(erro.exception))
 
     def test_so_medicao_aprovada_se_retifica(self):
         medicao = services.criar_medicao(
@@ -3331,64 +3579,43 @@ class RetificacaoTests(BaseContrato):
             services.retificar(medicao=medicao, motivo="qualquer")
         self.assertIn("aprovada", str(erro.exception))
 
-    def test_a_retificadora_nasce_vazia_e_aponta_para_a_corrigida(self):
-        """Copiar as linhas com sinal trocado pareceria conveniência e seria uma
-        armadilha: a retificação quase nunca é 'estorna tudo'."""
-        self.apontar(self.alvenaria, "30", date(2026, 6, 15))
-        original = services.criar_medicao(
-            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
-        )
-        services._congelar_medicao(original, aprovada=True)
-        nova = services.retificar(
-            medicao=original, motivo="O item 1.1 mediu 300 e eram 250.",
-        )
-        self.assertEqual(nova.retifica_id, original.pk)
-        self.assertEqual(nova.itens.count(), 0)
-        self.assertEqual(nova.periodo_inicio, original.periodo_inicio)
-        self.assertIn("mediu 300", nova.observacao)
-
     def test_nao_se_retifica_a_mesma_medicao_duas_vezes(self):
-        self.apontar(self.alvenaria, "30", date(2026, 6, 15))
-        original = services.criar_medicao(
-            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
-        )
-        services._congelar_medicao(original, aprovada=True)
+        original = self._aprovada()
         services.retificar(medicao=original, motivo="primeira")
         with self.assertRaises(ValidationError) as erro:
             services.retificar(medicao=original, motivo="segunda")
         self.assertIn("já está sendo retificada", str(erro.exception))
 
-    def test_a_retificadora_devolve_quantidade_com_linha_negativa(self):
-        """Quantidade negativa **é** permitida, e só no item de medição: é como
-        a retificadora devolve o que foi medido a mais. O piso de zero mora no
-        acumulado."""
-        self.apontar(self.alvenaria, "30", date(2026, 6, 15))
-        original = services.criar_medicao(
-            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
-        )
-        services._congelar_medicao(original, aprovada=True)
-        nova = services.retificar(medicao=original, motivo="mediu a mais")
-        services.reescrever_linhas(medicao=nova, linhas=[
-            {"item_contrato_id": self.item_alv.pk, "quantidade": Decimal("-50")},
-        ])
-        services.validar_medicao(nova)  # não levanta: 300 − 50 = 250 ≤ 1000
-        self.assertEqual(
-            services.totais_da_medicao(nova)["bruto"], Decimal("-4000.00"),
-        )
+    def test_a_retificadora_pode_zerar_a_medicao(self):
+        original = self._aprovada()
+        nova = services.retificar(medicao=original, motivo="não era deste período")
+        services.reescrever_linhas(medicao=nova, linhas=[])
+        services.validar_medicao(nova)
+        self.assertEqual(services.totais_da_medicao(nova)["bruto"], Decimal("0.00"))
 
-    def test_a_retificadora_nao_devolve_mais_do_que_foi_medido(self):
-        self.apontar(self.alvenaria, "30", date(2026, 6, 15))
-        original = services.criar_medicao(
-            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+    def test_a_ficha_conta_o_titulo_uma_vez_e_mostra_a_retificada(self):
+        _original, antigo, nova = self._retificada_com_desconto(pagar=Decimal("24000"))
+        services._congelar_medicao(nova, aprovada=True)
+        ficha = services.ficha_do_contrato(self.contrato)
+        self.assertEqual(ficha["financeiro"]["titulos"], 1)
+        self.assertEqual(ficha["financeiro"]["pago"], Decimal("24000.00"))
+        medicoes = [e for e in ficha["linha_do_tempo"] if e["tipo"] == "medicao"]
+        self.assertEqual(
+            [e["status"] for e in medicoes],
+            [Medicao.Status.RETIFICADA, Medicao.Status.APROVADA],
         )
-        services._congelar_medicao(original, aprovada=True)
-        nova = services.retificar(medicao=original, motivo="exagerada")
+        self.assertIn(f"substituída pela {nova.numero}", medicoes[0]["detalhe"])
+
+    def test_o_proximo_periodo_continua_depois_da_retificada(self):
+        original = self._aprovada()
+        nova = services.retificar(medicao=original, motivo="eram 250")
         services.reescrever_linhas(medicao=nova, linhas=[
-            {"item_contrato_id": self.item_alv.pk, "quantidade": Decimal("-500")},
+            {"item_contrato_id": self.item_alv.pk, "quantidade": Decimal("250")},
         ])
-        with self.assertRaises(ValidationError) as erro:
-            services.validar_medicao(nova)
-        self.assertIn("negativo", str(erro.exception))
+        services._congelar_medicao(nova, aprovada=True)
+        self.assertEqual(
+            services.sugerir_periodo(self.contrato)["inicio"], date(2026, 7, 1),
+        )
 
 
 def _escada_de_medicao(tenant, permissao="pdca.medicao.atestar", niveis=1):
@@ -4315,6 +4542,51 @@ class AditivoTests(BaseContrato):
         }])
         self.assertEqual(services.valor_contratado(self.contrato), antes)
 
+    def test_o_aditivo_aprovado_muda_a_retencao_do_contrato_para_a_frente(self):
+        aditivo = self.aditivo(retencao_percentual_nova=Decimal("5"))
+        services._congelar_aditivo(aditivo, aprovado=True)
+        self.contrato.refresh_from_db()
+        self.assertEqual(self.contrato.retencao_percentual, Decimal("5"))
+        self.apontar(self.alvenaria, "10", date(2026, 6, 10))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+        )
+        # 100 × 80 = 8.000 × 5%
+        self.assertEqual(services.totais_da_medicao(medicao)["retencao"], Decimal("400.00"))
+
+    def test_o_item_novo_do_aditivo_retem_pela_regra_propria(self):
+        aditivo = self.aditivo(itens=[{
+            "acao": "inclusao", "codigo_novo": "9.1", "descricao_nova": "Muro",
+            "unidade_nova": "m", "quantidade_delta": Decimal("100"),
+            "preco_unitario": Decimal("50"), "retencao_percentual": Decimal("10"),
+        }])
+        services._congelar_aditivo(aditivo, aprovado=True)
+        muro = self.contrato.itens.get(codigo="9.1")
+        self.assertEqual(muro.retencao_percentual, Decimal("10"))
+        self.apontar(self.alvenaria, "10", date(2026, 6, 10))
+        medicao = services.criar_medicao(
+            contrato=self.contrato, inicio=date(2026, 6, 1), fim=date(2026, 6, 30),
+            linhas=[
+                {"item_contrato_id": self.item_alv.pk, "quantidade": Decimal("100")},
+                {"item_contrato_id": muro.pk, "quantidade": Decimal("20")},
+            ],
+        )
+        totais = services.totais_da_medicao(medicao)
+        # Contrato sem retenção: só o muro retém — 20 × 50 = 1.000 × 10%.
+        self.assertEqual(totais["retencao"], Decimal("100.00"))
+        self.assertTrue(totais["retencao_por_item"])
+
+    def test_o_cabecalho_do_rascunho_se_edita_e_o_aprovado_nao(self):
+        aditivo = self.aditivo()
+        services.editar_aditivo(
+            aditivo=aditivo, objeto="Prorrogação", nova_data_fim=date(2027, 3, 31),
+        )
+        aditivo.refresh_from_db()
+        self.assertEqual(aditivo.objeto, "Prorrogação")
+        services._congelar_aditivo(aditivo, aprovado=True)
+        with self.assertRaises(ValidationError):
+            services.editar_aditivo(aditivo=aditivo, objeto="outra coisa")
+
     def test_o_acrescimo_aprovado_aumenta_o_contratado_e_o_saldo(self):
         aditivo = self.aditivo(itens=[{
             "acao": "acrescimo", "item_contrato_id": self.item_alv.pk,
@@ -5082,6 +5354,54 @@ class SeamDoScmTests(_BaseLastPlanner):
         with self.assertRaises(ValidationError):
             services.gerar_demanda_scm(restricao=r)
 
+    def test_equipamento_e_mao_de_obra_viram_contratacao_de_servico(self):
+        """Toda restrição que se destrava comprando leva à compra — não só a de
+        material. Locação e empreitada abrem demanda de serviço."""
+        from moduloscm.models import Demanda
+
+        for tipo in (TipoRestricao.EQUIPAMENTO, TipoRestricao.MAO_DE_OBRA):
+            r = self._restricao(self.a1, tipo=tipo, descricao=f"Falta {tipo}")
+            demanda = Demanda.objects.get(pk=services.gerar_demanda_scm(restricao=r))
+            self.assertEqual(demanda.tipo, Demanda.Tipo.SERVICO)
+            self.assertEqual(demanda.origem, Demanda.Origem.RESTRICAO)
+
+
+class ReabrirRestricaoTests(_BaseLastPlanner):
+    """A resolvida fica na lista e pode voltar a ser aberta — carimbada."""
+
+    def test_resolvida_volta_a_aberta_e_a_nota_fica(self):
+        r = self._restricao(self.a1)
+        services.remover_restricao(restricao=r, por="Ana", nota="chegou na sexta")
+        services.reabrir_restricao(restricao=r, por="Bia")
+        r.refresh_from_db()
+        self.assertEqual(r.status, Restricao.Status.ABERTA)
+        self.assertEqual(r.reaberta_por, "Bia")
+        self.assertIsNotNone(r.reaberta_em)
+        self.assertEqual(r.vezes_reaberta, 1)
+        self.assertEqual(r.nota_remocao, "chegou na sexta")
+
+    def test_reaberta_volta_a_travar_o_compromisso(self):
+        r = self._restricao(self.a1)
+        services.remover_restricao(restricao=r, por="Ana", nota="chegou")
+        services.validar_pode_comprometer(self.a1, tenant_id=self.tenant.pk)
+        services.reabrir_restricao(restricao=r, por="Ana")
+        with self.assertRaises(ValidationError):
+            services.validar_pode_comprometer(self.a1, tenant_id=self.tenant.pk)
+
+    def test_so_a_resolvida_reabre(self):
+        aberta = self._restricao(self.a1)
+        cancelada = self._restricao(self.a1, status=Restricao.Status.CANCELADA)
+        for r in (aberta, cancelada):
+            with self.assertRaises(ValidationError):
+                services.reabrir_restricao(restricao=r, por="Ana")
+
+    def test_reabrir_respeita_o_teto_de_abertas(self):
+        r = self._restricao(self.a1)
+        services.remover_restricao(restricao=r, por="Ana", nota="chegou")
+        with patch.object(services, "PDCA_TETO_RESTRICOES_ABERTAS_POR_OBRA", 0):
+            with self.assertRaises(ValidationError):
+                services.reabrir_restricao(restricao=r, por="Ana")
+
 
 class TetosDoLastPlannerNoServicoTests(_BaseLastPlanner):
     """Os tetos da §5.5j exercidos onde eles mordem."""
@@ -5117,6 +5437,19 @@ class TetosDoLastPlannerNoServicoTests(_BaseLastPlanner):
         services.semear_causas_de_fabrica(self.tenant.pk)
         criadas = services.semear_causas_de_fabrica(self.tenant.pk)
         self.assertEqual(criadas, 0)
+
+    def test_interdicao_de_seguranca_tem_causa_propria_fora_de_externo(self):
+        """D192 — a frente interditada por risco não pode cair em "externo"."""
+        services.semear_causas_de_fabrica(self.tenant.pk)
+        causa = CausaNaoCumprimento.objects.get(tenant=self.tenant, codigo="SEG-INTERD")
+        self.assertTrue(causa.de_fabrica)
+        self.assertEqual(causa.categoria, CausaNaoCumprimento.Categoria.PLANEJAMENTO)
+
+    def test_tenant_antigo_recebe_a_causa_nova_na_proxima_semeadura(self):
+        """Quem semeou antes do D192 ganha a SEG-INTERD sem perder nada."""
+        services.semear_causas_de_fabrica(self.tenant.pk)
+        CausaNaoCumprimento.objects.filter(tenant=self.tenant, codigo="SEG-INTERD").delete()
+        self.assertEqual(services.semear_causas_de_fabrica(self.tenant.pk), 1)
 
 
 class ApiDaPdca5Tests(APITestCase):
@@ -7036,6 +7369,32 @@ class SeamDoLastPlannerTests(_BaseVerificacao):
         with self.assertRaises(ValidationError) as erro:
             services.gerar_restricao_da_nc(nc=nc, por="qualidade")
         self.assertIn("aberta", str(erro.exception))
+
+    def test_nao_encerra_por_cima_de_frente_interditada(self):
+        """D191 — a restrição não sai em cascata, e encerrar recusa e diz qual é."""
+        nc = self._nc(atividade=self.atividade, gravidade=GravidadeNC.CRITICA)
+        restricao_id = services.gerar_restricao_da_nc(nc=nc, por="qualidade")
+        services.registrar_eficacia(
+            nc=nc, data=date(2026, 6, 25), eficaz=True,
+            evidencia="Refeito.", por="fiscal",
+        )
+        nc.refresh_from_db()
+
+        with self.assertRaises(ValidationError) as erro:
+            services.encerrar_nc(nc=nc, por="fiscal")
+        self.assertIn(str(restricao_id), str(erro.exception))
+        nc.refresh_from_db()
+        self.assertNotEqual(nc.status, NaoConformidade.Status.ENCERRADA)
+
+        # Removida a trava pelo verbo de quem responde pela obra, encerra.
+        services.remover_restricao(
+            restricao=Restricao.objects.get(pk=restricao_id),
+            por="engenharia", nota="Frente liberada.",
+        )
+        nc.refresh_from_db()
+        services.encerrar_nc(nc=nc, por="fiscal")
+        nc.refresh_from_db()
+        self.assertEqual(nc.status, NaoConformidade.Status.ENCERRADA)
 
 
 class LeituraDaQualidadeTests(_BaseVerificacao):
@@ -10053,3 +10412,442 @@ class ApiDasMinhasFrentesTests(APITestCase):
         self.assertEqual(
             corpo["tetos"]["linhas_por_frente"], PDCA_TETO_LINHAS_POR_FRENTE,
         )
+
+
+# ---------------------------------------------------------------------------
+# A montagem do plano dentro do posto (09/10/2026) — fase, inserir, mover,
+# colar/importar, orçamento e modelo anexado
+# ---------------------------------------------------------------------------
+
+
+class LigacaoDeFaseTests(BaseCronograma):
+    """Decisão do dono, 09/10/2026: "dependências de fases" — a seta sai de uma
+    etapa ou chega nela, e o CPM a expande nas folhas."""
+
+    def test_fs_de_fase_segura_todas_as_folhas_da_etapa_seguinte(self):
+        fund = self.atividade("1", duracao=None)
+        self.atividade("1.1", duracao=3, pai=fund)
+        self.atividade("1.2", duracao=5, pai=fund)
+        estr = self.atividade("2", duracao=None)
+        a = self.atividade("2.1", duracao=1, pai=estr)
+        b = self.atividade("2.2", duracao=1, pai=estr)
+        self.ligar(fund, estr)
+        services.calcular_cpm(self.cronograma)
+        a.refresh_from_db(); b.refresh_from_db()
+        # A fundação termina na sexta 05/06 (a folha de 5 dias manda).
+        self.assertEqual(a.inicio_cedo, date(2026, 6, 8))
+        self.assertEqual(b.inicio_cedo, date(2026, 6, 8))
+
+    def test_ss_de_fase_sai_das_folhas_que_abrem_a_etapa(self):
+        fund = self.atividade("1", duracao=None)
+        abre = self.atividade("1.1", duracao=2, pai=fund)
+        fecha = self.atividade("1.2", duracao=3, pai=fund)
+        self.ligar(abre, fecha)
+        seguinte = self.atividade("2", duracao=1)
+        self.ligar(fund, seguinte, tipo=Precedencia.Tipo.SS, atraso=1)
+        services.calcular_cpm(self.cronograma)
+        seguinte.refresh_from_db()
+        self.assertEqual(seguinte.inicio_cedo, date(2026, 6, 2))
+
+    def test_o_ciclo_que_passa_por_dentro_da_etapa_e_recusado(self):
+        fund = self.atividade("1", duracao=None)
+        dentro = self.atividade("1.1", duracao=2, pai=fund)
+        depois = self.atividade("2", duracao=1)
+        self.ligar(fund, depois)
+        volta = services.LigacaoEntreFolhas(0, depois.pk, dentro.pk, "FS", 0)
+        with self.assertRaises(ValidationError):
+            services.verificar_rede(self.cronograma, nova=volta)
+
+
+class MontagemDaArvoreTests(BaseCronograma):
+    def _codigos(self):
+        return dict(self.cronograma.atividades.values_list("nome", "codigo"))
+
+    def test_inserir_logo_abaixo_empurra_as_seguintes_e_renumera(self):
+        um = self.atividade("1")
+        self.atividade("2")
+        nova = services.inserir_atividade(
+            self.cronograma, pai=None, depois_de=um, nome="Canteiro", duracao_dias=4,
+        )
+        self.assertEqual(nova.codigo, "2")
+        self.assertEqual(self._codigos(), {
+            "Serviço 1": "1", "Canteiro": "2", "Serviço 2": "3",
+        })
+
+    def test_mover_para_dentro_recua_e_renumera(self):
+        um = self.atividade("1")
+        dois = self.atividade("2")
+        movida = services.mover_atividade(dois, pai=um)
+        self.assertEqual(movida.codigo, "1.1")
+        self.assertEqual(movida.profundidade, 2)
+
+    def test_mover_para_dentro_de_si_e_recusado(self):
+        um = self.atividade("1", duracao=None)
+        filho = self.atividade("1.1", pai=um)
+        with self.assertRaises(ValidationError):
+            services.mover_atividade(um, pai=filho)
+
+    def test_o_pai_que_fica_sem_filhos_volta_a_ter_duracao(self):
+        um = self.atividade("1", duracao=None)
+        filho = self.atividade("1.1", pai=um)
+        services.mover_atividade(filho, pai=None)
+        um.refresh_from_db()
+        self.assertEqual(um.duracao_dias, 1)
+        services.calcular_cpm(self.cronograma)
+
+    def test_subir_entre_irmas_troca_a_ordem(self):
+        self.atividade("1")
+        dois = self.atividade("2")
+        services.mover_atividade(dois, pai=None, posicao=0)
+        self.assertEqual(self._codigos(), {"Serviço 2": "1", "Serviço 1": "2"})
+
+
+class ImportarLinhasTests(BaseCronograma):
+    def test_le_a_grafia_do_project_em_ingles_e_em_portugues(self):
+        self.assertEqual(
+            services.ler_predecessoras("1.2FS+3d; 1.4SS, 2TI-2 dias"),
+            [("1.2", "FS", 3), ("1.4", "SS", 0), ("2", "FS", -2)],
+        )
+
+    def test_monta_a_arvore_a_rede_e_o_marco(self):
+        resultado = services.importar_linhas(self.cronograma, [
+            {"codigo": "1", "nome": "Fundação"},
+            {"codigo": "1.1", "nome": "Estacas", "duracao_dias": "10"},
+            {"codigo": "1.2", "nome": "Blocos", "duracao_dias": "8",
+             "predecessoras": "1.1FS+2"},
+            {"codigo": "2", "nome": "Entrega", "duracao_dias": "0"},
+        ])
+        self.assertEqual(resultado["criadas"], 4)
+        self.assertEqual(resultado["ligacoes"], 1)
+        blocos = self.cronograma.atividades.get(nome="Blocos")
+        self.assertEqual(blocos.codigo, "1.2")
+        lig = Precedencia.objects.get(destino=blocos)
+        self.assertEqual((lig.origem.nome, lig.atraso_dias), ("Estacas", 2))
+        self.assertTrue(self.cronograma.atividades.get(nome="Entrega").eh_marco)
+        services.calcular_cpm(self.cronograma)
+
+    def test_o_project_aponta_pelo_numero_da_linha(self):
+        services.importar_linhas(self.cronograma, [
+            {"nome": "Escavar", "nivel": 1, "duracao_dias": "2"},
+            {"nome": "Concretar", "nivel": 1, "duracao_dias": "1", "predecessoras": "1"},
+        ], referencia="linha")
+        lig = Precedencia.objects.get(destino__nome="Concretar")
+        self.assertEqual(lig.origem.nome, "Escavar")
+
+    def test_entra_no_fim_do_que_ja_existe(self):
+        self.atividade("1")
+        services.importar_linhas(self.cronograma, [{"nome": "Colada", "duracao_dias": "3"}])
+        self.assertEqual(self.cronograma.atividades.get(nome="Colada").codigo, "2")
+
+    def test_ciclo_desfaz_o_bloco_inteiro(self):
+        with self.assertRaises(ValidationError):
+            services.importar_linhas(self.cronograma, [
+                {"codigo": "1", "nome": "A", "duracao_dias": "1", "predecessoras": "2"},
+                {"codigo": "2", "nome": "B", "duracao_dias": "1", "predecessoras": "1"},
+            ])
+        self.assertFalse(self.cronograma.atividades.exists())
+
+
+class GerarDoOrcamentoTests(BaseCronograma):
+    """Do orçamento vêm só etapas (decisão do dono, 10/10/2026): a etapa, quando
+    começa, quanto dura em dias úteis do plano, quanto vale e o Hh orçado."""
+
+    def setUp(self):
+        super().setUp()
+        from moduloorcamento import cronograma as cronograma_do_orcamento, planilha
+        from moduloorcamento.models import ItemOrcado, Orcamento
+        from obras.models import EtapaObra
+
+        self.fundacao = EtapaObra.objects.create(
+            tenant=self.tenant, obra=self.obra, nome_etapa="Fundação", ordem=1,
+        )
+        self.estrutura = EtapaObra.objects.create(
+            tenant=self.tenant, obra=self.obra, nome_etapa="Estrutura", ordem=2,
+        )
+        self.orcamento = Orcamento.objects.create(
+            tenant=self.tenant, obra=self.obra, descricao="Executivo",
+            bdi_percentual=Decimal("0"), data_base=date(2026, 7, 1),
+        )
+        # A etapa do orçamento é o grupo de 1º nível da planilha; aqui ela está
+        # ligada à etapa da obra (vínculo opcional, que o PDCA usa para casar).
+        self.grupos = {}
+        for ordem, (nome, etapa, valor) in enumerate((
+            ("Fundação", self.fundacao, "40000"), ("Estrutura", self.estrutura, "60000"),
+        )):
+            grupo = ItemOrcado.objects.create(
+                tenant=self.tenant, orcamento=self.orcamento, descricao=nome, ordem=ordem,
+                tipo_linha=ItemOrcado.TipoLinha.SINTETICO,
+            )
+            ItemOrcado.objects.create(
+                tenant=self.tenant, orcamento=self.orcamento, descricao=f"{nome} — serviço",
+                tipo_linha=ItemOrcado.TipoLinha.ANALITICO, pai=grupo, ordem=1,
+                quantidade=Decimal("1"), custo_unitario=Decimal(valor),
+            )
+            self.grupos[nome] = grupo
+            cronograma_do_orcamento.vincular_etapa_da_obra(
+                self.orcamento, grupo_id=grupo.pk, etapa_id=etapa.pk,
+            )
+        planilha.recalcular_orcamento(self.orcamento)
+        # Fundação no tempo (3 a 14/08: 10 dias úteis); estrutura ainda não.
+        cronograma_do_orcamento.planejar_etapa(
+            self.orcamento, grupo_id=self.grupos["Fundação"].pk,
+            inicio=date(2026, 8, 3), termino=date(2026, 8, 14),
+        )
+        self.orcamento.refresh_from_db()
+
+    def test_vem_uma_atividade_por_etapa_com_inicio_duracao_e_valor(self):
+        resultado = services.gerar_do_orcamento(self.cronograma, orcamento_id=self.orcamento.pk)
+        self.assertEqual((resultado["criadas"], resultado["planejadas"], resultado["sem_plano"]), (2, 1, 1))
+
+        fundacao = self.cronograma.atividades.get(etapa=self.fundacao)
+        self.assertEqual(fundacao.nao_comecar_antes_de, date(2026, 8, 3))
+        self.assertEqual(fundacao.duracao_dias, 10)
+        self.assertEqual(fundacao.peso_informado, Decimal("40000"))
+        self.assertTrue(fundacao.peso_do_orcamento)
+        self.assertIsNone(fundacao.item_orcado_id)
+        self.assertEqual(services.peso_de(fundacao), (Decimal("40000.0000"), "orcado"))
+
+        estrutura = self.cronograma.atividades.get(etapa=self.estrutura)
+        self.assertEqual(estrutura.duracao_dias, 5)  # duracao_padrao
+        self.assertIsNone(estrutura.nao_comecar_antes_de)
+
+        self.cronograma.refresh_from_db()
+        self.assertEqual(self.cronograma.orcamento_origem_id, self.orcamento.pk)
+        services.calcular_cpm(self.cronograma)
+
+    def test_etapa_sem_vinculo_com_a_obra_tambem_vira_atividade(self):
+        """O vínculo com a EtapaObra é opcional: sem ele a atividade nasce sem
+        etapa da obra, e o planejador liga no plano."""
+        from moduloorcamento import cronograma as cronograma_do_orcamento
+
+        cronograma_do_orcamento.vincular_etapa_da_obra(
+            self.orcamento, grupo_id=self.grupos["Estrutura"].pk, etapa_id=None,
+        )
+        services.gerar_do_orcamento(self.cronograma, orcamento_id=self.orcamento.pk)
+        estrutura = self.cronograma.atividades.get(nome="Estrutura")
+        self.assertIsNone(estrutura.etapa_id)
+        self.assertEqual(estrutura.peso_informado, Decimal("60000"))
+        # E a atualização casa pelo nome, sem duplicar.
+        resultado = services.atualizar_do_orcamento(self.cronograma, orcamento_id=self.orcamento.pk)
+        self.assertEqual(resultado["criadas"], 0)
+
+    def test_simular_nao_escreve(self):
+        resultado = services.gerar_do_orcamento(
+            self.cronograma, orcamento_id=self.orcamento.pk, simular=True,
+        )
+        self.assertEqual(resultado["linhas"], 2)
+        self.assertFalse(self.cronograma.atividades.exists())
+
+    def test_as_etapas_nao_entram_duas_vezes(self):
+        services.gerar_do_orcamento(self.cronograma, orcamento_id=self.orcamento.pk)
+        with self.assertRaises(ValidationError):
+            services.gerar_do_orcamento(self.cronograma, orcamento_id=self.orcamento.pk)
+        self.assertTrue(services.orcamentos_da_obra(self.cronograma)[0]["ja_no_plano"])
+
+    def test_editar_o_cronograma_do_orcamento_avisa_e_atualizar_traz(self):
+        from moduloorcamento import cronograma as cronograma_do_orcamento
+
+        services.gerar_do_orcamento(self.cronograma, orcamento_id=self.orcamento.pk)
+        self.cronograma.refresh_from_db()
+        self.assertFalse(services.situacao_do_orcamento(self.cronograma)["mudou"])
+
+        cronograma_do_orcamento.planejar_etapa(
+            self.orcamento, grupo_id=self.grupos["Fundação"].pk,
+            inicio=date(2026, 8, 10), termino=date(2026, 8, 14),
+        )
+        situacao = services.situacao_do_orcamento(self.cronograma)
+        self.assertEqual((situacao["mudou"], situacao["motivo"]), (True, "cronograma_editado"))
+        self.assertTrue(situacao["pode_atualizar"])
+
+        resultado = services.atualizar_do_orcamento(self.cronograma)
+        self.assertEqual(resultado["atualizadas"], 2)
+        fundacao = self.cronograma.atividades.get(etapa=self.fundacao)
+        self.assertEqual((fundacao.nao_comecar_antes_de, fundacao.duracao_dias), (date(2026, 8, 10), 5))
+        self.cronograma.refresh_from_db()
+        self.assertFalse(services.situacao_do_orcamento(self.cronograma)["mudou"])
+
+    def test_versao_nova_do_orcamento_avisa(self):
+        from moduloorcamento import planilha
+
+        services.gerar_do_orcamento(self.cronograma, orcamento_id=self.orcamento.pk)
+        planilha.aprovar_orcamento(self.orcamento)
+        nova = planilha.revisar_orcamento(self.orcamento, tipo="aditivo", motivo="Escopo")
+        planilha.aprovar_orcamento(nova)
+        self.cronograma.refresh_from_db()
+
+        situacao = services.situacao_do_orcamento(self.cronograma)
+        self.assertEqual(situacao["motivo"], "nova_versao")
+        self.assertEqual(situacao["atualizar_de"], nova.pk)
+        resultado = services.atualizar_do_orcamento(self.cronograma)
+        self.assertEqual(resultado["versao"], nova.versao)
+        self.cronograma.refresh_from_db()
+        self.assertEqual(self.cronograma.orcamento_origem_id, nova.pk)
+
+    def test_peso_digitado_deixa_de_ser_do_orcamento(self):
+        from modulopdca.serializers import AtividadeSerializer
+
+        services.gerar_do_orcamento(self.cronograma, orcamento_id=self.orcamento.pk)
+        fundacao = self.cronograma.atividades.get(etapa=self.fundacao)
+        s = AtividadeSerializer(fundacao, data={"peso_informado": "10"}, partial=True)
+        self.assertTrue(s.is_valid(), s.errors)
+        s.save()
+        fundacao.refresh_from_db()
+        self.assertFalse(fundacao.peso_do_orcamento)
+
+
+class AnexarModeloTests(BaseCronograma):
+    def test_o_modelo_entra_no_fim_sem_apagar_nada(self):
+        modelo = Cronograma.objects.create(
+            tenant=self.tenant, descricao="Padrão", data_inicio=date(2026, 1, 1),
+            eh_modelo=True, nome_modelo="Torre padrão",
+        )
+        base = Atividade.objects.create(
+            tenant=self.tenant, cronograma=modelo, codigo="1", nome="Torre",
+            profundidade=1,
+        )
+        Atividade.objects.create(
+            tenant=self.tenant, cronograma=modelo, pai=base, codigo="1.1",
+            nome="Pavimento", duracao_dias=4, profundidade=2,
+        )
+        self.atividade("1")
+        resultado = services.anexar_modelo(modelo, self.cronograma)
+        self.assertEqual(resultado["criadas"], 2)
+        self.assertEqual(self.cronograma.atividades.get(nome="Pavimento").codigo, "2.1")
+
+
+class ApiDaMontagemTests(APITestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.tenant = Tenant.objects.create(slug="pdca-montagem", nome="Construtora Monta")
+        cls.obra = Obra.objects.create(
+            tenant=cls.tenant, nome_obra="Obra montada", endereco="Rua 1",
+        )
+        cls.calendario = CalendarioTrabalho.objects.create(
+            tenant=cls.tenant, nome="Comercial", obra=cls.obra,
+        )
+        cls.usuario = Usuario.objects.create(username="monta", tenant=cls.tenant)
+
+    def setUp(self):
+        self.cronograma = Cronograma.objects.create(
+            tenant=self.tenant, obra=self.obra, descricao="Plano",
+            data_inicio=date(2026, 6, 1), calendario=self.calendario,
+        )
+        self.um = Atividade.objects.create(
+            tenant=self.tenant, cronograma=self.cronograma, codigo="1",
+            nome="Fundação", duracao_dias=5, profundidade=1,
+        )
+        self.usuario.iam_modules = ["pdca"]
+        self.usuario.iam_permissions = ["pdca.cronograma.view", "pdca.cronograma.edit"]
+        self.client.force_authenticate(user=self.usuario)
+
+    def test_inserir_e_mover_pela_api(self):
+        url = f"/api/pdca/cronogramas/{self.cronograma.pk}/inserir-atividade/"
+        resposta = self.client.post(url, {"pai": self.um.pk, "nome": "Estacas"}, format="json")
+        self.assertEqual(resposta.status_code, 201, resposta.content)
+        self.assertEqual(resposta.json()["codigo"], "1.1")
+        nova = resposta.json()["atividade_id"]
+        resposta = self.client.post(
+            f"/api/pdca/atividades/{nova}/mover/", {"pai": None, "posicao": 0}, format="json",
+        )
+        self.assertEqual(resposta.status_code, 200, resposta.content)
+        self.assertEqual(resposta.json()["codigo"], "1")
+
+    def test_so_ver_nao_insere(self):
+        self.usuario.iam_permissions = ["pdca.cronograma.view"]
+        self.client.force_authenticate(user=self.usuario)
+        resposta = self.client.post(
+            f"/api/pdca/cronogramas/{self.cronograma.pk}/inserir-atividade/",
+            {"nome": "X"}, format="json",
+        )
+        self.assertEqual(resposta.status_code, 403)
+
+    def test_importar_e_listar_orcamentos(self):
+        resposta = self.client.post(
+            f"/api/pdca/cronogramas/{self.cronograma.pk}/importar-linhas/",
+            {"linhas": [{"nome": "Colada", "duracao_dias": "2", "predecessoras": "1"}]},
+            format="json",
+        )
+        self.assertEqual(resposta.status_code, 200, resposta.content)
+        self.assertEqual(resposta.json()["ligacoes"], 1)
+        resposta = self.client.get(f"/api/pdca/cronogramas/{self.cronograma.pk}/orcamentos/")
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(resposta.json(), [])
+
+
+class RestaurarLinhasTests(BaseCronograma):
+    """O desfazer da exclusão (decisão do dono, 09/10/2026: o Ctrl+Z vale "até
+    eu finalizar o plano")."""
+
+    def _retrato(self, raiz):
+        sub = [raiz, *Atividade.objects.filter(pai=raiz)]
+        ids = {a.pk for a in sub}
+        return {
+            "atividades": [
+                {"id": a.pk, "pai": a.pai_id, "nome": a.nome, "ordem": a.ordem,
+                 "duracao_dias": a.duracao_dias, "eh_marco": a.eh_marco,
+                 "local": None, "etapa": None, "item_orcado": None,
+                 "calendario": None, "responsavel": None}
+                for a in sub
+            ],
+            "ligacoes": [
+                {"origem": p.origem_id, "destino": p.destino_id, "tipo": p.tipo,
+                 "atraso_dias": p.atraso_dias}
+                for p in Precedencia.objects.filter(Q(origem_id__in=ids) | Q(destino_id__in=ids))
+            ],
+        }
+
+    def test_a_subarvore_volta_no_mesmo_lugar_com_as_ligacoes(self):
+        um = self.atividade("1")
+        dois = self.atividade("2", duracao=None)
+        filha = self.atividade("2.1", duracao=4, pai=dois)
+        tres = self.atividade("3")
+        self.ligar(um, filha)
+        self.ligar(filha, tres)
+        retrato = self._retrato(dois)
+        dois.delete()
+        services.renumerar_eap(self.cronograma)
+
+        resultado = services.restaurar_linhas(
+            self.cronograma, pai_id=None, posicao=1, **retrato,
+        )
+        nova_filha = Atividade.objects.get(pk=resultado["mapa"][str(filha.pk)])
+        self.assertEqual(nova_filha.codigo, "2.1")
+        self.assertEqual(nova_filha.duracao_dias, 4)
+        self.assertEqual(Atividade.objects.get(pk=tres.pk).codigo, "3")
+        self.assertTrue(Precedencia.objects.filter(origem=um, destino=nova_filha).exists())
+        self.assertTrue(Precedencia.objects.filter(origem=nova_filha, destino=tres).exists())
+        services.calcular_cpm(self.cronograma)
+
+    def test_vinculo_de_outra_obra_volta_vazio(self):
+        outra = Obra.objects.create(tenant=self.tenant, nome_obra="Outra", endereco="Rua 2")
+        local_alheio = LocalObra.objects.create(
+            tenant=self.tenant, obra=outra, codigo="T", nome="Torre alheia",
+            nivel=NivelLocal.BLOCO, profundidade=1,
+        )
+        a = self.atividade("1")
+        retrato = self._retrato(a)
+        retrato["atividades"][0]["local"] = local_alheio.pk
+        antigo = a.pk
+        a.delete()
+        resultado = services.restaurar_linhas(self.cronograma, pai_id=None, posicao=0, **retrato)
+        nova = Atividade.objects.get(pk=resultado["mapa"][str(antigo)])
+        self.assertIsNone(nova.local_id)
+
+    def test_pela_api(self):
+        from rest_framework.test import APIClient
+
+        usuario = Usuario.objects.create(username="restaura", tenant=self.tenant)
+        usuario.iam_modules = ["pdca"]
+        usuario.iam_permissions = ["pdca.cronograma.view", "pdca.cronograma.edit"]
+        cliente = APIClient()
+        cliente.force_authenticate(user=usuario)
+        a = self.atividade("1", duracao=3)
+        retrato = self._retrato(a)
+        antigo = a.pk
+        a.delete()
+        resposta = cliente.post(
+            f"/api/pdca/cronogramas/{self.cronograma.pk}/restaurar-linhas/",
+            {"pai": None, "posicao": 0, **retrato}, format="json",
+        )
+        self.assertEqual(resposta.status_code, 200, resposta.content)
+        self.assertIn(str(antigo), resposta.json()["mapa"])

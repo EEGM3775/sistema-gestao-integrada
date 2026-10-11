@@ -4,6 +4,7 @@ from rest_framework.routers import DefaultRouter
 
 from .views import (
     AplicadoView,
+    ConsumoABaixarView,
     CurvaABCView,
     DevolucaoViewSet,
     EmprestimoFerramentaViewSet,
@@ -46,5 +47,6 @@ urlpatterns = [
     path("dashboard/", SilDashboardView.as_view(), name="sil-dashboard"),
     path("curva-abc/", CurvaABCView.as_view(), name="sil-curva-abc"),
     path("aplicado/", AplicadoView.as_view(), name="sil-aplicado"),
+    path("consumo-a-baixar/", ConsumoABaixarView.as_view(), name="sil-consumo-a-baixar"),
     path("", include(router.urls)),
 ]

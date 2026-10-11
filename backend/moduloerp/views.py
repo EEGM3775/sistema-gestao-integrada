@@ -2,6 +2,7 @@
 import logging
 from urllib.parse import urlparse
 import requests
+from django.conf import settings
 from nucleo.busca import BuscaSemAcento
 from rest_framework import viewsets, permissions, views, filters, status as status_module
 from django_filters.rest_framework import DjangoFilterBackend
@@ -110,7 +111,7 @@ def _verificar_documento_nf(nf):
     foi cancelada) e atualiza a nota local; **fora do ar** → devolve a última
     versão guardada e sinaliza `gateway_online=False`. Nunca levanta exceção.
     """
-    from .nfe_client import NFeClient, NFeIndisponivel, NFeErro
+    from .nfe_client import NFeIndisponivel, NFeErro, cliente_do_tenant
     from .tasks import _aplicar_retorno
 
     # D70 — a cópia LOCAL da nota sai pela porta única. Este payload é montado à
@@ -135,7 +136,7 @@ def _verificar_documento_nf(nf):
     if not nf.nfe_io_id:
         return _local('Nota sem ID na NFE.io — exibindo a versão local, se houver.')
 
-    client = NFeClient()
+    client = cliente_do_tenant(nf.tenant_id)
     try:
         dados = client.consultar_nfse(nf.nfe_io_id)
     except NFeIndisponivel:
@@ -1339,6 +1340,59 @@ class ConfiguracaoLotesView(TenantScopedAPIViewMixin, views.APIView):
             detalhes={c: [antes[c], novos[c]] for c in novos if antes[c] != novos[c]},
         )
         return Response(limites_lote.resumo(user))
+
+
+class IntegracaoFiscalView(TenantScopedAPIViewMixin, views.APIView):
+    """A conta da empresa na NFE.io (achado do dono, 10/10/2026: "como vou
+    cadastrar minha API?").
+
+    `GET` — o que está cadastrado, **sem a chave**: só os quatro últimos
+    caracteres, e de onde vem a credencial que vale (`empresa` ou `ambiente`).
+    `PUT` — grava `company_id` e, se vier, a `api_key` (cifrada). Mesma
+    permissão das demais configurações do financeiro.
+    """
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
+    required_module = "erp_financeiro"
+    permission_map = {"view": "erp.nf.view", "write": limites_lote.PERMISSAO}
+
+    @staticmethod
+    def _resumo(cadastro) -> dict:
+        da_empresa = bool(cadastro and cadastro.company_id and cadastro.api_key_cifrada)
+        do_ambiente = bool(settings.NFE_IO_API_KEY and settings.NFE_IO_COMPANY_ID)
+        return {
+            "company_id": cadastro.company_id if cadastro else "",
+            "tem_chave": bool(cadastro and cadastro.api_key_cifrada),
+            "chave_final": cadastro.api_key_final if cadastro else "",
+            "origem": "empresa" if da_empresa else ("ambiente" if do_ambiente else "nenhuma"),
+            "atualizado_em": cadastro.atualizado_em if cadastro else None,
+        }
+
+    def get(self, request):
+        from .models import IntegracaoFiscal
+
+        cadastro = IntegracaoFiscal.objects.filter(tenant_id=request.user.tenant_id).first()
+        return Response(self._resumo(cadastro))
+
+    def put(self, request):
+        from .models import IntegracaoFiscal
+
+        company_id = (request.data.get("company_id") or "").strip()
+        if len(company_id) > 80:
+            return Response({"company_id": "ID longo demais."}, status=status_module.HTTP_400_BAD_REQUEST)
+        cadastro, _ = IntegracaoFiscal.objects.get_or_create(tenant_id=request.user.tenant_id)
+        cadastro.company_id = company_id
+        if "api_key" in request.data:
+            cadastro.definir_api_key(request.data.get("api_key") or "")
+        cadastro.atualizado_por = request.user
+        cadastro.save()
+
+        from nucleo.auditoria import registrar_auditoria
+        registrar_auditoria(
+            acao="configurar_integracao_fiscal", instance=cadastro, usuario=request.user,
+            # Nunca a chave: só que ela mudou.
+            detalhes={"company_id": company_id, "chave_trocada": "api_key" in request.data},
+        )
+        return Response(self._resumo(cadastro))
 
 
 class AtualizarStatusNFView(TenantScopedAPIViewMixin, views.APIView):

@@ -65,6 +65,8 @@ export interface PedidoCompra {
   data_pedido: string; data_entrega_prevista: string | null; conta_pagar_ref: number | null
   origem_tenant: string | null; observacao: string; criado_em: string
   fornecedor_nome?: string; centro_custo_nome?: string | null; itens_count?: number; recebimentos_count?: number
+  /** Medição × compra de serviço: os contratos do PDCA que medem este pedido. */
+  medicao_pdca?: { contrato: number; numero: string; obra: number; medido_aprovado: string }[]
 }
 export interface ItemPedido {
   item_pedido_id: number; pedido: number; produto: number | null; descricao: string

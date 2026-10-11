@@ -15,6 +15,7 @@ from .serializers import (
 from .filters import ObraFilter
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError
 from decimal import Decimal
 from datetime import date
 
@@ -93,6 +94,37 @@ class EtapaObraViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     required_resource = "obra.obra"
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['obra']
+
+    # As etapas da obra são as raízes do plano do PDCA (`modulopdca/etapas.py`).
+    # Import sob demanda pelo mesmo motivo do serializer: `obras` é fundação e
+    # não depende de módulo vendido — sem o app, a etapa segue sozinha.
+
+    @staticmethod
+    def _pdca():
+        try:
+            from modulopdca import etapas
+        except Exception:
+            return None
+        return etapas
+
+    def perform_create(self, serializer):
+        super().perform_create(serializer)
+        pdca = self._pdca()
+        if pdca is not None:
+            pdca.puxar_para_o_plano(serializer.instance)
+
+    def perform_update(self, serializer):
+        super().perform_update(serializer)
+        pdca = self._pdca()
+        if pdca is not None:
+            pdca.renomear_no_plano(serializer.instance)
+
+    def perform_destroy(self, instance):
+        pdca = self._pdca()
+        motivo = pdca.motivo_para_nao_excluir(instance) if pdca is not None else None
+        if motivo:
+            raise ValidationError({"detail": motivo})
+        super().perform_destroy(instance)
 
 class DocumentoObraViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     """

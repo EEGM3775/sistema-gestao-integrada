@@ -8,7 +8,9 @@ from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from nucleo.busca import BuscaSemAcento
 from rest_framework import filters, permissions, status, views, viewsets
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.response import Response
 
 from catalogo.models import Item
@@ -309,11 +311,19 @@ class InventarioViewSet(BaseSilViewSet):
     filterset_fields = ["local", "status", "tipo"]
     ordering_fields = ["criado_em"]
     required_resource = "sil.inventario"
-    action_permission_map = {"fechar": "sil.inventario.fechar"}
+    # Reabrir desfaz o que o fechamento fez no saldo: é o mesmo degrau.
+    action_permission_map = {"fechar": "sil.inventario.fechar", "reabrir": "sil.inventario.fechar"}
 
     def perform_create(self, serializer):
         user = getattr(self.request, "user", None)
         serializer.save(tenant_id=getattr(user, "tenant_id", None), usuario=user if getattr(user, "pk", None) else None)
+
+    def perform_destroy(self, instance):
+        """Excluir só a contagem aberta. A fechada já mexeu no saldo: reabra-a
+        (o que estorna os ajustes) e exclua depois."""
+        if instance.status == Inventario.Status.FECHADO:
+            raise DRFValidationError({"detail": "Inventário fechado não se exclui — reabra-o antes (os ajustes são estornados)."})
+        super().perform_destroy(instance)
 
     @action(detail=True, methods=["post"])
     def fechar(self, request, pk=None):
@@ -321,6 +331,15 @@ class InventarioViewSet(BaseSilViewSet):
         if inv.status == Inventario.Status.FECHADO:
             return Response({"detail": "Inventário já fechado."}, status=status.HTTP_400_BAD_REQUEST)
         services.fechar_inventario(inv)
+        return Response(self.get_serializer(inv).data)
+
+    @action(detail=True, methods=["post"])
+    def reabrir(self, request, pk=None):
+        inv = self.get_object()
+        try:
+            services.reabrir_inventario(inv)
+        except DjangoValidationError as erro:
+            return Response({"detail": " ".join(erro.messages)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(self.get_serializer(inv).data)
 
 
@@ -331,6 +350,23 @@ class ItemInventarioViewSet(BaseSilViewSet):
     filterset_fields = ["inventario", "item"]
     required_resource = "sil.inventario"
     pagination_class = None
+
+    @staticmethod
+    def _so_aberto(inventario):
+        if inventario.status != Inventario.Status.ABERTO:
+            raise DRFValidationError({"detail": "Inventário fechado: reabra-o para mudar a contagem."})
+
+    def perform_create(self, serializer):
+        self._so_aberto(serializer.validated_data["inventario"])
+        super().perform_create(serializer)
+
+    def perform_update(self, serializer):
+        self._so_aberto(serializer.instance.inventario)
+        super().perform_update(serializer)
+
+    def perform_destroy(self, instance):
+        self._so_aberto(instance.inventario)
+        super().perform_destroy(instance)
 
 
 class EntregaEPIViewSet(BaseSilViewSet):
@@ -469,6 +505,32 @@ class CurvaABCView(views.APIView):
             "total": str(total),
             "resumo": {c: {"itens": v["itens"], "valor": str(v["valor"])} for c, v in resumo.items()},
             "itens": itens,
+        })
+
+
+class ConsumoABaixarView(views.APIView):
+    """O que o campo **apontou** no PDCA e o estoque ainda não baixou.
+
+    *(Decisão do dono: "o apontamento não mexe no estoque, mas avisa ao estoque
+    para ser feito depois".)* Teórico = avanço apontado × material da atividade
+    (composição do orçamento); aplicado = saída para a obra e a etapa. A
+    diferença é a baixa a registrar — ou o desperdício a explicar. Import tardio
+    e tolerante: sem o PDCA, a lista vem vazia.
+    """
+
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
+    required_module = "sil"
+    required_permission = "sil.relatorio.view"
+
+    def get(self, request):
+        try:
+            from modulopdca.suprimentos import consumo_a_baixar
+        except ImportError:
+            return Response({"linhas": [], "disponivel": False})
+        obra = request.query_params.get("obra")
+        return Response({
+            "linhas": consumo_a_baixar(request.user.tenant_id, obra_id=int(obra) if obra and obra.isdigit() else None),
+            "disponivel": True,
         })
 
 

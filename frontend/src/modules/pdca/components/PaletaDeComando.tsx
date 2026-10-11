@@ -128,7 +128,7 @@ export function PaletaDeComando() {
       return
     }
     if (r.tipo === 'obra') {
-      navigate(`/app/pdca/o/${r.id}/hoje`)
+      navigate(`/app/pdca/o/${r.id}/controle`)
       return
     }
     const destinoObra = ('obra' in r && r.obra) || obraId
@@ -139,7 +139,7 @@ export function PaletaDeComando() {
       navigate(enderecoDoDocumento(destinoObra, r.tipo, r.id))
       return
     }
-    const posto = POSTO_DA_ESPECIE[r.tipo] ?? 'hoje'
+    const posto = POSTO_DA_ESPECIE[r.tipo] ?? 'controle'
     navigate(`/app/pdca/o/${destinoObra}/${posto}`)
   }
 

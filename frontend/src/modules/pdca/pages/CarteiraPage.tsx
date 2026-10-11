@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { ArrowRight, Search } from 'lucide-react'
+import { Link, useNavigate } from 'react-router-dom'
+import { ArrowRight, HardHat, Search } from 'lucide-react'
 import { Btn, Card, Empty, Loading, Num, Pill, SectionHead } from '@/components/malha'
+import { useAuth } from '@/hooks/useAuth'
 import { contemSemAcento } from '@/utils/texto'
 import { dateToBR } from '@/utils/dates'
 import { useCarteira } from '../hooks'
 import { emDias, percentual } from '../formato'
-import { DEGRAUS, POSTO_DA_ORIGEM } from '../postos'
+import { DEGRAUS, POSTO_DA_ORIGEM, portaDoPapel } from '../postos'
 import { SemPermissaoAviso } from '../components/SemPermissaoAviso'
 import type { Consequencia, LinhaDaCarteira } from '../types'
 
@@ -37,6 +38,8 @@ export default function CarteiraPage() {
   const [ordem, setOrdem] = useState<Ordem>('pior')
   const navigate = useNavigate()
   const carteira = useCarteira()
+  const { roles, hasPermission } = useAuth()
+  const portaDoCampo = portaDoPapel(roles, hasPermission) === 'campo'
 
   const linhas = useMemo(() => {
     const visiveis = (carteira.data?.obras ?? []).filter(
@@ -127,6 +130,8 @@ export default function CarteiraPage() {
         Carteira de obras
       </SectionHead>
 
+      {portaDoCampo && <PassagemParaOCampo />}
+
       {dados.sem_permissao.length > 0 && <SemPermissaoAviso itens={dados.sem_permissao} />}
 
       {dados.truncada && (
@@ -154,12 +159,43 @@ export default function CarteiraPage() {
             <LinhaDaObra
               key={linha.obra}
               linha={linha}
-              aoEntrar={(posto) => navigate(`/app/pdca/o/${linha.obra}/${posto}`)}
+              aoEntrar={(posto) => navigate(
+                posto ? `/app/pdca/o/${linha.obra}/${posto}` : `/app/pdca/o/${linha.obra}`,
+              )}
             />
           ))}
         </div>
       )}
     </div>
+  )
+}
+
+/** **A porta do encarregado é o campo** (§3.3 da planta) — *a minha frente
+ *  de hoje*, que não é de obra nenhuma em particular. Ela não substitui a
+ *  carteira (o papel escolhe a porta, nunca esconde o resto): fica à vista
+ *  aqui, que é onde se chega antes de escolher obra, e sem ela a superfície de
+ *  campo só era alcançável digitando o endereço. */
+function PassagemParaOCampo() {
+  return (
+    <Link
+      to="/campo"
+      style={{
+        display: 'flex', alignItems: 'center', gap: 12, textDecoration: 'none',
+        padding: '12px 16px', borderRadius: 'var(--r-md)',
+        background: 'var(--accent-soft)', border: '1px solid var(--accent)',
+      }}
+    >
+      <HardHat size={20} style={{ color: 'var(--accent-ink)', flexShrink: 0 }} />
+      <span style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1, minWidth: 0 }}>
+        <span style={{ fontSize: 14, fontWeight: 680, color: 'var(--ink)' }}>
+          A sua frente de hoje
+        </span>
+        <span style={{ fontSize: 12.5, color: 'var(--ink-2)' }}>
+          Apontar o que andou, dizer que a trava saiu, responder a ficha — a versão de canteiro.
+        </span>
+      </span>
+      <ArrowRight size={16} style={{ color: 'var(--accent-ink)', flexShrink: 0 }} />
+    </Link>
   )
 }
 
@@ -174,7 +210,7 @@ function atraso(linha: LinhaDaCarteira): number {
 
 function LinhaDaObra({
   linha, aoEntrar,
-}: { linha: LinhaDaCarteira; aoEntrar: (posto: string) => void }) {
+}: { linha: LinhaDaCarteira; aoEntrar: (posto?: string) => void }) {
   const desvio = linha.prazo?.desvio_dias
 
   return (
@@ -188,7 +224,7 @@ function LinhaDaObra({
       >
         <button
           type="button"
-          onClick={() => aoEntrar('hoje')}
+          onClick={() => aoEntrar()}
           style={{
             flex: '1 1 280px', minWidth: 0, textAlign: 'left', cursor: 'pointer',
             background: 'none', border: 'none', padding: '13px 16px',
@@ -279,7 +315,7 @@ function LinhaDaObra({
           <span style={{ marginLeft: 'auto', display: 'inline-flex' }}>
             <button
               type="button"
-              onClick={() => aoEntrar('hoje')}
+              onClick={() => aoEntrar('controle')}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 5,
                 background: 'none', border: 'none', cursor: 'pointer',

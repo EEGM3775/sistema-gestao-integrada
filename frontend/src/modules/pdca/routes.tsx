@@ -1,11 +1,12 @@
 import { lazy, Suspense, type ReactNode } from 'react'
 import { Navigate, Route } from 'react-router-dom'
 import ModuleRoute from '@/components/ModuleRoute'
+import { PortaDaObra } from './components/PortaDaObra'
+import { ParaOControle } from './components/ParaOControle'
 
 const CarteiraPage = lazy(() => import('./pages/CarteiraPage'))
 const CascaPdca = lazy(() => import('./components/CascaPdca'))
-const HojePage = lazy(() => import('./pages/HojePage'))
-const SemanaPage = lazy(() => import('./pages/SemanaPage'))
+const ControlePage = lazy(() => import('./pages/ControlePage'))
 const PlanoPage = lazy(() => import('./pages/PlanoPage'))
 const MedicaoPage = lazy(() => import('./pages/MedicaoPage'))
 const QualidadePage = lazy(() => import('./pages/QualidadePage'))
@@ -41,19 +42,19 @@ export const pdcaRoutes = (
   <Route element={<ModuleRoute module="pdca" />}>
     <Route path="pdca" element={w(<CarteiraPage />)} />
     <Route path="pdca/o/:obraId" element={w(<CascaPdca />)}>
-      {/* **A obra abre em `HOJE`**, e não no plano: a pergunta do primeiro
-          minuto do dia é o que exige decisão, não o que o cronograma diz.
-          A porta por papel (o planejador em `PLANO`, o técnico de segurança
-          em `SEGURANÇA` — §3.3 da planta) ainda não existe: com os seis
-          postos no ar ela passou a ser construível, e está no roadmap. */}
-      <Route index element={<Navigate to="hoje" replace />} />
-      <Route path="hoje" element={w(<HojePage />)} />
-      <Route path="semana" element={w(<SemanaPage />)} />
+      {/* **A obra abre no posto do papel** (§3.3 da planta): o planejador
+          em `PLANO`, o técnico de segurança em `SEGURANÇA`. Quem não tem
+          papel de posto cai no `CONTROLE` (aba Hoje) — a pergunta do primeiro minuto do dia
+          é o que exige decisão, não o que o cronograma diz. */}
+      <Route index element={<PortaDaObra />} />
+      <Route path="controle" element={w(<ControlePage />)} />
+      <Route path="hoje" element={<ParaOControle aba="hoje" />} />
+      <Route path="semana" element={<ParaOControle aba="semana" />} />
       <Route path="plano" element={w(<PlanoPage />)} />
       <Route path="medicao" element={w(<MedicaoPage />)} />
       <Route path="qualidade" element={w(<QualidadePage />)} />
       <Route path="seguranca" element={w(<SegurancaPage />)} />
-      <Route path="*" element={<Navigate to="hoje" replace />} />
+      <Route path="*" element={<Navigate to="controle" replace />} />
     </Route>
   </Route>
 )

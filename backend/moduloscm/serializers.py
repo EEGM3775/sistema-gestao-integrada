@@ -146,6 +146,8 @@ class PedidoCompraSerializer(TenantScopedModelSerializer):
     centro_custo_nome = serializers.CharField(source="centro_custo.nome", read_only=True, default=None)
     itens_count = serializers.IntegerField(source="itens.count", read_only=True)
     recebimentos_count = serializers.IntegerField(source="recebimentos.count", read_only=True)
+    #: Medição × compra de serviço: os contratos do PDCA que medem este pedido.
+    medicao_pdca = serializers.SerializerMethodField()
 
     class Meta:
         model = PedidoCompra
@@ -153,6 +155,22 @@ class PedidoCompraSerializer(TenantScopedModelSerializer):
         # ref_externa auto; conta_pagar_ref/origem_tenant são seams de sistema
         # (ERP/rede); status muda pelas actions/recebimentos.
         read_only_fields = ["tenant", "ref_externa", "conta_pagar_ref", "origem_tenant"]
+
+    def get_medicao_pdca(self, obj):
+        contratos = getattr(obj, "contratos_pdca", None)
+        if contratos is None:
+            return []
+        from decimal import Decimal
+
+        from django.db.models import F, Sum
+
+        saida = []
+        for c in contratos.all():
+            medido = (c.medicoes.filter(status="aprovada")
+                      .aggregate(v=Sum(F("itens__quantidade") * F("itens__preco_unitario")))["v"] or Decimal("0"))
+            saida.append({"contrato": c.pk, "numero": c.numero, "obra": c.obra_id,
+                          "medido_aprovado": str(Decimal(medido).quantize(Decimal("0.01")))})
+        return saida
 
 
 class ItemPedidoSerializer(TenantScopedModelSerializer):
