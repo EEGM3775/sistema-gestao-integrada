@@ -11,11 +11,13 @@ O que se prova aqui, em ordem de importância:
 4. **Coordenada trocada não entra** — lon/lat invertidos são o erro mais comum
    de importação, e passam em qualquer validação de intervalo global.
 """
+import json
 from datetime import date, time
 from decimal import Decimal
 from unittest.mock import patch
 
 from django.contrib.gis.geos import Point, Polygon
+from django.test import override_settings
 from rest_framework.test import APITestCase
 
 from empreendimentos.models import Empreendimento
@@ -745,3 +747,142 @@ class UnidadeNoMapaTests(MapsTestBase):
             if l["tipo"] == "avulso"
         )
         self.assertIsNone(linha["unidade_detalhe"])
+
+
+# ---------------------------------------------------------------------------
+# Edição na tela — pin à mão, polígono desenhado, rota montada, exclusão
+# (itens 62–70 do dono)
+# ---------------------------------------------------------------------------
+class EdicaoNaTelaTests(MapsTestBase):
+    def test_pin_movido_a_mao_vira_exata_e_sai_da_fila(self):
+        """PATCH do ponto rebaixava nada e promovia nada: ficava `municipio`."""
+        self.autenticar()
+        local = self._local(precisao=Precisao.MUNICIPIO)
+        local.fonte = "ibge"
+        local.save()
+        r = self.client.patch(
+            f"/api/maps/locais/{local.pk}/", {"ponto": {"lon": -38.50, "lat": -12.98}}, format="json"
+        )
+        self.assertEqual(r.status_code, 200, r.content)
+        local.refresh_from_db()
+        self.assertEqual(local.precisao, Precisao.EXATA)
+        self.assertEqual(local.fonte, "manual")
+        self.assertIsNotNone(local.geocodificado_em)
+
+    def test_editar_so_o_nome_nao_mexe_na_precisao(self):
+        self.autenticar()
+        local = self._local(precisao=Precisao.CEP)
+        r = self.client.patch(f"/api/maps/locais/{local.pk}/", {"nome": "Outro"}, format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        local.refresh_from_db()
+        self.assertEqual(local.precisao, Precisao.CEP)
+
+    def test_tirar_o_pin_volta_para_sem_coordenada(self):
+        self.autenticar()
+        local = self._local()
+        r = self.client.patch(f"/api/maps/locais/{local.pk}/", {"ponto": None}, format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        local.refresh_from_db()
+        self.assertIsNone(local.ponto)
+        self.assertEqual(local.precisao, Precisao.DESCONHECIDA)
+
+    def test_local_em_rota_nao_se_apaga_e_diz_por_que(self):
+        self.autenticar()
+        origem = self._local(nome="Almoxarifado")
+        Rota.objects.create(tenant=self.tenant, nome="R", origem=origem)
+        r = self.client.delete(f"/api/maps/locais/{origem.pk}/")
+        self.assertEqual(r.status_code, 409)
+        self.assertIn("rota", r.json()["detail"])
+        self.assertTrue(Local.objects.filter(pk=origem.pk).exists())
+
+    def test_plano_desenhado_nasce_do_poligono_e_editar_a_area_apaga_o_calculo(self):
+        self.autenticar()
+        area = json.loads(self._area().geojson)
+        r = self.client.post(
+            "/api/maps/planos-voo/", {"nome": "Desenhado", "area": area, "gsd_alvo_cm": "3"}, format="json"
+        )
+        self.assertEqual(r.status_code, 201, r.content)
+        plano_id = r.json()["plano_id"]
+        self.assertEqual(self.client.post(f"/api/maps/planos-voo/{plano_id}/calcular/").status_code, 200)
+        self.assertTrue(PlanoVoo.objects.get(pk=plano_id).waypoints)
+
+        nova = json.loads(self._area(centro=LAURO).geojson)
+        r = self.client.patch(f"/api/maps/planos-voo/{plano_id}/", {"area": nova}, format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        plano = PlanoVoo.objects.get(pk=plano_id)
+        self.assertEqual(plano.waypoints, [])
+        self.assertIsNone(plano.linha)
+        self.assertIsNone(plano.altura_m)
+
+        self.assertEqual(self.client.delete(f"/api/maps/planos-voo/{plano_id}/").status_code, 204)
+        self.assertFalse(PlanoVoo.objects.filter(pk=plano_id).exists())
+
+    def test_poligono_auto_interceptado_e_recusado(self):
+        self.autenticar()
+        laco = {"type": "Polygon", "coordinates": [[
+            [-38.48, -12.97], [-38.47, -12.96], [-38.48, -12.96], [-38.47, -12.97], [-38.48, -12.97],
+        ]]}
+        r = self.client.post("/api/maps/planos-voo/", {"nome": "Laço", "area": laco}, format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_rota_nasce_com_as_paradas_na_ordem_enviada(self):
+        self.autenticar()
+        origem = self._local(nome="Almoxarifado")
+        feira, lauro = self._local(nome="Feira", coord=FEIRA), self._local(nome="Lauro", coord=LAURO)
+        r = self.client.post(
+            "/api/maps/rotas/",
+            {"nome": "Entrega", "origem": origem.pk, "paradas_locais": [feira.pk, lauro.pk]},
+            format="json",
+        )
+        self.assertEqual(r.status_code, 201, r.content)
+        paradas = r.json()["paradas"]
+        self.assertEqual([p["local"] for p in paradas], [feira.pk, lauro.pk])
+        self.assertEqual([p["ordem"] for p in paradas], [1, 2])
+
+        # Editar a lista substitui as paradas e apaga o traçado velho.
+        rota_id = r.json()["rota_id"]
+        self.client.post(f"/api/maps/rotas/{rota_id}/tracar/")
+        r = self.client.patch(f"/api/maps/rotas/{rota_id}/", {"paradas_locais": [lauro.pk]}, format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual([p["local"] for p in r.json()["paradas"]], [lauro.pk])
+        self.assertIsNone(r.json()["linha"])
+
+    def test_rota_recusa_parada_de_outra_empresa_e_origem_repetida(self):
+        self.autenticar()
+        origem = self._local(nome="Almoxarifado")
+        alheio = self._local(nome="Alheio", tenant=self.tenant_b)
+        r = self.client.post(
+            "/api/maps/rotas/", {"nome": "X", "origem": origem.pk, "paradas_locais": [alheio.pk]}, format="json"
+        )
+        self.assertEqual(r.status_code, 400)
+        r = self.client.post(
+            "/api/maps/rotas/", {"nome": "Y", "origem": origem.pk, "paradas_locais": [origem.pk]}, format="json"
+        )
+        self.assertEqual(r.status_code, 400)
+        self.assertFalse(Rota.objects.filter(nome__in=["X", "Y"]).exists())
+
+
+class ProvedorComChaveTests(MapsTestBase):
+    @override_settings(NOMINATIM_URL="https://us1.locationiq.com/v1", NOMINATIM_API_KEY="pk.segredo")
+    def test_chave_vai_como_parametro_e_nao_aparece_no_log(self):
+        from django.core.cache import cache
+        import requests
+
+        cache.clear()
+        resposta = requests.Response()
+        resposta.status_code = 401
+        resposta.url = "https://us1.locationiq.com/v1/search?key=pk.segredo"
+        erro = requests.HTTPError(f"401 Client Error for url: {resposta.url}", response=resposta)
+        with patch("nucleo.geo.requests.get", side_effect=erro) as get, \
+                self.assertLogs("nucleo.geo", level="WARNING") as logs:
+            self.assertIsNone(geo.geocodificar_endereco("Rua Chile, 10, Salvador BA"))
+        self.assertEqual(get.call_args.kwargs["params"]["key"], "pk.segredo")
+        self.assertNotIn("pk.segredo", "\n".join(logs.output))
+
+    @override_settings(NOMINATIM_URL="https://nominatim.openstreetmap.org", OSRM_URL="")
+    def test_status_declara_o_servidor_publico(self):
+        self.autenticar()
+        r = self.client.get("/api/maps/status/")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json()["provedores"]["geocodificacao_endereco"])
+        self.assertEqual(r.json()["provedores_publicos"], ["geocodificacao_endereco"])

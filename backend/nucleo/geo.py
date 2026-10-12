@@ -279,7 +279,10 @@ def _externo(fornecedor: str, url: str, params=None, headers=None):
         resp.raise_for_status()
         return resp.json()
     except (requests.RequestException, ValueError) as e:
-        logger.warning("Provedor geo %s falhou (%s): %s", fornecedor, url, e)
+        # Sem `e` no log: o texto de um HTTPError traz a URL **com a query**, e
+        # a query de provedor com chave (`?key=`) levaria a credencial ao log.
+        status = getattr(getattr(e, "response", None), "status_code", "")
+        logger.warning("Provedor geo %s falhou (%s): %s %s", fornecedor, url, type(e).__name__, status)
         return None
 
 
@@ -298,9 +301,15 @@ def geocodificar_endereco(endereco: str):
     cacheado = cache.get(chave)
     if cacheado is not None:
         return cacheado or None
+    params = {"q": endereco, "format": "json", "countrycodes": "br", "limit": 1}
+    # Provedor compatível com chave (LocationIQ): mesma API, mais `key`. O
+    # `format=json` (e não `jsonv2`) é o que os dois falam — os campos lidos
+    # aqui (`lon`, `lat`) são iguais nos dois formatos.
+    if getattr(settings, "NOMINATIM_API_KEY", ""):
+        params["key"] = settings.NOMINATIM_API_KEY
     dados = _externo(
         "geo", f"{base.rstrip('/')}/search",
-        params={"q": endereco, "format": "jsonv2", "countrycodes": "br", "limit": 1},
+        params=params,
         # Exigência da política de uso do Nominatim público; num self-host é rastro.
         headers={"User-Agent": getattr(settings, "NOMINATIM_USER_AGENT", "sgi-plataforma/1.0")},
     )

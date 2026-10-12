@@ -10,6 +10,67 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D259 — o Maps mostrava o território, mas não deixava mexer nele · ✅ corrigido 12/10/2026
+
+Relato do dono, itens 62–70: *"Em maps tá sem API KEY"*; *"não entendi o que é Território… deveria
+tudo ser uma aba só (operação e território)"*; *"poderia ter uma legenda das cores dos pontos"*;
+*"quando clico em satélite somem os pontos e também não tem nomes de ruas, cidades"*; *"não consigo
+editar nem adicionar os pins à mão"*; *"(Locais) não aparece o mapa… teria sido melhor colocar em
+Mapa da empresa, lembrando que não pode ser corrido"*; *"a aba Camadas dentro de Território é
+inútil?"*; *"ainda não consigo ver os voos, não consigo editar para criar um polígono, não consigo
+excluir planos"*; *"aplicar o OSRM para ver rotas"*.
+
+**Causas.**
+- **62/70 — os provedores nunca chegavam ao contêiner.** `NOMINATIM_URL`, `OSRM_URL` e `TITILER_URL`
+  existiam no `settings.py`, mas o `deploy/compose/base.yml` lista o ambiente do `erp`/`worker` à mão
+  e não os repassava: preenchidos no `.env`, ficavam fora do backend. Sem geocodificador, todo pin
+  caía no centro da cidade; sem OSRM, toda rota era reta. E a tela não dizia o que faltava.
+- **65 e parte do 69 — o mapa perdia o que desenhava.** Trocar para satélite chamava `setStyle`, que
+  descarta as camadas próprias; o redesenho esperava o `styledata` e desistia se o estilo ainda não
+  estivesse pronto — os pins sumiam. O satélite era só a imagem, sem rótulo de rua nem cidade. E,
+  desde o MapLibre 6 (30/09, D229), o **worker** é um arquivo à parte que o Vite não empacotava
+  (`Worker failed to load` no dev; ausente de `assets/` no build) — sem worker, nenhum pin, polígono
+  ou rota é desenhado.
+- **69 — "não vejo os voos".** Cada plano tinha um mapinha que nascia enquadrado no Brasil: o
+  enquadramento automático só considerava pins, e plano de voo é polígono — a área de 150 m ficava do
+  tamanho de um pixel. Criar só dava "a partir de um local" (círculo); editar e excluir não existiam.
+- **66 — pin à mão só pelo admin**, e o `PATCH` do ponto (que a API aceitava) gravava a coordenada
+  nova com a precisão **antiga**: a obra arrastada para a porta continuava "centro da cidade" e na fila.
+- **63/67/68 — a navegação era a do backend.** O seletor Operação × Território espelhava o corte
+  fundação × produto, que ninguém precisa ver; a aba Locais era tabela sem mapa; a aba Camadas era
+  uma lista de etiquetas e um mapa vazio, longe das obras.
+- **64 — a cor do pin era o tipo, e a legenda só falava do halo** (em cinza).
+
+**Correção.**
+- Compose repassa `NOMINATIM_URL`, `NOMINATIM_API_KEY` (novo — provedor compatível com chave, como o
+  LocationIQ; vai como `?key=` e o log de falha não imprime mais a URL com query), `NOMINATIM_USER_AGENT`,
+  `OSRM_URL` e `TITILER_URL`; o `dev.env.example` aponta para os servidores públicos do OSM. O
+  `status/` ganhou `provedores_publicos`, e as abas avisam o que falta (com a variável que liga) ou que
+  o servidor é público/de teste.
+- `<Mapa>`: fundos (Carto claro/escuro, Esri satélite + rótulos de ruas e de lugares) vivem todos no
+  estilo e trocar é **visibilidade**, nunca `setStyle`; worker empacotado com `?worker&url` +
+  `setWorkerUrl` (`worker.format: 'es'` no Vite); modos `edicao` (pin arrastável) e `desenho`
+  (polígono com vértices arrastáveis, botão direito remove); camada fora da lista sai do mapa; sem
+  pins, enquadra pelas camadas; anel no pin selecionado.
+- Página com **uma fileira de abas** (Mapa da empresa · Vizinhança · Planos de voo · Acervo · Rotas;
+  as pagas com cadeado). **Mapa da empresa** = mapa e painel de locais lado a lado, mesma altura, a
+  lista rola por dentro; mover/posicionar pin, **Novo ponto**, excluir avulso; camadas (planos, rotas,
+  acervo, temáticas) ligam e desligam por cima; legenda cor = tipo (clicável, filtra) e halo = precisão.
+- Backend: `PATCH` de `ponto` → `exata/manual` (`null` → sem coordenada); `DELETE` de local em rota →
+  409 com motivo (era 500 de `ProtectedError`); `PATCH` de área/parâmetros do plano apaga o cálculo
+  velho; `RotaSerializer.paradas_locais` cria/substitui as paradas num request (tenant conferido,
+  origem não pode ser parada).
+- **Planos de voo**: um mapa com todos os planos, desenhar/editar a área (salvar recalcula), excluir.
+  **Rotas**: criar na tela (origem + paradas na ordem marcada) e traçar na hora, excluir; traçado
+  estimado aparece **tracejado**.
+
+Guardas: `EdicaoNaTelaTests` e `ProvedorComChaveTests` em
+[testes/backend/modulomaps/tests.py](../testes/backend/modulomaps/tests.py) (suíte 65/65 sobre
+PostGIS). Fluxos da tela conferidos no Chromium com a API simulada (pin movido → `PATCH`, novo ponto →
+`POST`, polígono → `POST` + `calcular`, excluir plano → `DELETE`, nova rota → `POST` com
+`paradas_locais` + `tracar`). **Fica para o dono:** preencher no `.env` do servidor um geocodificador
+de produção (Nominatim self-host ou chave LocationIQ) e um OSRM self-host — os públicos são de teste.
+---
 ### D115 · D153 · D196 — a demo usava além do plano que assina · ✅ corrigido 03/10/2026
 
 **Decisão do dono (03/10/2026):** a demo **não sobe de plano** — fica no `profissional` e se

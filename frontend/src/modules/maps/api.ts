@@ -22,6 +22,9 @@ export const salvarLocal = (dados: Partial<Local> & { ponto?: { lon: number; lat
     ? apiClient.patch<Local>(`${base}/locais/${dados.local_id}/`, dados).then((r) => r.data)
     : apiClient.post<Local>(`${base}/locais/`, dados).then((r) => r.data)
 
+/** Excluir é para ponto avulso; local vinculado a cadastro volta na sincronização. */
+export const excluirLocal = (id: number) => apiClient.delete(`${base}/locais/${id}/`)
+
 export const geocodificarLocal = (id: number, forcar = false) =>
   apiClient
     .post<{ geocodificado: boolean; motivo: string; local: Local }>(
@@ -54,6 +57,16 @@ export const tilesDaOrtofoto = (id: number) =>
 // ── Planos de voo ──────────────────────────────────────────────────────────
 export const listarPlanos = () =>
   apiClient.get<Paginado<PlanoVoo>>(`${base}/planos-voo/`).then((r) => r.data)
+
+/** Plano de polígono desenhado na tela — a área vem do desenho, não de um local. */
+export const salvarPlano = (dados: Partial<Pick<PlanoVoo,
+  'nome' | 'tipo' | 'gsd_alvo_cm' | 'sobreposicao_frontal_pct' | 'sobreposicao_lateral_pct'
+>> & { plano_id?: number; area?: GeoJSON.Polygon }) =>
+  dados.plano_id
+    ? apiClient.patch<PlanoVoo>(`${base}/planos-voo/${dados.plano_id}/`, dados).then((r) => r.data)
+    : apiClient.post<PlanoVoo>(`${base}/planos-voo/`, dados).then((r) => r.data)
+
+export const excluirPlano = (id: number) => apiClient.delete(`${base}/planos-voo/${id}/`)
 
 export const calcularPlano = (id: number) =>
   apiClient
@@ -97,6 +110,16 @@ export async function exportarPlano(id: number, formato: 'kml' | 'plan' | 'litch
 // ── Rotas ──────────────────────────────────────────────────────────────────
 export const listarRotas = () =>
   apiClient.get<Paginado<Rota>>(`${base}/rotas/`).then((r) => r.data)
+
+/** A rota nasce com as paradas num POST só (`paradas_locais`, na ordem). */
+export const salvarRota = (dados: {
+  rota_id?: number; nome?: string; origem?: number; data_planejada?: string | null; paradas_locais?: number[]
+}) =>
+  dados.rota_id
+    ? apiClient.patch<Rota>(`${base}/rotas/${dados.rota_id}/`, dados).then((r) => r.data)
+    : apiClient.post<Rota>(`${base}/rotas/`, dados).then((r) => r.data)
+
+export const excluirRota = (id: number) => apiClient.delete(`${base}/rotas/${id}/`)
 
 export const otimizarRota = (id: number) =>
   apiClient

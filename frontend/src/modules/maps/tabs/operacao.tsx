@@ -1,14 +1,21 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import {
-  AlertTriangle, ChevronRight, Crosshair, Eye, MapPin, Navigation, Radar, RefreshCw,
-  Building2, HardHat, Truck, Warehouse,
+  AlertTriangle, Building2, ChevronRight, Crosshair, HardHat, Layers, MapPin, MapPinPlus, Move,
+  Navigation, Radar, RefreshCw, Search, Trash2, Truck, Warehouse, X,
 } from 'lucide-react'
 import { Btn, Card, Empty, KpiTile, Loading, Mapa, Num, Pill, SectionHead } from '@/components/malha'
-import type { PillKind, PontoMapa } from '@/components/malha'
-import { useGeocodificar, useLocais, useMapa, useProximos } from '../hooks'
+import type { CamadaGeoJSON, PillKind, PontoMapa } from '@/components/malha'
+import { COR_TIPO } from '@/components/malha/mapaCores'
+import * as api from '../api'
+import {
+  mapsKeys, useExcluirLocal, useGeocodificar, useLocais, useMapa, useProximos, useSalvarLocal, useStatusMaps,
+} from '../hooks'
 import type { Destino, Ir, Local, LocalResumo, Precisao, UnidadeDetalhe } from '../types'
+import { AvisoDeProvedores, FaixaDoMapa, LegendaDoMapa, MapaComPainel } from './comum'
+import { ROTULO_TIPO, inputEstilo, motivo, selectEstilo, type Say } from './util'
 
-export type Say = (mensagem: string) => void
+export type { Say } from './util'
 
 /** Como cada precisão se apresenta. O rótulo é sempre o que o backend mandou —
  *  aqui só se escolhe a cor, e a cor conta a mesma história do halo do mapa. */
@@ -36,47 +43,217 @@ function paraPontos(locais: LocalResumo[]): PontoMapa[] {
     }))
 }
 
-const selectEstilo: React.CSSProperties = {
-  padding: '7px 11px', borderRadius: 8, border: '1px solid var(--line)',
-  background: 'var(--surface)', color: 'var(--ink)', fontSize: 13,
-}
+const semAcento = (t: string) => t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
 
 /**
  * Para onde cada pendência da fila leva — o que transforma o cartaz em fila.
  *
- * Cada `tipo` que o backend emite em `requer_decisao` tem aqui o seu destino, e
- * o destino é **o lugar onde a pendência se resolve**, já filtrado: "12 obras
- * sem coordenada" abre a tabela de locais mostrando só as 12, não a lista
- * inteira para a pessoa refazer o filtro na mão. O que não tiver destino
- * declarado continua legível e simplesmente não clica — é melhor que um clique
- * que leva ao lugar errado.
+ * Desde que a tabela de locais virou o painel do mapa, todas as pendências de
+ * cadastro levam ao MESMO lugar (o mapa), já com o recorte que isola o que a
+ * pendência conta: "12 obras sem coordenada" abre o painel mostrando só as 12.
  */
 const DESTINO_DA_PENDENCIA: Record<string, (alvo: string) => Destino | null> = {
-  sem_coordenada: (alvo) => ({ tab: 'locais', filtro: { tipo: alvo, precisao: 'desconhecida' } }),
-  precisao_grosseira: () => ({ tab: 'locais', filtro: { precisao: 'municipio' } }),
-  rua_divergente: () => ({ tab: 'locais', filtro: { tipo: 'unidade' } }),
+  sem_coordenada: (alvo) => ({ tab: 'mapa', filtro: { tipo: alvo, precisao: 'desconhecida' } }),
+  precisao_grosseira: () => ({ tab: 'mapa', filtro: { precisao: 'municipio' } }),
+  rua_divergente: () => ({ tab: 'mapa', filtro: { tipo: 'unidade' } }),
   ortofoto_vencida: () => ({ tab: 'acervo' }),
   voo_sem_autorizacao: () => ({ tab: 'voos' }),
 }
 
-/* ═══════════ Mapa da empresa + fila de decisão ═══════════ */
-export function MapaDaEmpresa({ say, ir, foco = null }: {
-  say: Say; ir: Ir; foco?: { lon: number; lat: number } | null
+type Modo =
+  | { tipo: 'posicionar'; local: Local; ponto: { lon: number; lat: number } | null }
+  | { tipo: 'novo'; nome: string; ponto: { lon: number; lat: number } | null }
+
+/** O que se pode sobrepor ao mapa da empresa quando o tenant assina Maps. */
+const SOBREPOSICOES_FIXAS = [
+  { id: 'planos', rotulo: 'Planos de voo', cor: '#1D9AA6' },
+  { id: 'rotas', rotulo: 'Rotas', cor: '#3E9C6E' },
+  { id: 'acervo', rotulo: 'Ortofotos (envelopes)', cor: '#8892A6' },
+] as const
+
+/**
+ * **As camadas do território, no mapa da empresa** (item 68).
+ *
+ * A antiga aba "Camadas" era uma lista de etiquetas e um mapa vazio: nenhuma
+ * camada existia, e mesmo existindo ela ficava num mapa à parte, longe das
+ * obras. Aqui camada é o que o nome diz — algo que se liga e desliga POR CIMA
+ * do mapa da empresa: os planos de voo, as rotas, os envelopes do acervo e as
+ * camadas temáticas (sondagens, marcos, interferências). É também onde os
+ * módulos se encontram na tela: a obra do cadastro, o voo e a entrega no mesmo
+ * enquadramento.
+ */
+function useSobreposicoes(temMaps: boolean, ativas: Set<string>) {
+  const { data: camadas } = useQuery({ queryKey: mapsKeys.camadas, queryFn: api.listarCamadas, enabled: temMaps })
+  const algumaTematica = [...ativas].some((a) => a.startsWith('camada-'))
+  const { data: feicoes } = useQuery({
+    queryKey: mapsKeys.feicoes({ page_size: 500 }),
+    queryFn: () => api.listarFeicoes({ page_size: 500 }),
+    enabled: temMaps && algumaTematica,
+  })
+  const { data: planos } = useQuery({ queryKey: mapsKeys.planos, queryFn: api.listarPlanos, enabled: temMaps })
+  const { data: rotas } = useQuery({ queryKey: mapsKeys.rotas, queryFn: api.listarRotas, enabled: temMaps })
+  const { data: ortofotos } = useQuery({ queryKey: mapsKeys.ortofotos, queryFn: () => api.listarOrtofotos(), enabled: temMaps })
+
+  const desenho = useMemo<CamadaGeoJSON[]>(() => {
+    const saida: CamadaGeoJSON[] = []
+    if (ativas.has('planos')) {
+      ;(planos?.results ?? []).forEach((p) => saida.push({ id: `plano-${p.plano_id}`, data: p.area, cor: '#1D9AA6' }))
+    }
+    if (ativas.has('rotas')) {
+      ;(rotas?.results ?? []).filter((r) => r.linha).forEach((r) => saida.push({
+        id: `rota-${r.rota_id}`, data: r.linha!, cor: '#3E9C6E', largura: 3, tracejado: r.procedencia !== 'osrm',
+      }))
+    }
+    if (ativas.has('acervo')) {
+      ;(ortofotos?.results ?? []).forEach((o) => saida.push({ id: `orto-${o.ortofoto_id}`, data: o.bbox, cor: '#8892A6', preenchimento: false }))
+    }
+    ;(camadas?.results ?? []).forEach((c) => {
+      if (!ativas.has(`camada-${c.camada_id}`)) return
+      const doCamada = (feicoes?.results ?? []).filter((f) => f.camada === c.camada_id)
+      if (!doCamada.length) return
+      saida.push({
+        id: `camada-${c.camada_id}`, cor: c.cor,
+        data: { type: 'FeatureCollection', features: doCamada.map((f) => ({ type: 'Feature', geometry: f.geom, properties: { nome: f.nome } })) },
+      })
+    })
+    return saida
+  }, [ativas, planos, rotas, ortofotos, camadas, feicoes])
+
+  const contagem: Record<string, number> = {
+    planos: planos?.count ?? 0, rotas: rotas?.count ?? 0, acervo: ortofotos?.count ?? 0,
+  }
+  return { desenho, camadas: camadas?.results ?? [], contagem }
+}
+
+/* ═══════════ Mapa da empresa — mapa + painel de locais + camadas ═══════════ */
+export function MapaDaEmpresa({ say, ir, temMaps, foco = null, filtroInicial }: {
+  say: Say; ir: Ir; temMaps: boolean
+  foco?: { lon: number; lat: number } | null
+  filtroInicial?: Record<string, string>
 }) {
   const { data, isLoading } = useMapa()
+  const { data: status } = useStatusMaps(temMaps)
   const [satelite, setSatelite] = useState(false)
-  const geocodificar = useGeocodificar()
+  // O recorte nasce do que a fila de decisão pediu: chegar por "12 obras sem
+  // coordenada" e encontrar o seletor em "Todos" obrigaria a refazer o filtro.
+  const [tipo, setTipo] = useState(filtroInicial?.tipo ?? '')
+  const [precisao, setPrecisao] = useState(filtroInicial?.precisao ?? '')
+  const [busca, setBusca] = useState('')
+  const [selecionado, setSelecionado] = useState<number | null>(null)
+  const [focoAtual, setFocoAtual] = useState<{ lon: number; lat: number; selo?: number } | null>(foco)
+  const [modo, setModo] = useState<Modo | null>(null)
+  const [ativas, setAtivas] = useState<Set<string>>(() => new Set(['planos', 'rotas']))
+  const sobre = useSobreposicoes(temMaps, ativas)
+  const salvar = useSalvarLocal()
 
-  const pontos = useMemo(() => paraPontos(data?.locais ?? []), [data])
+  const pontos = useMemo(() => {
+    const termo = semAcento(busca.trim())
+    return paraPontos((data?.locais ?? []).filter((l) =>
+      (!tipo || l.tipo === tipo)
+      && (!precisao || l.precisao === precisao)
+      && (!termo || semAcento(`${l.nome} ${l.cidade} ${l.vinculo_rotulo}`).includes(termo)),
+    ))
+  }, [data, tipo, precisao, busca])
+
   if (isLoading) return <Loading o="o mapa da empresa" />
   if (!data) return <Empty>Não foi possível carregar o mapa.</Empty>
 
   const { resumo, requer_decisao } = data
   const semCoordenada = resumo.total - resumo.com_coordenada
 
+  const selecionar = (id: number, ponto: { lon: number; lat: number } | null) => {
+    setSelecionado(id)
+    if (ponto) setFocoAtual({ ...ponto, selo: Date.now() })
+  }
+
+  const salvarModo = () => {
+    if (!modo?.ponto) return
+    if (modo.tipo === 'posicionar') {
+      salvar.mutate({ local_id: modo.local.local_id, ponto: modo.ponto }, {
+        onSuccess: () => { say(`Pin de ${modo.local.nome} salvo — precisão exata (posicionado à mão).`); setModo(null) },
+        onError: (e) => say(motivo(e, 'Não deu para salvar o pin.')),
+      })
+    } else {
+      salvar.mutate({ nome: modo.nome.trim(), tipo: 'avulso', ponto: modo.ponto }, {
+        onSuccess: (novo) => { say(`Ponto "${novo.nome}" criado.`); setModo(null); setSelecionado(novo.local_id) },
+        onError: (e) => say(motivo(e, 'Não deu para criar o ponto.')),
+      })
+    }
+  }
+
+  const mapa = (
+    <>
+      <Mapa
+        pontos={modo?.tipo === 'posicionar' ? pontos.filter((p) => p.id !== modo.local.local_id) : pontos}
+        camadas={sobre.desenho}
+        altura={600} satelite={satelite} foco={focoAtual} selecionado={selecionado}
+        onSelecionar={(id) => {
+          const local = data.locais.find((l) => String(l.local_id) === String(id))
+          if (local) selecionar(local.local_id, null)
+        }}
+        edicao={modo ? { ponto: modo.ponto, aoMover: (lon, lat) => setModo({ ...modo, ponto: { lon, lat } }) } : null}
+      />
+      {modo ? (
+        <FaixaDoMapa>
+          <Move size={15} style={{ color: 'var(--accent-ink)' }} />
+          <span style={{ flex: 1, minWidth: 180 }}>
+            {modo.tipo === 'posicionar'
+              ? <>Clique no mapa ou arraste o pin para posicionar <b>{modo.local.nome}</b>.</>
+              : <>Clique no mapa onde fica o novo ponto{modo.nome ? <> <b>{modo.nome}</b></> : ''}.</>}
+          </span>
+          <Btn tam="sm" onClick={() => setModo(null)}>Cancelar</Btn>
+          <Btn tam="sm" variant="primary" onClick={salvarModo}
+            disabled={!modo.ponto || salvar.isPending || (modo.tipo === 'novo' && !modo.nome.trim())}>
+            Salvar pin
+          </Btn>
+        </FaixaDoMapa>
+      ) : (
+        <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 2 }}>
+          <Btn tam="sm" onClick={() => setSatelite((s) => !s)}
+            style={{ boxShadow: 'var(--shadow-sm)' }}>
+            {satelite ? 'Mapa' : 'Satélite'}
+          </Btn>
+        </div>
+      )}
+    </>
+  )
+
+  const legendaDeCamadas = temMaps ? (
+    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
+      <span style={{ fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', fontSize: 10.5, color: 'var(--ink-3)', minWidth: 64, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+        <Layers size={12} /> Camadas
+      </span>
+      {[...SOBREPOSICOES_FIXAS.map((s) => ({ ...s, n: sobre.contagem[s.id] ?? 0 })),
+        ...sobre.camadas.map((c) => ({ id: `camada-${c.camada_id}`, rotulo: c.nome, cor: c.cor, n: c.total_feicoes ?? 0 }))]
+        .map((s) => {
+          const on = ativas.has(s.id)
+          return (
+            <label key={s.id} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 9px', borderRadius: 999, fontSize: 12,
+              cursor: 'pointer', color: on ? 'var(--ink)' : 'var(--ink-3)', border: '1px solid var(--line)',
+              background: on ? 'var(--surface-2)' : 'transparent',
+            }}>
+              <input type="checkbox" checked={on} style={{ margin: 0 }}
+                onChange={() => setAtivas((a) => { const n = new Set(a); if (on) n.delete(s.id); else n.add(s.id); return n })} />
+              <span style={{ width: 12, height: 4, borderRadius: 2, background: s.cor, flex: 'none' }} />
+              {s.rotulo}
+              <span style={{ color: 'var(--ink-3)', fontVariantNumeric: 'tabular-nums' }}>{s.n}</span>
+            </label>
+          )
+        })}
+      {sobre.camadas.length === 0 && (
+        <span style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>
+          Camadas temáticas (sondagens, marcos, interferências) chegam pela Prancheta — em breve.
+        </span>
+      )}
+    </div>
+  ) : null
+
   return (
     <>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: 12, marginBottom: 18 }}>
+      <AvisoDeProvedores status={status} quais={['geocodificacao_endereco']} />
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: 12, marginBottom: 14 }}>
         <KpiTile label="Locais no território" valor={<Num>{resumo.total}</Num>} base="obras, fornecedores, almoxarifados" />
         <KpiTile label="Com coordenada" valor={<Num>{resumo.com_coordenada}</Num>}
           base={semCoordenada ? `${semCoordenada} ainda sem` : 'todos localizados'} />
@@ -86,9 +263,9 @@ export function MapaDaEmpresa({ say, ir, foco = null }: {
       </div>
 
       {requer_decisao.length > 0 && (
-        <Card style={{ marginBottom: 18 }}>
+        <Card style={{ marginBottom: 14 }}>
           <SectionHead right={<Pill kind="accent">{requer_decisao.length}</Pill>}>Requer decisão</SectionHead>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 8 }}>
             {requer_decisao.map((item) => {
               const destino = DESTINO_DA_PENDENCIA[item.tipo]?.(item.alvo) ?? null
               return (
@@ -116,242 +293,192 @@ export function MapaDaEmpresa({ say, ir, foco = null }: {
         </Card>
       )}
 
-      <Card>
-        <SectionHead
-          sub="O halo cresce com a incerteza — pin firme é porta, mancha larga é cidade."
-          right={<Btn onClick={() => setSatelite((s) => !s)}>{satelite ? 'Mapa' : 'Satélite'}</Btn>}
-        >
-          Mapa da empresa
-        </SectionHead>
-        {pontos.length === 0 ? (
-          <Empty>
-            Nenhum local com coordenada ainda. Rode o georreferenciamento dos cadastros
-            (obras, fornecedores, almoxarifados) ou posicione o primeiro pin à mão.
-          </Empty>
-        ) : (
-          <>
-            <Mapa pontos={pontos} altura={470} satelite={satelite} foco={foco}
-              onSelecionar={(id) => {
-                const local = data.locais.find((l) => String(l.local_id) === String(id))
-                if (local) say(`${local.nome} — ${local.precisao_rotulo}`)
-              }} />
-            <Legenda />
-          </>
-        )}
-      </Card>
-
-      {semCoordenada > 0 && (
-        <Card style={{ marginTop: 16 }}>
-          <SectionHead sub="A cascata tenta endereço → CEP → município. Se nenhum degrau resolver, o pin fica com você.">
-            Sem coordenada
-          </SectionHead>
-          <ListaDeLocais
-            filtro={{ precisao: 'desconhecida' }}
-            aoGeocodificar={(id, forcar) =>
-              geocodificar.mutate({ id, forcar }, {
-                onSuccess: (r) => say(r.geocodificado ? `Localizado: ${r.local.precisao_rotulo}` : r.motivo),
-                onError: () => say('Não deu para localizar agora — tente de novo em instantes.'),
-              })
-            }
+      <MapaComPainel
+        mapa={mapa}
+        painel={
+          <PainelDeLocais
+            tipo={tipo} setTipo={setTipo} precisao={precisao} setPrecisao={setPrecisao}
+            busca={busca} setBusca={setBusca}
+            selecionado={selecionado}
+            aoSelecionar={(l) => selecionar(l.local_id, l.ponto)}
+            modo={modo} setModo={setModo}
+            say={say}
           />
-        </Card>
-      )}
+        }
+        rodape={
+          <LegendaDoMapa porTipo={resumo.por_tipo} tipoAtivo={tipo} aoEscolherTipo={setTipo} extra={legendaDeCamadas} />
+        }
+      />
     </>
   )
 }
 
-function Legenda() {
-  const escala: Array<[Precisao, string, number]> = [
-    ['exata', 'Porta (pin/EXIF)', 8],
-    ['endereco', 'Endereço', 12],
-    ['cep', 'CEP', 16],
-    ['municipio', 'Centro da cidade', 21],
-  ]
-  return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 14, marginTop: 12, fontSize: 11.5, color: 'var(--ink-3)' }}>
-      <span style={{ fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Precisão</span>
-      {escala.map(([chave, rotulo, tamanho]) => (
-        <span key={chave} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <span style={{
-            width: tamanho, height: tamanho, borderRadius: '50%', background: 'var(--ink-3)',
-            opacity: chave === 'exata' ? 0.85 : 0.25, flex: 'none',
-          }} />
-          {rotulo}
-        </span>
-      ))}
-    </div>
-  )
-}
-
-/* ═══════════ Locais (tabela) ═══════════ */
-export function Locais({ say, ir, filtroInicial }: {
-  say: Say; ir: Ir; filtroInicial?: Record<string, string>
-}) {
-  // O tipo nasce do que a fila de decisão pediu: chegar aqui por "12 obras sem
-  // coordenada" e encontrar o seletor em "Todos os tipos" obrigaria a pessoa a
-  // refazer à mão o filtro que ela acabou de clicar.
-  const [tipo, setTipo] = useState(filtroInicial?.tipo ?? '')
-  const [precisao, setPrecisao] = useState(filtroInicial?.precisao ?? '')
-  const geocodificar = useGeocodificar()
-
-  const filtro = { ...(tipo ? { tipo } : {}), ...(precisao ? { precisao } : {}) }
-  const filtrando = !!(tipo || precisao)
-
-  return (
-    <Card>
-      <SectionHead
-        sub={filtrando ? 'Recorte pedido pela fila de decisão.' : undefined}
-        right={
-          <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
-            <select value={tipo} onChange={(e) => setTipo(e.target.value)} style={selectEstilo}>
-              <option value="">Todos os tipos</option>
-              <option value="obra">Obras</option>
-              <option value="empreendimento">Empreendimentos</option>
-              <option value="fornecedor">Fornecedores</option>
-              <option value="local_estoque">Almoxarifados</option>
-              {/* Faltava: os lotes e apartamentos entram no mapa como `unidade`,
-                  mas o seletor não os oferecia — o filtro que a fila de decisão
-                  pede ao clicar em "rua divergente" não existia na tela. */}
-              <option value="unidade">Unidades (lotes)</option>
-              <option value="avulso">Avulsos</option>
-            </select>
-            <select value={precisao} onChange={(e) => setPrecisao(e.target.value)} style={selectEstilo}>
-              <option value="">Qualquer precisão</option>
-              <option value="exata">Porta (pin/EXIF)</option>
-              <option value="endereco">Endereço</option>
-              <option value="cep">CEP</option>
-              <option value="municipio">Centro da cidade</option>
-              <option value="desconhecida">Sem coordenada</option>
-            </select>
-            {filtrando && (
-              <Btn tam="sm" onClick={() => { setTipo(''); setPrecisao('') }}>Limpar</Btn>
-            )}
-          </div>
-        }
-      >
-        Locais
-      </SectionHead>
-      <ListaDeLocais
-        filtro={filtro}
-        aoVerNoMapa={(local) =>
-          ir({ tab: 'mapa', foco: { lon: local.ponto!.lon, lat: local.ponto!.lat } })
-        }
-        aoGeocodificar={(id, forcar) =>
-          geocodificar.mutate({ id, forcar }, {
-            onSuccess: (r) => say(r.geocodificado ? `Localizado: ${r.local.precisao_rotulo}` : r.motivo),
-            // Sem isto, um 403/500 no `geocodificar/` era silêncio absoluto —
-            // o clique não mudava a tabela nem dizia nada, e o botão parecia
-            // morto. Falha que não fala é indistinguível de botão quebrado.
-            onError: () => say('Não deu para localizar agora — tente de novo em instantes.'),
-          })
-        }
-      />
-    </Card>
-  )
-}
-
-function ListaDeLocais({
-  filtro, aoGeocodificar, aoVerNoMapa,
+/**
+ * O painel ao lado do mapa — a antiga aba "Locais", agora onde ela faz sentido.
+ *
+ * Mesmos filtros do mapa (o que a lista mostra é o que o mapa mostra), linha
+ * clicável que enquadra o pin, e as ações do local escolhido: **posicionar o
+ * pin à mão** (item 66), rodar a cascata, excluir o ponto avulso.
+ */
+function PainelDeLocais({
+  tipo, setTipo, precisao, setPrecisao, busca, setBusca, selecionado, aoSelecionar, modo, setModo, say,
 }: {
-  filtro?: Record<string, unknown>
-  aoGeocodificar: (id: number, forcar?: boolean) => void
-  aoVerNoMapa?: (local: Local) => void
+  tipo: string; setTipo: (v: string) => void
+  precisao: string; setPrecisao: (v: string) => void
+  busca: string; setBusca: (v: string) => void
+  selecionado: number | null
+  aoSelecionar: (l: Local) => void
+  modo: Modo | null; setModo: (m: Modo | null) => void
+  say: Say
 }) {
-  const { data, isLoading } = useLocais({ page_size: 100, ...(filtro ?? {}) })
-  if (isLoading) return <Loading o="os locais" />
-  const linhas = data?.results ?? []
-  if (!linhas.length) return <Empty>Nada por aqui.</Empty>
-
-  const th: React.CSSProperties = {
-    padding: '8px 10px', textAlign: 'left', color: 'var(--ink-3)', fontSize: 11,
-    textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700,
+  const [buscaDebounce, setBuscaDebounce] = useState(busca)
+  useEffect(() => {
+    const t = window.setTimeout(() => setBuscaDebounce(busca), 300)
+    return () => window.clearTimeout(t)
+  }, [busca])
+  const params = {
+    page_size: 200,
+    ...(tipo ? { tipo } : {}), ...(precisao ? { precisao } : {}), ...(buscaDebounce.trim() ? { search: buscaDebounce.trim() } : {}),
   }
+  const { data, isLoading } = useLocais(params)
+  const geocodificar = useGeocodificar()
+  const excluir = useExcluirLocal()
+  const linhas = data?.results ?? []
+  const filtrando = !!(tipo || precisao || busca)
+
+  // O pin clicado no mapa traz a linha dele para a vista — senão, com centenas
+  // de locais, a seleção acontecia lá embaixo e ninguém via.
+  const refs = useRef<Record<number, HTMLDivElement | null>>({})
+  useEffect(() => {
+    if (selecionado != null) refs.current[selecionado]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [selecionado, linhas.length])
+
+  const rodarCascata = (local: Local, forcar = false) =>
+    geocodificar.mutate({ id: local.local_id, forcar }, {
+      onSuccess: (r) => say(r.geocodificado ? `Localizado: ${r.local.precisao_rotulo}` : r.motivo),
+      onError: (e) => say(motivo(e, 'Não deu para localizar agora — tente de novo em instantes.')),
+    })
+
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5 }}>
-        <thead>
-          <tr>
-            <th style={th}>Local</th>
-            <th style={th}>Cidade</th>
-            <th style={th}>Precisão</th>
-            <th style={th}>Procedência</th>
-            <th style={th} />
-          </tr>
-        </thead>
-        <tbody>
-          {linhas.map((local) => (
-            <tr key={local.local_id} style={{ borderTop: '1px solid var(--line-2)' }}>
-              <td style={{ padding: '9px 10px' }}>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, color: 'var(--ink)' }}>
-                  <span style={{ color: 'var(--ink-3)', display: 'grid', placeItems: 'center' }}>
-                    {ICONE_TIPO[local.tipo] ?? ICONE_TIPO.avulso}
+    <>
+      <div style={{ padding: 10, borderBottom: '1px solid var(--line)', display: 'grid', gap: 7 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <b style={{ fontFamily: 'var(--display)', fontSize: 14.5, color: 'var(--ink)', flex: 1 }}>
+            Locais <span style={{ color: 'var(--ink-3)', fontWeight: 600, fontSize: 12.5 }}>{data ? data.count : ''}</span>
+          </b>
+          <Btn tam="sm" variant="primary" disabled={!!modo}
+            onClick={() => setModo({ tipo: 'novo', nome: '', ponto: null })}
+            title="Criar um ponto avulso clicando no mapa">
+            <MapPinPlus size={13} /> Novo ponto
+          </Btn>
+        </div>
+        <label style={{ position: 'relative', display: 'block' }}>
+          <Search size={14} style={{ position: 'absolute', left: 9, top: 9, color: 'var(--ink-3)' }} />
+          <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por nome, cidade…"
+            style={{ ...inputEstilo, paddingLeft: 29 }} />
+        </label>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <select value={tipo} onChange={(e) => setTipo(e.target.value)} style={{ ...selectEstilo, flex: 1, minWidth: 0 }}>
+            <option value="">Todos os tipos</option>
+            {Object.entries(ROTULO_TIPO).map(([v, r]) => <option key={v} value={v}>{r}</option>)}
+          </select>
+          <select value={precisao} onChange={(e) => setPrecisao(e.target.value)} style={{ ...selectEstilo, flex: 1, minWidth: 0 }}>
+            <option value="">Qualquer precisão</option>
+            <option value="exata">Porta (pin/EXIF)</option>
+            <option value="endereco">Endereço</option>
+            <option value="cep">CEP</option>
+            <option value="municipio">Centro da cidade</option>
+            <option value="desconhecida">Sem coordenada</option>
+          </select>
+          {filtrando && (
+            <Btn tam="sm" title="Limpar filtros" onClick={() => { setTipo(''); setPrecisao(''); setBusca('') }}><X size={13} /></Btn>
+          )}
+        </div>
+        {modo?.tipo === 'novo' && (
+          <div style={{ display: 'grid', gap: 6, padding: 9, borderRadius: 8, background: 'var(--accent-soft)' }}>
+            <span style={{ fontSize: 12, color: 'var(--ink-2)' }}>Nome do novo ponto — depois clique no mapa onde ele fica.</span>
+            <input autoFocus value={modo.nome} onChange={(e) => setModo({ ...modo, nome: e.target.value })}
+              placeholder="Ex.: Portão de descarga, Jazida de areia" style={inputEstilo} maxLength={180} />
+          </div>
+        )}
+      </div>
+
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+        {isLoading ? <Loading o="os locais" /> : linhas.length === 0 ? (
+          <div style={{ padding: 16 }}><Empty>Nada neste recorte.</Empty></div>
+        ) : linhas.map((local) => {
+          const on = local.local_id === selecionado
+          return (
+            <div key={local.local_id} ref={(el) => { refs.current[local.local_id] = el }}
+              style={{ borderBottom: '1px solid var(--line-2)', background: on ? 'var(--surface-2)' : 'transparent' }}>
+              <button type="button" onClick={() => aoSelecionar(local)}
+                style={{ display: 'flex', alignItems: 'flex-start', gap: 9, width: '100%', padding: '9px 11px', textAlign: 'left', font: 'inherit', background: 'none', border: 'none', cursor: 'pointer' }}>
+                <span style={{ width: 10, height: 10, borderRadius: '50%', background: COR_TIPO[local.tipo] ?? COR_TIPO.avulso, flex: 'none', marginTop: 4 }} />
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: 'block', fontSize: 13.5, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{local.nome}</span>
+                  <span style={{ display: 'block', fontSize: 11.5, color: 'var(--ink-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {[local.vinculo_rotulo, [local.cidade, local.uf].filter(Boolean).join(' - ')].filter(Boolean).join(' · ') || ROTULO_TIPO[local.tipo]}
                   </span>
-                  {local.nome}
                 </span>
-                {local.vinculo_rotulo && (
-                  <div style={{ fontSize: 11.5, color: 'var(--ink-3)', marginLeft: 21 }}>{local.vinculo_rotulo}</div>
-                )}
-                {local.unidade_detalhe && <DetalheDaUnidade u={local.unidade_detalhe} />}
-              </td>
-              <td style={{ padding: '9px 10px', color: 'var(--ink-2)' }}>
-                {[local.cidade, local.uf].filter(Boolean).join(' - ') || '—'}
-              </td>
-              <td style={{ padding: '9px 10px' }}>
-                <Pill kind={PRECISAO_KIND[local.precisao]}>{local.precisao_rotulo}</Pill>
-              </td>
-              <td style={{ padding: '9px 10px', color: 'var(--ink-3)', fontSize: 12.5 }}>
-                {local.fonte_rotulo || '—'}
-              </td>
-              {/**
-                * **O que "Localizar" faz depende do estado do local, e antes não
-                * dependia.** O botão era um só e chamava sempre a cascata; num
-                * local que já tinha coordenada o backend respondia, corretamente,
-                * "já tem coordenada — use ?forcar=1", e a tela mostrava um aviso
-                * que não mudava nada. Para quem clicou querendo VER onde o local
-                * está, isso é um botão que não faz nada.
-                *
-                * São dois gestos diferentes e agora são dois botões:
-                * **Ver** enquadra o pin no mapa (sempre funciona, e é o que a
-                * palavra "localizar" sugeria), e **Localizar/Refazer** roda a
-                * cascata — só aparece onde ela tem o que fazer. Pin `exata` não
-                * ganha o segundo: é verdade de campo, e nenhum provedor a desfaz.
-                */}
-              <td style={{ padding: '9px 10px', textAlign: 'right' }}>
-                <div style={{ display: 'inline-flex', gap: 6, justifyContent: 'flex-end' }}>
-                  {local.ponto && aoVerNoMapa && (
-                    <Btn tam="sm" onClick={() => aoVerNoMapa(local)} title="Enquadrar no mapa da empresa">
-                      <Eye size={13} /> Ver
+                <Pill kind={PRECISAO_KIND[local.precisao]}>{local.ponto ? local.precisao_rotulo.split(' (')[0] : 'sem pin'}</Pill>
+              </button>
+
+              {on && (
+                <div style={{ padding: '0 11px 11px 30px', display: 'grid', gap: 7 }}>
+                  <div style={{ fontSize: 12, color: 'var(--ink-3)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ color: 'var(--ink-3)', display: 'grid', placeItems: 'center' }}>{ICONE_TIPO[local.tipo] ?? ICONE_TIPO.avulso}</span>
+                    {local.endereco_completo || 'Sem endereço cadastrado'}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>
+                    {local.precisao_rotulo}{local.fonte_rotulo ? ` · ${local.fonte_rotulo}` : ''}
+                  </div>
+                  {local.unidade_detalhe && <DetalheDaUnidade u={local.unidade_detalhe} />}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    <Btn tam="sm" variant="primary" disabled={!!modo}
+                      onClick={() => setModo({ tipo: 'posicionar', local, ponto: local.ponto })}
+                      title="Arrastar o pin para o lugar certo — vira precisão exata">
+                      <Move size={13} /> {local.ponto ? 'Mover pin' : 'Posicionar pin'}
                     </Btn>
-                  )}
-                  {!local.ponto && (
-                    <Btn tam="sm" onClick={() => aoGeocodificar(local.local_id)}>
-                      <Crosshair size={13} /> Localizar
-                    </Btn>
-                  )}
-                  {local.ponto && local.precisao !== 'exata' && (
-                    <Btn tam="sm" onClick={() => aoGeocodificar(local.local_id, true)}
-                      title="Rodar a cascata de novo — pode refinar a precisão">
-                      <RefreshCw size={13} /> Refazer
-                    </Btn>
-                  )}
+                    {/* **Localizar ≠ posicionar.** Localizar roda a cascata (endereço →
+                        CEP → município); só aparece onde ela tem o que fazer. Pin
+                        `exata` não ganha "Refazer": é verdade de campo. */}
+                    {!local.ponto && (
+                      <Btn tam="sm" onClick={() => rodarCascata(local)}><Crosshair size={13} /> Localizar pelo endereço</Btn>
+                    )}
+                    {local.ponto && local.precisao !== 'exata' && (
+                      <Btn tam="sm" onClick={() => rodarCascata(local, true)} title="Rodar a cascata de novo — pode refinar a precisão">
+                        <RefreshCw size={13} /> Refazer
+                      </Btn>
+                    )}
+                    {local.tipo === 'avulso' && (
+                      <Btn tam="sm" title="Excluir este ponto avulso"
+                        onClick={() => {
+                          if (!window.confirm(`Excluir o ponto "${local.nome}"?`)) return
+                          excluir.mutate(local.local_id, {
+                            onSuccess: () => say(`Ponto "${local.nome}" excluído.`),
+                            onError: (e) => say(motivo(e, 'Não deu para excluir.')),
+                          })
+                        }}>
+                        <Trash2 size={13} />
+                      </Btn>
+                    )}
+                  </div>
                 </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </>
   )
 }
 
 /**
  * O que um lote é, no mapa: medidas, divisas e a rua da frente.
  *
- * **O que faltava:** a unidade chegava aqui com área e mais nada. Área não
- * descreve terreno — o que vai ao contrato, à matrícula e à conversa com o
- * vizinho é *quanto mede cada lado* e *com quem cada lado divide*, e o lado da
- * frente é a rua, de onde sai o endereço. O cadastro já guardava tudo isso
- * (`empreendimentos.Unidade`); o mapa é que não mostrava.
+ * Área não descreve terreno — o que vai ao contrato, à matrícula e à conversa
+ * com o vizinho é *quanto mede cada lado* e *com quem cada lado divide*, e o
+ * lado da frente é a rua, de onde sai o endereço.
  *
  * A pílula da rua tem três estados, e o terceiro é o que evita o alarme falso:
  * bate, **não bate**, e "não dá para dizer" — este último quando falta o
@@ -364,7 +491,7 @@ function DetalheDaUnidade({ u }: { u: UnidadeDetalhe }) {
   ].filter(Boolean).join(' · ')
 
   return (
-    <div style={{ marginLeft: 21, marginTop: 4, display: 'grid', gap: 3 }}>
+    <div style={{ display: 'grid', gap: 3 }}>
       {areas && <div style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>{areas}</div>}
 
       {u.confrontacoes.length === 0 ? (
@@ -381,7 +508,7 @@ function DetalheDaUnidade({ u }: { u: UnidadeDetalhe }) {
                 + `${c.confrontante ? `, com ${c.confrontante}` : ''}`}
               style={{
                 display: 'inline-flex', alignItems: 'baseline', gap: 5, padding: '2px 8px',
-                borderRadius: 999, border: '1px solid var(--line)', background: 'var(--surface-2)',
+                borderRadius: 999, border: '1px solid var(--line)', background: 'var(--surface)',
                 fontSize: 11, color: 'var(--ink-2)', maxWidth: 260,
               }}
             >

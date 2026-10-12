@@ -242,6 +242,8 @@ export interface StatusMaps {
     motor_rota: boolean
     tiles_raster: boolean
   }
+  /** Provedores ligados no servidor PÚBLICO do OSM — funcionam, mas são de teste. */
+  provedores_publicos?: Array<'geocodificacao_endereco' | 'motor_rota'>
 }
 
 export interface Paginado<T> {
@@ -257,7 +259,7 @@ export interface Paginado<T> {
  * página é quem as importa: declarar o tipo lá criaria um par de arquivos
  * apontando um para o outro só para dizer o que é um destino.
  */
-export type TabMaps = 'mapa' | 'locais' | 'vizinhanca' | 'camadas' | 'acervo' | 'voos' | 'rotas'
+export type TabMaps = 'mapa' | 'vizinhanca' | 'voos' | 'acervo' | 'rotas'
 
 /** Para onde um item da fila de decisão (ou uma linha da tabela) leva. */
 export interface Destino {

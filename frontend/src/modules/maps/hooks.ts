@@ -85,3 +85,65 @@ export function useTracarRota() {
     onSuccess: () => qc.invalidateQueries({ queryKey: mapsKeys.rotas }),
   })
 }
+
+/** Pin posicionado à mão, local avulso novo ou renomeado — o mapa e a lista mudam juntos. */
+export function useSalvarLocal() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: api.salvarLocal,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: mapsKeys.mapa })
+      qc.invalidateQueries({ queryKey: ['maps', 'locais'] })
+    },
+  })
+}
+
+export function useExcluirLocal() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: api.excluirLocal,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: mapsKeys.mapa })
+      qc.invalidateQueries({ queryKey: ['maps', 'locais'] })
+    },
+  })
+}
+
+/** Plano mexe também na fila de decisão ("sem autorização") — invalida o mapa. */
+export function useSalvarPlano() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: api.salvarPlano,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: mapsKeys.planos })
+      qc.invalidateQueries({ queryKey: mapsKeys.mapa })
+    },
+  })
+}
+
+export function useExcluirPlano() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: api.excluirPlano,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: mapsKeys.planos })
+      qc.invalidateQueries({ queryKey: mapsKeys.mapa })
+    },
+  })
+}
+
+export function useSalvarRota() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: api.salvarRota,
+    onSuccess: () => qc.invalidateQueries({ queryKey: mapsKeys.rotas }),
+  })
+}
+
+export function useExcluirRota() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: api.excluirRota,
+    onSuccess: () => qc.invalidateQueries({ queryKey: mapsKeys.rotas }),
+  })
+}

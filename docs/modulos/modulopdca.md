@@ -443,9 +443,10 @@ o `services.componentes_da_composicao` do Orçamento já corrigiu ao virar leitu
 módulo tem necessidade própria, e a desta é pesquisada e resolvida aqui.)*
 
 A [régua §1.6](../frontend.md) já dizia isso — *"a régua é o espírito, não a forma"*: mesma
-profundidade, facilidade e costura com a expansão; **não** os mesmos cards, lentes e nomes. O seletor
-"Operação × Território" do Maps e o "Campo × Acervo" da Prancheta resolvem o problema **daqueles**
-domínios. Copiá-los aqui seria repetir forma sem herdar razão.
+profundidade, facilidade e costura com a expansão; **não** os mesmos cards, lentes e nomes. O "Campo ×
+Acervo" da Prancheta resolve o problema **daquele** domínio — e o Maps, que tinha um seletor
+"Operação × Território", acabou trocando-o por uma fileira de abas só, porque o corte era do backend e
+não de quem usa. Copiar a forma aqui seria repetir forma sem herdar razão.
 
 ### 5.1 A diferença estrutural: a unidade de trabalho é a OBRA
 
