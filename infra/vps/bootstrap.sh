@@ -52,7 +52,9 @@ ufw allow 22/tcp
 ufw --force enable
 
 echo "== SSH: só por chave =="
-cat > /etc/ssh/sshd_config.d/99-sgi.conf <<'EOF'
+# O prefixo `00-` é obrigatório: o sshd vale a PRIMEIRA diretiva que lê, e o `50-cloud-init.conf`
+# da imagem liga a senha. Com `99-` o arquivo era ignorado e a senha seguia aberta.
+cat > /etc/ssh/sshd_config.d/00-sgi.conf <<'EOF'
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 PermitRootLogin prohibit-password
