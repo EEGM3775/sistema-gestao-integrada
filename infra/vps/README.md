@@ -1,4 +1,4 @@
-# VPS — teste real em app.gmaxis.com
+# VPS — teste real em www.gmaxis.com
 
 Topologia do staging (modo produção) numa máquina só, **sem o drone**, com entrada pelo
 **Cloudflare Tunnel**: nenhuma porta pública além do SSH. Compose: [base.yml](../../deploy/compose/base.yml)
@@ -14,11 +14,11 @@ Topologia do staging (modo produção) numa máquina só, **sem o drone**, com e
 ## Ordem
 
 1. **Cloudflare (painel):** Zero Trust → Networks → Tunnels → criar túnel → copiar o token →
-   *Public Hostname*: `app.gmaxis.com` → serviço `HTTP` `gateway:80`. O DNS do `app` é criado sozinho.
+   *Public Hostname*: `www.gmaxis.com` → serviço `HTTP` `gateway:80`. O DNS do `app` é criado sozinho.
 2. **Servidor:** `git clone` em `/opt/sgi` (branch `drone-no-repositorio`), depois
    `bash infra/vps/bootstrap.sh`, `CLOUDFLARE_TUNNEL_TOKEN=… bash infra/vps/gerar-env.sh`,
    `bash infra/vps/up.sh`, `bash infra/vps/criar-admin.sh`.
-3. Abra `https://app.gmaxis.com/`, entre com a credencial de `/root/sgi-admin-credenciais.txt` e
+3. Abra `https://www.gmaxis.com/`, entre com a credencial de `/root/sgi-credenciais-<usuario>.txt` e
    cadastre o segundo fator.
 
 ## Operação

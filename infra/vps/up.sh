@@ -33,5 +33,5 @@ dc up -d --build "$@"
 echo
 echo "Subindo (aguarde os healthchecks, ~2-3 min). Acompanhe com:"
 echo "  docker compose --env-file deploy/env/vps.env -f deploy/compose/base.yml -f deploy/compose/vps.yml --profile full ps"
-echo "Entrada pública: https://app.gmaxis.com/  (túnel: hostname app.gmaxis.com → http://gateway:80)"
+echo "Entrada pública: https://www.gmaxis.com/  (túnel: hostname www.gmaxis.com → http://gateway:80)"
 echo "Primeiro acesso: bash infra/vps/criar-admin.sh"

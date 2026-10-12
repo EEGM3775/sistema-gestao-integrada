@@ -5,7 +5,7 @@
 #   bash infra/vps/criar-admin.sh [slug] [usuario] [email]
 #   bash infra/vps/criar-admin.sh eegm egan egan@gmaxis.com      # (padrões)
 #
-# A senha é gravada em /root/sgi-admin-credenciais.txt (permissão 600) e NÃO é impressa.
+# A senha é gravada em /root/sgi-credenciais-<usuario>.txt (permissão 600) e NÃO é impressa.
 # Leia o arquivo você mesmo, copie para o gerenciador de senhas e apague.
 # No primeiro login o sistema pede o cadastro do segundo fator (app autenticador).
 # ------------------------------------------------------------
@@ -21,8 +21,8 @@ NOME="${SGI_TENANT_NOME:-EEGM Engenharia}"
 SENHA="$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-20)A1!"
 
 umask 077
-ARQ=/root/sgi-admin-credenciais.txt
-printf 'URL:     https://app.gmaxis.com/\nEmpresa: %s\nUsuário: %s\nE-mail:  %s\nSenha:   %s\n' \
+ARQ="/root/sgi-credenciais-${USUARIO}.txt"
+printf 'URL:     https://www.gmaxis.com/\nEmpresa: %s\nUsuário: %s\nE-mail:  %s\nSenha:   %s\n' \
   "$SLUG" "$USUARIO" "$EMAIL" "$SENHA" > "$ARQ"
 
 docker compose --env-file deploy/env/vps.env \

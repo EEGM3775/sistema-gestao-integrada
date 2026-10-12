@@ -1,5 +1,5 @@
 # ============================================================
-# Override de VPS — teste real em https://app.gmaxis.com — aplicado SOBRE deploy/compose/base.yml.
+# Override de VPS — teste real em https://www.gmaxis.com — aplicado SOBRE deploy/compose/base.yml.
 #
 #   docker compose --env-file deploy/env/vps.env \
 #     -f deploy/compose/base.yml -f deploy/compose/vps.yml --profile full up -d --build
@@ -59,7 +59,7 @@ services:
 
   # --- Túnel de saída para o Cloudflare (ingress sem abrir porta) ------------
   # O token vem do painel Zero Trust → Networks → Tunnels (CLOUDFLARE_TUNNEL_TOKEN no
-  # vps.env). O hostname público (app.gmaxis.com → http://gateway:80) é configurado lá.
+  # vps.env). O hostname público (www.gmaxis.com → http://gateway:80) é configurado lá.
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: ${SGI_PREFIX:-sgi}-cloudflared
