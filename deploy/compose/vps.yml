@@ -1,0 +1,74 @@
+# ============================================================
+# Override de VPS — teste real em https://app.gmaxis.com — aplicado SOBRE deploy/compose/base.yml.
+#
+#   docker compose --env-file deploy/env/vps.env \
+#     -f deploy/compose/base.yml -f deploy/compose/vps.yml --profile full up -d --build
+#
+# (use o helper `bash infra/vps/up.sh`.)
+#
+# Mesma topologia e mesmo modo "produção" do staging (DEBUG=False, RS256, cookies Secure,
+# Celery assíncrono), numa máquina só e com Postgres/Redis em container. O que muda:
+#   • SEM drone: java-service, nodeodm, potree-converter, funcoesodm-db e drone-nginx saem
+#     do perfil `full` (vão para `drone`, que ninguém liga aqui);
+#   • SEM porta pública: nada escuta em 0.0.0.0. O Docker fura o firewall (ufw) ao publicar
+#     porta, então Postgres, Redis e mailpit ficam presos em 127.0.0.1 e o gateway nem
+#     publica — o `cloudflared` (túnel de saída) entra pela rede interna do compose;
+#   • gateway HTTP-only (nginx.vps.conf): o TLS termina no Cloudflare.
+#
+# Exige Docker Compose >= 2.24.4 (tags `!override`). O bootstrap instala o atual.
+# ============================================================
+
+services:
+  # --- Drone fora deste ambiente ---------------------------------------------
+  funcoesodm-db:
+    profiles: !override ["drone"]
+  nodeodm:
+    profiles: !override ["drone"]
+  potree-converter:
+    profiles: !override ["drone"]
+  java-service:
+    profiles: !override ["drone"]
+  drone-nginx:
+    profiles: !override ["drone"]
+
+  # --- Portas só no loopback do servidor (acesso por túnel SSH, nunca pela internet) ---
+  postgres:
+    ports: !override
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+  redis:
+    ports: !override
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+  mailpit:
+    ports: !override
+      - "127.0.0.1:${MAILPIT_UI_PORT:-8025}:8025"
+      - "127.0.0.1:${MAILPIT_SMTP_PORT:-1025}:1025"
+
+  gateway:
+    # Sem drone nas dependências; sem publicação de porta (só o cloudflared fala com ele).
+    depends_on: !override
+      iam:
+        condition: service_healthy
+      erp:
+        condition: service_healthy
+      react:
+        condition: service_started
+    ports: !override
+      - "127.0.0.1:${GATEWAY_PORT:-8090}:80"
+    volumes:
+      - ../../infra/gateway/nginx.vps.conf:/etc/nginx/nginx.conf:ro
+
+  # --- Túnel de saída para o Cloudflare (ingress sem abrir porta) ------------
+  # O token vem do painel Zero Trust → Networks → Tunnels (CLOUDFLARE_TUNNEL_TOKEN no
+  # vps.env). O hostname público (app.gmaxis.com → http://gateway:80) é configurado lá.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: ${SGI_PREFIX:-sgi}-cloudflared
+    profiles: ["full"]
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?defina CLOUDFLARE_TUNNEL_TOKEN no deploy/env/vps.env}
+    depends_on:
+      gateway:
+        condition: service_started
+    networks: [sgi]
+    restart: unless-stopped
