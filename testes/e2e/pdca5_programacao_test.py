@@ -445,9 +445,9 @@ check("`gerente` não julga o compromisso de uma equipe que não acompanha",
 status, sem_causa = req("POST", f"/api/pdca/programacoes/{prog_id}/julgar/", demo, {
     "julgamentos": [{"item": cartoes["2"], "cumprido": False}],
 })
-check("«não saiu» SEM causa é recusado", status == 400)
-check("e a recusa diz que sem ela o Last Planner vira marcar caixinha",
-      "caixinha" in texto(sem_causa) or "causa" in texto(sem_causa))
+check("«não saiu» SEM causa é SALVO (não impede de salvar a semana)", status == 200)
+check("e volta com o aviso de que falta a causa",
+      "causa" in texto((sem_causa or {}).get("avisos")))
 
 status, com_causa = req("POST", f"/api/pdca/programacoes/{prog_id}/julgar/", demo, {
     "julgamentos": [{"item": cartoes["1"], "cumprido": True,

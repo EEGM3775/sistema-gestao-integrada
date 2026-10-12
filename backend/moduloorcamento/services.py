@@ -320,7 +320,10 @@ def adotar_no_catalogo(
     tipo, flags = _tipo_e_flags(referencia)
     item = _localizar_item(tenant_id, referencia)
     if item is None:
-        item = Item(tenant_id=tenant_id, codigo_interno=codigo_interno_para(referencia))
+        item = Item(
+            tenant_id=tenant_id, codigo_interno=codigo_interno_para(referencia),
+            origem=Item.Origem.BASE, origem_detalhe=str(referencia.base)[:120],
+        )
         # Flags só são definidas na CRIAÇÃO: se a empresa marcou o item como não
         # estocável, uma re-adoção não pode desfazer essa decisão dela.
         for campo, valor in flags.items():

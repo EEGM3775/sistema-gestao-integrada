@@ -27,3 +27,36 @@ def criar_notificacao(*, user, tenant_id, titulo, mensagem="", tipo=Notificacao.
         url=url,
         nivel=nivel,
     )
+
+
+def avisar_quem_pode(*, tenant_id, permissao, titulo, mensagem="", url="",
+                     nivel=Notificacao.Nivel.SABER) -> int:
+    """**Um módulo mexeu no outro: avise quem responde por ele.**
+
+    *Regra do dono (11/10/2026): "qualquer alteração que interfira em outro
+    módulo tem que ter notificação".* O PDCA que emite um título no ERP, o plano
+    que abre demanda no Suprimentos, o recebimento que dá entrada no Estoque —
+    quem trabalha do outro lado não estava olhando a tela onde aconteceu.
+
+    Vai a todo usuário ativo do tenant com `permissao` (a do verbo que age sobre
+    o que mudou — `docs/modulos/funcoesnotificacoes.md` §3, régua 2) e **uma vez
+    por fato**: o mesmo `titulo` ainda não lido não se repete (régua 3). Devolve
+    quantos avisos saíram.
+    """
+    from . import autorizacao
+    from .models import Usuario
+
+    enviados = 0
+    for usuario in Usuario.objects.filter(tenant_id=tenant_id, is_active=True):
+        if not autorizacao.pode(usuario, permissao):
+            continue
+        if Notificacao.objects.filter(
+            user=usuario, titulo=titulo, lida_em__isnull=True,
+        ).exists():
+            continue
+        criar_notificacao(
+            user=usuario, tenant_id=tenant_id, titulo=titulo[:200],
+            mensagem=mensagem, url=url, nivel=nivel,
+        )
+        enviados += 1
+    return enviados

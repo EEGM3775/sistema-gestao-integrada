@@ -212,7 +212,7 @@ export function FormularioDeContrato({
 
   return (
     <Modal
-      titulo={lado === 'custo' ? 'Novo contrato de empreitada' : 'Novo contrato com o contratante'}
+      titulo={lado === 'custo' ? 'Novo contrato de empreitada' : 'Novo contrato com o cliente'}
       onClose={aoFechar}
       largura={680}
       alto
@@ -243,7 +243,7 @@ export function FormularioDeContrato({
         <Campo rotulo="De que lado da obra">
           <div style={{ display: 'flex', gap: 14 }}>
             {([['custo', 'Empreiteiro', 'a medição gera conta a pagar'],
-               ['receita', 'Contratante', 'a medição gera conta a receber']] as const).map(([v, r, e]) => (
+               ['receita', 'Cliente', 'a medição gera conta a receber']] as const).map(([v, r, e]) => (
               <label key={v} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
                 <input type="radio" name="lado" checked={lado === v} onChange={() => setLado(v)} style={{ marginTop: 3 }} />
                 <span>
@@ -257,9 +257,9 @@ export function FormularioDeContrato({
 
         <Linha>
           {lado === 'receita' ? (
-            <Campo rotulo="Contratante" larga>
+            <Campo rotulo="Cliente" larga>
               <select value={cliente} onChange={(e) => setCliente(e.target.value ? Number(e.target.value) : '')} style={entrada}>
-                <option value="">Escolha o contratante</option>
+                <option value="">Escolha o cliente</option>
                 {clientes.map((c) => (
                   <option key={c.cliente_id} value={c.cliente_id}>{c.nome_completo}</option>
                 ))}

@@ -250,6 +250,25 @@ class ContaPagar(TenantScopedModel, Excluivel):
     desconto = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name=_("Desconto"))
     data_pagamento = models.DateField(null=True, blank=True, verbose_name=_("Data da Última Baixa"))
 
+    # --- A compra que gerou o título (Suprimentos, 11/10/2026 — D284) ---
+    # Seam frouxo, sem FK, pelo mesmo motivo do `PedidoCompra.conta_pagar_ref`
+    # do outro lado: o ERP não depende do SCM. A NF-e da compra mora no SCM (lá
+    # ela pode nascer só com o número, antes do documento); aqui fica o que o
+    # financeiro precisa ver na linha do título para não pagar sem nota.
+    class SituacaoNfe(models.TextChoices):
+        NAO_SE_APLICA = "", _("—")
+        AGUARDANDO_NOTA = "aguardando_nota", _("Aguardando NF-e")
+        AGUARDANDO_DOCUMENTO = "aguardando_documento", _("NF-e informada, aguardando documento")
+        CONFERIDA = "conferida", _("NF-e conferida")
+        DIVERGENTE = "divergente", _("NF-e divergente")
+
+    pedido_compra_ref = models.PositiveIntegerField(null=True, blank=True, db_index=True, verbose_name=_("Pedido de compra (Suprimentos)"))
+    nfe_numero = models.CharField(max_length=20, blank=True, verbose_name=_("Número da NF-e da compra"))
+    nfe_situacao = models.CharField(
+        max_length=20, choices=SituacaoNfe.choices, blank=True, default="",
+        verbose_name=_("Situação da NF-e da compra"),
+    )
+
     class Meta:
         verbose_name = _("Conta a Pagar")
         verbose_name_plural = _("Contas a Pagar")
@@ -658,6 +677,46 @@ class RateioContaPagar(TenantScopedModel):
 
     def __str__(self):
         return f"Conta #{self.conta_pagar_id} → {self.centro_custo.nome}: R$ {self.valor}"
+
+
+class AnotacaoContaPagar(TenantScopedModel):
+    """O que aconteceu fora do ERP e mexe no título — escrito na linha dele.
+
+    *Dono, 11/10/2026:* "essas edições também têm que ir como anotações ao ERP.
+    Caso o item venha a mais ou a menos". O pedido de compra muda depois de virar
+    título (item a mais, saldo encerrado, nota divergente, valor editado), e quem
+    paga só olha o ERP. A anotação **não altera o título**: o valor e o
+    vencimento continuam sendo decididos por quem tem a baixa — ela diz o que
+    mudou, onde, e por quê.
+
+    Só se acrescenta (não há edição nem exclusão pela API): é trilha.
+    """
+
+    class Tipo(models.TextChoices):
+        COBRANCA = "cobranca", _("Cobrança")
+        EDICAO = "edicao", _("Pedido editado")
+        DIVERGENCIA = "divergencia", _("Divergência no recebimento")
+        NFE = "nfe", _("NF-e")
+        CANCELAMENTO = "cancelamento", _("Cancelamento")
+        NOTA = "nota", _("Anotação")
+
+    anotacao_id = models.AutoField(primary_key=True)
+    conta_pagar = models.ForeignKey(ContaPagar, on_delete=models.CASCADE, related_name='anotacoes', verbose_name=_("Conta a Pagar"))
+    tipo = models.CharField(max_length=12, choices=Tipo.choices, default=Tipo.NOTA, verbose_name=_("Tipo"))
+    origem = models.CharField(max_length=20, blank=True, verbose_name=_("Módulo de origem"), help_text=_("'scm', 'manual'…"))
+    texto = models.TextField(verbose_name=_("Texto"))
+    #: O valor que a anotação põe em jogo (a divergência, o saldo encerrado), quando há.
+    valor = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True, verbose_name=_("Valor envolvido"))
+    autor = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True, related_name='+', verbose_name=_("Autor"))
+    criado_em = models.DateTimeField(auto_now_add=True, verbose_name=_("Criado em"))
+
+    class Meta:
+        verbose_name = _("Anotação de Conta a Pagar")
+        verbose_name_plural = _("Anotações de Contas a Pagar")
+        ordering = ['-criado_em', '-anotacao_id']
+
+    def __str__(self):
+        return f"Conta #{self.conta_pagar_id} · {self.get_tipo_display()}"
 
 
 class RateioContaReceber(TenantScopedModel):

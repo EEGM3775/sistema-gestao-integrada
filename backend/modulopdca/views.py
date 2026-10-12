@@ -2842,6 +2842,17 @@ class ProgramacaoSemanalViewSet(TenantScopedViewSetMixin,
                 pode_antecipar=pode_antecipar,
                 motivo_antecipado=entrada.validated_data.get("motivo", ""),
                 arrastar=entrada.validated_data.get("arrastar", True),
+                aceitar_sem_causa=bool(request.data.get("aceitar_sem_causa")),
+                pode_aceitar_sem_causa=_tem_permissao(
+                    request, "pdca.programacao.encerrar_sem_causa",
+                ),
+            )
+        except services.EncerramentoSemCausa as erro:
+            # O aviso antes do bloqueio: devolve o que falta e se quem pediu pode seguir.
+            return Response(
+                {"detail": erro.messages, "codigo": "sem_causa",
+                 "sem_causa": erro.itens, "pode_aceitar": erro.pode},
+                status=status.HTTP_409_CONFLICT,
             )
         except DjangoValidationError as erro:
             raise ValidationError({"detail": erro.messages})

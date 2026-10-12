@@ -415,6 +415,14 @@ class ClienteEmpreendimentoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewS
             ContaReceber.objects.bulk_create(titulos)
             aquisicao.parcelas_geradas_em = timezone.now()
             aquisicao.save(update_fields=['parcelas_geradas_em'])
+            from nucleo.notificacoes import avisar_quem_pode
+
+            avisar_quem_pode(
+                tenant_id=aquisicao.tenant_id, permissao='erp.conta_receber.baixar',
+                titulo=f'Carnê de {aquisicao.cliente.nome_completo} gerou {len(titulos)} contas a receber'[:200],
+                mensagem=f'Total R$ {plano.total}, a partir de {plano.parcelas[0].vencimento:%d/%m/%Y}.',
+                url='/app/erp/contas-a-receber',
+            )
 
         return Response({
             'geradas': len(titulos),

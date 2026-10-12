@@ -11,6 +11,7 @@ from .views import (
     ItemPedidoViewSet,
     ItemPropostaViewSet,
     ItemRecebimentoViewSet,
+    NotaFiscalCompraViewSet,
     OfertaFornecedorViewSet,
     PedidoCompraViewSet,
     PropostaViewSet,
@@ -32,6 +33,7 @@ router.register(r"pedidos", PedidoCompraViewSet, basename="scm-pedido")
 router.register(r"itens-pedido", ItemPedidoViewSet, basename="scm-itempedido")
 router.register(r"recebimentos", RecebimentoViewSet, basename="scm-recebimento")
 router.register(r"itens-recebimento", ItemRecebimentoViewSet, basename="scm-itemrecebimento")
+router.register(r"notas-fiscais", NotaFiscalCompraViewSet, basename="scm-notafiscal")
 router.register(r"avaliacoes", AvaliacaoFornecedorViewSet, basename="scm-avaliacao")
 
 urlpatterns = [

@@ -365,6 +365,7 @@ definition modulo_pdca {
     relation concede_pdca__programacao__comprometer: papel#portador
     relation concede_pdca__programacao__encerrar: papel#portador
     relation concede_pdca__programacao__encerrar_antecipado: papel#portador
+    relation concede_pdca__programacao__encerrar_sem_causa: papel#portador
     relation concede_pdca__programacao__view: papel#portador
     relation concede_pdca__restricao__edit: papel#portador
     relation concede_pdca__restricao__remover: papel#portador
@@ -404,6 +405,7 @@ definition modulo_pdca {
     permission pdca__programacao__comprometer = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__programacao__comprometer)
     permission pdca__programacao__encerrar = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__programacao__encerrar)
     permission pdca__programacao__encerrar_antecipado = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__programacao__encerrar_antecipado)
+    permission pdca__programacao__encerrar_sem_causa = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__programacao__encerrar_sem_causa)
     permission pdca__programacao__view = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__programacao__view)
     permission pdca__restricao__edit = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__restricao__edit)
     permission pdca__restricao__remover = empresa->administrador + catalogado->supervisor + (usa & concede_pdca__restricao__remover)

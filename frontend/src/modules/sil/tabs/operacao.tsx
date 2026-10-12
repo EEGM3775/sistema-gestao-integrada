@@ -151,6 +151,8 @@ function Fila({ kind, icon, titulo, meta, acao }: { kind: Kind; icon: ReactNode;
 export function Almoxarifados({ say }: { say: Say }) {
   const { hasPermission } = useAuth()
   const podeSaldo = hasPermission('sil.saldo.edit'), podeLocal = hasPermission('sil.local.edit')
+  const podeMover = hasPermission('sil.movimentacao.edit')
+  const [saida, setSaida] = useState<{ item: number; local: number } | null>(null)
   const [soBaixo, setSoBaixo] = useState(false)
   const [search, setSearch] = useState('')
   const [minimo, setMinimo] = useState<SaldoEstoque | null>(null)
@@ -213,6 +215,7 @@ export function Almoxarifados({ say }: { say: Say }) {
                 <td style={{ ...mono, padding: '11px 16px', textAlign: 'right', color: 'var(--ink-2)' }}>{brl(s.custo_medio)}</td>
                 <td style={{ ...mono, padding: '11px 16px', textAlign: 'right', fontWeight: 700, color: 'var(--ink)' }}>{brl(s.valor_total)}</td>
                 <td style={{ padding: '11px 16px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                  {podeMover && (num(s.disponivel) ?? 0) > 0 && <Btn style={{ padding: '5px 10px', fontSize: 12 }} onClick={() => setSaida({ item: s.item, local: s.local })}><PackageMinus size={12} /> Saída</Btn>}
                   {podeSaldo && <>
                     {s.abaixo_minimo && <Btn variant="primary" style={{ padding: '5px 10px', fontSize: 12 }} disabled={gerar.isPending} onClick={async () => { await gerar.mutateAsync({ saldo: s.saldo_id }); say('Demanda gerada no SCM') }}><Send size={12} /> Demanda</Btn>}
                     <Btn style={{ padding: '5px 10px', fontSize: 12, marginLeft: 6 }} onClick={() => setMinimo(s)}>Mínimo</Btn>
@@ -225,7 +228,8 @@ export function Almoxarifados({ say }: { say: Say }) {
       )}
       {minimo && <DefinirMinimoModal saldo={minimo} onClose={() => setMinimo(null)} onDone={() => { setMinimo(null); say('Ponto de reposição atualizado') }} />}
       {localSel && <LocalDrawer local={localSel} saldos={todosSaldos.filter(s => s.local === localSel.local_id)} onItem={id => { setLocalSel(null); setItemSel(id) }} onClose={() => setLocalSel(null)} />}
-      {itemSel != null && <ItemDrawer itemId={itemSel} onClose={() => setItemSel(null)} />}
+      {itemSel != null && <ItemDrawer itemId={itemSel} onClose={() => setItemSel(null)} onSaida={podeMover ? local => setSaida({ item: itemSel, local }) : undefined} />}
+      {saida && <RegistrarMovModal inicial={{ ...saida, tipo: 'saida' }} onClose={() => setSaida(null)} onDone={() => { setSaida(null); say('Saída registrada') }} />}
       {novoLocal && <NovoLocalModal onClose={() => setNovoLocal(false)} onDone={() => { setNovoLocal(false); say('Local criado') }} />}
     </>
   )
@@ -264,7 +268,7 @@ function LocalDrawer({ local, saldos, onItem, onClose }: { local: LocalEstoque; 
     </Drawer>
   )
 }
-function ItemDrawer({ itemId, onClose }: { itemId: number; onClose: () => void }) {
+function ItemDrawer({ itemId, onClose, onSaida }: { itemId: number; onClose: () => void; onSaida?: (local: number) => void }) {
   const { data: saldosData } = saldosHooks.useAll({ item: itemId })
   const { data: movs } = movimentacoesHooks.useList({ item: itemId, page_size: 20 })
   const saldos = (saldosData ?? []) as SaldoEstoque[]
@@ -282,13 +286,14 @@ function ItemDrawer({ itemId, onClose }: { itemId: number; onClose: () => void }
       </div>
       <SectHead>Saldo por local</SectHead>
       <Card pad={false} style={{ overflow: 'hidden' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-        <thead><tr>{['Local', 'Qtd.', 'Reservado', 'Custo médio'].map((h, i) => <th key={i} style={th(h, i, n => n >= 1)}>{h}</th>)}</tr></thead>
+        <thead><tr>{['Local', 'Qtd.', 'Reservado', 'Custo médio', ''].map((h, i) => <th key={i} style={th(h, i, n => n >= 1 && n <= 3)}>{h}</th>)}</tr></thead>
         <tbody>{saldos.map((s, i) => (
           <tr key={s.saldo_id} style={{ borderBottom: i < saldos.length - 1 ? '1px solid var(--line-2)' : undefined, background: s.abaixo_minimo ? 'var(--accent-soft)' : undefined }}>
             <td style={{ padding: '10px 14px', color: 'var(--ink)' }}>{s.local_nome}</td>
             <td style={{ ...mono, padding: '10px 14px', textAlign: 'right', fontWeight: 600 }}>{qty(s.quantidade)}</td>
             <td style={{ ...mono, padding: '10px 14px', textAlign: 'right', color: 'var(--ink-3)' }}>{qty(s.reservado)}</td>
             <td style={{ ...mono, padding: '10px 14px', textAlign: 'right' }}>{brl(s.custo_medio)}</td>
+            <td style={{ padding: '10px 14px', textAlign: 'right' }}>{onSaida && (num(s.disponivel) ?? 0) > 0 && <Btn style={{ padding: '4px 9px', fontSize: 12 }} onClick={() => onSaida(s.local)}><PackageMinus size={12} /> Saída</Btn>}</td>
           </tr>
         ))}</tbody>
       </table></Card>
@@ -388,12 +393,12 @@ export function Movimentacoes({ say }: { say: Say }) {
     </>
   )
 }
-function RegistrarMovModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+function RegistrarMovModal({ inicial, onClose, onDone }: { inicial?: { item: number; local: number; tipo: string }; onClose: () => void; onDone: () => void }) {
   const registrar = useRegistrarMov()
   const { data: itens } = itensHooks.useAll({ estocavel: true })
   const { data: locais } = locaisHooks.useAll({ ativo: true })
   const { data: obras } = useObras()
-  const [item, setItem] = useState(''), [local, setLocal] = useState(''), [tipo, setTipo] = useState('entrada')
+  const [item, setItem] = useState(inicial ? String(inicial.item) : ''), [local, setLocal] = useState(inicial ? String(inicial.local) : ''), [tipo, setTipo] = useState(inicial?.tipo ?? 'entrada')
   const [quantidade, setQuantidade] = useState(''), [custo, setCusto] = useState(''), [obra, setObra] = useState(''), [etapa, setEtapa] = useState('')
   const { data: etapas } = useEtapas(obra ? Number(obra) : undefined)
   const [err, setErr] = useState('')

@@ -61,6 +61,11 @@ de produção — isso é do **final do desenvolvimento** e está listado em
   constante e dá a ela o nome local que quiser; o **valor** é do dono. Quem cobra é
   `testes/backend/nucleo/test_tetos_no_payment.py`; a fronteira do que **não** é limite (constante física,
   largura de campo, TTL de cache, janela de protocolo de terceiro) está na §5.6 do `planos.py`.
+- **Alteração que interfere em outro módulo tem notificação** *(decisão do dono, 11/10/2026)* — o
+  módulo que cria, cancela ou muda registro de outro (título no ERP, demanda no Suprimentos, entrada no
+  Estoque, etapa da Obra…) chama `nucleo.notificacoes.avisar_quem_pode(permissao=…)` no mesmo gesto,
+  com o nível de [docs/modulos/funcoesnotificacoes.md](docs/modulos/funcoesnotificacoes.md). Escrita
+  cruzada nova sem aviso é defeito.
 - **Frontend de módulo segue a régua** (grandioso + expansível): cockpit com fila de decisão,
 - loop do domínio ponta a ponta, dados honestos (agregado real ou "em breve", nunca fabricado),
   **integração visível entre módulos** (o que conversa no backend conversa na tela — um *sistema de

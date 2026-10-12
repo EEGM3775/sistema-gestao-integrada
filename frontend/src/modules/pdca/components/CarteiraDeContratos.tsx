@@ -87,17 +87,22 @@ export function CarteiraDeContratos({
       ) : (
         <Card pad={false} style={{ overflow: 'hidden' }}>
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 880 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 980 }}>
               <thead>
                 <tr>
                   {[
                     'Contrato', 'Empreiteiro', 'Regime', 'Contratado', 'Aprovado',
-                    'Na escada', 'Saldo', 'Retido', 'Próximo período',
+                    'Líquido a pagar', 'Na escada', 'Saldo', 'Retido', 'Próximo período',
                   ].map((coluna, i) => (
                     <th
                       key={coluna}
+                      title={
+                        coluna === 'Líquido a pagar'
+                          ? 'O que se paga: o medido aprovado menos retenção e descontos. O saldo do contrato é consumido pelo medido, não pelo líquido.'
+                          : undefined
+                      }
                       style={{
-                        textAlign: i >= 3 && i <= 7 ? 'right' : 'left',
+                        textAlign: i >= 3 && i <= 8 ? 'right' : 'left',
                         padding: '8px 12px', fontSize: 10.5, fontWeight: 700,
                         letterSpacing: '0.07em', textTransform: 'uppercase',
                         color: 'var(--ink-3)', borderBottom: '1px solid var(--line)',
@@ -226,14 +231,14 @@ function LinhaDaCarteira({
         <div style={{ fontSize: 10.5, color: 'var(--ink-3)', marginTop: 2 }}>
           {proporcao ? `${proporcao} do contratado` : 'sem planilha'}
         </div>
-        {apiDecimalToCents(saldo.liquido_aprovado) !== apiDecimalToCents(saldo.medido_aprovado) && (
-          <div
-            style={{ fontSize: 10.5, color: 'var(--ink-3)', marginTop: 2 }}
-            title="O que se paga: o medido menos retenção e descontos. O saldo do contrato é consumido pelo medido, não pelo líquido."
-          >
-            líquido a pagar {formatBRL(apiDecimalToCents(saldo.liquido_aprovado))}
-          </div>
-        )}
+      </td>
+
+      {/* O que se paga: o medido menos retenção e descontos. O saldo do
+          contrato é consumido pelo medido, não pelo líquido. */}
+      <td style={{ padding: '10px 12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+        <Num size={12.5} tone="var(--ink)">
+          {formatBRL(apiDecimalToCents(saldo.liquido_aprovado))}
+        </Num>
       </td>
 
       <td style={{ padding: '10px 12px', textAlign: 'right', whiteSpace: 'nowrap' }}>

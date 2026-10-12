@@ -24,7 +24,8 @@ from .impexp import RECURSO_NOTA_FISCAL
 from .models import (
     Transacao, NotaFiscalServico, NotaFiscalProduto,
     NotaFiscal, ContaPagar, ContaReceber, CobrancaCliente, Boleto,
-    CentroCusto, LoteRemessa, StatusConta, StatusNFE, RevisaoBaixa, StatusRevisaoBaixa, BaixaRequerRevisao
+    CentroCusto, LoteRemessa, StatusConta, StatusNFE, RevisaoBaixa, StatusRevisaoBaixa, BaixaRequerRevisao,
+    AnotacaoContaPagar,
 )
 from .serializers import (
     TransacaoSerializer,
@@ -638,6 +639,8 @@ class ContaPagarViewSet(EstornoMixin, ListaoMixin, TenantScopedViewSetMixin, vie
         "dar_baixa": "erp.conta_pagar.baixar",
         "estornar_baixa": "erp.conta_pagar.estornar",
         "gerar_lote_remessa": "erp.lote_remessa.create",
+        # Anotar é escrever no título — a mesma permissão de editá-lo.
+        "anotar": "erp.conta_pagar.edit",
     }
     pagination_class = ErpPageNumberPagination
     filter_backends = [DjangoFilterBackend, listao.BuscaDeTitulos, listao.OrdenacaoDoListao]
@@ -687,6 +690,19 @@ class ContaPagarViewSet(EstornoMixin, ListaoMixin, TenantScopedViewSetMixin, vie
                 status=status_module.HTTP_202_ACCEPTED,
             )
         return Response(ContaPagarSerializer(conta).data)
+
+    @action(detail=True, methods=['post'])
+    def anotar(self, request, pk=None):
+        """Acrescenta uma anotação à mão na trilha do título (D284)."""
+        conta = self.get_object()
+        texto = (request.data.get('texto') or '').strip()
+        if not texto:
+            return Response({'texto': 'Escreva a anotação.'}, status=status_module.HTTP_400_BAD_REQUEST)
+        AnotacaoContaPagar.objects.create(
+            tenant_id=conta.tenant_id, conta_pagar=conta, tipo=AnotacaoContaPagar.Tipo.NOTA,
+            origem='manual', texto=texto[:4000], autor=request.user,
+        )
+        return Response(self.get_serializer(conta).data, status=status_module.HTTP_201_CREATED)
 
     @action(detail=False, methods=['post'], url_path='gerar-lote-remessa')
     def gerar_lote_remessa(self, request):
@@ -1281,6 +1297,32 @@ class BoletoViewSet(ListaoMixin, TenantScopedViewSetMixin, viewsets.ReadOnlyMode
             detalhes={"boleto_id": boleto.boleto_id, "gateway_id": boleto.gateway_id},
         )
         return Response({'detail': 'Boleto cancelado no Asaas.', 'boleto': BoletoSerializer(boleto).data})
+
+
+class NotasDasComprasView(TenantScopedAPIViewMixin, views.APIView):
+    """As NF-e das compras do Suprimentos — com as pendências (D284).
+
+    A nota da compra mora no SCM (pode nascer só com o número); aqui o
+    financeiro a vê ao lado das notas importadas por XML, junto com a compra
+    recebida que ainda não tem nota. `?pendentes=1` deixa só o que pede ação.
+    Import tardio: instalação sem o Suprimentos devolve a lista vazia.
+    """
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
+    required_module = "erp_financeiro"
+    required_permission = "erp.nf.view"
+
+    def get(self, request):
+        try:
+            from moduloscm.notas import notas_das_compras
+        except ImportError:
+            return Response({"count": 0, "pendentes": 0, "results": []})
+        so_pendentes = request.query_params.get("pendentes") in ("1", "true")
+        linhas = notas_das_compras(request.user.tenant_id, so_pendentes=so_pendentes)
+        paginador = ErpPageNumberPagination()
+        pagina = paginador.paginate_queryset(linhas, request, view=self)
+        resposta = paginador.get_paginated_response(pagina)
+        resposta.data["pendentes"] = sum(1 for l in linhas if l["situacao"] != "conferida")
+        return resposta
 
 
 class ConfiguracaoLotesView(TenantScopedAPIViewMixin, views.APIView):

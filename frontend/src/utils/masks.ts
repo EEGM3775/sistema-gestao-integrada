@@ -86,6 +86,41 @@ export function formatCPFCNPJ(v: string | null | undefined): string {
   return v
 }
 
+// ─── Chave de acesso da NF-e — 44 dígitos em grupos de 4 ─────────────────────
+// Testada como CPF e CNPJ (dono, 11/10/2026): o dígito verificador (módulo 11),
+// e o que a chave carrega dentro — modelo, mês de emissão e o CNPJ/CPF do
+// emitente, que tem os próprios dígitos. Espelha `moduloscm.notas.validar_chave`.
+// **Avisa, não bloqueia**: a nota pode sair em nome de outra empresa, e a nota
+// errada registrada e marcada vale mais que a nota recusada e esquecida.
+
+export function maskChaveNFe(v: string): string {
+  return v.replace(/\D/g, '').slice(0, 44).replace(/(\d{4})(?=\d)/g, '$1 ')
+}
+
+export function validateChaveNFe(digits: string): string | null {
+  const d = digits.replace(/\D/g, '')
+  if (!d) return null
+  if (d.length !== 44) return `Chave incompleta — ${d.length} de 44 dígitos.`
+  let soma = 0, peso = 2
+  for (let i = 42; i >= 0; i--) { soma += +d[i] * peso; peso = peso === 9 ? 2 : peso + 1 }
+  const resto = soma % 11
+  if ((resto < 2 ? 0 : 11 - resto) !== +d[43]) return 'Chave de acesso inválida — confira a digitação.'
+  const mes = +d.slice(4, 6)
+  if (mes < 1 || mes > 12) return 'Chave de acesso inválida — o mês de emissão não existe.'
+  const modelo = d.slice(20, 22)
+  if (modelo !== '55' && modelo !== '65') return `A chave é de um documento modelo ${modelo}, não de NF-e.`
+  const emitente = d.slice(6, 20)
+  const cpfDoEmitente = emitente.startsWith('000') && validateCPF(emitente.slice(3)) === null
+  if (validateCNPJ(emitente) !== null && !cpfDoEmitente) return 'Chave de acesso inválida — o CNPJ do emitente dentro dela não confere.'
+  return null
+}
+
+/** O número da nota que a chave carrega (posições 26–34), sem zeros à esquerda. */
+export function numeroDaChaveNFe(digits: string): string {
+  const d = digits.replace(/\D/g, '')
+  return d.length === 44 ? String(+d.slice(25, 34)) : ''
+}
+
 // ─── PIS/PASEP (NIT) — formato 000.00000.00-0 (11 dígitos) ───────────────────
 
 export function maskPISPASEP(v: string): string {

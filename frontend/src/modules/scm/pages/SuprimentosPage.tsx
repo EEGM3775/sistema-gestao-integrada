@@ -1,60 +1,31 @@
-import { useMemo, useState, type CSSProperties, type ReactNode, type HTMLAttributes, type ButtonHTMLAttributes } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   LayoutDashboard, Tags, FileSpreadsheet, ShoppingCart, Network, ClipboardList,
   PackageCheck, ChevronRight, Coins, Gavel, Truck, Clock, Check, Sparkles, ArrowLeft,
   Package, Upload, LineChart, BadgeCheck, ArrowLeftRight, Store, AlertTriangle,
-  Boxes, Star, Zap, Inbox, Lock,
+  Boxes, Star, Zap, Lock, PlusCircle, Trash2,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import {
   useScmDashboard, cotacoesHooks, pedidosHooks, ofertasHooks, centrosCustoHooks,
-  demandasHooks, itensDemandaHooks, propostasHooks, itensPropostaHooks, itensPedidoHooks,
-  recebimentosHooks, avaliacoesHooks, useAdjudicar, useComprarDireto, useGerarDeCotacao, useCompraAvulsa,
+  demandasHooks, itensDemandaHooks, propostasHooks, itensPropostaHooks,
+  useAdjudicar, useComprarDireto, useGerarDeCotacao, useCompraAvulsa,
 } from '../hooks'
-import { scmKeys } from '../api/queryKeys'
 import { CompraPeloCronograma } from '../components/CompraPeloCronograma'
-import { recebimentos as recebimentosApi, avaliacoes as avaliacoesApi } from '../api/scmApi'
-import { brl, qty, dataBR, num, cotacaoEstado, pedidoEstado, propostaEstado, origemPedido, type Kind, type Estado } from '../lib'
+import { PedidoDetail } from '../components/PedidoDetalhe'
+import { FichaItemModal } from '../components/FichaItem'
+import { cadastrarItem, cotarItens, abrirCotacaoDaDemanda } from '../api/scmApi'
+import { brl, qty, dataBR, num, cotacaoEstado, demandaEstado, pedidoEstado, propostaEstado, origemPedido, type Kind } from '../lib'
 import { minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
-import type {
-  OfertaFornecedor, Cotacao, Proposta, ItemDemanda, ItemProposta,
-  ItemPedido, Recebimento, AvaliacaoFornecedor, CentroCusto, TipoRecebimento,
-} from '../types'
+import { parseApiErrors } from '@/utils/formErrors'
+import type { OfertaFornecedor, Cotacao, Demanda, Proposta, ItemDemanda, ItemProposta, CentroCusto } from '../types'
 import apiClient from '@/api/apiClient'
+import { Pill, EstadoPill, Card, Avatar, Btn, SectHead, Loading, Empty, Modal, Field } from '../components/ui'
+import { mono, KIND, CAPS, inp, lerDecimal, type Say } from '../components/estilo'
 
-/* ─── primitivos ─── */
-const mono: CSSProperties = { fontFamily: 'var(--mono)', fontVariantNumeric: 'tabular-nums' }
 let toastTimer: number | undefined
-const KIND: Record<Kind, [string, string]> = {
-  slate: ['var(--inset)', 'var(--ink-2)'], info: ['var(--info-soft)', 'var(--info-ink)'], amber: ['var(--accent-soft)', 'var(--accent-ink)'],
-  good: ['var(--good-soft)', 'var(--good-ink)'], danger: ['var(--danger-soft)', 'var(--danger-ink)'], net: ['var(--net-soft)', 'var(--net-ink)'],
-}
-function Pill({ kind = 'slate', pulse, children }: { kind?: Kind; pulse?: boolean; children: ReactNode }) {
-  const [bg, fg] = KIND[kind]
-  return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11.5, fontWeight: 650, padding: '3px 9px', borderRadius: 999, whiteSpace: 'nowrap', lineHeight: 1.4, background: bg, color: fg }}>{pulse && <span className="scm-dot" />}{children}</span>
-}
-const EstadoPill = ({ e }: { e: Estado }) => <Pill kind={e.kind} pulse={e.pulse}>{e.label}</Pill>
-function Card({ children, style, pad = true, ...rest }: { children: ReactNode; pad?: boolean } & HTMLAttributes<HTMLDivElement>) {
-  return <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 'var(--r-lg)', boxShadow: 'var(--shadow-sm)', padding: pad ? 18 : 0, ...style }} {...rest}>{children}</div>
-}
-const CONN = new Set(['de', 'do', 'da', 'dos', 'das', 'e'])
-function iniciais(n: string) { const p = n.trim().split(/\s+/).filter(w => !CONN.has(w.toLowerCase())); const s = p.length ? p : n.trim().split(/\s+/); return ((s[0]?.[0] ?? '') + (s[1]?.[0] ?? '')).toUpperCase() }
-const AV: [string, string][] = [['var(--info-soft)', 'var(--info-ink)'], ['var(--accent-soft)', 'var(--accent-ink)'], ['var(--good-soft)', 'var(--good-ink)'], ['var(--net-soft)', 'var(--net-ink)']]
-function avColor(s: string) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return AV[h % AV.length] }
-function Avatar({ name, size = 26 }: { name: string; size?: number }) { const [bg, fg] = avColor(name || '?'); return <span style={{ width: size, height: size, borderRadius: Math.round(size * 0.27), flex: 'none', display: 'grid', placeItems: 'center', background: bg, color: fg, fontFamily: 'var(--mono)', fontWeight: 700, fontSize: Math.round(size * 0.42) }}>{iniciais(name || '?')}</span> }
-function Btn({ variant = 'ghost', children, style, ...rest }: { variant?: 'primary' | 'ghost' | 'brand' } & ButtonHTMLAttributes<HTMLButtonElement>) {
-  const v: Record<string, CSSProperties> = { primary: { background: 'var(--accent)', color: '#1A1204' }, ghost: { background: 'var(--surface)', color: 'var(--ink-2)', border: '1px solid var(--line)' }, brand: { background: 'var(--brand)', color: 'var(--brand-ink)' } }
-  return <button {...rest} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 13.5, fontWeight: 650, padding: '9px 15px', borderRadius: 'var(--r-sm)', cursor: rest.disabled ? 'not-allowed' : 'pointer', opacity: rest.disabled ? 0.5 : 1, border: '1px solid transparent', whiteSpace: 'nowrap', ...v[variant], ...style }}>{children}</button>
-}
-function SectHead({ children, right }: { children: ReactNode; right?: ReactNode }) {
-  return <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '22px 0 12px' }}><h2 style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.02em', textTransform: 'uppercase', color: 'var(--ink-2)' }}>{children}</h2><span style={{ flex: 1, height: 1, background: 'var(--line-2)' }} />{right}</div>
-}
-const CAPS: CSSProperties = { fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--ink-3)', fontWeight: 700 }
-const Spinner = () => <span style={{ width: 26, height: 26, borderRadius: 999, border: '2.5px solid var(--line)', borderTopColor: 'var(--accent)', display: 'inline-block', animation: 'scmSpin .8s linear infinite' }} />
-const Loading = () => <div style={{ display: 'grid', placeItems: 'center', padding: 60 }}><Spinner /></div>
-function Empty({ children }: { children: ReactNode }) { return <Card style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: 44, color: 'var(--ink-3)' }}><Inbox size={32} style={{ opacity: 0.7 }} /><span style={{ fontSize: 13, textAlign: 'center' }}>{children}</span></Card> }
-type Say = (m: string) => void
 
 /* ─── página ─── */
 type TabId = 'cockpit' | 'catalogo' | 'cotacao' | 'pedidos' | 'rede'
@@ -65,13 +36,18 @@ const TABS: { id: TabId; label: string; icon: ReactNode; locked?: boolean }[] = 
 ]
 
 export default function SuprimentosPage() {
-  const [tab, setTab] = useState<TabId>('cockpit')
+  // O título do ERP abre o pedido de origem (`?pedido=`, D284).
+  const [params] = useSearchParams()
+  const pedidoDoLink = Number(params.get('pedido')) || null
+  const [tab, setTab] = useState<TabId>(pedidoDoLink ? 'pedidos' : 'cockpit')
   const [selCot, setSelCot] = useState<number | null>(null)
-  const [selPed, setSelPed] = useState<number | null>(null)
+  const [selPed, setSelPed] = useState<number | null>(pedidoDoLink)
   const [toast, setToast] = useState('')
-  const say: Say = m => { setToast(m); window.clearTimeout(toastTimer); toastTimer = window.setTimeout(() => setToast(''), 2800) }
+  const say: Say = (m, ms = 2800) => { setToast(m); window.clearTimeout(toastTimer); toastTimer = window.setTimeout(() => setToast(''), ms) }
   const openCot = (id: number) => { setSelCot(id); setTab('cotacao') }
   const openPed = (id: number) => { setSelPed(id); setTab('pedidos') }
+  // Clicar na aba leva à lista dela, não ao último registro aberto (dono, 11/10/2026).
+  const irParaAba = (t: TabId) => { setSelCot(null); setSelPed(null); setTab(t) }
 
   return (
     <div style={{ padding: '24px 26px 64px', maxWidth: 1240, margin: '0 auto' }}>
@@ -99,21 +75,21 @@ export default function SuprimentosPage() {
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', flexWrap: 'wrap', gap: 3, background: 'var(--surface-2)', border: '1px solid var(--line)', padding: 4, borderRadius: 12 }}>
           {TABS.map(t => { const on = t.id === tab; return (
-            <button key={t.id} onClick={() => setTab(t.id)} title={t.locked ? 'Bloqueado — disponível quando a Esfera de Rede for construída' : undefined} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '7px 13px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', border: 'none', color: on ? 'var(--ink)' : 'var(--ink-2)', background: on ? 'var(--surface)' : 'transparent', boxShadow: on ? 'var(--shadow-sm)' : 'none' }}>
+            <button key={t.id} onClick={() => irParaAba(t.id)} title={t.locked ? 'Bloqueado — disponível quando a Esfera de Rede for construída' : undefined} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '7px 13px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', border: 'none', color: on ? 'var(--ink)' : 'var(--ink-2)', background: on ? 'var(--surface)' : 'transparent', boxShadow: on ? 'var(--shadow-sm)' : 'none' }}>
               <span style={{ color: on ? 'var(--accent-strong)' : 'inherit', display: 'grid', placeItems: 'center' }}>{t.icon}</span>{t.label}{t.locked && <Lock size={12} style={{ color: 'var(--ink-3)', marginLeft: 1 }} />}
             </button>) })}
         </div>
       </div>
 
       <div className="scm-screen" key={tab + (selCot ?? '') + (selPed ?? '')}>
-        {tab === 'cockpit' && <Cockpit go={setTab} openCot={openCot} />}
-        {tab === 'catalogo' && <Catalogo say={say} onComprou={openPed} />}
-        {tab === 'cotacao' && (selCot != null ? <CotacaoDetail id={selCot} onBack={() => setSelCot(null)} openPed={openPed} say={say} /> : <CotacaoList onOpen={setSelCot} />)}
+        {tab === 'cockpit' && <Cockpit go={irParaAba} openCot={openCot} openPed={openPed} say={say} />}
+        {tab === 'catalogo' && <Catalogo say={say} onComprou={openPed} onCotou={openCot} />}
+        {tab === 'cotacao' && (selCot != null ? <CotacaoDetail id={selCot} onBack={() => setSelCot(null)} openPed={openPed} say={say} /> : <CotacaoList onOpen={setSelCot} say={say} onComprou={openPed} />)}
         {tab === 'pedidos' && (selPed != null ? <PedidoDetail id={selPed} onBack={() => setSelPed(null)} say={say} /> : <PedidoList onOpen={setSelPed} say={say} onComprou={setSelPed} />)}
         {tab === 'rede' && <Rede />}
       </div>
 
-      {toast && <div style={{ position: 'fixed', bottom: 24, left: '50%', background: 'var(--ink)', color: 'var(--surface)', padding: '12px 18px', borderRadius: 11, fontSize: 13.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 10, zIndex: 100, boxShadow: 'var(--shadow-lg)', animation: 'scmToast .28s cubic-bezier(.2,.7,.2,1) both' }}><Check size={17} style={{ color: 'var(--good)' }} />{toast}</div>}
+      {toast && <div role="status" style={{ position: 'fixed', bottom: 24, left: '50%', maxWidth: 'min(640px, calc(100vw - 32px))', background: 'var(--ink)', color: 'var(--surface)', padding: '12px 18px', borderRadius: 11, fontSize: 13.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 10, zIndex: 100, boxShadow: 'var(--shadow-lg)', animation: 'scmToast .28s cubic-bezier(.2,.7,.2,1) both' }}><Check size={17} style={{ color: 'var(--good)' }} />{toast}</div>}
     </div>
   )
 }
@@ -125,7 +101,7 @@ const ATIV: Record<string, { icon: ReactNode; kind: Kind }> = {
   compra_direta: { icon: <ShoppingCart size={15} />, kind: 'net' },
   avaliacao: { icon: <Star size={15} />, kind: 'info' },
 }
-function Cockpit({ go, openCot }: { go: (t: TabId) => void; openCot: (id: number) => void }) {
+function Cockpit({ go, openCot, openPed, say }: { go: (t: TabId) => void; openCot: (id: number) => void; openPed: (id: number) => void; say: Say }) {
   const { data: d, isLoading } = useScmDashboard()
   const { data: cots } = cotacoesHooks.useList({ status: 'aberta' })
   const { hasPermission } = useAuth()
@@ -145,7 +121,7 @@ function Cockpit({ go, openCot }: { go: (t: TabId) => void; openCot: (id: number
           <Btn variant="primary" onClick={() => setNovaCompra(true)}><ShoppingCart size={14} /> Nova compra</Btn>
         </div>
       )}
-      {novaCompra && <NovaCompraModal onClose={() => setNovaCompra(false)} onDone={() => { setNovaCompra(false); go('pedidos') }} />}
+      {novaCompra && <NovaCompraModal say={say} onClose={() => setNovaCompra(false)} onDone={id => { setNovaCompra(false); say('Pedido gerado'); openPed(id) }} />}
       <Card pad={false} style={{ marginBottom: 14, overflow: 'hidden' }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)' }}>
           {rail.map((s, i) => (
@@ -242,16 +218,98 @@ function DecisaoRow({ cot, openCot, last }: { cot: Cotacao; openCot: (id: number
 }
 
 /* ═══ CATÁLOGO ═══ */
-function Catalogo({ say, onComprou }: { say: Say; onComprou: (id: number) => void }) {
+interface ItemDoCatalogo { item_id: number; codigo_interno: string; descricao: string; unidade: string; tipo_nome: string; categoria: string; origem: string; origem_detalhe: string }
+const ORIGEM: Record<string, { label: string; kind: Kind }> = {
+  manual: { label: 'Cadastro', kind: 'slate' }, base: { label: 'Base de referência', kind: 'info' },
+  orcamento: { label: 'Orçamento', kind: 'amber' }, compra: { label: 'Compra', kind: 'good' },
+}
+/** Os itens do catálogo, com a ficha (de onde veio, lojas, preços, estoque) no clique. */
+function ItensDoCatalogo({ onFicha, onComprar, onCotar, marcados, onMarcar }: {
+  onFicha: (id: number) => void; onComprar?: (its: ItemDoCatalogo[]) => void; onCotar?: (its: ItemDoCatalogo[]) => void
+  marcados: Map<number, ItemDoCatalogo>; onMarcar: (its: ItemDoCatalogo[], marcar: boolean) => void
+}) {
+  const [busca, setBusca] = useState('')
+  const [pagina, setPagina] = useState(1)
+  const { data, isLoading } = useQuery({
+    queryKey: ['scm', 'catalogo-itens', busca, pagina],
+    queryFn: async () => (await apiClient.get<{ count: number; results: ItemDoCatalogo[] }>('catalogo/itens/', { params: { search: busca, page: pagina, page_size: 15, ordering: 'descricao' } })).data,
+    placeholderData: prev => prev,
+  })
+  const itens = data?.results ?? [], total = data?.count ?? 0
+  return (
+    <>
+      <SectHead right={<input value={busca} onChange={e => { setBusca(e.target.value); setPagina(1) }} placeholder="Buscar item (nome, código)…" style={{ fontSize: 13, padding: '7px 11px', border: '1px solid var(--line)', borderRadius: 'var(--r-sm)', background: 'var(--surface-2)', color: 'var(--ink)', minWidth: 240 }} />}>Itens do catálogo{total ? ` (${total.toLocaleString('pt-BR')})` : ''}</SectHead>
+      {marcados.size > 0 && (
+        <div style={{ position: 'sticky', top: 8, zIndex: 4, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '9px 14px', marginBottom: 10, borderRadius: 'var(--r-md)', background: 'var(--accent-soft)', border: '1px solid color-mix(in srgb,var(--accent) 35%,var(--line))', color: 'var(--accent-ink)', fontSize: 13, fontWeight: 600 }}>
+          <span>{marcados.size} {marcados.size === 1 ? 'item selecionado' : 'itens selecionados'}</span>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <Btn style={{ padding: '5px 11px', fontSize: 12.5 }} onClick={() => onMarcar([...marcados.values()], false)}>Limpar</Btn>
+            {onCotar && <Btn style={{ padding: '5px 11px', fontSize: 12.5 }} onClick={() => onCotar([...marcados.values()])}><FileSpreadsheet size={13} /> Cotar selecionados</Btn>}
+            {onComprar && <Btn variant="primary" style={{ padding: '5px 11px', fontSize: 12.5 }} onClick={() => onComprar([...marcados.values()])}><ShoppingCart size={13} /> Comprar selecionados</Btn>}
+          </div>
+        </div>
+      )}
+      {isLoading ? <Loading /> : itens.length === 0 ? <Empty>Nenhum item{busca ? ' para a busca' : ' no catálogo ainda'}.</Empty> : (
+        <Card pad={false} style={{ overflow: 'hidden', marginBottom: 6 }}>
+          <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 620 }}>
+            <thead><tr>{['', 'Código', 'Item', 'Un.', 'Tipo', 'De onde veio', ''].map((h, i) => i === 0 && (onComprar || onCotar)
+              ? <th key={i} style={{ width: 36, padding: '10px 0 10px 16px', borderBottom: '1px solid var(--line)', background: 'var(--surface-2)' }}>
+                  <input type="checkbox" aria-label="Marcar todos desta página" checked={itens.length > 0 && itens.every(x => marcados.has(x.item_id))}
+                    onChange={e => onMarcar(itens, e.target.checked)} />
+                </th>
+              : <th key={i} style={{ ...CAPS, fontSize: 10.5, textAlign: 'left', padding: '10px 16px', borderBottom: '1px solid var(--line)', background: 'var(--surface-2)' }}>{h}</th>)}</tr></thead>
+            <tbody>{itens.map((it, i) => (
+              <tr key={it.item_id} className="scm-row" style={{ cursor: 'pointer', borderBottom: i < itens.length - 1 ? '1px solid var(--line-2)' : undefined }} onClick={() => onFicha(it.item_id)}>
+                {(onComprar || onCotar) ? <td style={{ width: 36, padding: '10px 0 10px 16px' }} onClick={e => e.stopPropagation()}>
+                  <input type="checkbox" aria-label={`Marcar ${it.descricao}`} checked={marcados.has(it.item_id)} onChange={e => onMarcar([it], e.target.checked)} />
+                </td> : <td />}
+                <td style={{ ...mono, padding: '10px 16px', color: 'var(--ink-3)', fontSize: 12 }}>{it.codigo_interno}</td>
+                <td style={{ padding: '10px 16px', color: 'var(--ink)', fontWeight: 500 }}>{it.descricao}{it.categoria && <span style={{ fontSize: 11.5, color: 'var(--ink-3)' }}> · {it.categoria}</span>}</td>
+                <td style={{ padding: '10px 16px', color: 'var(--ink-2)' }}>{it.unidade}</td>
+                <td style={{ padding: '10px 16px', color: 'var(--ink-2)', fontSize: 12.5 }}>{it.tipo_nome}</td>
+                <td style={{ padding: '10px 16px' }}><Pill kind={ORIGEM[it.origem]?.kind ?? 'slate'}>{ORIGEM[it.origem]?.label ?? it.origem}</Pill>{it.origem_detalhe && <span style={{ fontSize: 11.5, color: 'var(--ink-3)', marginLeft: 6 }}>{it.origem_detalhe}</span>}</td>
+                <td style={{ padding: '10px 16px', textAlign: 'right', whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
+                  {onCotar && <Btn style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => onCotar([it])}><FileSpreadsheet size={12} /> Cotar</Btn>}
+                  {onComprar && <Btn variant="primary" style={{ padding: '4px 10px', fontSize: 12, marginLeft: 6 }} onClick={() => onComprar([it])}><ShoppingCart size={12} /> Comprar</Btn>}
+                </td>
+              </tr>
+            ))}</tbody>
+          </table></div>
+        </Card>
+      )}
+      {total > 15 && <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--ink-3)' }}>
+        <Btn style={{ padding: '4px 10px', fontSize: 12 }} disabled={pagina <= 1} onClick={() => setPagina(p => p - 1)}>Anterior</Btn>
+        página {pagina} de {Math.ceil(total / 15)}
+        <Btn style={{ padding: '4px 10px', fontSize: 12 }} disabled={pagina >= Math.ceil(total / 15)} onClick={() => setPagina(p => p + 1)}>Próxima</Btn>
+      </div>}
+    </>
+  )
+}
+
+function Catalogo({ say, onComprou, onCotou }: { say: Say; onComprou: (id: number) => void; onCotou: (id: number) => void }) {
   const { hasPermission } = useAuth()
-  const podeComprar = hasPermission('scm.pedido.criar')
+  const podeComprar = hasPermission('scm.pedido.criar'), podeCotar = hasPermission('scm.demanda.edit')
+  const [compraDe, setCompraDe] = useState<ItemDoCatalogo[] | null>(null)
+  const [cotacaoDe, setCotacaoDe] = useState<ItemDoCatalogo[] | null>(null)
+  // A seleção sobrevive à troca de página e à busca: marca-se aqui e ali, compra-se junto.
+  const [marcados, setMarcados] = useState<Map<number, ItemDoCatalogo>>(new Map())
+  const marcar = (its: ItemDoCatalogo[], on: boolean) => setMarcados(prev => {
+    const novo = new Map(prev)
+    for (const it of its) on ? novo.set(it.item_id, it) : novo.delete(it.item_id)
+    return novo
+  })
   const [search, setSearch] = useState('')
   const [comprar, setComprar] = useState<OfertaFornecedor | null>(null)
+  const [ficha, setFicha] = useState<number | null>(null)
   const { data, isLoading } = ofertasHooks.useList({ search, page_size: 24 })
   const rows = data?.results ?? []
   return (
     <>
-      <SectHead right={<input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar produto…" style={{ fontSize: 13, padding: '7px 11px', border: '1px solid var(--line)', borderRadius: 'var(--r-sm)', background: 'var(--surface-2)', color: 'var(--ink)', minWidth: 220 }} />}>Catálogo de ofertas</SectHead>
+      <ItensDoCatalogo onFicha={setFicha} onComprar={podeComprar ? setCompraDe : undefined} onCotar={podeCotar ? setCotacaoDe : undefined} marcados={marcados} onMarcar={marcar} />
+      {ficha != null && <FichaItemModal item={ficha} onClose={() => setFicha(null)} />}
+      {compraDe && <NovaCompraModal say={say} iniciais={compraDe.map(it => ({ produto: it.item_id, descricao: it.descricao, unidade: it.unidade }))} onClose={() => setCompraDe(null)} onDone={id => { setCompraDe(null); setMarcados(new Map()); say('Pedido gerado'); onComprou(id) }} />}
+      {cotacaoDe && <CotarModal itens={cotacaoDe} onClose={() => setCotacaoDe(null)} onDone={id => { setCotacaoDe(null); setMarcados(new Map()); say('Cotação aberta'); onCotou(id) }} />}
+      <SectHead right={<input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar oferta…" style={{ fontSize: 13, padding: '7px 11px', border: '1px solid var(--line)', borderRadius: 'var(--r-sm)', background: 'var(--surface-2)', color: 'var(--ink)', minWidth: 220 }} />}>Ofertas das lojas</SectHead>
       {isLoading ? <Loading /> : rows.length === 0 ? <Empty>Nenhuma oferta no catálogo{search ? ' para a busca' : ''}.</Empty> : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(268px,1fr))', gap: 14 }}>
           {rows.map(o => {
@@ -260,7 +318,7 @@ function Catalogo({ say, onComprou }: { say: Say; onComprou: (id: number) => voi
               <Card key={o.oferta_id} className="scm-lift" style={{ display: 'flex', flexDirection: 'column', gap: 12, opacity: o.ativo ? 1 : 0.6 }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
                   <div style={{ width: 40, height: 40, borderRadius: 'var(--r-md)', flex: 'none', display: 'grid', placeItems: 'center', background: 'var(--inset)', color: 'var(--ink-2)' }}><Package size={20} /></div>
-                  <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontWeight: 650, fontSize: 14, color: 'var(--ink)', lineHeight: 1.3 }}>{o.produto_descricao ?? `#${o.produto}`}</div><div style={{ ...mono, fontSize: 11.5, color: 'var(--ink-3)', marginTop: 2 }}>{o.produto_codigo ?? ''} · {o.fornecedor_nome ?? `#${o.fornecedor}`}</div></div>
+                  <div style={{ flex: 1, minWidth: 0 }}><button type="button" onClick={() => setFicha(o.produto)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left', fontWeight: 650, fontSize: 14, color: 'var(--ink)', lineHeight: 1.3 }}>{o.produto_descricao ?? `#${o.produto}`}</button><div style={{ ...mono, fontSize: 11.5, color: 'var(--ink-3)', marginTop: 2 }}>{o.produto_codigo ?? ''} · {o.fornecedor_nome ?? `#${o.fornecedor}`}</div></div>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', paddingTop: 10, borderTop: '1px solid var(--line-2)' }}><span style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600 }}>Preço direto</span><span style={{ ...mono, fontWeight: 700, fontSize: 16, color: 'var(--ink)' }}>{brl(o.preco_direto)}</span></div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ flex: 1, height: 6, borderRadius: 999, background: 'var(--inset)', overflow: 'hidden' }}><span style={{ display: 'block', height: '100%', width: `${frac * 100}%`, background: frac > 0.15 ? 'var(--good)' : 'var(--danger)' }} /></span><span style={{ ...mono, fontSize: 11.5, color: 'var(--ink-3)', whiteSpace: 'nowrap' }}>{qty(livre)} {o.produto_unidade ?? ''}</span></div>
@@ -276,13 +334,99 @@ function Catalogo({ say, onComprou }: { say: Say; onComprou: (id: number) => voi
 }
 
 /* ═══ COTAÇÃO ═══ */
-function CotacaoList({ onOpen }: { onOpen: (id: number) => void }) {
+/** As demandas que esperam decisão: cada uma vira cotação ou vai direto à compra. */
+function DemandasAbertas({ onCotou, onComprou, say }: { onCotou: (cotacao: number) => void; onComprou: (pedido: number) => void; say: Say }) {
+  const { hasPermission } = useAuth()
+  const podeCotar = hasPermission('scm.demanda.edit'), podeComprar = hasPermission('scm.pedido.criar')
+  const { data, isLoading } = demandasHooks.useList({ page_size: 50 })
+  const [ocupada, setOcupada] = useState<number | null>(null)
+  const [compra, setCompra] = useState<{ demanda: Demanda; linhas: LinhaInicial[] } | null>(null)
+  const [erro, setErro] = useState('')
+  const [marcadas, setMarcadas] = useState<Set<number>>(new Set())
+  const remover = demandasHooks.useRemove()
+  const rows = (data?.results ?? []).filter(d => d.status === 'rascunho' || d.status === 'aberta' || d.status === 'em_cotacao')
+  if (isLoading || rows.length === 0) return null
+  const alternar = (ids: number[], on: boolean) => setMarcadas(prev => { const n = new Set(prev); for (const id of ids) on ? n.add(id) : n.delete(id); return n })
+  /** Apaga uma a uma; as que já têm pedido ou proposta o servidor recusa e o motivo aparece. */
+  const excluir = async (ids: number[]) => {
+    if (!window.confirm(ids.length === 1 ? `Apagar a demanda #${ids[0]}? Isso não pode ser desfeito.` : `Apagar ${ids.length} demandas? Isso não pode ser desfeito.`)) return
+    setErro('')
+    const falhas: string[] = []
+    let apagadas = 0
+    for (const id of ids) {
+      try { await remover.mutateAsync(id); apagadas++ }
+      catch (e) { falhas.push(Object.values(parseApiErrors(e))[0] ?? `Não foi possível apagar a #${id}.`) }
+    }
+    setMarcadas(new Set())
+    if (apagadas) say(apagadas === 1 ? 'Demanda apagada' : `${apagadas} demandas apagadas`)
+    if (falhas.length) setErro(falhas.join(' '))
+  }
+  const cotar = async (d: Demanda) => {
+    setErro(''); setOcupada(d.demanda_id)
+    try { const r = await abrirCotacaoDaDemanda(d.demanda_id); say('Cotação aberta'); onCotou(r.cotacao_id) }
+    catch (e) { setErro(Object.values(parseApiErrors(e))[0] ?? 'Não foi possível abrir a cotação.') }
+    setOcupada(null)
+  }
+  const comprar = async (d: Demanda) => {
+    setErro(''); setOcupada(d.demanda_id)
+    try {
+      const { data: itens } = await apiClient.get<ItemDemanda[]>('scm/itens-demanda/', { params: { demanda: d.demanda_id } })
+      const faltam = itens.filter(i => (num(i.saldo ?? i.quantidade) ?? 0) > 0)
+      if (faltam.length === 0) setErro('A demanda não tem itens a comprar.')
+      else setCompra({
+        demanda: d,
+        linhas: faltam.map(i => ({ produto: i.produto, descricao: i.produto ? (i.produto_descricao ?? '') : i.descricao_servico, unidade: i.unidade, quantidade: i.saldo ?? i.quantidade })),
+      })
+    } catch (e) { setErro(Object.values(parseApiErrors(e))[0] ?? 'Não foi possível ler os itens da demanda.') }
+    setOcupada(null)
+  }
+  return (
+    <>
+      <SectHead right={podeCotar && marcadas.size > 0
+        ? <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--ink-2)' }}>
+            {marcadas.size} selecionada{marcadas.size > 1 ? 's' : ''}
+            <Btn style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => setMarcadas(new Set())}>Limpar</Btn>
+            <Btn variant="danger" style={{ padding: '4px 10px', fontSize: 12 }} disabled={remover.isPending} onClick={() => excluir([...marcadas])}><Trash2 size={12} /> Apagar selecionadas</Btn>
+          </div> : undefined}>Demandas para decidir ({rows.length})</SectHead>
+      {erro &&<div style={{ background: 'var(--danger-soft)', color: 'var(--danger-ink)', padding: '9px 12px', borderRadius: 'var(--r-sm)', fontSize: 12.5, marginBottom: 10 }}>{erro}</div>}
+      <Card pad={false} style={{ overflow: 'hidden', marginBottom: 18 }}>
+        <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5, minWidth: 620 }}>
+          <thead><tr>{['', 'Demanda', 'Origem', 'Centro de custo', 'Itens', 'Estado', ''].map((h, i) => i === 0
+            ? <th key={i} style={{ width: 36, padding: '11px 0 11px 16px', borderBottom: '1px solid var(--line)', background: 'var(--surface-2)' }}>
+                {podeCotar && <input type="checkbox" aria-label="Marcar todas" checked={rows.every(d => marcadas.has(d.demanda_id))} onChange={e => alternar(rows.map(d => d.demanda_id), e.target.checked)} />}
+              </th>
+            : <th key={i} style={{ ...CAPS, fontSize: 10.5, textAlign: i === 4 ? 'right' : 'left', padding: '11px 16px', borderBottom: '1px solid var(--line)', background: 'var(--surface-2)' }}>{h}</th>)}</tr></thead>
+          <tbody>{rows.map((d, i) => (
+            <tr key={d.demanda_id} style={{ borderBottom: i < rows.length - 1 ? '1px solid var(--line-2)' : undefined }}>
+              <td style={{ width: 36, padding: '12px 0 12px 16px' }}>{podeCotar && <input type="checkbox" aria-label={`Marcar demanda #${d.demanda_id}`} checked={marcadas.has(d.demanda_id)} onChange={e => alternar([d.demanda_id], e.target.checked)} />}</td>
+              <td style={{ ...mono, padding: '12px 16px', fontWeight: 700, color: 'var(--ink)' }}>#{d.demanda_id}{d.observacao && <div style={{ fontFamily: 'var(--sans)', fontWeight: 400, fontSize: 11.5, color: 'var(--ink-3)', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.observacao}</div>}</td>
+              <td style={{ padding: '12px 16px', color: 'var(--ink-2)', fontSize: 12.5, textTransform: 'capitalize' }}>{d.origem}</td>
+              <td style={{ padding: '12px 16px', color: 'var(--ink-3)', fontSize: 12.5 }}>{d.centro_custo_nome ?? '—'}</td>
+              <td style={{ ...mono, padding: '12px 16px', textAlign: 'right', color: 'var(--ink-2)' }}>{d.itens_count ?? 0}</td>
+              <td style={{ padding: '12px 16px' }}><EstadoPill e={demandaEstado[d.status]} /></td>
+              <td style={{ padding: '12px 16px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                {podeCotar && <Btn style={{ padding: '4px 10px', fontSize: 12 }} disabled={ocupada === d.demanda_id} onClick={() => cotar(d)}><FileSpreadsheet size={12} /> Abrir cotação</Btn>}
+                {podeComprar && <Btn variant="primary" style={{ padding: '4px 10px', fontSize: 12, marginLeft: 6 }} disabled={ocupada === d.demanda_id} onClick={() => comprar(d)}><ShoppingCart size={12} /> Comprar</Btn>}
+                {podeCotar && <Btn variant="danger" style={{ padding: '4px 8px', fontSize: 12, marginLeft: 6 }} title="Apagar demanda" aria-label={`Apagar demanda #${d.demanda_id}`} disabled={remover.isPending} onClick={() => excluir([d.demanda_id])}><Trash2 size={12} /></Btn>}
+              </td>
+            </tr>
+          ))}</tbody>
+        </table></div>
+      </Card>
+      {compra && <NovaCompraModal say={say} iniciais={compra.linhas} demanda={{ id: compra.demanda.demanda_id, centro_custo: compra.demanda.centro_custo }}
+        onClose={() => setCompra(null)} onDone={id => { setCompra(null); say('Pedido gerado da demanda'); onComprou(id) }} />}
+    </>
+  )
+}
+
+function CotacaoList({ onOpen, say, onComprou }: { onOpen: (id: number) => void; say: Say; onComprou: (id: number) => void }) {
   const { data, isLoading } = cotacoesHooks.useList({})
   const rows = data?.results ?? []
   if (isLoading) return <Loading />
-  if (rows.length === 0) return <><SectHead>Cotações</SectHead><Empty>Nenhuma cotação. Elas nascem de uma demanda publicada.</Empty></>
+  if (rows.length === 0) return <><DemandasAbertas onCotou={onOpen} onComprou={onComprou} say={say} /><SectHead>Cotações</SectHead><Empty>Nenhuma cotação ainda. Abra uma pela demanda acima, ou cote direto do Catálogo.</Empty></>
   return (
     <>
+      <DemandasAbertas onCotou={onOpen} onComprou={onComprou} say={say} />
       <SectHead>Cotações</SectHead>
       <Card pad={false} style={{ overflow: 'hidden' }}>
         <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5, minWidth: 560 }}>
@@ -310,7 +454,9 @@ function CotacaoDetail({ id, onBack, openPed, say }: { id: number; onBack: () =>
   const { data: itens } = itensDemandaHooks.useAll({ demanda: cot?.demanda ?? 0 }, cot?.demanda != null)
   const { data: propostas } = propostasHooks.useAll({ cotacao: id })
   const { data: itensProp } = itensPropostaHooks.useAll({ proposta__cotacao: id })
+  const { data: demanda } = demandasHooks.useDetail(cot?.demanda)
   const adjudicar = useAdjudicar(), gerar = useGerarDeCotacao()
+  const [direto, setDireto] = useState(false)
 
   const lista = useMemo(() => (itens ?? []) as ItemDemanda[], [itens])
   const props = useMemo(() => (propostas ?? []) as Proposta[], [propostas])
@@ -331,7 +477,12 @@ function CotacaoDetail({ id, onBack, openPed, say }: { id: number; onBack: () =>
         <EstadoPill e={cotacaoEstado[cot.status]} />
         {cot.data_limite && <span style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>encerra <b className="mono">{dataBR(cot.data_limite)}</b></span>}
         {adjudicada && podeGerar && <Btn variant="primary" style={{ marginLeft: 'auto' }} onClick={async () => { const p = await gerar.mutateAsync(id); say('Pedido gerado da cotação'); openPed(p.pedido_id) }} disabled={gerar.isPending}><ShoppingCart size={14} /> Gerar pedido</Btn>}
+        {cot.status === 'aberta' && podeGerar && lista.some(i => (num(i.saldo ?? i.quantidade) ?? 0) > 0) && <Btn variant="primary" style={{ marginLeft: 'auto' }} title="Compra os itens da demanda sem esperar proposta: escolha o fornecedor e os preços" onClick={() => setDireto(true)}><ShoppingCart size={14} /> Gerar pedido</Btn>}
       </div>
+      {direto && cot.demanda != null && <NovaCompraModal say={say}
+        iniciais={lista.filter(i => (num(i.saldo ?? i.quantidade) ?? 0) > 0).map(i => ({ produto: i.produto, descricao: i.produto ? (i.produto_descricao ?? '') : i.descricao_servico, unidade: i.unidade, quantidade: i.saldo ?? i.quantidade }))}
+        demanda={{ id: cot.demanda, centro_custo: demanda?.centro_custo ?? null }}
+        onClose={() => setDireto(false)} onDone={id => { setDireto(false); say('Pedido gerado da cotação'); openPed(id) }} />}
 
       {props.length === 0 ? <Empty>Nenhuma proposta registrada nesta cotação ainda.</Empty> : (
         <>
@@ -425,95 +576,12 @@ function PedidoList({ onOpen, say, onComprou }: { onOpen: (id: number) => void; 
           </table></div>
         </Card>
       )}
-      {comprar && <NovaCompraModal onClose={() => setComprar(false)} onDone={id => { setComprar(false); say('Pedido gerado'); onComprou(id) }} />}
+      {comprar && <NovaCompraModal say={say} onClose={() => setComprar(false)} onDone={id => { setComprar(false); say('Pedido gerado'); onComprou(id) }} />}
     </>
   )
 }
 
-function PedidoDetail({ id, onBack, say }: { id: number; onBack: () => void; say: Say }) {
-  const { hasPermission } = useAuth()
-  const podeReceber = hasPermission('scm.recebimento.edit'), podeAvaliar = hasPermission('scm.avaliacao.edit')
-  const { data: p, isLoading } = pedidosHooks.useDetail(id)
-  const { data: itens } = itensPedidoHooks.useAll({ pedido: id })
-  const { data: recs } = recebimentosHooks.useAll({ pedido: id })
-  const { data: avals } = avaliacoesHooks.useAll({ pedido: id })
-  const [receber, setReceber] = useState(false), [avaliar, setAvaliar] = useState(false)
-  if (isLoading || !p) return <Loading />
-  const linhas = (itens ?? []) as ItemPedido[], recebs = (recs ?? []) as Recebimento[], avaliacoesL = (avals ?? []) as AvaliacaoFornecedor[]
-  const finalizado = p.status === 'cancelado'
-  return (
-    <div style={{ maxWidth: 980 }}>
-      <button onClick={onBack} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--ink-3)', background: 'none', border: 'none', cursor: 'pointer', marginBottom: 6 }}><ArrowLeft size={13} /> Todos os pedidos</button>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
-        <h2 style={{ fontFamily: 'var(--display)', fontSize: 19, fontWeight: 750, letterSpacing: '-0.02em', color: 'var(--ink)' }}>Pedido #{p.pedido_id}</h2>
-        <EstadoPill e={pedidoEstado[p.status]} /><Pill kind={origemPedido[p.origem].kind}>{origemPedido[p.origem].label}</Pill>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 9 }}>
-          {podeAvaliar && <Btn onClick={() => setAvaliar(true)}><Star size={14} /> Avaliar fornecedor</Btn>}
-          {podeReceber && !finalizado && <Btn variant="primary" onClick={() => setReceber(true)}><PackageCheck size={14} /> Registrar recebimento</Btn>}
-        </div>
-      </div>
-
-      <div style={{ display: 'grid', gap: 18 }}>
-        <Card><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 16 }}>
-          <Info k="Fornecedor" v={p.fornecedor_nome ?? `#${p.fornecedor}`} />
-          <Info k="Centro de custo" v={p.centro_custo_nome ?? '—'} />
-          <Info k="Valor total" v={brl(p.valor_total)} mono />
-          <Info k="Data do pedido" v={dataBR(p.data_pedido)} mono />
-          {p.demanda && <Info k="Origem" v={`Demanda #${p.demanda}`} />}
-          {p.oferta_origem && <Info k="Origem" v={`Oferta #${p.oferta_origem}`} />}
-          {(p.medicao_pdca ?? []).map(m => (
-            <Info key={m.contrato} k={`Medido no PDCA · contrato ${m.numero}`} v={`${brl(m.medido_aprovado)} de ${brl(p.valor_total)}`} mono />
-          ))}
-        </div></Card>
-
-        <div>
-          <SectHead>Itens</SectHead>
-          {linhas.length === 0 ? <Empty>Sem itens.</Empty> : <Card pad={false} style={{ overflow: 'hidden' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead><tr>{['Item', 'Qtd.', 'Preço unit.', 'Subtotal'].map((h, i) => <th key={i} style={{ ...CAPS, fontSize: 10.5, textAlign: i ? 'right' : 'left', padding: '10px 16px', borderBottom: '1px solid var(--line)', background: 'var(--surface-2)' }}>{h}</th>)}</tr></thead>
-            <tbody>{linhas.map((it, i) => (
-              <tr key={it.item_pedido_id} style={{ borderBottom: i < linhas.length - 1 ? '1px solid var(--line-2)' : undefined }}>
-                <td style={{ padding: '11px 16px' }}><div style={{ fontWeight: 500, color: 'var(--ink)' }}>{it.produto_descricao ?? it.descricao ?? '—'}</div>{it.produto_codigo && <span style={{ ...mono, fontSize: 11.5, color: 'var(--ink-3)' }}>{it.produto_codigo}</span>}</td>
-                <td style={{ ...mono, padding: '11px 16px', textAlign: 'right' }}>{qty(it.quantidade)}</td>
-                <td style={{ ...mono, padding: '11px 16px', textAlign: 'right' }}>{brl(it.preco_unitario)}</td>
-                <td style={{ ...mono, padding: '11px 16px', textAlign: 'right', fontWeight: 600, color: 'var(--ink)' }}>{brl((num(it.preco_unitario) ?? 0) * (num(it.quantidade) ?? 0))}</td>
-              </tr>
-            ))}</tbody>
-          </table></Card>}
-        </div>
-
-        <div>
-          <SectHead>Recebimentos</SectHead>
-          {recebs.length === 0 ? <Empty>Nenhum recebimento registrado.</Empty> : <Card pad={false} style={{ overflow: 'hidden' }}>{recebs.map((r, i) => (
-            <div key={r.recebimento_id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderBottom: i < recebs.length - 1 ? '1px solid var(--line-2)' : undefined }}><Pill kind={r.tipo === 'total' ? 'good' : 'amber'}>{r.tipo === 'total' ? 'Total' : 'Parcial'}</Pill><span style={{ ...mono, fontSize: 12.5, color: 'var(--ink-2)' }}>{dataBR(r.data)}</span>{r.nota_fiscal_ref && <span style={{ marginLeft: 'auto', ...mono, fontSize: 12, color: 'var(--net-ink)' }}>NF-e {r.nota_fiscal_ref}</span>}</div>
-          ))}</Card>}
-        </div>
-
-        {avaliacoesL.length > 0 && <div>
-          <SectHead>Avaliação do fornecedor</SectHead>
-          {avaliacoesL.map(a => <Card key={a.avaliacao_id} style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'center' }}><Nota k="Qualidade" v={a.nota_qualidade} /><Nota k="Pontualidade" v={a.nota_pontualidade} /><Nota k="Atendimento" v={a.nota_atendimento} />{a.comentario && <p style={{ flex: 1, minWidth: 200, fontSize: 13, color: 'var(--ink-2)' }}>{a.comentario}</p>}</Card>)}
-        </div>}
-      </div>
-
-      {receber && <RecebimentoModal pedidoId={id} onClose={() => setReceber(false)} onDone={() => { setReceber(false); say('Recebimento registrado') }} />}
-      {avaliar && <AvaliarModal pedidoId={id} fornecedor={p.fornecedor} onClose={() => setAvaliar(false)} onDone={() => { setAvaliar(false); say('Fornecedor avaliado') }} />}
-    </div>
-  )
-}
-function Info({ k, v, mono: m }: { k: string; v: string; mono?: boolean }) { return <div><div style={{ ...CAPS, fontSize: 10.5, marginBottom: 3 }}>{k}</div><div style={m ? mono : undefined}>{v}</div></div> }
-function Nota({ k, v }: { k: string; v: number }) { return <div><div style={{ ...CAPS, fontSize: 10.5, marginBottom: 4 }}>{k}</div><div style={{ display: 'flex', gap: 2 }}>{[1, 2, 3, 4, 5].map(n => <Star key={n} size={15} style={{ color: n <= v ? 'var(--accent)' : 'var(--line)', fill: n <= v ? 'var(--accent)' : 'none' }} />)}</div></div> }
-
 /* ═══ modais ═══ */
-function Modal({ title, onClose, children, footer }: { title: string; onClose: () => void; children: ReactNode; footer: ReactNode }) {
-  return <div onMouseDown={e => { if (e.target === e.currentTarget) onClose() }} style={{ position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(6,14,26,.5)', backdropFilter: 'blur(3px)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: '8vh 16px' }}>
-    <div style={{ width: '100%', maxWidth: 480, background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 'var(--r-lg)', boxShadow: 'var(--shadow-lg)' }}>
-      <div style={{ padding: '15px 20px', borderBottom: '1px solid var(--line)', fontFamily: 'var(--display)', fontSize: 16, fontWeight: 700, color: 'var(--ink)' }}>{title}</div>
-      <div style={{ padding: 20 }}>{children}</div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 9, padding: '14px 20px', borderTop: '1px solid var(--line)' }}>{footer}</div>
-    </div>
-  </div>
-}
-function Field({ label, children }: { label: string; children: ReactNode }) { return <label style={{ display: 'block', marginBottom: 14 }}><span style={{ display: 'block', ...CAPS, fontSize: 10.5, marginBottom: 5 }}>{label}</span>{children}</label> }
-const inp: CSSProperties = { width: '100%', padding: '8px 11px', fontSize: 13.5, color: 'var(--ink)', background: 'var(--surface-2)', border: '1px solid var(--line)', borderRadius: 'var(--r-sm)', outline: 'none', fontFamily: 'var(--sans)' }
 
 function ComprarModal({ oferta, onClose, onDone }: { oferta?: OfertaFornecedor; onClose: () => void; onDone: (id: number) => void }) {
   const comprar = useComprarDireto()
@@ -541,15 +609,53 @@ function ComprarModal({ oferta, onClose, onDone }: { oferta?: OfertaFornecedor; 
     <Field label="Centro de custo"><select style={inp} value={centro} onChange={e => setCentro(e.target.value)}><option value="">— nenhum —</option>{centros.map(c => <option key={c.centro_custo_id} value={c.centro_custo_id}>{c.nome}</option>)}</select></Field>
   </Modal>
 }
+/** **Cotar** um item do catálogo: quantidade, centro de custo e prazo → demanda + cotação abertas. */
+function CotarModal({ itens, onClose, onDone }: { itens: ItemDoCatalogo[]; onClose: () => void; onDone: (cotacao: number) => void }) {
+  const { data: cc } = centrosCustoHooks.useAll({ ativo: true })
+  const centros = (cc ?? []) as CentroCusto[]
+  const [qtds, setQtds] = useState<Record<number, string>>({}), [centro, setCentro] = useState(''), [limite, setLimite] = useState('')
+  const [err, setErr] = useState(''), [salvando, setSalvando] = useState(false)
+  const salvar = async () => {
+    setErr('')
+    const linhas = itens.map(it => ({ produto: it.item_id, q: lerDecimal(qtds[it.item_id] ?? '') ?? 0, nome: it.descricao }))
+    const sem = linhas.find(l => l.q <= 0)
+    if (sem) return setErr(`Informe a quantidade de "${sem.nome}".`)
+    setSalvando(true)
+    try {
+      const r = await cotarItens({ itens: linhas.map(l => ({ produto: l.produto, quantidade: String(l.q) })), centro_custo: centro ? Number(centro) : null, data_limite: limite || null })
+      onDone(r.cotacao_id)
+    } catch (e) { setErr(Object.values(parseApiErrors(e))[0] ?? 'Não foi possível abrir a cotação.'); setSalvando(false) }
+  }
+  return <Modal title={itens.length === 1 ? 'Cotar item' : `Cotar ${itens.length} itens`} largura={560} onClose={onClose} footer={<><Btn onClick={onClose}>Cancelar</Btn><Btn variant="primary" onClick={salvar} disabled={salvando}>{salvando ? 'Abrindo…' : 'Abrir cotação'}</Btn></>}>
+    {err && <div style={{ background: 'var(--danger-soft)', color: 'var(--danger-ink)', padding: '9px 12px', borderRadius: 'var(--r-sm)', fontSize: 12.5, marginBottom: 12 }}>{err}</div>}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14, maxHeight: 280, overflowY: 'auto' }}>
+      {itens.map(it => (
+        <div key={it.item_id} style={{ display: 'grid', gridTemplateColumns: '1fr 110px', gap: 10, alignItems: 'center', padding: '8px 12px', background: 'var(--surface-2)', borderRadius: 'var(--r-sm)' }}>
+          <div style={{ minWidth: 0 }}><div style={{ fontWeight: 600, color: 'var(--ink)', fontSize: 13 }}>{it.descricao}</div><div style={{ ...mono, fontSize: 11.5, color: 'var(--ink-3)' }}>{it.codigo_interno} · {it.unidade}</div></div>
+          <input style={{ ...inp, ...mono }} inputMode="decimal" aria-label={`Quantidade de ${it.descricao}`} placeholder={`Qtd (${it.unidade || 'un'})`} value={qtds[it.item_id] ?? ''} onChange={e => setQtds(q => ({ ...q, [it.item_id]: e.target.value }))} />
+        </div>
+      ))}
+    </div>
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+      <Field label="Responder até"><input style={inp} type="date" min={minCalendarioISO} max={maxCalendarioISO} value={limite} onChange={e => setLimite(e.target.value)} /></Field>
+    </div>
+    <Field label="Centro de custo"><select style={inp} value={centro} onChange={e => setCentro(e.target.value)}><option value="">— nenhum —</option>{centros.map(c => <option key={c.centro_custo_id} value={c.centro_custo_id}>{c.nome}</option>)}</select></Field>
+  </Modal>
+}
 interface ItemCatalogo { item_id: number; codigo_interno: string; descricao: string; unidade: string }
 interface LinhaDeCompra { chave: number; produto: number | null; descricao: string; unidade: string; quantidade: string; preco: string }
+
 
 /** **Nova compra** — fornecedor, o que se compra, quantidade e preço. Sem
  *  oferta no catálogo e sem cotação: é a compra do depósito da esquina, que a
  *  obra faz todo dia (achado do dono, 10/10/2026: "continuo sem poder
  *  comprar"). Item do catálogo é procurado pelo nome; o que não está no
  *  catálogo vai como texto. Nasce pedido aprovado e segue igual aos outros. */
-function NovaCompraModal({ onClose, onDone }: { onClose: () => void; onDone: (id: number) => void }) {
+interface LinhaInicial { produto: number | null; descricao: string; unidade: string; quantidade?: string }
+function NovaCompraModal({ onClose, onDone, say, iniciais, demanda }: {
+  onClose: () => void; onDone: (id: number) => void; say: Say
+  iniciais?: LinhaInicial[]; demanda?: { id: number; centro_custo: number | null }
+}) {
   const comprar = useCompraAvulsa()
   const { data: cc } = centrosCustoHooks.useAll({ ativo: true })
   const centros = (cc ?? []) as CentroCusto[]
@@ -561,9 +667,11 @@ function NovaCompraModal({ onClose, onDone }: { onClose: () => void; onDone: (id
     },
   })
   const [fornecedor, setFornecedor] = useState('')
-  const [centro, setCentro] = useState('')
+  const [centro, setCentro] = useState(demanda?.centro_custo != null ? String(demanda.centro_custo) : '')
   const [entrega, setEntrega] = useState('')
-  const [linhas, setLinhas] = useState<LinhaDeCompra[]>([{ chave: 1, produto: null, descricao: '', unidade: '', quantidade: '', preco: '' }])
+  const [linhas, setLinhas] = useState<LinhaDeCompra[]>(iniciais?.length
+    ? iniciais.map((it, i) => ({ chave: i + 1, produto: it.produto, descricao: it.descricao, unidade: it.unidade, quantidade: it.quantidade ?? '', preco: '' }))
+    : [{ chave: 1, produto: null, descricao: '', unidade: '', quantidade: '', preco: '' }])
   const [busca, setBusca] = useState<{ chave: number; termo: string } | null>(null)
   const sugestoes = useQuery({
     queryKey: ['scm', 'produtos-busca', busca?.termo ?? ''],
@@ -573,20 +681,39 @@ function NovaCompraModal({ onClose, onDone }: { onClose: () => void; onDone: (id
   const listaSugestoes = Array.isArray(sugestoes.data) ? sugestoes.data : (sugestoes.data?.results ?? [])
   const [err, setErr] = useState('')
   const mudar = (chave: number, patch: Partial<LinhaDeCompra>) => setLinhas(ls => ls.map(l => l.chave === chave ? { ...l, ...patch } : l))
-  const total = linhas.reduce((t, l) => t + (num(l.quantidade) ?? 0) * (num(l.preco) ?? 0), 0)
+  const subtotal = (l: LinhaDeCompra) => (lerDecimal(l.quantidade) ?? 0) * (lerDecimal(l.preco) ?? 0)
+  const total = linhas.reduce((t, l) => t + subtotal(l), 0)
+  const [cadastrando, setCadastrando] = useState<number | null>(null)
+
+  /** O item que é só texto vira item do catálogo (e a loja dele, com o preço
+   *  digitado). O código gerado aparece no aviso embaixo (dono, 11/10/2026). */
+  const cadastrar = async (l: LinhaDeCompra) => {
+    if (!l.descricao.trim()) return setErr('Escreva o item antes de cadastrar.')
+    setErr(''); setCadastrando(l.chave)
+    try {
+      const r = await cadastrarItem({
+        descricao: l.descricao.trim(), unidade: l.unidade.trim(),
+        fornecedor: fornecedor ? Number(fornecedor) : null,
+        preco: lerDecimal(l.preco) != null ? String(lerDecimal(l.preco)) : undefined,
+      })
+      mudar(l.chave, { produto: r.item_id, descricao: r.descricao, unidade: r.unidade })
+      say(r.criado ? `Item cadastrado no catálogo: ${r.codigo_interno} — ${r.descricao} (${r.unidade})` : `Já estava no catálogo: ${r.codigo_interno} — ${r.descricao}`, 6000)
+    } catch (e) { setErr(Object.values(parseApiErrors(e))[0] ?? 'Não foi possível cadastrar o item.') }
+    setCadastrando(null)
+  }
 
   const salvar = async () => {
     setErr('')
     if (!fornecedor) return setErr('Escolha o fornecedor.')
     const itens = linhas.filter(l => l.descricao.trim() || l.produto).map(l => ({
-      produto: l.produto, descricao: l.produto ? '' : l.descricao.trim(),
-      quantidade: (l.quantidade || '0').replace(',', '.'), preco_unitario: (l.preco || '0').replace(',', '.'),
+      produto: l.produto, descricao: l.produto ? '' : l.descricao.trim(), unidade: l.unidade.trim(),
+      quantidade: String(lerDecimal(l.quantidade) ?? 0), preco_unitario: String(lerDecimal(l.preco) ?? 0),
     }))
     if (itens.length === 0) return setErr('Inclua ao menos um item.')
     try {
       const p = await comprar.mutateAsync({
         fornecedor: Number(fornecedor), centro_custo: centro ? Number(centro) : null,
-        data_entrega_prevista: entrega || null, itens,
+        data_entrega_prevista: entrega || null, demanda: demanda?.id ?? null, itens,
       })
       onDone(p.pedido_id)
     } catch (e) {
@@ -595,7 +722,7 @@ function NovaCompraModal({ onClose, onDone }: { onClose: () => void; onDone: (id
     }
   }
 
-  return <Modal title="Nova compra" onClose={onClose} footer={<><Btn onClick={onClose}>Cancelar</Btn><Btn variant="primary" onClick={salvar} disabled={comprar.isPending}>{comprar.isPending ? 'Gerando…' : `Gerar pedido · ${brl(total.toFixed(2))}`}</Btn></>}>
+  return <Modal title="Nova compra" largura={920} onClose={onClose} footer={<><Btn onClick={onClose}>Cancelar</Btn><Btn variant="primary" onClick={salvar} disabled={comprar.isPending}>{comprar.isPending ? 'Gerando…' : `Gerar pedido · ${brl(total.toFixed(2))}`}</Btn></>}>
     {err && <div style={{ background: 'var(--danger-soft)', color: 'var(--danger-ink)', padding: '9px 12px', borderRadius: 'var(--r-sm)', fontSize: 12.5, marginBottom: 12 }}>{err}</div>}
     <Field label="Fornecedor">
       <select style={inp} value={fornecedor} onChange={e => setFornecedor(e.target.value)}>
@@ -610,7 +737,12 @@ function NovaCompraModal({ onClose, onDone }: { onClose: () => void; onDone: (id
     <div style={{ ...CAPS, fontSize: 10.5, marginBottom: 6 }}>Itens</div>
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 8 }}>
       {linhas.map(l => (
-        <div key={l.chave} style={{ display: 'grid', gridTemplateColumns: '1fr 90px 110px 28px', gap: 6, alignItems: 'start' }}>
+        <div key={l.chave} style={{ display: 'grid', gridTemplateColumns: '24px 1fr 80px 70px 120px 28px', gap: 6, alignItems: 'start' }}>
+          {/* Só texto → botão à esquerda cadastra no catálogo (dono, 11/10/2026). */}
+          {l.produto == null && l.descricao.trim().length >= 2
+            ? <button type="button" title="Cadastrar este item no catálogo" aria-label="Cadastrar no catálogo" disabled={cadastrando === l.chave}
+                onClick={() => cadastrar(l)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent-ink)', paddingTop: 8, display: 'grid', placeItems: 'center' }}><PlusCircle size={18} /></button>
+            : <span />}
           <div style={{ position: 'relative' }}>
             <input
               style={inp} value={l.descricao} placeholder="O que comprar (procura no catálogo)"
@@ -627,49 +759,35 @@ function NovaCompraModal({ onClose, onDone }: { onClose: () => void; onDone: (id
                 ))}
               </div>
             )}
-            {l.produto != null && <div style={{ fontSize: 10.5, color: 'var(--good-ink)', marginTop: 2 }}>do catálogo · {l.unidade}</div>}
+            {l.produto != null
+              ? <div style={{ fontSize: 10.5, color: 'var(--good-ink)', marginTop: 2 }}>do catálogo</div>
+              : l.descricao.trim().length >= 2 && <div style={{ fontSize: 10.5, color: 'var(--ink-3)', marginTop: 2 }}>fora do catálogo — não entra no estoque; use o + para cadastrar</div>}
           </div>
           <input style={{ ...inp, ...mono }} inputMode="decimal" placeholder="Qtd" value={l.quantidade} onChange={e => mudar(l.chave, { quantidade: e.target.value })} />
-          <input style={{ ...inp, ...mono }} inputMode="decimal" placeholder="Preço un." value={l.preco} onChange={e => mudar(l.chave, { preco: e.target.value })} />
+          {/* Item do catálogo traz a unidade do cadastro; item livre diz a sua. */}
+          <input style={{ ...inp, ...(l.produto != null ? { color: 'var(--ink-3)' } : {}) }} placeholder="Un." maxLength={20}
+            title={l.produto != null ? 'Unidade do cadastro do catálogo' : 'Unidade: un, m, m², m³, kg, sc, vb…'}
+            value={l.unidade} readOnly={l.produto != null} onChange={e => mudar(l.chave, { unidade: e.target.value })} />
+          <div style={{ position: 'relative' }}>
+            <span style={{ position: 'absolute', left: 10, top: 9, fontSize: 12.5, color: 'var(--ink-3)', pointerEvents: 'none' }}>R$</span>
+            <input style={{ ...inp, ...mono, paddingLeft: 32, textAlign: 'right' }} inputMode="decimal" placeholder="0,00"
+              aria-label="Preço unitário em reais" title={l.unidade ? `Preço por ${l.unidade}` : 'Preço unitário'}
+              value={l.preco} onChange={e => mudar(l.chave, { preco: e.target.value })} />
+            {subtotal(l) > 0 && <div style={{ ...mono, fontSize: 10.5, color: 'var(--ink-3)', marginTop: 2, textAlign: 'right' }}>= {brl(subtotal(l).toFixed(2))}</div>}
+          </div>
           <button type="button" aria-label="Tirar item" disabled={linhas.length === 1} onClick={() => setLinhas(ls => ls.filter(x => x.chave !== l.chave))}
             style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-3)', paddingTop: 8 }}>×</button>
         </div>
       ))}
     </div>
-    <Btn onClick={() => setLinhas(ls => [...ls, { chave: Date.now(), produto: null, descricao: '', unidade: '', quantidade: '', preco: '' }])}>+ Outro item</Btn>
-  </Modal>
-}
-
-function RecebimentoModal({ pedidoId, onClose, onDone }: { pedidoId: number; onClose: () => void; onDone: () => void }) {
-  const qc = useQueryClient()
-  const [tipo, setTipo] = useState<TipoRecebimento>('total')
-  const [data, setData] = useState(new Date().toISOString().slice(0, 10))
-  const [nf, setNf] = useState(''), [saving, setSaving] = useState(false), [err, setErr] = useState('')
-  const salvar = async () => {
-    setSaving(true); setErr('')
-    try { await recebimentosApi.create({ pedido: pedidoId, tipo, data, nota_fiscal_ref: nf }); await qc.invalidateQueries({ queryKey: scmKeys.all }); onDone() }
-    catch { setErr('Falha ao registrar.'); setSaving(false) }
-  }
-  return <Modal title="Registrar recebimento" onClose={onClose} footer={<><Btn onClick={onClose}>Cancelar</Btn><Btn variant="primary" onClick={salvar} disabled={saving}>{saving ? 'Salvando…' : 'Registrar'}</Btn></>}>
-    {err && <div style={{ background: 'var(--danger-soft)', color: 'var(--danger-ink)', padding: '9px 12px', borderRadius: 'var(--r-sm)', fontSize: 12.5, marginBottom: 12 }}>{err}</div>}
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-      <Field label="Tipo"><select style={inp} value={tipo} onChange={e => setTipo(e.target.value as TipoRecebimento)}><option value="total">Total</option><option value="parcial">Parcial</option></select></Field>
-      <Field label="Data"><input style={inp} type="date" min={minCalendarioISO} max={maxCalendarioISO} value={data} onChange={e => setData(e.target.value)} /></Field>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+      <Btn onClick={() => setLinhas(ls => [...ls, { chave: Date.now(), produto: null, descricao: '', unidade: '', quantidade: '', preco: '' }])}>+ Outro item</Btn>
+      <div style={{ textAlign: 'right' }}>
+        <div style={{ ...CAPS, fontSize: 10.5 }}>Total do pedido</div>
+        <div style={{ ...mono, fontSize: 18, fontWeight: 650, color: 'var(--ink)' }}>{brl(total.toFixed(2))}</div>
+      </div>
     </div>
-    <Field label="NF-e (chave/número)"><input style={inp} value={nf} onChange={e => setNf(e.target.value)} placeholder="Opcional — concilia com o ERP" /></Field>
   </Modal>
-}
-function AvaliarModal({ pedidoId, fornecedor, onClose, onDone }: { pedidoId: number; fornecedor: number; onClose: () => void; onDone: () => void }) {
-  const qc = useQueryClient()
-  const [q, setQ] = useState(5), [pt, setPt] = useState(5), [at, setAt] = useState(5), [c, setC] = useState(''), [saving, setSaving] = useState(false)
-  const salvar = async () => { setSaving(true); try { await avaliacoesApi.create({ fornecedor, pedido: pedidoId, nota_qualidade: q, nota_pontualidade: pt, nota_atendimento: at, comentario: c }); await qc.invalidateQueries({ queryKey: scmKeys.all }); onDone() } catch { setSaving(false) } }
-  return <Modal title="Avaliar fornecedor" onClose={onClose} footer={<><Btn onClick={onClose}>Cancelar</Btn><Btn variant="primary" onClick={salvar} disabled={saving}>{saving ? 'Salvando…' : 'Salvar avaliação'}</Btn></>}>
-    <StarsPick label="Qualidade" v={q} on={setQ} /><StarsPick label="Pontualidade" v={pt} on={setPt} /><StarsPick label="Atendimento" v={at} on={setAt} />
-    <Field label="Comentário"><textarea style={{ ...inp, resize: 'vertical', minHeight: 60 }} value={c} onChange={e => setC(e.target.value)} placeholder="Opcional" /></Field>
-  </Modal>
-}
-function StarsPick({ label, v, on }: { label: string; v: number; on: (n: number) => void }) {
-  return <div style={{ marginBottom: 14 }}><div style={{ ...CAPS, fontSize: 10.5, marginBottom: 6 }}>{label}</div><div style={{ display: 'flex', gap: 4 }}>{[1, 2, 3, 4, 5].map(n => <button key={n} onClick={() => on(n)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2 }}><Star size={22} style={{ color: n <= v ? 'var(--accent)' : 'var(--line)', fill: n <= v ? 'var(--accent)' : 'none' }} /></button>)}</div></div>
 }
 
 /* ═══ ESFERA DE REDE (estático) ═══ */

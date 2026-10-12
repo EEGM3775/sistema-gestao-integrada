@@ -79,7 +79,7 @@ export function FichaDoContrato({
         {cadastro.isLoading ? <Loading o="o cadastro do contrato" /> : cadastro.data ? (
           <Card>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', columnGap: 24 }}>
-              <Linha rotulo={receita ? 'Contratante' : 'Empreiteiro'} valor={cadastro.data.fornecedor_nome} />
+              <Linha rotulo={receita ? 'Cliente' : 'Empreiteiro'} valor={cadastro.data.fornecedor_nome} />
               <Linha rotulo="Objeto" valor={cadastro.data.objeto} />
               <Linha rotulo="Regime" valor={cadastro.data.regime_rotulo} />
               <Linha rotulo="Situação" valor={<Pill kind={cadastro.data.status === 'rascunho' ? 'slate' : 'good'}>{cadastro.data.status_rotulo}</Pill>} />

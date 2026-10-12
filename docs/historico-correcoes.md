@@ -10,6 +10,29 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D284 — o recebimento do Suprimentos não dava entrada no estoque nem chegava ao ERP · ✅ corrigido 11/10/2026
+
+Achado pelo dono no Pedido #6 (recebido total, NF-e informada): o estoque e o ERP não mudaram, não havia
+onde ver o recebimento nem onde pôr a nota e a chave, o pedido não se editava, e clicar na aba Pedidos
+reabria o último pedido. **Causas:** o `RecebimentoModal` gravava só o `Recebimento`, sem
+`ItemRecebimento` — e a entrada do SIL escuta a **linha** (`modulosil.signals`), então nenhum
+recebimento feito pela tela entrou no estoque; nada ligava o pedido ao contas a pagar
+(`PedidoCompra.conta_pagar_ref` nunca era preenchido); a NF-e era um campo de texto; a aba não limpava o
+pedido selecionado. **Correção** (desenho decidido com o dono na mesma data, a partir de como Senior,
+SAP B1, CIGAM, Alterdata e Sienge fazem): recebimento **por linha** (`pedidos/{id}/receber/`, a mais
+aceito e anotado; a menos só vira divergência ao **finalizar** com saldo); `NotaFiscalCompra` com número,
+chave (testada como CPF/CNPJ — DV, mês, modelo, CNPJ embutido — e **só avisada**, porque a nota pode
+sair em nome de outra empresa), XML/DANFE pela porta única (`scm.nota_compra`) e conferência — e listada com as pendências (inclusive a
+compra recebida sem nota) na aba Recebidas das Notas fiscais do ERP (`erp/notas-das-compras/`); cobrança
+em meios livres (`MeioPagamentoPedido`/`ParcelaPedido`) que vira títulos "aguardando NF-e" com a obra;
+`AnotacaoContaPagar` para tudo que muda o que se paga; edição livre até o recebimento e de saldo depois
+(regra no servidor, `regime` no painel); PDF + e-mail/WhatsApp; "cadastrar" do item só-texto
+(`catalogo.registro`, `ITM-…` sem colisão nem duplicata) com a loja; ficha do item; teto
+`catalogo_itens`. Testes: `testes/backend/moduloscm/test_d284_pedido.py` (37). Três guardas do
+projeto pegaram convenções no caminho e foram atendidas: RLS na forma estimável (D238), porta de mídia
+(D70) e registro no DMS.
+
+---
 ### D283 — a retificação seguia errada: duas medições aprovadas, diferença como documento e aditivo sem tela · ✅ corrigido 11/10/2026
 
 Achado pelo dono depois do D282: a retificação ainda não chegava ao Contas a pagar, o contrato mostrava **duas
@@ -27,7 +50,11 @@ existentes para a medição inteira); a aprovada não se cancela. Tela: quadro o
 conciliação com o efeito no saldo e no ERP; lista com "substituída pela nº X". Parada **Contrato** com a ficha
 inteira (`contratos/{id}/ficha/`). Aditivo: `EditorDeAditivo` (termo, itens existentes, itens novos, antes →
 depois), `cabecalho/`, editar/excluir/retirar, e retenção nova do contrato + retenção própria por item
-(migration 0035). Testes em `RetificacaoTests` e `AditivoTests`.
+(migration 0035). **Reaberto no mesmo dia:** no staging a 0034 passou em branco — a conversão rodou sem
+`app.rls_bypass` e a RLS escondeu todas as linhas, então a retificadora antiga seguia como "só a diferença" e a
+tela a lia como medição nova contra o saldo. A conversão foi para a **0036**, com o bypass, e ela também fecha a
+retificadora aprovada pendente pelo serviço (original → `retificada`, título acertado). Testes em
+`RetificacaoTests` (inclusive o caso do staging) e `AditivoTests`.
 
 ---
 ### D282 — a retificação de medição não chegava ao Contas a pagar e mostrava a diferença como líquido · ✅ corrigido 11/10/2026

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Plus, X } from 'lucide-react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useAuth } from '@/hooks/useAuth'
 import { TelaDaGrade } from '../grade/TelaDaGrade'
 import { estiloFiltro } from '../grade/estilos'
 import { useGrade } from '../grade/useGrade'
@@ -17,7 +18,7 @@ import { AvisoDeTrava } from '../components/forms/trava'
 import { buttonPrimaryStyle, buttonSecondaryStyle } from '../components/forms/formStyles'
 import { EstornarBaixaDialog } from '../components/EstornarBaixaDialog'
 import { erpKeys } from '../api/queryKeys'
-import { fetchContaAPagar } from '../api/endpoints/contasAPagar'
+import { anotarContaAPagar, fetchContaAPagar } from '../api/endpoints/contasAPagar'
 import { useCreateContaAPagar, useDarBaixaContaAPagar, useUpdateContaAPagar } from '../hooks/useContasAPagar'
 import { useEstornarBaixa } from '../hooks/useCobranca'
 import { useEmpreendimentoOptions } from '../hooks/useEntityOptions'
@@ -50,7 +51,8 @@ export default function ContasAPagarPage() {
     const obra = params.get('obra')
     return obra ? [{ chave: 'obra', valor: obra, rotulo: `Obra: ${params.get('obra_nome') || `#${obra}`}` }] : []
   })
-  const [aberta, setAberta] = useState<number | null>(null)
+  // O pedido de compra do Suprimentos abre o título direto (`?conta=`, D284).
+  const [aberta, setAberta] = useState<number | null>(() => Number(params.get('conta')) || null)
   const [criando, setCriando] = useState(false)
   const [titulo, setTitulo] = useState<{ titulo: string; descricao?: string }>({ titulo: '' })
 
@@ -190,6 +192,7 @@ function DetalheContaPagar({ contaId, onTitulo }: { contaId: number; onTitulo: (
           {conta.rateios.map(r => <li key={r.rateio_id} className="flex justify-between"><span>{r.centro_custo_nome}</span><MoneyDisplay cents={apiDecimalToCents(r.valor)} /></li>)}
         </ul>
       )}
+      {conta.pedido_compra_ref != null && <CompraDoTitulo conta={conta} />}
       <AvisoDeTrava motivo={conta.travado_porque} />
       {conta.estorno_impedido_porque && <p style={{ fontSize: 12, color: 'var(--ink-3)' }}>{conta.estorno_impedido_porque}</p>}
       <div className="flex items-center justify-end gap-2 flex-wrap">
@@ -202,6 +205,62 @@ function DetalheContaPagar({ contaId, onTitulo }: { contaId: number; onTitulo: (
       {estornando && (
         <EstornarBaixaDialog valorPago={conta.valor_pago} pendente={estornar.isPending} onFechar={() => setEstornando(false)}
           onConfirmar={motivo => estornar.mutateAsync({ id: conta.conta_pagar_id, motivo })} />
+      )}
+    </div>
+  )
+}
+
+const NFE_COR: Record<string, [string, string]> = {
+  aguardando_nota: ['var(--accent-soft)', 'var(--accent-ink)'],
+  aguardando_documento: ['var(--accent-soft)', 'var(--accent-ink)'],
+  conferida: ['var(--good-soft)', 'var(--good-ink)'],
+  divergente: ['var(--danger-soft)', 'var(--danger-ink)'],
+}
+
+/** O título que nasceu de um pedido de compra: a nota e a trilha do que mudou
+ *  no pedido depois (edição, entrega a mais ou a menos, nota divergente). */
+function CompraDoTitulo({ conta }: { conta: ContaPagar }) {
+  const qc = useQueryClient()
+  const { hasPermission } = useAuth()
+  const [texto, setTexto] = useState('')
+  const [salvando, setSalvando] = useState(false)
+  const [cor, tinta] = NFE_COR[conta.nfe_situacao ?? ''] ?? ['var(--surface-2)', 'var(--ink-2)']
+  const anotar = async () => {
+    if (!texto.trim()) return
+    setSalvando(true)
+    try {
+      await anotarContaAPagar(conta.conta_pagar_id, texto.trim())
+      setTexto('')
+      await qc.invalidateQueries({ queryKey: erpKeys.contasAPagar.detail(conta.conta_pagar_id) })
+    } finally { setSalvando(false) }
+  }
+  return (
+    <div className="flex flex-col gap-2" style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <Link to={`/app/scm?pedido=${conta.pedido_compra_ref}`} style={{ fontWeight: 600, color: 'var(--net-ink)' }}>Pedido de compra #{conta.pedido_compra_ref}</Link>
+        <span style={{ fontSize: 11.5, fontWeight: 650, padding: '2px 9px', borderRadius: 999, background: cor, color: tinta }}>
+          {conta.nfe_situacao_nome}{conta.nfe_numero ? ` · ${conta.nfe_numero}` : ''}
+        </span>
+      </div>
+      {(conta.anotacoes ?? []).length > 0 && (
+        <ul className="flex flex-col gap-2" style={{ fontSize: 12.5 }}>
+          {(conta.anotacoes ?? []).map(a => (
+            <li key={a.anotacao_id} style={{ padding: '7px 10px', borderRadius: 8, background: a.tipo === 'divergencia' ? 'var(--danger-soft)' : 'var(--surface-2)' }}>
+              <div style={{ color: 'var(--ink)' }}>{a.texto}</div>
+              <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2 }}>
+                {a.tipo_nome} · {new Date(a.criado_em).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}{a.autor_nome ? ` · ${a.autor_nome}` : ''}
+                {a.valor ? <> · <MoneyDisplay cents={apiDecimalToCents(a.valor)} /></> : null}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {hasPermission('erp.conta_pagar.edit') && (
+        <div className="flex gap-2">
+          <input value={texto} onChange={e => setTexto(e.target.value)} placeholder="Anotar neste título…" aria-label="Anotação"
+            style={{ flex: 1, fontSize: 12.5, padding: '6px 10px', border: '1px solid var(--line)', borderRadius: 8, background: 'var(--surface-2)', color: 'var(--ink)' }} />
+          <button type="button" onClick={anotar} disabled={salvando || !texto.trim()} style={buttonSecondaryStyle}>Anotar</button>
+        </div>
       )}
     </div>
   )

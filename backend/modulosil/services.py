@@ -326,6 +326,15 @@ def registrar_entrada_de_item_recebimento(item_recebimento):
         recebimento_scm_ref=ir.recebimento_id, item_recebimento_ref=ir.pk,
         observacao=f"Entrada do recebimento SCM #{ir.recebimento_id}",
     )
+    # Um aviso por recebimento, não por linha: o título é a chave (régua 3).
+    from nucleo.notificacoes import avisar_quem_pode
+
+    avisar_quem_pode(
+        tenant_id=tenant_id, permissao="sil.requisicao.atender",
+        titulo=f"Recebimento {ir.recebimento_id} do Suprimentos deu entrada no estoque",
+        mensagem=f"Entrou no local {local}. Confira as quantidades no Estoque.",
+        url="/app/sil",
+    )
 
 
 def registrar_entrada_de_recebimento(recebimento):
@@ -358,4 +367,16 @@ def gerar_demanda_de_saldo(saldo, quantidade, user=None):
     emitir_evento_dominio("sil.demanda_gerada", tenant_id, {
         "demanda_id": demanda.demanda_id, "item_id": saldo.item_id, "quantidade": str(quantidade),
     })
+    from nucleo.models import Notificacao
+    from nucleo.notificacoes import avisar_quem_pode
+
+    avisar_quem_pode(
+        tenant_id=tenant_id, permissao="scm.demanda.edit",
+        titulo=f"Estoque pediu reposição: demanda {demanda.demanda_id}",
+        mensagem=(
+            f"{getattr(saldo.item, 'descricao', saldo.item_id)} abaixo do mínimo no "
+            f"local {saldo.local_id} — {_dec(quantidade)} {getattr(saldo.item, 'unidade', '')}."
+        ),
+        url="/app/scm", nivel=Notificacao.Nivel.DECIDIR,
+    )
     return demanda

@@ -416,9 +416,9 @@ export function useJulgarSemana(obraId: number | undefined) {
 export function useEncerrarSemana(obraId: number | undefined) {
   const invalidar = useInvalidarSemana(obraId)
   return useMutation({
-    mutationFn: ({ id, motivo, arrastar }:
-    { id: number; motivo?: string; arrastar?: boolean }) =>
-      api.programacoes.encerrar(id, { motivo, arrastar }),
+    mutationFn: ({ id, motivo, arrastar, aceitarSemCausa }:
+    { id: number; motivo?: string; arrastar?: boolean; aceitarSemCausa?: boolean }) =>
+      api.programacoes.encerrar(id, { motivo, arrastar, aceitar_sem_causa: aceitarSemCausa }),
     onSuccess: invalidar,
   })
 }

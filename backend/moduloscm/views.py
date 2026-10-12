@@ -28,6 +28,7 @@ from .models import (
     ItemPedido,
     ItemProposta,
     ItemRecebimento,
+    NotaFiscalCompra,
     OfertaFornecedor,
     PedidoCompra,
     Proposta,
@@ -38,11 +39,13 @@ from .serializers import (
     CentroCustoSerializer,
     CotacaoSerializer,
     DemandaSerializer,
+    EventoPedidoSerializer,
     FaixaPrecoOfertaSerializer,
     ItemDemandaSerializer,
     ItemPedidoSerializer,
     ItemPropostaSerializer,
     ItemRecebimentoSerializer,
+    NotaFiscalCompraSerializer,
     OfertaFornecedorSerializer,
     PedidoCompraSerializer,
     PropostaSerializer,
@@ -122,7 +125,87 @@ class DemandaViewSet(BaseScmViewSet):
         "do_orcamento": "scm.demanda.edit",
         "do_cronograma": "scm.demanda.view",
         "do_cronograma_gerar": "scm.demanda.edit",
+        "cotar": "scm.demanda.edit",
+        "abrir_cotacao": "scm.demanda.edit",
     }
+
+    def destroy(self, request, *args, **kwargs):
+        """Apaga a demanda que não virou nada. Com pedido ou proposta ela já tem
+        história de compra: aí só cancela (o histórico fica)."""
+        from django.db.models import ProtectedError
+
+        demanda = self.get_object()
+        if demanda.pedidos.exists():
+            return Response({"detail": f"A demanda #{demanda.pk} já gerou pedido — não dá para apagar."},
+                            status=status.HTTP_409_CONFLICT)
+        if Proposta.objects.filter(cotacao__demanda=demanda).exists():
+            return Response({"detail": f"A demanda #{demanda.pk} já tem proposta de fornecedor — não dá para apagar."},
+                            status=status.HTTP_409_CONFLICT)
+        try:
+            with transaction.atomic():
+                demanda.delete()  # itens e cotações vazias saem junto
+        except ProtectedError:
+            return Response({"detail": f"A demanda #{demanda.pk} é usada por outro registro — não dá para apagar."},
+                            status=status.HTTP_409_CONFLICT)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=["post"], url_path="abrir-cotacao")
+    def abrir_cotacao(self, request, pk=None):
+        """A demanda já existe (do cronograma, do orçamento, do estoque…): abre a
+        cotação dela. Demanda sem itens não cota; a que já tem cotação aberta devolve a mesma."""
+        demanda = self.get_object()
+        if demanda.status in (Demanda.Status.ATENDIDA, Demanda.Status.CANCELADA):
+            return Response({"detail": "Esta demanda já foi atendida ou cancelada."}, status=status.HTTP_400_BAD_REQUEST)
+        if not demanda.itens.exists():
+            return Response({"detail": "A demanda não tem itens para cotar."}, status=status.HTTP_400_BAD_REQUEST)
+        with transaction.atomic():
+            cotacao = demanda.cotacoes.filter(status=Cotacao.Status.ABERTA).first()
+            if cotacao is None:
+                cotacao = Cotacao.objects.create(
+                    tenant_id=demanda.tenant_id, demanda=demanda, data_limite=request.data.get("data_limite") or None,
+                )
+            if demanda.status in (Demanda.Status.RASCUNHO, Demanda.Status.ABERTA):
+                demanda.status = Demanda.Status.EM_COTACAO
+                demanda.save(update_fields=["status"])
+        return Response({"demanda_id": demanda.pk, "cotacao_id": cotacao.pk})
+
+    @action(detail=False, methods=["post"])
+    def cotar(self, request):
+        """Cotar direto do catálogo: itens e quantidades → demanda aberta + cotação
+        aberta, de uma vez. Quem cota já recebe o link da cotação para chamar propostas."""
+        tenant_id = getattr(request.user, "tenant_id", None)
+        itens = request.data.get("itens")
+        if not isinstance(itens, list) or not itens:
+            return Response({"itens": "Informe ao menos um item."}, status=status.HTTP_400_BAD_REQUEST)
+        linhas = []
+        for linha in itens:
+            try:
+                quantidade = Decimal(str(linha.get("quantidade")))
+            except (InvalidOperation, AttributeError):
+                quantidade = Decimal("0")
+            produto = Item.objects.filter(tenant_id=tenant_id, pk=linha.get("produto")).first() if isinstance(linha, dict) else None
+            if produto is None or quantidade <= 0:
+                return Response({"itens": "Cada item precisa existir no catálogo e ter quantidade positiva."},
+                                status=status.HTTP_400_BAD_REQUEST)
+            linhas.append((produto, quantidade))
+        centro = None
+        if request.data.get("centro_custo"):
+            centro = CentroCusto.objects.filter(tenant_id=tenant_id, pk=request.data["centro_custo"]).first()
+            if centro is None:
+                return Response({"centro_custo": "Centro de custo não encontrado."}, status=status.HTTP_400_BAD_REQUEST)
+        data_limite = request.data.get("data_limite") or None
+        with transaction.atomic():
+            demanda = Demanda.objects.create(
+                tenant_id=tenant_id, centro_custo=centro, solicitante=request.user,
+                status=Demanda.Status.EM_COTACAO, observacao=(request.data.get("observacao") or "")[:2000],
+            )
+            for produto, quantidade in linhas:
+                ItemDemanda.objects.create(
+                    tenant_id=tenant_id, demanda=demanda, produto=produto, quantidade=quantidade,
+                    unidade=(produto.unidade or "")[:20],
+                )
+            cotacao = Cotacao.objects.create(tenant_id=tenant_id, demanda=demanda, data_limite=data_limite)
+        return Response({"demanda_id": demanda.pk, "cotacao_id": cotacao.pk}, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["get"], url_path="do-cronograma")
     def do_cronograma(self, request):
@@ -354,11 +437,277 @@ class PedidoCompraViewSet(BaseScmViewSet):
     filterset_fields = ["origem", "status", "fornecedor", "centro_custo", "demanda"]
     ordering_fields = ["criado_em", "data_pedido", "valor_total"]
     required_resource = "scm.pedido"
+    # D284 — os verbos do pedido reusam as permissões que já existem (permissão
+    # nova exige rebuild da IAM + re-seed): receber e lançar a nota são do
+    # recebimento; cobrança, edição, cancelamento e envio são escrita do pedido;
+    # cadastrar o item que se está comprando é parte do gesto de comprar.
     action_permission_map = {
         "comprar_direto": "scm.pedido.criar",
         "gerar_de_cotacao": "scm.pedido.criar",
         "compra_avulsa": "scm.pedido.criar",
+        "cadastrar_item": "scm.pedido.criar",
+        "receber": "scm.recebimento.edit",
+        "lancar_nota": "scm.recebimento.edit",
+        "definir_cobranca": "scm.pedido.edit",
+        "editar": "scm.pedido.edit",
+        "cancelar": "scm.pedido.edit",
+        "enviar": "scm.pedido.edit",
+        "painel": "scm.pedido.view",
+        "pdf": "scm.pedido.view",
     }
+
+    # --- D284: o pedido inteiro numa resposta, e os verbos dele -------------
+
+    @action(detail=True, methods=["get"])
+    def painel(self, request, pk=None):
+        """Tudo o que a tela do pedido mostra: linhas com saldo, recebimentos,
+        notas, cobrança, títulos do ERP, histórico e o que está pendente."""
+        from . import cobranca as cobranca_mod
+        from . import financeiro
+        from .edicao import regime
+        from .recebimento import saldos
+
+        pedido = self.get_object()
+        linhas = saldos(pedido)
+        recebimentos = []
+        for r in pedido.recebimentos.prefetch_related("itens__item_pedido__produto", "notas_fiscais").select_related("recebido_por").order_by("-data", "-recebimento_id"):
+            recebimentos.append({
+                "recebimento_id": r.recebimento_id, "data": r.data.isoformat(), "tipo": r.tipo,
+                "encerrou_saldo": r.encerrou_saldo, "local_entrega": r.local_entrega, "observacao": r.observacao,
+                "nota_fiscal_ref": r.nota_fiscal_ref,
+                "recebido_por": (r.recebido_por.get_full_name() or r.recebido_por.username) if r.recebido_por else "",
+                "itens": [{
+                    "item_pedido": i.item_pedido_id,
+                    "descricao": i.item_pedido.produto.descricao if i.item_pedido.produto_id else i.item_pedido.descricao,
+                    "quantidade": str(i.quantidade_recebida),
+                } for i in r.itens.all()],
+                "notas": [n.nota_id for n in r.notas_fiscais.all()],
+            })
+        notas = NotaFiscalCompraSerializer(pedido.notas_fiscais.order_by("-criado_em"), many=True).data
+        resumo_cobranca = cobranca_mod.resumo(pedido)
+        titulos = [{
+            "conta_pagar_id": c.pk, "descricao": c.descricao, "valor": str(c.valor), "valor_pago": str(c.valor_pago),
+            "status": c.status, "data_vencimento": c.data_vencimento.isoformat(), "nfe_situacao": c.nfe_situacao,
+        } for c in financeiro.titulos(pedido, vivos=False)]
+        chegou = any(l["recebido"] > 0 for l in linhas)
+        situacoes = {n["situacao"] for n in notas}
+        pendencias = []
+        if chegou and not notas:
+            pendencias.append("aguardando_nfe")
+        if "aguardando_documento" in situacoes:
+            pendencias.append("nfe_aguardando_documento")
+        if "divergente" in situacoes:
+            pendencias.append("nfe_divergente")
+        if pedido.status != PedidoCompra.Status.CANCELADO:
+            if not resumo_cobranca["meios"]:
+                pendencias.append("sem_cobranca")
+            elif not resumo_cobranca["confere"]:
+                pendencias.append("cobranca_nao_confere")
+        return Response({
+            "pedido": self.get_serializer(pedido).data,
+            "regime": regime(pedido),
+            "linhas": [{**l, **{k: str(l[k]) for k in ("quantidade", "recebido", "encerrado", "pendente", "excedente", "preco_unitario")},
+                        "subtotal": str((l["quantidade"] * l["preco_unitario"]).quantize(Decimal("0.01")))} for l in linhas],
+            "recebimentos": recebimentos,
+            "notas": notas,
+            "cobranca": resumo_cobranca,
+            "titulos": titulos,
+            "eventos": EventoPedidoSerializer(pedido.eventos.select_related("autor")[:100], many=True).data,
+            "pendencias": pendencias,
+            "fornecedor_contato": {
+                "email": pedido.fornecedor.email or "", "telefone": pedido.fornecedor.telefone or "",
+            },
+        })
+
+    @staticmethod
+    def _itens_do_corpo(request):
+        """`itens` vem como lista (JSON) ou como texto JSON (multipart, quando a
+        nota vem anexada no mesmo envio)."""
+        import json
+
+        itens = request.data.get("itens")
+        if isinstance(itens, str):
+            try:
+                itens = json.loads(itens or "[]")
+            except ValueError:
+                itens = None
+        return itens
+
+    @action(detail=True, methods=["post"])
+    def receber(self, request, pk=None):
+        """Recebe linha por linha — a entrada no estoque sai daqui (D284)."""
+        from .notas import NotaInvalida
+        from .recebimento import RecebimentoInvalido, receber
+
+        pedido = self.get_object()
+        encerrar = str(request.data.get("encerrar") or "").lower() in ("1", "true", "sim", "on")
+        nota = {
+            "numero": request.data.get("nf_numero") or "", "serie": request.data.get("nf_serie") or "",
+            "chave": request.data.get("nf_chave") or "",
+            "xml_arquivo": request.FILES.get("nf_xml"), "pdf_arquivo": request.FILES.get("nf_pdf"),
+        }
+        try:
+            resultado = receber(
+                pedido, itens=self._itens_do_corpo(request), data=request.data.get("data"),
+                local_entrega=request.data.get("local_entrega") or "", observacao=request.data.get("observacao") or "",
+                encerrar=encerrar, autor=request.user, nota=nota,
+            )
+        except (RecebimentoInvalido, NotaInvalida) as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(resultado, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"], url_path="notas")
+    def lancar_nota(self, request, pk=None):
+        """Lança a NF-e da compra: número, chave e/ou documento (XML, PDF)."""
+        from .notas import NotaInvalida, lancar_nota
+
+        pedido = self.get_object()
+        recebimento = None
+        if request.data.get("recebimento"):
+            recebimento = pedido.recebimentos.filter(pk=request.data["recebimento"]).first()
+        try:
+            nota = lancar_nota(
+                pedido, numero=request.data.get("numero") or "", serie=request.data.get("serie") or "",
+                chave=request.data.get("chave") or "", recebimento=recebimento,
+                xml_arquivo=request.FILES.get("xml"), pdf_arquivo=request.FILES.get("pdf"), autor=request.user,
+            )
+        except NotaInvalida as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(NotaFiscalCompraSerializer(nota).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"], url_path="cobranca")
+    def definir_cobranca(self, request, pk=None):
+        """Define (ou redefine) a cobrança e gera os títulos no ERP."""
+        from .cobranca import CobrancaInvalida, definir_cobranca, resumo
+
+        pedido = self.get_object()
+        if pedido.status == PedidoCompra.Status.CANCELADO:
+            return Response({"detail": "Pedido cancelado não tem cobrança."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            titulos = definir_cobranca(pedido, request.data.get("meios"), autor=request.user)
+        except CobrancaInvalida as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"titulos": titulos, "cobranca": resumo(pedido)}, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"])
+    def editar(self, request, pk=None):
+        from .edicao import EdicaoInvalida, editar
+
+        pedido = self.get_object()
+        try:
+            mudancas = editar(pedido, request.data, autor=request.user)
+        except EdicaoInvalida as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        pedido.refresh_from_db()
+        return Response({"mudancas": mudancas, "pedido": self.get_serializer(pedido).data})
+
+    @action(detail=True, methods=["post"])
+    def cancelar(self, request, pk=None):
+        from .edicao import EdicaoInvalida, cancelar
+
+        pedido = self.get_object()
+        try:
+            resultado = cancelar(pedido, motivo=request.data.get("motivo") or "", autor=request.user)
+        except EdicaoInvalida as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(resultado)
+
+    @action(detail=True, methods=["get"])
+    def pdf(self, request, pk=None):
+        """O PDF do pedido para o fornecedor."""
+        from django.http import HttpResponse
+
+        from .documento_pedido import nome_do_arquivo, pdf_do_pedido
+
+        pedido = self.get_object()
+        try:
+            conteudo = pdf_do_pedido(pedido)
+        except Exception as exc:  # noqa: BLE001 - motor de PDF fora do ar vira 503 legível
+            return Response({"detail": f"Não foi possível gerar o PDF: {exc}"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        resposta = HttpResponse(conteudo, content_type="application/pdf")
+        resposta["Content-Disposition"] = f'inline; filename="{nome_do_arquivo(pedido)}"'
+        return resposta
+
+    @action(detail=True, methods=["post"])
+    def enviar(self, request, pk=None):
+        """`{canal: email, para}` envia daqui com o PDF; `whatsapp`/`impresso`
+        só registram que o pedido saiu (o envio foi pelo navegador)."""
+        from .documento_pedido import EnvioIndisponivel, enviar_por_email, marcar_enviado
+
+        pedido = self.get_object()
+        canal = request.data.get("canal") or ""
+        para = (request.data.get("para") or "").strip()
+        if canal == "email":
+            if "@" not in para:
+                return Response({"detail": "Informe o e-mail do fornecedor."}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                enviar_por_email(pedido, para=para, autor=request.user)
+            except EnvioIndisponivel as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        elif canal in ("whatsapp", "impresso"):
+            marcar_enviado(pedido, canal=canal, para=para, autor=request.user)
+        else:
+            return Response({"detail": "Canal: email, whatsapp ou impresso."}, status=status.HTTP_400_BAD_REQUEST)
+        pedido.refresh_from_db()
+        return Response(self.get_serializer(pedido).data)
+
+    @action(detail=False, methods=["post"])
+    def cadastrar_item(self, request):
+        """O item que é só texto vira item do catálogo — e loja dele (D284).
+
+        `{descricao, unidade, tipo?, fornecedor?, preco?, item_pedido?}`. Com
+        `fornecedor` e `preco`, registra também a oferta daquele fornecedor; com
+        `item_pedido`, liga a linha do pedido ao item novo.
+        """
+        from catalogo.models import Item as ItemCatalogo
+        from catalogo.registro import TextoInvalido, registrar_item_proprio
+        from fornecedores.models import Fornecedor
+
+        tid = self._tenant_id()
+        linha = None
+        if request.data.get("item_pedido"):
+            linha = ItemPedido.objects.filter(tenant_id=tid, pk=request.data["item_pedido"]).select_related("pedido").first()
+            if linha is None:
+                return Response({"detail": "Linha do pedido não encontrada."}, status=status.HTTP_404_NOT_FOUND)
+        descricao = request.data.get("descricao") or (linha.descricao if linha else "")
+        unidade = request.data.get("unidade") or (linha.unidade if linha else "")
+        tipo = request.data.get("tipo") or ItemCatalogo.Tipo.MATERIAL
+        if tipo not in ItemCatalogo.Tipo.values:
+            return Response({"detail": "Tipo de item inválido."}, status=status.HTTP_400_BAD_REQUEST)
+        fornecedor_id = request.data.get("fornecedor") or (linha.pedido.fornecedor_id if linha else None)
+        detalhe = f"Pedido de compra #{linha.pedido_id}" if linha else "Compra (Suprimentos)"
+        try:
+            item, criado = registrar_item_proprio(
+                tenant_id=tid, descricao=descricao, unidade=unidade, tipo=tipo,
+                origem=ItemCatalogo.Origem.COMPRA, origem_detalhe=detalhe, usuario=request.user,
+            )
+        except TextoInvalido as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        oferta = None
+        preco = request.data.get("preco")
+        if preco in (None, "") and linha is not None:
+            preco = linha.preco_unitario
+        fornecedor = Fornecedor.objects.filter(tenant_id=tid, pk=fornecedor_id).first() if fornecedor_id else None
+        if fornecedor is not None and preco not in (None, ""):
+            try:
+                valor = Decimal(str(preco).replace(",", ".")).quantize(Decimal("0.01"))
+            except (InvalidOperation, TypeError):
+                valor = None
+            if valor is not None and valor >= 0:
+                oferta, _ = OfertaFornecedor.objects.get_or_create(
+                    tenant_id=tid, produto=item, fornecedor=fornecedor,
+                    defaults={"preco_direto": valor},
+                )
+        if linha is not None:
+            linha.produto = item
+            linha.descricao = ""
+            linha.unidade = item.unidade
+            linha.save(update_fields=["produto", "descricao", "unidade"])
+        return Response({
+            "item_id": item.item_id, "codigo_interno": item.codigo_interno, "descricao": item.descricao,
+            "unidade": item.unidade, "criado": criado, "oferta": oferta.oferta_id if oferta else None,
+        }, status=status.HTTP_201_CREATED if criado else status.HTTP_200_OK)
 
     @action(detail=False, methods=["post"])
     def compra_avulsa(self, request):
@@ -403,7 +752,8 @@ class PedidoCompraViewSet(BaseScmViewSet):
             if quantidade <= 0 or preco < 0:
                 problemas.append(f"Item {n}: quantidade precisa ser positiva e preço não pode ser negativo.")
                 continue
-            linhas.append((produto, descricao, quantidade, preco))
+            unidade = (produto.unidade if produto else (linha.get("unidade") or "").strip())[:20]
+            linhas.append((produto, descricao, unidade, quantidade, preco))
         if problemas:
             return Response({"detail": " ".join(problemas)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -411,19 +761,33 @@ class PedidoCompraViewSet(BaseScmViewSet):
         if request.data.get("centro_custo"):
             centro_custo = CentroCusto.objects.filter(pk=request.data["centro_custo"], tenant_id=tid).first()
 
+        # Compra feita a partir de uma demanda: o pedido a referencia e ela fica atendida.
+        demanda = None
+        if request.data.get("demanda"):
+            demanda = Demanda.objects.filter(pk=request.data["demanda"], tenant_id=tid).first()
+            if demanda is None:
+                return Response({"detail": "Demanda não encontrada."}, status=status.HTTP_400_BAD_REQUEST)
+            centro_custo = centro_custo or demanda.centro_custo
+
         with transaction.atomic():
             pedido = PedidoCompra.objects.create(
-                tenant_id=tid, origem=PedidoCompra.Origem.MANUAL, fornecedor=fornecedor,
+                tenant_id=tid, origem=PedidoCompra.Origem.MANUAL, fornecedor=fornecedor, demanda=demanda,
                 centro_custo=centro_custo, status=PedidoCompra.Status.APROVADO,
                 data_entrega_prevista=request.data.get("data_entrega_prevista") or None,
                 observacao=(request.data.get("observacao") or "")[:2000],
-                valor_total=sum((q * p for _, _, q, p in linhas), Decimal("0")).quantize(Decimal("0.01")),
+                valor_total=sum((q * p for _, _, _, q, p in linhas), Decimal("0")).quantize(Decimal("0.01")),
             )
             ItemPedido.objects.bulk_create([
                 ItemPedido(tenant_id=tid, pedido=pedido, produto=produto, descricao=descricao,
-                           quantidade=quantidade, preco_unitario=preco)
-                for produto, descricao, quantidade, preco in linhas
+                           unidade=unidade, quantidade=quantidade, preco_unitario=preco)
+                for produto, descricao, unidade, quantidade, preco in linhas
             ])
+            if demanda is not None:
+                # Só fecha a demanda (e a cotação aberta dela) quando os pedidos cobrem
+                # todas as linhas; comprou parte, o resto continua na fila.
+                from .saldo_demanda import atualizar_status
+                atualizar_status(demanda)
+        _registrar_criacao(pedido, f"Pedido criado (compra avulsa) — R$ {pedido.valor_total}.", request.user)
         return Response(self.get_serializer(pedido).data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["post"])
@@ -463,6 +827,7 @@ class PedidoCompraViewSet(BaseScmViewSet):
                 tenant_id=tid, pedido=pedido, produto=oferta.produto,
                 quantidade=quantidade, preco_unitario=oferta.preco_direto,
             )
+        _registrar_criacao(pedido, f"Pedido criado por compra direta da oferta #{oferta.pk} — R$ {pedido.valor_total}.", request.user)
         return Response(self.get_serializer(pedido).data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["post"])
@@ -496,7 +861,15 @@ class PedidoCompraViewSet(BaseScmViewSet):
                 )
             if cotacao.demanda_id:
                 Demanda.objects.filter(pk=cotacao.demanda_id).update(status=Demanda.Status.ATENDIDA)
+        _registrar_criacao(pedido, f"Pedido criado da cotação #{cotacao.pk} — R$ {pedido.valor_total}.", request.user)
         return Response(self.get_serializer(pedido).data, status=status.HTTP_201_CREATED)
+
+
+def _registrar_criacao(pedido, texto, autor):
+    from . import financeiro
+    from .models import EventoPedido
+
+    financeiro.registrar_evento(pedido, EventoPedido.Tipo.CRIADO, texto, autor=autor)
 
 
 class ItemPedidoViewSet(BaseScmViewSet):
@@ -536,6 +909,64 @@ class ItemRecebimentoViewSet(BaseScmViewSet):
     filterset_fields = ["recebimento", "item_pedido"]
     required_resource = "scm.recebimento"
     pagination_class = None  # itens lidos por recebimento
+
+
+class NotaFiscalCompraViewSet(BaseScmViewSet):
+    """As NF-e das compras. Criar é pelo pedido (`pedidos/{id}/notas/`); aqui se
+    lista e anexa o documento que faltava. O arquivo sai pela porta única
+    (`moduloscm.impexp`, `url_xml`/`url_pdf` no JSON)."""
+
+    queryset = NotaFiscalCompra.objects.all().order_by("-criado_em")
+    serializer_class = NotaFiscalCompraSerializer
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ["pedido", "recebimento", "situacao"]
+    ordering_fields = ["criado_em", "numero"]
+    required_resource = "scm.recebimento"
+    http_method_names = ["get", "post", "head", "options"]
+    action_permission_map = {"documento": "scm.recebimento.edit", "corrigir": "scm.recebimento.edit",
+                             "remover": "scm.recebimento.edit"}
+
+    def create(self, request, *args, **kwargs):
+        return Response({"detail": "Lance a nota pelo pedido: POST /api/scm/pedidos/{id}/notas/."},
+                        status=status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    @action(detail=True, methods=["post"])
+    def documento(self, request, pk=None):
+        """Anexa o XML e/ou o PDF (e a chave) e confere de novo."""
+        from .notas import NotaInvalida, anexar_documento
+
+        nota = self.get_object()
+        try:
+            nota = anexar_documento(
+                nota, chave=request.data.get("chave") or "", xml_arquivo=request.FILES.get("xml"),
+                pdf_arquivo=request.FILES.get("pdf"), autor=request.user,
+            )
+        except NotaInvalida as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(self.get_serializer(nota).data)
+
+    @action(detail=True, methods=["post"])
+    def corrigir(self, request, pk=None):
+        """Corrige número, série e chave de uma nota lançada errada."""
+        from .notas import NotaInvalida, corrigir_nota
+
+        nota = self.get_object()
+        try:
+            nota = corrigir_nota(
+                nota, numero=request.data.get("numero") or "", serie=request.data.get("serie") or "",
+                chave=request.data.get("chave") or "", autor=request.user,
+            )
+        except NotaInvalida as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(self.get_serializer(nota).data)
+
+    @action(detail=True, methods=["post"])
+    def remover(self, request, pk=None):
+        """Tira a nota do pedido (lançada por engano). Fica no histórico e no ERP."""
+        from .notas import remover_nota
+
+        remover_nota(self.get_object(), motivo=(request.data.get("motivo") or "")[:300], autor=request.user)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class AvaliacaoFornecedorViewSet(BaseScmViewSet):

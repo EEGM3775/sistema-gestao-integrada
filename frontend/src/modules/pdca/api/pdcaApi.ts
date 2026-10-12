@@ -192,7 +192,7 @@ export const programacoes = {
     return data
   },
   async encerrar(
-    id: number, corpo: { motivo?: string; arrastar?: boolean } = {},
+    id: number, corpo: { motivo?: string; arrastar?: boolean; aceitar_sem_causa?: boolean } = {},
   ): Promise<ResumoDoPpc> {
     const { data } = await apiClient.post(`/pdca/programacoes/${id}/encerrar/`, corpo)
     return data

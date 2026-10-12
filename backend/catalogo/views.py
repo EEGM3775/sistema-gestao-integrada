@@ -6,8 +6,10 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from nucleo.permissions import RequirePermission
+from nucleo.quotas import QuotaEnforcedMixin
 from nucleo.tenancy import TenantScopedViewSetMixin
 
+from .ficha import ficha_do_item
 from .models import ComponenteComposicao, Item, TipoItemProprio
 from .pagination import CatalogoPageNumberPagination
 from .serializers import (
@@ -26,17 +28,25 @@ class BaseCatalogoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     pagination_class = CatalogoPageNumberPagination
 
 
-class ItemViewSet(BaseCatalogoViewSet):
+class ItemViewSet(QuotaEnforcedMixin, BaseCatalogoViewSet):
     queryset = Item.objects.all().order_by("descricao")
     serializer_class = ItemSerializer
     filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_fields = [
-        "tipo", "tipo_proprio", "categoria", "ativo",
+        "tipo", "tipo_proprio", "categoria", "ativo", "origem",
         "compravel", "estocavel", "vendavel", "consumivel", "rastreavel",
     ]
     search_fields = ["codigo_interno", "descricao", "categoria", "gtin"]
-    ordering_fields = ["descricao", "codigo_interno"]
+    ordering_fields = ["descricao", "codigo_interno", "criado_em"]
     required_resource = "cadastro.item"
+    # Teto de itens próprios do plano (11/10/2026). Só trava criar — editar e
+    # apagar seguem livres acima do teto (`nucleo.quotas`).
+    quota_recurso = "catalogo_itens"
+
+    @action(detail=True, methods=["get"])
+    def ficha(self, request, pk=None):
+        """Tudo sobre o item: de onde veio, onde está, lojas, preços e estoque."""
+        return Response(ficha_do_item(self.get_object()))
 
 
 class TipoItemProprioViewSet(BaseCatalogoViewSet):

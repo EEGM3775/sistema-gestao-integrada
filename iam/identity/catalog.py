@@ -344,6 +344,14 @@ CATALOGO: tuple[Perm, ...] = (
     #         tem este verbo encerra antes **dando motivo por escrito**, e a
     #         semana fica marcada na série.
     Perm("pdca.programacao.encerrar_antecipado", "Encerrar a semana antes de ela acabar — exige motivo, e marca o ponto na série", "pdca"),
+    #       · `programacao.encerrar_sem_causa` é o **sétimo** verbo *(dono,
+    #         11/10/2026)*: salvar o julgamento nunca é barrado, e o sistema
+    #         **avisa** quando algo que não saiu está sem causa. Quem tem este
+    #         verbo decide seguir e encerra assim mesmo — a causa fica como «Sem
+    #         causa informada» e aparece como tal no ranking. Quem não tem fica
+    #         barrado: é a alçada de quem tem qualificação para dizer que a
+    #         semana fecha com uma resposta em aberto.
+    Perm("pdca.programacao.encerrar_sem_causa", "Encerrar a semana mesmo com compromisso sem causa — o sistema avisa e a pessoa decide", "pdca"),
     #     PDCA.7 — a máquina de verificação. Sete verbos, e a régua é a de
     #     sempre nesta casa: quem executa não aprova o próprio trabalho.
     #       · `verificacao.view` lê a biblioteca de fichas e as inspeções feitas;

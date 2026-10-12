@@ -8,11 +8,13 @@ from .models import (
     CentroCusto,
     Cotacao,
     Demanda,
+    EventoPedido,
     FaixaPrecoOferta,
     ItemDemanda,
     ItemPedido,
     ItemProposta,
     ItemRecebimento,
+    NotaFiscalCompra,
     OfertaFornecedor,
     PedidoCompra,
     Proposta,
@@ -65,6 +67,16 @@ class DemandaSerializer(TenantScopedModelSerializer):
 class ItemDemandaSerializer(TenantScopedModelSerializer):
     produto_descricao = serializers.CharField(source="produto.descricao", read_only=True, default=None)
     produto_codigo = serializers.CharField(source="produto.codigo_interno", read_only=True, default=None)
+    produto_unidade = serializers.CharField(source="produto.unidade", read_only=True, default=None)
+    saldo = serializers.SerializerMethodField(help_text="Quanto ainda falta comprar desta linha.")
+
+    def get_saldo(self, obj):
+        from .saldo_demanda import saldos
+
+        cache = self.context.setdefault("_saldos_demanda", {})
+        if obj.demanda_id not in cache:
+            cache[obj.demanda_id] = saldos(obj.demanda)
+        return str(cache[obj.demanda_id].get(obj.item_demanda_id, obj.quantidade))
 
     class Meta:
         model = ItemDemanda
@@ -154,7 +166,7 @@ class PedidoCompraSerializer(TenantScopedModelSerializer):
         fields = "__all__"
         # ref_externa auto; conta_pagar_ref/origem_tenant são seams de sistema
         # (ERP/rede); status muda pelas actions/recebimentos.
-        read_only_fields = ["tenant", "ref_externa", "conta_pagar_ref", "origem_tenant"]
+        read_only_fields = ["tenant", "ref_externa", "conta_pagar_ref", "origem_tenant", "revisao", "enviado_em"]
 
     def get_medicao_pdca(self, obj):
         contratos = getattr(obj, "contratos_pdca", None)
@@ -176,6 +188,7 @@ class PedidoCompraSerializer(TenantScopedModelSerializer):
 class ItemPedidoSerializer(TenantScopedModelSerializer):
     produto_descricao = serializers.CharField(source="produto.descricao", read_only=True, default=None)
     produto_codigo = serializers.CharField(source="produto.codigo_interno", read_only=True, default=None)
+    produto_unidade = serializers.CharField(source="produto.unidade", read_only=True, default=None)
 
     class Meta:
         model = ItemPedido
@@ -195,6 +208,52 @@ class ItemRecebimentoSerializer(TenantScopedModelSerializer):
         model = ItemRecebimento
         fields = "__all__"
         read_only_fields = ["tenant"]
+
+
+class NotaFiscalCompraSerializer(TenantScopedModelSerializer):
+    situacao_nome = serializers.CharField(source="get_situacao_display", read_only=True)
+    # O arquivo sai pela porta única (D70), nunca por `/media/`: a URL publicada
+    # é a da entrega autenticada, ou `None` quando o documento ainda não veio.
+    url_xml = serializers.SerializerMethodField()
+    url_pdf = serializers.SerializerMethodField()
+
+    class Meta:
+        model = NotaFiscalCompra
+        exclude = ["arquivo_xml", "arquivo_pdf"]
+        read_only_fields = [
+            "tenant", "situacao", "divergencias", "duplicatas", "conferida_em", "criado_por",
+            "data_emissao", "valor_total", "emitente_cnpj", "emitente_nome",
+        ]
+
+    def _url(self, obj, especie, campo):
+        if not getattr(obj, campo):
+            return None
+        from funcoesimpexp.entrega import url_do_arquivo
+
+        from .impexp import RECURSO_NOTA_COMPRA
+
+        return url_do_arquivo(RECURSO_NOTA_COMPRA, especie, obj.pk)
+
+    def get_url_xml(self, obj):
+        return self._url(obj, "xml", "arquivo_xml")
+
+    def get_url_pdf(self, obj):
+        return self._url(obj, "pdf", "arquivo_pdf")
+
+
+class EventoPedidoSerializer(TenantScopedModelSerializer):
+    tipo_nome = serializers.CharField(source="get_tipo_display", read_only=True)
+    autor_nome = serializers.SerializerMethodField()
+
+    class Meta:
+        model = EventoPedido
+        fields = ["evento_id", "tipo", "tipo_nome", "texto", "valor", "vai_ao_erp", "autor_nome", "criado_em"]
+        read_only_fields = fields
+
+    def get_autor_nome(self, obj):
+        if obj.autor is None:
+            return ""
+        return obj.autor.get_full_name() or obj.autor.username
 
 
 class AvaliacaoFornecedorSerializer(TenantScopedModelSerializer):

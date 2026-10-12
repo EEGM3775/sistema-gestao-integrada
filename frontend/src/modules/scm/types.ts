@@ -37,6 +37,8 @@ export interface Demanda {
 export interface ItemDemanda {
   item_demanda_id: number; demanda: number; produto: number | null; descricao_servico: string
   quantidade: string; unidade: string; produto_descricao?: string | null; produto_codigo?: string | null
+  /** Quanto ainda falta comprar desta linha (pedidos já gerados abatem). */
+  saldo?: string
 }
 
 export type StatusCotacao = 'aberta' | 'encerrada' | 'adjudicada'
@@ -64,13 +66,15 @@ export interface PedidoCompra {
   centro_custo: number | null; status: StatusPedido; valor_total: string | null
   data_pedido: string; data_entrega_prevista: string | null; conta_pagar_ref: number | null
   origem_tenant: string | null; observacao: string; criado_em: string
+  enviado_em?: string | null; revisao?: number
   fornecedor_nome?: string; centro_custo_nome?: string | null; itens_count?: number; recebimentos_count?: number
   /** Medição × compra de serviço: os contratos do PDCA que medem este pedido. */
   medicao_pdca?: { contrato: number; numero: string; obra: number; medido_aprovado: string }[]
 }
 export interface ItemPedido {
-  item_pedido_id: number; pedido: number; produto: number | null; descricao: string
+  item_pedido_id: number; pedido: number; produto: number | null; descricao: string; unidade?: string
   quantidade: string; preco_unitario: string; produto_descricao?: string | null; produto_codigo?: string | null
+  produto_unidade?: string | null
 }
 
 export type TipoRecebimento = 'parcial' | 'total'
@@ -83,6 +87,75 @@ export interface AvaliacaoFornecedor {
   nota_qualidade: number; nota_pontualidade: number; nota_atendimento: number
   comentario: string; data: string; fornecedor_nome?: string
 }
+
+// ─── D284: o pedido inteiro (painel), a NF-e da compra, a cobrança, a ficha ───
+export type Regime = 'livre' | 'saldo' | 'travado'
+export type Pendencia = 'aguardando_nfe' | 'nfe_aguardando_documento' | 'nfe_divergente' | 'sem_cobranca' | 'cobranca_nao_confere'
+export interface LinhaSaldo {
+  item_pedido: number; produto: number | null; descricao: string; codigo: string; unidade: string; estocavel: boolean
+  quantidade: string; recebido: string; encerrado: string; pendente: string; excedente: string
+  preco_unitario: string; subtotal: string
+}
+export type SituacaoNota = 'aguardando_documento' | 'conferida' | 'divergente'
+export interface NotaFiscalCompra {
+  nota_id: number; pedido: number; recebimento: number | null; numero: string; serie: string
+  chave_acesso: string; data_emissao: string | null; valor_total: string | null
+  emitente_cnpj: string; emitente_nome: string; situacao: SituacaoNota; situacao_nome: string
+  divergencias: string[]; duplicatas: { numero: string; vencimento: string; valor: string }[]
+  conferida_em: string | null; criado_em: string
+  /** A entrega autenticada (`/api/impexp/scm.nota_compra/arquivo/…`), ou `null` sem o documento. */
+  url_xml: string | null; url_pdf: string | null
+}
+export interface ParcelaCobranca {
+  numero: number; vencimento: string; valor: string; conta_pagar_ref: number | null
+  titulo_status: string | null; titulo_valor_pago: string | null
+}
+export interface MeioCobranca {
+  meio_id: number; tipo: string; tipo_nome: string; valor: string; parcelas: number
+  primeiro_vencimento: string; intervalo_dias: number; descricao: string; parcelas_geradas: ParcelaCobranca[]
+}
+export interface CobrancaResumo {
+  meios: MeioCobranca[]; soma: string; valor_pedido: string; confere: boolean
+  tipos: { valor: string; rotulo: string }[]
+}
+export interface EventoPedido {
+  evento_id: number; tipo: string; tipo_nome: string; texto: string; valor: string | null
+  vai_ao_erp: boolean; autor_nome: string; criado_em: string
+}
+export interface RecebimentoPainel {
+  recebimento_id: number; data: string; tipo: TipoRecebimento; encerrou_saldo: boolean
+  local_entrega: string; observacao: string; nota_fiscal_ref: string; recebido_por: string
+  itens: { item_pedido: number; descricao: string; quantidade: string }[]; notas: number[]
+}
+export interface TituloPedido {
+  conta_pagar_id: number; descricao: string; valor: string; valor_pago: string
+  status: string; data_vencimento: string; nfe_situacao: string
+}
+export interface PainelPedido {
+  pedido: PedidoCompra; regime: Regime; linhas: LinhaSaldo[]; recebimentos: RecebimentoPainel[]
+  notas: NotaFiscalCompra[]; cobranca: CobrancaResumo; titulos: TituloPedido[]; eventos: EventoPedido[]
+  pendencias: Pendencia[]; fornecedor_contato: { email: string; telefone: string }
+}
+export interface FichaItem {
+  item: number; codigo_interno: string; descricao: string; unidade: string; tipo: string; tipo_nome: string
+  categoria: string; ncm: string; gtin: string; estocavel: boolean; ativo: boolean
+  origem: {
+    tipo: string; rotulo: string; detalhe: string; criado_em: string | null; fonte_referencia: string
+    fonte_nome: string; codigo_referencia: string; publicacao_referencia: string
+  }
+  lojas: {
+    fornecedor: number; fornecedor_nome: string; oferta: number | null; codigo_no_fornecedor: string
+    preco_oferta: string | null; compra_direta: boolean; prazo_entrega_dias: number | null; ativo: boolean
+    ultimo_preco_pago: string | null; ultima_compra: string | null
+  }[]
+  historico_precos: { pedido: number; data: string; fornecedor: number; fornecedor_nome: string; quantidade: string; unidade: string; preco_unitario: string }[]
+  preco_resumo: { ultimo: string | null; menor: string | null; maior: string | null; compras: number }
+  orcamentos: { orcamento: number; descricao: string; versao: number; obra: string; linhas: number; quantidade: string | null }[]
+  estoque: { local: number; local_nome: string; quantidade: string; reservado: string; custo_medio: string }[]
+  estoque_total: string
+  uso: { demandas: number; pedidos: number }
+}
+export interface ItemCadastrado { item_id: number; codigo_interno: string; descricao: string; unidade: string; criado: boolean; oferta: number | null }
 
 export interface AtividadeItem {
   tipo: 'recebimento' | 'adjudicacao' | 'compra_direta' | 'avaliacao'

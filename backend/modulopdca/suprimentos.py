@@ -545,6 +545,24 @@ def gerar_demandas_do_plano(cronograma: Cronograma, *, insumos: list[str] | None
             for r in por_insumo.values()
         ])
         criadas.append({"demanda": demanda.pk, "tipo": tipo, "itens": len(por_insumo)})
+    if criadas:
+        from nucleo.models import Notificacao
+        from nucleo.notificacoes import avisar_quem_pode
+
+        avisar_quem_pode(
+            tenant_id=cronograma.tenant_id, permissao="scm.demanda.edit",
+            titulo=(
+                f"Plano{f' da obra {obra_nome}' if obra_nome else ''} abriu "
+                f"{len(criadas)} demanda(s) de compra: "
+                + ", ".join(str(c["demanda"]) for c in criadas)
+            ),
+            mensagem=(
+                f"Do cronograma v{cronograma.versao}; o primeiro material precisa chegar "
+                f"até {date.fromisoformat(min(l['chegar_ate'] for l in escolhidas)):%d/%m/%Y}. "
+                f"Nasceram em rascunho: confira e publique."
+            ),
+            url="/app/scm", nivel=Notificacao.Nivel.DECIDIR,
+        )
     return criadas
 
 
@@ -679,6 +697,18 @@ def pedir_material_da_semana(item_programacao, *, solicitante=None):
             )
     item_programacao.requisicao_sil = requisicao
     item_programacao.save(update_fields=["requisicao_sil"])
+    from nucleo.models import Notificacao
+    from nucleo.notificacoes import avisar_quem_pode
+
+    avisar_quem_pode(
+        tenant_id=item_programacao.tenant_id, permissao="sil.requisicao.atender",
+        titulo=f"Requisição {requisicao.pk} pedida pela semana da obra — {atividade.codigo} {atividade.nome}"[:200],
+        mensagem=(
+            f"Material para a semana de {item_programacao.programacao.semana_inicio:%d/%m/%Y}, "
+            f"saindo do {local}. Nasceu em rascunho no Estoque."
+        ),
+        url="/app/sil", nivel=Notificacao.Nivel.DECIDIR,
+    )
     return requisicao
 
 

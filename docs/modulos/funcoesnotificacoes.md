@@ -53,6 +53,10 @@ Aviso sem verbo é nível 1. Aviso que não leva ao registro está mal escrito.
 
 ## 3. Régua dos produtores
 
+> **Toda alteração que um módulo faz em outro avisa** *(decisão do dono, 11/10/2026)*. Quem trabalha do
+> outro lado não estava olhando a tela onde aconteceu. A porta é `nucleo.notificacoes.avisar_quem_pode`
+> (permissão do verbo que age sobre o que mudou, nível, texto, destino; um aviso por fato ainda não lido).
+
 Regras para quem emite uma notificação — a declaração que viola a régua não entra:
 
 1. **Nível é do fato, não do módulo.** O produtor declara o nível pela pergunta do §1; o motor recusa nível 3
@@ -90,6 +94,21 @@ por desenho:
 |---|---|---|---|
 | [PDCA](modulopdca.md) | medição / aditivo aprovado | atesto pendente, cronograma a revisar | medição paga retificada |
 | [ERP](moduloerp.md) | baixa conciliada | título vencendo, baixa a revisar | título vencido, baixa em excesso |
+
+**As escritas cruzadas e o aviso de cada uma** (a regra do quadro acima):
+
+| Quem mexe | Em quê | Nível | Recebe quem tem |
+|---|---|---|---|
+| PDCA | título emitido pela medição ou pela liberação de retenção; título cancelado (medição retirada); título trocado na retificação | 1 | `erp.conta_pagar.baixar` / `erp.conta_receber.baixar` |
+| PDCA | medição já paga retificada (complemento, abatimento, devolução) | 3 | idem |
+| PDCA | demanda aberta pela restrição ou pela fila de compras do plano | 2 | `scm.demanda.edit` |
+| PDCA | requisição de material da semana | 2 | `sil.requisicao.atender` |
+| PDCA | etapa da obra criada, na lixeira ou restaurada pelo plano | 1 | `obra.obra.edit` |
+| Estoque | demanda de reposição | 2 | `scm.demanda.edit` |
+| Suprimentos | entrada do recebimento no estoque | 1 | `sil.requisicao.atender` |
+| Suprimentos | títulos gerados pela cobrança do pedido; títulos cancelados (cobrança redefinida, pedido cancelado) | 2 | `erp.conta_pagar.baixar` |
+| Suprimentos | divergência para o título: entrega a mais, saldo encerrado a menos, pedido editado com outro valor, NF-e divergente | 2 | `erp.conta_pagar.baixar` |
+| Clientes | carnê gerado em contas a receber | 1 | `erp.conta_receber.baixar` |
 | [Calendário](modulocalendar.md) | lembrete de evento | prazo do dia | — |
 | [SCM](moduloscm.md) | pedido recebido | cotação a decidir | pedido atrasado travando serviço |
 | [CRM](modulocrm.md) | lead novo | tarefa a vencer | — |

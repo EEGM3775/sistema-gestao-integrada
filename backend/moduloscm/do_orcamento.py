@@ -37,6 +37,42 @@ _CATEGORIAS_MATERIAL = {"material"}
 _CATEGORIAS_SERVICO = {"equipamento"}
 
 
+def _catalogar_insumos_sem_item(orcamento, linhas: list[dict], *, tipo: str, solicitante) -> int:
+    """O insumo do orçamento que não tem cadastro vira item do catálogo.
+
+    *Dono, 11/10/2026:* "itens registrados no orçamento já deveriam ir para o
+    catálogo". A composição própria digitada solta chega aqui só com descrição
+    (`relacao_de_insumos` agrupa por texto quando falta o item); sem cadastro, a
+    linha da demanda virava texto, que não entra no estoque nem tem ficha de
+    preço. Cadastra-se aqui — e não na planilha — porque é a compra que precisa
+    da identidade; a planilha continua com o snapshot dela, intocado.
+
+    Teto do plano batido: a linha segue como texto (a demanda não pode falhar
+    por isso), e a tela oferece o "cadastrar" depois. Muda `linhas` no lugar.
+    """
+    from catalogo.models import Item
+    from catalogo.registro import TextoInvalido, registrar_item_proprio
+    from nucleo.quotas import QuotaExcedida
+
+    tipo_item = Item.Tipo.MATERIAL if tipo == Demanda.Tipo.MATERIAL else Item.Tipo.EQUIPAMENTO
+    detalhe = f"Orçamento {orcamento.descricao} (v{orcamento.versao})"
+    usuario = solicitante if getattr(solicitante, "pk", None) else None
+    novos = 0
+    for linha in linhas:
+        if linha["item"]:
+            continue
+        try:
+            item, criado = registrar_item_proprio(
+                tenant_id=orcamento.tenant_id, descricao=linha["descricao"], unidade=linha["unidade"],
+                tipo=tipo_item, origem=Item.Origem.ORCAMENTO, origem_detalhe=detalhe, usuario=usuario,
+            )
+        except (TextoInvalido, QuotaExcedida):
+            continue
+        linha["item"] = item.item_id
+        novos += int(criado)
+    return novos
+
+
 class GeracaoInvalida(Exception):
     """Orçamento sem insumo explodido, ou sem nada na categoria pedida."""
 
@@ -96,6 +132,8 @@ def demanda_do_orcamento(
         ),
     )
 
+    catalogados = _catalogar_insumos_sem_item(orcamento, linhas, tipo=tipo, solicitante=solicitante)
+
     ItemDemanda.objects.bulk_create([
         ItemDemanda(
             tenant_id=orcamento.tenant_id,
@@ -116,6 +154,7 @@ def demanda_do_orcamento(
         "tipo": demanda.tipo,
         "status": demanda.status,
         "itens": len(linhas),
+        "itens_catalogados": catalogados,
         "orcamento": orcamento.pk,
         "valor_orcado_dos_itens": str(
             sum((Decimal(l["valor"]) for l in linhas), Decimal("0"))

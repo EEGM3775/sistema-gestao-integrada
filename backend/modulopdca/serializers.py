@@ -776,6 +776,9 @@ class ContratoObraSerializer(TenantScopedModelSerializer):
             "tenant", "criado_em", "atualizado_em",
             "excluido_em", "excluido_por", "motivo_exclusao",
         ]
+        # A unicidade (tenant, obra, número) é conferida em `validate`, com a
+        # mensagem em português; a constraint do banco continua sendo a rede.
+        validators = []
 
     def get_pedido_scm_resumo(self, obj):
         pedido = obj.pedido_scm
@@ -826,6 +829,19 @@ class ContratoObraSerializer(TenantScopedModelSerializer):
         valor_global = valor("valor_global")
         erros = {}
 
+        # Número repetido na obra: a frase do DRF ("Os campos obra, numero devem
+        # criar um set único") não diz o que fazer. A constraint do banco segue
+        # valendo; aqui ela vira mensagem no campo certo.
+        numero = valor("numero")
+        if obra is not None and numero:
+            repetido = ContratoObra.objects.filter(
+                tenant_id=getattr(obra, "tenant_id", None), obra=obra, numero=numero, excluido_em__isnull=True,
+            )
+            if self.instance is not None:
+                repetido = repetido.exclude(pk=self.instance.pk)
+            if repetido.exists():
+                erros["numero"] = f"O contrato número {numero} já existe nesta obra."
+
         # A parte conforme o lado (decisão do dono, 10/10/2026: o contrato com
         # o contratante é o mesmo documento, do lado da receita).
         from .models import LadoContrato
@@ -835,12 +851,12 @@ class ContratoObraSerializer(TenantScopedModelSerializer):
             if valor("fornecedor") is None:
                 erros["fornecedor"] = "Contrato de empreiteiro precisa do empreiteiro."
             if valor("cliente") is not None:
-                erros["cliente"] = "Contrato de empreiteiro não tem contratante — é custo."
+                erros["cliente"] = "Contrato de empreiteiro não tem cliente — é custo."
         else:
             if valor("cliente") is None:
-                erros["cliente"] = "Contrato com o contratante precisa do cliente que encomendou a obra."
+                erros["cliente"] = "Contrato com o cliente precisa do cliente que encomendou a obra."
             if valor("fornecedor") is not None:
-                erros["fornecedor"] = "Contrato com o contratante não tem empreiteiro — é receita."
+                erros["fornecedor"] = "Contrato com o cliente não tem empreiteiro — é receita."
             if valor("pedido_scm") is not None:
                 erros["pedido_scm"] = "Pedido de serviço do Suprimentos é do lado do custo."
 

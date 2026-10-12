@@ -46,6 +46,8 @@ Isolado por tenant. Ver [../acesso-e-permissoes.md](../acesso-e-permissoes.md).
 | Modelo | Guarda |
 |---|---|
 | `ContaPagar` / `ContaReceber` | Título da empresa (fornecedor/cliente, empreendimento, descrição, valor, datas de emissão/vencimento/agendamento/pagamento-recebimento, **status granular** `ABERTO/PARCIAL/QUITADO/CANCELADO`, `valor_pago`/`juros`/`multa`/`desconto`, `total_devido`/`saldo_aberto` calculados); `ContaReceber` ainda liga `NotaFiscalServico`/`NotaFiscalProduto` (emissão de NF é ação do próprio recurso) |
+| `ContaPagar` — a compra | O título que nasce do pedido de compra do Suprimentos guarda `pedido_compra_ref` (seam, sem FK), `nfe_numero` e `nfe_situacao` (aguardando NF-e · aguardando documento · conferida · divergente) — a NF-e da compra mora no SCM (`NotaFiscalCompra`), e o financeiro vê na linha se pode pagar |
+| `AnotacaoContaPagar` | Trilha do título, **só acrescenta**: o que mudou fora do ERP e mexe no que se paga (pedido editado, entrega a mais ou saldo encerrado a menos, NF-e divergente, cobrança redefinida, cancelamento), com `valor` envolvido e autor; `POST contas-a-pagar/{id}/anotar/` (`erp.conta_pagar.edit`) para a anotação à mão. Não altera valor nem vencimento |
 | `CentroCusto` | Centro de custo/rateio, opcionalmente ligado a um `empreendimento` |
 | `RateioContaPagar` / `RateioContaReceber` | Rateio do título por `CentroCusto` (1:N — soma livre, validada na UI) |
 | `LoteRemessa` | Registro de lote de remessa bancária (status, valor_total, M2M com `ContaPagar`) — **só o registro**; geração do arquivo CNAB fica para sub-fase futura |
@@ -182,8 +184,9 @@ Régua de cobrança, comissões de vendedor, vínculo a `clientes.ContratoClient
 
 ### 3.6 (E) Compras / Suprimentos
 Fluxo **requisição → cotação (multi-fornecedor) → pedido de compra → recebimento → NF de entrada →
-conta a pagar**. Aprovação por alçada. Vínculo a obra/centro de custo. Hoje só existe a `NotaFiscal`
-de entrada — falta o ciclo completo.
+conta a pagar**. Aprovação por alçada. Vínculo a obra/centro de custo. O ciclo vive no
+[Suprimentos](moduloscm.md): a cobrança do pedido gera os títulos, a NF-e da compra atualiza a
+situação deles e o que muda no pedido vira `AnotacaoContaPagar`.
 
 ### 3.7 (F) Estoque / Almoxarifado
 Cadastro de itens/insumos, saldos por depósito/obra, movimentações (entrada/saída/transferência),
@@ -620,6 +623,11 @@ Cobre o pedido de *"ver notas fiscais, emitir e cancelar"* e *"ver quem já pago
   como provedor alternativo de NFS-e.
 - **Recebidas (entrada):** `NotaFiscal` de fornecedor (XML/PDF) → origina `ContaPagar`; futuro:
   **manifestação do destinatário** e importação automática por XML/chave.
+- **Notas das compras** (`GET notas-das-compras/`, `erp.nf.view`, `?pendentes=1`): a NF-e de cada
+  pedido do [Suprimentos](moduloscm.md) com a situação (aguardando documento · divergente · conferida)
+  **e a compra recebida sem nota** (aguardando NF-e) — pendências primeiro, com o link do pedido, onde
+  a nota se lança. Fica no topo da aba Recebidas, com o nº de pendentes no rótulo da aba. Monta
+  `moduloscm.notas.notas_das_compras` (import tardio).
 - **Tela de NF:** abas Emitidas / Recebidas / Canceladas; filtros (período, cliente/fornecedor, status,
   obra); ações emitir (individual e **lote**), cancelar, baixar PDF/XML, consultar status
   (`/nf/<id>/consultar/`).

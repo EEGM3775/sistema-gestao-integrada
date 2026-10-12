@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowLeft, FileText, RefreshCw, Ban, FileDown, FileCode2, Plus, FileSearch } from 'lucide-react'
 import type { ColumnDef } from '@tanstack/react-table'
-import { useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
+import { fetchNotasDasCompras, type NotaDaCompra } from '../api/endpoints/notasFiscais'
 import { WizardArquivos } from '@/components/malha/impexp/WizardArquivos'
 import { erpKeys } from '../api/queryKeys'
 import { useEmpreendimentoOptions } from '../hooks/useEntityOptions'
@@ -39,6 +40,11 @@ const ABAS: { id: Aba; label: string }[] = [
  */
 export default function NotasFiscaisPage() {
   const [aba, setAba] = useState<Aba>('emitidas')
+  const resumoCompras = useQuery({
+    queryKey: [...erpKeys.notasFiscaisRecebidas.all, 'compras', 'resumo'],
+    queryFn: () => fetchNotasDasCompras({ page_size: 1, pendentes: true }),
+  })
+  const pendentesDasCompras = resumoCompras.data?.pendentes ?? 0
   const [emitirOpen, setEmitirOpen] = useState(false)
   const [avisoEmissao, setAvisoEmissao] = useState<string | null>(null)
 
@@ -117,6 +123,10 @@ export default function NotasFiscaisPage() {
               }}
             >
               {label}
+              {id === 'recebidas' && !!pendentesDasCompras && (
+                <span className="ml-2 text-xs font-semibold rounded-full" title="Compras esperando nota ou com nota a conferir"
+                  style={{ padding: '1px 7px', background: '#fef3c7', color: '#92400e' }}>{pendentesDasCompras}</span>
+              )}
             </button>
           )
         })}
@@ -324,6 +334,118 @@ function NotasServicoTab({ canceladas }: { canceladas: boolean }) {
  *  pela porta única de arquivos — por isso aparece também em Documentos (DMS) —,
  *  a conferência mostra o que ele diz (número, emitente, valor, parcelas) e,
  *  confirmada, a nota é lançada com uma conta a pagar por duplicata. */
+const SITUACAO_COMPRA: Record<NotaDaCompra['situacao'], { fundo: string; tinta: string }> = {
+  aguardando_nota: { fundo: '#fef3c7', tinta: '#92400e' },
+  aguardando_documento: { fundo: '#fef3c7', tinta: '#92400e' },
+  divergente: { fundo: '#fee2e2', tinta: '#b91c1c' },
+  conferida: { fundo: '#dcfce7', tinta: '#166534' },
+}
+
+/** As NF-e das compras do Suprimentos — e as compras recebidas que ainda
+ *  esperam a nota (dono, 11/10/2026: "em NF-e era para ficar a nota com
+ *  pendência"). O que pede ação vem primeiro; a nota se lança no pedido. */
+function NotasDasCompras() {
+  const [pageIndex, setPageIndex] = useState(0)
+  const [soPendentes, setSoPendentes] = useState(true)
+  const params = useMemo(() => ({ page: pageIndex + 1, page_size: PAGE_SIZE, pendentes: soPendentes }), [pageIndex, soPendentes])
+  const { data, isLoading, isFetching } = useQuery({
+    queryKey: [...erpKeys.notasFiscaisRecebidas.all, 'compras', params],
+    queryFn: () => fetchNotasDasCompras(params),
+    placeholderData: keepPreviousData,
+  })
+
+  const columns = useMemo<ColumnDef<NotaDaCompra>[]>(() => [
+    {
+      id: 'situacao', header: 'Situação', enableSorting: false,
+      cell: ({ row }) => {
+        const s = SITUACAO_COMPRA[row.original.situacao]
+        return (
+          <span title={row.original.divergencias.join('\n') || undefined} className="inline-flex text-xs font-semibold rounded-full whitespace-nowrap"
+            style={{ padding: '2px 9px', background: s.fundo, color: s.tinta }}>{row.original.situacao_nome}</span>
+        )
+      },
+    },
+    {
+      id: 'nota', header: 'Número', enableSorting: false,
+      cell: ({ row }) => row.original.numero
+        ? <span className="font-medium">{row.original.numero}{row.original.serie ? ` · série ${row.original.serie}` : ''}</span>
+        : <span style={{ color: 'var(--color-text-muted)' }}>sem nota</span>,
+    },
+    {
+      id: 'fornecedor', header: 'Fornecedor', enableSorting: false,
+      cell: ({ row }) => (
+        <div>
+          <div>{row.original.fornecedor_nome}</div>
+          {row.original.centro_custo_nome && <div className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{row.original.centro_custo_nome}</div>}
+        </div>
+      ),
+    },
+    {
+      id: 'pedido', header: 'Compra', enableSorting: false,
+      cell: ({ row }) => (
+        <Link to={`/app/scm?pedido=${row.original.pedido}`} className="text-sm font-semibold" style={{ color: 'var(--color-brand)', textDecoration: 'none' }}>
+          Pedido #{row.original.pedido}
+        </Link>
+      ),
+    },
+    {
+      id: 'valor', header: 'Valor', enableSorting: false,
+      cell: ({ row }) => {
+        const v = row.original.valor_total ?? row.original.valor_pedido
+        return v ? <span title={row.original.valor_total ? 'Valor da nota' : 'Valor do pedido'}><MoneyDisplay cents={apiDecimalToCents(v)} /></span> : '—'
+      },
+    },
+    {
+      id: 'data', header: 'Recebido em', enableSorting: false,
+      cell: ({ row }) => row.original.data ? dateToBR(row.original.data) : '—',
+    },
+    {
+      id: 'chave', header: 'Chave de acesso', enableSorting: false,
+      cell: ({ row }) => row.original.chave_acesso
+        ? <span className="font-mono text-xs">{row.original.chave_acesso}</span>
+        : <span style={{ color: 'var(--color-text-muted)' }}>—</span>,
+    },
+    {
+      id: 'arquivos', header: 'Arquivos', enableSorting: false,
+      cell: ({ row }) => <ArquivosCell pdf={row.original.url_pdf} xml={row.original.url_xml} nome={row.original.numero || null} />,
+    },
+  ], [])
+
+  return (
+    <section className="mb-8">
+      <div className="flex items-center gap-3 mb-3 flex-wrap" style={{ fontFamily: 'var(--font-body)' }}>
+        <h2 className="text-base font-semibold" style={{ color: 'var(--color-text)' }}>Notas das compras</h2>
+        {!!data?.pendentes && (
+          <span className="text-xs font-semibold rounded-full" style={{ padding: '2px 9px', background: '#fef3c7', color: '#92400e' }}>
+            {data.pendentes} pendente{data.pendentes > 1 ? 's' : ''}
+          </span>
+        )}
+        <label className="flex items-center gap-2 text-sm ml-auto" style={{ color: 'var(--color-text-muted)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={soPendentes} onChange={e => { setSoPendentes(e.target.checked); setPageIndex(0) }} />
+          Só as pendentes
+        </label>
+      </div>
+      <p className="text-sm mb-3" style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-body)' }}>
+        Lance o número, a chave ou o XML da nota no próprio pedido — clique em “Pedido #”.
+      </p>
+      <FinanceDataTable
+        data={data?.results ?? []}
+        columns={columns}
+        count={data?.count ?? 0}
+        pageIndex={pageIndex}
+        pageSize={PAGE_SIZE}
+        onPageChange={setPageIndex}
+        sorting={[]}
+        onSortingChange={() => {}}
+        getRowId={row => (row.nota != null ? `n${row.nota}` : `p${row.pedido}`)}
+        isLoading={isLoading}
+        isFetching={isFetching}
+        emptyMessage={soPendentes ? 'Nenhuma compra esperando nota.' : 'Nenhuma nota de compra lançada.'}
+      />
+    </section>
+  )
+}
+
 function NotasRecebidasTab() {
   const [pageIndex, setPageIndex] = useState(0)
   const filtros = useMemo(() => ({ page: pageIndex + 1, page_size: PAGE_SIZE }), [pageIndex])
@@ -377,6 +499,8 @@ function NotasRecebidasTab() {
 
   return (
     <>
+      <NotasDasCompras />
+      <h2 className="text-base font-semibold mb-3" style={{ color: 'var(--color-text)', fontFamily: 'var(--font-body)' }}>Notas importadas por XML</h2>
       <div className="flex items-center gap-3 mb-4 flex-wrap" style={{ fontFamily: 'var(--font-body)' }}>
         <label className="flex items-center gap-2 text-sm" style={{ color: 'var(--color-text-muted)' }}>
           Empreendimento

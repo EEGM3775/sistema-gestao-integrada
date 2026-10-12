@@ -43,6 +43,7 @@ export default function SemanaPage() {
   const [encerrando, setEncerrando] = useState(false)
   const [reabrindo, setReabrindo] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
+  const [aviso, setAviso] = useState<string[] | null>(null)
 
   const inicio = segundaDaSemana(params.get('s') || hojeIso())
   const fim = somaDias(inicio, 6)
@@ -107,6 +108,7 @@ export default function SemanaPage() {
 
   async function executar(acao: () => Promise<unknown>) {
     setErro(null)
+    setAviso(null)
     try {
       await acao()
     } catch (e) {
@@ -128,10 +130,12 @@ export default function SemanaPage() {
   async function gravarJulgamento() {
     if (!programacao || pendentesDeGravacao.length === 0) return
     await executar(async () => {
-      await julgar.mutateAsync({
+      const r = await julgar.mutateAsync({
         id: programacao.programacao_id, julgamentos: payloadDoJulgamento(),
-      })
+      }) as { avisos?: string[] } | undefined
       setJulgamentos({})
+      // Salvou. O que ficou sem causa vira aviso — só trava na hora de encerrar.
+      setAviso(r?.avisos?.length ? r.avisos : null)
     })
   }
 
@@ -220,6 +224,25 @@ export default function SemanaPage() {
         </div>
       )}
 
+      {aviso && (
+        <div
+          role="status"
+          style={{
+            padding: '9px 16px', background: 'var(--accent-soft)',
+            color: 'var(--accent-ink)', fontSize: 12.5, lineHeight: 1.5,
+            borderBottom: '1px solid var(--line)', flexShrink: 0,
+            display: 'flex', gap: 10, alignItems: 'flex-start',
+          }}
+        >
+          <span style={{ flex: 1 }}>
+            <strong>Salvo, com {aviso.length === 1 ? 'um aviso' : `${aviso.length} avisos`}:</strong>
+            {aviso.map((a) => <span key={a} style={{ display: 'block' }}>⚠ {a}</span>)}
+          </span>
+          <button type="button" aria-label="Fechar aviso" onClick={() => setAviso(null)}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit' }}>×</button>
+        </div>
+      )}
+
       {!programacao ? (
         <SemanaPorAbrir
           inicio={inicio}
@@ -271,7 +294,7 @@ export default function SemanaPage() {
           julgamentos={julgamentos}
           salvando={julgar.isPending || encerrar.isPending}
           aoFechar={() => setEncerrando(false)}
-          aoConfirmar={async ({ motivo, arrastar: levar }) => {
+          aoConfirmar={async ({ motivo, arrastar: levar, aceitarSemCausa }) => {
             //: Julgar **antes** de encerrar, e em duas chamadas, porque são dois
             //: atos: o julgamento pode ser salvo e revisto; o encerramento é o
             //: que faz o índice existir. O servidor recusa encerrar com item por
@@ -284,7 +307,7 @@ export default function SemanaPage() {
               setJulgamentos({})
             }
             const resumo = await encerrar.mutateAsync({
-              id: programacao.programacao_id, motivo, arrastar: levar,
+              id: programacao.programacao_id, motivo, arrastar: levar, aceitarSemCausa,
             })
             setEmJulgamento(false)
             return resumo

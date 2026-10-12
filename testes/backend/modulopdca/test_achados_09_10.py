@@ -264,12 +264,16 @@ class JulgarPeloConcluidoTests(_BaseSemana):
         self.assertEqual(resultado["apontamentos"], 1)
         self.assertEqual(self._total(), Decimal("25"))
 
-    def test_abaixo_da_meta_pede_causa(self):
+    def test_abaixo_da_meta_sem_causa_salva_e_avisa_depois_a_causa_fecha_o_julgamento(self):
         item = self._cartao(previsto=Decimal("20"))
-        with self.assertRaises(ValidationError):
-            services.julgar_itens(programacao=self.prog, julgamentos=[
-                {"item": item.pk, "percentual_concluido": Decimal("10")},
-            ])
+        # Salvar não é barrado: o avanço entra, o item fica por julgar e há aviso.
+        r = services.julgar_itens(programacao=self.prog, julgamentos=[
+            {"item": item.pk, "percentual_concluido": Decimal("10")},
+        ])
+        self.assertEqual(len(r["avisos"]), 1)
+        item.refresh_from_db()
+        self.assertIsNone(item.cumprido)
+        self.assertEqual(self._total(), Decimal("10"))
         causa = CausaNaoCumprimento.objects.filter(tenant=self.tenant).first()
         services.julgar_itens(programacao=self.prog, julgamentos=[
             {"item": item.pk, "percentual_concluido": Decimal("10"), "causa": causa.pk},

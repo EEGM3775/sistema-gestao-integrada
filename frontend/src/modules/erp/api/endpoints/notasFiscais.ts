@@ -29,6 +29,37 @@ export async function fetchNotasFiscaisServico(
 }
 
 /** NF recebidas de fornecedor (model `NotaFiscal`). */
+/** A NF-e de uma compra do Suprimentos — ou a compra recebida que ainda espera a nota (D284). */
+export interface NotaDaCompra {
+  pedido: number
+  fornecedor: number
+  fornecedor_nome: string
+  centro_custo_nome: string
+  valor_pedido: string | null
+  /** `null` quando a compra foi recebida sem nota alguma. */
+  nota: number | null
+  numero: string
+  serie: string
+  chave_acesso: string
+  valor_total: string | null
+  data_emissao: string | null
+  /** Data do recebimento (ou do lançamento da nota). */
+  data: string | null
+  situacao: 'aguardando_nota' | 'aguardando_documento' | 'divergente' | 'conferida'
+  situacao_nome: string
+  divergencias: string[]
+  url_xml: string | null
+  url_pdf: string | null
+}
+
+export async function fetchNotasDasCompras(params: { page?: number; page_size?: number; pendentes?: boolean } = {}) {
+  const { data } = await erpClient.get<PaginatedResponse<NotaDaCompra> & { pendentes: number }>(
+    `${ERP_BASE}notas-das-compras/`,
+    { params: { page: params.page, page_size: params.page_size, ...(params.pendentes ? { pendentes: 1 } : {}) } },
+  )
+  return data
+}
+
 export async function fetchNotasFiscaisRecebidas(
   filtros: NotaFiscalRecebidaFiltros = {},
 ): Promise<PaginatedResponse<NotaFiscalRecebida>> {

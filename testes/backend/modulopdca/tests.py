@@ -3593,6 +3593,82 @@ class RetificacaoTests(BaseContrato):
         services.validar_medicao(nova)
         self.assertEqual(services.totais_da_medicao(nova)["bruto"], Decimal("0.00"))
 
+    def test_a_migracao_0036_converte_a_retificadora_antiga_e_acerta_o_titulo(self):
+        """O caso do staging (11/10/2026): retificadora aprovada no formato antigo
+        (sem linhas, só o desconto de R$ 600), original ainda aprovada com título
+        aberto, e duas retificadoras canceladas de lixo."""
+        import importlib
+
+        from django.apps import apps as registro
+        from django.db import connection
+        from moduloerp.models import ContaPagar
+
+        from modulopdca.models import DeducaoMedicao
+
+        mig = importlib.import_module("modulopdca.migrations.0036_converter_retificadoras")
+        original = self._aprovada()
+        antigo = ContaPagar.objects.get(pk=original.conta_pagar_ref)
+        comum = dict(
+            tenant=self.tenant, contrato=self.contrato,
+            periodo_inicio=original.periodo_inicio, periodo_fim=original.periodo_fim,
+            retifica=original,
+        )
+        lixo = Medicao.objects.create(numero=2, status=Medicao.Status.CANCELADA, **comum)
+        velha = Medicao.objects.create(numero=3, status=Medicao.Status.APROVADA, **comum)
+        DeducaoMedicao.objects.create(
+            tenant=self.tenant, medicao=velha, tipo="outros", valor=Decimal("600"),
+        )
+
+        class Editor:
+            pass
+        editor = Editor()
+        editor.connection = connection
+        mig.converter(registro, editor)
+        mig.fechar(registro, editor)
+
+        self.assertFalse(Medicao.todos.filter(pk=lixo.pk).exists())
+        velha.refresh_from_db()
+        original.refresh_from_db()
+        antigo.refresh_from_db()
+        self.assertEqual(
+            [(l.item_contrato_id, l.quantidade) for l in velha.itens.all()],
+            [(l.item_contrato_id, l.quantidade) for l in original.itens.all()],
+        )
+        self.assertEqual(original.status, Medicao.Status.RETIFICADA)
+        self.assertEqual(antigo.status, "CANCELADO")
+        novo = ContaPagar.objects.get(pk=velha.conta_pagar_ref)
+        self.assertEqual(novo.valor, Decimal("23400.00"))
+        self.assertEqual(
+            services.medido_por_item(self.contrato)[self.item_alv.pk], Decimal("300"),
+        )
+
+    def test_mexer_no_erp_avisa_quem_da_baixa_uma_vez_por_fato(self):
+        """Regra do dono (11/10/2026): alteração que interfere em outro módulo
+        tem notificação. Medição aprovada → título → aviso ao financeiro; a
+        retificação → "título trocado"; repetir o mesmo fato não duplica."""
+        from nucleo.models import Notificacao
+        from nucleo.notificacoes import avisar_quem_pode
+
+        financeiro = Usuario.objects.create(
+            username="financeiro", tenant=self.tenant, is_superuser=True,
+        )
+        original = self._aprovada()
+        avisos = Notificacao.objects.filter(user=financeiro)
+        self.assertTrue(avisos.filter(titulo__contains="virou título").exists())
+        nova = services.retificar(medicao=original, motivo="eram 250")
+        services.reescrever_linhas(medicao=nova, linhas=[
+            {"item_contrato_id": self.item_alv.pk, "quantidade": Decimal("250")},
+        ])
+        services._congelar_medicao(nova, aprovada=True)
+        trocado = avisos.get(titulo__contains="título trocado")
+        self.assertIn("cancelado", trocado.mensagem)
+        antes = avisos.count()
+        avisar_quem_pode(
+            tenant_id=self.tenant.pk, permissao="erp.conta_pagar.baixar",
+            titulo=trocado.titulo, mensagem="de novo",
+        )
+        self.assertEqual(avisos.count(), antes)
+
     def test_a_ficha_conta_o_titulo_uma_vez_e_mostra_a_retificada(self):
         _original, antigo, nova = self._retificada_com_desconto(pagar=Decimal("24000"))
         services._congelar_medicao(nova, aprovada=True)
@@ -5246,15 +5322,59 @@ class CausaEhObrigatoriaTests(_BaseLastPlanner):
             tenant=self.tenant, codigo="MAT-FALTA",
         )
 
-    def test_nao_cumprido_sem_causa_e_recusado_pelo_servico(self):
+    def test_nao_cumprido_sem_causa_salva_com_aviso_e_nao_deixa_encerrar(self):
+        """Salvar nunca é barrado (dono, 11/10/2026): o julgamento incompleto é
+        guardado como «por julgar» e o aviso volta na resposta. Quem trava é o
+        `encerrar`."""
         prog = self._programacao()
         i = self._item(prog, self.a1)
         services.comprometer(programacao=prog, por="Ana")
+        r = services.julgar_itens(
+            programacao=prog, julgamentos=[{"item": i.pk, "cumprido": False}],
+        )
+        self.assertIn("causa", " ".join(r["avisos"]).lower())
+        i.refresh_from_db()
+        self.assertIsNone(i.cumprido)
+        with self.assertRaises(ValidationError):
+            services.encerrar(programacao=prog, por="Ana")
+
+    def _julgado_por_percentual_sem_causa(self):
+        prog = self._programacao()
+        i = self._item(prog, self.a1)
+        services.comprometer(programacao=prog, por="Ana")
+        r = services.julgar_itens(
+            programacao=prog, julgamentos=[{"item": i.pk, "percentual_concluido": 60}],
+        )
+        return prog, i, r
+
+    def test_abaixo_da_meta_sem_causa_grava_o_avanco_e_avisa(self):
+        _, i, r = self._julgado_por_percentual_sem_causa()
+        self.assertEqual(len(r["avisos"]), 1)
+        i.refresh_from_db()
+        self.assertEqual(i.percentual_concluido, 60)
+        self.assertIsNone(i.cumprido)
+
+    def test_encerrar_com_item_sem_causa_avisa_e_bloqueia_quem_nao_tem_alcada(self):
+        prog, _, _ = self._julgado_por_percentual_sem_causa()
+        with self.assertRaises(services.EncerramentoSemCausa) as ctx:
+            services.encerrar(programacao=prog, por="Ana")
+        self.assertFalse(ctx.exception.pode)
+        self.assertEqual(len(ctx.exception.itens), 1)
+
+    def test_quem_tem_alcada_encerra_assim_mesmo_e_o_ranking_mostra_a_falta(self):
+        prog, i, _ = self._julgado_por_percentual_sem_causa()
+        services.encerrar(
+            programacao=prog, por="Ana", aceitar_sem_causa=True, pode_aceitar_sem_causa=True,
+        )
+        i.refresh_from_db()
+        self.assertIs(i.cumprido, False)
+        self.assertEqual(i.causa.codigo, "SEM-CAUSA")
+
+    def test_aceitar_sem_causa_sem_a_alcada_e_recusado(self):
+        prog, _, _ = self._julgado_por_percentual_sem_causa()
         with self.assertRaises(ValidationError) as ctx:
-            services.julgar_itens(
-                programacao=prog, julgamentos=[{"item": i.pk, "cumprido": False}],
-            )
-        self.assertIn("causa", " ".join(ctx.exception.messages).lower())
+            services.encerrar(programacao=prog, por="Ana", aceitar_sem_causa=True)
+        self.assertNotIsInstance(ctx.exception, services.EncerramentoSemCausa)
 
     def test_nao_cumprido_sem_causa_e_recusado_pelo_BANCO(self):
         """A trava mora no banco, e não só no `services`: o comando de bancada e

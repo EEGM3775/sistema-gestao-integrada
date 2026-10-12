@@ -9,7 +9,8 @@ from .impexp import RECURSO_NOTA_FISCAL
 from .models import (
     Transacao, NotaFiscalServico, NotaFiscalProduto,
     NotaFiscal, ContaPagar, ContaReceber, CobrancaCliente, Boleto,
-    CentroCusto, RateioContaPagar, RateioContaReceber, LoteRemessa, RevisaoBaixa
+    CentroCusto, RateioContaPagar, RateioContaReceber, LoteRemessa, RevisaoBaixa,
+    AnotacaoContaPagar,
 )
 
 # --- Serializers for API Endpoints ---
@@ -267,6 +268,21 @@ def _validar_edicao_valor(instance, valor, rateios_no_payload):
                 })
 
 
+class AnotacaoContaPagarSerializer(serializers.ModelSerializer):
+    tipo_nome = serializers.CharField(source='get_tipo_display', read_only=True)
+    autor_nome = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AnotacaoContaPagar
+        fields = ['anotacao_id', 'tipo', 'tipo_nome', 'origem', 'texto', 'valor', 'autor', 'autor_nome', 'criado_em']
+        read_only_fields = fields
+
+    def get_autor_nome(self, obj):
+        if obj.autor is None:
+            return ''
+        return obj.autor.get_full_name() or obj.autor.username
+
+
 class ContaPagarSerializer(TravaDeEdicaoMixin, serializers.ModelSerializer):
     """
     Serializador para o modelo ContaPagar.
@@ -287,6 +303,10 @@ class ContaPagarSerializer(TravaDeEdicaoMixin, serializers.ModelSerializer):
     empreendimento_nome = serializers.CharField(source='empreendimento.empreendimento', read_only=True, default='')
     obra_nome = serializers.CharField(source='obra.nome_obra', read_only=True, default='')
     etapa_nome = serializers.CharField(source='etapa.nome_etapa', read_only=True, default='')
+    # A compra que gerou o título (Suprimentos, D284): a situação da NF-e e a
+    # trilha do que mudou no pedido depois de o título nascer.
+    nfe_situacao_nome = serializers.CharField(source='get_nfe_situacao_display', read_only=True)
+    anotacoes = serializers.SerializerMethodField()
 
     class Meta:
         model = ContaPagar
@@ -298,8 +318,19 @@ class ContaPagarSerializer(TravaDeEdicaoMixin, serializers.ModelSerializer):
             'status', 'valor_pago', 'juros', 'multa', 'desconto', 'data_pagamento',
             'total_devido', 'saldo_aberto', 'rateios', 'boletos',
             'campos_travados', 'travado_porque', 'pode_estornar', 'estorno_impedido_porque',
+            'pedido_compra_ref', 'nfe_numero', 'nfe_situacao', 'nfe_situacao_nome', 'anotacoes',
         ]
-        read_only_fields = ['status', 'valor_pago', 'juros', 'multa', 'desconto', 'data_pagamento']
+        read_only_fields = [
+            'status', 'valor_pago', 'juros', 'multa', 'desconto', 'data_pagamento',
+            'pedido_compra_ref', 'nfe_numero', 'nfe_situacao',
+        ]
+
+    def get_anotacoes(self, obj):
+        """Só no detalhe: a trilha inteira de cem títulos numa página de lista
+        não é lida por ninguém e custaria uma consulta por linha."""
+        if not self._eh_detalhe() and getattr(self.context.get('view'), 'action', None) != 'anotar':
+            return []
+        return AnotacaoContaPagarSerializer(obj.anotacoes.select_related('autor'), many=True).data
 
     def validate(self, attrs):
         rateios = attrs.get('rateios')

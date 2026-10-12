@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ClipboardPaste, GanttChartSquare, Calculator, Lock, Plus, X } from 'lucide-react'
 import {
   Btn, CampoDecimal, CampoMoeda, Card, Empty, Loading, Num, SectionHead,
@@ -17,6 +17,19 @@ const porCodigo = (a: ItemContrato, b: ItemContrato) =>
   a.codigo.localeCompare(b.codigo, 'pt-BR', { numeric: true })
 
 type Fonte = 'orcamento' | 'plano' | 'excel' | 'avulso'
+
+/** O código que vem depois do último: 01 → 02, 1.9 → 1.10, A-09 → A-10. Sem número no
+ *  fim, devolve vazio e o usuário digita. Mantém os zeros à esquerda. */
+function proximoCodigo(itens: ItemContrato[]): string {
+  const ultimo = [...itens].sort(porCodigo).at(-1)?.codigo ?? ''
+  const m = /^(.*?)(\d+)$/.exec(ultimo)
+  if (!m) return ''
+  return m[1] + String(Number(m[2]) + 1).padStart(m[2].length, '0')
+}
+
+/** O valor do item como a tela mostra: quantidade digitada × preço digitado, em centavos. */
+const valorEmCentavos = (quantidade: string, preco: number) =>
+  Math.round(Number(paraNumero(quantidade) ?? '0') * preco)
 
 /** **A planilha contratual** — o que foi combinado, item a item.
  *
@@ -45,10 +58,16 @@ export function PlanilhaContratual({
   const [fonte, setFonte] = useState<Fonte | null>(null)
   const fontes = useFontesDaPlanilha(contrato.contrato, editavel)
   const ordenados = useMemo(() => [...itens].sort(porCodigo), [itens])
+  // O que está digitado e ainda não gravado entra no total na hora: o cabeçalho
+  // não espera o "Gravar" para acompanhar a quantidade e o preço.
+  const [rascunhos, setRascunhos] = useState<Record<number, number | null>>({})
+  const aoRascunho = useCallback((id: number, centavos: number | null) => {
+    setRascunhos((r) => (r[id] === centavos ? r : { ...r, [id]: centavos }))
+  }, [])
 
   if (carregando) return <Loading o="a planilha do contrato" />
 
-  const soma = itens.reduce((t, i) => t + apiDecimalToCents(i.valor_contratado), 0)
+  const soma = itens.reduce((t, i) => t + (rascunhos[i.item_contrato_id] ?? apiDecimalToCents(i.valor_contratado)), 0)
   const fechado = apiDecimalToCents(contrato.saldo.valor_contratado)
 
   return (
@@ -93,6 +112,8 @@ export function PlanilhaContratual({
           {fonte === 'avulso' && aoCriar && (
             <LinhaNova
               contratoId={contrato.contrato}
+              fontes={fontes.data}
+              codigoInicial={proximoCodigo(itens)}
               salvando={salvando}
               aoCancelar={() => setFonte(null)}
               aoCriar={(corpo) => { aoCriar(corpo); setFonte(null) }}
@@ -159,6 +180,7 @@ export function PlanilhaContratual({
                     salvando={salvando}
                     aoSalvar={aoSalvar}
                     aoRemover={aoRemover}
+                    aoRascunho={aoRascunho}
                   />
                 ))}
               </tbody>
@@ -206,7 +228,7 @@ function SeletorDeVinculo({ valor, fontes, aoMudar, rotulo }: {
 }
 
 function LinhaDoItem({
-  item, fontes, editavel, salvando, aoSalvar, aoRemover,
+  item, fontes, editavel, salvando, aoSalvar, aoRemover, aoRascunho,
 }: {
   item: ItemContrato
   fontes: FontesDaPlanilha | undefined
@@ -214,6 +236,7 @@ function LinhaDoItem({
   salvando?: boolean
   aoSalvar?: (id: number, corpo: Partial<ItemContrato>) => void
   aoRemover?: (id: number) => void
+  aoRascunho?: (id: number, centavos: number | null) => void
 }) {
   const [codigo, setCodigo] = useState(item.codigo)
   const [descricao, setDescricao] = useState(item.descricao)
@@ -227,6 +250,13 @@ function LinhaDoItem({
     || vinculo !== vinculoDe(item)
   const aditivada = apiDecimalToCents(item.quantidade_aditivada) !== 0
   const td = { padding: '5px 8px', verticalAlign: 'middle' as const }
+  // Valor ao vivo: acompanha o que está digitado, não só o que foi gravado.
+  const valorAgora = editavel ? valorEmCentavos(quantidade, preco) : apiDecimalToCents(item.valor_contratado)
+  useEffect(() => {
+    if (!editavel) return
+    aoRascunho?.(item.item_contrato_id, valorAgora)
+    return () => aoRascunho?.(item.item_contrato_id, null)
+  }, [editavel, valorAgora, item.item_contrato_id, aoRascunho])
 
   function gravar() {
     aoSalvar?.(item.item_contrato_id, {
@@ -274,7 +304,7 @@ function LinhaDoItem({
         <CampoMoeda centavos={preco} aoMudar={setPreco} aria-label={`Preço unitário de ${item.codigo}`} />
       </td>
       <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
-        <Num size={12.5} tone="var(--ink)">{formatBRL(apiDecimalToCents(item.valor_contratado))}</Num>
+        <Num size={12.5} tone="var(--ink)">{formatBRL(valorAgora)}</Num>
       </td>
       <td style={td}>
         <SeletorDeVinculo valor={vinculo} fontes={fontes} aoMudar={setVinculo} rotulo={`Vínculo de ${item.codigo}`} />
@@ -291,19 +321,44 @@ function LinhaDoItem({
 
 /** O item avulso, digitado. Nasce com o vínculo escolhido ali mesmo. */
 function LinhaNova({
-  contratoId, salvando, aoCriar, aoCancelar,
+  contratoId, fontes, codigoInicial, salvando, aoCriar, aoCancelar,
 }: {
   contratoId: number
+  fontes: FontesDaPlanilha | undefined
+  codigoInicial: string
   salvando?: boolean
   aoCriar: (corpo: Partial<ItemContrato>) => void
   aoCancelar: () => void
 }) {
-  const [codigo, setCodigo] = useState('')
+  // Já nasce com o próximo código da planilha, e o vínculo é escolhido aqui mesmo —
+  // sem precisar incluir o item para depois ligá-lo a uma etapa (dono, 11/10/2026).
+  const [codigo, setCodigo] = useState(codigoInicial)
   const [descricao, setDescricao] = useState('')
   const [unidade, setUnidade] = useState('')
   const [quantidade, setQuantidade] = useState('')
   const [preco, setPreco] = useState(0)
+  const [vinculo, setVinculo] = useState('')
 
+  /** Ligar a uma fonte traz o que ela já sabe: o item orçado, descrição, unidade,
+   *  quantidade e preço; a atividade, o nome e 1 vb. O que foi digitado à mão
+   *  continua valendo quando o vínculo é desfeito. */
+  function escolherVinculo(v: string) {
+    setVinculo(v)
+    if (v.startsWith('o:')) {
+      const o = fontes?.itens_orcados.find((x) => x.item_orcado === Number(v.slice(2)))
+      if (o) {
+        setDescricao(o.descricao); setUnidade(o.unidade)
+        setQuantidade(daApi(o.quantidade)); setPreco(apiDecimalToCents(o.preco_unitario))
+      }
+    } else if (v.startsWith('a:')) {
+      const a = fontes?.atividades.find((x) => x.atividade === Number(v.slice(2)))
+      if (a) {
+        setDescricao(a.nome); setUnidade('vb'); setQuantidade('1')
+      }
+    }
+  }
+
+  const valor = valorEmCentavos(quantidade, preco)
   const completo = codigo.trim() && descricao.trim() && unidade.trim()
     && Number(paraNumero(quantidade) ?? '0') > 0
 
@@ -314,6 +369,15 @@ function LinhaNova({
       <input value={unidade} onChange={(e) => setUnidade(e.target.value)} placeholder="un" aria-label="Unidade" style={{ ...CAMPO, width: 70 }} />
       <div style={{ width: 130 }}><CampoDecimal valor={quantidade} aoMudar={setQuantidade} aria-label="Quantidade contratada" /></div>
       <div style={{ width: 150 }}><CampoMoeda centavos={preco} aoMudar={setPreco} aria-label="Preço unitário" /></div>
+      <div style={{ minWidth: 110, textAlign: 'right' }} aria-label="Valor do item">
+        <Num size={13} tone="var(--ink)">{formatBRL(valor)}</Num>
+      </div>
+      <div style={{ flexBasis: '100%', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 11.5, color: 'var(--ink-3)', whiteSpace: 'nowrap' }}>Ligado a</span>
+        <div style={{ flex: 1, maxWidth: 520 }}>
+          <SeletorDeVinculo valor={vinculo} fontes={fontes} aoMudar={escolherVinculo} rotulo="Vínculo do novo item" />
+        </div>
+      </div>
       <Btn tam="sm" onClick={aoCancelar}>Cancelar</Btn>
       <Btn
         tam="sm" variant="primary" disabled={!completo || salvando}
@@ -321,6 +385,8 @@ function LinhaNova({
           contrato: contratoId, codigo: codigo.trim(), descricao: descricao.trim(),
           unidade: unidade.trim(), quantidade_contratada: paraNumero(quantidade) ?? '0',
           preco_unitario: centsToApiDecimal(preco),
+          atividade: vinculo.startsWith('a:') ? Number(vinculo.slice(2)) : null,
+          item_orcado: vinculo.startsWith('o:') ? Number(vinculo.slice(2)) : null,
         })}
       >
         Incluir

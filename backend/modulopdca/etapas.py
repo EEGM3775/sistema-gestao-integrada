@@ -192,6 +192,28 @@ def sincronizar(obra_id, tenant_id, *, soltas=None) -> dict:
 
     if any(resumo.values()):
         logger.info("pdca_etapas_sincronizadas", extra={"obra_id": obra_id, **resumo})
+    if resumo["criadas"] or resumo["na_lixeira"] or resumo["restauradas"]:
+        # Etapa é cadastro da Obra, e o ERP e o Orçamento lançam por ela. Renomear
+        # e mover datas não avisa (é o mesmo registro seguindo o plano); nascer,
+        # sumir e voltar, sim.
+        from nucleo.notificacoes import avisar_quem_pode
+
+        partes = [
+            f"{resumo[chave]} {rotulo}" for chave, rotulo in (
+                ("criadas", "criada(s)"), ("na_lixeira", "na lixeira"),
+                ("restauradas", "restaurada(s)"),
+            ) if resumo[chave]
+        ]
+        avisar_quem_pode(
+            tenant_id=tenant_id, permissao="obra.obra.edit",
+            titulo=f"Etapas da obra mudaram com o plano: {', '.join(partes)}"[:200],
+            mensagem=(
+                "As etapas da obra seguem as fases do plano em vigor. Títulos e "
+                "orçamento lançados numa etapa que foi para a lixeira continuam "
+                "apontando para ela — confira."
+            ),
+            url=f"/app/obras/{obra_id}",
+        )
     return resumo
 
 

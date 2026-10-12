@@ -76,6 +76,8 @@ RECURSOS_CONTADOS: dict[str, str] = {
     # comuns, então esta quota é a primeira que conta um **recorte** dela: ver
     # `FILTRO_DO_RECURSO` logo abaixo.
     "planos_modelo": "modulopdca.Cronograma",
+    # Itens próprios do catálogo — recorte da tabela, como `planos_modelo`.
+    "catalogo_itens": "catalogo.Item",
 }
 
 # Quando a quota não é "quantas linhas a tabela tem", e sim "quantas linhas de um
@@ -85,6 +87,9 @@ RECURSOS_CONTADOS: dict[str, str] = {
 # `if recurso == "planos_modelo"` dentro do contador — é a que não escala.
 FILTRO_DO_RECURSO: dict[str, dict] = {
     "planos_modelo": {"eh_modelo": True},
+    # O item adotado da SINAPI/ORSE é procedência, não cadastro da empresa: só
+    # conta o que não tem fonte, ou cuja fonte é o banco próprio.
+    "catalogo_itens": {"fonte_referencia__in": ["", "propria"]},
 }
 
 # Rótulo legível para a mensagem do 402 e para o medidor da UI.
@@ -95,6 +100,7 @@ ROTULOS: dict[str, str] = {
     "fornecedores": "fornecedores",
     "banco_preco_linhas": "linhas de banco de preço próprio",
     "planos_modelo": "planos modelo",
+    "catalogo_itens": "itens próprios no catálogo",
     # Janela, não contagem — o rótulo é lido numa frase ("15 dias para
     # desfazer"), nunca ao lado de uma barra de progresso. Ver `plano_views`.
     "lixo_retencao_dias": "dias de lixeira",

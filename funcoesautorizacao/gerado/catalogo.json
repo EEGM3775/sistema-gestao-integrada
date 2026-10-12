@@ -576,6 +576,10 @@
    "classe": "B",
    "modulo": "pdca"
   },
+  "pdca.programacao.encerrar_sem_causa": {
+   "classe": "B",
+   "modulo": "pdca"
+  },
   "pdca.programacao.view": {
    "classe": "A",
    "modulo": "pdca"

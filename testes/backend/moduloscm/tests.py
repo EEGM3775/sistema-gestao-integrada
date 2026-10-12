@@ -243,7 +243,7 @@ class CompraAvulsaTests(ScmTestBase):
             "fornecedor": self.fornecedor.pk,
             "itens": [
                 {"produto": self.produto.pk, "quantidade": "10", "preco_unitario": "32.50"},
-                {"descricao": "Areia média (caçamba)", "quantidade": "2", "preco_unitario": "450"},
+                {"descricao": "Areia média (caçamba)", "unidade": "m³", "quantidade": "2", "preco_unitario": "450"},
             ],
         }, format="json")
         self.assertEqual(resp.status_code, 201, resp.content)
@@ -252,6 +252,8 @@ class CompraAvulsaTests(ScmTestBase):
         self.assertEqual(pedido.status, PedidoCompra.Status.APROVADO)
         self.assertEqual(pedido.valor_total, Decimal("1225.00"))
         self.assertEqual(pedido.itens.count(), 2)
+        # Item do catálogo leva a unidade do cadastro; item livre, a que foi dita.
+        self.assertEqual(sorted(pedido.itens.values_list("unidade", flat=True)), ["m³", "sc"])
 
     def test_recusa_sem_fornecedor_ou_sem_item(self):
         self.autenticar()

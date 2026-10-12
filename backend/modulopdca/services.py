@@ -4769,7 +4769,23 @@ def _fechar_retificacao(retificadora: Medicao) -> list[str]:
                     "valor": str(titulo.valor),
                 },
             )
-        conta_id = gerar_titulo_de_medicao(retificadora)
+        conta_id = gerar_titulo_de_medicao(retificadora, avisar=False)
+        novo = (
+            f"o novo, {conta_id}, é de R$ {totais_da_medicao(retificadora)['liquido']}"
+            if conta_id is not None else "a medição corrigida não tem valor a lançar"
+        )
+        avisar_erp(
+            retificadora.contrato,
+            titulo=(
+                f"Medição {original.numero} retificada pela {retificadora.numero} "
+                f"(contrato {retificadora.contrato.numero}) — título trocado"
+            ),
+            mensagem=(
+                (f"O título {titulo.pk} (R$ {titulo.valor}) foi cancelado; "
+                 if titulo is not None and titulo.status == "CANCELADO" else "")
+                + f"{novo}."
+            ),
+        )
         if conta_id is None:
             return []
         setattr(retificadora, campo, conta_id)
@@ -4782,7 +4798,7 @@ def _fechar_retificacao(retificadora: Medicao) -> list[str]:
     resto = _ZERO
     if diferenca > 0:
         complemento_id = gerar_titulo_de_medicao(
-            retificadora, valor=diferenca,
+            retificadora, valor=diferenca, avisar=False,
             rotulo=f"complemento da retificação da medição {original.numero}",
         )
     elif diferenca < 0:
@@ -4875,6 +4891,26 @@ def _gerar_devolucao(retificadora: Medicao, valor: Decimal) -> int | None:
     return ContaReceber.objects.create(cliente=alvo, **comum).pk
 
 
+def avisar_erp(contrato: ContratoObra, *, titulo: str, mensagem: str,
+               nivel: int | None = None) -> None:
+    """O PDCA mexeu num título do ERP — avisa quem dá baixa nele.
+
+    *Regra do dono (11/10/2026): alteração que interfere em outro módulo tem
+    notificação.* Emitir, cancelar ou reduzir um título é exatamente isso.
+    """
+    from nucleo.models import Notificacao
+    from nucleo.notificacoes import avisar_quem_pode
+
+    receita = contrato.lado == LadoContrato.RECEITA
+    avisar_quem_pode(
+        tenant_id=contrato.tenant_id,
+        permissao="erp.conta_receber.baixar" if receita else "erp.conta_pagar.baixar",
+        titulo=titulo, mensagem=mensagem,
+        url="/app/erp/contas-a-receber" if receita else "/app/erp/contas-a-pagar",
+        nivel=nivel or Notificacao.Nivel.SABER,
+    )
+
+
 def _avisar_erp_de_retificacao_paga(retificadora: Medicao, titulo, *, corrigido,
                                     diferenca, abatido, resto, complemento_id,
                                     devolucao_id) -> None:
@@ -4884,9 +4920,7 @@ def _avisar_erp_de_retificacao_paga(retificadora: Medicao, titulo, *, corrigido,
     ele. Cada frase diz o que **já foi lançado** e o que falta fazer; o link
     abre as contas no ERP.
     """
-    from nucleo import autorizacao
-    from nucleo.models import Notificacao, Usuario
-    from nucleo.notificacoes import criar_notificacao
+    from nucleo.models import Notificacao
 
     receita = retificadora.contrato.lado == LadoContrato.RECEITA
     pago = "recebidos" if receita else "pagos"
@@ -4918,16 +4952,14 @@ def _avisar_erp_de_retificacao_paga(retificadora: Medicao, titulo, *, corrigido,
                 f"R$ {resto} {pago} a mais: a contraparte não está cadastrada como "
                 f"{'fornecedor' if receita else 'cliente'} — cadastre e lance a devolução."
             )
-    codigo = "erp.conta_receber.baixar" if receita else "erp.conta_pagar.baixar"
-    for usuario in Usuario.objects.filter(tenant_id=retificadora.tenant_id, is_active=True):
-        if autorizacao.pode(usuario, codigo):
-            criar_notificacao(
-                user=usuario, tenant_id=retificadora.tenant_id,
-                titulo="Medição paga foi retificada — conferir no financeiro",
-                mensagem=" ".join(partes),
-                url="/app/erp/contas-a-receber" if receita else "/app/erp/contas-a-pagar",
-                nivel=Notificacao.Nivel.AGIR_JA,
-            )
+    avisar_erp(
+        retificadora.contrato,
+        titulo=(
+            f"Medição {retificadora.retifica.numero} já paga foi retificada "
+            f"(contrato {retificadora.contrato.numero}) — conferir no financeiro"
+        ),
+        mensagem=" ".join(partes), nivel=Notificacao.Nivel.AGIR_JA,
+    )
 
 
 def titulo_da_medicao(medicao: Medicao):
@@ -4986,7 +5018,7 @@ def estado_do_titulo(medicao: Medicao) -> dict | None:
 
 
 def gerar_titulo_de_medicao(medicao: Medicao, *, valor: Decimal | None = None,
-                           rotulo: str = "") -> int | None:
+                           rotulo: str = "", avisar: bool = True) -> int | None:
     """Medição aprovada → `ContaPagar` no ERP. O líquido, não o bruto.
 
     **Importa tarde, de propósito.** O `moduloerp` é importado aqui dentro e não
@@ -5041,8 +5073,20 @@ def gerar_titulo_de_medicao(medicao: Medicao, *, valor: Decimal | None = None,
     )
     # Do lado da receita a medição é faturada ao contratante: conta a receber.
     if contrato.lado == LadoContrato.RECEITA:
-        return ContaReceber.objects.create(cliente_id=contrato.cliente_id, **comum).pk
-    return ContaPagar.objects.create(fornecedor_id=contrato.fornecedor_id, **comum).pk
+        conta_id = ContaReceber.objects.create(cliente_id=contrato.cliente_id, **comum).pk
+    else:
+        conta_id = ContaPagar.objects.create(fornecedor_id=contrato.fornecedor_id, **comum).pk
+    if avisar:
+        avisar_erp(
+            contrato,
+            titulo=f"Medição {medicao.numero} do contrato {contrato.numero} virou título",
+            mensagem=(
+                f"Título {conta_id} de R$ {comum['valor']} a "
+                f"{'receber de' if contrato.lado == LadoContrato.RECEITA else 'pagar a'} "
+                f"{contrato.parte_nome}, vencendo em {comum['data_vencimento']:%d/%m/%Y}."
+            ),
+        )
+    return conta_id
 
 
 def _comum_do_titulo(medicao: Medicao, *, valor: Decimal, descricao: str) -> dict:
@@ -5703,8 +5747,15 @@ def _gerar_titulo_de_liberacao(liberacao: LiberacaoRetencao) -> int | None:
     }
     # Do lado da receita é a caução que o contratante devolve: a receber.
     if contrato.lado == LadoContrato.RECEITA:
-        return ContaReceber.objects.create(cliente_id=contrato.cliente_id, **comum).pk
-    return ContaPagar.objects.create(fornecedor_id=contrato.fornecedor_id, **comum).pk
+        conta_id = ContaReceber.objects.create(cliente_id=contrato.cliente_id, **comum).pk
+    else:
+        conta_id = ContaPagar.objects.create(fornecedor_id=contrato.fornecedor_id, **comum).pk
+    avisar_erp(
+        contrato,
+        titulo=f"Retenção liberada no contrato {contrato.numero} virou título",
+        mensagem=f"Título {conta_id} de R$ {liberacao.valor}, vencendo em {liberacao.data:%d/%m/%Y}.",
+    )
+    return conta_id
 
 
 # --- Cancelamento: retirar o documento E o título que ele gerou -------------
@@ -5806,6 +5857,14 @@ def cancelar_medicao(*, medicao: Medicao, motivo: str = "", por: str = "",
                     "valor": str(titulo.valor),
                     "motivo": motivo[:500],
                 },
+            )
+            avisar_erp(
+                medicao.contrato,
+                titulo=(
+                    f"Título {titulo.pk} cancelado — medição {medicao.numero} do "
+                    f"contrato {medicao.contrato.numero} foi retirada"
+                ),
+                mensagem=f"R$ {titulo.valor}. Motivo: {motivo}",
             )
 
     medicao.status = Medicao.Status.CANCELADA
@@ -6565,6 +6624,20 @@ def gerar_demanda_scm(*, restricao: Restricao, quantidade=None,
     )
     restricao.demanda_scm = demanda
     restricao.save(update_fields=["demanda_scm"])
+    from nucleo.models import Notificacao
+    from nucleo.notificacoes import avisar_quem_pode
+
+    avisar_quem_pode(
+        tenant_id=restricao.tenant_id, permissao="scm.demanda.edit",
+        titulo=f"Demanda {demanda.pk} aberta pelo plano da obra — restrição de {restricao.get_tipo_display().lower()}",
+        mensagem=(
+            f"{restricao.descricao[:200]} · atividade {atividade.codigo or atividade.pk}"
+            + (f" · obra {obra.nome_obra}" if obra else "")
+            + (f" · precisa até {restricao.prazo:%d/%m/%Y}" if restricao.prazo else "")
+            + ". Nasceu em rascunho: confira a quantidade e publique."
+        ),
+        url="/app/scm", nivel=Notificacao.Nivel.DECIDIR,
+    )
     return demanda.pk
 
 
@@ -6693,10 +6766,34 @@ def comprometer(*, programacao: ProgramacaoSemanal, por: str = "") -> dict:
     return {"programacao": programacao.pk, "compromissos": len(itens)}
 
 
+class EncerramentoSemCausa(ValidationError):
+    """Há compromisso que não saiu e ficou sem causa — o aviso antes de bloquear.
+
+    Carrega o que falta, para a tela mostrar os nomes e, a quem pode, oferecer
+    «encerrar assim mesmo». `pode` diz se quem pediu tem essa alçada."""
+
+    def __init__(self, itens, *, pode: bool):
+        self.itens = [
+            {"item": i.pk, "atividade": i.atividade.nome,
+             "percentual": str(i.percentual_concluido)}
+            for i in itens
+        ]
+        self.pode = pode
+        nomes = ", ".join(f"«{d['atividade']}»" for d in self.itens)
+        super().__init__(
+            f"{len(self.itens)} compromisso(s) que não saíram estão sem causa: {nomes}. "
+            + ("Você pode encerrar assim mesmo — a causa fica como «Sem causa informada»."
+               if pode else
+               "Informe a causa de cada um para encerrar, ou peça a quem tem a alçada.")
+        )
+
+
 @transaction.atomic
 def encerrar(*, programacao: ProgramacaoSemanal, por: str = "",
              hoje: date | None = None, pode_antecipar: bool = False,
-             motivo_antecipado: str = "", arrastar: bool = True) -> dict:
+             motivo_antecipado: str = "", arrastar: bool = True,
+             aceitar_sem_causa: bool = False,
+             pode_aceitar_sem_causa: bool = False) -> dict:
     """Comprometida → **encerrada**: cada item julgado, e o PPC passa a existir.
 
     **Recusa encerrar com item por julgar.** O `cumprido` nulo é "ainda não
@@ -6729,13 +6826,27 @@ def encerrar(*, programacao: ProgramacaoSemanal, por: str = "",
             f"{programacao.get_status_display().lower()} — só uma programação "
             f"comprometida pode ser encerrada."
         )
-    pendentes = programacao.itens.filter(cumprido__isnull=True).count()
+    por_julgar = programacao.itens.filter(cumprido__isnull=True)
+    # O que já tem avanço digitado e ficou sem causa (ver `julgar_itens`) é outra
+    # coisa que o que ninguém julgou: o primeiro pode fechar com a ressalva.
+    sem_causa = list(por_julgar.filter(percentual_concluido__isnull=False)
+                     .select_related("atividade"))
+    pendentes = por_julgar.filter(percentual_concluido__isnull=True).count()
     if pendentes:
         raise ValidationError(
             f"Ainda há {pendentes} compromisso(s) sem julgamento. Diga de cada "
             f"um se saiu ou não — e, quando não saiu, por quê: é dessa resposta "
             f"que sai o ranking que muda a obra, e não do índice."
         )
+    if sem_causa:
+        if not aceitar_sem_causa:
+            raise EncerramentoSemCausa(sem_causa, pode=pode_aceitar_sem_causa)
+        if not pode_aceitar_sem_causa:
+            raise ValidationError(
+                "Encerrar a semana com compromisso sem causa exige a permissão "
+                "'pdca.programacao.encerrar_sem_causa'. Informe a causa de cada "
+                "um, ou peça a quem a tem."
+            )
 
     hoje = hoje or timezone.localdate()
     antecipado = programacao.semana_fim > hoje
@@ -6758,6 +6869,22 @@ def encerrar(*, programacao: ProgramacaoSemanal, por: str = "",
                 f"por escrito. É a frase que a reunião seguinte lê para saber "
                 f"por que aquele ponto da série foi apurado mais cedo."
             )
+
+    if sem_causa:
+        # A decisão de seguir foi de quem tem a alçada; o ranking mostra a falta
+        # como tal — «Sem causa informada» — em vez de esconder ou inventar.
+        causa, _ = CausaNaoCumprimento.objects.get_or_create(
+            tenant_id=programacao.tenant_id, codigo="SEM-CAUSA",
+            defaults={"nome": "Sem causa informada", "ativo": False, "de_fabrica": True,
+                      "categoria": CausaNaoCumprimento.Categoria.PLANEJAMENTO},
+        )
+        for item in sem_causa:
+            item.cumprido = False
+            item.causa = causa
+            item.nota = (f"{item.nota}\n" if item.nota else "") + (
+                f"Semana encerrada por {por or 'usuário'} sem a causa informada."
+            )
+        ItemProgramacao.objects.bulk_update(sem_causa, ["cumprido", "causa", "nota"])
 
     programacao.status = ProgramacaoSemanal.Status.ENCERRADA
     programacao.encerrada_em = timezone.now()
@@ -7532,6 +7659,7 @@ def julgar_itens(*, programacao: ProgramacaoSemanal,
         ).values_list("causa_id", flat=True)
     )
     erros: list[str] = []
+    avisos: list[str] = []
     a_gravar: list[ItemProgramacao] = []
     a_apontar: list[tuple[ItemProgramacao, Decimal]] = []
     andamento = (andamento_dos_itens(programacao)
@@ -7575,15 +7703,22 @@ def julgar_itens(*, programacao: ProgramacaoSemanal,
             erros.append(f"Diga se «{item.atividade.nome}» saiu ou não.")
             continue
         if not cumprido and not causa_id:
-            erros.append(
+            # **Avisa, não impede de salvar** *(dono, 11/10/2026)*. O avanço
+            # digitado é registrado; o compromisso fica "por julgar" (cumprido
+            # nulo, que o banco aceita) até a causa chegar. Quem trava é o
+            # `encerrar`, que recusa semana com item por julgar.
+            avisos.append(
                 f"«{item.atividade.nome}» "
                 + (f"ficou em {concluido:.0f}%, abaixo da meta de "
                    f"{andamento[item.pk]['meta']:.0f}%, "
                    if concluido is not None and item.pk in andamento else "não saiu ")
-                + f"e não tem causa. É a "
-                f"resposta de onde sai o ranking que muda a obra — sem ela, o "
-                f"Last Planner vira marcar caixinha."
+                + "e ainda não tem causa. O avanço foi salvo; a causa é necessária "
+                "para encerrar a semana — é dela que sai o ranking que muda a obra."
             )
+            item.cumprido = None
+            item.causa_id = None
+            item.nota = (linha.get("nota") or item.nota or "")[:2000]
+            a_gravar.append(item)
             continue
         if cumprido and causa_id:
             erros.append(
@@ -7629,9 +7764,9 @@ def julgar_itens(*, programacao: ProgramacaoSemanal,
         ItemProgramacao.objects.bulk_update(
             a_gravar, ["cumprido", "causa", "nota", "percentual_concluido"]
         )
-    return {"julgados": len(a_gravar), "apontamentos": apontamentos, "por_julgar": (
+    return {"julgados": len(a_gravar) - len(avisos), "apontamentos": apontamentos, "por_julgar": (
         programacao.itens.filter(cumprido__isnull=True).count()
-    )}
+    ), "avisos": avisos}
 
 
 # ---------------------------------------------------------------------------

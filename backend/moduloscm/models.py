@@ -361,6 +361,10 @@ class PedidoCompra(TenantScopedModel):
     origem_tenant = models.UUIDField(null=True, blank=True, verbose_name=_("Tenant de origem (rede)"))
     observacao = models.TextField(blank=True, verbose_name=_("Observação"))
     criado_em = models.DateTimeField(auto_now_add=True, verbose_name=_("Criado em"))
+    # Quando o pedido saiu para o fornecedor (PDF por e-mail/WhatsApp) e quantas
+    # vezes foi editado depois de nascer — a revisão vai no PDF reenviado.
+    enviado_em = models.DateTimeField(null=True, blank=True, verbose_name=_("Enviado ao fornecedor em"))
+    revisao = models.PositiveIntegerField(default=0, verbose_name=_("Revisão"))
 
     class Meta:
         verbose_name = _("Pedido de Compra (SCM)")
@@ -378,8 +382,13 @@ class ItemPedido(TenantScopedModel):
     pedido = models.ForeignKey(PedidoCompra, on_delete=models.CASCADE, related_name="itens", verbose_name=_("Pedido"))
     produto = models.ForeignKey("catalogo.Item", on_delete=models.SET_NULL, null=True, blank=True, related_name="itens_pedido", verbose_name=_("Item"))
     descricao = models.CharField(max_length=255, blank=True, verbose_name=_("Descrição (serviço/item livre)"))
+    unidade = models.CharField(max_length=20, blank=True, verbose_name=_("Unidade"))  # un, kg, m³… — a do produto quando é do catálogo
     quantidade = models.DecimalField(max_digits=14, decimal_places=3, verbose_name=_("Quantidade"))
     preco_unitario = models.DecimalField(max_digits=15, decimal_places=2, verbose_name=_("Preço unitário"))
+    # O saldo que se desistiu de receber ("finalizar com saldo a menos", dono,
+    # 11/10/2026). Não é recebido nem pendente: sai da conta do que falta e vai
+    # ao ERP como divergência, para o título ser ajustado.
+    quantidade_encerrada = models.DecimalField(max_digits=14, decimal_places=3, default=0, verbose_name=_("Saldo encerrado"))
 
     class Meta:
         verbose_name = _("Item de Pedido (SCM)")
@@ -407,6 +416,11 @@ class Recebimento(TenantScopedModel):
     nota_fiscal_ref = models.CharField(max_length=60, blank=True, verbose_name=_("Ref. da NF-e (chave/número)"))
     observacao = models.TextField(blank=True, verbose_name=_("Observação"))
     criado_em = models.DateTimeField(auto_now_add=True, verbose_name=_("Criado em"))
+    # Este recebimento finalizou o pedido deixando saldo para trás.
+    encerrou_saldo = models.BooleanField(default=False, verbose_name=_("Encerrou o saldo"))
+    recebido_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+", verbose_name=_("Recebido por"),
+    )
 
     class Meta:
         verbose_name = _("Recebimento (SCM)")
@@ -432,6 +446,159 @@ class ItemRecebimento(TenantScopedModel):
 
     def __str__(self):
         return f"{self.item_pedido}: {self.quantidade_recebida}"
+
+
+# ---------------------------------------------------------------------------
+# D284 (11/10/2026) — a cobrança do pedido, a NF-e da compra e o histórico.
+# ---------------------------------------------------------------------------
+class MeioPagamentoPedido(TenantScopedModel):
+    """Um meio da cobrança do pedido — o espelho, na compra, do
+    `clientes.MeioPagamento` da venda.
+
+    *Dono, 11/10/2026:* "cobrança de pagamento do pedido que pode ser boleto,
+    cheque, à vista, parcelas, cartão de crédito, promissória, pix, até mais de um
+    meio". É uma **lista livre**: a soma dos meios fecha no valor do pedido (nem
+    um centavo a mais ou a menos — quem confere é `moduloscm.cobranca`), e cada
+    meio se divide nas suas parcelas. Cada parcela vira um título no ERP.
+    """
+
+    class Tipo(models.TextChoices):
+        BOLETO = "boleto", _("Boleto")
+        PIX = "pix", _("Pix")
+        DINHEIRO = "dinheiro", _("Dinheiro (à vista)")
+        TRANSFERENCIA = "transferencia", _("Transferência / TED")
+        CHEQUE = "cheque", _("Cheque")
+        CARTAO_CREDITO = "cartao_credito", _("Cartão de crédito")
+        CARTAO_DEBITO = "cartao_debito", _("Cartão de débito")
+        PROMISSORIA = "promissoria", _("Nota promissória")
+        OUTRO = "outro", _("Outro")
+
+    meio_id = models.AutoField(primary_key=True)
+    pedido = models.ForeignKey(PedidoCompra, on_delete=models.CASCADE, related_name="meios_pagamento", verbose_name=_("Pedido"))
+    ordem = models.PositiveSmallIntegerField(default=1, verbose_name=_("Ordem"))
+    tipo = models.CharField(max_length=16, choices=Tipo.choices, verbose_name=_("Meio de pagamento"))
+    valor = models.DecimalField(max_digits=15, decimal_places=2, verbose_name=_("Valor (R$)"))
+    parcelas = models.PositiveSmallIntegerField(default=1, verbose_name=_("Parcelas"))
+    primeiro_vencimento = models.DateField(verbose_name=_("1º vencimento"))
+    # "30/60/90" do comércio: dias corridos entre as parcelas, como o fornecedor fala.
+    intervalo_dias = models.PositiveSmallIntegerField(default=30, verbose_name=_("Dias entre parcelas"))
+    descricao = models.CharField(max_length=200, blank=True, verbose_name=_("Descrição"),
+                                 help_text=_("Banco e nº dos cheques, bandeira do cartão, o que explica o meio."))
+
+    class Meta:
+        verbose_name = _("Meio de pagamento do pedido (SCM)")
+        verbose_name_plural = _("Meios de pagamento do pedido (SCM)")
+        ordering = ["pedido", "ordem", "meio_id"]
+
+    def __str__(self):
+        return f"{self.get_tipo_display()} — R$ {self.valor}"
+
+
+class ParcelaPedido(TenantScopedModel):
+    """Uma parcela de um meio — e o título do ERP que ela gerou."""
+
+    parcela_id = models.AutoField(primary_key=True)
+    meio = models.ForeignKey(MeioPagamentoPedido, on_delete=models.CASCADE, related_name="parcelas_geradas", verbose_name=_("Meio"))
+    numero = models.PositiveSmallIntegerField(verbose_name=_("Parcela nº"))
+    vencimento = models.DateField(verbose_name=_("Vencimento"))
+    valor = models.DecimalField(max_digits=15, decimal_places=2, verbose_name=_("Valor"))
+    # Seam frouxo p/ o ERP (sem FK), como `PedidoCompra.conta_pagar_ref`.
+    conta_pagar_ref = models.PositiveIntegerField(null=True, blank=True, verbose_name=_("Título no ERP"))
+
+    class Meta:
+        verbose_name = _("Parcela do pedido (SCM)")
+        verbose_name_plural = _("Parcelas do pedido (SCM)")
+        ordering = ["meio", "numero"]
+
+    def __str__(self):
+        return f"{self.meio} · {self.numero}"
+
+
+class NotaFiscalCompra(TenantScopedModel):
+    """A NF-e de uma compra — que pode nascer **só com o número**.
+
+    *Dono, 11/10/2026:* "caso tenha só o número vai para o ERP com o número e fica
+    aguardando o documento, e quando coloca o documento compara se o número está
+    certo". Por isso ela mora aqui e não no `moduloerp.NotaFiscal` (que exige o
+    XML e um empreendimento): aqui a nota existe antes do documento.
+
+    A conferência (`moduloscm.notas`) olha número, série, CNPJ do emitente e,
+    com o XML, o valor. Tudo o que não bate fica em `divergencias`, com a frase
+    que a tela mostra e o ERP anota.
+    """
+
+    class Situacao(models.TextChoices):
+        AGUARDANDO_DOCUMENTO = "aguardando_documento", _("Aguardando documento")
+        CONFERIDA = "conferida", _("Conferida")
+        DIVERGENTE = "divergente", _("Divergente")
+
+    nota_id = models.AutoField(primary_key=True)
+    pedido = models.ForeignKey(PedidoCompra, on_delete=models.CASCADE, related_name="notas_fiscais", verbose_name=_("Pedido"))
+    recebimento = models.ForeignKey(
+        Recebimento, on_delete=models.SET_NULL, null=True, blank=True, related_name="notas_fiscais", verbose_name=_("Recebimento"),
+    )
+    numero = models.CharField(max_length=20, verbose_name=_("Número"))
+    serie = models.CharField(max_length=3, blank=True, verbose_name=_("Série"))
+    chave_acesso = models.CharField(max_length=44, blank=True, verbose_name=_("Chave de acesso"))
+    data_emissao = models.DateField(null=True, blank=True, verbose_name=_("Emissão"))
+    valor_total = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True, verbose_name=_("Valor da nota"))
+    emitente_cnpj = models.CharField(max_length=14, blank=True, verbose_name=_("CNPJ do emitente"))
+    emitente_nome = models.CharField(max_length=255, blank=True, verbose_name=_("Emitente"))
+    arquivo_xml = models.FileField(upload_to="scm/nfe/xml/%Y/%m/", null=True, blank=True, verbose_name=_("XML"))
+    arquivo_pdf = models.FileField(upload_to="scm/nfe/pdf/%Y/%m/", null=True, blank=True, verbose_name=_("DANFE (PDF)"))
+    situacao = models.CharField(max_length=20, choices=Situacao.choices, default=Situacao.AGUARDANDO_DOCUMENTO, verbose_name=_("Situação"))
+    divergencias = models.JSONField(default=list, blank=True, verbose_name=_("Divergências"))
+    duplicatas = models.JSONField(default=list, blank=True, verbose_name=_("Duplicatas do XML"))
+    conferida_em = models.DateTimeField(null=True, blank=True, verbose_name=_("Conferida em"))
+    criado_em = models.DateTimeField(auto_now_add=True, verbose_name=_("Lançada em"))
+    criado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+
+    class Meta:
+        verbose_name = _("NF-e da compra (SCM)")
+        verbose_name_plural = _("NF-e das compras (SCM)")
+        ordering = ["-criado_em"]
+
+    def __str__(self):
+        return f"NF-e {self.numero} (pedido {self.pedido_id})"
+
+
+class EventoPedido(TenantScopedModel):
+    """O histórico do pedido — e o que dele vai ao ERP.
+
+    Edição, divergência de recebimento, nota e cobrança ficam aqui **e** viram
+    anotação nos títulos do pedido. O registro mora no SCM porque o pedido pode
+    mudar antes de ter título (cobrança ainda não definida); quando os títulos
+    nascem, a trilha anterior é copiada para eles (`moduloscm.financeiro`), e o
+    financeiro não recebe um título sem a história.
+    """
+
+    class Tipo(models.TextChoices):
+        CRIADO = "criado", _("Pedido criado")
+        EDICAO = "edicao", _("Pedido editado")
+        ENVIO = "envio", _("Enviado ao fornecedor")
+        RECEBIMENTO = "recebimento", _("Recebimento")
+        DIVERGENCIA = "divergencia", _("Divergência no recebimento")
+        NFE = "nfe", _("NF-e")
+        COBRANCA = "cobranca", _("Cobrança")
+        CANCELAMENTO = "cancelamento", _("Cancelamento")
+
+    evento_id = models.AutoField(primary_key=True)
+    pedido = models.ForeignKey(PedidoCompra, on_delete=models.CASCADE, related_name="eventos", verbose_name=_("Pedido"))
+    tipo = models.CharField(max_length=12, choices=Tipo.choices, verbose_name=_("Tipo"))
+    texto = models.TextField(verbose_name=_("Texto"))
+    valor = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True, verbose_name=_("Valor envolvido"))
+    #: Vai ao ERP como anotação dos títulos (o que mexe no que se paga).
+    vai_ao_erp = models.BooleanField(default=False, verbose_name=_("Anotado no ERP"))
+    autor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    criado_em = models.DateTimeField(auto_now_add=True, verbose_name=_("Quando"))
+
+    class Meta:
+        verbose_name = _("Evento do pedido (SCM)")
+        verbose_name_plural = _("Eventos do pedido (SCM)")
+        ordering = ["-criado_em", "-evento_id"]
+
+    def __str__(self):
+        return f"Pedido {self.pedido_id} · {self.get_tipo_display()}"
 
 
 class AvaliacaoFornecedor(TenantScopedModel):
