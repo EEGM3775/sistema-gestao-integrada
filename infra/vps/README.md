@@ -14,7 +14,7 @@ Topologia do staging (modo produção) numa máquina só, **sem o drone**, com e
 ## Ordem
 
 1. **Cloudflare (painel):** Zero Trust → Networks → Tunnels → criar túnel → copiar o token →
-   *Public Hostname*: `www.gmaxis.com` → serviço `HTTP` `gateway:80`. O DNS do `app` é criado sozinho.
+   *Public Hostname*: `www.gmaxis.com` → serviço `HTTP` `gateway:80`. O DNS do `www` é criado sozinho.
 2. **Servidor:** `git clone` em `/opt/sgi` (branch `drone-no-repositorio`), depois
    `bash infra/vps/bootstrap.sh`, `CLOUDFLARE_TUNNEL_TOKEN=… bash infra/vps/gerar-env.sh`,
    `bash infra/vps/up.sh`, `bash infra/vps/criar-admin.sh`.
