@@ -882,12 +882,13 @@ def custo_do_plano(cronograma: Cronograma) -> dict:
     except ImportError:  # pragma: no cover
         pass
 
-    # Medido — medições aprovadas da obra.
-    from .models import ItemMedicao, Medicao
+    # Medido — medições aprovadas dos contratos de empreiteiro (a do contrato
+    # de receita é faturamento ao contratante, não custo).
+    from .models import ItemMedicao, LadoContrato, Medicao
 
     for atividade_codigo, item_orcado_id, qtd, preco in ItemMedicao.objects.filter(
         tenant_id=tenant_id, medicao__status=Medicao.Status.APROVADA,
-        medicao__contrato__obra_id=obra_id,
+        medicao__contrato__obra_id=obra_id, medicao__contrato__lado=LadoContrato.CUSTO,
     ).values_list("item_contrato__atividade__codigo", "item_contrato__item_orcado_id", "quantidade", "preco_unitario"):
         valor = (qtd or ZERO) * (preco or ZERO)
         if atividade_codigo and atividade_codigo in por_codigo:
