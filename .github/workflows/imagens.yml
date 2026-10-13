@@ -66,7 +66,7 @@ jobs:
             contexto: funcoesODM/docker/potree-converter
             dockerfile: funcoesODM/docker/potree-converter/Dockerfile
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           # No `workflow_run`, o commit que o CI aprovou — não o topo da main
           # neste instante, que pode já ser outro.
