@@ -4,7 +4,7 @@ import { Btn, Modal, Num, Pill } from '@/components/malha'
 import { dateToBR } from '@/utils/dates'
 import { FieldError, FormErrorBanner, parseApiErrors, type FieldErrors } from '@/utils/formErrors'
 import { percentual } from '../formato'
-import { hojeIso, intervaloDaSemana } from '../semana'
+import { cumpridoDoCartao, hojeIso, intervaloDaSemana } from '../semana'
 import type { ItemProgramacao, ProgramacaoSemanal, ResumoDoPpc } from '../types'
 import type { Julgamento } from './QuadroDaSemana'
 
@@ -39,7 +39,7 @@ export function DialogoDeEncerramento({
 
   const decididos = itens.map((item) => ({
     item,
-    cumprido: julgamentos[item.item_programacao_id]?.cumprido ?? item.cumprido,
+    cumprido: cumpridoDoCartao(item, julgamentos[item.item_programacao_id]),
     causa: julgamentos[item.item_programacao_id]?.causa ?? item.causa,
   }))
   const sairam = decididos.filter((d) => d.cumprido === true)
