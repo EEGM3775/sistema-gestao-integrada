@@ -1,14 +1,11 @@
-import { useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Activity, CalendarDays, LayoutDashboard, LayoutGrid, ListChecks } from 'lucide-react'
+import { Activity, CalendarDays, LayoutDashboard, ListChecks } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { Quarteirao } from '@/components/brand/Quarteirao'
-import { acessoDoModulo, CATALOGO } from './home/catalogo'
 import { useHomeResumo } from './home/useHomeResumo'
 import { TabVisaoGeral } from './home/TabVisaoGeral'
 import { TabDecisoes } from './home/TabDecisoes'
 import { TabAgenda } from './home/TabAgenda'
-import { TabModulos } from './home/TabModulos'
 import { TabAtividade } from './home/TabAtividade'
 
 /**
@@ -31,14 +28,13 @@ const ABAS = [
   { id: 'visao', label: 'Visão geral', icon: LayoutDashboard },
   { id: 'decisoes', label: 'Requer decisão', icon: ListChecks },
   { id: 'agenda', label: 'Agenda', icon: CalendarDays },
-  { id: 'modulos', label: 'Módulos', icon: LayoutGrid },
   { id: 'atividade', label: 'Atividade', icon: Activity },
 ] as const
 
 type AbaId = (typeof ABAS)[number]['id']
 
 export default function AppHomePage() {
-  const { user, hasModule, isTenantAdmin } = useAuth()
+  const { user } = useAuth()
   const [params, setParams] = useSearchParams()
   const r = useHomeResumo()
 
@@ -53,12 +49,6 @@ export default function AppHomePage() {
     month: 'long',
     year: 'numeric',
   })
-
-  // Quantos módulos este usuário realmente abre — número honesto do farol.
-  const disponiveis = useMemo(
-    () => CATALOGO.filter((m) => acessoDoModulo(m, hasModule, isTenantAdmin).pode).length,
-    [hasModule, isTenantAdmin],
-  )
 
   const temFonteOperacional = r.fontes.erp || r.fontes.scm || r.fontes.sil || r.fontes.pdca
 
@@ -145,7 +135,6 @@ export default function AppHomePage() {
             label="compromissos em 7 dias"
             onClick={() => irPara('agenda')}
           />
-          <NumeroVivo valor={disponiveis} label="módulos disponíveis" onClick={() => irPara('modulos')} />
         </div>
       </header>
 
@@ -217,7 +206,6 @@ export default function AppHomePage() {
         {abaAtual === 'agenda' && (
           <TabAgenda eventos={r.agenda.data} carregando={r.agenda.isLoading} erro={r.agenda.isError} />
         )}
-        {abaAtual === 'modulos' && <TabModulos />}
         {abaAtual === 'atividade' && (
           <TabAtividade fatos={r.atividade} temFonte={r.fontes.scm || r.fontes.sil} />
         )}

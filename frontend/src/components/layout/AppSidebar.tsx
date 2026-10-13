@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Building2, HardHat, Users, Truck,
   BarChart3, UserCog, TrendingUp, Brain, Plane, Package,
-  PanelLeft, Lock, ShieldCheck, Network, Warehouse, Calculator, DatabaseZap,
+  PanelLeft, Lock, ShieldCheck, Warehouse, Calculator, DatabaseZap,
   GanttChartSquare, Trash2, FileSignature,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
@@ -108,12 +108,6 @@ const NAV_SECTIONS: NavSection[] = [
     label: 'Sistema',
     items: [
       { label: 'Bases oficiais', icon: <DatabaseZap />, to: '/app/sistema/bases', platformOnly: true, implemented: true },
-    ],
-  },
-  {
-    label: 'Ecossistema',
-    items: [
-      { label: 'Esfera de Rede', icon: <Network />, to: '/app/rede', implemented: false, badge: { text: 'H2', kind: 'soon' } },
     ],
   },
 ]

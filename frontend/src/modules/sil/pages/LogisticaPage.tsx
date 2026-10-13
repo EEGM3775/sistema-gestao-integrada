@@ -1,22 +1,22 @@
 import { useState, type ReactNode } from 'react'
 import {
-  LayoutDashboard, ArrowLeftRight, ClipboardList, ClipboardCheck, Network,
+  LayoutDashboard, ArrowLeftRight, ClipboardList, ClipboardCheck,
   Warehouse, RotateCcw, ShieldCheck, Hammer, Layers, TrendingUp, Activity, Check, Lock,
 } from 'lucide-react'
 import { SilStyles, type Say } from '../ui'
 import { Cockpit, Almoxarifados, Movimentacoes, Requisicoes, Logistica, Inventario } from '../tabs/operacao'
 import { EPI, Ferramentaria } from '../tabs/pessoas'
-import { CurvaABC, CustoPorObra, GiroRuptura, Rede } from '../tabs/gestao'
+import { CurvaABC, CustoPorObra, GiroRuptura } from '../tabs/gestao'
 
 type Modo = 'operacao' | 'gestao'
 type TabId =
   | 'cockpit' | 'almoxarifados' | 'movimentacoes' | 'requisicoes' | 'logistica' | 'inventario' | 'epi' | 'ferramentaria'
-  | 'abc' | 'custo' | 'giro' | 'rede'
+  | 'abc' | 'custo' | 'giro'
 
 interface TabDef { id: TabId; label: string; icon: ReactNode; locked?: boolean }
 const TABS: Record<Modo, TabDef[]> = {
   operacao: [
-    { id: 'cockpit', label: 'Cockpit', icon: <LayoutDashboard size={15} /> },
+    { id: 'cockpit', label: 'Painel', icon: <LayoutDashboard size={15} /> },
     { id: 'almoxarifados', label: 'Almoxarifados', icon: <Warehouse size={15} /> },
     { id: 'movimentacoes', label: 'Movimentações', icon: <ArrowLeftRight size={15} /> },
     { id: 'requisicoes', label: 'Requisições', icon: <ClipboardList size={15} /> },
@@ -29,13 +29,12 @@ const TABS: Record<Modo, TabDef[]> = {
     { id: 'abc', label: 'Curva ABC', icon: <Layers size={15} /> },
     { id: 'custo', label: 'Custo por obra', icon: <TrendingUp size={15} /> },
     { id: 'giro', label: 'Giro & Ruptura', icon: <Activity size={15} /> },
-    { id: 'rede', label: 'Esfera de Rede', icon: <Network size={15} />, locked: true },
   ],
 }
 const MODO_DE: Record<TabId, Modo> = {
   cockpit: 'operacao', almoxarifados: 'operacao', movimentacoes: 'operacao', requisicoes: 'operacao',
   logistica: 'operacao', inventario: 'operacao', epi: 'operacao', ferramentaria: 'operacao',
-  abc: 'gestao', custo: 'gestao', giro: 'gestao', rede: 'gestao',
+  abc: 'gestao', custo: 'gestao', giro: 'gestao',
 }
 
 let toastTimer: number | undefined
@@ -94,7 +93,6 @@ export default function LogisticaPage() {
         {tab === 'abc' && <CurvaABC />}
         {tab === 'custo' && <CustoPorObra />}
         {tab === 'giro' && <GiroRuptura say={say} />}
-        {tab === 'rede' && <Rede />}
       </div>
 
       {toast && <div style={{ position: 'fixed', bottom: 24, left: '50%', background: 'var(--ink)', color: 'var(--surface)', padding: '12px 18px', borderRadius: 11, fontSize: 13.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 10, zIndex: 100, boxShadow: 'var(--shadow-lg)', animation: 'silToast .28s cubic-bezier(.2,.7,.2,1) both' }}><Check size={17} style={{ color: 'var(--good)' }} />{toast}</div>}

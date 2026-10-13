@@ -48,7 +48,7 @@ export function EPI({ say }: { say: Say }) {
     <>
       <div style={{ display: 'flex', gap: 12, padding: '13px 16px', borderRadius: 'var(--r-md)', background: 'var(--info-soft)', border: '1px solid color-mix(in srgb,var(--info) 30%,var(--line))', marginBottom: 4 }}>
         <ShieldCheck size={20} style={{ color: 'var(--info-ink)', flex: 'none' }} />
-        <span style={{ fontSize: 12.5, color: 'var(--info-ink)', lineHeight: 1.5 }}><b>NR-6:</b> a entrega de EPI é a prova trabalhista. Cada linha registra <b>quem recebeu</b>, o <b>CA</b> e sua validade, e a devolução/troca. EPI com CA vencido ou troca prevista aparece na fila do cockpit.</span>
+        <span style={{ fontSize: 12.5, color: 'var(--info-ink)', lineHeight: 1.5 }}><b>NR-6:</b> a entrega de EPI é a prova trabalhista. Cada linha registra <b>quem recebeu</b>, o <b>CA</b> e sua validade, e a devolução/troca. EPI com CA vencido ou troca prevista aparece na fila do painel.</span>
       </div>
       <SectHead right={podeEditar ? <Btn variant="primary" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => setNova(true)}><Plus size={14} /> Registrar entrega</Btn> : undefined}>Entregas de EPI</SectHead>
       {isLoading ? <Loading /> : rows.length === 0 ? <Empty>Nenhuma entrega de EPI registrada.</Empty> : (
