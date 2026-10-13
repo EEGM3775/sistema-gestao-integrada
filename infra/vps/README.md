@@ -10,6 +10,7 @@ Topologia do staging (modo produção) numa máquina só, **sem o drone**, com e
 | `gerar-env.sh` | cria `deploy/env/vps.env` com segredos fortes (pede só o token do túnel) |
 | `up.sh` | builda e sobe; reexecute após cada atualização de código |
 | `criar-admin.sh` | cria a empresa e o admin com senha forte (sem as senhas da demo) |
+| `criar-equipe-avaliacao.sh` | cria uma empresa de avaliação com um usuário por área (`admin`, `contas`, `obras`, `engenharia`, `compras`, `carteira` `@<slug>`); papéis em `criar_equipe.py` |
 
 ## Ordem
 
@@ -30,3 +31,7 @@ Topologia do staging (modo produção) numa máquina só, **sem o drone**, com e
 - Os e-mails do sistema caem no mailpit (só no loopback): `ssh -L 8025:127.0.0.1:8025 root@IP` e abra
   `http://localhost:8025`. Para enviar e-mail de verdade, troque `MAIL_*` no `vps.env` por um SMTP real.
 - Os dados da demo (`demo/demo123`, `dono/dono123`) **não** são semeados: a internet não pode ter senha conhecida.
+- Empresa de avaliação (ex.: investidor): `bash infra/vps/criar-equipe-avaliacao.sh taluma "Taluma"` — a senha
+  é pedida no terminal. Terminada a avaliação, desative as contas no shell do IAM:
+  `for u in Usuario.objects.filter(tenant__slug="taluma"): u.is_active = False; u.save()` (o `save()`
+  dispara a revogação das sessões; o `.update()` não).
