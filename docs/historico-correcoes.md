@@ -10,6 +10,40 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D290 — o contrato com o cliente entrava no custo da obra · ✅ corrigido 13/10/2026
+
+Relato do dono: o contrato 03 (R$ 30.000, vigente) aparecia no Controle › Custo como *"conta no
+comprometido"* — mas é o contrato com o **cliente**, o serviço que a empresa executa.
+
+**Causa.** O `ContratoObra` ganhou o `lado` (custo × receita) em 10/10/2026, mas as leituras de custo
+não passaram a filtrá-lo: `controle.contratos_comprometidos` somava todo contrato vigente no
+comprometido, e `controle.medido_por_etapa` e o "medido" por atividade (`suprimentos.py`) somavam a
+medição aprovada de qualquer contrato como custo incorrido — o faturamento ao contratante virava
+gasto, e o IDC/custo final saíam errados.
+
+**Correção.** As três leituras filtram `lado=custo`. Teste:
+`test_controle.ColunasTests.test_contrato_com_o_contratante_nao_e_custo`.
+
+### D289 — a semana assumida antes de um replanejamento não fechava · ✅ corrigido 13/10/2026
+
+Relato do dono: não conseguia fechar a semana 05–11/10 (Plano › Controle › Semana).
+
+**Causas.**
+- O cartão fica preso à atividade da versão do plano em que foi puxado. Publicada uma versão nova,
+  aquela vira `substituído`, e julgar pelo % concluído lançava o avanço **nela** — recusado por
+  `validar_apontamento` (*"só o cronograma vigente recebe apontamento… publique o plano"*, com o plano
+  publicado). O julgamento ia antes do encerramento, então a semana não encerrava. O "atual" do
+  julgamento e a prova "apontou" do cartão também liam só a cadeia da versão antiga.
+- Na tela, o cartão salvo abaixo da meta e sem causa voltava neutro (o servidor o guarda "por
+  julgar") e **escondia o campo da causa** — só redigitando o % ele reaparecia; o diálogo de
+  encerramento o contava como "por julgar" em vez de "sem causa".
+
+**Correção.** `_versao_vigente_de` / `_atividade_vigente` (services): o avanço do julgamento vai para a
+mesma atividade (pelo código) na versão em vigor; `andamento_dos_itens` e `avanco_apontado_dos_itens`
+leem a cadeia da vigente; o arrasto cria o cartão da semana seguinte na versão em vigor. Na tela,
+`cumpridoDoCartao` (`pdca/semana.ts`) deriva o "não saiu" do % contra a meta. Testes:
+`test_semana_replanejada.py`.
+
 ### D288 — o Maps mostrava o território, mas não deixava mexer nele · ✅ corrigido 12/10/2026
 
 Relato do dono, itens 62–70: *"Em maps tá sem API KEY"*; *"não entendi o que é Território… deveria
