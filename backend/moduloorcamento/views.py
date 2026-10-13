@@ -48,7 +48,7 @@ from payment import planos
 from . import (
     bancos as servico_bancos,
     carga,
-    controle,
+    cronograma as servico_cronograma,
     duplicacao,
     edicao,
     encargos,
@@ -59,7 +59,6 @@ from . import (
     planilha,
     precificacao,
     quantitativos,
-    reajuste,
     reprecificacao as servico_reprecificacao,
     services,
     tasks,
@@ -73,8 +72,6 @@ from .models import (
     ComposicaoEncargos,
     Fonte,
     FonteOficial,
-    FormulaReajuste,
-    IndiceEconomico,
     InsumoReferencia,
     ItemBancoPreco,
     ItemOrcado,
@@ -85,12 +82,11 @@ from .models import (
     Orcamento,
     ParametroObra,
     ParcelaEtapa,
-    ParcelaFormulaReajuste,
+    PlanoEtapa,
     PastaComposicao,
     PavimentoObra,
     Reprecificacao,
     RubricaEncargos,
-    ValorIndice,
     RevisaoOrcamento,
     UnidadeAutonoma,
 )
@@ -104,8 +100,6 @@ from .serializers import (
     ComposicaoEncargosSerializer,
     ComposicaoReferenciaItemSerializer,
     FonteOficialSerializer,
-    FormulaReajusteSerializer,
-    IndiceEconomicoSerializer,
     InsumoReferenciaSerializer,
     ItemBancoPrecoSerializer,
     ItemOrcadoInsumoSerializer,
@@ -116,14 +110,12 @@ from .serializers import (
     OrcamentoSerializer,
     ParametroObraSerializer,
     ParcelaEtapaSerializer,
-    ParcelaFormulaReajusteSerializer,
     PastaComposicaoSerializer,
     PavimentoObraSerializer,
     ReprecificacaoSerializer,
     RevisaoOrcamentoSerializer,
     RubricaEncargosSerializer,
     UnidadeAutonomaSerializer,
-    ValorIndiceSerializer,
 )
 
 MODULO = "orcamento"
@@ -738,7 +730,16 @@ class _PeriodoSerializer(serializers.Serializer):
 
     inicio = serializers.DateField()
     fim = serializers.DateField()
-    etapa = serializers.IntegerField(required=False, allow_null=True)
+    curva = serializers.ChoiceField(choices=PlanoEtapa.Curva.choices, required=False)
+    so_sem_plano = serializers.BooleanField(required=False, default=False)
+
+
+class _PlanoEtapaSerializer(serializers.Serializer):
+    grupo = serializers.IntegerField()
+    inicio = serializers.DateField()
+    termino = serializers.DateField()
+    curva = serializers.ChoiceField(choices=PlanoEtapa.Curva.choices, required=False)
+    observacao = serializers.CharField(required=False, allow_blank=True, max_length=255)
 
 
 class DocumentoFechado(exceptions.APIException):
@@ -794,8 +795,10 @@ class OrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.
         "curva_abc": "orcamento.relatorio.view",
         "por_categoria": "orcamento.relatorio.view",
         "cronograma": "orcamento.relatorio.view",
-        "curva_s": "orcamento.relatorio.view",
         "distribuir_cronograma": "orcamento.orcamento.edit",
+        "planejar_etapa": "orcamento.orcamento.edit",
+        "remover_etapa": "orcamento.orcamento.edit",
+        "vincular_etapa": "orcamento.orcamento.edit",
         # ORC.5b. Duplicar cria planilha nova → `.edit`; reprecificar mexe no
         # preço da régua, também `.edit`. Exportar é leitura de relatório.
         # Nenhuma permissão nova: ver §12.1 da planta — permissão nova exige
@@ -809,6 +812,9 @@ class OrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.
         # ORC.7 — quatro leituras novas, todas relatório. Continuam sem
         # permissão nova pelo mesmo motivo de sempre.
         "relacao_insumos": "orcamento.relatorio.view",
+        # Gera a memória de cálculo das linhas (o mesmo verbo do `explodir` da
+        # linha), sem tocar preço.
+        "explodir_pendentes": "orcamento.item.edit",
         "curva_abc_insumos": "orcamento.relatorio.view",
         "desembolso_insumos": "orcamento.relatorio.view",
         "cobertura_medicao": "orcamento.relatorio.view",
@@ -968,6 +974,13 @@ class OrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.
             self.get_object(), categoria=request.query_params.get("categoria") or None,
         ))
 
+    @action(detail=True, methods=["post"], url_path="explodir-pendentes")
+    def explodir_pendentes(self, request, pk=None):
+        """Abre de uma vez as composições que faltam, **sem mexer no preço** —
+        o gesto que o comprador fazia linha a linha, indo e voltando."""
+        resultado = precificacao.explodir_pendentes(self.get_object())
+        return Response(resultado)
+
     @action(detail=True, methods=["get"], url_path="curva-abc-insumos")
     def curva_abc_insumos(self, request, pk=None):
         """Curva ABC **de insumos** — onde negociar preço.
@@ -981,7 +994,7 @@ class OrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.
     @action(detail=True, methods=["get"], url_path="desembolso-insumos")
     def desembolso_insumos(self, request, pk=None):
         """Quanto de cada insumo cai em cada mês, herdando o cronograma da etapa."""
-        return Response(controle.desembolso_por_insumo(
+        return Response(servico_cronograma.desembolso_por_insumo(
             self.get_object(), categoria=request.query_params.get("categoria") or None,
         ))
 
@@ -1000,52 +1013,76 @@ class OrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.
         """
         return Response(precificacao.curva_abc(self.get_object()))
 
-    # --- ORC.3: cronograma e curva S ---
+    # --- Cronograma físico-financeiro, por etapa (decisão do dono, 10/10/2026) ---
 
     @action(detail=True, methods=["get"], url_path="cronograma")
     def cronograma(self, request, pk=None):
-        """A grade do cronograma físico-financeiro + conferência dos 100%."""
+        """As etapas planejadas, a grade etapa × mês, o desembolso mensal e a
+        conferência dos 100% — tudo numa chamada."""
+        return Response(servico_cronograma.cronograma(self.get_object()))
+
+    def _escrever_cronograma(self, gesto, *, criado=False):
         orcamento = self.get_object()
-        dados = controle.cronograma(orcamento)
-        dados["validacao"] = controle.validar_cronograma(orcamento)
-        return Response(dados)
+        try:
+            gesto(orcamento)
+        except servico_cronograma.CronogramaFechado as exc:
+            raise DocumentoFechado(str(exc)) from exc
+        except servico_cronograma.CronogramaInvalido as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            servico_cronograma.cronograma(orcamento),
+            status=status.HTTP_201_CREATED if criado else status.HTTP_200_OK,
+        )
 
     @action(detail=True, methods=["post"], url_path="distribuir-cronograma")
     def distribuir_cronograma(self, request, pk=None):
-        """Gera o cronograma linear de partida entre duas competências.
-
-        Ponto de partida editável, não verdade — é assim que as ferramentas do
-        mercado funcionam: gera-se o linear e o planejador ajusta.
-        """
-        orcamento = self.get_object()
-        _exigir_editavel(orcamento)
+        """Ponto de partida: o mesmo período e a mesma curva para toda etapa com
+        valor (ou só para as ainda não planejadas, com `so_sem_plano`). O ajuste
+        é etapa a etapa, em `planejar-etapa/`."""
         serializer = _PeriodoSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        etapa_id = serializer.validated_data.get("etapa")
+        dados = serializer.validated_data
+        return self._escrever_cronograma(lambda orc: servico_cronograma.planejar_todas(
+            orc, inicio=dados["inicio"], termino=dados["fim"],
+            curva=dados.get("curva") or PlanoEtapa.Curva.LINEAR,
+            so_sem_plano=dados.get("so_sem_plano", False),
+        ), criado=True)
 
-        etapa = None
-        if etapa_id:
-            etapa = ParcelaEtapa.etapa.field.related_model.objects.filter(
-                tenant_id=self._tenant_id(), pk=etapa_id, obra_id=orcamento.obra_id
-            ).first()
-            if etapa is None:
-                return Response(
-                    {"etapa": "Etapa não encontrada nesta obra."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
-        try:
-            controle.distribuir_linear(
-                orcamento, inicio=serializer.validated_data["inicio"],
-                fim=serializer.validated_data["fim"], etapa=etapa,
-            )
-        except controle.CronogramaInvalido as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(controle.cronograma(orcamento), status=status.HTTP_201_CREATED)
+    @action(detail=True, methods=["post"], url_path="planejar-etapa")
+    def planejar_etapa(self, request, pk=None):
+        """Início, término e curva de uma etapa — a grade dela é refeita."""
+        serializer = _PlanoEtapaSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        dados = serializer.validated_data
+        return self._escrever_cronograma(lambda orc: servico_cronograma.planejar_etapa(
+            orc, grupo_id=dados["grupo"], inicio=dados["inicio"], termino=dados["termino"],
+            curva=dados.get("curva") or PlanoEtapa.Curva.LINEAR,
+            observacao=dados.get("observacao", ""),
+        ))
 
-    @action(detail=True, methods=["get"], url_path="curva-s")
-    def curva_s(self, request, pk=None):
-        """Previsto acumulado × realizado acumulado, mês a mês."""
-        return Response(controle.curva_s(self.get_object()))
+    @action(detail=True, methods=["post"], url_path="remover-etapa")
+    def remover_etapa(self, request, pk=None):
+        """Tira a etapa do cronograma (plano e células)."""
+        grupo = request.data.get("grupo")
+        if not str(grupo or "").isdigit():
+            return Response({"grupo": "Informe a etapa."}, status=status.HTTP_400_BAD_REQUEST)
+        return self._escrever_cronograma(
+            lambda orc: servico_cronograma.remover_etapa(orc, grupo_id=int(grupo))
+        )
+
+    @action(detail=True, methods=["post"], url_path="vincular-etapa")
+    def vincular_etapa(self, request, pk=None):
+        """Liga a etapa do orçamento a uma etapa da obra — ou desliga (`etapa`
+        nula). Opcional: o cronograma não depende disso; serve para o orçado
+        casar com o aplicado do SIL e com o plano do PDCA."""
+        grupo, etapa = request.data.get("grupo"), request.data.get("etapa")
+        if not str(grupo or "").isdigit():
+            return Response({"grupo": "Informe a etapa do orçamento."}, status=status.HTTP_400_BAD_REQUEST)
+        if etapa not in (None, "") and not str(etapa).isdigit():
+            return Response({"etapa": "Etapa da obra inválida."}, status=status.HTTP_400_BAD_REQUEST)
+        return self._escrever_cronograma(lambda orc: servico_cronograma.vincular_etapa_da_obra(
+            orc, grupo_id=int(grupo), etapa_id=int(etapa) if etapa not in (None, "") else None,
+        ))
 
     @action(detail=True, methods=["post"], url_path="destravar")
     def destravar(self, request, pk=None):
@@ -1242,7 +1279,7 @@ class OrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.
                 nome = exportacao.nome_do_arquivo(orcamento, sufixo="carta-proposta", extensao="pdf")
                 tipo = "application/pdf"
             elif peca == "cronograma":
-                dados = controle.cronograma(orcamento)
+                dados = servico_cronograma.grade(orcamento)
                 conteudo = exportacao.cronograma_xlsx(orcamento, dados)
                 nome = exportacao.nome_do_arquivo(orcamento, sufixo="cronograma", extensao="xlsx")
                 tipo = XLSX
@@ -1699,61 +1736,49 @@ class ComposicaoBDIViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, views
 
 
 class ParcelaEtapaViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
-    """Células do cronograma — edição fina depois da distribuição linear.
+    """Células do cronograma — a edição fina, célula a célula.
 
-    Cada escrita reconverte percentuais em dinheiro. Não travamos a soma em
-    100%: um cronograma em construção passa por estados inconsistentes, e a
-    conferência é informada em `cronograma/`, não imposta na digitação.
+    Cada escrita reconverte percentuais em dinheiro e passa a curva da etapa
+    para **manual**: a célula ajustada à mão não pode ser apagada pela próxima
+    mudança de data. Não travamos a soma em 100% — um cronograma em construção
+    passa por estados inconsistentes, e a conferência é informada em
+    `cronograma/`, não imposta na digitação.
     """
 
-    queryset = ParcelaEtapa.objects.select_related("orcamento", "etapa").all()
+    queryset = ParcelaEtapa.objects.select_related("orcamento", "grupo").all()
     serializer_class = ParcelaEtapaSerializer
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ["orcamento", "etapa", "competencia"]
+    filterset_fields = ["orcamento", "grupo", "competencia"]
     ordering_fields = ["competencia", "percentual"]
     required_resource = "orcamento.item"
 
+    @staticmethod
+    def _exigir_cronograma_editavel(orcamento):
+        try:
+            servico_cronograma.exigir_cronograma_editavel(orcamento)
+        except servico_cronograma.CronogramaFechado as exc:
+            raise DocumentoFechado(str(exc)) from exc
+
+    def _depois(self, orcamento, grupo_id):
+        servico_cronograma.marcar_manual(orcamento, grupo_id)
+        servico_cronograma.recalcular_parcelas(orcamento)
+        servico_cronograma.carimbar(orcamento)
+
     def perform_create(self, serializer):
-        _exigir_editavel(serializer.validated_data.get("orcamento"))
+        self._exigir_cronograma_editavel(serializer.validated_data.get("orcamento"))
         super().perform_create(serializer)
-        controle.recalcular_parcelas(serializer.instance.orcamento)
+        self._depois(serializer.instance.orcamento, serializer.instance.grupo_id)
 
     def perform_update(self, serializer):
-        _exigir_editavel(serializer.instance.orcamento)
+        self._exigir_cronograma_editavel(serializer.instance.orcamento)
         super().perform_update(serializer)
-        controle.recalcular_parcelas(serializer.instance.orcamento)
+        self._depois(serializer.instance.orcamento, serializer.instance.grupo_id)
 
     def perform_destroy(self, instance):
-        orcamento = instance.orcamento
-        _exigir_editavel(orcamento)
+        orcamento, grupo_id = instance.orcamento, instance.grupo_id
+        self._exigir_cronograma_editavel(orcamento)
         instance.delete()
-        controle.recalcular_parcelas(orcamento)
-
-
-class ControleDeCustoView(views.APIView):
-    """As quatro colunas: orçado × comprometido × aplicado × realizado.
-
-    O cockpit do módulo — e o lugar onde a integração entre SCM, SIL, ERP e
-    Orçamento aparece num número só. `?obra=` filtra uma obra.
-    """
-
-    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
-    required_module = MODULO
-    required_permission = "orcamento.relatorio.view"
-
-    def get(self, request):
-        tenant_id = getattr(getattr(request, "user", None), "tenant_id", None)
-        obra = request.query_params.get("obra")
-        linhas = controle.quatro_colunas(tenant_id, obra or None)
-        return Response({
-            "obras": linhas,
-            # A tela precisa saber o que a coluna cobre para não apresentar um
-            # número parcial como total — ver a nota em controle.py.
-            "nota_realizado": (
-                "Realizado cobre toda despesa do ERP atribuída à obra — pela obra da conta "
-                "ou pelo rateio a centro de custo da obra. Conta sem obra fica de fora."
-            ),
-        })
+        self._depois(orcamento, grupo_id)
 
 
 # ---------------------------------------------------------------------------
@@ -2280,123 +2305,6 @@ class LinhaMedicaoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewse
         return Response(
             quantitativos.memoria_do_quantitativo(item), status=status.HTTP_201_CREATED,
         )
-
-
-class IndiceEconomicoViewSet(_OrcamentoPermsMixin, viewsets.ReadOnlyModelViewSet):
-    """Os índices de reajuste — **read-only**, como a base referencial.
-
-    Mesma razão do `BaseReferencialViewSet`: série pública gravada por
-    comando/job, então `POST` recebe 405 e não 403. Por isso `required_permission`
-    fixa em vez de `required_resource`, que derivaria um `.edit` fantasma.
-    """
-
-    queryset = IndiceEconomico.objects.all()
-    serializer_class = IndiceEconomicoSerializer
-    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ["codigo", "uf", "ativo"]
-    ordering_fields = ["codigo", "nome"]
-    required_permission = "orcamento.base.view"
-
-    @action(detail=True, methods=["get"], url_path="serie")
-    def serie(self, request, pk=None):
-        """A série do índice, para a tela conferir o número que entrou no fator."""
-        indice = self.get_object()
-        valores = ValorIndice.objects.filter(indice=indice).order_by("-competencia")
-        return Response({
-            "indice": indice.pk,
-            "codigo": indice.codigo,
-            "valores": ValorIndiceSerializer(valores, many=True).data,
-        })
-
-
-class FormulaReajusteViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
-    """A fórmula paramétrica do contrato, com prévia e aplicação.
-
-    `previa` é `orcamento.relatorio.view` (é leitura, e quem controla a obra
-    precisa ver o efeito antes de decidir); `aplicar` é `.revisar`, porque em
-    orçamento aprovado ele cria versão nova — é ato de contrato, não edição.
-    """
-
-    queryset = FormulaReajuste.objects.select_related("orcamento").prefetch_related(
-        "parcelas", "parcelas__indice"
-    ).all()
-    serializer_class = FormulaReajusteSerializer
-    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ["orcamento"]
-    required_resource = "orcamento.orcamento"
-    action_permission_map = {
-        "fator": "orcamento.relatorio.view",
-        "previa": "orcamento.relatorio.view",
-        "aplicar": "orcamento.orcamento.revisar",
-    }
-
-    @action(detail=True, methods=["get"], url_path="fator")
-    def fator(self, request, pk=None):
-        """Só o fator e a memória — sem tocar na planilha."""
-        competencia = parse_date(request.query_params.get("competencia") or "")
-        if competencia is None:
-            return Response(
-                {"competencia": "Informe a competência do reajuste (AAAA-MM-DD)."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        try:
-            return Response(reajuste.calcular_fator(self.get_object(), competencia))
-        except reajuste.ReajusteInvalido as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-
-    @action(detail=True, methods=["get"], url_path="previa")
-    def previa(self, request, pk=None):
-        """O efeito linha a linha, sem gravar."""
-        competencia = parse_date(request.query_params.get("competencia") or "")
-        if competencia is None:
-            return Response(
-                {"competencia": "Informe a competência do reajuste (AAAA-MM-DD)."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        formula = self.get_object()
-        try:
-            return Response(reajuste.previa(formula.orcamento, formula, competencia))
-        except reajuste.ReajusteInvalido as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-
-    @action(detail=True, methods=["post"], url_path="aplicar")
-    def aplicar(self, request, pk=None):
-        """Aplica o fator. Em aprovado, cria a revisão de reequilíbrio."""
-        competencia = parse_date(str(request.data.get("competencia") or ""))
-        if competencia is None:
-            return Response(
-                {"competencia": "Informe a competência do reajuste (AAAA-MM-DD)."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        formula = self.get_object()
-        try:
-            resultado = reajuste.aplicar(
-                formula.orcamento, formula, competencia,
-                motivo=request.data.get("motivo") or "",
-                usuario_nome=self._usuario_nome(request),
-            )
-        except reajuste.ReajusteInvalido as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        except planilha.OrcamentoNaoEditavel as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
-        return Response(resultado)
-
-    @staticmethod
-    def _usuario_nome(request) -> str:
-        user = getattr(request, "user", None)
-        return getattr(user, "get_full_name", lambda: "")() or getattr(user, "username", "") or ""
-
-
-class ParcelaFormulaReajusteViewSet(
-    _OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet
-):
-    """As parcelas da cesta de índices."""
-
-    queryset = ParcelaFormulaReajuste.objects.select_related("formula", "indice").all()
-    serializer_class = ParcelaFormulaReajusteSerializer
-    filter_backends = [DjangoFilterBackend]
-    filterset_fields = ["formula", "indice"]
-    required_resource = "orcamento.orcamento"
 
 
 class PastaComposicaoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):

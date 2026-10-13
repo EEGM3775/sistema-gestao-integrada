@@ -186,11 +186,11 @@ um alias global faria o campo certo ficar sem mapa num dos dois.
 | `RevisaoOrcamento` | Trilha da revisão: tipo (aditivo/supressão/reequilíbrio/atualização/correção), motivo, valores das duas pontas — o histórico que licitação e contrato exigem |
 | `ComposicaoBDI` | BDI **analítico** (Acórdão 2622/2013-TCU): AC, seguro, risco, garantia, despesas financeiras, lucro e tributos (PIS/COFINS/ISS/CPRB) → percentual derivado. Um por orçamento como `padrao`, outros p/ **BDI diferenciado** por linha |
 | `ItemOrcadoInsumo` | **Memória de cálculo**: a composição explodida em folhas, com coeficiente acumulado, `categoria` (material/mão de obra/equipamento) e custo no serviço |
-| `ParcelaEtapa` | Célula do cronograma: etapa × mês × percentual → valor previsto, curva S e desembolso |
+| `PlanoEtapa` · `ParcelaEtapa` | O **cronograma físico-financeiro por etapa do orçamento** — a etapa é o **grupo de 1º nível da planilha** (`grupo` → `ItemOrcado` de `pai` nulo), **não** a `EtapaObra`. `PlanoEtapa` guarda início, término e curva (linear · S · início · fim · manual); `ParcelaEtapa` (grupo × mês × percentual → valor) é a grade **calculada** pelos dias úteis do expediente da obra. O vínculo com a `EtapaObra` é **opcional** (`ItemOrcado.etapa`, ligado no grupo e propagado às linhas por `POST …/vincular-etapa/`), feito na planilha (menu da linha → "Ligar à etapa da obra") ou na página Cronograma; serve para casar com o aplicado do SIL e com o plano do PDCA. `Orcamento.cronograma_atualizado_em` é o carimbo que o PDCA compara para avisar que o cronograma mudou. A revisão do orçamento **herda** o cronograma |
 | `ComposicaoEncargos` · `RubricaEncargos` | O **quadro de encargos analítico**: grupos A (obrigações sobre a folha), B (recebem a incidência de A), C (indenizatórios) e D (**reincidências, derivadas** — `A×B/100` e `FGTS×aviso/100`). Unicidade por `(orçamento, tipo, regime)`: horista e mensalista convivem, e a explosão escolhe pela unidade do insumo. No desonerado a rubrica A1 **sai** do quadro (a CPP virou CPRB, que é tributo e vive no BDI) |
 | `ItemOrcado` (ORC.10e) | Três campos que destravam a linha: `eap_manual` (o código deixa de ser renumerado pelo recálculo — edital e contrato às vezes trazem numeração própria que a planilha precisa espelhar, e digitar por cima **é** o ato de assumi-la), `preco_travado` (cotação fechada: reprecificação e verbos de lote pulam a linha) e `texto_longo` (a especificação que vai para as peças — o *pliego* do Arquimedes; `observacao` continua sendo o bilhete curto) |
 | `LinhaMedicao` | A **memória do quantitativo**: parciais `n × a × b × c` com sinal, ou `formula` livre. Dimensão nula é ausência, não zero. A linha com parciais tem quantidade **derivada** |
-| `FormulaReajuste` · `ParcelaFormulaReajuste` | A **fórmula paramétrica do contrato** — `R = V × [a + Σpᵢ × (Iᵢ,t/Iᵢ,0)]`, cesta de índices com pesos. Reajustar ≠ reprecificar (§12.5) |
+| *(reajuste)* | **Não mora aqui.** Reajuste é cláusula de contrato: a série de índices é única (`nucleo.IndiceEconomico`/`ValorIndice`), o motor é `nucleo/reajuste.py` e a fórmula vive no `ContratoObra` do [PDCA](modulopdca.md) |
 | `Reprecificacao` · `LinhaReprecificacao` | O **lote de troca de data-base**, com o preço anterior linha a linha — é o que torna o desfazer possível sem inventar versão. `descontinuado` marca a linha cujo código **sumiu da publicação de destino**: ela entra no lote para *aparecer*, com `custo_depois == custo_antes`, `selecionada=False` e nunca aplicável, nem que venha marcada no pedido. `linhas_afetadas` conta preço trocado; `linhas_descontinuadas` conta à parte, porque não são a mesma coisa |
 | `ParametroObra` | Orçamento **paramétrico**: `projeto_padrao` (R-1…GI), CUB da data-base, áreas real e equivalente, adicionais que o CUB não cobre |
 | `PavimentoObra` · `UnidadeAutonoma` · `MemorialNBR` | Base dos quadros da **NBR 12721** — áreas por pavimento, unidades autônomas (coeficiente de proporcionalidade **e** fração ideal, que não são a mesma coisa) e os memoriais descritivos dos quadros V–VIII |
@@ -290,12 +290,11 @@ O módulo tem lógica demais para um `services.py` só. Os módulos são achatad
 | `services.py` | as duas travessias de catálogo: base referencial → `catalogo.Item` (adoção) e `catalogo.Item` → linha da planilha (snapshot) |
 | `planilha.py` | recálculo bottom-up, numeração EAP, aprovação, revisão, orçado por etapa (o seam do SIL) |
 | `precificacao.py` | BDI do TCU, explosão da composição, encargos, curva ABC, preço real do SCM/SIL |
-| `controle.py` | quatro colunas, cronograma, curva S |
+| `cronograma.py` | o cronograma por etapa: curva por dias úteis, Hh orçado e equipe média, herança na revisão, grade e desembolso por insumo |
 | `nbr12721.py` | paramétrico por CUB e os oito quadros |
 | `encargos.py` | o quadro A/B/C/D, o modelo de partida e o `ResolvedorEncargos` que a explosão consulta |
 | `quantitativos.py` | parciais de medição e o avaliador de fórmula por **AST restrita** (sem nó de nome nem de chamada) |
 | `insumos.py` | o orçamento visto **por insumo**: relação consolidada, curva ABC de insumos, composição separada nas três naturezas |
-| `reajuste.py` | fator paramétrico, prévia e aplicação (em aprovado, via revisão de reequilíbrio) |
 | `tasks.py` | varredura diária de base e índice atrasados — o calcanhar do módulo é dado fresco, não cálculo |
 
 ## 5. A tela que justifica o módulo — as quatro colunas
@@ -333,7 +332,7 @@ um gráfico convincente e errado se ela não estivesse lá.
 | Conecta com | Como |
 |---|---|
 | [SIL](modulosil.md) | `orcado`/`saldo`/`estourado` no `GET /api/sil/aplicado/`, do orçamento aprovado vigente, confrontando **custo direto** (material sai a custo; comparar com preço+BDI faria toda obra parecer economia). Import tardio e tolerante: sem o módulo assinado, `orcado` segue `None`. Curva ABC do orçado usa a mesma convenção de classe do ABC do consumo |
-| [SCM](moduloscm.md) | **comprometido** por obra (pedido → centro de custo → obra); o caminho de volta: `preco-real/` traz o preço médio pago e `aplicar-preco-real/` o adota no lugar do referencial; e, desde o ORC.7, **a compra nasce da planilha** — `relacao-insumos/` daqui vira `Demanda` em rascunho pelo `POST /api/scm/demandas/do-orcamento/`, que mora **no SCM** |
+| [SCM](moduloscm.md) | **comprometido** por obra (pedido → centro de custo → obra); o caminho de volta: `preco-real/` traz o preço médio pago e `aplicar-preco-real/` o adota no lugar do referencial; e, desde o ORC.7, **a compra nasce da planilha** — `relacao-insumos/` daqui vira `Demanda` em rascunho pelo `POST /api/scm/demandas/do-orcamento/`, que mora **no SCM** — e que antes abre sozinho as composições que faltam (`precificacao.explodir_pendentes`, sem mexer no preço; também `orcamentos/{id}/explodir-pendentes/`, o botão "Abrir as que faltam" dos insumos) |
 | [moduloerp](moduloerp.md) | **realizado** pela `ContaPagar` alcançada do pedido (ver o limite em §5); a curva S e o desembolso previsto alimentam a **DRE por obra** (D.1.4) e o fluxo de caixa projetado |
 | [obras](obras.md) | planilha por obra/etapa (EAP); `percentual_conclusao` pondera o avanço físico da curva S |
 | [empreendimentos](empreendimentos.md) | custo global do empreendimento; paramétrico na viabilidade; NBR 12721 (se entrar no escopo) |
@@ -342,8 +341,11 @@ um gráfico convincente e errado se ela não estivesse lá.
 
 ## 7. Fronteira do módulo (o que ele **não** faz)
 
-- **Não** é planejamento: Gantt, linha de balanço, caminho crítico e rede de precedências são do
-  **PDCA**. Aqui a dimensão tempo existe só como **distribuição de custo no tempo** (curva S).
+- **Não** é planejamento de execução: Gantt, linha de balanço, caminho crítico, precedências e serviços
+  são do **PDCA**. Aqui a dimensão tempo existe só **por etapa** (início, término, curva) — é o que o
+  PDCA recebe para gerar o plano e comparar o executado.
+- **Não** controla a execução: comprometido, aplicado, medido, realizado, valor agregado e material
+  gasto são do posto **Controle** do PDCA. **Não** reajusta: reajuste é cláusula do contrato.
 - **Não** é medição de empreiteiro: boletim de medição, retenção e liberação por avanço são do
   **PDCA** — são atos do **contrato de obra**, e o ERP é de recursos empresariais. Ele recebe o
   título líquido e paga, no mesmo molde do `PedidoCompra.conta_pagar_ref` do SCM (§13.1).
@@ -370,9 +372,9 @@ um **seletor horizontal** próprio no topo. Catálogo único das páginas em
 | `…/orcar` | **Orçar — obras** | orçamentista/engenheiro | as obras, com quantos orçamentos cada uma tem e o valor da versão que vale |
 | `…/orcar/obra/{obra}` | **Orçar — versões da obra** | orçamentista/engenheiro | as versões daquela obra (descrição, v, status, data-base, total) — onde se escolhe qual planilha abrir |
 | `…/orcar/orcamento/{id}` | **Orçar — a planilha** | orçamentista/engenheiro | a **grade**: árvore EAP → etapa → serviço → insumos, explosão de composição, precificar (referencial × histórico real), encargos/BDI, memória de cálculo. Sub-seletor sintético × analítico |
-| `…/encargos` | **Encargos & reajuste** | orçamentista | o **quadro A/B/C/D** (grupo D bloqueado, com a conta ao lado), a composição do BDI e a **cesta de índices** do reajuste com prévia do fator. Sub-seletor: encargos · reajuste |
-| `…/controlar` | **Controlar** | dono da obra / diretoria | as **quatro colunas** com drill-down, curva ABC, **insumos** (relação + ABC de insumos + gerar demanda no SCM), composição por natureza, curva S. Sub-seletor: colunas · ABC · insumos · composição |
-| `…/cronograma` | **Cronograma** | planejador | grade etapa × competência com percentual editável, distribuição linear de partida, desembolso previsto, curva S, **desembolso por insumo**. Sub-seletor: grade · curva S · insumos |
+| `…/encargos` | **Encargos & BDI** | orçamentista | o **quadro A/B/C/D** (grupo D bloqueado, com a conta ao lado) e a composição do BDI |
+| `…/analisar` | **Analisar** | orçamentista / dono da obra | só o **orçado**: curva ABC de serviços, **insumos** (relação + ABC de insumos + gerar demanda no SCM) e composição por natureza. O controle da execução (quatro colunas, valor agregado, material gasto) é o posto **Controle** do PDCA; `/controlar` redireciona para cá |
+| `…/cronograma` | **Cronograma** | planejador | o quadro das **etapas no tempo** (início, término, curva, Hh orçado, dias úteis, equipe média), a grade etapa × mês calculada (com ajuste fino que passa a etapa para manual), a curva S do **planejado** e o **desembolso por insumo**. Daqui o PDCA gera as atividades |
 | `…/bases` | **Bases & bancos** | orçamentista / curador de preços | bases-mãe travadas (exploração + adoção em lote), bancos próprios do tenant, importações e os **tipos de item da empresa** (natureza + flags, com o padrão de cada natureza preenchido) |
 | `…/incorporacao` | **Incorporação** | incorporador | paramétrico por CUB e os quadros da NBR 12721 |
 
@@ -866,11 +868,11 @@ entraria pelo payload.
 | Quadro de encargos e o resolvedor da explosão | [encargos.py](../../backend/moduloorcamento/encargos.py) |
 | Parciais de medição e o avaliador de fórmula | [quantitativos.py](../../backend/moduloorcamento/quantitativos.py) |
 | Relação de insumos, ABC de insumos, composição por natureza | [insumos.py](../../backend/moduloorcamento/insumos.py) |
-| Reajuste contratual | [reajuste.py](../../backend/moduloorcamento/reajuste.py) |
-| Desembolso por insumo | `desembolso_por_insumo` em [controle.py](../../backend/moduloorcamento/controle.py) |
+| Cronograma por etapa e desembolso por insumo | [cronograma.py](../../backend/moduloorcamento/cronograma.py) |
+| Reajuste (motor, no contrato) | [nucleo/reajuste.py](../../backend/nucleo/reajuste.py) |
 | Peças de documento (BDI, encargos, relação, ABC de insumos, carta) | [exportacao.py](../../backend/moduloorcamento/exportacao.py) + [carta_proposta.html](../../backend/moduloorcamento/templates/moduloorcamento/carta_proposta.html) |
 | Varredura de base/índice atrasados | [tasks.py](../../backend/moduloorcamento/tasks.py) (beat em `config/settings.py`) |
-| Série de índices por comando | [importar_indices.py](../../backend/moduloorcamento/management/commands/importar_indices.py) |
+| Série de índices por comando | [nucleo/…/importar_indices.py](../../backend/nucleo/management/commands/importar_indices.py) |
 | Seam da compra | [moduloscm/do_orcamento.py](../../backend/moduloscm/do_orcamento.py) |
 | Testes da fatia | [test_orc7.py](../../testes/backend/moduloorcamento/test_orc7.py) |
 

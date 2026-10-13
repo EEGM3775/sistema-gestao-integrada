@@ -26,8 +26,6 @@ from .models import (
     ComposicaoEncargos,
     ComposicaoReferenciaItem,
     FonteOficial,
-    FormulaReajuste,
-    IndiceEconomico,
     InsumoReferencia,
     ItemBancoPreco,
     ItemOrcado,
@@ -38,14 +36,12 @@ from .models import (
     Orcamento,
     ParametroObra,
     ParcelaEtapa,
-    ParcelaFormulaReajuste,
     PastaComposicao,
     PavimentoObra,
     Reprecificacao,
     RevisaoOrcamento,
     RubricaEncargos,
     UnidadeAutonoma,
-    ValorIndice,
 )
 
 
@@ -448,7 +444,7 @@ class ParcelaEtapaSerializer(TenantScopedModelSerializer):
     """Célula do cronograma. O valor é derivado do percentual — o planejador
     digita percentual, que é o que sobrevive a uma mudança de preço."""
 
-    etapa_nome = serializers.CharField(source="etapa.nome_etapa", read_only=True, default=None)
+    etapa_nome = serializers.CharField(source="grupo.descricao", read_only=True, default=None)
     valor_previsto = serializers.DecimalField(max_digits=18, decimal_places=2, read_only=True)
 
     class Meta:
@@ -457,10 +453,12 @@ class ParcelaEtapaSerializer(TenantScopedModelSerializer):
 
     def validate(self, attrs):
         orcamento = attrs.get("orcamento") or getattr(self.instance, "orcamento", None)
-        etapa = attrs.get("etapa") or getattr(self.instance, "etapa", None)
-        if etapa is not None and orcamento is not None and etapa.obra_id != orcamento.obra_id:
+        grupo = attrs.get("grupo") or getattr(self.instance, "grupo", None)
+        if grupo is not None and orcamento is not None and (
+            grupo.orcamento_id != orcamento.pk or grupo.pai_id is not None
+        ):
             raise serializers.ValidationError(
-                {"etapa": "A etapa precisa pertencer à obra do orçamento."}
+                {"grupo": "A etapa precisa ser um grupo de 1º nível deste orçamento."}
             )
         competencia = attrs.get("competencia")
         if competencia is not None and competencia.day != 1:
@@ -782,67 +780,3 @@ class LinhaMedicaoSerializer(TenantScopedModelSerializer):
         return attrs
 
 
-class IndiceEconomicoSerializer(serializers.ModelSerializer):
-    """Índice de reajuste — `ModelSerializer` puro, como a base referencial.
-
-    Não é `TenantScopedModelSerializer` porque o model não tem tenant: série
-    pública de terceiro (FGV, IBGE, Sinduscon), pela mesma razão da §11.1.
-    """
-
-    class Meta:
-        model = IndiceEconomico
-        fields = "__all__"
-
-
-class ValorIndiceSerializer(serializers.ModelSerializer):
-    """Um ponto da série."""
-
-    indice_codigo = serializers.CharField(source="indice.codigo", read_only=True)
-
-    class Meta:
-        model = ValorIndice
-        fields = "__all__"
-
-
-class ParcelaFormulaReajusteSerializer(TenantScopedModelSerializer):
-    """Parcela da cesta de índices."""
-
-    indice_codigo = serializers.CharField(source="indice.codigo", read_only=True)
-    indice_nome = serializers.CharField(source="indice.nome", read_only=True)
-
-    class Meta:
-        model = ParcelaFormulaReajuste
-        fields = "__all__"
-
-
-class FormulaReajusteSerializer(TenantScopedModelSerializer):
-    """A fórmula do contrato.
-
-    `fecha` é calculado e não gravado: a fórmula passa por estados que não
-    fecham enquanto o usuário monta a cesta, e recusar a gravação obrigaria a
-    digitar as três parcelas num submit só. Quem cobra o fechamento é o cálculo
-    do fator, que é onde errar custa dinheiro.
-    """
-
-    parcelas = ParcelaFormulaReajusteSerializer(many=True, read_only=True)
-    soma_pesos = serializers.SerializerMethodField()
-    fecha = serializers.SerializerMethodField()
-
-    class Meta:
-        model = FormulaReajuste
-        fields = "__all__"
-
-    def _soma(self, obj):
-        from decimal import Decimal
-
-        return (obj.parcela_fixa or Decimal("0")) + sum(
-            (p.peso for p in obj.parcelas.all()), Decimal("0")
-        )
-
-    def get_soma_pesos(self, obj) -> str:
-        return str(self._soma(obj))
-
-    def get_fecha(self, obj) -> bool:
-        from .reajuste import TOLERANCIA_FECHAMENTO
-
-        return abs(self._soma(obj) - 1) <= TOLERANCIA_FECHAMENTO

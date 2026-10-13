@@ -7,9 +7,12 @@ import { FieldError, FormErrorBanner, parseApiErrors, type FieldErrors } from '@
 import { contemSemAcento } from '@/utils/texto'
 import { usePdca } from '../contexto'
 import {
-  useCriarRestricao, useGerarDemandaDeCompra, useRemoverRestricao,
+  useCriarRestricao, useGerarDemandaDeCompra, useReabrirRestricao, useRemoverRestricao, useRestricoes,
 } from '../hooks'
+import { mensagemDe } from '../montagem'
 import { emDias } from '../formato'
+import { AndamentoDaCompra } from './AndamentoDaCompra'
+import { TIPOS_QUE_VIRAM_COMPRA } from '../vocabulario'
 import type { Atividade, Restricao, TipoRestricao } from '../types'
 
 /** As oito famílias do *make-ready*. Rótulo e ordem são de quem está na
@@ -46,6 +49,7 @@ export function EsteiraDeRestricoes({
   const podeRegistrar = hasPermission('pdca.restricao.edit')
   const podeRemover = hasPermission('pdca.restricao.remover')
   const podeComprar = hasPermission('scm.demanda.edit')
+  const remover = useRemoverRestricao(obraId)
 
   const vencidas = restricoes.filter((r) => (r.dias_para_o_prazo ?? 1) < 0).length
 
@@ -115,10 +119,13 @@ export function EsteiraDeRestricoes({
                 podeComprar={podeComprar}
                 aoRemover={() => setRemovendo(restricao)}
                 aoComprar={() => setComprando(restricao)}
+                aoDestravarRecebido={(nota) => remover.mutate({ id: restricao.restricao_id, nota })}
+                destravando={remover.isPending}
               />
             ))}
           </div>
         )}
+        <Destravadas obraId={obraId} podeReabrir={podeRemover} />
       </div>
 
       {abrindo && (
@@ -146,14 +153,78 @@ export function EsteiraDeRestricoes({
   )
 }
 
+/** As travas já destravadas **continuam na esteira** — riscadas, com quem
+ *  destravou e como, e com o caminho de volta. Sumir da lista fazia o
+ *  destravar errado (o material que "chegou" e era o errado) não ter onde
+ *  ser desfeito, e a reunião não via o que a obra destravou na semana. */
+function Destravadas({ obraId, podeReabrir }: { obraId: number; podeReabrir: boolean }) {
+  const { data: resolvidas = [] } = useRestricoes(obraId, 'removida')
+  const reabrir = useReabrirRestricao(obraId)
+  const [aberta, setAberta] = useState(true)
+  const [erro, setErro] = useState<string | null>(null)
+  if (resolvidas.length === 0) return null
+  const recentes = [...resolvidas].sort((a, b) => (b.removida_em ?? '').localeCompare(a.removida_em ?? ''))
+  return (
+    <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <button
+        type="button"
+        onClick={() => setAberta((v) => !v)}
+        style={{
+          background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left',
+          fontSize: 10.5, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-3)', fontWeight: 700,
+        }}
+      >
+        {aberta ? '▾' : '▸'} Destravadas ({resolvidas.length})
+      </button>
+      {erro && <span style={{ fontSize: 11, color: 'var(--danger-ink)' }}>{erro}</span>}
+      {aberta && recentes.map((r) => (
+        <div key={r.restricao_id} style={{ border: '1px dashed var(--line)', borderRadius: 'var(--r-md)', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Pill kind="good">✓ {r.tipo_rotulo}</Pill>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ink-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {r.atividade_codigo} · {r.atividade_nome}
+            </span>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--ink-3)', textDecoration: 'line-through', lineHeight: 1.4 }}>{r.descricao}</div>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.4 }}>
+            destravada{r.removida_em ? ` em ${dateToBR(r.removida_em.slice(0, 10))}` : ''}
+            {r.removida_por ? ` por ${r.removida_por}` : ''}
+            {r.nota_remocao ? ` — ${r.nota_remocao}` : ''}
+          </div>
+          {podeReabrir && (
+            <div>
+              <button
+                type="button"
+                style={acaoDeRodape}
+                disabled={reabrir.isPending}
+                title="Volta a travar o serviço — fica registrado que voltou"
+                onClick={async () => {
+                  setErro(null)
+                  try { await reabrir.mutateAsync(r.restricao_id) } catch (e) { setErro(mensagemDe(e)) }
+                }}
+              >
+                <Lock size={11} />
+                Não destravou — reabrir
+              </button>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function CartaoDeTrava({
-  restricao, podeRemover, podeComprar, aoRemover, aoComprar,
+  restricao, podeRemover, podeComprar, aoRemover, aoComprar, aoDestravarRecebido, destravando,
 }: {
   restricao: Restricao
   podeRemover: boolean
   podeComprar: boolean
   aoRemover: () => void
   aoComprar: () => void
+  /** O material chegou: destrava com a nota da entrega (a pessoa confirma no clique). */
+  aoDestravarRecebido: (nota: string) => void
+  destravando: boolean
 }) {
   const { selecionar } = usePdca()
   const dias = restricao.dias_para_o_prazo
@@ -204,19 +275,17 @@ function CartaoDeTrava({
           borderTop: '1px solid var(--line-2)', background: 'var(--inset)',
         }}
       >
-        {jaComprou ? (
-          <span
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 4,
-              fontSize: 11, color: 'var(--ink-3)',
-            }}
-            title="Esta trava já virou uma demanda no Suprimentos"
-          >
-            <Link2 size={11} />
-            compra aberta
-            {restricao.demanda_scm_status && ` · ${restricao.demanda_scm_status}`}
+        {jaComprou && restricao.compra ? (
+          <AndamentoDaCompra
+            compra={restricao.compra}
+            ocupado={destravando}
+            aoDestravar={podeRemover ? aoDestravarRecebido : undefined}
+          />
+        ) : jaComprou ? (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--ink-3)' }}>
+            <Link2 size={11} /> compra aberta
           </span>
-        ) : restricao.tipo === 'material' && podeComprar ? (
+        ) : TIPOS_QUE_VIRAM_COMPRA.has(restricao.tipo) && podeComprar ? (
           <button
             type="button"
             onClick={aoComprar}
@@ -544,7 +613,7 @@ function DialogoDeDemanda({
 
         <p style={{ fontSize: 12.5, color: 'var(--ink-2)', lineHeight: 1.55, margin: 0 }}>
           Abre um documento no Suprimentos com o que está faltando. A trava
-          continua aberta até alguém dizer que o material chegou — e o cartão
+          continua aberta até alguém dizer que chegou (o material, a máquina, a equipe) — e o cartão
           passa a mostrar em que pé está a compra.
         </p>
 

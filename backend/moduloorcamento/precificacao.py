@@ -263,6 +263,36 @@ def explodir_item(
     return insumos
 
 
+def explodir_pendentes(orcamento) -> dict:
+    """Abre a composição de toda linha que ainda não foi aberta — **sem mexer no preço**.
+
+    *Achado do dono, 10/10/2026:* "orçamento e planejamento têm que ser
+    fáceis; esse negócio de o cara ficar indo e voltando é errado". Comprar pelo
+    orçamento exigia ir ao Orçamento, explodir as linhas uma a uma e voltar ao
+    Suprimentos. Quem precisa da relação de insumos chama isto antes, e as linhas
+    que têm composição no catálogo entram sozinhas.
+
+    `atualizar_custo=False`: a memória de cálculo é gerada para a relação de
+    compra, e o preço que o orçamentista fechou continua o dele — por isso vale
+    também para o orçamento aprovado. Linha sem item ou sem composição no
+    catálogo fica de fora e é contada.
+    """
+    linhas = list(
+        ItemOrcado.objects.filter(
+            orcamento=orcamento, tipo_linha=ItemOrcado.TipoLinha.ANALITICO, item__isnull=False,
+        ).exclude(insumos__isnull=False).select_related("item")
+    )
+    resolvedor = encargos_mod.ResolvedorEncargos(orcamento) if linhas else None
+    explodidas = sem_composicao = 0
+    for linha in linhas:
+        try:
+            explodir_item(linha, atualizar_custo=False, resolvedor=resolvedor)
+            explodidas += 1
+        except ComposicaoInvalida:
+            sem_composicao += 1
+    return {"explodidas": explodidas, "sem_composicao": sem_composicao}
+
+
 def memoria_de_calculo(item_orcado: ItemOrcado) -> dict:
     """A composição da linha, com o peso de cada insumo e o resumo por categoria.
 

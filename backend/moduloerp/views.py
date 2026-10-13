@@ -2,6 +2,7 @@
 import logging
 from urllib.parse import urlparse
 import requests
+from django.conf import settings
 from nucleo.busca import BuscaSemAcento
 from rest_framework import viewsets, permissions, views, filters, status as status_module
 from django_filters.rest_framework import DjangoFilterBackend
@@ -23,7 +24,8 @@ from .impexp import RECURSO_NOTA_FISCAL
 from .models import (
     Transacao, NotaFiscalServico, NotaFiscalProduto,
     NotaFiscal, ContaPagar, ContaReceber, CobrancaCliente, Boleto,
-    CentroCusto, LoteRemessa, StatusConta, StatusNFE, RevisaoBaixa, StatusRevisaoBaixa, BaixaRequerRevisao
+    CentroCusto, LoteRemessa, StatusConta, StatusNFE, RevisaoBaixa, StatusRevisaoBaixa, BaixaRequerRevisao,
+    AnotacaoContaPagar,
 )
 from .serializers import (
     TransacaoSerializer,
@@ -110,7 +112,7 @@ def _verificar_documento_nf(nf):
     foi cancelada) e atualiza a nota local; **fora do ar** → devolve a última
     versão guardada e sinaliza `gateway_online=False`. Nunca levanta exceção.
     """
-    from .nfe_client import NFeClient, NFeIndisponivel, NFeErro
+    from .nfe_client import NFeIndisponivel, NFeErro, cliente_do_tenant
     from .tasks import _aplicar_retorno
 
     # D70 — a cópia LOCAL da nota sai pela porta única. Este payload é montado à
@@ -135,7 +137,7 @@ def _verificar_documento_nf(nf):
     if not nf.nfe_io_id:
         return _local('Nota sem ID na NFE.io — exibindo a versão local, se houver.')
 
-    client = NFeClient()
+    client = cliente_do_tenant(nf.tenant_id)
     try:
         dados = client.consultar_nfse(nf.nfe_io_id)
     except NFeIndisponivel:
@@ -637,6 +639,8 @@ class ContaPagarViewSet(EstornoMixin, ListaoMixin, TenantScopedViewSetMixin, vie
         "dar_baixa": "erp.conta_pagar.baixar",
         "estornar_baixa": "erp.conta_pagar.estornar",
         "gerar_lote_remessa": "erp.lote_remessa.create",
+        # Anotar é escrever no título — a mesma permissão de editá-lo.
+        "anotar": "erp.conta_pagar.edit",
     }
     pagination_class = ErpPageNumberPagination
     filter_backends = [DjangoFilterBackend, listao.BuscaDeTitulos, listao.OrdenacaoDoListao]
@@ -686,6 +690,19 @@ class ContaPagarViewSet(EstornoMixin, ListaoMixin, TenantScopedViewSetMixin, vie
                 status=status_module.HTTP_202_ACCEPTED,
             )
         return Response(ContaPagarSerializer(conta).data)
+
+    @action(detail=True, methods=['post'])
+    def anotar(self, request, pk=None):
+        """Acrescenta uma anotação à mão na trilha do título (D284)."""
+        conta = self.get_object()
+        texto = (request.data.get('texto') or '').strip()
+        if not texto:
+            return Response({'texto': 'Escreva a anotação.'}, status=status_module.HTTP_400_BAD_REQUEST)
+        AnotacaoContaPagar.objects.create(
+            tenant_id=conta.tenant_id, conta_pagar=conta, tipo=AnotacaoContaPagar.Tipo.NOTA,
+            origem='manual', texto=texto[:4000], autor=request.user,
+        )
+        return Response(self.get_serializer(conta).data, status=status_module.HTTP_201_CREATED)
 
     @action(detail=False, methods=['post'], url_path='gerar-lote-remessa')
     def gerar_lote_remessa(self, request):
@@ -1282,6 +1299,32 @@ class BoletoViewSet(ListaoMixin, TenantScopedViewSetMixin, viewsets.ReadOnlyMode
         return Response({'detail': 'Boleto cancelado no Asaas.', 'boleto': BoletoSerializer(boleto).data})
 
 
+class NotasDasComprasView(TenantScopedAPIViewMixin, views.APIView):
+    """As NF-e das compras do Suprimentos — com as pendências (D284).
+
+    A nota da compra mora no SCM (pode nascer só com o número); aqui o
+    financeiro a vê ao lado das notas importadas por XML, junto com a compra
+    recebida que ainda não tem nota. `?pendentes=1` deixa só o que pede ação.
+    Import tardio: instalação sem o Suprimentos devolve a lista vazia.
+    """
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
+    required_module = "erp_financeiro"
+    required_permission = "erp.nf.view"
+
+    def get(self, request):
+        try:
+            from moduloscm.notas import notas_das_compras
+        except ImportError:
+            return Response({"count": 0, "pendentes": 0, "results": []})
+        so_pendentes = request.query_params.get("pendentes") in ("1", "true")
+        linhas = notas_das_compras(request.user.tenant_id, so_pendentes=so_pendentes)
+        paginador = ErpPageNumberPagination()
+        pagina = paginador.paginate_queryset(linhas, request, view=self)
+        resposta = paginador.get_paginated_response(pagina)
+        resposta.data["pendentes"] = sum(1 for l in linhas if l["situacao"] != "conferida")
+        return resposta
+
+
 class ConfiguracaoLotesView(TenantScopedAPIViewMixin, views.APIView):
     """Quantos boletos e notas um lote emite nesta empresa (§5.5u do `planos.py`).
 
@@ -1339,6 +1382,59 @@ class ConfiguracaoLotesView(TenantScopedAPIViewMixin, views.APIView):
             detalhes={c: [antes[c], novos[c]] for c in novos if antes[c] != novos[c]},
         )
         return Response(limites_lote.resumo(user))
+
+
+class IntegracaoFiscalView(TenantScopedAPIViewMixin, views.APIView):
+    """A conta da empresa na NFE.io (achado do dono, 10/10/2026: "como vou
+    cadastrar minha API?").
+
+    `GET` — o que está cadastrado, **sem a chave**: só os quatro últimos
+    caracteres, e de onde vem a credencial que vale (`empresa` ou `ambiente`).
+    `PUT` — grava `company_id` e, se vier, a `api_key` (cifrada). Mesma
+    permissão das demais configurações do financeiro.
+    """
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
+    required_module = "erp_financeiro"
+    permission_map = {"view": "erp.nf.view", "write": limites_lote.PERMISSAO}
+
+    @staticmethod
+    def _resumo(cadastro) -> dict:
+        da_empresa = bool(cadastro and cadastro.company_id and cadastro.api_key_cifrada)
+        do_ambiente = bool(settings.NFE_IO_API_KEY and settings.NFE_IO_COMPANY_ID)
+        return {
+            "company_id": cadastro.company_id if cadastro else "",
+            "tem_chave": bool(cadastro and cadastro.api_key_cifrada),
+            "chave_final": cadastro.api_key_final if cadastro else "",
+            "origem": "empresa" if da_empresa else ("ambiente" if do_ambiente else "nenhuma"),
+            "atualizado_em": cadastro.atualizado_em if cadastro else None,
+        }
+
+    def get(self, request):
+        from .models import IntegracaoFiscal
+
+        cadastro = IntegracaoFiscal.objects.filter(tenant_id=request.user.tenant_id).first()
+        return Response(self._resumo(cadastro))
+
+    def put(self, request):
+        from .models import IntegracaoFiscal
+
+        company_id = (request.data.get("company_id") or "").strip()
+        if len(company_id) > 80:
+            return Response({"company_id": "ID longo demais."}, status=status_module.HTTP_400_BAD_REQUEST)
+        cadastro, _ = IntegracaoFiscal.objects.get_or_create(tenant_id=request.user.tenant_id)
+        cadastro.company_id = company_id
+        if "api_key" in request.data:
+            cadastro.definir_api_key(request.data.get("api_key") or "")
+        cadastro.atualizado_por = request.user
+        cadastro.save()
+
+        from nucleo.auditoria import registrar_auditoria
+        registrar_auditoria(
+            acao="configurar_integracao_fiscal", instance=cadastro, usuario=request.user,
+            # Nunca a chave: só que ela mudou.
+            detalhes={"company_id": company_id, "chave_trocada": "api_key" in request.data},
+        )
+        return Response(self._resumo(cadastro))
 
 
 class AtualizarStatusNFView(TenantScopedAPIViewMixin, views.APIView):

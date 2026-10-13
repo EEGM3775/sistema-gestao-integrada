@@ -647,6 +647,19 @@ class SincronizacaoTests(MapsTestBase):
             self.assertEqual(local.tipo, tipo)
             self.assertEqual(local.tenant_id, self.tenant.pk)
 
+    def test_comando_aceita_o_id_uuid_do_tenant(self):
+        """`--tenant` era `type=int` e recusava todo id real (UUID) — visto no VPS, 13/10/2026."""
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        obra = Obra.objects.create(tenant=self.tenant, nome_obra="Obra A", endereco="Rua A")
+        outra = Obra.objects.create(tenant=self.tenant_b, nome_obra="Obra B", endereco="Rua B")
+        call_command("georreferenciar_cadastros", tenant=str(self.tenant.pk), tipo="obra",
+                     sem_rede=True, stdout=StringIO())
+        self.assertTrue(Local.objects.filter(obra=obra).exists())
+        self.assertFalse(Local.objects.filter(obra=outra).exists())
+
 
 # ---------------------------------------------------------------------------
 # A unidade imobiliária no mapa — medidas, confrontações e a rua

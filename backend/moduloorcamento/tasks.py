@@ -106,11 +106,11 @@ def verificar_indices_desatualizados(self, referencia: str | None = None) -> dic
 
     Diferença de consequência que justifica task separada: base velha faz um
     orçamento novo nascer com preço vencido (ruim, silencioso). Índice velho faz
-    o cálculo do fator de reajuste **levantar erro** — `reajuste.numero_indice`
-    recusa-se a interpolar. Então este aviso é o que evita alguém descobrir a
+    o reajuste da medição do contrato cair em **índice provisório** — `nucleo.reajuste`
+    não interpola: usa o último publicado e marca. Este aviso é o que evita descobrir a
     lacuna no dia do aniversário do contrato, que é o pior dia possível.
     """
-    from .models import IndiceEconomico, ValorIndice
+    from nucleo.models import IndiceEconomico, ValorIndice
 
     hoje = date.fromisoformat(referencia) if referencia else date.today()
     atrasados, em_dia, vazios = [], [], []

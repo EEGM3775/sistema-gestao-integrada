@@ -134,6 +134,24 @@ export interface ContaPagar extends TravaDeEdicao {
   saldo_aberto: string
   rateios: Rateio[]
   boletos: Boleto[]
+  /** A compra que gerou o título (Suprimentos, D284) e a NF-e dela. */
+  pedido_compra_ref?: number | null
+  nfe_numero?: string
+  nfe_situacao?: '' | 'aguardando_nota' | 'aguardando_documento' | 'conferida' | 'divergente'
+  nfe_situacao_nome?: string
+  anotacoes?: AnotacaoContaPagar[]
+}
+
+/** O que mudou fora do ERP e mexe no título (pedido editado, divergência…). Só se acrescenta. */
+export interface AnotacaoContaPagar {
+  anotacao_id: number
+  tipo: string
+  tipo_nome: string
+  origem: string
+  texto: string
+  valor: string | null
+  autor_nome: string
+  criado_em: string
 }
 
 /**

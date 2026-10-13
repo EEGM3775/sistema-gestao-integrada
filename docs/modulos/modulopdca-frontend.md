@@ -108,6 +108,16 @@ permissão vê o posto; quem não tem vê o cadeado com o motivo, pela régua om
 | Fiscal / gerente | `HOJE` | Fila de decisão |
 | Diretor | **Carteira** | Obras lado a lado |
 
+A chave é o **nome da persona de fábrica** (`roles` do `/auth/me/`; o engenheiro de obra é a
+`engenharia`, o gerente é a `diretoria`) e a regra mora em `portaDoPapel` (`postos.ts`). Só o
+endereço sem posto (`/app/pdca/o/:id`, e o nome da obra na carteira) passa pela porta; a fila, a
+paleta e o link colado levam ao posto que nomeiam. Quem acumula papéis cai pelo de **quem assina**
+(fiscal, diretoria → `HOJE`) e, depois, pela ordem de consequência da §4.5 (segurança, medição,
+semana, qualidade, plano). Papel renomeado ou montado à mão não casa com nada e cai em `HOJE`, e o
+papel cujo posto está trancado para a pessoa passa a vez ao seguinte. **O campo não tira ninguém da
+obra**: a superfície de campo não é de obra nenhuma, então o encarregado que abre uma obra no
+escritório cai em `HOJE`; a porta dele é a **passagem para o campo** no topo da carteira.
+
 ## 4. A espinha — o que atravessa todos os postos
 
 Sem isto, seis postos são seis depósitos menores.
@@ -224,7 +234,11 @@ acessibilidade da busca sem acento ([§6 das convenções](../frontend-convencoe
 gesto em vez do texto.
 
 - **Esteira de restrições** à esquerda: o que trava, quem resolve, quando vence. Restrição de
-  material gera demanda no SCM pelo verbo que já existe — e o vínculo fica visível.
+  material, equipamento ou mão de obra gera demanda no SCM pelo verbo que já existe — e o vínculo fica
+  visível — com o andamento da compra e o "destravar" quando o material chega. As **destravadas
+  continuam embaixo**, riscadas, com quem destravou e como, e reabrem.
+- Cada cartão leva o **selo do material** (no estoque · a caminho · falta) lido da fila de suprimentos, e
+  o compromisso tem **"Pedir material"** (requisição em rascunho no Estoque, com o estado no cartão).
 - **Quadro da semana** ao centro: candidatos → comprometidos, por equipe e por dia. Atividade com
   restrição aberta **não entra**, e o quadro diz por quê ao tentar.
 - **Encerramento** como ato: julgar item a item **no próprio cartão** — a pergunta "saiu?" mora
@@ -235,6 +249,12 @@ gesto em vez do texto.
   série. A semana que **já acabou** abre julgando: é a reunião de segunda olhando a semana passada,
   e pedir um clique a mais só atrasaria o gesto.
 - **Ranking de causas** no rodapé, cumulativo, em três partes que somam o total.
+
+**As colunas são as equipes da obra** (`EquipeObra`): "Nova equipe" **compõe** — funcionários do RH e
+fornecedores, nome opcional (nasce dos membros) — e o cabeçalho mostra quem é a equipe. Nome solto de
+cartão antigo aparece como "sem composição". **Julgar é dizer o % concluído** da atividade: o cartão
+mostra a meta da semana e onde ela está hoje, diz se bateu a meta (o "saiu" é derivado) e pede a causa
+quando não bateu; o servidor lança a diferença como avanço.
 
 ### 5.3 PLANO — o cronograma e o ritmo
 
@@ -254,8 +274,111 @@ Quatro vistas sobre **o mesmo cronograma**, trocáveis sem trocar de rota:
 não se toca, e replanejar abre a versão seguinte com motivo. A tela deixa claro **em qual você está**
 o tempo inteiro — a barra de contexto muda e o verbo de publicar fica à vista.
 
+- **O posto abre o rascunho em montagem** (`usePlanoEmEdicao`), não o vigente: se há rascunho mais novo
+  que o vigente, é nele que se trabalha. A Semana e o Hoje seguem no vigente (`usePlanoCorrente`).
+- **Uma versão em rascunho por vez** — replanejar com um rascunho aberto é recusado no servidor.
+- **Seletor de versão** no topo (v4 · em montagem, v1 · o combinado, sobras de rascunho), com faixa
+  dizendo o que a versão é: rascunho (ver o vigente · descartar), vigente com rascunho aberto (abrir o
+  rascunho), vigente sem rascunho (replanejar), substituída (só leitura). Replanejar leva a tela à
+  versão nova. A escolha mora no contexto do PDCA (`planoEscolhido`), e o Inspetor lê dela.
+- **Restrição é do plano em execução.** No rascunho, a linha mostra as restrições da gêmea vigente
+  (mesmo código EAP); ao publicar, as abertas passam para a versão nova ([modulopdca.md](modulopdca.md)).
+
+**O plano se monta aqui dentro, sem sair do posto** — e por qualquer porta. *(Decisão do dono,
+09/10/2026: "hoje só consigo criar tarefa e mais nada. Quero fazer tudo.")*
+
+- **Obra sem plano abre o assistente** (`AssistenteDoPlano`): início e **expediente** (cadastrado ali
+  mesmo, se a empresa não tem — sem expediente o CPM não dá data) → **ponto de partida** → etapas e
+  atividades com duração (sugestões de fase clicáveis) → sequência (fase depois de fase; atividade
+  depois de atividade) → criar. Os quatro pontos de partida: **digitar**, **do orçamento**, **de um
+  modelo**, **colar do Excel / XML do MS Project**. Orçamento e colar criam o plano e abrem o diálogo
+  respectivo; o modelo aplica direto. Plano já criado e vazio mostra as mesmas quatro portas.
+- **A grade é planilha de verdade** (`GradeEap`), no molde do MS Project: setas andam entre células;
+  Enter/F2 ou digitar edita; Enter grava e desce; Tab (editando) grava e vai à direita; **Insert** ou
+  Shift+Enter cria a linha abaixo já com o nome em edição; Ctrl+Enter cria dentro; **Tab recua**
+  (entra na irmã de cima) e **Shift+Tab avança**; Alt+↑↓ muda a ordem; Delete exclui; Ctrl+V cola;
+  Ctrl+Z desfaz. A alça da linha **arrasta** para antes, depois ou **dentro** de outra (o terço do
+  meio da linha-alvo). Colunas escolhidas pela pessoa (EAP, atividade, duração, **predecessoras**,
+  início, término, folga, local, responsável, peso), guardadas no `localStorage`. Duração 0 vira marco.
+  A coluna Predecessoras se digita na grafia do Project (`1.2; 1.3SS+2; 4FF-1`, também TI/II/TT/IT).
+- **O Gantt é instrumento, não desenho**: arrastar a barra grava "não começar antes de" (e o CPM decide
+  onde ela fica); puxar a ponta muda a duração; os **pinos** nas pontas da barra selecionada ligam a
+  outra barra — do fim, FS ou FF; do início, SS ou SF, conforme se solta perto do começo ou do fim da
+  alvo; clicar na seta abre o editor (tipo, defasagem, desligar). Restrição com prazo aparece como
+  marca na linha, vermelha quando chega depois do início previsto.
+- **A seta chega pelo lado certo**: por trás no início (FS, SS), pela frente no término (FF, SF); sem
+  espaço entre as barras, desvia pela fronteira entre as linhas em vez de voltar por cima da barra.
+- **A barra se corta nos dias parados** do expediente dela (fim de semana, feriado, recesso), e o fundo
+  do Gantt sombreia os do plano — feriado e exceção num tom próprio, com o nome no cabeçalho. Vem do
+  bloco `expedientes` do `gantt/`: os feriados são os do lugar da obra, os mesmos da Agenda.
+- **Escala contínua**: atalhos dia · semana · mês · trimestre, deslizante (logarítmico), −/+ e
+  "caber" (o plano inteiro na largura). A régua de tempo se adapta à densidade; a escala fica guardada.
+- **O Inspetor edita tudo** da atividade: nome, marco, duração, data mínima, expediente próprio (vazio =
+  herda o do plano, e o rótulo diz qual), rede inteira para trás (**Depende de**) e para frente
+  (**Libera**) com tipo e defasagem — com cabeçalho das colunas e legenda dos tipos —, **restrições**
+  (material, projeto, licença…) com prazo, "pedir compra" (material) ou "pedir contratação" (equipamento,
+  mão de obra) no SCM com link à demanda, e a opção de segurar a atividade até o prazo; a **resolvida
+  fica na lista**, riscada, com a nota, e pode ser **reaberta**. Peso informado (o bloco explica que o
+  peso pondera o avanço físico da etapa e da obra), local, etapa da obra, **item orçado** (busca no
+  orçamento da obra), responsável (RH) e observação. Data digitada só grava inteira (`CampoData`).
+  Na **etapa**, o bloco de peso é a **composição**: cada filha com o peso (digitável ali mesmo) e a parcela
+  na etapa, e o peso da etapa (soma das filhas) com a parcela na obra; na folha, a participação (% da etapa
+  · % da obra). A coluna Peso da grade mostra o número e a parcela da obra (`pesos.ts`). As listas de
+  dependência seguem a ordem da árvore, não a do código. Sem locais, o seletor de local explica o que é e
+  leva ao cadastro.
+- **Etapa liga com etapa** — a ligação de fase ("a alvenaria começa quando a estrutura termina") é uma
+  seta na tela e o CPM a expande nas folhas ([modulopdca.md §4.2](modulopdca.md)). Uma etapa não se liga
+  ao que ela contém.
+- **Menu Montar**: nova etapa, atividade (abaixo da selecionada, ou dentro se ela é etapa), marco, colar
+  / abrir MS Project, trazer do orçamento, modelos (trazer para o fim deste plano, ou salvar este como
+  modelo), encadear as etapas. Abre por cima de tudo, dentro da janela, mesmo com o botão quebrado.
+- **Várias de vez**: Ctrl+clique marca e desmarca, Shift+clique e Shift+↑↓ marcam o intervalo, Ctrl+A
+  marca todas, Esc desmarca. Delete, Tab, Shift+Tab e arrastar valem para o lote, e o Inspetor vira o
+  **painel do lote**: encadear em sequência, desligar entre elas, recuar, avançar, excluir e aplicar a
+  todas duração, data mínima, local, responsável e expediente — cada ação é **um** passo no desfazer.
+- **Desfazer e recálculo** moram no store `montagem.ts`, compartilhado pela grade, pelo Gantt e pelo
+  Inspetor. *(Decisão do dono, 09/10/2026: o Ctrl+Z vale "enquanto estou na tela ou até eu finalizar o
+  plano".)* A pilha é **dado, não função**: operações inversas serializáveis, guardadas por plano no
+  navegador — sobrevivem a recarregar e a trocar de posto, e zeram ao publicar ou replanejar (até 100
+  passos). Ligações são lembradas pelo par (origem, destino). **Excluir também volta**: a tela fotografa
+  a subárvore antes de apagar e o inverso é `restaurar-linhas/`, cujo mapa de ids corrige o resto da
+  pilha. O Ctrl+Z vale com o foco em qualquer lugar do posto, menos num campo de texto em digitação.
+  Cada gesto dispara o CPM; o motivo de não ter calculado vira faixa no posto.
+- **Excluir pergunta num diálogo do sistema** (quantas linhas vão junto, quantas ligações saem, que
+  dá para desfazer, e quais restrições não voltam), e a linha **some na hora** — o servidor apaga,
+  recalcula e confirma por trás.
+- **Recolher é estado da pessoa**: a etapa recolhida esconde as filhas e continua recolhida ao
+  recarregar (por plano, no navegador).
+- O topo do posto mostra e edita o **início** e o **expediente** do plano, e o término calculado.
+
+A **etapa do plano (raiz) é a etapa da obra**: criar uma etapa cria a etapa da obra e liga as duas, e
+renomear uma renomeia a outra (salvo se outra atividade usa a mesma etapa). No plano vigente, o único
+verbo de escrita é **Replanejar**, com motivo; as restrições continuam registráveis (são do make-ready).
+
+*Limites declarados:* o `.mpp` é binário fechado — a tela pede o XML do Project. O esticar da barra
+conta os dias úteis pelo expediente da atividade (com feriado e exceção), e o servidor refaz pelo CPM.
+
+**Vista Suprimentos** — a fila "comprar até": por insumo, necessário × estoque × pedido × demanda × a
+comprar, a data de pedir (atrasada em vermelho), expandindo para as atividades (chegar até, de onde vem a
+antecedência); antecedência padrão da obra e exceção por insumo editáveis ali; marcar e **gerar demanda**;
+avisos de cobertura (atividade fora da conta, sem orçamento aprovado, revisão do orçamento com "religar")
+e da sobra em outro almoxarifado. **Vista Custo** — por etapa (expande para atividades): orçado ×
+comprometido × recebido × aplicado × medido, com "acima do orçado" e a linha do que não tem dono. No
+Inspetor, o bloco **Material** da atividade (insumos, situação, chegar até, antecedência própria) e o
+custo dela. A restrição mostra o **andamento da compra** e oferece "Material recebido — destravar".
+
+**Vista Avanço R$** — o avanço físico-financeiro: por etapa e da obra, previsto pelas datas × realizado
+apontado (% e R$ do orçado), e contra o **planejado no cronograma do Orçamento**; a curva S troca a régua
+(datas do plano ou planejado no Orçamento). O cronograma físico-financeiro se monta no Orçamento, que
+linka de volta para esta vista. **Faixa do expediente** — feriado/parada lançado depois do cálculo que cai
+dentro de barras: cita os dias e as atividades; no rascunho recalcula, na versão congelada manda
+replanejar. Excluir uma etapa avisa que ela sai também das etapas da obra (ou, no rascunho do
+replanejamento, que sai ao publicar). As parcelas de peso em % somam 100% (maior resto).
+
 A hierarquia de locais e a biblioteca de planos modelo moram **aqui dentro**, como painéis do posto
-(§8), não como itens de menu.
+(§8), não como itens de menu. O painel **Locais** explica o que é um local e cadastra ali mesmo — no
+topo ou dentro de outro, um por vez ou em série ("Trecho" × 12 → Trecho 1…12, código seguido do pai) — e
+exclui. A vista do posto mora na URL (`?vista=locais`), para o Inspetor levar direto a ela.
 
 ### 5.4 MEDIÇÃO — o dinheiro
 
@@ -279,9 +402,27 @@ contrato**, como informação ao lado dele.
   também **nasce aqui**: sem isso o estado vazio pediria uma ação sem caminho. O formulário só
   aparece para quem tem `pdca.contrato.edit` — a diretoria ateste e não monta contrato, e o verbo
   some em vez de aparecer e recusar.
-- **Planilha contratual** — a grade de itens, e ela **fecha** quando o contrato não permite mais
-  editar. A trava vem do backend (`planilha_editavel`, `planilha_fechada_porque`) e a tela **lê a
-  resposta**, nunca reimplementa a condição ([convenções §11](../frontend-convencoes.md)).
+- **Dentro do contrato, um mapa — não abas** (pedido do dono: "igual um jogo com ótimo design de
+  mapas: sempre deixa saber o caminho, sem ficar avisando"). O caminho é uma linha só: **Contrato →
+  Vigente → Medir → Aprovação → Executado**, derivado do saldo (`trilha.ts`). O feito fica marcado,
+  a próxima parada brilha, a aberta tem o anel de "você está aqui"; clicar leva até ela. Aditivos e
+  Retenção são desvios ao lado da estrada. Sem vista no endereço, o contrato abre na próxima parada.
+  Nenhuma faixa de aviso: o mapa mostra.
+- **Contrato** (`FichaDoContrato`, `?v=planilha`) — o contrato inteiro: o dinheiro do contratado ao
+  pago no ERP, o cadastro, a linha do tempo (medição retificada riscada, apontando para a que a
+  substituiu), os itens com medido e saldo, e a planilha contratual embaixo, editável até a primeira
+  medição.
+- **Vigente** — o resumo do contrato e o botão **Tornar vigente** (`ativar/`): unitário precisa de
+  planilha, global/administração do valor fechado.
+- **Planilha contratual** — em ordem natural de código, toda linha editável inteira (código,
+  descrição, unidade, quantidade, preço) e com o **vínculo escolhido na linha** (atividade do plano
+  ou item do orçamento; sem vínculo = digita-se na medição). Entra de quatro jeitos: **do orçamento**,
+  **do plano**, **colando do Excel** e item avulso (`fontes-da-planilha/` + `incluir-na-planilha/`,
+  tudo ou nada). Ela **fecha** quando o contrato não permite mais editar. A trava vem do backend
+  (`planilha_editavel`, `planilha_fechada_porque`) e a tela **lê a resposta**, nunca reimplementa a
+  condição ([convenções §11](../frontend-convencoes.md)).
+- **Medir** juntou Apurar e Boletins: o período e a prévia em cima, os boletins embaixo. Na grade,
+  item ligado vem proposto pelo avanço e item sem vínculo se digita — os dois na mesma grade.
 - **Apurar** — a medição nasce do avanço apontado, não da digitação. A proposta vem pronta do
   servidor e a grade mostra a **memória de cálculo** de cada linha: de onde veio o número.
 - **Prévia** — somente leitura por desenho, e a tela **diz isso**: número é texto, não `input`
@@ -295,7 +436,12 @@ contrato**, como informação ao lado dele.
   ao lado.
 - **Escada de atesto** — submeter, atestar, cancelar; cada degrau com a sua permissão. Cancelar
   medição aprovada cancela o título no ERP, e o aviso sai do mesmo lugar da trava.
-- **Aditivo** e **deduções** como painéis do posto, porque só existem em função do contrato.
+- **Aditivo** e **deduções** como painéis do posto, porque só existem em função do contrato. O
+  aditivo se monta no `EditorDeAditivo`, como um contrato: termo (objeto, motivo, prorrogação, nova
+  retenção), cada item existente (acréscimo, supressão, preço novo, retenção própria), itens novos e o
+  antes → depois do contratado; o rascunho se edita, exclui ou envia, e o que está na escada se retira.
+- **Retificadora** — a grade vira o quadro original | corrigido | diferença, e o boletim ganha a
+  conciliação (líquido antes, corrigido, diferença; o efeito no saldo e no ERP).
 
 ### 5.5 QUALIDADE — o laço que fecha
 
@@ -553,3 +699,13 @@ Um posto está pronto quando:
 - **O rail não cresce por fatia.** Capacidade nova entra num posto existente; cadência nova — e só
   ela — justificaria um sétimo.
 - **WhatsApp e web responsiva** entram dentro das fatias que produzem dado de campo; não são posto.
+
+
+## Mudança de desenho — o posto Controle (decisão do dono, 10/10/2026)
+
+O **Hoje** e a **Semana** deixam de ser postos: viram abas do posto **Controle**
+(`/app/pdca/o/:obraId/controle?aba=hoje|semana|avanco|custo|materiais`). `hoje` e `semana` na URL
+redirecionam; `?vista=avanco|custo` do Plano também. O Plano fica com Cronograma, Suprimentos, Ritmo,
+Locais e Expediente. O diálogo "Trazer do orçamento" traz as etapas do cronograma do Orçamento, e uma
+faixa no topo do Plano avisa quando esse cronograma mudou. O formulário de contrato escolhe o lado
+(empreiteiro/contratante) e a fórmula de reajuste.

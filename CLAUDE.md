@@ -27,6 +27,14 @@ Padrão de status nas tabelas
 Antes de documentar um campo, verificar se o modelo Python reflete o estado atual do banco
 (última migration aplicada). Se divergirem, corrigir o `models.py` primeiro.
 
+## Estamos em desenvolvimento — nada de pré-produção
+
+*(decisão do dono, 03/10/2026)* O projeto **não está no ar**. Ao indicar o próximo passo ou escolher
+trabalho, ficar em **funcionalidade**: módulos, telas, defeitos, Fase 7. **Não sugerir** preço ou limite
+de plano, servidor, pentest, ingress, Grafana/alertas, homologação bancária, contêiner sem root nem manual
+de produção — isso é do **final do desenvolvimento** e está listado em
+[docs/roadmap.md](docs/roadmap.md#foco-atual--desenvolvimento). Só tratar desses itens se o dono pedir.
+
 ## Arquitetura e documentação do projeto
 
 - Planta baixa: [docs/arquitetura.md](docs/arquitetura.md)
@@ -38,6 +46,8 @@ Antes de documentar um campo, verificar se o modelo Python reflete o estado atua
 - Identidade visual (Sistema Malha — marca, cor, tipografia, voz): [docs/identidade-visual.md](docs/identidade-visual.md)
 - Acesso e permissões: [docs/acesso-e-permissoes.md](docs/acesso-e-permissoes.md)
 - Como rodar: [docs/desenvolvimento.md](docs/desenvolvimento.md)
+- Produção (www.gmaxis.com — publicar atualização/módulo, dados, armadilhas): [docs/producao/](docs/producao/README.md).
+  Testes e ambiente dev **não** sobem para o servidor
 - Drone (Java + Angular, versionado aqui em `funcoesODM/`, docs próprias):
   [funcoesODM/docs/README.md](funcoesODM/docs/README.md) — a cópia em `ImgDrone/` é antiga, não editar
 
@@ -53,6 +63,11 @@ Antes de documentar um campo, verificar se o modelo Python reflete o estado atua
   constante e dá a ela o nome local que quiser; o **valor** é do dono. Quem cobra é
   `testes/backend/nucleo/test_tetos_no_payment.py`; a fronteira do que **não** é limite (constante física,
   largura de campo, TTL de cache, janela de protocolo de terceiro) está na §5.6 do `planos.py`.
+- **Alteração que interfere em outro módulo tem notificação** *(decisão do dono, 11/10/2026)* — o
+  módulo que cria, cancela ou muda registro de outro (título no ERP, demanda no Suprimentos, entrada no
+  Estoque, etapa da Obra…) chama `nucleo.notificacoes.avisar_quem_pode(permissao=…)` no mesmo gesto,
+  com o nível de [docs/modulos/funcoesnotificacoes.md](docs/modulos/funcoesnotificacoes.md). Escrita
+  cruzada nova sem aviso é defeito.
 - **Frontend de módulo segue a régua** (grandioso + expansível): cockpit com fila de decisão,
 - loop do domínio ponta a ponta, dados honestos (agregado real ou "em breve", nunca fabricado),
   **integração visível entre módulos** (o que conversa no backend conversa na tela — um *sistema de

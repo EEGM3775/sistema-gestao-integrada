@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
 export type ChavePagina =
-  | 'orcar' | 'encargos' | 'controlar' | 'cronograma' | 'bases' | 'incorporacao'
+  | 'orcar' | 'encargos' | 'analisar' | 'cronograma' | 'bases' | 'incorporacao'
 
 export interface DefinicaoPagina {
   chave: ChavePagina
@@ -28,18 +28,18 @@ export const PAGINAS: DefinicaoPagina[] = [
   {
     chave: 'encargos',
     rota: '/app/orcamento/encargos',
-    titulo: 'Encargos & reajuste',
+    titulo: 'Encargos & BDI',
     verbo: 'Parametrizar o preço',
-    resumo: 'Quadro de encargos por grupo A/B/C/D, composição do BDI e reajuste por índice.',
+    resumo: 'Quadro de encargos por grupo A/B/C/D e composição do BDI. O reajuste é cláusula do contrato, no PDCA.',
     permissao: 'orcamento.orcamento.view',
     icone: 'percentual',
   },
   {
-    chave: 'controlar',
-    rota: '/app/orcamento/controlar',
-    titulo: 'Controlar',
-    verbo: 'Acompanhar o custo',
-    resumo: 'Orçado × comprometido × aplicado × realizado por obra, curva ABC e desvios.',
+    chave: 'analisar',
+    rota: '/app/orcamento/analisar',
+    titulo: 'Analisar',
+    verbo: 'Ler o orçado',
+    resumo: 'Curva ABC de serviços e de insumos, relação de insumos para o Suprimentos e composição do custo.',
     permissao: 'orcamento.relatorio.view',
     icone: 'colunas',
   },
@@ -48,7 +48,7 @@ export const PAGINAS: DefinicaoPagina[] = [
     rota: '/app/orcamento/cronograma',
     titulo: 'Cronograma',
     verbo: 'Distribuir no tempo',
-    resumo: 'Físico-financeiro por etapa e competência, com curva S de previsto × realizado.',
+    resumo: 'Físico-financeiro por etapa: início, término e curva, Hh e equipe — a base do plano do PDCA.',
     permissao: 'orcamento.relatorio.view',
     icone: 'calendario',
   },

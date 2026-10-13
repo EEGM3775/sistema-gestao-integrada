@@ -24,7 +24,15 @@ No WSL (`wsl -d Ubuntu`), com o stack de pé:
 cd ~/projetos/02sistema_gestao_integrada
 ./infra/ponte/ponte.sh subir          # 4 horas (padrão)
 ./infra/ponte/ponte.sh subir 2        # ou o prazo que você quiser, até 12h
+./infra/ponte/ponte.sh subir stg      # o staging (8443) em vez do dev (8090)
 ```
+
+No PowerShell, na pasta `infra\ponte`: `wsl ./ponte.sh subir` — sem o `wsl` na frente o Windows
+só abre o `.sh` e nada sobe.
+
+No `stg` o porteiro fala TLS com o gateway do staging (o `:80` de lá só redireciona) e repassa a
+origem `https://localhost:8443`; a cópia do `nginx.conf` com essas duas trocas é gerada na subida.
+O staging tem dado real (tenant EEGM) — a senha da ponte é o que o separa da internet.
 
 Ele imprime a **URL**, o **usuário** (`sgi`), a **senha** — gerada na hora — e a
 **hora em que expira**. No celular: abra a URL, o navegador pede usuário e
@@ -32,10 +40,35 @@ senha, e depois você cai no login normal do SGI.
 
 | Comando | O que faz |
 | --- | --- |
-| `subir [horas]` | Levanta a ponte. Padrão 4h, teto 12h. |
+| `subir [horas] [stg]` | Levanta a ponte. Padrão 4h no dev, teto 12h; `stg` aponta para o staging. |
 | `status` | O que está no ar, quanto falta, e se o vigia está vivo. |
 | `prorrogar [horas]` | Estica o prazo. **A URL e a senha não mudam.** |
 | `derrubar` | Fecha agora, sem esperar o prazo. |
+| `dominio [nome\|-]` | Mostra, grava ou apaga (`-`) o **link fixo** (abaixo). |
+
+### Link fixo
+
+O `trycloudflare` sorteia uma URL nova a cada `subir`. Para o link ser sempre o mesmo, a ponte usa o
+**domínio estático gratuito do ngrok** da conta já configurada nesta máquina
+(`~/.config/ngrok/ngrok.yml`, a mesma do webhook do Asaas):
+
+1. Reservar o domínio **uma vez** no painel do ngrok (*Universal Gateway → Domains → New Domain*; a
+   conta gratuita tem um). O script não cria domínio — isso exige o login da conta.
+2. `./infra/ponte/ponte.sh dominio fulano.ngrok-free.app` — fica gravado em `~/ponte-temporaria/dominio`.
+3. Daí em diante, `subir` usa o ngrok nesse domínio. **A senha continua nova a cada subida**: um link
+   que não muda é mais fácil de achar, e a senha é o que o protege.
+
+No ngrok gratuito o navegador mostra, na primeira visita, um aviso do próprio ngrok ("You are about to
+visit…") com um botão para seguir — é dele, não do SGI. `dominio -` volta ao `trycloudflare`.
+
+### Por que o porteiro reescreve o `Origin`
+
+O porteiro troca o `Host` por `localhost` (para o `ALLOWED_HOSTS` valer sem ser editado). O refresh e
+o logout da IAM recusam origem cross-site comparando `Origin` com `Host` — e o celular manda
+`Origin: https://<ponte>`. Sem reescrever, todo refresh dava 403 e a sessão caía a cada recarga de
+página ([D259](historico-correcoes.md)). Só a origem **da própria ponte** vira `http://localhost`;
+qualquer outra segue como veio e continua recusada. Em produção não há porteiro: `Host` e `Origin` são
+o mesmo domínio.
 
 ---
 

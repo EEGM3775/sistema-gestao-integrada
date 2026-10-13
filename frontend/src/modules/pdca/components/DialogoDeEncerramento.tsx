@@ -25,12 +25,17 @@ export function DialogoDeEncerramento({
   julgamentos: Record<number, Julgamento>
   salvando: boolean
   aoFechar: () => void
-  aoConfirmar: (opcoes: { motivo: string; arrastar: boolean }) => Promise<ResumoDoPpc>
+  aoConfirmar: (opcoes: { motivo: string; arrastar: boolean; aceitarSemCausa?: boolean }) => Promise<ResumoDoPpc>
 }) {
   const [motivo, setMotivo] = useState('')
   const [arrastar, setArrastar] = useState(true)
   const [erros, setErros] = useState<FieldErrors>({})
   const [resumo, setResumo] = useState<ResumoDoPpc | null>(null)
+  /** O aviso do servidor antes de bloquear: o que não saiu está sem causa. Quem
+   *  tem a alçada (`pode`) decide seguir; quem não tem só vê o que falta. */
+  const [semCausaAviso, setSemCausaAviso] = useState<
+    { itens: { atividade: string; percentual: string }[]; pode: boolean } | null
+  >(null)
 
   const decididos = itens.map((item) => ({
     item,
@@ -48,11 +53,19 @@ export function DialogoDeEncerramento({
    *  e a do navegador envelheceria primeiro. */
   const aindaNaoAcabou = programacao.semana_fim >= hojeIso()
 
-  async function confirmar() {
+  async function confirmar(aceitarSemCausa = false) {
     setErros({})
     try {
-      setResumo(await aoConfirmar({ motivo, arrastar }))
+      setResumo(await aoConfirmar({ motivo, arrastar, aceitarSemCausa }))
+      setSemCausaAviso(null)
     } catch (e) {
+      const dados = (e as { response?: { data?: { codigo?: string; sem_causa?: { atividade: string; percentual: string }[]; pode_aceitar?: boolean } } })
+        .response?.data
+      if (dados?.codigo === 'sem_causa') {
+        setSemCausaAviso({ itens: dados.sem_causa ?? [], pode: !!dados.pode_aceitar })
+        return
+      }
+      setSemCausaAviso(null)
       setErros(parseApiErrors(e))
     }
   }
@@ -67,7 +80,12 @@ export function DialogoDeEncerramento({
       rodape={
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <Btn onClick={aoFechar}>Ainda não</Btn>
-          <Btn variant="primary" onClick={confirmar} disabled={salvando}>
+          {semCausaAviso?.pode && (
+            <Btn onClick={() => void confirmar(true)} disabled={salvando}>
+              Encerrar assim mesmo
+            </Btn>
+          )}
+          <Btn variant="primary" onClick={() => void confirmar(false)} disabled={salvando}>
             {salvando ? 'Encerrando…' : 'Encerrar'}
           </Btn>
         </div>
@@ -75,6 +93,21 @@ export function DialogoDeEncerramento({
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <FormErrorBanner errors={erros} />
+
+        {semCausaAviso && (
+          <Aviso tom="accent">
+            <strong>
+              {semCausaAviso.itens.length === 1
+                ? 'Um compromisso que não saiu está sem causa.'
+                : `${semCausaAviso.itens.length} compromissos que não saíram estão sem causa.`}
+            </strong>{' '}
+            A causa é de onde sai o ranking que muda a obra.{' '}
+            {semCausaAviso.pode
+              ? 'Você pode encerrar assim mesmo: eles entram no ranking como «Sem causa informada».'
+              : 'Informe a causa de cada um para encerrar — ou peça a quem tem a alçada de encerrar sem causa.'}
+            <Lista nomes={semCausaAviso.itens.map((i) => `${i.atividade} (${Number(i.percentual).toFixed(0)}%)`)} />
+          </Aviso>
+        )}
 
         <div style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>
           Semana de{' '}

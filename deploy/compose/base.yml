@@ -202,6 +202,10 @@ services:
       IAM_SEGUNDO_FATOR_CHAVE: ${IAM_SEGUNDO_FATOR_CHAVE:-}
       IAM_DEBUG: ${IAM_DEBUG:-True}
       IAM_ALLOWED_HOSTS: ${IAM_ALLOWED_HOSTS:-localhost,127.0.0.1,iam,gateway}
+      # Origens confiáveis do refresh/logout além da "mesma origem" (Origin = Host).
+      # Em produção, o domínio público: assim a sessão não cai se um proxy na frente
+      # do gateway trocar o Host (D259). O padrão é o mesmo do settings da IAM.
+      IAM_CORS_ORIGINS: ${IAM_CORS_ORIGINS:-http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173}
       JWT_SECRET: ${JWT_SECRET}
       JWT_ACCESS_MINUTES: ${JWT_ACCESS_MINUTES:-5}
       JWT_REFRESH_DAYS: ${JWT_REFRESH_DAYS:-30}

@@ -16,14 +16,22 @@ const TOM_DO_STATUS: Record<StatusMedicao, 'good' | 'accent' | 'info' | 'danger'
   aprovada: 'good',
   reprovada: 'danger',
   cancelada: 'slate',
+  retificada: 'slate',
 }
 
+/** Os mesmos tipos do servidor (`TipoDeducao`). A tela tinha `imposto` e
+ *  `outro`, que o servidor não conhece — todo desconto lançado voltava
+ *  recusado, e a recusa aparecia como "[object Object]" (achado do dono,
+ *  10/10/2026). O tipo é o que o financeiro concilia com a guia, por isso
+ *  INSS, ISS e IRRF são separados. */
 const TIPOS_DE_DEDUCAO: { valor: TipoDeducao; rotulo: string }[] = [
-  { valor: 'imposto', rotulo: 'Imposto retido' },
+  { valor: 'inss', rotulo: 'Retenção de INSS' },
+  { valor: 'iss', rotulo: 'Retenção de ISS' },
+  { valor: 'irrf', rotulo: 'Retenção de IRRF' },
   { valor: 'adiantamento', rotulo: 'Amortização de adiantamento' },
-  { valor: 'multa', rotulo: 'Multa' },
+  { valor: 'multa', rotulo: 'Multa contratual' },
   { valor: 'material', rotulo: 'Material fornecido pela obra' },
-  { valor: 'outro', rotulo: 'Outro desconto' },
+  { valor: 'outros', rotulo: 'Outro desconto' },
 ]
 
 /** **O boletim** — cabeçalho, o dinheiro somado e a escada de quem assina.
@@ -73,7 +81,11 @@ export function BoletimDeMedicao({
         </div>
       )}
 
-      <OsNumeros totais={totais} />
+      <OsNumeros totais={totais} receita={medicao.lado === 'receita'} />
+
+      {totais.original && (
+        <Conciliacao totais={totais} receita={medicao.lado === 'receita'} status={medicao.status} />
+      )}
 
       <Deducoes
         deducoes={medicao.deducoes ?? []}
@@ -143,12 +155,18 @@ function Cabecalho({ medicao }: { medicao: Medicao }) {
 
 /** Bruto → retenção → deduções → líquido, **na ordem em que o dinheiro
  *  encolhe**. É o líquido que vira título no ERP, e por isso ele é o único
- *  destacado: os outros três existem para explicá-lo. */
-function OsNumeros({ totais }: { totais: TotaisDaMedicao }) {
+ *  destacado: os outros três existem para explicá-lo. Na retificadora são os
+ *  números da medição corrigida **inteira** — a comparação mora na
+ *  `Conciliacao`. */
+function OsNumeros({ totais, receita }: { totais: TotaisDaMedicao; receita: boolean }) {
   const linhas: { rotulo: string; valor: string; base?: string; sinal?: '-' }[] = [
     { rotulo: 'Serviço executado', valor: totais.executado },
     { rotulo: 'Material posto na obra', valor: totais.material_estocado },
     { rotulo: 'Bruto do período', valor: totais.bruto },
+    ...(apiDecimalToCents(totais.reajuste) !== 0 ? [{
+      rotulo: totais.reajuste_provisorio ? 'Reajuste (índice provisório)' : 'Reajuste do contrato',
+      valor: totais.reajuste,
+    }] : []),
     {
       rotulo: 'Retenção contratual',
       valor: totais.retencao,
@@ -186,11 +204,131 @@ function OsNumeros({ totais }: { totais: TotaisDaMedicao }) {
         }}
       >
         <span style={{ flex: 1, fontSize: 12.5, fontWeight: 700, color: 'var(--ink)' }}>
-          Líquido a pagar
+          {receita ? 'Líquido a receber' : 'Líquido a pagar'}
+          {totais.original && ' (medição corrigida)'}
         </span>
         <Num size={18} weight={750} tone="var(--ink)">
           {formatBRL(apiDecimalToCents(totais.liquido))}
         </Num>
+      </div>
+    </Card>
+  )
+}
+
+/** **A conciliação da retificadora** — original | corrigida | diferença, e o
+ *  que cada número faz no contrato e no financeiro *(achado do dono,
+ *  11/10/2026: "ia ter R$ 600 a menos e o contrato não ia fechar", sem a tela
+ *  dizer por quê)*. A tela não soma nada além da subtração das colunas: os
+ *  três números de cada linha vêm do servidor. */
+function Conciliacao({ totais, receita, status }: {
+  totais: TotaisDaMedicao
+  receita: boolean
+  status: Medicao['status']
+}) {
+  const original = totais.original!
+  const c = apiDecimalToCents
+  const linhas = [
+    { rotulo: 'Bruto (com reajuste)', antes: c(original.bruto_reajustado), depois: c(totais.bruto_reajustado) },
+    { rotulo: 'Retenção', antes: -c(original.retencao), depois: -c(totais.retencao) },
+    { rotulo: 'Descontos', antes: -c(original.total_deducoes), depois: -c(totais.total_deducoes) },
+    { rotulo: 'Líquido', antes: c(original.liquido), depois: c(totais.liquido), forte: true },
+  ]
+  const difBruto = c(totais.bruto_reajustado) - c(original.bruto_reajustado)
+  const difLiquido = c(totais.liquido) - c(original.liquido)
+  const difDescontos = c(totais.total_deducoes) - c(original.total_deducoes)
+  const pagar = receita ? 'receber' : 'pagar'
+  const sinal = (v: number) => (v === 0 ? '—' : `${v > 0 ? '+' : '−'} ${formatBRL(Math.abs(v))}`)
+
+  return (
+    <Card pad={false} style={{ overflow: 'hidden' }}>
+      <div style={{ padding: '10px 14px 4px', fontSize: 12.5, fontWeight: 700, color: 'var(--ink)' }}>
+        Conciliação com a medição {original.numero}
+      </div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+          <thead>
+            <tr>
+              {['', `Medição ${original.numero}`, 'Corrigida', 'Diferença'].map((r, i) => (
+                <th
+                  key={r || 'rotulo'}
+                  style={{
+                    textAlign: i === 0 ? 'left' : 'right', padding: '6px 14px',
+                    fontSize: 10.5, fontWeight: 700, letterSpacing: '0.07em',
+                    textTransform: 'uppercase', color: 'var(--ink-3)',
+                    borderBottom: '1px solid var(--line)',
+                  }}
+                >
+                  {r}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {linhas.map((l) => (
+              <tr key={l.rotulo} style={{ borderBottom: '1px solid var(--line-2)' }}>
+                <td style={{ padding: '6px 14px', color: l.forte ? 'var(--ink)' : 'var(--ink-3)', fontWeight: l.forte ? 700 : 400 }}>
+                  {l.rotulo}
+                </td>
+                <td style={{ padding: '6px 14px', textAlign: 'right' }}>
+                  <Num size={12.5} tone="var(--ink-3)">{formatBRL(l.antes)}</Num>
+                </td>
+                <td style={{ padding: '6px 14px', textAlign: 'right' }}>
+                  <Num size={12.5} tone="var(--ink)" weight={l.forte ? 750 : undefined}>{formatBRL(l.depois)}</Num>
+                </td>
+                <td style={{ padding: '6px 14px', textAlign: 'right' }}>
+                  <Num
+                    size={12.5}
+                    tone={l.depois - l.antes === 0 ? 'var(--ink-3)'
+                      : l.depois - l.antes < 0 ? 'var(--danger-ink)' : 'var(--good-ink)'}
+                  >
+                    {sinal(l.depois - l.antes)}
+                  </Num>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div
+        style={{
+          padding: '10px 14px', borderTop: '1px solid var(--line)', background: 'var(--inset)',
+          fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.55,
+          display: 'flex', flexDirection: 'column', gap: 5,
+        }}
+      >
+        <div>
+          <strong>No contrato:</strong>{' '}
+          {difBruto === 0
+            ? 'o medido não muda — o saldo a medir continua o mesmo.'
+            : difBruto < 0
+              ? `voltam ${formatBRL(-difBruto)} ao saldo a medir do contrato.`
+              : `o contrato consome mais ${formatBRL(difBruto)} do saldo.`}
+          {difDescontos !== 0 && (
+            <> {' '}Os descontos ({sinal(-difDescontos)} no líquido) <strong>não</strong> mexem
+              no saldo: o contrato é consumido pelo bruto medido, por isso a soma dos líquidos
+              não fecha com o valor do contrato.</>
+          )}
+        </div>
+        <div>
+          <strong>No financeiro, ao aprovar:</strong>{' '}
+          a medição {original.numero} vira <em>retificada</em> e sai de toda soma.
+          {' '}Se o título dela ainda está em aberto, ele é cancelado e nasce um de{' '}
+          {formatBRL(c(totais.liquido))} a {pagar}.
+          {' '}Se já foi {receita ? 'recebido' : 'pago'},{' '}
+          {difLiquido > 0
+            ? `nasce o complemento de ${formatBRL(difLiquido)} a ${pagar}`
+            : difLiquido < 0
+              ? `o saldo em aberto do título cai primeiro e o que sobrar (até ${formatBRL(-difLiquido)}) vira devolução`
+              : 'o título já confere'}
+          {' '}— e o ERP recebe um aviso <strong>Agir já</strong>.
+        </div>
+        {status !== 'aprovada' && (
+          <div style={{ color: 'var(--ink-3)' }}>
+            Até a aprovação, a medição {original.numero} continua valendo. Cancelar esta
+            retificadora a apaga de vez.
+          </div>
+        )}
       </div>
     </Card>
   )
@@ -220,12 +358,16 @@ function Deducoes({
   const [linhas, setLinhas] = useState<LinhaDeDeducao[]>([])
 
   function abrir() {
+    // "Lançar desconto" abre já com uma linha: abrir vazio pedia um segundo
+    // clique em "Outra linha" antes de poder digitar qualquer coisa.
     setLinhas(
-      (deducoes.length > 0 ? deducoes : []).map((d) => ({
-        tipo: d.tipo,
-        descricao: d.descricao,
-        centavos: apiDecimalToCents(d.valor_aplicado),
-      })),
+      deducoes.length > 0
+        ? deducoes.map((d) => ({
+          tipo: d.tipo,
+          descricao: d.descricao,
+          centavos: apiDecimalToCents(d.valor_aplicado),
+        }))
+        : [{ tipo: 'inss', descricao: '', centavos: 0 }],
     )
     setEditando(true)
   }
@@ -310,7 +452,7 @@ function Deducoes({
                 tam="sm"
                 onClick={() =>
                   setLinhas((atual) => [
-                    ...atual, { tipo: 'imposto', descricao: '', centavos: 0 },
+                    ...atual, { tipo: 'inss', descricao: '', centavos: 0 },
                   ])}
               >
                 <Plus size={13} />
@@ -464,7 +606,7 @@ function TituloNoErp({
         </span>
         <span style={{ flex: 1 }} />
         <Link
-          to={`/app/financeiro/contas-pagar/${titulo.conta_pagar}`}
+          to={titulo.lado === 'receita' ? '/app/erp/contas-a-receber' : '/app/erp/contas-a-pagar'}
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 4,
             fontSize: 12, color: 'var(--brand)', textDecoration: 'none',
@@ -543,7 +685,9 @@ function Verbos({
   }
   if (
     (status === 'rascunho' || status === 'em_aprovacao') && podeApurar
-    || (status === 'aprovada' && podeAtestar)
+    // A retificadora aprovada já mexeu no financeiro: corrige-se retificando
+    // de novo, não retirando (o servidor recusa).
+    || (status === 'aprovada' && podeAtestar && medicao.retifica == null)
   ) {
     botoes.push(
       <Btn key="cancelar" tam="sm" disabled={ocupado}
@@ -611,7 +755,15 @@ function DialogoDoVerbo({
       exige: true,
       acao: 'Devolver',
     },
-    cancelar: {
+    cancelar: medicao.retifica != null ? {
+      titulo: 'Descartar a retificadora',
+      explica:
+        'A retificadora ainda não valeu: ela é apagada de vez e a medição que ela '
+        + 'corrigiria continua como está. Depois, se quiser, abra outra.',
+      rotulo: 'Motivo (opcional)',
+      exige: false,
+      acao: 'Descartar',
+    } : {
       titulo: 'Retirar o boletim',
       explica: titulo
         ? titulo.pode_cancelar
@@ -630,8 +782,9 @@ function DialogoDoVerbo({
     retificar: {
       titulo: 'Abrir a medição que corrige esta',
       explica:
-        'A retificadora nasce vazia, no mesmo período. Ela não estorna tudo: '
-        + 'você lança as quantidades certas, e as duas ficam legíveis lado a lado.',
+        'A retificadora abre no mesmo período como cópia desta — linhas, material '
+        + 'e descontos. Você escreve os valores certos; aprovada, ela substitui esta '
+        + '(que fica como "retificada", só para leitura) e o financeiro é acertado.',
       rotulo: 'O que estava errado',
       exige: true,
       acao: 'Abrir retificadora',

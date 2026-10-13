@@ -36,6 +36,13 @@ consome a relação consolidada de insumos do [Orçamento](moduloorcamento.md) e
 com a quantidade **da obra inteira** — o mesmo aço que aparece em nove serviços entra uma vez,
 somado, apontando o mesmo `catalogo.Item` que foi orçado.
 
+**A compra que nasce do cronograma** (`GET /api/scm/demandas/do-cronograma/`, `scm.demanda.view`;
+`POST .../do-cronograma/gerar/`, `scm.demanda.edit`): a mesma fila "comprar até" do posto Plano do
+[PDCA](modulopdca.md), por insumo juntando as obras com plano vigente — já descontado estoque, pedido e
+demanda —, com a obra e a data de cada pedaço; vira demanda em rascunho (`origem = plano`). No cockpit,
+card "Comprar pelo cronograma". O pedido mostra `medicao_pdca` — o que os contratos de empreitada do PDCA
+já mediram dele.
+
 O arquivo mora **aqui**, e não no orçamento, porque quem sabe explodir composição é aquele
 módulo e quem sabe o que é uma demanda é este. Três decisões do domínio: nasce **rascunho**
 (planilha de mil linhas viraria RFQ com centenas de itens indo direto para cotação); **material
@@ -56,10 +63,13 @@ metade, e o comprador precisa saber antes de cotar).
 | `Cotacao` | RFQ de uma `Demanda`. `status` (aberta→encerrada→adjudicada, read-only), `visibilidade`, `data_limite` | `scm.cotacao` |
 | `Proposta` | Resposta de fornecedor. Interna → `fornecedor` (FK); da rede → `origem_tenant` (cópia, **sem FK cruzada**) + `fornecedor_nome`. `valor_total`, `prazo`, `status` (recebida→vencedora/recusada, read-only) | `scm.cotacao` |
 | `ItemProposta` | Preço proposto p/ um `ItemDemanda` (único por proposta+item) | `scm.cotacao` |
-| `PedidoCompra` | **Convergência das duas vias** (`origem` compra_direta\|cotacao\|manual). Rastros opcionais: `oferta_origem` (direta), `proposta_vencedora`+`demanda` (cotação). `status` (rascunho→aprovado→enviado→recebido_parcial/total→cancelado), `fornecedor`, `centro_custo`, `valor_total`, `conta_pagar_ref` (seam ERP, read-only), `ref_externa`/`origem_tenant` (seam rede) | `scm.pedido` |
-| `ItemPedido` | Linha do pedido (`produto` ou `descricao` + `quantidade`/`preco_unitario`) | `scm.pedido` |
-| `Recebimento` | Entrega (`tipo` parcial\|total) — conciliação com NF-e (`nota_fiscal_ref`, seam) + origem da entrada de estoque (`local_entrega`, seam SIL). Criar recebimento **propaga o status ao pedido** | `scm.recebimento` |
-| `ItemRecebimento` | Quantidade recebida por item do pedido | `scm.recebimento` |
+| `PedidoCompra` | **Convergência das duas vias** (`origem` compra_direta\|cotacao\|manual). Rastros opcionais: `oferta_origem` (direta), `proposta_vencedora`+`demanda` (cotação). `status` (rascunho→aprovado→enviado→recebido_parcial/total→cancelado), `fornecedor`, `centro_custo`, `valor_total`, `conta_pagar_ref` (1º título no ERP, read-only), `revisao` (sobe a cada edição), `enviado_em`, `ref_externa`/`origem_tenant` (seam rede) | `scm.pedido` |
+| `ItemPedido` | Linha do pedido (`produto` ou `descricao` + `unidade` + `quantidade`/`preco_unitario`; item do catálogo grava a unidade do produto). `quantidade_encerrada` = saldo que se desistiu de receber | `scm.pedido` |
+| `Recebimento` | Entrega (`tipo` parcial\|total, calculado) — `local_entrega` (SIL), `nota_fiscal_ref` (nº da NF-e ligada), `encerrou_saldo`, `recebido_por` | `scm.recebimento` |
+| `ItemRecebimento` | Quantidade recebida por linha — **é ela que dá a entrada no estoque** (`modulosil.signals`) | `scm.recebimento` |
+| `NotaFiscalCompra` | A NF-e da compra — nasce **só com o número** se preciso. `numero`/`serie`/`chave_acesso`, `arquivo_xml`/`arquivo_pdf`, dados lidos do XML (emitente, valor, `duplicatas`), `situacao` (aguardando_documento\|conferida\|divergente) + `divergencias` (frases). Mora aqui, não no `moduloerp.NotaFiscal` (que exige XML e empreendimento) | `scm.recebimento` |
+| `MeioPagamentoPedido` / `ParcelaPedido` | A **cobrança**: lista livre de meios (boleto, Pix, dinheiro, TED, cheque, cartão, promissória, outro), cada um com valor, parcelas, 1º vencimento e dias entre parcelas; a soma fecha no valor do pedido. Cada parcela guarda o título que gerou (`conta_pagar_ref`) | `scm.pedido` |
+| `EventoPedido` | Histórico do pedido (criado, edição, envio, recebimento, divergência, NF-e, cobrança, cancelamento). `vai_ao_erp` = vira anotação nos títulos | `scm.pedido` |
 | `AvaliacaoFornecedor` | Notas 1–5 (qualidade/pontualidade/atendimento) + comentário, opcionalmente ligada a um pedido | `scm.avaliacao` |
 
 ## Catálogo de permissões (`scm.*`, 17)
@@ -110,7 +120,17 @@ mapa comparativo itens × propostas numa chamada).
 | `POST demandas/{id}/publicar/` | — | `visibilidade=rede`; rascunho→aberta | `scm.demanda.publicar` |
 | `POST cotacoes/{id}/adjudicar/` | `{ proposta_id }` | marca a vencedora, recusa as demais, cotação→adjudicada | `scm.cotacao.adjudicar` |
 | `POST pedidos/comprar_direto/` | `{ oferta, quantidade, centro_custo? }` | via **direta**: pedido `aprovado` (origem=compra_direta) + item a `preco_direto`. Recusa oferta sem `compra_direta` (400) | `scm.pedido.criar` |
+| `POST pedidos/compra_avulsa/` | `{ fornecedor, centro_custo?, data_entrega_prevista?, observacao?, itens: [{ produto? \| descricao, quantidade, preco_unitario }] }` | **compra sem catálogo e sem cotação** ("Nova compra"): pedido `aprovado` (origem=manual) com os itens; segue igual aos outros (recebimento, avaliação) | `scm.pedido.criar` |
 | `POST pedidos/gerar_de_cotacao/` | `{ cotacao }` | via **cotação**: pedido da proposta vencedora (copia itens) + demanda→atendida. Sem vencedora → 400 | `scm.pedido.criar` |
+| `GET pedidos/{id}/painel/` | — | o pedido inteiro: linhas com saldo, recebimentos, NF-e, cobrança + títulos do ERP, histórico, `regime` de edição e `pendencias` | `scm.pedido.view` |
+| `POST pedidos/{id}/receber/` | `{ itens:[{item_pedido, quantidade}], data, encerrar, observacao?, nf_numero?, nf_serie?, nf_chave? }` (+ `nf_xml`/`nf_pdf` em multipart) | recebe **por linha** (entrada no estoque); a mais → divergência; `encerrar` com saldo a menos → `quantidade_encerrada` + divergência; a NF-e opcional entra junto | `scm.recebimento.edit` |
+| `POST pedidos/{id}/notas/` | `numero`, `serie`, `chave`, `xml`, `pdf` (multipart) | lança a NF-e e confere | `scm.recebimento.edit` |
+| `POST notas-fiscais/{id}/documento/` · `GET …/arquivo/?tipo=xml\|pdf` | `chave`, `xml`, `pdf` | anexa o documento que faltava e confere de novo · baixa | `scm.recebimento.edit` · `.view` |
+| `POST pedidos/{id}/cobranca/` | `{ meios:[{tipo, valor, parcelas, primeiro_vencimento, intervalo_dias, descricao}] }` | define/redefine a cobrança e gera os títulos (soma ≠ pedido → 400; título já pago → 400) | `scm.pedido.edit` |
+| `POST pedidos/{id}/editar/` | cabeçalho + `itens` + `motivo` | regime **livre** (nada recebido) ou **saldo** (só quantidades ≥ recebido); revisão +1, histórico + anotação no ERP | `scm.pedido.edit` |
+| `POST pedidos/{id}/cancelar/` | `{ motivo }` | só sem recebimento; cancela os títulos sem pagamento | `scm.pedido.edit` |
+| `GET pedidos/{id}/pdf/` · `POST pedidos/{id}/enviar/` | `{ canal: email\|whatsapp\|impresso, para }` | PDF para o fornecedor · e-mail com o PDF anexado (ou registra o envio feito pelo navegador) → status `enviado` | `scm.pedido.view` · `.edit` |
+| `POST pedidos/cadastrar_item/` | `{ descricao, unidade, tipo?, fornecedor?, preco?, item_pedido? }` | item só-texto vira item do catálogo (`ITM-NNNNNN`, sem duplicar) + oferta do fornecedor; liga a linha do pedido. Teto do plano → 402 | `scm.pedido.criar` |
 
 `GET status/` — health do módulo (só exige `scm`).
 
@@ -119,12 +139,26 @@ mapa comparativo itens × propostas numa chamada).
 - **Estoque = fonte única (CDC):** não há anúncio de venda direta separado da oferta de cotação — um
   saldo, um preço. A **reserva/anti-oversell é do lado vendedor** (rede) e **não** é aplicada no lado
   comprador atual, de propósito (ver [expansão/modulos/moduloscm.md §3](../expansão/modulos/moduloscm.md)).
-- **Recebimento propaga status:** criar um recebimento `total`/`parcial` põe o pedido em
-  `recebido_total`/`recebido_parcial`.
+- **Recebimento por linha** (`moduloscm.recebimento`): cada `ItemRecebimento` dá a entrada no SIL.
+  O status do pedido é calculado — total quando nada falta (recebido ou encerrado), parcial quando
+  algo chegou. **A menos** sem finalizar = parcial, sem divergência; **finalizar com saldo a menos**
+  = saldo encerrado + divergência ao ERP com o valor; **a mais** = aceito (o estoque recebe o que
+  chegou) + divergência ao ERP. Sem NF-e o pedido fica "aguardando NF-e" (SCM e título).
+- **NF-e** (`moduloscm.notas`): a chave é testada como CPF/CNPJ (DV módulo 11, mês, modelo 55/65, CNPJ
+  do emitente embutido) e **não é recusada** — o que não bate (chave inválida, número/série fora da
+  chave, emitente ≠ fornecedor, valor acima do pedido) vira divergência, porque a nota pode sair em
+  nome de outra empresa. Só número → aguardando documento; XML, ou PDF + chave → conferida/divergente.
+- **Cobrança → ERP** (`moduloscm.cobranca` + `moduloscm.financeiro`): cada parcela vira um
+  `ContaPagar` com a obra do centro de custo, `pedido_compra_ref` e a situação da NF-e; a trilha
+  anterior do pedido é copiada como anotação para os títulos novos. Redefinir cancela os títulos sem
+  pagamento. Edição, divergência, NF-e e cancelamento viram `AnotacaoContaPagar` e avisam
+  `erp.conta_pagar.baixar`.
+- **Edição** (`moduloscm.edicao`): a regra (`regime`) é do servidor e a tela lê do painel.
 - **`Demanda.solicitante`** default = usuário do request quando não enviado.
-- **Seams (frontend NÃO implementa agora, mas o modelo já carrega):** `origem=estoque` (gatilho do
-  SIL), `local_entrega`/`nota_fiscal_ref` (SIL/NF-e), `conta_pagar_ref` (ERP), `visibilidade`/
-  `ref_externa`/`origem_tenant` (rede/marketplace).
+- **A demanda do orçamento cataloga** o insumo sem cadastro (`origem=orcamento`), para a linha entrar
+  no estoque e ter ficha; teto do plano batido → a linha segue como texto.
+- **Seams:** `origem=estoque` (gatilho do SIL), `visibilidade`/`ref_externa`/`origem_tenant`
+  (rede/marketplace).
 
 ## Frontend (fase atual) — escopo e sub-fases
 
@@ -173,8 +207,14 @@ avaliar) abrem em detalhe/modal na própria aba.
 reputação portátil, documento espelhado comprador↔vendedor). **Sem feature nem dado de rede** — os
 campos-seam seguem inertes no backend. Marca o lugar; destrava quando a Esfera de Rede for construída.
 
-**Seams na UI:** só os **internos** — a NF-e (`nota_fiscal_ref`) é capturada no recebimento;
-ContaPagar (`conta_pagar_ref`) e estoque (`local_entrega`) aparecem quando as integrações graduarem.
+**Tela do pedido** ([components/PedidoDetalhe.tsx](../../frontend/src/modules/scm/components/PedidoDetalhe.tsx)):
+faixa de pendências com o botão de cada uma, itens com recebido/falta/encerrado (linha só-texto tem o
+**+** à esquerda que cadastra no catálogo e mostra o código no aviso), NF-e, cobrança com o status de
+cada título, recebimentos e histórico; modais de receber (por linha + "finalizar" + NF-e), NF-e
+(chave com máscara e aviso ao digitar), cobrança, edição (livre × saldo), envio (PDF, e-mail,
+WhatsApp) e cancelamento. A aba **Catálogo** lista os itens com a **ficha**
+([components/FichaItem.tsx](../../frontend/src/modules/scm/components/FichaItem.tsx)). `?pedido=` abre
+o pedido (link vindo do título no ERP); clicar numa aba volta à lista dela.
 Os *seams de rede* (`visibilidade`, `origem_tenant`, `ref_externa`) **não têm UI** de feature. Gate por
 **permissão de usuário** (`hasPermission('scm.*')`), não só entitlement do tenant.
 

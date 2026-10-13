@@ -74,10 +74,13 @@ def _uf_de_fragmento(fragmento: str):
 
 
 def _limpar_cidade(cidade: str):
-    """Higieniza o candidato a cidade: remove "<número> - " residual e hífens
-    soltos nas bordas (ex.: "500 - São Paulo" → "São Paulo")."""
+    """Higieniza o candidato a cidade: fica com o que vem depois do último
+    " - " (o que vem antes é número, bairro ou loteamento — ex.: "500 - São
+    Paulo", "Loteamento Villa Privillege - Nazaré") e tira hífens soltos nas
+    bordas. Hífen sem espaço é do nome ("Embu-Guaçu") e fica."""
     if not cidade:
         return None
+    cidade = re.split(r"\s+[-–]\s+", cidade.strip())[-1]
     cidade = re.sub(r"^\d[\d\s\-]*", "", cidade).strip(" -/")
     cidade = re.sub(r"[-–]\s*$", "", cidade).strip(" -/")
     return cidade or None

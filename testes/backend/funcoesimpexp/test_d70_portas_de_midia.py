@@ -55,6 +55,8 @@ PORTAS = {
     # o `CustoEmpreendimento` tem gate próprio (`obra.custo_nfe`)
     "nfe_xmls": ("erp.nota_fiscal", "obra.custo_nfe"),
     "notas_fiscais": "erp.nota_fiscal",
+    # D284 — a NF-e da compra (XML e DANFE) lançada no recebimento do pedido.
+    "scm": "scm.nota_compra",
     # Portas construídas antes do D70
     "impexp": "—",       # o próprio motor: entrada, conferência e saída
     "prancheta": ("prancheta.acervo", "prancheta.marcacao"),

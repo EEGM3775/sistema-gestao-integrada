@@ -6,7 +6,7 @@ import {
   entregasEpi, ferramentas, emprestimos,
   getSilDashboard, getCurvaABC, getAplicado, listObras, listFornecedores, listFuncionarios, listEtapas,
   registrarMov, definirMinimo, gerarDemanda, aprovarRequisicao, atenderRequisicao,
-  executarTransferencia, executarDevolucao, fecharInventario,
+  executarTransferencia, executarDevolucao, fecharInventario, reabrirInventario,
   devolverEpi, alterarEstadoFerramenta, devolverEmprestimo,
 } from './api/silApi'
 import { silKeys } from './api/queryKeys'
@@ -89,6 +89,7 @@ export const useAtenderRequisicao = () => useVerb((id: number) => atenderRequisi
 export const useExecutarTransferencia = () => useVerb((id: number) => executarTransferencia(id))
 export const useExecutarDevolucao = () => useVerb((id: number) => executarDevolucao(id))
 export const useFecharInventario = () => useVerb((id: number) => fecharInventario(id))
+export const useReabrirInventario = () => useVerb((id: number) => reabrirInventario(id))
 export const useDevolverEpi = () => useVerb((id: number) => devolverEpi(id))
 export const useAlterarEstadoFerramenta = () => useVerb((v: { id: number; estado: string; proxima_calibracao?: string | null; proxima_manutencao?: string | null }) => alterarEstadoFerramenta(v.id, v))
 export const useDevolverEmprestimo = () => useVerb((id: number) => devolverEmprestimo(id))

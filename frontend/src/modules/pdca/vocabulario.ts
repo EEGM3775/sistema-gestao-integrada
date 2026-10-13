@@ -2,8 +2,15 @@
  *  que mais de um componente usa. Fica fora dos componentes para o fast refresh
  *  do Vite continuar funcionando (arquivo de componente só exporta componente). */
 import type {
-  GravidadeNc, ResultadoItem, StatusNc, StatusOcorrencia, TipoOcorrencia,
+  GravidadeNc, ResultadoItem, StatusNc, StatusOcorrencia, TipoOcorrencia, TipoRestricao,
 } from './types'
+
+/** As restrições que se destravam **comprando** — o espelho do
+ *  `TIPOS_QUE_VIRAM_COMPRA` do servidor. Material vira compra de insumo;
+ *  equipamento (locação) e mão de obra (empreitada), contratação de serviço. */
+export const TIPOS_QUE_VIRAM_COMPRA: ReadonlySet<TipoRestricao> = new Set<TipoRestricao>([
+  'material', 'equipamento', 'mao_de_obra',
+])
 
 export const GRAVIDADES: { valor: GravidadeNc; rotulo: string; explica: string; tom: 'slate' | 'accent' | 'danger' }[] = [
   { valor: 'menor', rotulo: 'Menor', explica: 'corrige-se na frente', tom: 'slate' },

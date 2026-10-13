@@ -334,6 +334,17 @@ class Notificacao(TenantScopedModel):
     titulo = models.CharField(_("Título"), max_length=200)
     mensagem = models.TextField(_("Mensagem"), blank=True, default="")
     tipo = models.CharField(max_length=20, choices=Tipo.choices, default=Tipo.SISTEMA)
+
+    class Nivel(models.IntegerChoices):
+        """Os três níveis do `docs/modulos/funcoesnotificacoes.md` — a pergunta
+        "eu preciso fazer alguma coisa?" e as três respostas."""
+        SABER = 1, _("Saber")
+        DECIDIR = 2, _("Decidir")
+        AGIR_JA = 3, _("Agir já")
+
+    nivel = models.PositiveSmallIntegerField(
+        _("Nível"), choices=Nivel.choices, default=Nivel.SABER,
+    )
     # Rota do frontend para onde o clique leva (ex.: "/app/calendario"). Opcional.
     url = models.CharField(_("Link"), max_length=300, blank=True, default="")
     lida_em = models.DateTimeField(_("Lida em"), null=True, blank=True)
@@ -369,7 +380,18 @@ class Notificacao(TenantScopedModel):
 # Sem tenant, sem RLS — e a escrita é do administrador da plataforma.
 
 class IndiceEconomico(models.Model):
-    """Um índice de correção monetária. A série mensal vive em `ValorIndice`."""
+    """Um índice econômico. A série mensal vive em `ValorIndice`.
+
+    **A única tabela de índice do sistema** *(decisão do dono, 10/10/2026)*. O
+    Orçamento tinha a sua (`moduloorcamento.IndiceEconomico`, com número-índice
+    para o reajuste paramétrico) e o comercial esta (variação mensal para a
+    correção do comprador): duas séries de INCC que podiam discordar. A dele foi
+    migrada para cá e apagada; quem reajusta — a medição do contrato, de
+    empreiteiro ou de contratante, e o saldo do comprador — lê daqui.
+
+    O código é livre (`incc`, `incc-m`, `cub-ba`…): os quatro de `Codigo` são os
+    que o comercial oferece de saída, não a lista fechada do que existe.
+    """
 
     class Codigo(models.TextChoices):
         IPCA = "ipca", _("IPCA")
@@ -377,14 +399,14 @@ class IndiceEconomico(models.Model):
         IGPM = "igpm", _("IGP-M")
         INPC = "inpc", _("INPC")
 
-    codigo = models.CharField(
-        max_length=10, choices=Codigo.choices, unique=True, verbose_name=_("Código"),
-    )
+    codigo = models.CharField(max_length=20, unique=True, verbose_name=_("Código"))
     nome = models.CharField(max_length=120, verbose_name=_("Nome"))
     fonte = models.CharField(
         max_length=120, blank=True, verbose_name=_("Fonte"),
         help_text=_("Quem publica — IBGE, FGV, Sinduscon."),
     )
+    #: Índice regional (o CUB de cada Sinduscon) tem UF; o nacional, vazio.
+    uf = models.CharField(max_length=2, blank=True, verbose_name=_("UF"))
     ativo = models.BooleanField(default=True, verbose_name=_("Ativo"))
 
     class Meta:
@@ -393,15 +415,18 @@ class IndiceEconomico(models.Model):
         ordering = ["codigo"]
 
     def __str__(self):
-        return self.nome or self.get_codigo_display()
+        return self.nome or self.codigo
 
 
 class ValorIndice(models.Model):
-    """A variação de **um mês** do índice, em pontos percentuais.
+    """O índice num mês: a **variação** e, quando publicado, o **número-índice**.
 
-    Guarda a variação do mês, não o número-índice acumulado: é assim que IBGE e
-    FGV publicam, e é o que permite compor qualquer intervalo sem depender de uma
-    base arbitrária. O acumulado sai da composição em `clientes/correcao.py`.
+    A variação é o que IBGE e FGV divulgam mês a mês e o que permite compor
+    qualquer intervalo (`clientes/correcao.py`). O número-índice é o que a
+    fórmula paramétrica de reajuste usa — `Iₜ / I₀`, dois pontos e uma divisão,
+    sem o erro de arredondamento que encadear variações acumula
+    (`nucleo/reajuste.py`). Os dois são opcionais e pelo menos um existe; sem o
+    número, a razão sai da composição das variações.
 
     `competencia` é sempre o **dia 1** do mês — mesma convenção da data-base do
     orçamento. Guardar o dia da divulgação misturaria "mês a que se refere" com
@@ -417,8 +442,13 @@ class ValorIndice(models.Model):
         help_text=_("Dia 1 do mês a que a variação se refere."),
     )
     variacao_percentual = models.DecimalField(
-        max_digits=9, decimal_places=4, verbose_name=_("Variação no mês (%)"),
+        max_digits=9, decimal_places=4, null=True, blank=True,
+        verbose_name=_("Variação no mês (%)"),
         help_text=_("Pode ser negativa — deflação existe e o contrato a acompanha."),
+    )
+    numero_indice = models.DecimalField(
+        max_digits=18, decimal_places=6, null=True, blank=True,
+        verbose_name=_("Número-índice"),
     )
 
     class Meta:
@@ -435,7 +465,7 @@ class ValorIndice(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.indice.codigo} {self.competencia:%m/%Y}: {self.variacao_percentual}%"
+        return f"{self.indice.codigo} {self.competencia:%m/%Y}: {self.numero_indice or self.variacao_percentual}"
 
 
 # ===========================================================================

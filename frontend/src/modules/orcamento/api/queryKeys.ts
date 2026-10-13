@@ -33,10 +33,8 @@ export const orcKeys = {
   curvaAbc: (id: number) => [...raiz, 'curva-abc', id] as const,
   porCategoria: (id: number) => [...raiz, 'por-categoria', id] as const,
   cronograma: (id: number) => [...raiz, 'cronograma', id] as const,
-  curvaS: (id: number) => [...raiz, 'curva-s', id] as const,
   memoria: (id: number) => [...raiz, 'memoria', id] as const,
   precoReal: (id: number) => [...raiz, 'preco-real', id] as const,
-  controle: (obra?: number) => [...raiz, 'controle', obra ?? 'todas'] as const,
   nbr: (obra: number) => [...raiz, 'nbr', obra] as const,
   obras: [...raiz, 'obras'] as const,
   etapas: (obra: number) => [...raiz, 'etapas', obra] as const,
@@ -56,8 +54,6 @@ export const orcKeys = {
   rubricas: familia('rubricas-encargos'),
   medicoes: familia('medicoes'),
   indices: familia('indices'),
-  formulas: familia('formulas-reajuste'),
-  parcelasReajuste: familia('parcelas-reajuste'),
   quadroEncargos: (id: number) => [...raiz, 'quadro-encargos', id] as const,
   memoriaQuantitativo: (id: number) => [...raiz, 'memoria-quantitativo', id] as const,
   composicaoNatureza: (id: number) => [...raiz, 'composicao-natureza', id] as const,
@@ -67,11 +63,6 @@ export const orcKeys = {
   curvaAbcInsumos: (id: number) => [...raiz, 'curva-abc-insumos', id] as const,
   desembolsoInsumos: (id: number, categoria?: string) =>
     [...raiz, 'desembolso-insumos', id, categoria ?? 'todas'] as const,
-  serieIndice: (id: number) => [...raiz, 'serie-indice', id] as const,
-  fatorReajuste: (id: number, competencia: string) =>
-    [...raiz, 'fator-reajuste', id, competencia] as const,
-  previaReajuste: (id: number, competencia: string) =>
-    [...raiz, 'previa-reajuste', id, competencia] as const,
   // ORC.8
   fontesOficiais: familia('fontes-oficiais'),
   cargas: familia('cargas'),

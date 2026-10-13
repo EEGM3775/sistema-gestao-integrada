@@ -12,7 +12,7 @@ não apaga endereço nenhum. `--dry-run` diz o que faria sem gravar — é o mod
 conferir antes num tenant grande.
 
     python manage.py georreferenciar_cadastros --dry-run
-    python manage.py georreferenciar_cadastros --tenant 3 --tipo obra
+    python manage.py georreferenciar_cadastros --tenant <uuid> --tipo obra
 """
 from __future__ import annotations
 
@@ -28,7 +28,8 @@ class Command(BaseCommand):
     help = "Cria o Local (e geocodifica) de obras, empreendimentos, fornecedores e almoxarifados."
 
     def add_arguments(self, parser):
-        parser.add_argument("--tenant", type=int, help="Só este tenant (default: todos).")
+        # O id do tenant é UUID: `type=int` recusava qualquer empresa real.
+        parser.add_argument("--tenant", help="Só este tenant, pelo id (default: todos).")
         parser.add_argument(
             "--tipo", choices=sorted(VINCULOS), help="Só este tipo de vínculo (default: todos)."
         )

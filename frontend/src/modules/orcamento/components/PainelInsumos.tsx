@@ -6,6 +6,9 @@ import { brl, CLASSE_KIND, num, pct } from '../lib'
 import { Pareto } from './graficos'
 import { baixarExportacao } from '../api/orcamentoApi'
 import { useCurvaAbcInsumos, useGerarDemandaDoOrcamento, useRelacaoInsumos } from '../hooks'
+import { useQueryClient } from '@tanstack/react-query'
+import apiClient from '@/api/apiClient'
+import { orcKeys } from '../api/queryKeys'
 
 type Visao = 'relacao' | 'abc'
 
@@ -36,6 +39,8 @@ export default function PainelInsumos({ orcamentoId }: { orcamentoId: number }) 
   )
   const { data: abc, isLoading: carregandoAbc } = useCurvaAbcInsumos(orcamentoId)
   const gerarDemanda = useGerarDemandaDoOrcamento()
+  const qc = useQueryClient()
+  const [explodindo, setExplodindo] = useState(false)
 
   const dados = visao === 'relacao' ? relacao : abc
   const carregando = visao === 'relacao' ? carregandoRelacao : carregandoAbc
@@ -92,13 +97,38 @@ export default function PainelInsumos({ orcamentoId }: { orcamentoId: number }) 
 
       {recado && <Aviso tom="info">{recado}</Aviso>}
 
+      {/* A cobertura dita curta, com o gesto ao lado — e não um parágrafo que
+          manda a pessoa a outro lugar. Abrir as composições que faltam é aqui
+          mesmo, sem mexer em preço (achado do dono, 10/10/2026). */}
       {cobertura < 100 && (
-        <Aviso tom={cobertura < 60 ? 'amber' : 'info'}>
-          Esta lista fala de <b>{pct(dados.cobertura_pct)}</b> do custo direto —{' '}
-          {dados.linhas_explodidas} de {dados.linhas_analiticas} linhas têm composição explodida.
-          O que não foi explodido <b>não aparece aqui</b>: o insumo só existe depois que a composição
-          é aberta. Uma lista de compra tirada assim compra pela metade.
-        </Aviso>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: 12.5, color: 'var(--ink-3)' }}>
+          <span>
+            {dados.linhas_explodidas} de {dados.linhas_analiticas} linhas entram na lista ({pct(dados.cobertura_pct)} do custo).
+          </span>
+          {hasPermission('orcamento.item.edit') && (
+            <Btn
+              disabled={explodindo}
+              onClick={async () => {
+                setExplodindo(true)
+                try {
+                  const r = (await apiClient.post<{ explodidas: number; sem_composicao: number }>(
+                    `orcamento/orcamentos/${orcamentoId}/explodir-pendentes/`,
+                  )).data
+                  await qc.invalidateQueries({ queryKey: orcKeys.all })
+                  setRecado(r.sem_composicao > 0
+                    ? `${r.explodidas} linhas abertas; ${r.sem_composicao} não têm composição no catálogo.`
+                    : `${r.explodidas} linhas abertas.`)
+                } catch {
+                  setRecado('Não consegui abrir as composições.')
+                } finally {
+                  setExplodindo(false)
+                }
+              }}
+            >
+              {explodindo ? 'Abrindo…' : 'Abrir as que faltam'}
+            </Btn>
+          )}
+        </div>
       )}
 
       {visao === 'abc' && abc && (

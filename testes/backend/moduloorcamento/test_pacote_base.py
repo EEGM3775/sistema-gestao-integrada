@@ -16,10 +16,9 @@ from moduloorcamento.models import (
     BaseReferencial,
     ComposicaoReferenciaItem,
     Fonte,
-    IndiceEconomico,
     InsumoReferencia,
-    ValorIndice,
 )
+from nucleo.models import IndiceEconomico, ValorIndice
 
 from .tests import OrcamentoTestBase
 

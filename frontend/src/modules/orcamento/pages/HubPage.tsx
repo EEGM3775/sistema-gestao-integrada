@@ -2,19 +2,19 @@ import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import {
   AlertTriangle, ArrowUpRight, Building2, CalendarRange, Database, FileSpreadsheet,
-  Layers, Lock, Percent, PieChart, TrendingUp,
+  Layers, Lock, Percent, PieChart,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { Aviso, Btn, Card, CAPS, Empty, Kpi, Loading, mono, Num, OrcStyles, Pill, SectHead } from '../ui'
-import { brl, brlCurto, dataBR, mesBR, pct, STATUS_ESTADO } from '../lib'
-import { useBasesResumo, useControle, useOrcamentos } from '../hooks'
+import { brl, brlCurto, dataBR, mesBR, STATUS_ESTADO } from '../lib'
+import { useBasesResumo, useObras, useOrcamentos } from '../hooks'
 import { PAGINAS, type ChavePagina } from '../paginas'
-import type { ControleLinha, Orcamento } from '../types'
+import type { Orcamento } from '../types'
 
 const ICONES: Record<ChavePagina, typeof Layers> = {
   orcar: FileSpreadsheet,
   encargos: Percent,
-  controlar: Layers,
+  analisar: PieChart,
   cronograma: CalendarRange,
   bases: Database,
   incorporacao: Building2,
@@ -29,30 +29,20 @@ interface Decisao {
   rotuloAcao: string
 }
 
-function montarFila(orcamentos: Orcamento[], controle: ControleLinha[]): Decisao[] {
+/** A fila do **planejamento** (decisão do dono, 10/10/2026: o Orçamento só
+ *  planeja). Estouro de custo é execução e mora no Controle do PDCA. */
+function montarFila(orcamentos: Orcamento[], obras: { obra_id: number; nome_obra: string }[]): Decisao[] {
   const fila: Decisao[] = []
 
-  for (const linha of controle) {
-    if (!linha.estourado || linha.orcado === null) continue
-    const excesso = Number(linha.comprometido) - Number(linha.orcado)
+  const comAlgum = new Set(orcamentos.map(o => o.obra))
+  for (const obra of obras) {
+    if (comAlgum.has(obra.obra_id)) continue
     fila.push({
-      id: `estouro-${linha.obra}`,
-      urgencia: 'danger',
-      titulo: `${linha.obra_nome} comprometeu acima do orçado`,
-      detalhe: `${brl(linha.comprometido)} comprometidos contra ${brl(linha.orcado)} orçados — ${brl(excesso)} de excesso já contratado.`,
-      paraOnde: `/app/orcamento/controlar?obra=${linha.obra}`,
-      rotuloAcao: 'Ver as quatro colunas',
-    })
-  }
-
-  for (const linha of controle) {
-    if (linha.orcamento !== null || linha.orcado !== null) continue
-    fila.push({
-      id: `sem-regua-${linha.obra}`,
+      id: `sem-orcamento-${obra.obra_id}`,
       urgencia: 'amber',
-      titulo: `${linha.obra_nome} não tem orçamento aprovado`,
-      detalhe: `Já há ${brl(linha.comprometido)} comprometidos e ${brl(linha.aplicado)} aplicados sem régua de custo para comparar.`,
-      paraOnde: '/app/orcamento/orcar',
+      titulo: `${obra.nome_obra} não tem orçamento`,
+      detalhe: 'Sem planilha não há régua de custo nem cronograma físico-financeiro para o PDCA planejar.',
+      paraOnde: `/app/orcamento/orcar/obra/${obra.obra_id}`,
       rotuloAcao: 'Montar a planilha',
     })
   }
@@ -87,20 +77,15 @@ function montarFila(orcamentos: Orcamento[], controle: ControleLinha[]): Decisao
 export default function HubPage() {
   const { hasPermission } = useAuth()
   const { data: pagina, isLoading: carregandoOrc, isError: erroOrc } = useOrcamentos({ page_size: 100, ordering: '-criado_em' })
-  const podeVerControle = hasPermission('orcamento.relatorio.view')
-  const { data: controle, isLoading: carregandoCtrl } = useControle(undefined)
+  const { data: obras } = useObras()
   const { data: bases } = useBasesResumo()
 
   const orcamentos = useMemo(() => pagina?.results ?? [], [pagina])
-  const linhas = useMemo(() => (podeVerControle ? controle ?? [] : []), [controle, podeVerControle])
-  const fila = useMemo(() => montarFila(orcamentos, linhas), [orcamentos, linhas])
+  const fila = useMemo(() => montarFila(orcamentos, obras ?? []), [orcamentos, obras])
 
   const aprovados = orcamentos.filter(o => o.status === 'aprovado')
   const totalAprovado = aprovados.reduce((soma, o) => soma + Number(o.valor_total || 0), 0)
   const rascunhos = orcamentos.filter(o => o.status === 'rascunho').length
-  const obrasEstouradas = linhas.filter(l => l.estourado).length
-  const comprometidoTotal = linhas.reduce((soma, l) => soma + Number(l.comprometido || 0), 0)
-  const aplicadoTotal = linhas.reduce((soma, l) => soma + Number(l.aplicado || 0), 0)
 
   if (carregandoOrc) return <Loading texto="Carregando o Orçamento…" />
 
@@ -127,29 +112,10 @@ export default function HubPage() {
       <Card style={{ display: 'flex', gap: 30, flexWrap: 'wrap', padding: '17px 20px', marginBottom: 8 }}>
         <Kpi rotulo="Orçado aprovado" valor={brlCurto(totalAprovado)} apoio={`${aprovados.length} orçamento(s) vigente(s)`} />
         <Kpi rotulo="Em rascunho" valor={<Num forte>{rascunhos}</Num>} apoio="ainda não valem como régua" />
-        {podeVerControle ? (
-          <>
-            <Kpi
-              rotulo="Comprometido"
-              valor={brlCurto(comprometidoTotal)}
-              apoio={<Link to="/app/scm" style={{ color: 'var(--net-ink)', textDecoration: 'none' }}>pedidos do Suprimentos ↗</Link>}
-            />
-            <Kpi
-              rotulo="Aplicado"
-              valor={brlCurto(aplicadoTotal)}
-              apoio={<Link to="/app/sil" style={{ color: 'var(--net-ink)', textDecoration: 'none' }}>consumo do Estoque ↗</Link>}
-            />
-            <Kpi
-              rotulo="Obras estouradas"
-              valor={<Num forte tom={obrasEstouradas ? 'var(--danger-ink)' : undefined}>{obrasEstouradas}</Num>}
-              apoio={carregandoCtrl ? 'apurando…' : 'comprometido acima do orçado'}
-            />
-          </>
-        ) : (
-          <div style={{ alignSelf: 'center' }}>
-            <Pill kind="slate"><Lock size={11} />Indicadores de controle exigem <code style={{ ...mono, fontSize: 11 }}>orcamento.relatorio.view</code></Pill>
-          </div>
-        )}
+        <div style={{ marginLeft: 'auto', alignSelf: 'center', fontSize: 12, color: 'var(--ink-3)', maxWidth: 300, lineHeight: 1.5 }}>
+          O custo executado contra esta régua — comprometido, aplicado, medido, realizado e o custo final
+          projetado — fica no posto <Link to="/app/pdca" style={{ color: 'var(--net-ink)', fontWeight: 650 }}>Controle do PDCA ↗</Link>.
+        </div>
       </Card>
 
       {erroOrc && <Aviso tom="danger"><AlertTriangle size={15} />Não foi possível carregar os orçamentos agora.</Aviso>}
@@ -301,43 +267,6 @@ export default function HubPage() {
         </div>
       )}
 
-      {podeVerControle && linhas.length > 0 && (
-        <>
-          <SectHead right={<Link to="/app/orcamento/controlar" style={{ fontSize: 12, color: 'var(--ink-3)', textDecoration: 'none' }}>abrir controle ↗</Link>}>
-            Consumo do orçado por obra
-          </SectHead>
-          <div style={{ display: 'grid', gap: 7 }}>
-            {linhas.slice(0, 6).map(l => {
-              const consumido = l.consumido_pct === null ? null : Number(l.consumido_pct)
-              return (
-                <Card key={l.obra} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '11px 15px' }}>
-                  <span style={{ flex: '0 0 190px', fontSize: 13, fontWeight: 600, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {l.obra_nome}
-                  </span>
-                  <div style={{ flex: 1, minWidth: 120, height: 8, borderRadius: 999, background: 'var(--inset)', overflow: 'hidden' }}>
-                    <div style={{
-                      width: `${Math.min(consumido ?? 0, 100)}%`, height: '100%', borderRadius: 999,
-                      background: l.estourado ? 'var(--danger)' : (consumido ?? 0) > 85 ? 'var(--accent)' : 'var(--good)',
-                    }} />
-                  </div>
-                  <span style={{ ...mono, fontSize: 12.5, color: 'var(--ink-2)', flex: '0 0 62px', textAlign: 'right' }}>
-                    {consumido === null ? '—' : pct(consumido, 1)}
-                  </span>
-                  <span style={{ ...mono, fontSize: 12.5, color: 'var(--ink-3)', flex: '0 0 120px', textAlign: 'right' }}>
-                    {l.orcado === null ? 'sem régua' : brl(l.saldo)}
-                  </span>
-                  {l.estourado && <Pill kind="danger"><TrendingUp size={11} />estourado</Pill>}
-                </Card>
-              )
-            })}
-          </div>
-          <p style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11.5, color: 'var(--ink-3)', marginTop: 10 }}>
-            <PieChart size={13} />
-            Consumo = comprometido ÷ orçado. O que já virou pedido de compra não está mais disponível,
-            mesmo que a nota ainda não tenha chegado.
-          </p>
-        </>
-      )}
     </div>
   )
 }

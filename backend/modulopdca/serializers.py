@@ -17,6 +17,8 @@ from funcoesimpexp.entrega import url_do_arquivo
 from nucleo.field_masking import FieldMaskingSerializerMixin
 from nucleo.tenant_validators import TenantScopedModelSerializer
 from nucleo.upload_validation import UploadValidationMixin
+from fornecedores.models import Fornecedor
+from rh.models import Funcionario
 
 from . import services
 from .impexp import (
@@ -25,10 +27,12 @@ from .impexp import (
     ESPECIE_ANEXO, ESPECIE_ATESTADO, RECURSO_SSMA, RECURSO_SSMA_CLINICO,
 )
 from .models import (
-    AcaoAditivo, AditivoContrato, ApontamentoAvanco, Atividade,
+    ParcelaReajusteContrato,
+    AcaoAditivo, AditivoContrato, AntecedenciaDeCompra, ApontamentoAvanco, Atividade,
     CalendarioTrabalho, ContratoObra, Cronograma, DeducaoMedicao,
     ExcecaoCalendario, ItemAditivo, ItemContrato, ItemMedicao,
-    CausaNaoCumprimento, ItemProgramacao, LiberacaoRetencao, LocalObra,
+    CausaNaoCumprimento, EquipeObra, ItemProgramacao, LiberacaoRetencao, LocalObra,
+    MaterialDaAtividade,
     Medicao, OrigemApontamento, Precedencia, ProgramacaoSemanal, Restricao,
     RegimeContrato, TipoDeducao,
     GravidadeNC, ItemModeloVerificacao, ItemVerificacao, ModeloVerificacao,
@@ -90,14 +94,39 @@ class ExcecaoCalendarioSerializer(TenantScopedModelSerializer):
         read_only_fields = ["tenant"]
 
 
+class AntecedenciaDeCompraSerializer(TenantScopedModelSerializer):
+    item_descricao = serializers.CharField(source="item.descricao", read_only=True)
+
+    class Meta:
+        model = AntecedenciaDeCompra
+        fields = "__all__"
+        read_only_fields = ["tenant", "atualizado_em"]
+
+
+class GerarDemandaDoPlanoSerializer(serializers.Serializer):
+    #: Chaves de insumo da fila (vazio = tudo o que falta comprar).
+    insumos = serializers.ListField(child=serializers.CharField(max_length=300), required=False)
+    #: Só o que se precisa pedir até esta data.
+    ate = serializers.DateField(required=False, allow_null=True)
+
+
 class CalendarioTrabalhoSerializer(TenantScopedModelSerializer):
     obra_nome = serializers.CharField(source="obra.nome_obra", read_only=True)
     excecoes = ExcecaoCalendarioSerializer(many=True, read_only=True)
+    #: De onde são os feriados: o UF/IBGE digitado ou o lugar da obra (pelo
+    #: endereço, como a Agenda). A tela diz "feriados de Nazaré/BA".
+    localidade_feriados = serializers.SerializerMethodField()
 
     class Meta:
         model = CalendarioTrabalho
         fields = "__all__"
         read_only_fields = ["tenant", "criado_em", "atualizado_em"]
+
+    def get_localidade_feriados(self, obj):
+        if not obj.considera_feriados:
+            return None
+        from .services import localidade_dos_feriados
+        return localidade_dos_feriados(obj)
 
     def validate(self, dados):
         """Um calendário sem nenhum dia da semana ligado não é um calendário —
@@ -160,6 +189,9 @@ class CronogramaSerializer(TenantScopedModelSerializer):
         read_only_fields = [
             "tenant", "versao", "status", "origem", "publicado_em", "publicado_por",
             "calculado_em", "termino_calculado", "criado_em", "atualizado_em",
+            # O vínculo com o orçamento é escrito pelos verbos `gerar-do-orcamento`
+            # e `atualizar-do-orcamento`, nunca pelo PATCH do plano.
+            "orcamento_origem",
         ]
 
     def validate(self, dados):
@@ -220,7 +252,7 @@ class AtividadeSerializer(TenantScopedModelSerializer):
         read_only_fields = [
             "tenant", "profundidade", "inicio_cedo", "termino_cedo",
             "inicio_tarde", "termino_tarde", "folga_total", "folga_livre",
-            "critica", "criado_em", "atualizado_em",
+            "critica", "criado_em", "atualizado_em", "peso_do_orcamento",
         ]
 
     def get_local_rotulo(self, obj) -> str:
@@ -231,6 +263,14 @@ class AtividadeSerializer(TenantScopedModelSerializer):
 
     def get_tem_filhos(self, obj) -> bool:
         return obj.filhos.exists()
+
+    def update(self, instance, validated_data):
+        # O planejador digitou outro peso: deixa de ser o valor da etapa no
+        # orçamento e passa a ser dele — não pode seguir contando como orçado.
+        if ("peso_informado" in validated_data
+                and validated_data["peso_informado"] != instance.peso_informado):
+            instance.peso_do_orcamento = False
+        return super().update(instance, validated_data)
 
     def get_peso(self, obj):
         peso, _origem = services.peso_de(obj)
@@ -320,10 +360,13 @@ class PrecedenciaSerializer(TenantScopedModelSerializer):
     def validate(self, dados):
         """Quatro recusas, e as quatro existem para o erro ter endereço.
 
-        Ligar atividades de cronogramas diferentes, ligar uma sintética (que não
-        entra no grafo), fechar um ciclo ou mexer num plano já publicado: todas
+        Ligar atividades de cronogramas diferentes, ligar uma etapa a algo que
+        está dentro dela, fechar um ciclo ou mexer num plano já publicado: todas
         apareceriam depois como "o cronograma não calcula", numa tela que não
         saberia dizer qual das centenas de setas está errada.
+
+        A **etapa** (sintética) pode ser ligada desde 09/10/2026 — é a ligação de
+        fase, que o CPM expande nas folhas (`services.ligacoes_das_folhas`).
         """
         origem = dados.get("origem", getattr(self.instance, "origem", None))
         destino = dados.get("destino", getattr(self.instance, "destino", None))
@@ -340,40 +383,41 @@ class PrecedenciaSerializer(TenantScopedModelSerializer):
             raise serializers.ValidationError(
                 "Este cronograma não é mais rascunho. Para mudar as precedências, replaneje."
             )
-        for papel, atividade in (("origem", origem), ("destino", destino)):
-            if atividade.filhos.exists():
-                raise serializers.ValidationError({
-                    papel: (
-                        f"'{atividade.codigo}' é uma atividade sintética (tem filhas). "
-                        "A precedência liga as folhas — a sintética é o intervalo delas."
-                    ),
-                })
+        for de_cima, de_baixo in ((origem, destino), (destino, origem)):
+            no = de_baixo.pai
+            while no is not None:
+                if no.pk == de_cima.pk:
+                    raise serializers.ValidationError(
+                        f"'{de_baixo.codigo}' está dentro de '{de_cima.codigo}'. Uma etapa "
+                        "não se liga ao que ela mesma contém — ligue as atividades de "
+                        "dentro entre si."
+                    )
+                no = no.pai
 
-        if self._fecha_ciclo(origem, destino):
+        atual = getattr(self.instance, "pk", None)
+        if self._fecha_ciclo(origem, destino, dados, atual):
             raise serializers.ValidationError(
                 f"Esta ligação fecharia um ciclo: '{destino.codigo}' já leva, direta ou "
                 f"indiretamente, a '{origem.codigo}'."
             )
         return dados
 
-    def _fecha_ciclo(self, origem, destino) -> bool:
-        """Chegando de `destino` a `origem`, a seta nova fecharia o laço."""
-        atual = getattr(self.instance, "pk", None)
-        vistos = set()
-        pilha = [destino.pk]
-        while pilha:
-            no = pilha.pop()
-            if no == origem.pk:
+    def _fecha_ciclo(self, origem, destino, dados, atual) -> bool:
+        """A seta nova, somada à rede, deixa o grafo **expandido** sem ordem?
+
+        Conferido nas folhas porque, com ligação de fase, o laço pode passar por
+        dentro de uma etapa sem que nenhuma seta gravada o feche sozinha."""
+        nova = services.LigacaoEntreFolhas(
+            0, origem.pk, destino.pk,
+            dados.get("tipo", getattr(self.instance, "tipo", Precedencia.Tipo.FS)),
+            dados.get("atraso_dias", getattr(self.instance, "atraso_dias", 0)),
+        )
+        try:
+            services.verificar_rede(origem.cronograma, nova=nova, ignorar=atual)
+        except DjangoValidationError as erro:
+            if "ciclo" in " ".join(erro.messages):
                 return True
-            if no in vistos:
-                continue
-            vistos.add(no)
-            pilha.extend(
-                Precedencia.objects
-                .filter(origem_id=no)
-                .exclude(pk=atual)
-                .values_list("destino_id", flat=True)
-            )
+            raise serializers.ValidationError(erro.messages)
         return False
 
 
@@ -413,6 +457,71 @@ class LoteSerializer(serializers.Serializer):
     serviço, com a lista branca — aqui só se garante a forma."""
 
     edicoes = EdicaoEmLoteSerializer(many=True)
+
+
+class InserirAtividadeSerializer(serializers.Serializer):
+    """A linha que nasce **na posição** — o Enter da grade."""
+
+    pai = serializers.IntegerField(required=False, allow_null=True)
+    depois_de = serializers.IntegerField(required=False, allow_null=True)
+    nome = serializers.CharField(max_length=200, required=False, allow_blank=True)
+    duracao_dias = serializers.IntegerField(required=False, allow_null=True, min_value=0)
+    eh_marco = serializers.BooleanField(required=False, default=False)
+    etapa = serializers.IntegerField(required=False, allow_null=True)
+
+
+class MoverAtividadeSerializer(serializers.Serializer):
+    """Para onde a linha vai: debaixo de quem, e em que posição entre as irmãs."""
+
+    pai = serializers.IntegerField(required=False, allow_null=True)
+    posicao = serializers.IntegerField(required=False, allow_null=True, min_value=0)
+
+
+class LinhaImportadaSerializer(serializers.Serializer):
+    nome = serializers.CharField(max_length=400, allow_blank=True)
+    codigo = serializers.CharField(max_length=60, required=False, allow_blank=True)
+    nivel = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    duracao_dias = serializers.CharField(
+        max_length=20, required=False, allow_blank=True, allow_null=True,
+    )
+    eh_marco = serializers.BooleanField(required=False, allow_null=True, default=None)
+    predecessoras = serializers.CharField(max_length=500, required=False, allow_blank=True)
+    nao_comecar_antes_de = serializers.CharField(
+        max_length=30, required=False, allow_blank=True, allow_null=True,
+    )
+    peso = serializers.CharField(max_length=30, required=False, allow_blank=True, allow_null=True)
+
+
+class ImportarLinhasSerializer(serializers.Serializer):
+    """O corpo de `importar-linhas/` — colar do Excel ou abrir o XML do Project."""
+
+    linhas = LinhaImportadaSerializer(many=True)
+    referencia = serializers.ChoiceField(choices=["codigo", "linha"], default="codigo")
+
+
+class GerarDoOrcamentoSerializer(serializers.Serializer):
+    orcamento = serializers.IntegerField()
+    #: Duração da etapa que ainda não tem datas no cronograma do orçamento.
+    duracao_padrao = serializers.IntegerField(required=False, default=5, min_value=1)
+    simular = serializers.BooleanField(required=False, default=False)
+
+
+class AtualizarDoOrcamentoSerializer(serializers.Serializer):
+    orcamento = serializers.IntegerField(required=False, allow_null=True)
+    duracao_padrao = serializers.IntegerField(required=False, default=5, min_value=1)
+
+
+class AnexarModeloSerializer(serializers.Serializer):
+    modelo = serializers.IntegerField()
+
+
+class RestaurarLinhasSerializer(serializers.Serializer):
+    """O retrato que a tela tirou antes de excluir — o desfazer da exclusão."""
+
+    pai = serializers.IntegerField(required=False, allow_null=True)
+    posicao = serializers.IntegerField(required=False, allow_null=True, min_value=0)
+    atividades = serializers.ListField(child=serializers.DictField(), allow_empty=False)
+    ligacoes = serializers.ListField(child=serializers.DictField(), required=False, default=list)
 
 
 # ---------------------------------------------------------------------------
@@ -626,11 +735,23 @@ class ItemContratoSerializer(TenantScopedModelSerializer):
         return str(services.aditivo_por_item(obj.contrato).get(obj.pk, 0))
 
 
+class ParcelaReajusteContratoSerializer(TenantScopedModelSerializer):
+    indice_codigo = serializers.CharField(source="indice.codigo", read_only=True)
+    indice_nome = serializers.CharField(source="indice.nome", read_only=True)
+
+    class Meta:
+        model = ParcelaReajusteContrato
+        fields = "__all__"
+        read_only_fields = ["tenant"]
+
+
 class ContratoObraSerializer(TenantScopedModelSerializer):
     obra_nome = serializers.CharField(source="obra.nome_obra", read_only=True)
-    fornecedor_nome = serializers.CharField(
-        source="fornecedor.razao_social", read_only=True,
-    )
+    #: O nome **da parte** — o empreiteiro no custo, o contratante na receita.
+    #: O campo guarda o nome antigo porque toda a tela de medição já o lê.
+    fornecedor_nome = serializers.CharField(source="parte_nome", read_only=True)
+    lado_rotulo = serializers.CharField(source="get_lado_display", read_only=True)
+    parcelas_reajuste = ParcelaReajusteContratoSerializer(many=True, read_only=True)
     regime_rotulo = serializers.CharField(source="get_regime_display", read_only=True)
     status_rotulo = serializers.CharField(source="get_status_display", read_only=True)
     retencao_natureza_rotulo = serializers.CharField(
@@ -645,6 +766,8 @@ class ContratoObraSerializer(TenantScopedModelSerializer):
     planilha_editavel = serializers.SerializerMethodField()
     planilha_fechada_porque = serializers.SerializerMethodField()
     medicoes_count = serializers.IntegerField(source="medicoes.count", read_only=True)
+    #: O pedido de serviço do Suprimentos ao lado do que a medição já pagou.
+    pedido_scm_resumo = serializers.SerializerMethodField()
 
     class Meta:
         model = ContratoObra
@@ -653,6 +776,30 @@ class ContratoObraSerializer(TenantScopedModelSerializer):
             "tenant", "criado_em", "atualizado_em",
             "excluido_em", "excluido_por", "motivo_exclusao",
         ]
+        # A unicidade (tenant, obra, número) é conferida em `validate`, com a
+        # mensagem em português; a constraint do banco continua sendo a rede.
+        validators = []
+
+    def get_pedido_scm_resumo(self, obj):
+        pedido = obj.pedido_scm
+        if pedido is None:
+            return None
+        from decimal import Decimal
+
+        from django.db.models import F, Sum
+
+        valor = pedido.valor_total
+        if valor is None:
+            valor = pedido.itens.aggregate(v=Sum(F("quantidade") * F("preco_unitario")))["v"] or Decimal("0")
+        medido = (ItemMedicao.objects
+                  .filter(medicao__contrato=obj, medicao__status=Medicao.Status.APROVADA)
+                  .aggregate(v=Sum(F("quantidade") * F("preco_unitario")))["v"] or Decimal("0"))
+        return {
+            "pedido": pedido.pk, "status": pedido.status, "status_rotulo": pedido.get_status_display(),
+            "valor_pedido": str(Decimal(valor).quantize(Decimal("0.01"))),
+            "medido_aprovado": str(Decimal(medido).quantize(Decimal("0.01"))),
+            "saldo": str((Decimal(valor) - Decimal(medido)).quantize(Decimal("0.01"))),
+        }
 
     def validate(self, dados):
         """As coerências que a constraint do banco cobra, ditas em português.
@@ -667,9 +814,51 @@ class ContratoObraSerializer(TenantScopedModelSerializer):
                 return dados[campo]
             return getattr(self.instance, campo, None)
 
+        pedido = valor("pedido_scm")
+        obra = valor("obra")
+        if pedido is not None and obra is not None:
+            obra_do_pedido = getattr(getattr(pedido, "centro_custo", None), "obra_id", None)
+            if obra_do_pedido not in (None, getattr(obra, "pk", obra)):
+                raise serializers.ValidationError({
+                    "pedido_scm": "Este pedido é do centro de custo de outra obra.",
+                })
+            if pedido.tenant_id != getattr(obra, "tenant_id", pedido.tenant_id):
+                raise serializers.ValidationError({"pedido_scm": "Pedido inválido."})
+
         regime = valor("regime") or RegimeContrato.UNITARIO
         valor_global = valor("valor_global")
         erros = {}
+
+        # Número repetido na obra: a frase do DRF ("Os campos obra, numero devem
+        # criar um set único") não diz o que fazer. A constraint do banco segue
+        # valendo; aqui ela vira mensagem no campo certo.
+        numero = valor("numero")
+        if obra is not None and numero:
+            repetido = ContratoObra.objects.filter(
+                tenant_id=getattr(obra, "tenant_id", None), obra=obra, numero=numero, excluido_em__isnull=True,
+            )
+            if self.instance is not None:
+                repetido = repetido.exclude(pk=self.instance.pk)
+            if repetido.exists():
+                erros["numero"] = f"O contrato número {numero} já existe nesta obra."
+
+        # A parte conforme o lado (decisão do dono, 10/10/2026: o contrato com
+        # o contratante é o mesmo documento, do lado da receita).
+        from .models import LadoContrato
+
+        lado = valor("lado") or LadoContrato.CUSTO
+        if lado == LadoContrato.CUSTO:
+            if valor("fornecedor") is None:
+                erros["fornecedor"] = "Contrato de empreiteiro precisa do empreiteiro."
+            if valor("cliente") is not None:
+                erros["cliente"] = "Contrato de empreiteiro não tem cliente — é custo."
+        else:
+            if valor("cliente") is None:
+                erros["cliente"] = "Contrato com o cliente precisa do cliente que encomendou a obra."
+            if valor("fornecedor") is not None:
+                erros["fornecedor"] = "Contrato com o cliente não tem empreiteiro — é receita."
+            if valor("pedido_scm") is not None:
+                erros["pedido_scm"] = "Pedido de serviço do Suprimentos é do lado do custo."
 
         if regime == RegimeContrato.UNITARIO and valor_global is not None:
             erros["valor_global"] = (
@@ -708,6 +897,9 @@ class ContratoObraSerializer(TenantScopedModelSerializer):
                 "contrato. O sistema confere contra o número que você declarar — "
                 "ele não escolhe o percentual por você."
             )
+        cliente = valor("cliente")
+        if cliente is not None and obra is not None and cliente.tenant_id != getattr(obra, "tenant_id", cliente.tenant_id):
+            erros["cliente"] = "Cliente inválido."
         if erros:
             raise serializers.ValidationError(erros)
         return dados
@@ -858,7 +1050,7 @@ class MedicaoSerializer(TenantScopedModelSerializer):
         source="contrato.numero", read_only=True,
     )
     fornecedor_nome = serializers.CharField(
-        source="contrato.fornecedor.razao_social", read_only=True,
+        source="contrato.parte_nome", read_only=True,
     )
     obra_nome = serializers.CharField(
         source="contrato.obra.nome_obra", read_only=True,
@@ -870,6 +1062,7 @@ class MedicaoSerializer(TenantScopedModelSerializer):
     contrato_obra = serializers.IntegerField(
         source="contrato.obra_id", read_only=True,
     )
+    lado = serializers.CharField(source="contrato.lado", read_only=True)
     regime = serializers.CharField(source="contrato.regime", read_only=True)
     status_rotulo = serializers.CharField(source="get_status_display", read_only=True)
     custo_origem_rotulo = serializers.CharField(
@@ -902,6 +1095,9 @@ class MedicaoSerializer(TenantScopedModelSerializer):
         read_only_fields = [
             "tenant", "numero", "apurada_em", "congelada_em", "conta_pagar_ref",
             "status", "excluido_em", "excluido_por", "motivo_exclusao",
+            # O reajuste sai da fórmula do contrato e do índice publicado —
+            # nunca do PATCH (`services.recalcular_reajuste`).
+            "conta_receber_ref", "valor_reajuste", "reajuste_memoria", "reajuste_provisorio",
         ]
 
     def get_totais(self, obj):
@@ -1082,7 +1278,7 @@ class AditivoContratoSerializer(TenantScopedModelSerializer):
     contrato_numero = serializers.CharField(source="contrato.numero", read_only=True)
     contrato_obra = serializers.IntegerField(source="contrato.obra_id", read_only=True)
     fornecedor_nome = serializers.CharField(
-        source="contrato.fornecedor.razao_social", read_only=True,
+        source="contrato.parte_nome", read_only=True,
     )
     status_rotulo = serializers.CharField(source="get_status_display", read_only=True)
     itens = ItemAditivoSerializer(many=True, read_only=True)
@@ -1125,6 +1321,11 @@ class LinhaDeAditivoSerializer(serializers.Serializer):
     codigo_novo = serializers.CharField(required=False, allow_blank=True)
     descricao_nova = serializers.CharField(required=False, allow_blank=True)
     unidade_nova = serializers.CharField(required=False, allow_blank=True)
+    #: A retenção própria que a linha dá ao item. Nula = não mexe.
+    retencao_percentual = serializers.DecimalField(
+        max_digits=5, decimal_places=2, required=False, allow_null=True,
+        min_value=0, max_value=100,
+    )
     observacao = serializers.CharField(required=False, allow_blank=True)
 
 
@@ -1136,7 +1337,25 @@ class AbrirAditivoSerializer(serializers.Serializer):
     justificativa = serializers.CharField()
     data_assinatura = serializers.DateField(required=False, allow_null=True)
     nova_data_fim = serializers.DateField(required=False, allow_null=True)
+    #: A nova retenção do contrato, quando o aditivo muda a cláusula.
+    retencao_percentual_nova = serializers.DecimalField(
+        max_digits=5, decimal_places=2, required=False, allow_null=True,
+        min_value=0, max_value=100,
+    )
     itens = LinhaDeAditivoSerializer(many=True, required=False)
+
+
+class EditarAditivoSerializer(serializers.Serializer):
+    """O cabeçalho do rascunho. Só o que vier no corpo muda."""
+
+    objeto = serializers.CharField(required=False)
+    justificativa = serializers.CharField(required=False)
+    data_assinatura = serializers.DateField(required=False, allow_null=True)
+    nova_data_fim = serializers.DateField(required=False, allow_null=True)
+    retencao_percentual_nova = serializers.DecimalField(
+        max_digits=5, decimal_places=2, required=False, allow_null=True,
+        min_value=0, max_value=100,
+    )
 
 
 class LiberacaoRetencaoSerializer(TenantScopedModelSerializer):
@@ -1144,7 +1363,7 @@ class LiberacaoRetencaoSerializer(TenantScopedModelSerializer):
         source="contrato.numero", read_only=True,
     )
     fornecedor_nome = serializers.CharField(
-        source="contrato.fornecedor.razao_social", read_only=True,
+        source="contrato.parte_nome", read_only=True,
     )
     status_rotulo = serializers.CharField(source="get_status_display", read_only=True)
 
@@ -1154,6 +1373,7 @@ class LiberacaoRetencaoSerializer(TenantScopedModelSerializer):
         read_only_fields = [
             "tenant", "criado_em", "congelada_em", "conta_pagar_ref", "status",
             "solicitada_por", "excluido_em", "excluido_por", "motivo_exclusao",
+            "conta_receber_ref",
         ]
 
 
@@ -1198,6 +1418,77 @@ class CausaNaoCumprimentoSerializer(TenantScopedModelSerializer):
                 "o vocabulário da sua casa; o código fica."
             )
         return valor
+
+
+class EquipeObraSerializer(TenantScopedModelSerializer):
+    """A composição da equipe: funcionários (RH) e fornecedores (empreiteiras).
+
+    O nome vazio nasce dos membros — "Zé Silva + Construtora X" — porque o
+    nome é o rótulo que viaja no cartão e que o encarregado procura no campo.
+    """
+
+    nome = serializers.CharField(max_length=150, required=False, allow_blank=True, default="")
+    funcionarios = serializers.PrimaryKeyRelatedField(
+        many=True, required=False, queryset=Funcionario.objects.all(),
+    )
+    fornecedores = serializers.PrimaryKeyRelatedField(
+        many=True, required=False, queryset=Fornecedor.objects.all(),
+    )
+    membros = serializers.SerializerMethodField()
+
+    class Meta:
+        model = EquipeObra
+        fields = [
+            "equipe_id", "obra", "nome", "funcionarios", "fornecedores",
+            "membros", "ativa",
+        ]
+        read_only_fields = ["equipe_id"]
+
+    def get_membros(self, obj) -> list[dict]:
+        return (
+            [{"tipo": "funcionario", "id": f.pk, "nome": f.nome_completo}
+             for f in obj.funcionarios.all()]
+            + [{"tipo": "fornecedor", "id": f.pk, "nome": f.razao_social}
+               for f in obj.fornecedores.all()]
+        )
+
+    def validate(self, dados):
+        tenant_id = getattr(self.context.get("request"), "user", None)
+        tenant_id = getattr(tenant_id, "tenant_id", None)
+        obra = dados.get("obra") or getattr(self.instance, "obra", None)
+        funcionarios = dados.get(
+            "funcionarios",
+            list(self.instance.funcionarios.all()) if self.instance else [],
+        )
+        fornecedores = dados.get(
+            "fornecedores",
+            list(self.instance.fornecedores.all()) if self.instance else [],
+        )
+        if tenant_id is not None:
+            alheios = [m for m in [obra, *funcionarios, *fornecedores]
+                       if m is not None and m.tenant_id != tenant_id]
+            if alheios:
+                raise serializers.ValidationError("Há membro ou obra que não é desta empresa.")
+        if not funcionarios and not fornecedores:
+            raise serializers.ValidationError(
+                "A equipe é a composição de quem trabalha: escolha ao menos um "
+                "funcionário ou um fornecedor."
+            )
+        nome = (dados.get("nome") or "").strip()
+        if not nome and (self.instance is None or "nome" in dados):
+            partes = [f.nome_completo.split()[0] if f.nome_completo else "" for f in funcionarios]
+            partes += [f.razao_social for f in fornecedores]
+            nome = " + ".join(p for p in partes if p)[:150] or "Equipe"
+        if nome:
+            dados["nome"] = nome
+            repetida = EquipeObra.objects.filter(obra=obra, nome__iexact=nome)
+            if self.instance is not None:
+                repetida = repetida.exclude(pk=self.instance.pk)
+            if repetida.exists():
+                raise serializers.ValidationError({
+                    "nome": f"Já existe a equipe \"{nome}\" nesta obra — dê outro nome.",
+                })
+        return dados
 
 
 class GerarRitmoSerializer(serializers.Serializer):
@@ -1268,6 +1559,11 @@ class RestricaoSerializer(TenantScopedModelSerializer):
     #: Quantos dias faltam (negativo = vencida). `None` quando não há prazo — e
     #: a tela mostra "sem prazo", nunca "vencida há 0 dias".
     dias_para_o_prazo = serializers.SerializerMethodField()
+    #: **A trava acompanha a compra** (integração PDCA × Suprimentos × estoque):
+    #: demanda → cotação → pedido → recebimento, e `sugerir_destravar` quando
+    #: tudo o que foi pedido chegou. Destravar continua sendo da pessoa — o
+    #: recebimento só sugere *(decisão do dono, 09/10/2026)*.
+    compra = serializers.SerializerMethodField()
 
     class Meta:
         model = Restricao
@@ -1277,12 +1573,45 @@ class RestricaoSerializer(TenantScopedModelSerializer):
             "descricao", "responsavel", "prazo", "dias_para_o_prazo",
             "status", "status_rotulo", "demanda_scm", "demanda_scm_status",
             "criada_por", "criada_em", "removida_em", "removida_por",
-            "nota_remocao",
+            "nota_remocao", "reaberta_em", "reaberta_por", "vezes_reaberta",
+            "compra",
         ]
         read_only_fields = [
             "restricao_id", "criada_em", "removida_em", "removida_por",
-            "nota_remocao", "demanda_scm",
+            "nota_remocao", "demanda_scm", "reaberta_em", "reaberta_por",
+            "vezes_reaberta",
         ]
+
+    def get_compra(self, obj):
+        demanda = obj.demanda_scm
+        if demanda is None:
+            return None
+        pedidos = [p for p in demanda.pedidos.all() if p.status != "cancelado"]
+        cotacoes = sorted(demanda.cotacoes.all(), key=lambda c: c.cotacao_id)
+        entregues = [p for p in pedidos if p.status == "recebido_total"]
+        if entregues and len(entregues) == len(pedidos):
+            etapa = "recebido"
+        elif any(p.status == "recebido_parcial" for p in pedidos):
+            etapa = "recebido_parcial"
+        elif pedidos:
+            etapa = "pedido"
+        elif cotacoes:
+            etapa = "cotacao"
+        else:
+            etapa = "demanda"
+        return {
+            "demanda": demanda.pk,
+            "demanda_status": demanda.status,
+            "cotacao": cotacoes[-1].cotacao_id if cotacoes else None,
+            "cotacao_status": cotacoes[-1].status if cotacoes else None,
+            "pedidos": [
+                {"pedido": p.pk, "status": p.status, "status_rotulo": p.get_status_display(),
+                 "entrega_prevista": p.data_entrega_prevista}
+                for p in sorted(pedidos, key=lambda p: p.pk)
+            ],
+            "etapa": etapa,
+            "sugerir_destravar": obj.status == Restricao.Status.ABERTA and etapa == "recebido",
+        }
 
     def get_dias_para_o_prazo(self, obj):
         if not obj.prazo or obj.status != Restricao.Status.ABERTA:
@@ -1312,14 +1641,21 @@ class ItemProgramacaoSerializer(TenantScopedModelSerializer):
     #: `null` quando o campo não apontou nada na semana, que é diferente de
     #: zero: pode ser que ninguém tenha apontado, não que nada tenha andado.
     percentual_apontado = serializers.SerializerMethodField()
+    requisicao_sil_status = serializers.CharField(source="requisicao_sil.status", read_only=True, default=None)
+    #: O julgamento por % (decisão do dono, 09/10/2026): o acumulado da
+    #: atividade agora e a meta da semana — onde ela tinha de chegar. A tela
+    #: abre o campo do concluído com o atual e diz se ele bate a meta.
+    avanco_atual = serializers.SerializerMethodField()
+    meta_da_semana = serializers.SerializerMethodField()
 
     class Meta:
         model = ItemProgramacao
         fields = [
-            "item_programacao_id", "programacao", "atividade",
+            "item_programacao_id", "programacao", "atividade", "equipe",
             "atividade_codigo", "atividade_nome", "local", "local_rotulo",
             "responsavel", "percentual_previsto", "percentual_apontado",
             "cumprido", "causa", "causa_codigo", "causa_nome", "nota", "ordem",
+            "percentual_concluido", "avanco_atual", "meta_da_semana",
             "restricoes_abertas", "ncs_abertas",
             #: O peso congelado e de onde ele saiu — é o que o PPC ponderado
             #: divide, e a tela mostra ao lado do cartão para o índice não ser
@@ -1329,15 +1665,19 @@ class ItemProgramacaoSerializer(TenantScopedModelSerializer):
             #: quantas semanas ele está de pé. Um serviço na quarta semana
             #: seguida é o que a reunião precisa ver antes do índice.
             "arrastado_de", "vezes_arrastado",
+            #: O material que o cartão pediu ao almoxarifado, e em que pé está.
+            "requisicao_sil", "requisicao_sil_status",
         ]
         read_only_fields = [
-            "item_programacao_id",
+            "item_programacao_id", "requisicao_sil",
             #: **Congelados pelo servidor, não digitados.** O peso sai do
             #: planejamento (orçamento → peso informado → duração) no momento em
             #: que o cartão entra no quadro; aceitar o valor pelo corpo do POST
             #: deixaria a tela escolher quanto cada compromisso vale, que é o
             #: contrário de o número ter procedência.
             "peso", "peso_origem", "arrastado_de", "vezes_arrastado",
+            #: Só o julgamento escreve — ver `services.julgar_itens`.
+            "percentual_concluido",
         ]
 
     def get_restricoes_abertas(self, obj):
@@ -1377,6 +1717,20 @@ class ItemProgramacaoSerializer(TenantScopedModelSerializer):
         else:
             valor = services.avanco_apontado_dos_itens(obj.programacao).get(obj.pk)
         return str(valor) if valor is not None else None
+
+    def _andamento(self, obj) -> dict | None:
+        mapa = self.context.get("andamento_por_item")
+        if mapa is None:
+            mapa = services.andamento_dos_itens(obj.programacao)
+        return mapa.get(obj.pk)
+
+    def get_avanco_atual(self, obj):
+        conta = self._andamento(obj)
+        return services.str_decimais(conta["atual"]) if conta else None
+
+    def get_meta_da_semana(self, obj):
+        conta = self._andamento(obj)
+        return services.str_decimais(conta["meta"]) if conta else None
 
     def validate(self, dados):
         #: A regra do LPS, dita na entrada: atividade travada não entra no
@@ -1430,6 +1784,22 @@ class ItemProgramacaoSerializer(TenantScopedModelSerializer):
                     f"falha duas vezes — para dividir a frente, puxe-a em locais "
                     f"diferentes."
                 )
+
+        #: **A equipe e o nome andam juntos.** Com a equipe, o `responsavel` é o
+        #: nome dela (é o que o campo procura). Só com o nome — o arrasto entre
+        #: colunas, a tela antiga, o comando de bancada —, a equipe de mesmo
+        #: nome na obra é ligada sozinha; nome solto fica só como rótulo.
+        if programacao is not None and ("equipe" in dados or "responsavel" in dados):
+            equipe = dados.get("equipe")
+            if equipe is not None:
+                if equipe.obra_id != programacao.obra_id:
+                    raise serializers.ValidationError({"equipe": "Esta equipe não é desta obra."})
+                dados["responsavel"] = equipe.nome
+            elif "responsavel" in dados:
+                nome = (dados["responsavel"] or "").strip()
+                dados["equipe"] = (EquipeObra.objects
+                                   .filter(obra_id=programacao.obra_id, nome__iexact=nome)
+                                   .first() if nome else None)
         return dados
 
 
@@ -1476,6 +1846,12 @@ class JulgamentoSerializer(serializers.Serializer):
     cumprido = serializers.BooleanField(allow_null=True, required=False)
     causa = serializers.IntegerField(required=False, allow_null=True)
     nota = serializers.CharField(required=False, allow_blank=True)
+    #: O % concluído da atividade no fim da semana — quando vem, decide o
+    #: `cumprido` e vira apontamento de avanço (`services.julgar_itens`).
+    percentual_concluido = serializers.DecimalField(
+        max_digits=6, decimal_places=2, required=False, allow_null=True,
+        min_value=0, max_value=100,
+    )
 
 
 class JulgarSerializer(serializers.Serializer):
@@ -2167,3 +2543,49 @@ class InterditarFrenteSerializer(serializers.Serializer):
 
 class EncerrarOcorrenciaSerializer(serializers.Serializer):
     nota = serializers.CharField(required=False, allow_blank=True)
+
+
+class MaterialDaAtividadeSerializer(TenantScopedModelSerializer):
+    """O material informado na atividade (obra sem orçamento ou serviço fora dele)."""
+
+    item_codigo = serializers.CharField(source="item.codigo_interno", read_only=True, default=None)
+
+    class Meta:
+        model = MaterialDaAtividade
+        fields = [
+            "material_id", "atividade", "item", "item_codigo", "descricao", "unidade",
+            "categoria", "quantidade", "custo_unitario",
+        ]
+        read_only_fields = ["material_id"]
+        extra_kwargs = {
+            "descricao": {"required": False, "allow_blank": True},
+            "unidade": {"required": False, "allow_blank": True},
+        }
+
+    def validate(self, dados):
+        request = self.context.get("request")
+        tenant_id = getattr(getattr(request, "user", None), "tenant_id", None)
+        atividade = dados.get("atividade") or getattr(self.instance, "atividade", None)
+        item = dados.get("item")
+        for objeto in (atividade, item):
+            if objeto is not None and tenant_id is not None and objeto.tenant_id != tenant_id:
+                raise serializers.ValidationError("Atividade ou item de outra empresa.")
+        if atividade is not None and atividade.filhos.exists():
+            raise serializers.ValidationError({
+                "atividade": "O material vai na atividade que executa, não na etapa que a agrupa.",
+            })
+        quantidade = dados.get("quantidade", getattr(self.instance, "quantidade", None))
+        if quantidade is not None and quantidade <= 0:
+            raise serializers.ValidationError({"quantidade": "A quantidade precisa ser maior que zero."})
+        # Com item do catálogo, descrição e unidade vêm dele quando não digitadas.
+        if item is not None:
+            if not (dados.get("descricao") or "").strip():
+                dados["descricao"] = item.descricao
+            if not (dados.get("unidade") or "").strip():
+                dados["unidade"] = item.unidade
+        if self.instance is None:
+            if not (dados.get("descricao") or "").strip():
+                raise serializers.ValidationError({"descricao": "Diga qual é o material (ou escolha do catálogo)."})
+            if not (dados.get("unidade") or "").strip():
+                raise serializers.ValidationError({"unidade": "Informe a unidade."})
+        return dados

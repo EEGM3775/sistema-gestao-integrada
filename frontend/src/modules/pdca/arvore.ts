@@ -26,24 +26,26 @@ export function linhasVisiveis(
   }
 
   const saida: LinhaDaArvore[] = []
-  function descer(pai: number | null, nivel: number) {
+  /** Toda atividade alcançada a partir da raiz — mostrada **ou escondida**
+   *  dentro de uma etapa recolhida. Contar só as mostradas fazia os filhos
+   *  recolhidos passarem por órfãos e irem parar no fim do plano. */
+  const alcancados = new Set<number>()
+  function descer(pai: number | null, nivel: number, visivel: boolean) {
     for (const a of filhosDe.get(pai) ?? []) {
+      alcancados.add(a.atividade_id)
       const filhos = filhosDe.get(a.atividade_id) ?? []
       const aberta = !fechados.has(a.atividade_id)
-      saida.push({ atividade: a, nivel, temFilhos: filhos.length > 0, aberta })
-      if (filhos.length > 0 && aberta) descer(a.atividade_id, nivel + 1)
+      if (visivel) saida.push({ atividade: a, nivel, temFilhos: filhos.length > 0, aberta })
+      if (filhos.length > 0) descer(a.atividade_id, nivel + 1, visivel && aberta)
     }
   }
-  descer(null, 0)
+  descer(null, 0, true)
 
-  /** Atividade cujo pai foi apagado ficaria invisível sem isto — e sumir em
-   *  silêncio num plano é o defeito que ninguém encontra. */
-  if (saida.length < atividades.length) {
-    const vistos = new Set(saida.map((l) => l.atividade.atividade_id))
-    for (const a of atividades) {
-      if (!vistos.has(a.atividade_id)) {
-        saida.push({ atividade: a, nivel: 0, temFilhos: false, aberta: true })
-      }
+  /** Atividade cujo pai não está na lista ficaria invisível sem isto — e sumir
+   *  em silêncio num plano é o defeito que ninguém encontra. */
+  for (const a of atividades) {
+    if (!alcancados.has(a.atividade_id)) {
+      saida.push({ atividade: a, nivel: 0, temFilhos: false, aberta: true })
     }
   }
   return saida

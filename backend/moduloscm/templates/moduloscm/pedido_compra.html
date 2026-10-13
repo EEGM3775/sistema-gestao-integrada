@@ -1,0 +1,94 @@
+<!--
+  Pedido de compra para o fornecedor (D284). Uma página A4 de pé, cabeçalho da
+  empresa compradora, o que se compra, onde entregar e como se paga — o que o
+  vendedor precisa para emitir a NF-e citando o pedido.
+-->
+<meta charset="utf-8">
+<style>
+  @page {
+    size: A4;
+    margin: 14mm 12mm 16mm 12mm;
+    @bottom-left { content: "Pedido de compra nº {{ pedido.pedido_id }}{% if pedido.revisao %} · revisão {{ pedido.revisao }}{% endif %}"; font: 7.5pt "DejaVu Sans", sans-serif; color: #64748b; }
+    @bottom-right { content: "página " counter(page) " de " counter(pages); font: 7.5pt "DejaVu Sans", sans-serif; color: #64748b; }
+  }
+  body { font-family: "DejaVu Sans", sans-serif; font-size: 9pt; color: #0f172a; }
+  .topo { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 0.6mm solid #0f172a; padding-bottom: 3mm; margin-bottom: 5mm; }
+  .empresa { font-size: 13pt; font-weight: bold; }
+  .titulo { text-align: right; }
+  .titulo h1 { font-size: 15pt; margin: 0; }
+  .titulo .meta { color: #475569; font-size: 8pt; margin-top: 1mm; }
+  .blocos { display: flex; gap: 5mm; margin-bottom: 5mm; }
+  .bloco { flex: 1; border: 0.3mm solid #cbd5e1; border-radius: 1.5mm; padding: 2.5mm 3mm; }
+  .bloco h2 { font-size: 7.5pt; letter-spacing: 0.06em; text-transform: uppercase; color: #64748b; margin: 0 0 1.5mm; }
+  .bloco p { margin: 0.6mm 0; }
+  table { width: 100%; border-collapse: collapse; }
+  thead { display: table-header-group; }
+  tr { page-break-inside: avoid; }
+  th { background: #e8edf5; text-align: left; padding: 1.8mm 1.6mm; border-bottom: 0.4mm solid #c9d2e0; font-size: 8pt; }
+  td { padding: 1.6mm; border-bottom: 0.15mm solid #e2e8f0; vertical-align: top; }
+  .num { text-align: right; white-space: nowrap; }
+  .cod { color: #64748b; font-size: 7.5pt; }
+  .total td { border-bottom: none; font-weight: bold; font-size: 10.5pt; padding-top: 2.5mm; }
+  .pagto { margin-top: 5mm; }
+  .aviso { margin-top: 6mm; padding: 2.5mm 3mm; background: #fef9e7; border: 0.3mm solid #f3d38a; border-radius: 1.5mm; font-size: 8.5pt; }
+  .obs { margin-top: 4mm; white-space: pre-wrap; }
+</style>
+
+<div class="topo">
+  <div>
+    <div class="empresa">{{ empresa }}</div>
+    {% if centro %}<div class="meta">Centro de custo: {{ centro }}</div>{% endif %}
+  </div>
+  <div class="titulo">
+    <h1>Pedido de compra nº {{ pedido.pedido_id }}</h1>
+    <div class="meta">Emitido em {{ pedido.data_pedido|date:"d/m/Y" }}{% if pedido.revisao %} · revisão {{ pedido.revisao }}{% endif %}</div>
+  </div>
+</div>
+
+<div class="blocos">
+  <div class="bloco">
+    <h2>Fornecedor</h2>
+    <p><b>{{ fornecedor.razao_social }}</b></p>
+    {% if fornecedor.cnpj %}<p>CNPJ {{ fornecedor.cnpj }}</p>{% endif %}
+    {% if fornecedor.contato %}<p>A/C {{ fornecedor.contato }}</p>{% endif %}
+    {% if fornecedor.telefone or fornecedor.email %}<p>{{ fornecedor.telefone }}{% if fornecedor.telefone and fornecedor.email %} · {% endif %}{{ fornecedor.email }}</p>{% endif %}
+  </div>
+  <div class="bloco">
+    <h2>Entrega</h2>
+    {% if obra %}<p><b>{{ obra.nome_obra }}</b></p><p>{{ obra.endereco }}</p>{% elif centro %}<p><b>{{ centro }}</b></p>{% else %}<p>A combinar</p>{% endif %}
+    <p>Prevista: {% if pedido.data_entrega_prevista %}{{ pedido.data_entrega_prevista|date:"d/m/Y" }}{% else %}a combinar{% endif %}</p>
+  </div>
+</div>
+
+<table>
+  <thead>
+    <tr><th style="width:5%">#</th><th>Item</th><th class="num" style="width:12%">Qtd.</th><th style="width:7%">Un.</th><th class="num" style="width:14%">Preço unit.</th><th class="num" style="width:15%">Subtotal</th></tr>
+  </thead>
+  <tbody>
+    {% for l in linhas %}
+    <tr>
+      <td>{{ forloop.counter }}</td>
+      <td>{{ l.descricao }}{% if l.codigo %}<br><span class="cod">{{ l.codigo }}</span>{% endif %}</td>
+      <td class="num">{{ l.quantidade }}</td>
+      <td>{{ l.unidade }}</td>
+      <td class="num">{{ l.preco }}</td>
+      <td class="num">{{ l.subtotal }}</td>
+    </tr>
+    {% endfor %}
+    <tr class="total"><td colspan="5" class="num">Total do pedido</td><td class="num">{{ total }}</td></tr>
+  </tbody>
+</table>
+
+<div class="pagto">
+  <div class="bloco">
+    <h2>Condição de pagamento</h2>
+    {% if pagamento %}{% for p in pagamento %}<p>{{ p }}</p>{% endfor %}{% else %}<p>A combinar.</p>{% endif %}
+  </div>
+</div>
+
+{% if pedido.observacao %}<div class="obs"><b>Observação:</b> {{ pedido.observacao }}</div>{% endif %}
+
+<div class="aviso">
+  Favor citar <b>“Pedido de compra nº {{ pedido.pedido_id }}”</b> na NF-e. Entregas a mais ou a menos do
+  pedido são conferidas no recebimento e anotadas na conta a pagar.
+</div>

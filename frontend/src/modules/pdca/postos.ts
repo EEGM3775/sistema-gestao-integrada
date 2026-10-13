@@ -16,13 +16,58 @@ export interface Posto {
  *  mexe uma vez por mês. O rail não cresce por fatia: capacidade nova entra num
  *  posto existente, e só uma cadência nova justificaria um sétimo. */
 export const POSTOS: Posto[] = [
-  { codigo: 'hoje', rotulo: 'Hoje', cadencia: 'todo dia', permissao: 'pdca.cronograma.view', noAr: true },
-  { codigo: 'semana', rotulo: 'Semana', cadencia: 'semanal', permissao: 'pdca.programacao.view', noAr: true },
+  // *Decisão do dono, 10/10/2026:* o Controle absorve o Hoje e a Semana e
+  // recebe o custo e o material da obra — o que se olha todo dia e toda
+  // semana para saber se a obra está andando e gastando como o plano manda.
+  { codigo: 'controle', rotulo: 'Controle', cadencia: 'diária e semanal', permissao: 'pdca.cronograma.view', noAr: true },
   { codigo: 'plano', rotulo: 'Plano', cadencia: 'por evento', permissao: 'pdca.cronograma.view', noAr: true },
   { codigo: 'medicao', rotulo: 'Medição', cadencia: 'mensal', permissao: 'pdca.medicao.view', noAr: true },
   { codigo: 'qualidade', rotulo: 'Qualidade', cadencia: 'contínua', permissao: 'pdca.verificacao.view', noAr: true },
   { codigo: 'seguranca', rotulo: 'Segurança', cadencia: 'diária', permissao: 'pdca.ocorrencia.view', noAr: true },
 ]
+
+/** Onde a pessoa cai: um dos seis postos ou a segunda superfície. */
+export type Porta = CodigoPosto | 'campo'
+
+/** **O papel escolhe a porta, e nunca esconde o resto** (§3.3 da planta).
+ *
+ *  A chave é o nome da persona de fábrica (`TEMPLATES_PAPEL` da IAM), que é o
+ *  nome com que o papel nasce no tenant. Papel renomeado ou montado à mão não
+ *  casa com nada e cai em `HOJE` — a fila de decisão, que é a porta de quem
+ *  não tem uma só.
+ *
+ *  **A ordem é a precedência** de quem acumula papéis. Primeiro quem assina
+ *  (fiscal, diretoria): a fila do `HOJE` já traz tudo o que espera por eles.
+ *  Depois a ordem de consequência da §4.5 — o prazo legal da CAT antes do
+ *  dinheiro da medição, o dinheiro antes do compromisso da semana, o
+ *  compromisso antes do retrabalho —, o plano, que se mexe por evento, e por
+ *  último o campo: quem tem um papel de escritório está abrindo o escritório. */
+const PORTA_DO_PAPEL: [string, Porta][] = [
+  ['fiscal_de_obra', 'controle'],
+  ['diretoria', 'controle'],
+  ['tecnico_seguranca', 'seguranca'],
+  ['gestor_contratos', 'medicao'],
+  ['engenharia', 'controle'],
+  ['tecnico_qualidade', 'qualidade'],
+  ['planejador', 'plano'],
+  ['campo', 'campo'],
+]
+
+/** A porta de quem tem estes papéis. **A permissão vence o nome**: papel
+ *  recomposto sem o verbo do posto não manda ninguém para um cadeado, passa
+ *  para o próximo papel da pessoa. */
+export function portaDoPapel(
+  papeis: readonly string[],
+  pode: (permissao: string) => boolean,
+): Porta {
+  for (const [papel, porta] of PORTA_DO_PAPEL) {
+    if (!papeis.includes(papel)) continue
+    if (porta === 'campo') return porta
+    const posto = POSTOS.find((p) => p.codigo === porta)
+    if (posto && pode(posto.permissao)) return porta
+  }
+  return 'controle'
+}
 
 /** **O endereço do documento, e não só do posto.**
  *
@@ -58,9 +103,9 @@ export function enderecoDoDocumento(
         ? `${raiz}/medicao?contrato=${extra.contrato}&boletim=${id}`
         : `${raiz}/medicao`
     case 'programacao':
-      return `${raiz}/semana`
+      return `${raiz}/controle?aba=semana`
     case 'restricao':
-      return `${raiz}/semana`
+      return `${raiz}/controle?aba=semana`
     default:
       return raiz
   }
@@ -74,8 +119,8 @@ export function enderecoDoDocumento(
 export const POSTO_DA_ORIGEM: Record<OrigemDaFila, CodigoPosto> = {
   seguranca: 'seguranca',
   medicao: 'medicao',
-  programacao: 'semana',
-  restricao: 'semana',
+  programacao: 'controle',
+  restricao: 'controle',
   qualidade: 'qualidade',
 }
 

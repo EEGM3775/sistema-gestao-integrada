@@ -1,7 +1,8 @@
-# backend/moduloorcamento/management/commands/importar_indices.py
+# backend/nucleo/management/commands/importar_indices.py
 """Importa a série de um índice econômico (INCC-M, IPCA, IGP-M, CUB).
 
-Irmão do `importar_base_referencial`, e pelo mesmo motivo: `IndiceEconomico` e
+Grava na série **única** do `nucleo` (decisão do dono, 10/10/2026), a mesma que o
+`importar_indice` (variação mensal) alimenta. Irmão do `importar_base_referencial`: `IndiceEconomico` e
 `ValorIndice` são tabelas **de plataforma** (§11.1) — dado público de terceiro,
 gravado só por comando, read-only na API. Quem opera a plataforma alimenta; o
 tenant lê.
@@ -22,7 +23,7 @@ from decimal import Decimal, InvalidOperation
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from moduloorcamento.models import IndiceEconomico, ValorIndice
+from nucleo.models import IndiceEconomico, ValorIndice
 
 # Sinônimos de cabeçalho — arquivos oficiais mudam de rótulo entre publicações,
 # e exigir um layout exato faria o comando falhar por causa de um acento.
@@ -79,7 +80,8 @@ class Command(BaseCommand):
         if not linhas:
             raise CommandError("Nenhuma linha legível no arquivo.")
 
-        codigo = opcoes["codigo"].strip().upper()
+        # Minúsculo, como o comercial (`incc`, `ipca`): uma série, um código.
+        codigo = opcoes["codigo"].strip().lower()
         pontos = []
         for numero_linha, linha in enumerate(linhas, start=2):
             competencia = _competencia(linha.get("competencia", ""))

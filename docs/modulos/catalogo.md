@@ -37,7 +37,7 @@ por-tenant** (cada empresa tem o seu); o seam `item_rede_id` prepara o catálogo
 
 | Modelo | Papel | Guarda-permissão |
 |---|---|---|
-| `Item` | **Item mestre**, supplier-agnostic. `codigo_interno` (SKU, único por-tenant), `descricao`, `unidade`, `categoria`, **`tipo`** (taxonomia abaixo), **flags por domínio** (abaixo), `ncm`, `gtin`, `codigo_referencia`+`fonte_referencia`+`publicacao_referencia` (SINAPI/TCPO), `item_rede_id` (seam rede), `ativo` | `cadastro.item` |
+| `Item` | **Item mestre**, supplier-agnostic. `codigo_interno` (SKU, único por-tenant), `descricao`, `unidade`, `categoria`, **`tipo`** (taxonomia abaixo), **flags por domínio** (abaixo), `ncm`, `gtin`, `codigo_referencia`+`fonte_referencia`+`publicacao_referencia` (SINAPI/TCPO), `item_rede_id` (seam rede), `ativo`; **`origem`** (manual\|base\|orcamento\|compra — o gesto que criou o cadastro) + `origem_detalhe` (o documento: "Pedido de compra #6", "Orçamento X") + `criado_em` | `cadastro.item` |
 | `ComponenteComposicao` | BOM de um `Item` do tipo **composição**: `item_pai` → `item_filho` + `coeficiente`. Base para explosão de insumos, curva ABC e orçado×realizado do módulo Orçamento (futuro) | `cadastro.item` |
 | `TipoItemProprio` | O tipo **que a empresa cria** por cima das naturezas fechadas: `codigo`, `nome`, `natureza` (uma das do `tipo`) e as flags de domínio. `Item.tipo_proprio` aponta para ele e o `save()` do `Item` **reescreve o `tipo` pela natureza declarada** — não existe item com rótulo de uma coisa e cálculo de outra. `clean()` recusa encargo social fora de mão de obra e composição comprável/estocável | `cadastro.tipo_item` |
 
@@ -87,7 +87,17 @@ assíncronos do frontend — não se carrega o catálogo inteiro no cliente).
 
 | Rota | Recurso | Filtros úteis |
 |---|---|---|
-| `itens/` | `Item` | `tipo`, `tipo_proprio`, `categoria`, `ativo`, flags (`compravel`/`estocavel`/…) · busca `codigo_interno`/`descricao`/`gtin` |
+| `itens/` | `Item` | `tipo`, `tipo_proprio`, `categoria`, `ativo`, `origem`, flags (`compravel`/`estocavel`/…) · busca `codigo_interno`/`descricao`/`gtin` |
+| `itens/{id}/ficha/` | **Ficha do item** ([`catalogo/ficha.py`](../../backend/catalogo/ficha.py)): de onde veio, lojas (preço de tabela da oferta + último preço pago + última compra), linha do tempo de preços pagos, orçamentos que o usam, saldo por local do estoque, nº de pedidos e demandas. Cada bloco importa o módulo tarde e tolerante | — |
+
+**Criar item próprio a partir de texto** — porta única [`catalogo/registro.py`](../../backend/catalogo/registro.py)
+(`registrar_item_proprio`), usada pelo "cadastrar" da compra e pela demanda do orçamento: código
+`ITM-NNNNNN` (o próximo do tenant; a unicidade é do banco e a colisão tenta o seguinte), e **mesmo
+texto** (sem acento, caixa e espaço) **+ mesma unidade = mesmo item**, nunca um duplicado.
+
+**Teto do plano** — `catalogo_itens` em `payment/planos.py` (500 / 5 mil / 50 mil / 200 mil / contrato),
+contado só sobre itens **próprios** (sem fonte ou banco próprio — o adotado da SINAPI/ORSE não conta).
+Trava só a criação (402), pelo `QuotaEnforcedMixin` do `itens/` e pelo `registrar_item_proprio`.
 | `componentes-composicao/` | `ComponenteComposicao` | `item_pai` |
 | `tipos-item/` | `TipoItemProprio` (sem paginação — dezenas, não milhares; traz `itens_com_este_tipo`) | `natureza`, `ativo` · busca `codigo`/`nome` |
 | `tipos-item/naturezas/` | as naturezas **com o padrão de flag de cada uma** | — |

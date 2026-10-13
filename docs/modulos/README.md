@@ -48,6 +48,7 @@
 |---|---|---|
 | `funcoesnf` | [funcoesnf.md](funcoesnf.md) · [integração PHP](funcoesnf-integracao-php.md) | Emissão de NF-e/NFS-e (NFE.io → **Asaas** sandbox→real) |
 | `funcoeslead` | [funcoeslead.md](funcoeslead.md) | **Absorvido pelo backend** (Fase 11.2): conversão/score/agenda/notificações em `modulocrm`/`modulocalendar` |
+| `funcoesnotificacoes` | [funcoesnotificacoes.md](funcoesnotificacoes.md) | **O que o usuário precisa saber, em três níveis** (saber · decidir · agir já): o sino, a lista em faixas e a régua de quem emite aviso |
 | `funcoeswhatsapp` | [funcoeswhatsapp.md](funcoeswhatsapp.md) | Bot de WhatsApp (diário de obra por chat) |
 | worker de `funcoesia`² | [funcoesia.md](funcoesia.md) | Chama o Google Gemini na análise de imagens |
 

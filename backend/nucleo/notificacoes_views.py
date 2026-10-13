@@ -32,11 +32,11 @@ class NotificacaoSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Notificacao
-        fields = ["id", "titulo", "mensagem", "tipo", "url", "lida", "lida_em", "criado_em"]
+        fields = ["id", "titulo", "mensagem", "tipo", "nivel", "url", "lida", "lida_em", "criado_em"]
         # `lida` é declarado explicitamente acima (property do modelo) — não pode
         # entrar em read_only_fields (o DRF proíbe duplicar). Os demais campos,
         # sim; de resto o ViewSet é ReadOnly.
-        read_only_fields = ["id", "titulo", "mensagem", "tipo", "url", "lida_em", "criado_em"]
+        read_only_fields = ["id", "titulo", "mensagem", "tipo", "nivel", "url", "lida_em", "criado_em"]
 
 
 class NotificacaoViewSet(TenantScopedViewSetMixin, viewsets.ReadOnlyModelViewSet):

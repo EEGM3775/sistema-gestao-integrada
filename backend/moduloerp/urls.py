@@ -19,6 +19,8 @@ from .views import (
     AtualizarStatusNFView,
     ConsultarStatusNFView,
     ConfiguracaoLotesView,
+    IntegracaoFiscalView,
+    NotasDasComprasView,
 )
 
 from .views_cnab import ContaCobrancaViewSet, LoteCobrancaViewSet, RemessaViewSet, RetornoViewSet
@@ -43,9 +45,11 @@ router.register(r'lotes-remessa', LoteRemessaViewSet)
 urlpatterns = [
     path('', include(router.urls)),
     path('dashboard/', ERPDashboardView.as_view(), name='erp-dashboard'),
+    path('notas-das-compras/', NotasDasComprasView.as_view(), name='erp-notas-das-compras'),
     path('obras/financeiro/', FinanceiroObrasView.as_view(), name='erp-financeiro-obras'),
     path('obras/<int:obra_id>/dre/', DreObraView.as_view(), name='erp-dre-obra'),
     path('configuracao/lotes/', ConfiguracaoLotesView.as_view(), name='erp-configuracao-lotes'),
+    path('configuracao/integracao-fiscal/', IntegracaoFiscalView.as_view(), name='erp-integracao-fiscal'),
     path('atualizar-status-nf/', AtualizarStatusNFView.as_view(), name='atualizar-status-nf'),
     path('nf/<int:nf_id>/consultar/', ConsultarStatusNFView.as_view(), name='consultar-status-nf'),
 ]

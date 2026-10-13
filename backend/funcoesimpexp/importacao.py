@@ -361,6 +361,12 @@ def preparar_arquivos(
 
     for numero, (recebido, conteudo) in enumerate(arquivos, start=1):
         dados = recurso.dados_do_arquivo(recebido)
+        do_conteudo = recurso.dados_do_conteudo(recebido, conteudo)
+        if do_conteudo:
+            dados = {**dados, **do_conteudo}
+            # O módulo leu os bytes; o binário ainda vai ser gravado abaixo.
+            if hasattr(conteudo, "seek"):
+                conteudo.seek(0)
         chave = str(dados.get(recurso.chave) or "").strip()
         situacao, motivo = _classificar(
             recurso, dados, chave, vistos_no_lote, existentes, tenant_id,

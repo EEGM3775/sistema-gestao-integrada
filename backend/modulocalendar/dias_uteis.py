@@ -58,6 +58,28 @@ def feriados_entre(inicio: date, fim: date, *, uf: str = "", ibge: str = "") -> 
     }
 
 
+def feriados_da_localidade(inicio: date, fim: date, *, uf: str = "", ibge: str = "") -> dict[date, str]:
+    """Os feriados **de lei e do município** no período — os mesmos que a Agenda
+    mostra, com ou sem a tabela sincronizada.
+
+    É a resposta para *"a equipe trabalha neste dia?"*: sem o calendário
+    bancário (Carnaval e Corpus Christi só entram se forem lei no lugar). A lei
+    vem da tabela ou, faltando o ano, do cálculo; o município vem do dataset ou
+    da projeção pela regra dos anos publicados — a mesma régua do vencimento.
+    """
+    uf = (uf or "").upper()[:2]
+    municipais = _feriados.FeriadosMunicipais(ibge)
+    saida: dict[date, str] = {}
+    for ano in range(inicio.year, fim.year + 1):
+        lei = _lei_na_tabela(ano, uf)
+        if lei is None:
+            lei = _feriados.de_lei(ano, uf)
+        do_ano = dict(municipais.do_ano(ano))
+        do_ano.update(lei)  # a lei dá o nome quando os dois caem no mesmo dia
+        saida.update({dia: nome for dia, nome in do_ano.items() if inicio <= dia <= fim})
+    return saida
+
+
 def base_sincronizada() -> bool:
     """O ajuste conhece os feriados? **Sempre, desde 01/10/2026.**
 

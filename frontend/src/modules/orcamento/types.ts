@@ -97,12 +97,6 @@ export interface ComponenteReferencia {
   custo_no_item: string
 }
 
-/** Envelope de `/referencias/{id}/composicao/`: a composição-pai + a analítica. */
-export interface ComposicaoReferenciaResposta {
-  composicao: InsumoReferencia
-  componentes: ComponenteReferencia[]
-}
-
 /** Item do catálogo da empresa criado (ou reaproveitado) por uma adoção. */
 export interface ItemAdotado {
   item_id: number
@@ -370,36 +364,16 @@ export interface PrecoReal {
   }
 }
 
-export interface ControleLinha {
-  obra: number
-  obra_nome: string
-  orcamento: number | null
-  orcamento_versao: number | null
-  orcado: string | null
-  orcado_com_bdi: string | null
-  comprometido: string
-  aplicado: string
-  realizado: string
-  saldo: string | null
-  consumido_pct: string | null
-  estourado: boolean
-  realizado_cobertura: string
-  /** Vem do envelope da resposta (ver `ControleResposta`), não da linha: o
-   *  cliente a replica em cada linha para a tela ler de um lugar só. */
-  nota_realizado?: string
-}
-
-/** Envelope de `/orcamento/controle/`. A nota é da RESPOSTA, não da obra — a tela
- *  precisa dela para não apresentar um realizado parcial como total. */
-export interface ControleResposta {
-  obras: ControleLinha[]
-  nota_realizado: string
+/** Envelope de `/referencias/{id}/composicao/`: a composição-pai + a analítica. */
+export interface ComposicaoReferenciaResposta {
+  composicao: InsumoReferencia
+  componentes: ComponenteReferencia[]
 }
 
 export interface ParcelaEtapa {
   parcela_id: number
   orcamento: number
-  etapa: number | null
+  grupo: number | null
   etapa_nome: string | null
   competencia: string
   percentual: string
@@ -414,43 +388,63 @@ export interface ParcelaCelula {
 }
 
 export interface CronogramaLinha {
-  etapa: number | null
+  grupo: number | null
   etapa_nome: string
+  ordem: number
   parcelas: Record<string, ParcelaCelula>
   total: string
 }
 
 export interface CronogramaValidacao {
   consistente: boolean
-  problemas: { etapa: number | null; soma_percentual: string; diferenca: string }[]
+  problemas: { grupo: number | null; etapa_nome: string; soma_percentual: string; diferenca: string }[]
+}
+
+/** Como o custo da etapa se espalha entre o início e o término. */
+export type CurvaEtapa = 'linear' | 's' | 'inicio' | 'fim' | 'manual'
+
+/** A etapa no cronograma do orçamento (decisão do dono, 10/10/2026): o
+ *  orçamento planeja só por etapa — o detalhe é do PDCA. */
+export interface EtapaPlanejada {
+  /** A etapa do orçamento: o grupo de 1º nível da planilha. */
+  grupo: number
+  codigo: string
+  /** A etapa da obra ligada a ela — opcional (nula = só do orçamento). */
+  etapa: number | null
+  etapa_obra_nome: string | null
+  etapa_nome: string
+  ordem: number
+  valor: string
+  horas_mao_de_obra: string | null
+  planejada: boolean
+  inicio: string | null
+  termino: string | null
+  curva: CurvaEtapa | null
+  observacao: string
+  dias_uteis: number | null
+  equipe_media: string | null
+}
+
+export interface CronogramaMes {
+  competencia: string
+  valor: string
+  acumulado: string
+  pct_acumulado: string
 }
 
 export interface Cronograma {
   orcamento: number
   competencias: string[]
   linhas: CronogramaLinha[]
+  mensal: CronogramaMes[]
   total: string
   validacao: CronogramaValidacao
-}
-
-export interface CurvaSPonto {
-  competencia: string
-  previsto: string
-  previsto_acumulado: string
-  previsto_pct_acumulado: string | null
-  realizado: string
-  realizado_acumulado: string
-  realizado_pct_acumulado: string | null
-  desvio_acumulado: string
-}
-
-export interface CurvaS {
-  orcamento: number
-  obra: number
-  total_previsto: string
-  total_realizado: string
-  fonte_realizado: string
-  serie: CurvaSPonto[]
+  etapas: EtapaPlanejada[]
+  expediente: 'expediente_da_obra' | 'segunda_a_sexta' | null
+  horas_por_dia: string | null
+  atualizado_em: string | null
+  editavel: boolean
+  valor_orcamento: string
 }
 
 export interface ParametroObra {
@@ -723,7 +717,7 @@ export interface ResumoDuplicata {
   aviso_etapa: string
 }
 
-// --- ORC.7: encargos analíticos, memória do quantitativo e reajuste ---
+// --- ORC.7: encargos analíticos e memória do quantitativo ---
 
 export type GrupoEncargos = 'A' | 'B' | 'C' | 'D'
 export type TipoMaoDeObra = 'horista' | 'mensalista'
@@ -923,101 +917,6 @@ export interface DesembolsoPorInsumo {
   insumos: DesembolsoInsumo[]
   sem_distribuicao: DesembolsoInsumo[]
   nota_sem_distribuicao: string
-}
-
-export interface IndiceEconomico {
-  indice_id: number
-  codigo: string
-  nome: string
-  fonte: string
-  uf: string
-  ativo: boolean
-}
-
-export interface ValorIndice {
-  valor_id: number
-  indice: number
-  indice_codigo: string
-  competencia: string
-  numero_indice: string
-  variacao_percentual: string | null
-}
-
-export interface ParcelaFormulaReajuste {
-  parcela_id: number
-  formula: number
-  indice: number
-  indice_codigo: string
-  indice_nome: string
-  peso: string
-  rotulo: string
-}
-
-export interface FormulaReajuste {
-  formula_id: number
-  orcamento: number
-  nome: string
-  data_base: string
-  parcela_fixa: string
-  observacao: string
-  parcelas: ParcelaFormulaReajuste[]
-  soma_pesos: string
-  fecha: boolean
-}
-
-export interface MemoriaFator {
-  formula: number
-  nome: string
-  data_base: string
-  competencia: string
-  parcela_fixa: string
-  fator: string
-  variacao_pct: string
-  parcelas: {
-    parcela: number
-    indice: string
-    nome_indice: string
-    rotulo: string
-    peso: string
-    indice_base: string
-    indice_reajuste: string
-    razao: string
-    variacao_pct: string
-    contribuicao: string
-  }[]
-}
-
-export interface PreviaReajuste {
-  orcamento: number
-  status_orcamento: StatusOrcamento
-  exige_revisao: boolean
-  memoria: MemoriaFator
-  total_antes: string
-  total_depois: string
-  delta: string
-  itens: {
-    item_orcado: number
-    codigo_eap: string
-    descricao: string
-    unidade: string
-    quantidade: string
-    custo_antes: string
-    custo_depois: string
-    valor_antes: string
-    valor_depois: string
-    delta: string
-  }[]
-}
-
-export interface ResultadoReajuste {
-  orcamento: number
-  versao: number
-  gerou_revisao: boolean
-  revisao: number | null
-  memoria: MemoriaFator
-  linhas_reajustadas: number
-  valor_anterior: string
-  valor_novo: string
 }
 
 export interface DemandaGerada {

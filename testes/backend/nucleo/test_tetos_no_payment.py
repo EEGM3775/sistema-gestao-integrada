@@ -483,6 +483,10 @@ class TetosDoPdcaTests(SimpleTestCase):
             services.PDCA_TETO_VERSOES_POR_CRONOGRAMA,
             planos.PDCA_TETO_VERSOES_POR_CRONOGRAMA,
         )
+        # 09/10/2026 — a ligação de fase multiplica setas no grafo do CPM.
+        self.assertIs(
+            services.PDCA_TETO_LIGACOES_EXPANDIDAS, planos.PDCA_TETO_LIGACOES_EXPANDIDAS,
+        )
 
     def test_o_cpm_sincrono_cabe_dentro_do_teto_de_atividades(self):
         """Se o corte síncrono fosse menor que o teto do cronograma sem existir

@@ -1,5 +1,5 @@
 # testes/backend/moduloorcamento/test_orc7.py
-"""Testes do ORC.7 — encargos analíticos, memória do quantitativo e reajuste.
+"""Testes do ORC.7 — encargos analíticos e memória do quantitativo (o reajuste foi para o contrato).
 
 O fio comum das três peças é o mesmo do ORC.5b: **nenhuma delas quebra quando
 erra**. Encargo com grupo D digitado à mão fecha uma conta plausível; parcial de
@@ -13,20 +13,17 @@ from decimal import Decimal
 
 from catalogo.models import Item
 
-from moduloorcamento import encargos, insumos, quantitativos, reajuste, services
+from moduloorcamento import encargos, insumos, quantitativos, services
+from nucleo.models import IndiceEconomico
 from moduloorcamento.models import (
     ComposicaoEncargos,
     ComposicaoReferenciaItem,
-    FormulaReajuste,
-    IndiceEconomico,
     InsumoReferencia,
     ItemOrcado,
     LinhaMedicao,
     Orcamento,
     ParcelaEtapa,
-    ParcelaFormulaReajuste,
     RubricaEncargos,
-    ValorIndice,
 )
 from .test_planilha import PlanilhaTestBase
 
@@ -492,7 +489,7 @@ class DesembolsoPorInsumoTests(ComposicaoTestBase):
 
     def test_insumo_sem_cronograma_fica_fora_da_grade(self):
         """Jogá-lo no primeiro mês fabricaria compra que ninguém planejou."""
-        from moduloorcamento import controle
+        from moduloorcamento import cronograma as controle
 
         dados = controle.desembolso_por_insumo(self.orcamento)
         self.assertEqual(dados["insumos"], [])
@@ -500,11 +497,12 @@ class DesembolsoPorInsumoTests(ComposicaoTestBase):
         self.assertIn("fora da grade", dados["nota_sem_distribuicao"])
 
     def test_distribuicao_herda_o_percentual_da_etapa(self):
-        from moduloorcamento import controle
+        from moduloorcamento import cronograma as controle
 
         for competencia, percentual in ((date(2026, 9, 1), "60"), (date(2026, 10, 1), "40")):
             ParcelaEtapa.objects.create(
-                tenant=self.tenant, orcamento=self.orcamento, etapa=self.estrutura,
+                # A linha é de 1º nível, então é ela mesma a etapa do orçamento.
+                tenant=self.tenant, orcamento=self.orcamento, grupo=self.linha,
                 competencia=competencia, percentual=Decimal(percentual),
             )
 
@@ -514,111 +512,6 @@ class DesembolsoPorInsumoTests(ComposicaoTestBase):
         self.assertEqual(Decimal(cimento["meses"]["2026-09-01"]["quantidade"]), Decimal("600.0000"))
         self.assertEqual(Decimal(cimento["meses"]["2026-10-01"]["quantidade"]), Decimal("400.0000"))
         self.assertEqual(dados["sem_distribuicao"], [])
-
-
-# ---------------------------------------------------------------------------
-# Reajuste contratual
-# ---------------------------------------------------------------------------
-
-
-class ReajusteTests(PlanilhaTestBase):
-    def setUp(self):
-        super().setUp()
-        self.orcamento = self._orcamento()
-        self._linha(self.orcamento, "Concreto", quantidade="10", custo="100")
-
-        from moduloorcamento import planilha as servico_planilha
-
-        servico_planilha.recalcular_orcamento(self.orcamento)
-
-        self.incc = IndiceEconomico.objects.create(
-            codigo="INCC-M", nome="INCC-M (FGV)", fonte="FGV",
-        )
-        ValorIndice.objects.create(
-            indice=self.incc, competencia=date(2026, 1, 1), numero_indice=Decimal("1000"),
-        )
-        ValorIndice.objects.create(
-            indice=self.incc, competencia=date(2027, 1, 1), numero_indice=Decimal("1100"),
-        )
-        self.formula = FormulaReajuste.objects.create(
-            tenant=self.tenant, orcamento=self.orcamento, data_base=date(2026, 1, 1),
-            parcela_fixa=Decimal("0"),
-        )
-        ParcelaFormulaReajuste.objects.create(
-            tenant=self.tenant, formula=self.formula, indice=self.incc, peso=Decimal("1"),
-        )
-
-    def test_fator_e_a_razao_dos_numeros_indice(self):
-        calculo = reajuste.calcular_fator(self.formula, date(2027, 1, 1))
-        self.assertEqual(Decimal(calculo["fator"]), Decimal("1.100000"))
-        self.assertEqual(Decimal(calculo["variacao_pct"]), Decimal("10"))
-
-    def test_formula_que_nao_fecha_e_recusada(self):
-        """Peso a menos é desconto disfarçado de correção monetária."""
-        self.formula.parcela_fixa = Decimal("0.3")
-        self.formula.save()
-        with self.assertRaises(reajuste.ReajusteInvalido):
-            reajuste.calcular_fator(self.formula, date(2027, 1, 1))
-
-    def test_cesta_de_indices_pondera_pelo_peso(self):
-        ipca = IndiceEconomico.objects.create(codigo="IPCA", nome="IPCA (IBGE)")
-        ValorIndice.objects.create(
-            indice=ipca, competencia=date(2026, 1, 1), numero_indice=Decimal("100"),
-        )
-        ValorIndice.objects.create(
-            indice=ipca, competencia=date(2027, 1, 1), numero_indice=Decimal("100"),
-        )
-        ParcelaFormulaReajuste.objects.filter(formula=self.formula).update(peso=Decimal("0.5"))
-        ParcelaFormulaReajuste.objects.create(
-            tenant=self.tenant, formula=self.formula, indice=ipca, peso=Decimal("0.5"),
-        )
-        calculo = reajuste.calcular_fator(self.formula, date(2027, 1, 1))
-        self.assertEqual(Decimal(calculo["fator"]), Decimal("1.050000"))
-
-    def test_competencia_sem_serie_nao_interpola(self):
-        """Preencher a lacuna produziria um fator que a fonte oficial não confirma."""
-        with self.assertRaises(reajuste.ReajusteInvalido):
-            reajuste.calcular_fator(self.formula, date(2027, 6, 1))
-
-    def test_previa_nao_grava(self):
-        antes = self.orcamento.valor_total
-        reajuste.previa(self.orcamento, self.formula, date(2027, 1, 1))
-        self.orcamento.refresh_from_db()
-        self.assertEqual(self.orcamento.valor_total, antes)
-
-    def test_aplicar_em_rascunho_escreve_no_proprio_orcamento(self):
-        resultado = reajuste.aplicar(self.orcamento, self.formula, date(2027, 1, 1))
-        self.orcamento.refresh_from_db()
-        linha = ItemOrcado.objects.get(orcamento=self.orcamento, descricao="Concreto")
-        self.assertFalse(resultado["gerou_revisao"])
-        self.assertEqual(linha.custo_unitario, Decimal("110.0000"))
-
-    def test_aplicar_em_aprovado_cria_revisao_e_preserva_a_regua(self):
-        from moduloorcamento import planilha as servico_planilha
-
-        servico_planilha.aprovar_orcamento(self.orcamento)
-        resultado = reajuste.aplicar(self.orcamento, self.formula, date(2027, 1, 1))
-
-        self.orcamento.refresh_from_db()
-        nova = Orcamento.objects.get(pk=resultado["orcamento"])
-        self.assertTrue(resultado["gerou_revisao"])
-        self.assertEqual(self.orcamento.status, Orcamento.Status.SUPERADO)
-        self.assertEqual(nova.versao, self.orcamento.versao + 1)
-        # A régua congelada não mudou de valor.
-        antiga = ItemOrcado.objects.get(orcamento=self.orcamento, descricao="Concreto")
-        self.assertEqual(antiga.custo_unitario, Decimal("100.0000"))
-
-    def test_reajuste_nao_reescreve_a_procedencia_do_preco(self):
-        """O preço continua sendo o da SINAPI de março, corrigido por contrato."""
-        linha = ItemOrcado.objects.get(orcamento=self.orcamento, descricao="Concreto")
-        linha.fonte_referencia = "sinapi"
-        linha.data_base_preco = date(2026, 1, 1)
-        linha.save()
-
-        reajuste.aplicar(self.orcamento, self.formula, date(2027, 1, 1))
-        linha.refresh_from_db()
-        self.assertEqual(linha.fonte_referencia, "sinapi")
-        self.assertEqual(linha.data_base_preco, date(2026, 1, 1))
 
 
 # ---------------------------------------------------------------------------
@@ -662,9 +555,26 @@ class DemandaDoOrcamentoTests(ComposicaoTestBase):
         self.assertEqual(item.produto_id, self.cimento.pk)
         self.assertEqual(item.quantidade, Decimal("1000.000"))
 
-    def test_orcamento_sem_composicao_explodida_e_recusado(self):
+    def test_linha_ainda_nao_explodida_e_aberta_sozinha_sem_mexer_no_preco(self):
+        """Sem ida e volta (dono, 10/10/2026): o Suprimentos abre a composição
+        que faltava, e o preço que o orçamentista fechou continua o dele."""
+        from moduloscm.do_orcamento import demanda_do_orcamento
+        from moduloscm.models import ItemDemanda
+
+        self.linha.custo_unitario = Decimal("777")
+        self.linha.save(update_fields=["custo_unitario"])
+        resultado = demanda_do_orcamento(self.orcamento)
+        item = ItemDemanda.objects.get(demanda_id=resultado["demanda"])
+        self.assertEqual(item.produto_id, self.cimento.pk)
+        self.assertEqual(item.quantidade, Decimal("1000.000"))
+        self.linha.refresh_from_db()
+        self.assertEqual(self.linha.custo_unitario, Decimal("777"))
+
+    def test_orcamento_sem_composicao_no_catalogo_e_recusado(self):
+        from catalogo.models import ComponenteComposicao
         from moduloscm.do_orcamento import GeracaoInvalida, demanda_do_orcamento
 
+        ComponenteComposicao.objects.filter(item_pai=self.linha.item).delete()
         with self.assertRaises(GeracaoInvalida):
             demanda_do_orcamento(self.orcamento)
 

@@ -2,8 +2,8 @@ import apiClient from '@/api/apiClient'
 import type {
   ArvoreResposta, BancoPreco, BancoResumo, BaseReferencial, BaseResumo, CatalogoItem,
   ComponenteBancoPreco, ComponenteReferencia, ComposicaoBDI, ComposicaoReferenciaResposta,
-  ControleLinha, ControleResposta, Cronograma, CurvaABC, DivergenciaAdocao,
-  CurvaS, CustoPorCategoria, EtapaOpt, InsumoReferencia, ItemAdotado,
+  Cronograma, CurvaABC, CurvaEtapa, DivergenciaAdocao,
+  CustoPorCategoria, EtapaOpt, InsumoReferencia, ItemAdotado,
   ItemBancoPreco, ItemOrcado, ItemOrcadoInsumo, InsumoEscrita, LinhaParaRestaurar, ResultadoExclusao,
   AnaliticaOrcamento, NaturezaComPadroes, TipoItemProprio,
   MemoriaCalculo, MemorialNBR, ObraOpt, Orcamento, Paginated, ParametroObra,
@@ -12,12 +12,12 @@ import type {
   UnidadeAutonoma,
   // ORC.7
   CoberturaMedicao, ComposicaoEncargos, ComposicaoPorNatureza, CurvaABCInsumos,
-  DemandaGerada, DesembolsoPorInsumo, FormulaReajuste, IndiceEconomico, LinhaMedicao,
-  MemoriaFator, MemoriaQuantitativo, ParcelaFormulaReajuste, PreviaReajuste,
+  DemandaGerada, DesembolsoPorInsumo, LinhaMedicao,
+  MemoriaQuantitativo, 
   // ORC.8
   CargaBase, DocumentosDaFonte, EstadoDaCarga, FonteOficial,
-  QuadroEncargos, RegimeEncargos, RelacaoInsumos, ResultadoReajuste, RubricaEncargos,
-  TipoMaoDeObra, ValorIndice,
+  QuadroEncargos, RegimeEncargos, RelacaoInsumos, RubricaEncargos,
+  TipoMaoDeObra, 
 } from '../types'
 
 type Params = Record<string, unknown>
@@ -57,14 +57,6 @@ export const getStatusModulo = async () =>
 export const getBasesResumo = async () =>
   (await apiClient.get<BaseResumo[]>('orcamento/bases-resumo/')).data
 
-/** A view devolve `{composicao, componentes}`; a tela só lista os componentes. */
-export const getComposicaoReferencia = async (referenciaId: number): Promise<ComponenteReferencia[]> => {
-  const { data } = await apiClient.get<ComposicaoReferenciaResposta>(
-    `orcamento/referencias/${referenciaId}/composicao/`,
-  )
-  return data?.componentes ?? []
-}
-
 export const adotarReferencia = async (referenciaId: number) =>
   (await apiClient.post<ItemAdotado & { tipo: string; componentes: number }>(
     `orcamento/referencias/${referenciaId}/adotar/`,
@@ -98,11 +90,28 @@ export const getCronograma = async (orcamentoId: number) =>
   (await apiClient.get<Cronograma>(`orcamento/orcamentos/${orcamentoId}/cronograma/`)).data
 
 export const distribuirCronograma = async (
-  orcamentoId: number, body: { inicio: string; fim: string; etapa?: number | null },
+  orcamentoId: number, body: { inicio: string; fim: string; curva?: CurvaEtapa; so_sem_plano?: boolean },
 ) => (await apiClient.post<Cronograma>(`orcamento/orcamentos/${orcamentoId}/distribuir-cronograma/`, body)).data
 
-export const getCurvaS = async (orcamentoId: number) =>
-  (await apiClient.get<CurvaS>(`orcamento/orcamentos/${orcamentoId}/curva-s/`)).data
+export const planejarEtapa = async (
+  orcamentoId: number,
+  body: { grupo: number; inicio: string; termino: string; curva?: CurvaEtapa; observacao?: string },
+) => (await apiClient.post<Cronograma>(`orcamento/orcamentos/${orcamentoId}/planejar-etapa/`, body)).data
+
+export const removerEtapaDoCronograma = async (orcamentoId: number, grupo: number) =>
+  (await apiClient.post<Cronograma>(`orcamento/orcamentos/${orcamentoId}/remover-etapa/`, { grupo })).data
+
+/** Liga (ou desliga, com `etapa: null`) a etapa do orçamento a uma etapa da obra — opcional. */
+export const vincularEtapaDaObra = async (orcamentoId: number, grupo: number, etapa: number | null) =>
+  (await apiClient.post<Cronograma>(`orcamento/orcamentos/${orcamentoId}/vincular-etapa/`, { grupo, etapa })).data
+
+type EtapaDaObra = { etapa_id: number; nome_etapa: string; ordem: number }
+export const getEtapasDaObra = async (obraId: number) => {
+  const { data } = await apiClient.get<{ results?: EtapaDaObra[] } | EtapaDaObra[]>(
+    '/etapas-obras/', { params: { obra: obraId, page_size: 500 } },
+  )
+  return Array.isArray(data) ? data : (data.results ?? [])
+}
 
 export const criarItemDoCatalogo = async (body: {
   orcamento: number; item: number; quantidade: string
@@ -124,13 +133,12 @@ export const getPrecoReal = async (itemOrcadoId: number) =>
 export const aplicarPrecoReal = async (itemOrcadoId: number, origem: 'scm' | 'sil') =>
   (await apiClient.post<ItemOrcado>(`orcamento/itens/${itemOrcadoId}/aplicar-preco-real/`, { origem })).data
 
-/** A view devolve `{obras, nota_realizado}`, não uma lista: desembrulha aqui e
- *  carimba a nota em cada linha (as telas consomem uma lista só). */
-export const getControle = async (obra?: number): Promise<ControleLinha[]> => {
-  const { data } = await apiClient.get<ControleResposta>('orcamento/controle/', {
-    params: obra ? { obra } : {},
-  })
-  return (data?.obras ?? []).map(linha => ({ ...linha, nota_realizado: data.nota_realizado }))
+/** A view devolve `{composicao, componentes}`; a tela só lista os componentes. */
+export const getComposicaoReferencia = async (referenciaId: number): Promise<ComponenteReferencia[]> => {
+  const { data } = await apiClient.get<ComposicaoReferenciaResposta>(
+    `orcamento/referencias/${referenciaId}/composicao/`,
+  )
+  return data?.componentes ?? []
 }
 
 export const getQuadrosNBR = async (obra: number) =>
@@ -280,15 +288,11 @@ export async function baixarExportacao(
   return nome
 }
 
-// --- ORC.7: encargos analíticos, memória do quantitativo e reajuste ---
+// --- ORC.7: encargos analíticos e memória do quantitativo ---
 
 export const encargos = recurso<ComposicaoEncargos, Partial<ComposicaoEncargos>>('encargos')
 export const rubricas = recurso<RubricaEncargos, Partial<RubricaEncargos>>('rubricas-encargos')
 export const medicoes = recurso<LinhaMedicao, Partial<LinhaMedicao>>('medicoes')
-export const indices = recurso<IndiceEconomico, never>('indices')
-export const formulasReajuste = recurso<FormulaReajuste, Partial<FormulaReajuste>>('formulas-reajuste')
-export const parcelasReajuste =
-  recurso<ParcelaFormulaReajuste, Partial<ParcelaFormulaReajuste>>('parcelas-reajuste')
 
 /** Cria o quadro já com as rubricas do modelo de partida — o usuário não digita
  *  trinta linhas para chegar onde toda publicação já chega. */
@@ -341,27 +345,6 @@ export const getDesembolsoInsumos = async (orcamentoId: number, categoria?: stri
     `orcamento/orcamentos/${orcamentoId}/desembolso-insumos/`,
     { params: categoria ? { categoria } : {} },
   )).data
-
-export const getSerieIndice = async (indiceId: number) =>
-  (await apiClient.get<{ indice: number; codigo: string; valores: ValorIndice[] }>(
-    `orcamento/indices/${indiceId}/serie/`,
-  )).data
-
-export const getFatorReajuste = async (formulaId: number, competencia: string) =>
-  (await apiClient.get<MemoriaFator>(
-    `orcamento/formulas-reajuste/${formulaId}/fator/`, { params: { competencia } },
-  )).data
-
-export const getPreviaReajuste = async (formulaId: number, competencia: string) =>
-  (await apiClient.get<PreviaReajuste>(
-    `orcamento/formulas-reajuste/${formulaId}/previa/`, { params: { competencia } },
-  )).data
-
-export const aplicarReajuste = async (
-  formulaId: number, body: { competencia: string; motivo?: string },
-) => (await apiClient.post<ResultadoReajuste>(
-  `orcamento/formulas-reajuste/${formulaId}/aplicar/`, body,
-)).data
 
 /** O seam do SCM: a relação de insumos vira demanda de compra em rascunho.
  *  O endpoint é **do SCM** — quem sabe o que é demanda é ele. */

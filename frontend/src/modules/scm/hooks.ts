@@ -3,7 +3,7 @@ import type { Resource } from './api/scmApi'
 import {
   produtos, centrosCusto, ofertas, faixas, demandas, itensDemanda,
   cotacoes, propostas, itensProposta, pedidos, itensPedido, recebimentos, avaliacoes,
-  getScmDashboard, adjudicarCotacao, publicarDemanda, comprarDireto, gerarDeCotacao,
+  getScmDashboard, adjudicarCotacao, publicarDemanda, comprarDireto, gerarDeCotacao, compraAvulsa,
 } from './api/scmApi'
 import { scmKeys } from './api/queryKeys'
 import type {
@@ -61,6 +61,7 @@ function useVerb<V, R>(fn: (v: V) => Promise<R>) {
 export const useAdjudicar = () => useVerb((v: { cotacao: number; proposta: number }) => adjudicarCotacao(v.cotacao, v.proposta))
 export const usePublicarDemanda = () => useVerb((id: number) => publicarDemanda(id))
 export const useComprarDireto = () => useVerb((v: { oferta: number; quantidade: string; centro_custo?: number | null }) => comprarDireto(v))
+export const useCompraAvulsa = () => useVerb((v: Parameters<typeof compraAvulsa>[0]) => compraAvulsa(v))
 export const useGerarDeCotacao = () => useVerb((cotacao: number) => gerarDeCotacao(cotacao))
 
 export function useScmDashboard(mes?: string) {

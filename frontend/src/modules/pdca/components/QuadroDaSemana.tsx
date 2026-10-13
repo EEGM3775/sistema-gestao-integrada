@@ -1,12 +1,19 @@
 import { useMemo, useState } from 'react'
-import { AlertTriangle, Check, Lock, Plus, Repeat, X } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { AlertTriangle, Building2, Check, Lock, Package, Plus, Repeat, User, X } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
 import { Btn, Empty, Pill } from '@/components/malha'
 import { dateToBR } from '@/utils/dates'
 import { contemSemAcento } from '@/utils/texto'
 import { usePdca } from '../contexto'
+import { useAuth } from '@/hooks/useAuth'
 import { percentual } from '../formato'
+import { useCriarEquipe, useEquipesDaObra, usePedirMaterialDaSemana } from '../hooks'
+import { buscarFornecedores, buscarFuncionarios } from '../api/montagemApi'
+import { mensagemDe } from '../montagem'
+import { SeloDoMaterial } from './SeloDoMaterial'
 import type {
-  CandidatoDaSemana, CausaNaoCumprimento, ItemProgramacao, ProgramacaoSemanal,
+  CandidatoDaSemana, CausaNaoCumprimento, EquipeObra, ItemProgramacao, ProgramacaoSemanal,
 } from '../types'
 
 /** O que está sendo arrastado. Vai no `dataTransfer` como JSON porque o
@@ -21,6 +28,8 @@ export interface Julgamento {
   cumprido: boolean | null
   causa: number | null
   nota: string
+  /** O % concluído da atividade — quando há, o "saiu" é derivado dele. */
+  percentual_concluido?: string | null
 }
 
 /** A coluna de quem ninguém assumiu. É a **string vazia**, que é exatamente o
@@ -59,8 +68,15 @@ export function QuadroDaSemana({
   aoJulgar: (item: number, julgamento: Julgamento) => void
 }) {
   const [busca, setBusca] = useState('')
-  const [equipesNovas, setEquipesNovas] = useState<string[]>([])
   const [batendo, setBatendo] = useState<string | null>(null)
+  //: As colunas são as **equipes da obra** — composições de funcionários e
+  //: fornecedores (decisão do dono, 09/10/2026) — mais os nomes soltos de
+  //: cartões antigos, que continuam aparecendo onde estavam.
+  const equipesDaObra = useEquipesDaObra(programacao.obra)
+  const composicoes = useMemo(
+    () => new Map((equipesDaObra.data ?? []).map((e) => [e.nome, e])),
+    [equipesDaObra.data],
+  )
 
   const montavel = podeMontar && programacao.status === 'rascunho'
 
@@ -69,7 +85,7 @@ export function QuadroDaSemana({
     for (const item of itens) {
       doQuadro.add(item.responsavel.trim() || SEM_DONO)
     }
-    for (const nova of equipesNovas) doQuadro.add(nova)
+    for (const nome of composicoes.keys()) doQuadro.add(nome)
     const nomeadas = [...doQuadro].filter((e) => e !== SEM_DONO).sort(
       (a, b) => a.localeCompare(b, 'pt-BR'),
     )
@@ -78,7 +94,7 @@ export function QuadroDaSemana({
     return doQuadro.has(SEM_DONO) || nomeadas.length === 0
       ? [SEM_DONO, ...nomeadas]
       : nomeadas
-  }, [itens, equipesNovas])
+  }, [itens, composicoes])
 
   const visiveis = useMemo(() => {
     const abertos = candidatos.filter((c) => !c.ja_no_quadro)
@@ -206,6 +222,7 @@ export function QuadroDaSemana({
             <ColunaDaEquipe
               key={equipe || 'sem-dono'}
               equipe={equipe}
+              composicao={composicoes.get(equipe)}
               equipes={equipes}
               itens={itens.filter(
                 (i) => (i.responsavel.trim() || SEM_DONO) === equipe,
@@ -228,7 +245,7 @@ export function QuadroDaSemana({
 
         {montavel && (
           <BotaoDeEquipe
-            aoCriar={(nome) => setEquipesNovas((atual) => [...atual, nome])}
+            obraId={programacao.obra}
             existentes={equipes}
           />
         )}
@@ -311,8 +328,8 @@ function CartaoCandidato({
           {candidato.fim_previsto ? dateToBR(candidato.fim_previsto) : '—'}
         </div>
       )}
-      {(travado || candidato.ncs_abertas > 0) && (
-        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 6 }}>
+      <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 6 }}>
+        <SeloDoMaterial atividade={candidato.atividade} />
           {travado && (
             <Pill kind="danger">
               <Lock size={10} />
@@ -324,17 +341,18 @@ function CartaoCandidato({
               {candidato.ncs_abertas} defeito{candidato.ncs_abertas > 1 ? 's' : ''}
             </Pill>
           )}
-        </div>
-      )}
+      </div>
     </div>
   )
 }
 
 function ColunaDaEquipe({
-  equipe, equipes, itens, causas, julgamentos, montavel, podeJulgar, emJulgamento,
+  equipe, composicao, equipes, itens, causas, julgamentos, montavel, podeJulgar, emJulgamento,
   batendo, aoEntrar, aoSair, aoSoltar, aoDevolver, aoMover, aoJulgar,
 }: {
   equipe: string
+  /** A composição, quando a coluna é uma equipe da obra (e não um nome solto). */
+  composicao?: EquipeObra
   equipes: string[]
   itens: ItemProgramacao[]
   causas: CausaNaoCumprimento[]
@@ -387,6 +405,31 @@ function ColunaDaEquipe({
           {itens.length} compromisso{itens.length === 1 ? '' : 's'}
           {emJulgamento && porJulgar > 0 && ` · ${porJulgar} por julgar`}
         </div>
+        {/* Quem é a equipe — a composição, e não só o nome que alguém deu. */}
+        {composicao && composicao.membros.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
+            {composicao.membros.map((m) => (
+              <span
+                key={`${m.tipo}-${m.id}`}
+                title={m.tipo === 'fornecedor' ? 'Fornecedor' : 'Funcionário'}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 3, maxWidth: '100%',
+                  padding: '1px 6px', borderRadius: 999, fontSize: 10.5,
+                  background: m.tipo === 'fornecedor' ? 'var(--info-soft)' : 'var(--inset)',
+                  color: m.tipo === 'fornecedor' ? 'var(--info-ink)' : 'var(--ink-2)',
+                }}
+              >
+                {m.tipo === 'fornecedor' ? <Building2 size={9} /> : <User size={9} />}
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.nome}</span>
+              </span>
+            ))}
+          </div>
+        )}
+        {!semDono && !composicao && (
+          <div style={{ fontSize: 10, color: 'var(--ink-3)', marginTop: 4, fontStyle: 'italic' }}>
+            nome solto, sem composição
+          </div>
+        )}
       </header>
 
       <div
@@ -429,6 +472,52 @@ function ColunaDaEquipe({
   )
 }
 
+const STATUS_DA_REQUISICAO: Record<string, string> = {
+  rascunho: 'rascunho', pendente: 'aguardando aprovação', aprovada: 'aprovada (reservado)',
+  atendida: 'atendida', parcial: 'atendida em parte', cancelada: 'cancelada',
+}
+
+/** "Pedir material" do compromisso — requisição em rascunho no Estoque, e o
+ *  cartão mostra em que pé ela está *(decisão do dono: botão por compromisso)*. */
+function PedidoDeMaterial({ item }: { item: ItemProgramacao }) {
+  const { obraId } = usePdca()
+  const { hasPermission } = useAuth()
+  const pedir = usePedirMaterialDaSemana(obraId)
+  const [erro, setErro] = useState<string | null>(null)
+  const pedido = item.requisicao_sil && item.requisicao_sil_status !== 'cancelada'
+  if (pedido) {
+    return (
+      <Link
+        to="/app/sil"
+        onClick={(e) => e.stopPropagation()}
+        title="Abrir a requisição no Estoque"
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 6, fontSize: 11, color: 'var(--brand)', textDecoration: 'none' }}
+      >
+        <Package size={11} /> material pedido · req. #{item.requisicao_sil} · {STATUS_DA_REQUISICAO[item.requisicao_sil_status ?? ''] ?? item.requisicao_sil_status}
+      </Link>
+    )
+  }
+  if (!hasPermission('sil.requisicao.edit')) return null
+  return (
+    <div style={{ marginTop: 6 }}>
+      <button
+        type="button"
+        disabled={pedir.isPending}
+        onClick={async (e) => {
+          e.stopPropagation()
+          setErro(null)
+          try { await pedir.mutateAsync(item.item_programacao_id) } catch (err) { setErro(mensagemDe(err)) }
+        }}
+        title="Cria a requisição do material da semana ao almoxarifado (em rascunho)"
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 650, padding: '2px 8px', borderRadius: 'var(--r-sm)', border: '1px solid var(--line)', background: 'var(--surface)', color: 'var(--ink-2)', cursor: 'pointer' }}
+      >
+        <Package size={11} /> {pedir.isPending ? 'Pedindo…' : 'Pedir material'}
+      </button>
+      {erro && <div style={{ fontSize: 10.5, color: 'var(--danger-ink)', marginTop: 3 }}>{erro}</div>}
+    </div>
+  )
+}
+
 function CartaoDeCompromisso({
   item, causas, equipes, julgamento, montavel, podeJulgar, emJulgamento,
   aoDevolver, aoMover, aoJulgar,
@@ -454,14 +543,29 @@ function CartaoDeCompromisso({
   const previsto = percentual(item.percentual_previsto)
   const apontado = percentual(item.percentual_apontado)
 
-  function julgar(valor: boolean) {
-    //: Marcar "saiu" **limpa a causa**: o servidor recusa cumprido com causa, e
-    //: deixar o campo pendurado faria a recusa chegar no fim da reunião.
-    aoJulgar({
-      cumprido: cumprido === valor ? null : valor,
-      causa: valor ? null : causa,
-      nota,
-    })
+  //: O julgamento é pelo **% concluído** da atividade (decisão do dono,
+  //: 09/10/2026); o "saiu" do PPC é derivado: bateu a meta da semana ou não.
+  //: A conta final é do servidor — esta é a mesma, para a causa ser pedida
+  //: na hora e não no fim da reunião.
+  const concluido = julgamento?.percentual_concluido !== undefined
+    ? julgamento.percentual_concluido
+    : item.percentual_concluido ?? null
+  const meta = item.meta_da_semana != null ? Number(item.meta_da_semana) : 100
+  const atual = item.avanco_atual != null ? Number(item.avanco_atual) : 0
+  const valorConcluido = concluido != null && concluido !== '' ? Number(concluido) : null
+  const abaixoDoApontado = valorConcluido != null && valorConcluido < atual
+
+  function definirConcluido(texto: string) {
+    const limpo = texto.replace(/[^\d,.]/g, '').replace(',', '.')
+    if (!limpo) {
+      aoJulgar({ cumprido: null, causa, nota, percentual_concluido: null })
+      return
+    }
+    const n = Number(limpo)
+    if (!Number.isFinite(n) || n > 100) return
+    const saiu = n >= meta
+    //: Bater a meta **limpa a causa**: o servidor recusa cumprido com causa.
+    aoJulgar({ cumprido: saiu, causa: saiu ? null : causa, nota, percentual_concluido: limpo })
   }
 
   return (
@@ -574,8 +678,9 @@ function CartaoDeCompromisso({
         </select>
       )}
 
-      {(item.restricoes_abertas > 0 || item.ncs_abertas > 0 || item.vezes_arrastado > 0) && (
-        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 6 }}>
+      <PedidoDeMaterial item={item} />
+      <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 6 }}>
+        <SeloDoMaterial atividade={item.atividade} />
           {item.restricoes_abertas > 0 && (
             <Pill kind="danger">
               <AlertTriangle size={10} />
@@ -596,8 +701,7 @@ function CartaoDeCompromisso({
               {item.vezes_arrastado + 1}ª semana
             </Pill>
           )}
-        </div>
-      )}
+      </div>
 
       {emJulgamento && podeJulgar && (
         <div
@@ -607,26 +711,42 @@ function CartaoDeCompromisso({
             display: 'flex', flexDirection: 'column', gap: 6,
           }}
         >
-          <div style={{ display: 'flex', gap: 5 }}>
-            <BotaoDeJulgamento
-              ativo={cumprido === true}
-              tom="good"
-              onClick={() => julgar(true)}
-            >
-              <Check size={12} />
-              Saiu
-            </BotaoDeJulgamento>
-            <BotaoDeJulgamento
-              ativo={cumprido === false}
-              tom="danger"
-              onClick={() => julgar(false)}
-            >
-              <X size={12} />
-              Não saiu
-            </BotaoDeJulgamento>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--ink-3)' }}>
+            <span style={{ flex: 1 }}>Concluído</span>
+            <span style={{ position: 'relative', width: 78 }}>
+              <input
+                inputMode="decimal"
+                value={concluido == null ? '' : String(concluido).replace('.', ',')}
+                placeholder={String(atual).replace('.', ',')}
+                onChange={(e) => definirConcluido(e.target.value)}
+                aria-label={`Quanto de ${item.atividade_nome} está concluído`}
+                style={{
+                  width: '100%', padding: '4px 20px 4px 7px', borderRadius: 6, fontSize: 12.5,
+                  textAlign: 'right', fontFamily: 'var(--mono)',
+                  border: `1px solid ${abaixoDoApontado ? 'var(--danger-ink)' : 'var(--line)'}`,
+                  background: 'var(--surface)', color: 'var(--ink)',
+                }}
+              />
+              <span style={{ position: 'absolute', right: 7, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>%</span>
+            </span>
+          </label>
+          <div style={{ fontSize: 10.5, color: 'var(--ink-3)', lineHeight: 1.45 }}>
+            {abaixoDoApontado
+              ? <span style={{ color: 'var(--danger-ink)' }}>O campo já apontou {percentual(atual)} — o concluído não fica abaixo disso.</span>
+              : <>
+                  meta da semana <span style={{ fontFamily: 'var(--mono)', color: 'var(--ink-2)' }}>{percentual(meta)}</span>
+                  {' · '}hoje em <span style={{ fontFamily: 'var(--mono)', color: 'var(--ink-2)' }}>{percentual(atual)}</span>
+                  {valorConcluido != null && valorConcluido > atual && <> · lança +{percentual(valorConcluido - atual)} de avanço</>}
+                </>}
           </div>
+          {cumprido != null && !abaixoDoApontado && (
+            <Pill kind={cumprido ? 'good' : 'danger'}>
+              {cumprido ? <Check size={10} /> : <X size={10} />}
+              {cumprido ? 'bateu a meta · saiu' : 'abaixo da meta · não saiu'}
+            </Pill>
+          )}
 
-          {cumprido === false && (
+          {cumprido === false && !abaixoDoApontado && (
             <>
               <select
                 value={causa ?? ''}
@@ -634,6 +754,7 @@ function CartaoDeCompromisso({
                   cumprido: false,
                   causa: e.target.value ? Number(e.target.value) : null,
                   nota,
+                  percentual_concluido: concluido,
                 })}
                 style={{
                   width: '100%', padding: '5px 7px', borderRadius: 6, fontSize: 12,
@@ -651,7 +772,7 @@ function CartaoDeCompromisso({
               </select>
               <input
                 value={nota}
-                onChange={(e) => aoJulgar({ cumprido: false, causa, nota: e.target.value })}
+                onChange={(e) => aoJulgar({ cumprido: false, causa, nota: e.target.value, percentual_concluido: concluido })}
                 placeholder="Qual material? Que projeto?"
                 style={{
                   width: '100%', padding: '5px 7px', borderRadius: 6, fontSize: 12,
@@ -667,6 +788,7 @@ function CartaoDeCompromisso({
       {!emJulgamento && cumprido != null && (
         <div style={{ marginTop: 7 }}>
           <Pill kind={cumprido ? 'good' : 'danger'}>
+            {item.percentual_concluido != null && `${percentual(item.percentual_concluido)} · `}
             {cumprido ? 'saiu' : `não saiu${item.causa_nome ? ` · ${item.causa_nome}` : ''}`}
           </Pill>
         </div>
@@ -675,48 +797,46 @@ function CartaoDeCompromisso({
   )
 }
 
-function BotaoDeJulgamento({
-  ativo, tom, onClick, children,
-}: {
-  ativo: boolean
-  tom: 'good' | 'danger'
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        gap: 4, padding: '5px 8px', borderRadius: 6, cursor: 'pointer',
-        fontSize: 11.5, fontWeight: 650, fontFamily: 'inherit',
-        background: ativo ? `var(--${tom}-soft)` : 'var(--surface)',
-        color: ativo ? `var(--${tom}-ink)` : 'var(--ink-3)',
-        border: `1px solid ${ativo ? `var(--${tom}-soft)` : 'var(--line)'}`,
-      }}
-    >
-      {children}
-    </button>
-  )
-}
-
-function BotaoDeEquipe({
-  aoCriar, existentes,
-}: { aoCriar: (nome: string) => void; existentes: string[] }) {
+/** **Compor** a equipe — funcionários do RH e fornecedores (as empreiteiras),
+ *  não escrever um nome (decisão do dono, 09/10/2026). O nome é opcional: vazio,
+ *  nasce dos membros. A equipe é da obra e volta nas semanas seguintes. */
+function BotaoDeEquipe({ obraId, existentes }: { obraId: number; existentes: string[] }) {
   const [abrindo, setAbrindo] = useState(false)
   const [nome, setNome] = useState('')
+  const [filtro, setFiltro] = useState('')
+  const [funcionarios, setFuncionarios] = useState<number[]>([])
+  const [fornecedores, setFornecedores] = useState<number[]>([])
+  const [erro, setErro] = useState<string | null>(null)
+  const criar = useCriarEquipe(obraId)
+  const pessoas = useQuery({
+    queryKey: ['pdca', 'funcionarios'], queryFn: buscarFuncionarios, enabled: abrindo,
+  })
+  const empresas = useQuery({
+    queryKey: ['pdca', 'fornecedores'], queryFn: buscarFornecedores, enabled: abrindo,
+  })
 
-  function confirmar() {
+  function fechar() {
+    setAbrindo(false)
+    setNome('')
+    setFiltro('')
+    setFuncionarios([])
+    setFornecedores([])
+    setErro(null)
+  }
+
+  async function confirmar() {
     const limpo = nome.trim()
-    if (!limpo || existentes.includes(limpo)) {
-      setAbrindo(false)
-      setNome('')
+    if (limpo && existentes.some((e) => e.toLocaleLowerCase('pt-BR') === limpo.toLocaleLowerCase('pt-BR'))) {
+      setErro('Já há uma coluna com esse nome nesta semana.')
       return
     }
-    aoCriar(limpo)
-    setNome('')
-    setAbrindo(false)
+    setErro(null)
+    try {
+      await criar.mutateAsync({ obra: obraId, nome: limpo, funcionarios, fornecedores })
+      fechar()
+    } catch (e) {
+      setErro(mensagemDe(e))
+    }
   }
 
   if (!abrindo) {
@@ -738,36 +858,83 @@ function BotaoDeEquipe({
     )
   }
 
+  const casa = (texto: string) => !filtro.trim() || contemSemAcento(texto, filtro)
+  const alternar = (lista: number[], id: number) =>
+    lista.includes(id) ? lista.filter((x) => x !== id) : [...lista, id]
+  const campo = {
+    width: '100%', padding: '6px 9px', borderRadius: 7, fontSize: 12.5,
+    border: '1px solid var(--line)', background: 'var(--ground)',
+    color: 'var(--ink)', fontFamily: 'inherit',
+  } as const
+  const rotuloDaLista = {
+    fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 700,
+    color: 'var(--ink-3)', display: 'flex', alignItems: 'center', gap: 4,
+  } as const
+  const escolhidos = funcionarios.length + fornecedores.length
+
   return (
     <div
       style={{
-        width: 224, flexShrink: 0, padding: 10, border: '1px solid var(--line)',
+        width: 280, flexShrink: 0, padding: 10, border: '1px solid var(--line)',
         borderRadius: 'var(--r-md)', background: 'var(--surface)',
-        display: 'flex', flexDirection: 'column', gap: 8,
+        display: 'flex', flexDirection: 'column', gap: 8, maxHeight: '100%',
       }}
     >
       <input
         autoFocus
         value={nome}
         onChange={(e) => setNome(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') confirmar()
-          if (e.key === 'Escape') { setAbrindo(false); setNome('') }
-        }}
-        placeholder="Nome da equipe ou do encarregado"
-        style={{
-          width: '100%', padding: '6px 9px', borderRadius: 7, fontSize: 12.5,
-          border: '1px solid var(--line)', background: 'var(--ground)',
-          color: 'var(--ink)', fontFamily: 'inherit',
-        }}
+        onKeyDown={(e) => { if (e.key === 'Escape') fechar() }}
+        placeholder="Nome da equipe (opcional)"
+        aria-label="Nome da equipe"
+        style={campo}
       />
+      <input
+        value={filtro}
+        onChange={(e) => setFiltro(e.target.value)}
+        placeholder="Procurar funcionário ou fornecedor"
+        aria-label="Procurar membros"
+        style={campo}
+      />
+      <div style={{ flex: 1, minHeight: 80, maxHeight: 300, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 3 }}>
+        <span style={rotuloDaLista}><User size={10} /> Funcionários</span>
+        {pessoas.isLoading && <span style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>Carregando…</span>}
+        {pessoas.isError && <span style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>Sem acesso ao RH.</span>}
+        {(pessoas.data ?? []).filter((p) => casa(p.nome_completo)).map((p) => (
+          <label key={`f-${p.funcionario_id}`} style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, color: 'var(--ink-2)', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={funcionarios.includes(p.funcionario_id)}
+              onChange={() => setFuncionarios((l) => alternar(l, p.funcionario_id))}
+            />
+            {p.nome_completo}
+          </label>
+        ))}
+        <span style={{ ...rotuloDaLista, marginTop: 6 }}><Building2 size={10} /> Fornecedores</span>
+        {empresas.isLoading && <span style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>Carregando…</span>}
+        {empresas.isError && <span style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>Sem acesso a fornecedores.</span>}
+        {(empresas.data ?? []).filter((f) => casa(f.razao_social)).map((f) => (
+          <label key={`e-${f.fornecedor_id}`} style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, color: 'var(--ink-2)', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={fornecedores.includes(f.fornecedor_id)}
+              onChange={() => setFornecedores((l) => alternar(l, f.fornecedor_id))}
+            />
+            {f.razao_social}
+          </label>
+        ))}
+      </div>
       <span style={{ fontSize: 10.5, color: 'var(--ink-3)', lineHeight: 1.45 }}>
-        É este nome que o encarregado vai procurar no celular dele. Escreva como
-        a obra o chama.
+        {escolhidos === 0
+          ? 'Escolha quem forma a equipe. Sem nome, ela se chama pelos membros.'
+          : `${escolhidos} na equipe. A equipe é da obra e volta nas próximas semanas.`}
       </span>
+      {erro && <span style={{ fontSize: 11.5, color: 'var(--danger-ink)' }}>{erro}</span>}
       <div style={{ display: 'flex', gap: 6 }}>
-        <Btn tam="sm" variant="primary" onClick={confirmar}>Criar</Btn>
-        <Btn tam="sm" onClick={() => { setAbrindo(false); setNome('') }}>Cancelar</Btn>
+        <Btn tam="sm" variant="primary" disabled={escolhidos === 0 || criar.isPending} onClick={() => void confirmar()}>
+          {criar.isPending ? 'Criando…' : 'Criar'}
+        </Btn>
+        <Btn tam="sm" onClick={fechar}>Cancelar</Btn>
       </div>
     </div>
   )

@@ -14,6 +14,9 @@ export interface LinhaEditada {
   observacao: string
 }
 
+/** A retificadora guarda a medição corrigida **inteira** (decisão do dono,
+ *  11/10/2026): o campo é o número certo, e o que a original mediu viaja ao
+ *  lado (`quantidade_na_original`) para o quadro original | corrigido | diferença. */
 function daLinha(linha: LinhaDaGradeDeMedicao): LinhaEditada {
   return {
     item_contrato_id: linha.item_contrato_id,
@@ -84,6 +87,7 @@ export function GradeDeMedicao({
 }) {
   const [editadas, setEditadas] = useState<Map<number, LinhaEditada>>(new Map())
   const [abertas, setAbertas] = useState<Set<number>>(new Set())
+  const retificando = contexto.linhas[0]?.quantidade_na_original != null
 
   /** A grade volta ao que o servidor diz sempre que o documento muda — salvar
    *  devolve linhas novas, e manter o rascunho local por cima mostraria o que
@@ -216,10 +220,10 @@ export function GradeDeMedicao({
                   { r: 'Contratado', a: 'right' },
                   { r: 'Já medido', a: 'right' },
                   { r: 'Saldo', a: 'right' },
-                  { r: 'Proposto', a: 'right' },
-                  { r: 'Medido no período', a: 'right' },
+                  { r: retificando ? 'Na original' : 'Proposto', a: 'right' },
+                  { r: retificando ? 'Corrigido' : 'Medido no período', a: 'right' },
                   { r: 'Material na obra', a: 'right' },
-                  { r: 'Valor', a: 'right' },
+                  { r: retificando ? 'Diferença (R$)' : 'Valor', a: 'right' },
                 ].map((coluna) => (
                   <th
                     key={coluna.r}
@@ -296,6 +300,7 @@ function Linha({
   const id = linha.item_contrato_id
   const temMemoria = linha.memoria.length > 0
   const proposto = percentual(linha.percentual_avanco_periodo)
+  const retificadora = linha.quantidade_na_original != null
   const excede = Number(paraNumero(editada.quantidade) ?? '0')
     + Number(paraNumero(editada.quantidade_estocada) ?? '0')
     > Number(linha.saldo)
@@ -359,7 +364,9 @@ function Linha({
         </td>
 
         <td style={{ padding: '7px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-          {linha.criterio === 'sem_vinculo' ? (
+          {retificadora ? (
+            <Num size={12} tone="var(--ink-3)">{daApi(linha.quantidade_na_original ?? '0')}</Num>
+          ) : linha.criterio === 'sem_vinculo' ? (
             <span style={{ fontSize: 11, color: 'var(--ink-3)', fontStyle: 'italic' }}>
               sem vínculo
             </span>
@@ -375,7 +382,7 @@ function Linha({
               apontamento errado propagaria para uma quantidade acima do
               contratado, e sem este selo o gestor não saberia que o número que
               está vendo já foi aparado. */}
-          {linha.limitada_pelo_saldo && (
+          {!retificadora && linha.limitada_pelo_saldo && (
             <div style={{ marginTop: 3 }}>
               <Pill kind="accent" title="A proposta foi cortada no saldo restante do item">
                 <TriangleAlert size={10} />
@@ -387,7 +394,9 @@ function Linha({
 
         <td style={{ padding: '5px 10px', textAlign: 'right', minWidth: 130 }}>
           {somenteLeitura ? (
-            <Num size={12.5} tone="var(--ink)">{daApi(linha.quantidade_medida)}</Num>
+            <Num size={12.5} tone="var(--ink)">
+              {daApi(linha.quantidade_medida)}
+            </Num>
           ) : (
             <>
               <CampoDecimal
@@ -429,9 +438,26 @@ function Linha({
         </td>
 
         <td style={{ padding: '7px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-          <Num size={12} tone="var(--ink-2)">
-            {formatBRL(valorProvisorio(linha, editada))}
-          </Num>
+          {retificadora ? (() => {
+            const preco = apiDecimalToCents(linha.preco_unitario)
+            const novo = Math.round(preco * Number(paraNumero(editada.quantidade) ?? '0'))
+            const antes = Math.round(preco * Number(linha.quantidade_na_original))
+            const dif = novo - antes
+            return (
+              <>
+                <Num size={12} tone={dif === 0 ? 'var(--ink-3)' : dif < 0 ? 'var(--danger-ink)' : 'var(--good-ink)'}>
+                  {dif === 0 ? '—' : `${dif > 0 ? '+' : ''}${formatBRL(dif)}`}
+                </Num>
+                <div style={{ fontSize: 10, color: 'var(--ink-3)' }}>
+                  {formatBRL(antes)} → {formatBRL(novo)}
+                </div>
+              </>
+            )
+          })() : (
+            <Num size={12} tone="var(--ink-2)">
+              {formatBRL(valorProvisorio(linha, editada))}
+            </Num>
+          )}
           <div style={{ fontSize: 10, color: 'var(--ink-3)' }}>
             {formatBRL(apiDecimalToCents(linha.preco_unitario))}/{linha.unidade}
           </div>

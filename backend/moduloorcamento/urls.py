@@ -10,10 +10,7 @@ from .views import (
     ComponenteBancoPrecoViewSet,
     ComposicaoBDIViewSet,
     ComposicaoEncargosViewSet,
-    ControleDeCustoView,
     FonteOficialViewSet,
-    FormulaReajusteViewSet,
-    IndiceEconomicoViewSet,
     InsumoReferenciaViewSet,
     ItemBancoPrecoViewSet,
     ItemOrcadoInsumoViewSet,
@@ -24,7 +21,6 @@ from .views import (
     OrcamentoViewSet,
     ParametroObraViewSet,
     ParcelaEtapaViewSet,
-    ParcelaFormulaReajusteViewSet,
     PastaComposicaoViewSet,
     PavimentoObraViewSet,
     QuadrosNBRView,
@@ -54,15 +50,11 @@ router.register(r"pastas", PastaComposicaoViewSet, basename="orcamento-pasta")
 router.register(r"itens-banco", ItemBancoPrecoViewSet, basename="orcamento-item-banco")
 router.register(r"componentes-banco", ComponenteBancoPrecoViewSet, basename="orcamento-componente-banco")
 router.register(r"reprecificacoes", ReprecificacaoViewSet, basename="orcamento-reprecificacao")
-# ORC.7 — encargos analíticos, memória do quantitativo e reajuste contratual
+# ORC.7 — encargos analíticos e memória do quantitativo (o reajuste foi para o
+# contrato, no PDCA — decisão do dono, 10/10/2026)
 router.register(r"encargos", ComposicaoEncargosViewSet, basename="orcamento-encargos")
 router.register(r"rubricas-encargos", RubricaEncargosViewSet, basename="orcamento-rubrica-encargos")
 router.register(r"medicoes", LinhaMedicaoViewSet, basename="orcamento-medicao")
-router.register(r"indices", IndiceEconomicoViewSet, basename="orcamento-indice")
-router.register(r"formulas-reajuste", FormulaReajusteViewSet, basename="orcamento-formula-reajuste")
-router.register(
-    r"parcelas-reajuste", ParcelaFormulaReajusteViewSet, basename="orcamento-parcela-reajuste",
-)
 # ORC.8 — a carga da base oficial: onde a fonte mora e o que já foi tentado
 router.register(r"fontes-oficiais", FonteOficialViewSet, basename="orcamento-fonte-oficial")
 router.register(r"cargas", CargaBaseViewSet, basename="orcamento-carga")
@@ -70,7 +62,6 @@ router.register(r"cargas", CargaBaseViewSet, basename="orcamento-carga")
 urlpatterns = [
     path("status/", OrcamentoStatusView.as_view(), name="orcamento-status"),
     path("bases-resumo/", BaseReferencialResumoView.as_view(), name="orcamento-bases-resumo"),
-    path("controle/", ControleDeCustoView.as_view(), name="orcamento-controle"),
     path("nbr12721/", QuadrosNBRView.as_view(), name="orcamento-nbr12721"),
     *router.urls,
 ]

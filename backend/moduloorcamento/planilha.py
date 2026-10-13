@@ -144,6 +144,11 @@ def recalcular_orcamento(orcamento: Orcamento) -> Orcamento:
     orcamento.custo_direto_total = dinheiro(total_direto)
     orcamento.valor_total = dinheiro(total_com_bdi)
     orcamento.save(update_fields=["custo_direto_total", "valor_total", "atualizado_em"])
+    # O percentual do cronograma sobrevive à mudança de preço; o valor da célula
+    # acompanha. Import tardio: `cronograma` importa `dinheiro` daqui.
+    from .cronograma import recalcular_parcelas
+
+    recalcular_parcelas(orcamento)
     return orcamento
 
 
@@ -220,8 +225,11 @@ def revisar_orcamento(
         status=Orcamento.Status.RASCUNHO,
         observacao=orcamento.observacao,
     )
-    _clonar_itens(orcamento, nova)
+    de_para = _clonar_itens(orcamento, nova)
     recalcular_orcamento(nova)
+    from .cronograma import copiar_cronograma
+
+    copiar_cronograma(orcamento, nova, de_para)
 
     numero = RevisaoOrcamento.objects.filter(orcamento__obra=orcamento.obra).count() + 1
     RevisaoOrcamento.objects.create(
@@ -241,7 +249,7 @@ def revisar_orcamento(
     return nova
 
 
-def _clonar_itens(origem: Orcamento, destino: Orcamento) -> None:
+def _clonar_itens(origem: Orcamento, destino: Orcamento) -> dict[int, int]:
     """Copia a árvore preservando a hierarquia.
 
     Duas passadas porque `pai` aponta para linhas do mesmo lote: a primeira cria
@@ -280,6 +288,7 @@ def _clonar_itens(origem: Orcamento, destino: Orcamento) -> None:
             religar.append(clone)
     if religar:
         ItemOrcado.objects.bulk_update(religar, ["pai"], batch_size=500)
+    return de_para
 
 
 def orcamento_vigente(tenant_id, obra_id) -> Orcamento | None:

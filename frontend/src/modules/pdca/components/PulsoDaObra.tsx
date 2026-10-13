@@ -64,7 +64,7 @@ export function PulsoDaObra({ pulso, obraId }: { pulso: Pulso; obraId: number })
         <Leitura
           rotulo="Cumprimento da semana"
           icone={<CalendarCheck size={14} />}
-          para={`/app/pdca/o/${obraId}/semana`}
+          para={`/app/pdca/o/${obraId}/controle?aba=semana`}
           bloqueado={ppc == null}
           valor={percentual(ppc?.ppc)}
           faltando={ppc?.sem_apuracao_porque}

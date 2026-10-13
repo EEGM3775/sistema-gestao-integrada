@@ -113,7 +113,10 @@ CRUD REST isolado por tenant; **listas paginam** server-side e os viewsets de se
   no SCM (`origem=estoque`).
 - **Recebimento → entrada:** criar `Recebimento` no SCM gera `MovimentacaoEstoque` ENTRADA (ativa o
   seam `local_entrega`); concilia com o XML NF-e já lido (`nota_fiscal_ref`).
-- **Inventário:** fechar a contagem gera ajustes automáticos e trava reedição.
+- **Inventário:** fechar a contagem gera ajustes automáticos e trava reedição. Cada linha guarda o
+  ajuste aplicado, com sinal (`ajuste_aplicado`), e **reabrir** (`reabrir/`, mesma permissão de fechar)
+  o estorna sobre o saldo de hoje — recusando se deixaria saldo negativo. Contagem e linha só se
+  excluem com o inventário aberto.
 
 ## Integrações (o "tudo se conecta")
 
@@ -122,6 +125,7 @@ CRUD REST isolado por tenant; **listas paginam** server-side e os viewsets de se
 | [catalogo](catalogo.md) | fonte única do **que** se estoca (`Item` com `estocavel`) | **vivo** |
 | [moduloscm](moduloscm.md) | Recebimento → ENTRADA; item < mínimo → **Demanda** (`origem=estoque`) | **vivo** (as duas pontas) |
 | [obras](obras.md) | canteiro vinculado à obra; consumo (requisição) apropriado à obra | **vivo** |
+| [modulopdca](modulopdca.md) | o compromisso da semana pede o material (requisição em rascunho do canteiro, obra + etapa); o apontamento **avisa** a baixa que falta (`GET consumo-a-baixar/`, card no cockpit: teórico do avanço × saídas) — não baixa nada | **vivo** |
 | [moduloerp](moduloerp.md) | consumo → custo por centro de custo/obra (DRE); valorização de estoque | **vivo (leve) + seam** |
 | NF-e (`moduloerp.nfe_client`) | entrada concilia com o XML já lido | **seam pronto** |
 | Eventos (E3) / Automação (E6) | `sil.estoque_minimo_atingido`, `sil.material_vencendo` → notificação/RFQ | **evento vivo; RFQ = rede** |

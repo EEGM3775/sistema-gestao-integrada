@@ -86,6 +86,7 @@ PLANOS: dict[str, dict] = {
         "notas_por_lote": 10,
         "processamentos_drone_mes": 0,
         "banco_preco_linhas": 500,
+        "catalogo_itens": 500,
         "importacao_linhas": 500,
         # Maps (MAP.0–MAP.5) — COGS: geocodificação fina, motor de rota e
         # storage raster custam dinheiro por uso. Declaradas e INERTES, como as
@@ -133,6 +134,7 @@ PLANOS: dict[str, dict] = {
         "notas_por_lote": 50,
         "processamentos_drone_mes": 0,
         "banco_preco_linhas": 20_000,
+        "catalogo_itens": 5_000,
         "importacao_linhas": 5_000,
         "geocodificacoes_mes": 1_000,
         "rotas_mes": 20,
@@ -174,6 +176,7 @@ PLANOS: dict[str, dict] = {
         "notas_por_lote": 500,
         "processamentos_drone_mes": 0,  # add-on
         "banco_preco_linhas": 150_000,
+        "catalogo_itens": 50_000,
         "importacao_linhas": 40_000,
         "geocodificacoes_mes": 10_000,
         "rotas_mes": 200,
@@ -223,6 +226,7 @@ PLANOS: dict[str, dict] = {
         "notas_por_lote": 1_000,
         "processamentos_drone_mes": 25,
         "banco_preco_linhas": 600_000,
+        "catalogo_itens": 200_000,
         "importacao_linhas": 120_000,
         "geocodificacoes_mes": 50_000,
         "rotas_mes": 1_000,
@@ -278,6 +282,7 @@ PLANOS: dict[str, dict] = {
         "notas_por_lote": None,
         "processamentos_drone_mes": None,
         "banco_preco_linhas": None,
+        "catalogo_itens": None,
         "importacao_linhas": None,
         "geocodificacoes_mes": None,
         "rotas_mes": None,
@@ -359,6 +364,11 @@ QUOTAS_DE_OBJETO: tuple[str, ...] = (
     # cronograma (isso já vem com o módulo), é ter biblioteca de padrão para
     # replicar em obra nova. Ver §5.5e.
     "planos_modelo",
+    # Itens **próprios** do catálogo (11/10/2026, decisão do dono: 500 / 5 mil /
+    # 50 mil / 200 mil). O que veio de base de referência (SINAPI, ORSE…) não
+    # conta — é procedência, não cadastro da empresa; conta o que ela criou à mão,
+    # da compra ou do orçamento (`nucleo.quotas.FILTRO_DO_RECURSO`).
+    "catalogo_itens",
 )
 
 # Seats — contado na IAM, que é quem cria usuário. Seat = usuário ATIVO, então
@@ -1263,7 +1273,16 @@ PDCA_TETO_NIVEIS_APROVACAO: int = 6
 #     atividades são 250 mil linhas de uma obra só. 50 é muito além da prática
 #     (replanejar é ato caro, mensal na obra mal comportada) e é o freio contra
 #     o botão clicado em laço.
+#   - `PDCA_TETO_LIGACOES_EXPANDIDAS` — quantas setas **entre folhas** a rede
+#     pode virar depois de expandir as ligações de fase. Ligar a etapa
+#     "Estrutura" à etapa "Alvenaria" é uma seta na tela e, no grafo do CPM,
+#     uma seta de cada folha de uma para cada folha da outra (40 × 60 = 2.400).
+#     O custo do CPM é O(V+E), e é o E que a ligação de fase multiplica sem o
+#     planejador ver. 50.000 cobre dezenas de ligações de fase entre etapas
+#     grandes e ainda roda em fração de segundo; passar disso é sinal de rede
+#     desenhada no nível errado (ligar a obra inteira à obra inteira).
 PDCA_TETO_ATIVIDADES_POR_CRONOGRAMA: int = 5_000
+PDCA_TETO_LIGACOES_EXPANDIDAS: int = 50_000
 PDCA_PROFUNDIDADE_MAXIMA_WBS: int = 12
 PDCA_TETO_CPM_SINCRONO: int = 5_000
 PDCA_CPM_SEGUNDOS: int = 60
@@ -1955,6 +1974,31 @@ ERP_TETO_NOTAS_POR_LOTE: int = 1_000
 #   3. **Empresa** — `moduloerp.ConfiguracaoFinanceiro`: o administrador (ou quem
 #      tem `erp.lote.configurar`) põe um número menor, como freio contra o lote
 #      grande por engano. Vazio = o máximo do plano.
+
+# ---------------------------------------------------------------------------
+# 5.5v Suprimentos: a cobrança do pedido, a NF-e da compra e a ficha do item (11/10/2026)
+# ---------------------------------------------------------------------------
+# *(Redesenho do pedido de compra decidido com o dono em 11/10/2026 — D284.)*
+#
+#   - `SCM_COBRANCA_TETO_MEIOS` / `_TETO_PARCELAS` — a cobrança do pedido é uma
+#     lista livre de meios (boleto, Pix, cheque, cartão, promissória…), cada um
+#     parcelado, e cada parcela vira um título no ERP. Lista livre sem teto é a
+#     mesma porta da §5.5q: dez mil títulos de um clique. A compra mais retalhada
+#     do canteiro é entrada + cheques + boleto; **10** meios cobrem com folga. **60**
+#     parcelas por meio cobrem o financiamento de equipamento em cinco anos.
+#     O valor e o prazo NÃO estão aqui: são o que se negociou com o fornecedor
+#     (fronteira da §5.6).
+#   - `SCM_NFE_ARQUIVO_TETO_MB` — o XML da NF-e e o PDF do DANFE anexados ao
+#     recebimento. O XML de uma nota de cem itens tem centenas de KB e o DANFE,
+#     um ou dois MB; 5 MB recusa o arquivo errado (um scan de 40 páginas) antes
+#     de guardá-lo.
+#   - `CATALOGO_FICHA_HISTORICO_LINHAS` — quantas compras a linha do tempo de
+#     preço da ficha do item mostra. É tela de conferência ("quanto paguei nas
+#     últimas vezes"), não relatório: 30 compras são anos de um item comum.
+SCM_COBRANCA_TETO_MEIOS: int = 10
+SCM_COBRANCA_TETO_PARCELAS: int = 60
+SCM_NFE_ARQUIVO_TETO_MB: int = 5
+CATALOGO_FICHA_HISTORICO_LINHAS: int = 30
 
 # ---------------------------------------------------------------------------
 # 5.6 O que NÃO é limite — e por isso continua no código de engenharia

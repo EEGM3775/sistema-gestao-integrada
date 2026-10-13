@@ -267,6 +267,11 @@ class ItemInventario(TenantScopedModel):
     lote = models.ForeignKey(Lote, null=True, blank=True, on_delete=models.SET_NULL, related_name="+", verbose_name=_("Lote"))
     quantidade_sistema = models.DecimalField(max_digits=14, decimal_places=3, default=0, verbose_name=_("Quantidade no sistema"))
     quantidade_contada = models.DecimalField(max_digits=14, decimal_places=3, default=0, verbose_name=_("Quantidade contada"))
+    #: O ajuste que o fechamento aplicou (contada − saldo de então), **com sinal**.
+    #: O ledger guarda só a quantidade absoluta (o sentido vem do tipo, e o AJUSTE
+    #: não diz qual); sem este número, reabrir não saberia o que estornar.
+    #: Nulo enquanto aberto — e nos fechados antes de este campo existir.
+    ajuste_aplicado = models.DecimalField(max_digits=14, decimal_places=3, null=True, blank=True, verbose_name=_("Ajuste aplicado"))
 
     class Meta:
         verbose_name = _("Item de Inventário")

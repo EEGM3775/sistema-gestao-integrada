@@ -1,34 +1,31 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
-  AlertTriangle, Calculator, CheckCircle2, Download, Info as InfoIcon, Lock, Plus, Trash2,
+  Download, Info as InfoIcon, Lock, Plus, Trash2,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import PaginaShell from '../components/PaginaShell'
 import {
-  Aviso, Btn, Card, CAPS, Empty, Field, inp, Kpi, Loading, Modal, mono, Pill, SectHead,
-  Select, Seletor,
+  Aviso, Btn, Card, CAPS, Empty, inp, Kpi, Loading, mono, Pill, SectHead,
+  Select,
 } from '../ui'
-import { brl, mesBR, paraDecimal, pct } from '../lib'
+import { paraDecimal, pct } from '../lib'
 import {
-  useAplicarReajuste, useAtualizarRubrica, useCriarFormulaReajuste, useCriarParcelaReajuste,
-  useCriarQuadroEncargos, useFormulasReajuste, useIndices, useOrcamentos, usePreviaReajuste,
-  useQuadroEncargos, useQuadrosEncargos, useRemoverParcelaReajuste, useRemoverQuadroEncargos,
+  useAtualizarRubrica, useCriarQuadroEncargos, useOrcamentos, useQuadroEncargos,
+  useQuadrosEncargos, useRemoverQuadroEncargos,
 } from '../hooks'
 import { baixarExportacao } from '../api/orcamentoApi'
 import type { QuadroEncargos, TipoMaoDeObra } from '../types'
 
-type Aba = 'encargos' | 'reajuste'
-
-/** A página onde o **preço** ganha parâmetro: encargos sobre a folha e correção
- *  contratual. As duas peças moram juntas porque respondem à mesma pergunta do
- *  analista — "de onde veio esse percentual?" — e porque nenhuma delas mexe em
- *  quantidade, que é assunto da grade. */
+/** A página onde o **preço** ganha parâmetro: os encargos sobre a folha.
+ *
+ *  *Decisão do dono, 10/10/2026:* o reajuste contratual saiu daqui — é cláusula
+ *  de contrato, e mora no contrato do PDCA (medição do empreiteiro e do
+ *  contratante). O Orçamento só planeja. */
 export default function EncargosPage() {
   const { hasPermission } = useAuth()
   const [params, setParams] = useSearchParams()
   const orcamentoId = params.get('orcamento') ? Number(params.get('orcamento')) : undefined
-  const [aba, setAba] = useState<Aba>('encargos')
   const [recado, setRecado] = useState('')
 
   const { data: lista } = useOrcamentos({ page_size: 200, ordering: '-versao' })
@@ -59,15 +56,6 @@ export default function EncargosPage() {
           </option>
         ))}
       </Select>
-      <Seletor
-        compacto
-        valor={aba}
-        onChange={setAba}
-        opcoes={[
-          { valor: 'encargos', rotulo: 'Encargos sociais' },
-          { valor: 'reajuste', rotulo: 'Reajuste contratual' },
-        ]}
-      />
     </>
   )
 
@@ -76,14 +64,17 @@ export default function EncargosPage() {
       pagina="encargos"
       seletor={seletor}
       acoes={orcamentoId ? (
-        <Btn
-          onClick={() => baixarExportacao(orcamentoId, {
-            peca: aba === 'encargos' ? 'encargos' : 'composicao-bdi',
-          })}
-          title="Baixar a peça em XLSX — é o anexo que acompanha a planilha na proposta"
-        >
-          <Download size={14} />{aba === 'encargos' ? 'Quadro de encargos' : 'Composição do BDI'}
-        </Btn>
+        <>
+          <Btn
+            onClick={() => baixarExportacao(orcamentoId, { peca: 'encargos' })}
+            title="Baixar a peça em XLSX — é o anexo que acompanha a planilha na proposta"
+          >
+            <Download size={14} />Quadro de encargos
+          </Btn>
+          <Btn onClick={() => baixarExportacao(orcamentoId, { peca: 'composicao-bdi' })}>
+            <Download size={14} />Composição do BDI
+          </Btn>
+        </>
       ) : undefined}
     >
       <div style={{ padding: '18px 20px 30px', display: 'grid', gap: 14 }}>
@@ -91,24 +82,16 @@ export default function EncargosPage() {
 
         {!orcamentoId && (
           <Empty>
-            Escolha um orçamento acima. Encargos e reajuste são parâmetros <b>daquela</b> planilha —
-            o quadro de uma obra em Sergipe não serve para uma em São Paulo, e a fórmula de reajuste
-            é cláusula do contrato específico.
+            Escolha um orçamento acima. Os encargos são parâmetros <b>daquela</b> planilha —
+            o quadro de uma obra em Sergipe não serve para uma em São Paulo. O reajuste contratual
+            mora no contrato, no PDCA.
           </Empty>
         )}
 
-        {orcamentoId && aba === 'encargos' && (
+        {orcamentoId && (
           <PainelEncargos
             orcamentoId={orcamentoId}
             podeEditar={podeEditar}
-            aoAvisar={setRecado}
-          />
-        )}
-
-        {orcamentoId && aba === 'reajuste' && (
-          <PainelReajuste
-            orcamentoId={orcamentoId}
-            podeRevisar={hasPermission('orcamento.orcamento.revisar')}
             aoAvisar={setRecado}
           />
         )}
@@ -332,263 +315,5 @@ function QuadroDetalhe({ quadro, podeEditar, aoRemover }: {
         confira-as antes de entregar a proposta.
       </p>
     </Card>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Reajuste
-// ---------------------------------------------------------------------------
-
-function PainelReajuste({ orcamentoId, podeRevisar, aoAvisar }: {
-  orcamentoId: number
-  podeRevisar: boolean
-  aoAvisar: (t: string) => void
-}) {
-  const { data: formulas, isLoading } = useFormulasReajuste(orcamentoId)
-  const { data: indices } = useIndices()
-  const [competencia, setCompetencia] = useState('')
-  const [novaParcela, setNovaParcela] = useState(false)
-  const [confirmando, setConfirmando] = useState(false)
-
-  const formula = formulas?.[0]
-  const { data: previa, error: erroPrevia } = usePreviaReajuste(formula?.formula_id, competencia)
-  const criarFormula = useCriarFormulaReajuste()
-  const criarParcela = useCriarParcelaReajuste()
-  const removerParcela = useRemoverParcelaReajuste()
-  const aplicar = useAplicarReajuste()
-
-  if (isLoading) return <Loading texto="Carregando a fórmula…" />
-
-  if (!formula) {
-    return (
-      <Card>
-        <SectHead>Nenhuma fórmula de reajuste</SectHead>
-        <p style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.6, margin: '0 0 12px' }}>
-          Reajustar não é reprecificar. A <b>reprecificação</b> troca o preço unitário pela cotação de
-          outra publicação, item a item — muda a composição do custo. O <b>reajuste</b> multiplica tudo
-          por um fator contratual, sem tocar em composição, e é ato de contrato.
-        </p>
-        <Btn
-          variant="primary"
-          onClick={async () => {
-            await criarFormula.mutateAsync({
-              orcamento: orcamentoId,
-              nome: 'Reajuste contratual',
-              data_base: new Date().toISOString().slice(0, 10),
-              parcela_fixa: '0',
-            })
-            aoAvisar('Fórmula criada. Agora monte a cesta: a soma dos pesos com a parcela fixa precisa fechar em 1.')
-          }}
-        >
-          <Plus size={14} />Criar a fórmula
-        </Btn>
-      </Card>
-    )
-  }
-
-  return (
-    <>
-      <Card>
-        <SectHead
-          right={
-            <Pill kind={formula.fecha ? 'good' : 'danger'}>
-              {formula.fecha
-                ? <><CheckCircle2 size={11} />a + Σp = 1</>
-                : <><AlertTriangle size={11} />a + Σp = {formula.soma_pesos}</>}
-            </Pill>
-          }
-        >
-          {formula.nome} · data-base {mesBR(formula.data_base)}
-        </SectHead>
-
-        <p style={{ ...mono, fontSize: 12.5, color: 'var(--ink-2)', margin: '0 0 12px' }}>
-          R = V × [ a + Σ pᵢ × (Iᵢ,t ÷ Iᵢ,0) ]
-        </p>
-
-        {!formula.fecha && (
-          <Aviso tom="danger">
-            A fórmula não fecha em 1. Um peso a menos não é erro de digitação inofensivo — vira
-            <b> desconto disfarçado de correção monetária</b>, e o resultado continua sendo um número
-            plausível. O cálculo do fator recusa enquanto não fechar.
-          </Aviso>
-        )}
-
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, marginTop: 10 }}>
-          <thead>
-            <tr style={{ color: 'var(--ink-3)', textAlign: 'left' }}>
-              <th style={{ padding: '4px 6px' }}>Parcela</th>
-              <th style={{ padding: '4px 6px' }}>Índice</th>
-              <th style={{ padding: '4px 6px', textAlign: 'right', width: 90 }}>Peso</th>
-              <th style={{ width: 40 }} />
-            </tr>
-          </thead>
-          <tbody>
-            <tr style={{ borderTop: '1px solid var(--line)' }}>
-              <td style={{ padding: '5px 6px' }}>Parcela não reajustável (a)</td>
-              <td style={{ padding: '5px 6px', color: 'var(--ink-3)' }}>—</td>
-              <td style={{ ...mono, padding: '5px 6px', textAlign: 'right' }}>{formula.parcela_fixa}</td>
-              <td />
-            </tr>
-            {formula.parcelas.map(p => (
-              <tr key={p.parcela_id} style={{ borderTop: '1px solid var(--line)' }}>
-                <td style={{ padding: '5px 6px' }}>{p.rotulo || p.indice_nome}</td>
-                <td style={{ ...mono, padding: '5px 6px' }}>{p.indice_codigo}</td>
-                <td style={{ ...mono, padding: '5px 6px', textAlign: 'right' }}>{p.peso}</td>
-                <td style={{ padding: '5px 6px' }}>
-                  <Btn tam="sm" onClick={() => removerParcela.mutate(p.parcela_id)}>
-                    <Trash2 size={12} />
-                  </Btn>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        <Btn tam="sm" style={{ marginTop: 8 }} onClick={() => setNovaParcela(true)}>
-          <Plus size={13} />Acrescentar parcela
-        </Btn>
-      </Card>
-
-      <Card>
-        <SectHead>Prévia do reajuste</SectHead>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-          <Field label="Competência do reajuste" dica="O mês do aniversário do contrato.">
-            <input
-              type="month"
-              style={inp}
-              value={competencia.slice(0, 7)}
-              onChange={e => setCompetencia(e.target.value ? `${e.target.value}-01` : '')}
-            />
-          </Field>
-          {previa && (
-            <>
-              <Kpi rotulo="Fator" valor={previa.memoria.fator} tom="accent" />
-              <Kpi rotulo="Variação" valor={pct(previa.memoria.variacao_pct)} />
-              <Kpi rotulo="Total antes" valor={brl(previa.total_antes)} />
-              <Kpi rotulo="Total depois" valor={brl(previa.total_depois)} tom="accent" />
-              <Kpi rotulo="Δ" valor={brl(previa.delta)} />
-            </>
-          )}
-        </div>
-
-        {erroPrevia && (
-          <Aviso tom="amber">
-            {(erroPrevia as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-              ?? 'Não consegui calcular o fator para essa competência.'}
-          </Aviso>
-        )}
-
-        {previa && (
-          <>
-            <div style={{ ...CAPS, margin: '14px 0 6px' }}>Memória do fator</div>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
-              <thead>
-                <tr style={{ color: 'var(--ink-3)', textAlign: 'left' }}>
-                  <th style={{ padding: '4px 6px' }}>Parcela</th>
-                  <th style={{ padding: '4px 6px', textAlign: 'right' }}>Peso</th>
-                  <th style={{ padding: '4px 6px', textAlign: 'right' }}>I₀</th>
-                  <th style={{ padding: '4px 6px', textAlign: 'right' }}>I_t</th>
-                  <th style={{ padding: '4px 6px', textAlign: 'right' }}>Razão</th>
-                  <th style={{ padding: '4px 6px', textAlign: 'right' }}>Contribuição</th>
-                </tr>
-              </thead>
-              <tbody>
-                {previa.memoria.parcelas.map(p => (
-                  <tr key={p.parcela} style={{ borderTop: '1px solid var(--line)' }}>
-                    <td style={{ padding: '5px 6px' }}>{p.rotulo} <span style={{ ...mono, color: 'var(--ink-3)' }}>{p.indice}</span></td>
-                    <td style={{ ...mono, padding: '5px 6px', textAlign: 'right' }}>{p.peso}</td>
-                    <td style={{ ...mono, padding: '5px 6px', textAlign: 'right' }}>{p.indice_base}</td>
-                    <td style={{ ...mono, padding: '5px 6px', textAlign: 'right' }}>{p.indice_reajuste}</td>
-                    <td style={{ ...mono, padding: '5px 6px', textAlign: 'right' }}>{p.razao}</td>
-                    <td style={{ ...mono, padding: '5px 6px', textAlign: 'right' }}>{p.contribuicao}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-
-            {previa.exige_revisao && (
-              <Aviso tom="amber">
-                Este orçamento está <b>aprovado</b>. Aplicar o reajuste cria a <b>versão seguinte</b> com
-                revisão do tipo reequilíbrio — a régua congelada continua congelada, porque o SIL já
-                compara consumo contra ela.
-              </Aviso>
-            )}
-
-            <div style={{ marginTop: 12 }}>
-              <Btn
-                variant="primary"
-                disabled={!podeRevisar}
-                onClick={() => setConfirmando(true)}
-                title={podeRevisar ? undefined : 'Requer orcamento.orcamento.revisar'}
-              >
-                <Calculator size={14} />Aplicar o reajuste
-              </Btn>
-            </div>
-          </>
-        )}
-      </Card>
-
-      {novaParcela && (
-        <Modal titulo="Nova parcela da cesta" onClose={() => setNovaParcela(false)}>
-          <form
-            onSubmit={async e => {
-              e.preventDefault()
-              const dados = new FormData(e.currentTarget)
-              await criarParcela.mutateAsync({
-                formula: formula.formula_id,
-                indice: Number(dados.get('indice')),
-                peso: paraDecimal(String(dados.get('peso') ?? '0')),
-                rotulo: String(dados.get('rotulo') ?? ''),
-              })
-              setNovaParcela(false)
-            }}
-            style={{ display: 'grid', gap: 10 }}
-          >
-            <Field label="Índice">
-              <Select name="indice" required>
-                {indices?.map(i => (
-                  <option key={i.indice_id} value={i.indice_id}>{i.codigo} — {i.nome}</option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="Peso (p)" dica="Fração de 0 a 1. A soma com a parcela fixa precisa fechar em 1.">
-              <input name="peso" style={{ ...inp, ...mono }} defaultValue="0,00" />
-            </Field>
-            <Field label="Rótulo" dica="Como o edital nomeia a parcela: 'Mão de obra', 'Materiais'.">
-              <input name="rotulo" style={inp} />
-            </Field>
-            <Btn variant="primary" type="submit">Acrescentar</Btn>
-          </form>
-        </Modal>
-      )}
-
-      {confirmando && previa && (
-        <Modal titulo="Aplicar o reajuste" onClose={() => setConfirmando(false)}>
-          <p style={{ fontSize: 13, lineHeight: 1.6, color: 'var(--ink-2)' }}>
-            Fator <b style={mono}>{previa.memoria.fator}</b> sobre {previa.itens.length} linhas.
-            O total vai de <b>{brl(previa.total_antes)}</b> para <b>{brl(previa.total_depois)}</b>.
-            {previa.exige_revisao && ' Isto criará a versão seguinte do orçamento.'}
-          </p>
-          <p style={{ fontSize: 12, color: 'var(--ink-3)', lineHeight: 1.6 }}>
-            A procedência do preço <b>não muda</b>: a linha continua declarando a fonte e a data-base
-            originais, corrigidas por contrato. Dizer que virou preço de outra publicação seria rastro falso.
-          </p>
-          <Btn
-            variant="primary"
-            onClick={async () => {
-              const r = await aplicar.mutateAsync({ formula: formula.formula_id, competencia })
-              setConfirmando(false)
-              aoAvisar(
-                r.gerou_revisao
-                  ? `Reajuste aplicado na versão ${r.versao}, com revisão registrada.`
-                  : `Reajuste aplicado em ${r.linhas_reajustadas} linhas.`,
-              )
-            }}
-          >
-            Confirmar
-          </Btn>
-        </Modal>
-      )}
-    </>
   )
 }

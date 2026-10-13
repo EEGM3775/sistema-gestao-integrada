@@ -10,6 +10,12 @@ export interface ContextoPdca {
    *  seis instrumentos um sistema, e não seis telas. */
   selecao: Selecao
   selecionar: (s: Selecao) => void
+  /** A versão do plano que o posto Plano está mostrando, quando a pessoa
+   *  escolheu uma. `null` é o padrão: o rascunho em montagem, se houver um mais
+   *  novo que o vigente; senão, o vigente. O Inspetor lê daqui para abrir a
+   *  atividade da mesma versão que a grade mostra. */
+  planoEscolhido: number | null
+  escolherPlano: (id: number | null) => void
   paletaAberta: boolean
   abrirPaleta: () => void
   fecharPaleta: () => void

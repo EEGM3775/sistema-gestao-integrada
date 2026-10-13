@@ -9,6 +9,7 @@ players: SAP Material/Product Master; Oracle Item Master com taxonomia + flags
 por aplicação. Desenho em docs/modulos/catalogo.md.
 """
 from django.db import models
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 from nucleo.tenancy import TenantScopedModel
@@ -61,6 +62,15 @@ class Item(TenantScopedModel):
         EMBASA = "embasa", _("EMBASA")
         PROPRIA = "propria", _("Própria")
 
+    class Origem(models.TextChoices):
+        """O gesto que criou o cadastro — não confundir com a `Fonte`, que é de
+        onde veio o preço de referência."""
+
+        MANUAL = "manual", _("Cadastro manual")
+        BASE = "base", _("Base de referência")
+        ORCAMENTO = "orcamento", _("Orçamento")
+        COMPRA = "compra", _("Compra (Suprimentos)")
+
     item_id = models.AutoField(primary_key=True)
     codigo_interno = models.CharField(max_length=40, verbose_name=_("Código interno (SKU)"))
     descricao = models.CharField(max_length=255, verbose_name=_("Descrição"))
@@ -104,6 +114,17 @@ class Item(TenantScopedModel):
         help_text=_("Seam do catálogo global compartilhado (marketplace)."),
     )
     ativo = models.BooleanField(default=True, verbose_name=_("Ativo"))
+    # **De onde o item veio** (dono, 11/10/2026: "o catálogo precisa dizer todos
+    # os detalhes sobre os itens, de onde veio"). A fonte de referência acima diz
+    # de qual base saiu o *preço*; isto diz qual gesto criou o *cadastro* — e o
+    # `origem_detalhe` guarda o documento ("Pedido #6", "Orçamento Casa 3").
+    origem = models.CharField(
+        max_length=10, choices=Origem.choices, default=Origem.MANUAL, verbose_name=_("Origem do cadastro"),
+    )
+    origem_detalhe = models.CharField(max_length=120, blank=True, verbose_name=_("Documento de origem"))
+    # Nulo nos itens anteriores a 11/10/2026: a data não foi guardada e inventá-la
+    # seria pior que o "—".
+    criado_em = models.DateTimeField(null=True, blank=True, editable=False, verbose_name=_("Cadastrado em"))
 
     class Meta:
         verbose_name = _("Item (catálogo)")
@@ -123,6 +144,8 @@ class Item(TenantScopedModel):
         """
         if self.tipo_proprio_id:
             self.tipo = self.tipo_proprio.natureza
+        if self._state.adding and self.criado_em is None:
+            self.criado_em = timezone.now()
         super().save(*args, **kwargs)
 
     def __str__(self):

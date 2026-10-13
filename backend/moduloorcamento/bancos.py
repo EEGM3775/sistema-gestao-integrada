@@ -106,7 +106,10 @@ def adotar_no_catalogo(
     tipo, flags = _tipo_e_flags(item)
     alvo = _localizar_item(tenant_id, item)
     if alvo is None:
-        alvo = Item(tenant_id=tenant_id, codigo_interno=codigo_interno_para(item))
+        alvo = Item(
+            tenant_id=tenant_id, codigo_interno=codigo_interno_para(item),
+            origem=Item.Origem.BASE, origem_detalhe=item.banco.nome[:120],
+        )
         for campo, valor in flags.items():
             setattr(alvo, campo, valor)
         alvo.tipo = tipo

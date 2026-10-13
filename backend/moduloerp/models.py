@@ -213,7 +213,8 @@ class NotaFiscal(TenantScopedModel, Excluivel):
         db_table = 'financeiro_notafiscal'
         # Número e chave de acesso únicos por-tenant (Fase 8.3).
         constraints = [
-            models.UniqueConstraint(fields=['tenant', 'numero_nota'], condition=models.Q(excluido_em__isnull=True), name='nf_numero_unico_por_tenant'),
+            # Número é por FORNECEDOR: a NF 1234 de duas empreiteiras são duas notas.
+            models.UniqueConstraint(fields=['tenant', 'fornecedor', 'numero_nota'], condition=models.Q(excluido_em__isnull=True), name='nf_numero_unico_por_fornecedor'),
             models.UniqueConstraint(fields=['tenant', 'chave_acesso'], condition=models.Q(excluido_em__isnull=True), name='nf_chave_acesso_unica_por_tenant'),
         ]
 
@@ -248,6 +249,25 @@ class ContaPagar(TenantScopedModel, Excluivel):
     multa = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name=_("Multa"))
     desconto = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name=_("Desconto"))
     data_pagamento = models.DateField(null=True, blank=True, verbose_name=_("Data da Última Baixa"))
+
+    # --- A compra que gerou o título (Suprimentos, 11/10/2026 — D284) ---
+    # Seam frouxo, sem FK, pelo mesmo motivo do `PedidoCompra.conta_pagar_ref`
+    # do outro lado: o ERP não depende do SCM. A NF-e da compra mora no SCM (lá
+    # ela pode nascer só com o número, antes do documento); aqui fica o que o
+    # financeiro precisa ver na linha do título para não pagar sem nota.
+    class SituacaoNfe(models.TextChoices):
+        NAO_SE_APLICA = "", _("—")
+        AGUARDANDO_NOTA = "aguardando_nota", _("Aguardando NF-e")
+        AGUARDANDO_DOCUMENTO = "aguardando_documento", _("NF-e informada, aguardando documento")
+        CONFERIDA = "conferida", _("NF-e conferida")
+        DIVERGENTE = "divergente", _("NF-e divergente")
+
+    pedido_compra_ref = models.PositiveIntegerField(null=True, blank=True, db_index=True, verbose_name=_("Pedido de compra (Suprimentos)"))
+    nfe_numero = models.CharField(max_length=20, blank=True, verbose_name=_("Número da NF-e da compra"))
+    nfe_situacao = models.CharField(
+        max_length=20, choices=SituacaoNfe.choices, blank=True, default="",
+        verbose_name=_("Situação da NF-e da compra"),
+    )
 
     class Meta:
         verbose_name = _("Conta a Pagar")
@@ -659,6 +679,46 @@ class RateioContaPagar(TenantScopedModel):
         return f"Conta #{self.conta_pagar_id} → {self.centro_custo.nome}: R$ {self.valor}"
 
 
+class AnotacaoContaPagar(TenantScopedModel):
+    """O que aconteceu fora do ERP e mexe no título — escrito na linha dele.
+
+    *Dono, 11/10/2026:* "essas edições também têm que ir como anotações ao ERP.
+    Caso o item venha a mais ou a menos". O pedido de compra muda depois de virar
+    título (item a mais, saldo encerrado, nota divergente, valor editado), e quem
+    paga só olha o ERP. A anotação **não altera o título**: o valor e o
+    vencimento continuam sendo decididos por quem tem a baixa — ela diz o que
+    mudou, onde, e por quê.
+
+    Só se acrescenta (não há edição nem exclusão pela API): é trilha.
+    """
+
+    class Tipo(models.TextChoices):
+        COBRANCA = "cobranca", _("Cobrança")
+        EDICAO = "edicao", _("Pedido editado")
+        DIVERGENCIA = "divergencia", _("Divergência no recebimento")
+        NFE = "nfe", _("NF-e")
+        CANCELAMENTO = "cancelamento", _("Cancelamento")
+        NOTA = "nota", _("Anotação")
+
+    anotacao_id = models.AutoField(primary_key=True)
+    conta_pagar = models.ForeignKey(ContaPagar, on_delete=models.CASCADE, related_name='anotacoes', verbose_name=_("Conta a Pagar"))
+    tipo = models.CharField(max_length=12, choices=Tipo.choices, default=Tipo.NOTA, verbose_name=_("Tipo"))
+    origem = models.CharField(max_length=20, blank=True, verbose_name=_("Módulo de origem"), help_text=_("'scm', 'manual'…"))
+    texto = models.TextField(verbose_name=_("Texto"))
+    #: O valor que a anotação põe em jogo (a divergência, o saldo encerrado), quando há.
+    valor = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True, verbose_name=_("Valor envolvido"))
+    autor = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True, related_name='+', verbose_name=_("Autor"))
+    criado_em = models.DateTimeField(auto_now_add=True, verbose_name=_("Criado em"))
+
+    class Meta:
+        verbose_name = _("Anotação de Conta a Pagar")
+        verbose_name_plural = _("Anotações de Contas a Pagar")
+        ordering = ['-criado_em', '-anotacao_id']
+
+    def __str__(self):
+        return f"Conta #{self.conta_pagar_id} · {self.get_tipo_display()}"
+
+
 class RateioContaReceber(TenantScopedModel):
     """ Divisão do valor de uma ContaReceber entre N centros de custo. """
     rateio_id = models.AutoField(primary_key=True)
@@ -1001,3 +1061,40 @@ class ConfiguracaoFinanceiro(TenantScopedModel):
         constraints = [
             models.UniqueConstraint(fields=['tenant'], name='configuracao_financeiro_por_tenant'),
         ]
+
+
+class IntegracaoFiscal(TenantScopedModel):
+    """A conta da empresa na NFE.io — **por empresa**, cadastrada pela tela.
+
+    *Achado do dono, 10/10/2026:* "como vou cadastrar minha API?". A chave era
+    uma só, do ambiente, para todos os tenants (a decisão da Fase 11.1), e não
+    havia tela nenhuma: a NFS-e ficava em "Processando" até virar erro. Agora
+    cada empresa cadastra a sua conta em ERP › Configurações; sem cadastro, vale
+    a chave do ambiente (quem opera a plataforma para todos).
+
+    A chave da API é guardada **cifrada** (`nucleo.cifra`) e nunca volta para a
+    tela — só os últimos quatro caracteres, para a pessoa reconhecer qual é.
+    """
+    company_id = models.CharField(_("ID da empresa na NFE.io"), max_length=80, blank=True)
+    api_key_cifrada = models.TextField(_("Chave da API (cifrada)"), blank=True)
+    api_key_final = models.CharField(_("Final da chave"), max_length=8, blank=True)
+    atualizado_em = models.DateTimeField(auto_now=True)
+    atualizado_por = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+
+    class Meta:
+        verbose_name = _("Integração fiscal (NFE.io)")
+        verbose_name_plural = _("Integrações fiscais (NFE.io)")
+        constraints = [
+            models.UniqueConstraint(fields=['tenant'], name='integracao_fiscal_por_tenant'),
+        ]
+
+    @property
+    def api_key(self) -> str:
+        from nucleo.cifra import decifrar
+        return decifrar(self.api_key_cifrada)
+
+    def definir_api_key(self, valor: str) -> None:
+        from nucleo.cifra import cifrar
+        valor = (valor or "").strip()
+        self.api_key_cifrada = cifrar(valor)
+        self.api_key_final = valor[-4:] if valor else ""

@@ -25,6 +25,12 @@ export async function fetchContaAPagar(id: number): Promise<ContaPagar> {
   return data
 }
 
+/** Anotação à mão na trilha do título (D284). */
+export async function anotarContaAPagar(id: number, texto: string): Promise<ContaPagar> {
+  const { data } = await erpClient.post<ContaPagar>(`${ERP_BASE}contas-a-pagar/${id}/anotar/`, { texto })
+  return data
+}
+
 export async function createContaAPagar(payload: ContaPagarPayload): Promise<ContaPagar> {
   const { data } = await erpClient.post<ContaPagar>(`${ERP_BASE}contas-a-pagar/`, payload)
   return data
