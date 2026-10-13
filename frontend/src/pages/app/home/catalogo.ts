@@ -193,7 +193,7 @@ export const CATALOGO: ModuloDef[] = [
   {
     id: 'pdca',
     label: 'Planejamento & Qualidade (PDCA)',
-    descricao: 'Cronograma da obra com CPM, caminho crítico, linha de base e curva S prevista. Medição, verificação (FVS) e planos de ação entram nas próximas fatias.',
+    descricao: 'Cronograma com CPM e linha de base, semana do Last Planner (PPC), controle de custo, medição, qualidade (FVS) e segurança da obra.',
     icon: ClipboardList,
     estagio: 'construir',
     situacao: 'pronto',
@@ -203,11 +203,12 @@ export const CATALOGO: ModuloDef[] = [
   {
     id: 'medicoes',
     label: 'Medições & empreiteiros',
-    descricao: 'Contratos de empreitada, boletins, retenções e liberação — espelhado com a Edição Empreiteiro.',
+    descricao: 'Contratos com o empreiteiro (custo) e com o contratante (receita), boletins de medição, retenção e reajuste — por obra, no PDCA. A Edição Empreiteiro vem depois.',
     icon: Ruler,
     estagio: 'construir',
-    situacao: 'planejado',
-    horizonte: 'H2',
+    situacao: 'pronto',
+    modulo: 'pdca',
+    rota: '/app/pdca',
   },
 
   // ── Negociar ───────────────────────────────────────────────────────────────

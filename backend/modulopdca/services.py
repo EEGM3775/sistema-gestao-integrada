@@ -2454,6 +2454,37 @@ def _cadeia_de_versoes(cronograma: Cronograma) -> list[int]:
     return cadeia
 
 
+def _versao_vigente_de(cronograma: Cronograma) -> Cronograma:
+    """A versão **em vigor** que descende de `cronograma` — ou ele mesmo.
+
+    O cartão da semana se prende à atividade da versão em que foi puxado. Se o
+    plano é replanejado e publicado com a semana já assumida, aquela versão vira
+    `substituído`, e o avanço lançado nela seria recusado (só a vigente recebe
+    apontamento) — a semana não fechava. A atividade "é a mesma" pelo código na
+    cadeia de versões, que é a conta que o avanço já faz.
+    """
+    if cronograma.status == Cronograma.Status.VIGENTE:
+        return cronograma
+    vigente = Cronograma.objects.filter(
+        tenant_id=cronograma.tenant_id, obra_id=cronograma.obra_id,
+        status=Cronograma.Status.VIGENTE, eh_modelo=False,
+    ).first()
+    if vigente is not None and cronograma.pk in _cadeia_de_versoes(vigente):
+        return vigente
+    return cronograma
+
+
+def _atividade_vigente(atividade: Atividade) -> Atividade:
+    """A mesma atividade (pelo código) na versão em vigor — ver `_versao_vigente_de`.
+    Sem correspondente (o replanejamento a tirou), devolve a original, e a recusa
+    do apontamento diz o porquê."""
+    vigente = _versao_vigente_de(atividade.cronograma)
+    if vigente.pk == atividade.cronograma_id:
+        return atividade
+    return (Atividade.objects.filter(cronograma=vigente, codigo=atividade.codigo)
+            .select_related("cronograma").first() or atividade)
+
+
 def _apontado_por_codigo(cronograma: Cronograma) -> dict[str, dict]:
     """`{código da EAP: {"total", "lancamentos", "ultimo"}}`.
 
@@ -6952,7 +6983,7 @@ def arrastar_pendentes(*, programacao: ProgramacaoSemanal,
         )
 
     falhados = list(
-        programacao.itens.filter(cumprido=False).select_related("atividade")
+        programacao.itens.filter(cumprido=False).select_related("atividade__cronograma")
         .order_by("ordem", "item_programacao_id")
     )
     if not falhados:
@@ -6984,7 +7015,9 @@ def arrastar_pendentes(*, programacao: ProgramacaoSemanal,
     repetidos = 0
     sem_espaco = 0
     for item in falhados:
-        if (item.atividade_id, item.local_id) in ja_la:
+        # Na versão em vigor: o quadro novo não herda a versão substituída.
+        atividade = _atividade_vigente(item.atividade)
+        if (atividade.pk, item.local_id) in ja_la:
             repetidos += 1
             continue
         if espaco <= 0:
@@ -6994,7 +7027,7 @@ def arrastar_pendentes(*, programacao: ProgramacaoSemanal,
         ItemProgramacao.objects.create(
             tenant_id=destino.tenant_id,
             programacao=destino,
-            atividade=item.atividade,
+            atividade=atividade,
             local_id=item.local_id,
             responsavel=item.responsavel,
             percentual_previsto=_resto_previsto(item, apontado.get(item.pk)),
@@ -7002,7 +7035,7 @@ def arrastar_pendentes(*, programacao: ProgramacaoSemanal,
             vezes_arrastado=item.vezes_arrastado + 1,
             ordem=proxima_ordem,
         )
-        ja_la.add((item.atividade_id, item.local_id))
+        ja_la.add((atividade.pk, item.local_id))
         espaco -= 1
         arrastados += 1
 
@@ -7050,37 +7083,44 @@ def avanco_apontado_dos_itens(programacao: ProgramacaoSemanal) -> dict[int, Deci
     daquele local; item sem `local` é a atividade inteira e conta tudo. Somar os
     dois casos faria o mesmo apontamento pesar em dois cartões.
     """
-    itens = list(programacao.itens.all())
+    itens = list(programacao.itens.select_related("atividade__cronograma"))
     if not itens:
         return {}
 
+    # Pelo código na cadeia da versão em vigor, e não pelo id da atividade: o
+    # cartão puxado antes de um replanejamento é de uma versão substituída, e o
+    # avanço da semana pode ter sido lançado na versão nova.
+    cadeias: set[int] = set()
+    for cronograma in {i.atividade.cronograma for i in itens}:
+        cadeias.update(_cadeia_de_versoes(_versao_vigente_de(cronograma)))
     linhas = (
         ApontamentoAvanco.objects
         .filter(
             tenant_id=programacao.tenant_id,
-            atividade_id__in={i.atividade_id for i in itens},
+            atividade__cronograma_id__in=cadeias,
+            atividade__codigo__in={i.atividade.codigo for i in itens},
             data__gte=programacao.semana_inicio,
             data__lte=programacao.semana_fim,
         )
-        .values("atividade_id", "local_id")
+        .values("atividade__codigo", "local_id")
         .annotate(total=Sum("percentual"))
     )
-    por_atividade: dict[int, Decimal] = {}
-    por_atividade_local: dict[tuple[int, int], Decimal] = {}
+    por_atividade: dict[str, Decimal] = {}
+    por_atividade_local: dict[tuple[str, int], Decimal] = {}
     for linha in linhas:
         total = linha["total"] or _ZERO
-        por_atividade[linha["atividade_id"]] = (
-            por_atividade.get(linha["atividade_id"], _ZERO) + total
-        )
+        codigo = linha["atividade__codigo"]
+        por_atividade[codigo] = por_atividade.get(codigo, _ZERO) + total
         if linha["local_id"] is not None:
-            por_atividade_local[(linha["atividade_id"], linha["local_id"])] = total
+            chave = (codigo, linha["local_id"])
+            por_atividade_local[chave] = por_atividade_local.get(chave, _ZERO) + total
 
     resultado: dict[int, Decimal] = {}
     for item in itens:
         if item.local_id is not None:
-            valor = por_atividade_local.get((item.atividade_id, item.local_id))
+            valor = por_atividade_local.get((item.atividade.codigo, item.local_id))
         else:
-            valor = por_atividade.get(item.atividade_id)
+            valor = por_atividade.get(item.atividade.codigo)
         #: `None` e zero são coisas diferentes, e a tela precisa das duas: nulo é
         #: "o campo não apontou nada nesta semana" (pode ser que não tenha
         #: apontado, não que não tenha feito); zero é "apontou e estornou".
@@ -7595,7 +7635,9 @@ def andamento_dos_itens(programacao: ProgramacaoSemanal) -> dict[int, dict]:
 
     resposta: dict[int, dict] = {}
     for grupo in por_cronograma.values():
-        cadeia = _cadeia_de_versoes(grupo[0].atividade.cronograma)
+        # A cadeia da versão em vigor: depois de um replanejamento o avanço
+        # também é lançado na versão nova, e a antiga não o enxergaria.
+        cadeia = _cadeia_de_versoes(_versao_vigente_de(grupo[0].atividade.cronograma))
         codigos = {i.atividade.codigo for i in grupo}
         base = ApontamentoAvanco.objects.filter(
             atividade__cronograma_id__in=cadeia, atividade__codigo__in=codigos,
@@ -7747,8 +7789,11 @@ def julgar_itens(*, programacao: ProgramacaoSemanal,
         delta -= lancado.get(codigo, _ZERO)
         if delta <= 0:
             continue
+        # O cartão pode ser de uma versão já substituída: o avanço vai para a
+        # mesma atividade na versão em vigor (ver `_atividade_vigente`).
+        atividade = _atividade_vigente(item.atividade)
         registrar_apontamento(
-            atividade=item.atividade, percentual=delta, data=data,
+            atividade=atividade, percentual=delta, data=data,
             local=item.local, observacao=(
                 f"Julgamento da semana {programacao.semana_inicio:%d/%m}: "
                 f"{item.percentual_concluido:.0f}% concluído."
@@ -7758,7 +7803,7 @@ def julgar_itens(*, programacao: ProgramacaoSemanal,
         lancado[codigo] = lancado.get(codigo, _ZERO) + delta
         apontamentos += 1
     if apontamentos:
-        sincronizar_percentual_das_etapas(a_apontar[0][0].atividade.cronograma)
+        sincronizar_percentual_das_etapas(atividade.cronograma)
 
     if a_gravar:
         ItemProgramacao.objects.bulk_update(

@@ -12,6 +12,7 @@ from decimal import Decimal
 from unittest import mock
 
 from catalogo.models import Item
+from clientes.models import Cliente
 from fornecedores.models import Fornecedor
 from moduloerp.models import ContaPagar
 from modulosil.models import LocalEstoque, MovimentacaoEstoque
@@ -20,7 +21,7 @@ from moduloscm.models import CentroCusto, PedidoCompra
 from moduloorcamento import planilha
 from moduloorcamento.models import ItemOrcadoInsumo
 from modulopdca import controle
-from modulopdca.models import ContratoObra, Cronograma, RegimeContrato
+from modulopdca.models import ContratoObra, Cronograma, LadoContrato, RegimeContrato
 
 from testes.backend.moduloorcamento.test_planilha import PlanilhaTestBase
 
@@ -105,6 +106,26 @@ class ColunasTests(ControleTestBase):
         self.assertEqual(colunas["comprometido_pedidos"], "20000.00")
         self.assertEqual(colunas["comprometido_contratos"], "30000.00")
         self.assertEqual(colunas["comprometido"], "50000.00")
+
+    def test_contrato_com_o_contratante_nao_e_custo(self):
+        """O contrato de receita é o serviço que a empresa executa e o cliente
+        paga — entra no faturamento, não no comprometido."""
+        self._orcamento_aprovado("100000")
+        cliente = Cliente.objects.create(
+            tenant=self.tenant, nome_completo="Prefeitura de Nazaré",
+            cpf_cnpj="11222333000181", data_nascimento=date(2000, 1, 1),
+        )
+        ContratoObra.objects.create(
+            tenant=self.tenant, obra=self.obra, lado=LadoContrato.RECEITA,
+            fornecedor=None, cliente=cliente, numero="R-03", objeto="Execução da obra",
+            regime=RegimeContrato.GLOBAL, valor_global=Decimal("30000"),
+            data_inicio=date(2026, 8, 1), status=ContratoObra.Status.VIGENTE,
+        )
+        self._contrato("10000")
+
+        resposta = self.custo()
+        self.assertEqual(resposta["colunas"]["comprometido_contratos"], "10000.00")
+        self.assertEqual([c["numero"] for c in resposta["contratos"]], ["C-10000"])
 
     def test_comprometido_acima_do_orcado_marca_estouro(self):
         self._orcamento_aprovado("50000")

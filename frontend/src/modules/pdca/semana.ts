@@ -75,3 +75,21 @@ function deIso(iso: string): Date {
   const [ano, mes, dia] = (iso || '').split('-').map(Number)
   return new Date(ano || 1970, (mes || 1) - 1, dia || 1)
 }
+
+/** O "saiu" do cartão: o julgamento em edição, o gravado ou — o cartão salvo
+ *  abaixo da meta e ainda sem causa, que o servidor guarda "por julgar" — o
+ *  derivado do % concluído contra a meta. Sem esse terceiro caso o cartão
+ *  voltava neutro e escondia o campo da causa que falta para encerrar. */
+export function cumpridoDoCartao(
+  item: { cumprido: boolean | null; percentual_concluido?: string | null; meta_da_semana?: string | null },
+  julgamento?: { cumprido: boolean | null; percentual_concluido?: string | null },
+): boolean | null {
+  const explicito = julgamento?.cumprido ?? item.cumprido
+  if (explicito != null) return explicito
+  const concluido = julgamento?.percentual_concluido !== undefined
+    ? julgamento.percentual_concluido
+    : item.percentual_concluido
+  if (concluido == null || concluido === '') return null
+  const meta = item.meta_da_semana != null ? Number(item.meta_da_semana) : 100
+  return Number(concluido) >= meta
+}

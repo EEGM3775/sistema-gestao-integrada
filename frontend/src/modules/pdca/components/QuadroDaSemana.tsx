@@ -8,6 +8,7 @@ import { contemSemAcento } from '@/utils/texto'
 import { usePdca } from '../contexto'
 import { useAuth } from '@/hooks/useAuth'
 import { percentual } from '../formato'
+import { cumpridoDoCartao } from '../semana'
 import { useCriarEquipe, useEquipesDaObra, usePedirMaterialDaSemana } from '../hooks'
 import { buscarFornecedores, buscarFuncionarios } from '../api/montagemApi'
 import { mensagemDe } from '../montagem'
@@ -536,7 +537,7 @@ function CartaoDeCompromisso({
   const { selecao, selecionar } = usePdca()
   const escolhido = selecao?.tipo === 'atividade' && selecao.id === item.atividade
 
-  const cumprido = julgamento?.cumprido ?? item.cumprido
+  const cumprido = cumpridoDoCartao(item, julgamento)
   const causa = julgamento?.causa ?? item.causa
   const nota = julgamento?.nota ?? item.nota
 

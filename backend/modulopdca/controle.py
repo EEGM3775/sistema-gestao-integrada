@@ -11,7 +11,7 @@ caixa — e, com o avanço apontado, **para onde o custo final está indo**.
 | Coluna           | Pergunta                                 | Fonte                          |
 |------------------|------------------------------------------|--------------------------------|
 | **Orçado**       | quanto se planejou gastar?               | orçamento aprovado (custo direto) |
-| **Comprometido** | quanto a empresa já se obrigou a pagar?  | pedidos do SCM + contratos de empreiteiro |
+| **Comprometido** | quanto a empresa já se obrigou a pagar?  | pedidos do SCM + contratos de empreiteiro (lado custo) |
 | **Aplicado**     | quanto material já virou obra?           | saídas do SIL (menos devoluções) |
 | **Medido**       | quanto serviço de empreiteiro foi aceito?| medições aprovadas              |
 | **Realizado**    | quanto já saiu do caixa?                 | baixas do ERP                  |
@@ -76,14 +76,15 @@ def contratos_comprometidos(tenant_id, obra_id) -> list[dict]:
     """Contratos de empreiteiro em vigor (ou encerrados), pelo valor de hoje.
 
     `conta` diz se o contrato entra no comprometido: o que tem pedido de serviço
-    no Suprimentos já está contado no pedido.
+    no Suprimentos já está contado no pedido. **Só o lado custo**: o contrato com
+    o contratante (`receita`) é o que a obra vai receber, não o que ela deve.
     """
     from . import services
-    from .models import ContratoObra
+    from .models import ContratoObra, LadoContrato
 
     saida = []
     for contrato in (ContratoObra.objects
-                     .filter(tenant_id=tenant_id, obra_id=obra_id,
+                     .filter(tenant_id=tenant_id, obra_id=obra_id, lado=LadoContrato.CUSTO,
                              status__in=[ContratoObra.Status.VIGENTE, ContratoObra.Status.SUSPENSO,
                                          ContratoObra.Status.ENCERRADO])
                      .select_related("fornecedor").prefetch_related("itens")):
@@ -113,13 +114,14 @@ def aplicado_por_etapa(tenant_id, obra_id) -> dict[int | None, Decimal]:
 
 def medido_por_etapa(tenant_id, obra_id) -> dict[int | None, Decimal]:
     """Serviço medido e aprovado, na etapa do item de contrato (pela atividade
-    ou, sem ela, pelo item orçado)."""
-    from .models import ItemMedicao, Medicao
+    ou, sem ela, pelo item orçado). Só a do empreiteiro: medir o contrato de
+    receita é faturar ao contratante, não incorrer custo."""
+    from .models import ItemMedicao, LadoContrato, Medicao
 
     saida: dict[int | None, Decimal] = defaultdict(lambda: ZERO)
     for etapa_ativ, etapa_item, qtd, preco in ItemMedicao.objects.filter(
         tenant_id=tenant_id, medicao__status=Medicao.Status.APROVADA,
-        medicao__contrato__obra_id=obra_id,
+        medicao__contrato__obra_id=obra_id, medicao__contrato__lado=LadoContrato.CUSTO,
     ).values_list("item_contrato__atividade__etapa_id", "item_contrato__item_orcado__etapa_id",
                   "quantidade", "preco_unitario"):
         saida[etapa_ativ or etapa_item] += (qtd or ZERO) * (preco or ZERO)
