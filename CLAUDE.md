@@ -46,6 +46,8 @@ de produção — isso é do **final do desenvolvimento** e está listado em
 - Identidade visual (Sistema Malha — marca, cor, tipografia, voz): [docs/identidade-visual.md](docs/identidade-visual.md)
 - Acesso e permissões: [docs/acesso-e-permissoes.md](docs/acesso-e-permissoes.md)
 - Como rodar: [docs/desenvolvimento.md](docs/desenvolvimento.md)
+- Produção (www.gmaxis.com — publicar atualização/módulo, dados, armadilhas): [docs/producao/](docs/producao/README.md).
+  Testes e ambiente dev **não** sobem para o servidor
 - Drone (Java + Angular, versionado aqui em `funcoesODM/`, docs próprias):
   [funcoesODM/docs/README.md](funcoesODM/docs/README.md) — a cópia em `ImgDrone/` é antiga, não editar
 

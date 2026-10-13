@@ -17,7 +17,7 @@ from modulocrm.models import Interaction, Lead
 from nucleo.models import Notificacao, Tenant, Usuario
 from modulocalendar import dias_uteis
 from modulocalendar.models import CalendarEvent, EventReminder, Feriado, FeriadoSync
-from modulocalendar.tasks import despachar_lembretes
+from modulocalendar.tasks import _feriados_no_boot, despachar_lembretes
 
 LOCMEM_CACHE = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
 # Sem cache: o feed recorrente é relistado após cada mutação (em produção o
@@ -285,6 +285,17 @@ class FeriadosSyncCommandTests(APITestCase):
         self.assertTrue(nacionais.filter(data=date(2100, 12, 25)).exists())
         self.assertTrue(Feriado.objects.filter(escopo="municipal", ibge="3550308").exists())
         self.assertEqual(FeriadoSync.objects.get(pk=1).anos, "1900–2100")
+
+    @patch("modulocalendar.tasks.sincronizar_feriados_task.delay")
+    def test_beat_sobe_e_sincroniza_o_banco_que_nunca_sincronizou(self, delay):
+        """Servidor novo (12/10/2026): o intervalo semanal só rodaria em 7 dias."""
+        _feriados_no_boot()
+        delay.assert_called_once()
+
+        delay.reset_mock()
+        FeriadoSync.objects.create(pk=1)
+        _feriados_no_boot()
+        delay.assert_not_called()
 
 
 @override_settings(CACHES=DUMMY_CACHE)

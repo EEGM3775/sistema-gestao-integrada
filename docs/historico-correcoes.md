@@ -10,6 +10,31 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D287 — `georreferenciar_cadastros --tenant` recusava todo tenant real · ✅ corrigido 13/10/2026
+
+O mapa da EEGM no VPS abria vazio ("Nenhum local com coordenada ainda"): os cadastros vieram do staging
+sem `Local`, e o comando que os cria só podia rodar para **todas** as empresas — o `--tenant` era
+`type=int` e o id é UUID. **Correção:** o argumento passa a texto; teste em
+`testes/backend/modulomaps/tests.py`. No servidor, rodado só para a EEGM: 8 locais, obra e
+empreendimento no centroide de Nazaré/BA, os outros 6 sem endereço na fila do mapa.
+
+### D286 — servidor novo sem feriado estadual nem municipal · ✅ corrigido 13/10/2026
+
+Achado pelo dono no VPS (www.gmaxis.com): o calendário não mostrava feriado estadual nem municipal.
+**Causa:** a tabela `Feriado` estava vazia — o `sincronizar_feriados` só roda pelo beat, com intervalo de
+7 dias, e o intervalo do Celery dispara a primeira volta uma semana depois de o beat subir.
+**Correção:** `modulocalendar.tasks._feriados_no_boot` (sinal `beat_init`) enfileira a sincronização
+quando não há `FeriadoSync`; no servidor, o comando foi rodado na mão (1934 nacionais, 4335 estaduais,
+16676 municipais de 2025–2026). Teste em `testes/backend/modulocalendar/tests.py`.
+
+### D285 — município não reconhecido quando o bairro vem antes da cidade com " - " · ✅ corrigido 13/10/2026
+
+A obra da EEGM ("…, Loteamento Villa Privillege - Nazaré/ Bahia") resolvia só a UF (`uf_apenas`), sem
+IBGE, e o calendário não trazia os feriados de Nazaré. **Causa:** `nucleo.geo._limpar_cidade` só tirava
+número antes do " - "; o loteamento ia junto e o nome não casava com o IBGE. **Correção:** a cidade é o
+que vem depois do último " - " com espaços (hífen sem espaço, como em "Embu-Guaçu", é do nome). Testes
+em `testes/backend/nucleo/test_geo.py`.
+
 ### D284 — o recebimento do Suprimentos não dava entrada no estoque nem chegava ao ERP · ✅ corrigido 11/10/2026
 
 Achado pelo dono no Pedido #6 (recebido total, NF-e informada): o estoque e o ERP não mudaram, não havia

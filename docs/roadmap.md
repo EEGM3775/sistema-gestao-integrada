@@ -39,7 +39,7 @@
 5. **Testes que não cobram o que dizem** — [D195](pendencias.md) (dois roteiros de navegador dirigem a tela apagada) e [D190](pendencias.md) (o teste dos tetos é cego em 47 dos 74).
 6. **Fase 7, o que falta** — Calendário e wrapper do drone (E.1–E.2); [D17](pendencias.md) (leitura unificada das duas trilhas de auditoria).
 7. **Prancheta e orçamento** — [D224](pendencias.md) (recalibrar escala), [D183](pendencias.md) / [D184](pendencias.md) (carga da base oficial), [D53](pendencias.md) (render vetorial).
-8. **VPS de teste real (www.gmaxis.com)** ✅ 12/10/2026 — staging sem drone + Cloudflare Tunnel, em [infra/vps/](../infra/vps/README.md); login ok, falta cadastrar o 2º fator do admin e decidir os dados (demo × tenant EEGM).
+8. **VPS de teste real (www.gmaxis.com)** ✅ 12/10/2026 — staging sem drone + Cloudflare Tunnel, com o banco do staging local restaurado; procedimentos em [producao/](producao/README.md). Falta: SMTP real, redirecionar o domínio raiz, backup automático.
 9. **Passkey** (WebAuthn) como segundo método de login.
 
 ### ⏸ Final do desenvolvimento (não trabalhar agora)

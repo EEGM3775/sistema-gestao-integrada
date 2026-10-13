@@ -2,6 +2,9 @@
 """Tarefas periódicas do calendário.
 
 - `sincronizar_feriados_task` (Fatia F): re-sincroniza o dataset de feriados.
+  Semanal no beat e, num banco que nunca sincronizou, também quando o beat sobe
+  (`_feriados_no_boot`) — o intervalo de 7 dias só dispara a primeira volta uma
+  semana depois, e o servidor novo ficava sem feriado estadual nem municipal.
 - `despachar_lembretes` (Fatia C): varre os `EventReminder` vencendo e emite uma
   `Notificacao` in-app (e e-mail, se configurado) por ocorrência, uma única vez.
 
@@ -12,6 +15,7 @@ import logging
 from datetime import timedelta
 
 from celery import shared_task
+from celery.signals import beat_init
 from django.core.management import call_command
 from django.utils import timezone
 
@@ -37,6 +41,18 @@ def sincronizar_feriados_task():
         call_command("sincronizar_feriados")
     except Exception:  # não derruba o worker se a rede/dataset falhar
         logger.exception("Falha ao sincronizar feriados")
+
+
+@beat_init.connect
+def _feriados_no_boot(sender=None, **kwargs):
+    """Banco sem `FeriadoSync` nunca sincronizou: enfileira a primeira volta já."""
+    try:
+        from .models import FeriadoSync
+
+        if not FeriadoSync.objects.exists():
+            sincronizar_feriados_task.delay()
+    except Exception:  # o beat não deixa de subir por causa disto
+        logger.exception("Falha ao agendar a primeira sincronização de feriados")
 
 
 def _ocorrencias_vencendo(reminder, agora):

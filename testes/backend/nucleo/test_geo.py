@@ -56,6 +56,16 @@ class GeoParseTests(APITestCase):
         self.assertEqual(geo.parse_endereco("Av. Brasil, 500 - São Paulo/SP"),
                          ("São Paulo", "SP"))
 
+    def test_parse_bairro_antes_da_cidade_com_traco(self):
+        # Endereço real da EEGM: o loteamento vinha junto e o município não casava.
+        self.assertEqual(
+            geo.parse_endereco("Rua Leandro Santana, Loteamento Villa Privillege - Nazaré/ Bahia"),
+            ("Nazaré", "BA"))
+
+    def test_parse_hifen_do_nome_da_cidade_fica(self):
+        self.assertEqual(geo.parse_endereco("Rua A, 10, Centro - Embu-Guaçu/SP"),
+                         ("Embu-Guaçu", "SP"))
+
     def test_parse_sem_uf_retorna_none(self):
         self.assertEqual(geo.parse_endereco("Rua sem estado, 10"), (None, None))
 
