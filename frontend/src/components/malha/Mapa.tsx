@@ -133,23 +133,34 @@ const BRASIL: [number, number] = [-51.9, -14.2]
  * Provedores GRÁTIS por padrão (planta §9). O tile público do OSM fica de fora
  * de propósito: a política de uso dele restringe uso comercial pesado, e um
  * SaaS multi-tenant é exatamente isso. Pago entra como knob de payment/.
+ *
+ * Claro e escuro são a base cinza da Esri com os rótulos por cima. A CARTO
+ * (`basemaps.cartocdn.com`) passou a exigir chave e devolvia "API KEY REQUIRED"
+ * em todo tile. A base cinza só tem imagem até o zoom 16 — acima disso a Esri
+ * serve um tile de "sem dado" —, então o `maxzoom` faz o MapLibre ampliar o 16.
  */
 function estilo(escuro: boolean, satelite: boolean): StyleSpecification {
   const esri = (servico: string) =>
     [`https://server.arcgisonline.com/ArcGIS/rest/services/${servico}/MapServer/tile/{z}/{y}/{x}`]
+  const cinza = (servico: string) =>
+    ({ type: 'raster' as const, tileSize: 256, maxzoom: 16, tiles: esri(`Canvas/${servico}`) })
   const vis = (on: boolean) => ({ visibility: on ? 'visible' as const : 'none' as const })
   return {
     version: 8,
     sources: {
-      claro: { type: 'raster', tileSize: 256, tiles: ['https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'], attribution: '© OpenStreetMap · © CARTO' },
-      escuro: { type: 'raster', tileSize: 256, tiles: ['https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'], attribution: '© OpenStreetMap · © CARTO' },
+      claro: { ...cinza('World_Light_Gray_Base'), attribution: 'Esri, HERE, Garmin, © OpenStreetMap' },
+      'claro-rotulos': cinza('World_Light_Gray_Reference'),
+      escuro: { ...cinza('World_Dark_Gray_Base'), attribution: 'Esri, HERE, Garmin, © OpenStreetMap' },
+      'escuro-rotulos': cinza('World_Dark_Gray_Reference'),
       satelite: { type: 'raster', tileSize: 256, tiles: esri('World_Imagery'), attribution: 'Esri, Maxar, Earthstar Geographics' },
       ruas: { type: 'raster', tileSize: 256, tiles: esri('Reference/World_Transportation') },
       lugares: { type: 'raster', tileSize: 256, tiles: esri('Reference/World_Boundaries_and_Places') },
     },
     layers: [
       { id: 'fundo-claro', type: 'raster', source: 'claro', layout: vis(!satelite && !escuro) },
+      { id: 'rotulo-claro', type: 'raster', source: 'claro-rotulos', layout: vis(!satelite && !escuro) },
       { id: 'fundo-escuro', type: 'raster', source: 'escuro', layout: vis(!satelite && escuro) },
+      { id: 'rotulo-escuro', type: 'raster', source: 'escuro-rotulos', layout: vis(!satelite && escuro) },
       { id: 'fundo-satelite', type: 'raster', source: 'satelite', layout: vis(satelite) },
       { id: 'rotulo-ruas', type: 'raster', source: 'ruas', layout: vis(satelite) },
       { id: 'rotulo-lugares', type: 'raster', source: 'lugares', layout: vis(satelite) },
@@ -160,7 +171,9 @@ function estilo(escuro: boolean, satelite: boolean): StyleSpecification {
 function aplicarFundo(m: MapLibreMap, escuro: boolean, satelite: boolean) {
   const vis: Record<string, boolean> = {
     'fundo-claro': !satelite && !escuro,
+    'rotulo-claro': !satelite && !escuro,
     'fundo-escuro': !satelite && escuro,
+    'rotulo-escuro': !satelite && escuro,
     'fundo-satelite': satelite,
     'rotulo-ruas': satelite,
     'rotulo-lugares': satelite,

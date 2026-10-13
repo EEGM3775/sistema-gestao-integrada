@@ -236,7 +236,8 @@ tela (origem + paradas na ordem marcada) e são traçadas na hora; traçado esti
 sem geocodificador ou motor de rota, o aviso nomeia a variável que liga; no servidor público do OSM,
 avisa que é de teste.
 
-**`<Mapa>`**: os fundos (Carto claro/escuro, Esri satélite + rótulos de ruas e lugares) vivem todos no
+**`<Mapa>`**: os fundos (Esri cinza claro/escuro + rótulos, Esri satélite + rótulos de ruas e lugares;
+os cinzas com `maxzoom: 16`, acima disso a Esri não tem imagem e o MapLibre amplia) vivem todos no
 estilo e trocar é mudar **visibilidade** — nunca `setStyle`, que descartava pins e polígonos. O worker
 do MapLibre 6 é empacotado explicitamente (`?worker&url` + `setWorkerUrl`). Modos de edição: `edicao`
 (pin arrastável) e `desenho` (polígono com vértices arrastáveis); camadas que saem da lista saem do
@@ -257,13 +258,13 @@ muda o que o cliente paga não vive no código de engenharia:
 
 | Capacidade | Padrão (incluso) | Add-on |
 |---|---|---|
-| Basemap | Esri World Imagery · Carto · OpenTopoMap (já em uso no drone, com atribuição) | MapTiler/Mapbox |
+| Basemap | Esri World Imagery · Esri Canvas (cinza claro/escuro) · OpenTopoMap (já em uso no drone, com atribuição) | MapTiler/Mapbox · Carto (passou a exigir chave) |
 | Geocodificação | Cascata própria (CEP → centroide IBGE) | Nominatim self-host · **Google Geocoding** (precisão de porta) |
 | Rota | **OSRM** self-host (traçado + matriz) + **heurística própria** para a ordem (vizinho-mais-próximo + 2-opt) | Google Routes · Valhalla (isócronas) · **OR-Tools** quando entrar frota/capacidade |
 | Raster | **COG + range request**; **TiTiler** (Python, sem 4º runtime) | tile server dedicado |
 
 > **Atenção ao tile do OSM público:** a *tile usage policy* restringe uso comercial pesado. O drone
-> hoje o lista entre os basemaps; num mapa de SaaS multi-tenant o padrão deve ser Esri/Carto, com OSM
+> hoje o lista entre os basemaps; num mapa de SaaS multi-tenant o padrão deve ser Esri, com OSM
 > como opção consciente.
 
 **Traçar × ordenar são coisas diferentes, e só a primeira vem de fora.** O traçado é geometria de rua

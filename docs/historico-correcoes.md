@@ -10,6 +10,22 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D290 — o fundo do mapa virou "API KEY REQUIRED" · ✅ corrigido 13/10/2026
+
+Relato do dono no VPS (tenant `taluma`): *"API KEY required carto.com/basemaps?apikey"*.
+
+**Causa.** Os fundos claro e escuro do `<Mapa>` vinham de `basemaps.cartocdn.com` sem chave. A CARTO
+passou a exigir chave e responde `200` com o mesmo PNG de aviso (2049 B) para qualquer tile e
+estilo; o satélite (Esri) seguia normal. O DSM do drone usava o mesmo fundo.
+
+**Correção.** [Mapa.tsx](../frontend/src/components/malha/Mapa.tsx): claro/escuro passam à base
+cinza da Esri (`Canvas/World_Light_Gray_*`, `World_Dark_Gray_*`), com a camada de rótulos por cima
+e `maxzoom: 16` (acima do 16 a Esri serve tile de "sem dado"; o MapLibre amplia o 16). Mesmo
+fornecedor do satélite, sem chave. O DSM do drone
+([dsm-tab.component.ts](../funcoesODM/frontend/src/app/features/projects/components/results-viewer/components/dsm-tab/dsm-tab.component.ts))
+usa a base cinza-escura com `maxNativeZoom: 16`.
+
+---
 ### D288 — o Maps mostrava o território, mas não deixava mexer nele · ✅ corrigido 12/10/2026
 
 Relato do dono, itens 62–70: *"Em maps tá sem API KEY"*; *"não entendi o que é Território… deveria

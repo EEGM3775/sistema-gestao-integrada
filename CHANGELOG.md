@@ -1,6 +1,29 @@
 # Changelog
 
 Todas as mudanças notáveis desta versão são documentadas aqui.
+## [1.0.15] - 2026-10-13
+
+### Remoção de módulo não necessário
+
+O módulo **"Esfera de Rede"** foi removido, conforme decisão do usuário. Ele era apenas um teaser estático sem funcionalidade real e o usuário pediu explicitamente para remover acesso a módulos que ainda estão sendo desenvolvidos: *"Não quero que usuários tenham acesso ao que vai ser desenvolvido. Então apague a aba"*.
+
+### Remoção da aba "Módulos"
+
+A aba **"Módulos"** foi removida da Home (`/app/erp`). Ela era o lançador de módulos e já não está mais necessária com essa decisão. O arquivo `TabModulos.tsx` foi deletado.
+
+#### Que foi removido:
+- A seção "Ecossistema › Esfera de Rede" na barra lateral (`AppSidebar.tsx`)
+- As abas bloqueadas "Esfera de Rede" nos módulos SCM e SIL (`SuprimentosPage.tsx`, `LogisticaPage.tsx`, `gestao.tsx`)
+- O conteúdo estático/teaser da "Esfera de Rede" em todos os módulos onde estava incluído
+- A aba "Módulos" da home (`AppHomePage.tsx` e `TabVisaoGeral.tsx`)
+- O link "Ver todos os módulos" na Visão geral
+- O contador "módulos disponíveis" no cabeçalho
+
+#### Que foi mantido:
+- Os identificadores internos (`cockpit`, APIs do backend, nomes de função) para não quebrar rotas nem a API
+- Os comentários e o backend (se quiser renomear também, é uma segunda passada)
+- O resto da estrutura do sidebar e da home
+
 
 ## [1.0.14] - 2026-07-25
 
@@ -368,6 +391,11 @@ vem da rotação/detecção de reuso e do cookie HttpOnly, não da inconveniênc
 - D5 - Cadastros-base sem camada 2 (parcial - clientes, fornecedores, obras, empreendimentos)
 
 #### Testes
+## [1.0.16] - 2026-10-14
+
+### Remoção de módulo não necessário
+
+O módulo **\"Esfera de Rede\"** foi removido, conforme decisão do usuário. Ele era apenas um teaser estático sem funcionalidade real e o usuário pediu explicitamente para remover acesso a módulos que ainda estão sendo desenvolvidos: *\"Não quero que usuários tenham acesso ao que vai ser desenvolvido. Então apague a aba\"*.\n\n### Remoção da aba \"Módulos\"\n\nA aba **\"Módulos\"** foi removida da Home (`/app/erp`). Ela era o lançador de módulos e já não está mais necessária com essa decisão. O arquivo `TabModulos.tsx` foi deletado.\n\n#### Que foi removido:\n- A seção \"Ecossistema › Esfera de Rede\" na barra lateral (`AppSidebar.tsx`)\n- As abas bloqueadas \"Esfera de Rede\" nos módulos SCM e SIL (`SuprimentosPage.tsx`, `LogisticaPage.tsx`, `gestao.tsx`)\n- O conteúdo estático/teaser da \"Esfera de Rede\" em todos os módulos onde estava incluído\n- A aba \"Módulos\" da home (`AppHomePage.tsx` e `TabVisaoGeral.tsx`)\n- O link \"Ver todos os módulos\" na Visão geral\n- O contador \"módulos disponíveis\" no cabeçalho\n\n#### Que foi mantido:\n- Os identificadores internos (`cockpit`, APIs do backend, nomes de função) para não quebrar rotas nem a API\n- Os comentários e o backend (se quiser renomear também, é uma segunda passada)\n- O resto da estrutura do sidebar e da home
 - `nucleo/test_auditoria.py` (7 testes)
 - `nucleo/test_lgpd.py` (8 testes)
 - `rh/test_field_masking.py` (11 testes)

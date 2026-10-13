@@ -55,6 +55,27 @@ contêiner que faltava na frota geral — foi fechado em 07/08/2026, também no 
 A1 - Verificação sobre uso de hardware
 Uma observação: o ERP no servidor roda com o comando padrão da imagem, `gunicorn` com  **1 processo síncrono** , e não com os 2 processos × 4 threads do `base.yml`. Com mais gente usando ao mesmo tempo, isso pode voltar a deixar o sistema lento.
 
+### D289 — o cookie `__Host-sgi_sessao` não é preso ao dispositivo, e não há tela de sessões ativas · 🟠 aberto 13/10/2026
+
+Revisão da sessão do BFF (`iam/identity/sessoes.py`, `models.Sessao`, `iam_project/settings.py`).
+**O que está certo:** cookie `HttpOnly` + `Secure` + `SameSite=Strict` + `__Host-`; credencial de 256 bits
+guardada só como hash; o nginx tira o cookie antes dos serviços; logout, troca de senha, desativação e
+"encerrar todas" revogam no servidor e no Redis; janela de 2 h/12 h (7 d/30 d com "manter conectado"); CSRF
+por `X-SGI-CSRF`; step-up por `auth_time`/`amr`.
+
+**O que falta:**
+
+1. A `Sessao` não guarda user-agent nem IP. Quem copiar o valor do cookie (tela compartilhada, DevTools colado
+   em chat, malware) usa a sessão de outro computador, sem alerta, até ela expirar ou ser revogada. A detecção
+   de reuso só pega o ladrão se a pessoa legítima também estiver usando (comentário em `settings.py:245`).
+2. Sem tela "Meus dispositivos" (listar e encerrar sessões) — só o backend foi lido; conferir o frontend.
+3. Cabeçalhos de resposta duplicados (`X-Frame-Options` DENY e SAMEORIGIN, `Strict-Transport-Security`,
+   `X-Content-Type-Options`, `Referrer-Policy`): duas camadas (nginx e Django) emitem o mesmo. Sem risco, mas
+   deixar uma só responsável.
+
+**Caminho:** guardar hash do user-agent (e IP de criação) na `Sessao` — migration no IAM — e derrubar a sessão
+quando o user-agent mudar; tela de sessões ativas; unificar os cabeçalhos.
+
 ### F2 — Selects carregam tabelas inteiras · 🟠 parcial 25/07/2026
 
 Formulários carregam todos os clientes/fornecedores/empreendimentos para montar selects.
