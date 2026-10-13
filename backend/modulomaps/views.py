@@ -16,6 +16,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from django.conf import settings
+from django.db.models import ProtectedError
 from django.http import HttpResponse
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
@@ -30,7 +31,7 @@ from nucleo.tenancy import TenantScopedAPIViewMixin, TenantScopedViewSetMixin
 
 from . import deteccao, rotas as motor_rotas, services, voo
 from .models import (
-    Camada, Feicao, Geofence, Local, Ortofoto, ParadaRota, Precisao, PlanoVoo, Rota,
+    Camada, Feicao, FonteGeo, Geofence, Local, Ortofoto, ParadaRota, Precisao, PlanoVoo, Rota,
 )
 from .pagination import MapsPageNumberPagination
 from .serializers import (
@@ -73,6 +74,16 @@ class MapsStatusView(views.APIView):
                 "motor_rota": bool(getattr(settings, "OSRM_URL", "")),
                 "tiles_raster": bool(getattr(settings, "TITILER_URL", "")),
             },
+            # Servidor PÚBLICO do OpenStreetMap ligado: funciona, mas é de teste
+            # (cota baixa, sem garantia, uso comercial pesado proibido). A tela
+            # diz isso em vez de deixar parecer infraestrutura de produção.
+            "provedores_publicos": [
+                nome for nome, url in (
+                    ("geocodificacao_endereco", getattr(settings, "NOMINATIM_URL", "")),
+                    ("motor_rota", getattr(settings, "OSRM_URL", "")),
+                )
+                if any(h in (url or "") for h in ("openstreetmap.org", "project-osrm.org"))
+            ],
         })
 
 
@@ -132,6 +143,47 @@ class LocalViewSet(BaseFundacaoViewSet):
             return
         services.completar_localidade(local)
         services.geocodificar_local(local)
+
+    def perform_update(self, serializer):
+        """Pin movido à mão vira `exata/manual` — a mesma regra da criação.
+
+        Faltava: a criação já respeitava o pin enviado, mas a **edição** gravava
+        o ponto novo com a precisão antiga. Arrastar o pin de uma obra que estava
+        "no centro da cidade" deixava a coordenada certa carimbada como
+        `municipio` — e a fila de decisão continuava cobrando o que já tinha sido
+        resolvido no campo. Tirar o pin (`ponto: null`) volta o local para "sem
+        coordenada", que é o estado honesto, em vez de manter um rótulo de
+        precisão sem ponto nenhum atrás.
+        """
+        anterior = serializer.instance.ponto
+        super().perform_update(serializer)
+        if "ponto" not in serializer.validated_data:
+            return
+        local = serializer.instance
+        if local.ponto is None:
+            local.precisao, local.fonte, local.geocodificado_em = Precisao.DESCONHECIDA, "", None
+        elif anterior is None or not local.ponto.equals_exact(anterior, 1e-9):
+            local.precisao, local.fonte = Precisao.EXATA, FonteGeo.MANUAL
+            local.geocodificado_em = timezone.now()
+        else:
+            return
+        local.save(update_fields=["precisao", "fonte", "geocodificado_em", "atualizado_em"])
+
+    def destroy(self, request, *args, **kwargs):
+        """Local que é origem ou parada de rota não se apaga — e diz por quê.
+
+        `Rota.origem` e `ParadaRota.local` são `PROTECT`; sem este desvio o
+        `ProtectedError` subia como 500, e a tela mostrava "erro" para uma
+        situação que tem nome e tem saída.
+        """
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except ProtectedError:
+            return Response(
+                {"detail": "Este local está em uma rota (origem ou parada). "
+                           "Exclua ou edite a rota antes de excluí-lo."},
+                status=status.HTTP_409_CONFLICT,
+            )
 
     @action(detail=True, methods=["post"])
     def geocodificar(self, request, pk=None):
@@ -300,6 +352,34 @@ class PlanoVooViewSet(BaseCamadaViewSet):
     filterset_fields = ["obra", "tipo"]
     search_fields = ["nome"]
     required_resource = "mapa.plano_voo"
+
+    #: Campos dos quais o cálculo depende. Mudou um deles, o traçado gravado
+    #: deixou de descrever o plano.
+    _ENTRADAS_DO_CALCULO = (
+        "area", "tipo", "gsd_alvo_cm", "sobreposicao_frontal_pct",
+        "sobreposicao_lateral_pct", "velocidade_ms", "angulo_graus",
+    )
+
+    def perform_update(self, serializer):
+        """Redesenhar a área apaga o cálculo antigo.
+
+        Sem isto, editar o polígono deixava na tela as linhas de voo, a altura e
+        os waypoints da área ANTERIOR — e o exportar mandaria ao drone um voo
+        sobre o terreno errado. Plano editado volta a "não calculado", que é o
+        que ele é até alguém apertar Calcular.
+        """
+        mudou = any(campo in serializer.validated_data for campo in self._ENTRADAS_DO_CALCULO)
+        super().perform_update(serializer)
+        if not mudou:
+            return
+        plano = serializer.instance
+        plano.linha, plano.waypoints = None, []
+        plano.distancia_m = plano.duracao_min = plano.fotos_estimadas = None
+        plano.altura_m = plano.calculado_em = None
+        plano.save(update_fields=[
+            "linha", "waypoints", "distancia_m", "duracao_min",
+            "fotos_estimadas", "altura_m", "calculado_em",
+        ])
 
     @action(detail=False, methods=["post"], url_path="do-local")
     def do_local(self, request):

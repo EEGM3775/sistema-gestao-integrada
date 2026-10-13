@@ -888,6 +888,9 @@ NOMINATIM_URL = os.getenv('NOMINATIM_URL', '')
 # `User-Agent` é exigência da política de uso do Nominatim público; num
 # self-host é só rastro. Identifica a instalação, não o usuário final.
 NOMINATIM_USER_AGENT = os.getenv('NOMINATIM_USER_AGENT', 'sgi-plataforma/1.0')
+# Chave de provedor COMPATÍVEL com o Nominatim (LocationIQ e afins: mesma API,
+# `/search?q=&format=`, mais `?key=`). Vazia para o público ou self-host.
+NOMINATIM_API_KEY = os.getenv('NOMINATIM_API_KEY', '')
 # CEP → coordenada (BrasilAPI v2 devolve `location` quando conhece o logradouro).
 BRASILAPI_CEP_URL = os.getenv('BRASILAPI_CEP_URL', 'https://brasilapi.com.br/api/cep/v2')
 # Malha municipal do IBGE — de onde sai o centroide de município (último degrau).

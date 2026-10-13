@@ -140,12 +140,13 @@ decidir é a contagem de `precisao_grosseira` na fila de decisão dos primeiros 
 
 | Rota | Verbo de domínio |
 |---|---|
+| `status/` | O que a instalação tem: `provedores` (geocodificação, motor de rota, tiles) e `provedores_publicos` (os ligados no servidor público do OSM) |
 | `mapa/` | O mapa da empresa num payload só: pins + resumo por tipo/precisão + **fila de decisão**. Sem entitlement (são `Local`); as camadas pagas só entram se o tenant assina |
-| `locais/` | CRUD; `{id}/geocodificar/[?forcar=1]` (cascata); `proximos/?de=&raio_km=&tipo=` |
+| `locais/` | CRUD — `PATCH` com `ponto` vira `exata/manual` (`ponto: null` volta a "sem coordenada"); `DELETE` de local em rota dá **409**; `{id}/geocodificar/[?forcar=1]` (cascata); `proximos/?de=&raio_km=&tipo=` |
 | `camadas/` · `feicoes/` | CRUD; `feicoes/?bbox=&desde=&ate=` (recorte espacial **e temporal**) |
 | `ortofotos/` | Índice do acervo; `?bbox=&obra=`; `{id}/tiles/{z}/{x}/{y}/` |
-| `planos-voo/` | CRUD; **`do-local/`** (cria o plano a partir de um `Local` — perímetro desenhado se houver, círculo de `raio_m` se não, e a resposta declara qual dos dois em `origem_da_area`); `{id}/calcular/` (traçado + altura + memória de cálculo); `{id}/exportar/?formato=kml|plan|litchi|wpml` ||plan\|litchi\|wpml` |
-| `rotas/` · `paradas/` | CRUD; `{id}/tracar/` (ordem atual); `{id}/otimizar/` (reordena + devolve violações de janela) |
+| `planos-voo/` | CRUD — `PATCH` em área/tipo/GSD/sobreposição **apaga o cálculo** (linha, waypoints, altura); **`do-local/`** (cria o plano a partir de um `Local` — perímetro desenhado se houver, círculo de `raio_m` se não, e a resposta declara qual dos dois em `origem_da_area`); `{id}/calcular/` (traçado + altura + memória de cálculo); `{id}/exportar/?formato=kml|plan|litchi|wpml` ||plan\|litchi\|wpml` |
+| `rotas/` · `paradas/` | CRUD — a rota aceita **`paradas_locais`** (ids na ordem; no PATCH substitui as paradas e apaga o traçado velho); `{id}/tracar/` (ordem atual); `{id}/otimizar/` (reordena + devolve violações de janela) |
 | `geofences/` | CRUD; `gerar/` (do perímetro do `Local` ou de um raio); `conter/?lon=&lat=` |
 | `detectar-endereco/` | Texto livre **ou XML de NF-e** → endereços candidatos (§7, item 5) |
 | `camadas-externas/` | Catálogo de WMS/WFS do tenant — **MAP.7** |
@@ -206,15 +207,40 @@ de feições sem derrubar o browser (o mapa da empresa é isso), e o **estilo é
 escuro da Malha saem do mesmo mecanismo de tema, sem trocar de provedor de tile. O Leaflet **fica** no
 drone; são dois contextos, não uma migração.
 
-Página no padrão da régua ([frontend.md §1.6](../frontend.md)): **Operação × Território**, com fila de
-decisão real — *obras sem coordenada*, *pins no centro da cidade*, *ortofoto vencida* (último voo há N
-dias), *plano de voo sem autorização*. Pin com **precisão visível** (§5).
+Página no padrão da régua ([frontend.md §1.6](../frontend.md)): **uma fileira de abas** — Mapa da
+empresa · Vizinhança · Planos de voo · Acervo de voos · Rotas —, com fila de decisão real — *obras sem
+coordenada*, *pins no centro da cidade*, *ortofoto vencida* (último voo há N dias), *plano de voo sem
+autorização*. Pin com **precisão visível** (§5).
 
-O corte Operação × Território **é o mesmo do backend**: Operação é a metade fundação e abre para todo
-tenant; Território é a metade vendável e, sem o entitlement, mostra o cadeado com o que existe do
-outro lado — nunca some ([identidade §3.2](../identidade-visual.md)). Por isso a rota `/app/maps`
-**não** fica atrás de `ModuleRoute`: pendurá-la no entitlement daria 403 exatamente na tela que
-existe para quem ainda não contratou entender o módulo.
+O corte fundação × produto **é o do backend, mas não vira dois níveis de navegação**: as abas do
+módulo pago (voos, acervo, rotas) ganham um cadeado sem o entitlement e abrem o cartão que explica o
+que existe do outro lado — nunca somem ([identidade §3.2](../identidade-visual.md)). Por isso a rota
+`/app/maps` **não** fica atrás de `ModuleRoute`: pendurá-la no entitlement daria 403 exatamente na
+tela que existe para quem ainda não contratou entender o módulo.
+
+**Mapa da empresa = mapa + painel + camadas.** O mapa e a lista de locais ficam **lado a lado, com a
+mesma altura**, e quem rola é a lista (em tela estreita ela desce para baixo do mapa com altura
+limitada) — lista e pins obedecem aos mesmos filtros (tipo, precisão, busca). A linha escolhida
+enquadra o pin; o pin clicado traz a linha. No local escolhido: **posicionar/mover o pin à mão**
+(marcador arrastável ou clique no mapa → `PATCH ponto`, que vira `exata/manual`), rodar a cascata,
+excluir ponto avulso; **Novo ponto** cria um `Local` avulso pelo clique. Por cima do mapa ligam e
+desligam as **camadas**: planos de voo, rotas, envelopes do acervo e as `Camada` temáticas — é onde
+cadastro, voo e entrega se encontram no mesmo enquadramento. A **legenda** usa a mesma tabela de cores
+do pin (`mapaCores.ts`): cor = tipo (cada tipo filtra ao clicar), halo = precisão.
+
+**Planos de voo = um mapa com todos os planos**, enquadrado neles, e o mapa como prancheta: o polígono
+se **desenha** (clique marca canto, arrasto ajusta, botão direito remove) para criar e para **editar**
+a área; salvar recalcula. Criar a partir de um `Local` continua (`do-local/`). **Rotas** nascem na
+tela (origem + paradas na ordem marcada) e são traçadas na hora; traçado estimado aparece
+**tracejado**, para não se passar por rua. As abas dizem o que a instalação não tem (`status/`):
+sem geocodificador ou motor de rota, o aviso nomeia a variável que liga; no servidor público do OSM,
+avisa que é de teste.
+
+**`<Mapa>`**: os fundos (Carto claro/escuro, Esri satélite + rótulos de ruas e lugares) vivem todos no
+estilo e trocar é mudar **visibilidade** — nunca `setStyle`, que descartava pins e polígonos. O worker
+do MapLibre 6 é empacotado explicitamente (`?worker&url` + `setWorkerUrl`). Modos de edição: `edicao`
+(pin arrastável) e `desenho` (polígono com vértices arrastáveis); camadas que saem da lista saem do
+mapa; sem pins, o enquadramento é pelas camadas.
 
 **A precisão é desenhada, não escrita:** cada pin ganha um halo cujo raio cresce com a incerteza —
 ponto firme é porta, mancha larga é "algum lugar nesta cidade". Legenda existe, mas a forma já conta.
@@ -250,6 +276,12 @@ por cento dele. OR-Tools entra quando o problema virar **VRPTW de verdade** (fro
 dura); antes disso, seriam ~100 MB de dependência nativa na imagem e no CI para resolver um problema
 que não existe ainda. A **janela de horário não é violada em silêncio**: o otimizador devolve, junto
 da ordem, as violações que ela produziu — quem remaneja é quem conhece o canteiro.
+
+**Configuração** (`.env` da raiz → `deploy/compose/base.yml` repassa ao `erp` e ao `worker`):
+`NOMINATIM_URL` (+ `NOMINATIM_API_KEY` para provedor compatível com chave, como o LocationIQ — vai
+como `?key=` e nunca aparece em log), `NOMINATIM_USER_AGENT`, `OSRM_URL`, `TITILER_URL`. O exemplo de
+**dev** aponta para os servidores públicos do OSM (Nominatim e OSRM de demonstração) — servem para
+testar, e a tela avisa; staging e produção ficam vazios até haver self-host ou chave.
 
 Quotas de COGS (`geocodificacoes_mes`, `rotas_mes`, `storage_raster_gb`) nascem **declaradas e
 inertes**, como as demais — medem e cobram, não travam.
