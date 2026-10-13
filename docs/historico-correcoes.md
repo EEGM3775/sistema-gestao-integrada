@@ -10,21 +10,7 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
-### D290 — o contrato com o cliente entrava no custo da obra · ✅ corrigido 13/10/2026
-
-Relato do dono: o contrato 03 (R$ 30.000, vigente) aparecia no Controle › Custo como *"conta no
-comprometido"* — mas é o contrato com o **cliente**, o serviço que a empresa executa.
-
-**Causa.** O `ContratoObra` ganhou o `lado` (custo × receita) em 10/10/2026, mas as leituras de custo
-não passaram a filtrá-lo: `controle.contratos_comprometidos` somava todo contrato vigente no
-comprometido, e `controle.medido_por_etapa` e o "medido" por atividade (`suprimentos.py`) somavam a
-medição aprovada de qualquer contrato como custo incorrido — o faturamento ao contratante virava
-gasto, e o IDC/custo final saíam errados.
-
-**Correção.** As três leituras filtram `lado=custo`. Teste:
-`test_controle.ColunasTests.test_contrato_com_o_contratante_nao_e_custo`.
-
-### D289 — a semana assumida antes de um replanejamento não fechava · ✅ corrigido 13/10/2026
+### D292 — a semana assumida antes de um replanejamento não fechava · ✅ corrigido 13/10/2026
 
 Relato do dono: não conseguia fechar a semana 05–11/10 (Plano › Controle › Semana).
 
@@ -44,6 +30,36 @@ leem a cadeia da vigente; o arrasto cria o cartão da semana seguinte na versão
 `cumpridoDoCartao` (`pdca/semana.ts`) deriva o "não saiu" do % contra a meta. Testes:
 `test_semana_replanejada.py`.
 
+### D291 — o contrato com o cliente entrava no custo da obra · ✅ corrigido 13/10/2026
+
+Relato do dono: o contrato 03 (R$ 30.000, vigente) aparecia no Controle › Custo como *"conta no
+comprometido"* — mas é o contrato com o **cliente**, o serviço que a empresa executa.
+
+**Causa.** O `ContratoObra` ganhou o `lado` (custo × receita) em 10/10/2026, mas as leituras de custo
+não passaram a filtrá-lo: `controle.contratos_comprometidos` somava todo contrato vigente no
+comprometido, e `controle.medido_por_etapa` e o "medido" por atividade (`suprimentos.py`) somavam a
+medição aprovada de qualquer contrato como custo incorrido — o faturamento ao contratante virava
+gasto, e o IDC/custo final saíam errados.
+
+**Correção.** As três leituras filtram `lado=custo`. Teste:
+`test_controle.ColunasTests.test_contrato_com_o_contratante_nao_e_custo`.
+
+### D290 — o fundo do mapa virou "API KEY REQUIRED" · ✅ corrigido 13/10/2026
+
+Relato do dono no VPS (tenant `taluma`): *"API KEY required carto.com/basemaps?apikey"*.
+
+**Causa.** Os fundos claro e escuro do `<Mapa>` vinham de `basemaps.cartocdn.com` sem chave. A CARTO
+passou a exigir chave e responde `200` com o mesmo PNG de aviso (2049 B) para qualquer tile e
+estilo; o satélite (Esri) seguia normal. O DSM do drone usava o mesmo fundo.
+
+**Correção.** [Mapa.tsx](../frontend/src/components/malha/Mapa.tsx): claro/escuro passam à base
+cinza da Esri (`Canvas/World_Light_Gray_*`, `World_Dark_Gray_*`), com a camada de rótulos por cima
+e `maxzoom: 16` (acima do 16 a Esri serve tile de "sem dado"; o MapLibre amplia o 16). Mesmo
+fornecedor do satélite, sem chave. O DSM do drone
+([dsm-tab.component.ts](../funcoesODM/frontend/src/app/features/projects/components/results-viewer/components/dsm-tab/dsm-tab.component.ts))
+usa a base cinza-escura com `maxNativeZoom: 16`.
+
+---
 ### D288 — o Maps mostrava o território, mas não deixava mexer nele · ✅ corrigido 12/10/2026
 
 Relato do dono, itens 62–70: *"Em maps tá sem API KEY"*; *"não entendi o que é Território… deveria

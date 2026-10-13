@@ -1,6 +1,5 @@
-import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
-import { ArrowRight, Gauge } from 'lucide-react'
+import { Gauge } from 'lucide-react'
 import { Card, Empty, KpiTile, Loading, SectionHead } from '@/components/malha'
 import { ListaDecisoes } from './TabDecisoes'
 import { QuotaMeter } from './QuotaMeter'
@@ -117,12 +116,6 @@ export function TabVisaoGeral({ r }: { r: Resumo }) {
           {fontes.pdca && <>, <b style={{ color: 'var(--ink-2)' }}>PDCA</b></>}
           . Cada módulo calcula o seu agregado no backend.
         </span>
-        <Link
-          to="/app/dashboard?aba=modulos"
-          style={{ marginLeft: 'auto', fontSize: 11.5, fontWeight: 600, color: 'var(--brand)', display: 'inline-flex', alignItems: 'center', gap: 4 }}
-        >
-          Ver todos os módulos <ArrowRight size={12} />
-        </Link>
       </Card>
     </div>
   )

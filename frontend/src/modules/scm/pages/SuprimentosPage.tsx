@@ -1,9 +1,9 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
-  LayoutDashboard, Tags, FileSpreadsheet, ShoppingCart, Network, ClipboardList,
+  LayoutDashboard, Tags, FileSpreadsheet, ShoppingCart, ClipboardList,
   PackageCheck, ChevronRight, Coins, Gavel, Truck, Clock, Check, Sparkles, ArrowLeft,
-  Package, Upload, LineChart, BadgeCheck, ArrowLeftRight, Store, AlertTriangle,
+  Package,
   Boxes, Star, Zap, Lock, PlusCircle, Trash2,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
@@ -28,11 +28,10 @@ import { mono, KIND, CAPS, inp, lerDecimal, type Say } from '../components/estil
 let toastTimer: number | undefined
 
 /* ─── página ─── */
-type TabId = 'cockpit' | 'catalogo' | 'cotacao' | 'pedidos' | 'rede'
+type TabId = 'cockpit' | 'catalogo' | 'cotacao' | 'pedidos'
 const TABS: { id: TabId; label: string; icon: ReactNode; locked?: boolean }[] = [
-  { id: 'cockpit', label: 'Cockpit', icon: <LayoutDashboard size={15} /> }, { id: 'catalogo', label: 'Catálogo', icon: <Tags size={15} /> },
+  { id: 'cockpit', label: 'Painel', icon: <LayoutDashboard size={15} /> }, { id: 'catalogo', label: 'Catálogo', icon: <Tags size={15} /> },
   { id: 'cotacao', label: 'Cotação', icon: <FileSpreadsheet size={15} /> }, { id: 'pedidos', label: 'Pedidos', icon: <ShoppingCart size={15} /> },
-  { id: 'rede', label: 'Esfera de Rede', icon: <Network size={15} />, locked: true },
 ]
 
 export default function SuprimentosPage() {
@@ -86,7 +85,6 @@ export default function SuprimentosPage() {
         {tab === 'catalogo' && <Catalogo say={say} onComprou={openPed} onCotou={openCot} />}
         {tab === 'cotacao' && (selCot != null ? <CotacaoDetail id={selCot} onBack={() => setSelCot(null)} openPed={openPed} say={say} /> : <CotacaoList onOpen={setSelCot} say={say} onComprou={openPed} />)}
         {tab === 'pedidos' && (selPed != null ? <PedidoDetail id={selPed} onBack={() => setSelPed(null)} say={say} /> : <PedidoList onOpen={setSelPed} say={say} onComprou={setSelPed} />)}
-        {tab === 'rede' && <Rede />}
       </div>
 
       {toast && <div role="status" style={{ position: 'fixed', bottom: 24, left: '50%', maxWidth: 'min(640px, calc(100vw - 32px))', background: 'var(--ink)', color: 'var(--surface)', padding: '12px 18px', borderRadius: 11, fontSize: 13.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 10, zIndex: 100, boxShadow: 'var(--shadow-lg)', animation: 'scmToast .28s cubic-bezier(.2,.7,.2,1) both' }}><Check size={17} style={{ color: 'var(--good)' }} />{toast}</div>}
@@ -788,38 +786,4 @@ function NovaCompraModal({ onClose, onDone, say, iniciais, demanda }: {
       </div>
     </div>
   </Modal>
-}
-
-/* ═══ ESFERA DE REDE (estático) ═══ */
-function Rede() {
-  return (
-    <>
-      <div style={{ padding: '30px 30px 28px', borderRadius: 'var(--r-xl)', position: 'relative', overflow: 'hidden', background: 'linear-gradient(125deg,var(--brand),#08203f 60%,#0a2c5e)', color: '#EAF1FC', border: '1px solid var(--brand-2)' }}>
-        <div style={{ position: 'absolute', right: -60, top: -60, width: 260, height: 260, borderRadius: 999, background: 'radial-gradient(circle,rgba(15,138,147,.5),transparent 65%)' }} />
-        <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#7FE0E6', background: 'rgba(15,138,147,.18)', border: '1px solid rgba(43,182,191,.35)', padding: '5px 12px', borderRadius: 999 }}><Lock size={12} /> Bloqueado · em construção — Horizonte H2–H3</span>
-        <h2 style={{ position: 'relative', fontSize: 26, fontWeight: 750, letterSpacing: '-0.03em', margin: '16px 0 8px', maxWidth: 560, color: '#fff' }}>O mesmo mapa de cotação, aberto para o mercado inteiro.</h2>
-        <p style={{ position: 'relative', color: '#B3C6E4', fontSize: 14, maxWidth: 600, lineHeight: 1.6 }}>Hoje você cota entre fornecedores conhecidos. Na <b style={{ color: '#EAF1FC' }}>Esfera de Rede</b>, publicar a demanda a envia como RFQ para as lojas da região — elas respondem na mesma fila de orçamentos, e cada loja de fora vira um convite de trial. O SCM já carrega os <i>seams</i>; esta aba mostra para onde a costura leva.</p>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: 16, marginTop: 18 }}>
-        <RoadCard icon={<Upload size={20} />} tag="H2" title="Publicar RFQ na rede" seam="visibilidade · ref_externa">Um clique projeta a demanda como cotação pública para lojas parceiras. Respostas voltam como Proposta — cópia com estado, sem FK cruzada.</RoadCard>
-        <RoadCard icon={<LineChart size={20} />} tag="H3" title="Índice de preço regional" seam="fonte: Recebimento">Cada pedido concluído alimenta um benchmark k-anônimo por região e categoria. Você passa a saber se o preço praticado está caro.</RoadCard>
-        <RoadCard icon={<BadgeCheck size={20} />} tag="H2" title="Reputação portátil" seam="fonte: AvaliacaoFornecedor">As avaliações que você já registra viram selo verificado na vitrine do fornecedor — reputação só sobre transação real, impossível de forjar.</RoadCard>
-      </div>
-      <SectHead>O documento espelhado — comprador ↔ vendedor</SectHead>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 44px 1fr', alignItems: 'stretch' }}>
-        <MirrorSide color="var(--accent)" ink="var(--accent-ink)" title="Construtora · você (comprador)" items={['Demanda / RFQ publicada', 'PedidoCompra (origem: cotacao)', 'Recebimento + Avaliação']} />
-        <div style={{ display: 'grid', placeItems: 'center', color: 'var(--net)' }}><ArrowLeftRight size={22} /></div>
-        <MirrorSide color="var(--net)" ink="var(--net-ink)" title="Loja · Edição Loja (vendedor)" items={['RFQ na fila de orçamentos', 'Pedido de venda', 'NF-e + boleto (Asaas)']} icon={<Store size={13} />} />
-      </div>
-      <div style={{ display: 'flex', gap: 12, padding: '14px 16px', borderRadius: 'var(--r-md)', background: 'var(--accent-soft)', border: '1px solid color-mix(in srgb,var(--accent) 35%,var(--line))', fontSize: 12.5, color: 'var(--accent-ink)', lineHeight: 1.55, marginTop: 18 }}>
-        <AlertTriangle size={18} style={{ flex: 'none', marginTop: 1 }} /><span><b>Fronteira honesta:</b> nada aqui está construído. O lado vendedor, a sincronização e o checkout graduam junto com a Esfera de Rede — o backend atual entrega só o lado comprador com os <i>seams</i> prontos.</span>
-      </div>
-    </>
-  )
-}
-function RoadCard({ icon, tag, title, seam, children }: { icon: ReactNode; tag: string; title: string; seam: string; children: ReactNode }) {
-  return <Card style={{ display: 'flex', flexDirection: 'column', gap: 12 }}><div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><div style={{ width: 40, height: 40, borderRadius: 'var(--r-md)', background: 'var(--net-soft)', color: 'var(--net-ink)', display: 'grid', placeItems: 'center' }}>{icon}</div><Pill kind={tag === 'H2' ? 'net' : 'slate'}>{tag}</Pill></div><h3 style={{ fontFamily: 'var(--display)', fontSize: 15, fontWeight: 700, color: 'var(--ink)' }}>{title}</h3><p style={{ fontSize: 12.5, color: 'var(--ink-2)', lineHeight: 1.55 }}>{children}</p><div style={{ fontSize: 11.5, color: 'var(--ink-3)', display: 'flex', alignItems: 'center', gap: 7, paddingTop: 11, borderTop: '1px solid var(--line-2)' }}><BadgeCheck size={13} style={{ color: 'var(--net)' }} /><code style={{ ...mono, fontSize: 11, background: 'var(--inset)', padding: '1px 6px', borderRadius: 5, color: 'var(--net-ink)' }}>{seam}</code></div></Card>
-}
-function MirrorSide({ color, ink, title, items, icon }: { color: string; ink: string; title: string; items: string[]; icon?: ReactNode }) {
-  return <div style={{ padding: 18, borderRadius: 'var(--r-md)', border: `1px solid color-mix(in srgb,${color} 35%,var(--line))` }}><b style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.05em', color: ink, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 6 }}>{icon}{title}</b><ul style={{ listStyle: 'none', marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>{items.map(it => <li key={it} style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 13, color: 'var(--ink-2)' }}><span style={{ width: 7, height: 7, borderRadius: 2, flex: 'none', background: color }} />{it}</li>)}</ul></div>
 }
