@@ -13,7 +13,7 @@
 
 | O que                                | Para onde                                                  | Por quê                                                                  |
 | ------------------------------------ | ---------------------------------------------------------- | ------------------------------------------------------------------------- |
-| 144 achados corrigidos               | [historico-correcoes.md](historico-correcoes.md)            | Corrigido não é pendência — é histórico                             |
+| 145 achados corrigidos               | [historico-correcoes.md](historico-correcoes.md)            | Corrigido não é pendência — é histórico                             |
 | D29 · D30 · D32 (Maps)             | [modulos/modulomaps.md](modulos/modulomaps.md)              | Desvio consciente da planta, com gatilho de reabertura                    |
 | D35 · D36 · D37 · D55 (Prancheta) | [modulos/moduloprancheta.md](modulos/moduloprancheta.md)    | Limite declarado do desenho, não defeito                                 |
 | D74 (antivírus)                     | [modulos/funcoesimpexp.md](modulos/funcoesimpexp.md)        | Decisão do dono, adiada com método definido                             |

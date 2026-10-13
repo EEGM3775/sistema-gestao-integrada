@@ -15,7 +15,7 @@ Topologia do staging (modo produção) numa máquina só, **sem o drone**, com e
 
 1. **Cloudflare (painel):** Zero Trust → Networks → Tunnels → criar túnel → copiar o token →
    *Public Hostname*: `www.gmaxis.com` → serviço `HTTP` `gateway:80`. O DNS do `www` é criado sozinho.
-2. **Servidor:** `git clone` em `/opt/sgi` (branch `drone-no-repositorio`), depois
+2. **Servidor:** `git clone` em `/opt/sgi` (branch `0x70726f64` — o do servidor), depois
    `bash infra/vps/bootstrap.sh`, `CLOUDFLARE_TUNNEL_TOKEN=… bash infra/vps/gerar-env.sh`,
    `bash infra/vps/up.sh`, `bash infra/vps/criar-admin.sh`.
 3. Abra `https://www.gmaxis.com/`, entre com a credencial de `/root/sgi-credenciais-<usuario>.txt` e
@@ -24,7 +24,7 @@ Topologia do staging (modo produção) numa máquina só, **sem o drone**, com e
 ## Operação
 
 - Estado: `docker compose --env-file deploy/env/vps.env -f deploy/compose/base.yml -f deploy/compose/vps.yml --profile full ps`
-- Atualizar: `git pull && bash infra/vps/up.sh`.
+- Atualizar: [docs/producao/publicar-atualizacao.md](../../docs/producao/publicar-atualizacao.md) (o código chega por `git archive` do `0x70726f64`).
 - Backup: `bash infra/backup/backup.sh --prefixo sgi-vps --projeto sgi-vps --env deploy/env/vps.env --manter 7`
   (copie a pasta gerada para fora do servidor).
 - Os e-mails do sistema caem no mailpit (só no loopback): `ssh -L 8025:127.0.0.1:8025 root@IP` e abra

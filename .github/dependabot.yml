@@ -5,6 +5,10 @@
 # Motor de REMEDIAÇÃO: abre PRs de bump quando sai correção de CVE. O gate de
 # CI (job security-scan em ci.yml) é a barreira que BLOQUEIA vuln HIGH/CRITICAL;
 # os dois trabalham juntos — o scan acusa, o Dependabot conserta.
+#
+# Salto de versão grande (major) não vem por aqui (decisão do dono, 13/10/2026):
+# cada um quebra API e pede PR próprio, testado, aberto quando o dono decidir.
+# Ficam as menores e as correções. CVE em major continua acusado pelo security-scan.
 version: 2
 updates:
   # --- Python: backend ---
@@ -14,6 +18,9 @@ updates:
       interval: weekly
       day: monday
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     labels: ["dependencies", "backend"]
     groups:
       # Agrupa patches num só PR para reduzir ruído de revisão.
@@ -27,6 +34,9 @@ updates:
       interval: weekly
       day: monday
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     labels: ["dependencies", "iam"]
     groups:
       iam-patches:
@@ -39,6 +49,9 @@ updates:
       interval: weekly
       day: monday
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     labels: ["dependencies", "frontend"]
     groups:
       # Bumps de dev-deps raramente afetam produção — um PR só.
@@ -54,4 +67,7 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     labels: ["dependencies", "ci"]

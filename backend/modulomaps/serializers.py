@@ -207,6 +207,13 @@ class ParadaRotaSerializer(TenantScopedModelSerializer):
 class RotaSerializer(TenantScopedModelSerializer):
     linha = GeometriaField(read_only=True)
     paradas = ParadaRotaSerializer(many=True, read_only=True)
+    # A rota nasce com as paradas num POST só. Sem isto a tela teria de criar a
+    # rota e depois uma parada por requisição — e uma falha no meio deixava uma
+    # rota pela metade, que o otimizador ordenaria como se estivesse completa.
+    # Na edição, a lista SUBSTITUI as paradas (na ordem enviada).
+    paradas_locais = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), write_only=True, required=False,
+    )
     origem_nome = serializers.CharField(source="origem.nome", read_only=True)
     procedencia_rotulo = serializers.CharField(source="get_procedencia_display", read_only=True)
     distancia_km = serializers.SerializerMethodField()
@@ -221,6 +228,57 @@ class RotaSerializer(TenantScopedModelSerializer):
 
     def get_distancia_km(self, obj):
         return round(float(obj.distancia_m) / 1000, 1) if obj.distancia_m else None
+
+    def validate_paradas_locais(self, ids):
+        """Só locais desta empresa, sem repetição — a mesma régua da origem."""
+        if len(set(ids)) != len(ids):
+            raise serializers.ValidationError("Um local aparece mais de uma vez nas paradas.")
+        request = self.context.get("request")
+        tenant_id = getattr(getattr(request, "user", None), "tenant_id", None)
+        achados = set(
+            Local.objects.filter(tenant_id=tenant_id, pk__in=ids).values_list("pk", flat=True)
+        )
+        faltando = [i for i in ids if i not in achados]
+        if faltando:
+            raise serializers.ValidationError(f"Locais inexistentes nesta empresa: {faltando}.")
+        return ids
+
+    def validate(self, dados):
+        origem = dados.get("origem") or getattr(self.instance, "origem", None)
+        if origem is not None and origem.pk in (dados.get("paradas_locais") or []):
+            raise serializers.ValidationError(
+                {"paradas_locais": "A origem não pode ser também uma parada."}
+            )
+        return super().validate(dados)
+
+    def _gravar_paradas(self, rota, ids):
+        from django.db import transaction
+
+        with transaction.atomic():
+            rota.paradas.all().delete()
+            ParadaRota.objects.bulk_create([
+                ParadaRota(tenant_id=rota.tenant_id, rota=rota, local_id=local_id, ordem=ordem)
+                for ordem, local_id in enumerate(ids, start=1)
+            ])
+            # Paradas novas = traçado velho. A linha e os números da rota
+            # anterior não descrevem mais esta sequência.
+            rota.linha = rota.distancia_m = rota.duracao_s = None
+            rota.procedencia = ""
+            rota.save(update_fields=["linha", "distancia_m", "duracao_s", "procedencia"])
+
+    def create(self, dados):
+        ids = dados.pop("paradas_locais", None)
+        rota = super().create(dados)
+        if ids:
+            self._gravar_paradas(rota, ids)
+        return rota
+
+    def update(self, instancia, dados):
+        ids = dados.pop("paradas_locais", None)
+        rota = super().update(instancia, dados)
+        if ids is not None:
+            self._gravar_paradas(rota, ids)
+        return rota
 
 
 class GeofenceSerializer(TenantScopedModelSerializer):

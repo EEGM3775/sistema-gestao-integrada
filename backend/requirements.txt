@@ -52,7 +52,7 @@ prometheus-client
 # `Recorder`/`Player` (`bbox()` + `crop_rect()`), que é da 1.4. A imagem já rodava
 # 1.4.4 por acaso, e o pin dizia 1.1: um `pip install` num host que resolvesse a
 # 1.1 voltaria a entregar prancha com tarja preta sem quebrar teste nenhum.
-ezdxf>=1.4
+ezdxf>=1.4.4
 # Rasteriza a 1ª página do PDF para a miniatura do acervo (wheel autocontida,
 # sem dependência de sistema — poppler NÃO entra na imagem por causa disto).
 pypdfium2

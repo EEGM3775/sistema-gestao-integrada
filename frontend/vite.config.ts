@@ -9,6 +9,9 @@ export default defineConfig({
     alias: { '@': path.resolve(__dirname, './src') },
     dedupe: ['react', 'react-dom'],
   },
+  // O worker do MapLibre é um módulo ES (importa o `maplibre-gl-shared`); o
+  // formato padrão do Vite para worker (`iife`) não aceita essa divisão.
+  worker: { format: 'es' },
   server: {
     host: true,
     proxy: {

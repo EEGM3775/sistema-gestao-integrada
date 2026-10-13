@@ -333,6 +333,15 @@ services:
       NFE_IO_BASE_URL: ${NFE_IO_BASE_URL:-https://api.nfe.io/v1}
       NFE_IO_API_KEY: ${NFE_IO_API_KEY:-}
       NFE_IO_COMPANY_ID: ${NFE_IO_COMPANY_ID:-}
+      # Maps: provedores geo (docs/modulos/modulomaps.md §9). Faltavam aqui, e o
+      # `.env` da raiz não entra no contêiner — com eles fora desta lista, a
+      # instalação ficava sem geocodificador e sem motor de rota mesmo com as
+      # chaves preenchidas no `.env` (item 62 do dono: "Maps está sem API KEY").
+      NOMINATIM_URL: ${NOMINATIM_URL:-}
+      NOMINATIM_API_KEY: ${NOMINATIM_API_KEY:-}
+      NOMINATIM_USER_AGENT: ${NOMINATIM_USER_AGENT:-sgi-plataforma/1.0}
+      OSRM_URL: ${OSRM_URL:-}
+      TITILER_URL: ${TITILER_URL:-}
       # S7: segredo backend→IA obrigatório fora de DEBUG (sem fallback público).
       IA_SERVICE_SECRET_TOKEN: ${IA_SERVICE_SECRET_TOKEN:-}
       # E-mail (funcoesemail): lembrete de tarefa do CRM e lembrete de evento do
@@ -469,6 +478,15 @@ services:
       NFE_IO_BASE_URL: ${NFE_IO_BASE_URL:-https://api.nfe.io/v1}
       NFE_IO_API_KEY: ${NFE_IO_API_KEY:-}
       NFE_IO_COMPANY_ID: ${NFE_IO_COMPANY_ID:-}
+      # Maps: provedores geo (docs/modulos/modulomaps.md §9). Faltavam aqui, e o
+      # `.env` da raiz não entra no contêiner — com eles fora desta lista, a
+      # instalação ficava sem geocodificador e sem motor de rota mesmo com as
+      # chaves preenchidas no `.env` (item 62 do dono: "Maps está sem API KEY").
+      NOMINATIM_URL: ${NOMINATIM_URL:-}
+      NOMINATIM_API_KEY: ${NOMINATIM_API_KEY:-}
+      NOMINATIM_USER_AGENT: ${NOMINATIM_USER_AGENT:-sgi-plataforma/1.0}
+      OSRM_URL: ${OSRM_URL:-}
+      TITILER_URL: ${TITILER_URL:-}
       # S7: segredo backend→IA obrigatório fora de DEBUG (sem fallback público).
       IA_SERVICE_SECRET_TOKEN: ${IA_SERVICE_SECRET_TOKEN:-}
       # E-mail (funcoesemail): lembrete de tarefa do CRM e lembrete de evento do

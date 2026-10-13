@@ -10,15 +10,22 @@ antes de publicar qualquer coisa que mude o banco (ver [dados-e-restauracao.md](
 
 ## 1. Fechar o que vai sair
 
-O servidor recebe o **commit**, não a pasta de trabalho. Commit e push antes (o push segue o fluxo
-normal do projeto); o que não está commitado não chega.
+O servidor recebe o **commit**, não a pasta de trabalho, e só de um branch: **`0x70726f64`** ("prod" em
+hexadecimal; o `0x` impede que o git o confunda com um commit). O desenvolvimento entra na `main` por
+PR; quando a `main` estiver verde e for a hora de publicar, ela avança o branch do servidor:
+
+```bash
+git checkout 0x70726f64 && git pull && git merge --ff-only origin/main && git push
+```
+
+Nada se desenvolve direto no `0x70726f64` — ele só anda para onde a `main` já está.
 
 ## 2. Enviar o código (só o que roda lá)
 
-Da raiz do repositório, na WSL:
+Da raiz do repositório, na WSL, **com o `0x70726f64` em checkout**:
 
 ```bash
-git archive HEAD backend iam frontend payment funcoesemail funcoesautorizacao funcoesODM infra \
+git archive 0x70726f64 backend iam frontend payment funcoesemail funcoesautorizacao funcoesODM infra \
   deploy/compose/base.yml deploy/compose/vps.yml deploy/env/vps.env.example THIRD-PARTY-LICENSES.md \
   | ssh -i ~/.ssh/gmaxis root@75.119.143.64 'tar -x -C /opt/sgi'
 ```
@@ -75,6 +82,6 @@ padrão com erro 1010.
 
 ## Voltar atrás
 
-- **Só código** (sem migration): `git checkout <commit bom>`, repita os passos 2 e 3.
+- **Só código** (sem migration): `git archive <commit bom> …` no passo 2 e repita o 3.
 - **Com migration:** o código antigo pode não funcionar com o banco novo. Restaure o backup do passo 0
   (ver [dados-e-restauracao.md](dados-e-restauracao.md)) e depois o código antigo.

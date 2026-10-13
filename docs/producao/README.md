@@ -17,7 +17,7 @@
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Endereço           | **https://www.gmaxis.com/** (único endereço do app; o cookie de sessão vale para um host só) antes era app.gmaxis.com agora é www.gmaxis.com |
 | Servidor            | Contabo Cloud VPS 6 — 6 vCPU, 12 GB, ~200 GB, Ubuntu 24.04, datacenter na Europa                                                                        |
-| Código no servidor | `/opt/sgi` (sem `.git`: o código chega por `git archive`)                                                                                         |
+| Código no servidor | `/opt/sgi` (sem `.git`: o código chega por `git archive` do branch **`0x70726f64`**, que só avança para onde a `main` já está)                                                                                         |
 | Entrada             | Cloudflare Tunnel (`cloudflared` dentro do compose) → `gateway:80`. **Nenhuma porta aberta** além do SSH                                    |
 | DNS                 | Cloudflare (o e-mail do Google Workspace usa os mesmos nameservers; não mexer em MX/SPF/DKIM)                                                           |
 | Acesso              | SSH**só por chave**; a senha do root está desligada. Chave `~/.ssh/gmaxis` na WSL                                                              |
