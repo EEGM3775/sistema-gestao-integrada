@@ -42,6 +42,7 @@
 8. **VPS de teste real (www.gmaxis.com)** ✅ 12/10/2026 — staging sem drone + Cloudflare Tunnel, com o banco do staging local restaurado; procedimentos em [producao/](producao/README.md). Falta: SMTP real, redirecionar o domínio raiz, backup automático.
 9. **Passkey** (WebAuthn) como segundo método de login.
 10. **Entidades (multi-CNPJ)** — [planta](modulos/entidades.md). Fatias 1–2 ✅ 14/10/2026: entidades, participação com cota, dono do lançamento, centro de custo único (SCM → ERP), intercompany com encontro de contas, DRE por entidade, NFE.io e CNAB por entidade, recorte do ERP por entidade. Falta: recorte por empreendimento **fora do ERP** (fatia D do AD-9 — a concessão já existe); Asaas por entidade ([D293](pendencias.md)).
+11. **Exportar e importar em toda tela de lista** ([funcoesimpexp §14](modulos/funcoesimpexp.md)) — motor só cria e é tudo ou nada ✅ 14/10 · Cadastros ✅ 14/10 · CRM ❌ · SCM ❌ · ERP ❌ · Operação (PDCA, Logística, Diário, Locais; planilha do Orçamento pelo motor) ❌.
 
 ### ⏸ Final do desenvolvimento (não trabalhar agora)
 
@@ -57,6 +58,11 @@ Cada fase concluída foi validada por um script E2E em [testes/e2e/](../testes/e
 `pra3b_escala_test.py`, `pra1d_hachura_test.py`, `d70_media_fechada_test.py`,
 `orc8_carga_base_test.py`, `pdca_cockpit_test.py`, `pdca_frente_test.py`).
 *(Moraram em `infra/gateway/` até 16/08/2026 — [D95](historico-correcoes.md).)*
+
+### Mudanças de 14/10/2026 — importar só cria, e é tudo ou nada
+
+- **Motor `funcoesimpexp` ✅ 14/10/2026** — linha inválida ou já existente trava o lote inteiro; sai o "confirmar seleção"; tipo data; número/data malformados travam; número em branco é vazio, não zero. → [funcoesimpexp.md §14](modulos/funcoesimpexp.md)
+- **Cadastros com Exportar/Importar ✅ 14/10/2026** — Clientes, Fornecedores, Funcionários, Cargos, Obras, Empreendimentos e Entidades, sobre o `RecursoDeCadastro`. → [funcoesimpexp.md §14](modulos/funcoesimpexp.md)
 
 ### Mudanças de 30/09/2026
 

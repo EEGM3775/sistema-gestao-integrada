@@ -7,6 +7,7 @@ import { useEmpreendimentos } from '@/modules/empreendimentos/hooks/useEmpreendi
 import ObraStatusBadge from '../components/ObraStatusBadge'
 import ObraForm from '../components/ObraForm'
 import type { StatusObra, ObraFormData } from '@/types'
+import { BotaoExportar, WizardImportacao } from '@/components/malha'
 
 const STATUS_FILTER_OPTIONS: { value: StatusObra | ''; label: string }[] = [
   { value: '',             label: 'Todos os status'  },
@@ -68,6 +69,12 @@ const ObrasListPage: React.FC = () => {
             </p>
           </div>
         </div>
+        <div className="flex items-center gap-2">
+        <BotaoExportar
+          tam="md" recurso="obra.obra"
+          recorte={{ search: search.trim(), status, empreendimento_id: empreendimentoId ?? undefined }}
+        />
+        <WizardImportacao tam="md" recurso="obra.obra" onConcluida={() => refetch()} />
         <button
           onClick={() => setFormOpen(true)}
           className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold"
@@ -77,6 +84,7 @@ const ObrasListPage: React.FC = () => {
         >
           <Plus size={16} /> Nova Obra
         </button>
+        </div>
       </div>
 
       {/* Filtros */}

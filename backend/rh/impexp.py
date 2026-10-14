@@ -29,6 +29,11 @@ leitura.
 """
 from __future__ import annotations
 
+import re
+from datetime import date
+from decimal import Decimal
+
+from funcoesimpexp.cadastro import RecursoDeCadastro
 from funcoesimpexp.entrega import buscar_do_tenant, entregar_campo
 from funcoesimpexp.registro import (
     NATUREZA_ARQUIVO,
@@ -40,13 +45,126 @@ from funcoesimpexp.registro import (
     registrar,
 )
 
-from .models import ASOFuncionario, DocumentoFuncionario, FolhaPagamento, Funcionario
+from .models import ASOFuncionario, Cargo, DocumentoFuncionario, FolhaPagamento, Funcionario
 
 #: Os três recursos do RH no registry. Constantes porque o serializer os cita
 #: para montar a URL, e um erro de digitação daria 404 só naquele campo.
 RECURSO_DOCUMENTOS = "rh.documentos"
 RECURSO_ASO = "rh.aso"
 RECURSO_HOLERITE = "rh.holerite"
+RECURSO_CARGOS = "rh.cargo"
+RECURSO_FUNCIONARIOS = "rh.funcionario"
+
+
+# ---------------------------------------------------------------------------
+# Os cadastros — entram e saem como planilha (14/10/2026)
+# ---------------------------------------------------------------------------
+
+
+@registrar(RECURSO_CARGOS)
+class CadastroDeCargos(RecursoDeCadastro):
+    """Os cargos. Importam-se **antes** dos funcionários, que apontam para eles."""
+
+    rotulo = "Cargos"
+    modulo = "rh"
+    permissoes_exigidas = ("rh.cargo.view", "rh.cargo.edit")
+    modelo = Cargo
+    chave = "nome_cargo"
+    ordem = ("nome_cargo",)
+    campos_de_busca = ("nome_cargo", "departamento")
+    busca_por_palavra = False  # a tela filtra no navegador, pela frase
+
+    colunas = (
+        Coluna("nome_cargo", "Cargo", obrigatoria=True, exemplo="Mestre de obras",
+               aliases=("nome", "nome do cargo", "funcao", "função")),
+        Coluna("departamento", "Departamento", exemplo="Engenharia", aliases=("setor",)),
+        Coluna("descricao", "Descrição", exemplo="Coordena as equipes do canteiro"),
+    )
+
+
+@registrar(RECURSO_FUNCIONARIOS)
+class CadastroDeFuncionarios(RecursoDeCadastro):
+    """A ficha do funcionário — a admissão de turma é onde a carga em lote mais paga.
+
+    **O gate soma as máscaras** (§3): a planilha traz CPF e salário, então quem
+    exporta precisa de `rh.cpf.view` e `rh.folha.view`, e quem importa precisa de
+    `rh.folha.edit` — a mesma trava que o serializer põe na escrita do salário.
+    Os dados médicos, bancários e os documentos ficam fora do arquivo: são outros
+    gates, e cada um tem a sua tela.
+    """
+
+    rotulo = "Funcionários"
+    modulo = "rh"
+    permissoes_exigidas = (
+        "rh.funcionario.view", "rh.funcionario.create",
+        "rh.cpf.view", "rh.folha.view", "rh.folha.edit",
+    )
+    modelo = Funcionario
+    chave = "cpf"
+    ordem = ("nome_completo",)
+    campos_de_busca = ("nome_completo", "cpf")
+    busca_por_palavra = False  # a tela filtra no navegador, pela frase
+    filtros = {"status": "status_contrato", "status_contrato": "status_contrato", "cargo": "cargo"}
+    nao_validar = ("usuario", "carteira_trabalho")
+
+    @property
+    def referencias(self) -> dict:
+        from empreendimentos.models import Empreendimento
+
+        return {
+            "cargo": (Cargo, "nome_cargo"),
+            "empreendimento_vinculado": (Empreendimento, "empreendimento"),
+        }
+
+    colunas = (
+        Coluna("cpf", "CPF", obrigatoria=True, exemplo="12345678909"),
+        Coluna("nome_completo", "Nome completo", obrigatoria=True, exemplo="José Pereira",
+               aliases=("nome", "funcionario", "funcionário")),
+        Coluna("data_nascimento", "Data de nascimento", tipo=date, obrigatoria=True,
+               exemplo="20/07/1990", aliases=("nascimento",)),
+        Coluna("genero", "Gênero", obrigatoria=True, exemplo="Masculino", aliases=("sexo",)),
+        Coluna("estado_civil", "Estado civil", exemplo="Solteiro(a)"),
+        Coluna("rg", "RG", exemplo="1234567"),
+        Coluna("telefone_celular", "Celular (WhatsApp)", exemplo="+5571999990000",
+               aliases=("celular", "whatsapp")),
+        Coluna("telefone_pessoal", "Telefone", exemplo="(71) 3333-0000"),
+        Coluna("email_pessoal", "E-mail", exemplo="jose@exemplo.com", aliases=("email",)),
+        Coluna("endereco_completo", "Endereço", obrigatoria=True,
+               exemplo="Rua A, 10 — Salvador/BA", aliases=("endereco",)),
+        Coluna("cargo", "Cargo", exemplo="Mestre de obras"),
+        Coluna("empreendimento_vinculado", "Empreendimento", exemplo="Residencial Aurora"),
+        Coluna("data_admissao", "Data de admissão", tipo=date, obrigatoria=True,
+               exemplo="02/01/2026", aliases=("admissao", "admissão")),
+        Coluna("data_demissao", "Data de demissão", tipo=date, exemplo=""),
+        Coluna("salario_base", "Salário base", tipo=Decimal, obrigatoria=True,
+               exemplo="3.500,00", aliases=("salario", "salário")),
+        Coluna("status_contrato", "Situação", exemplo="Ativo", aliases=("status",)),
+        Coluna("pis_pasep", "PIS/PASEP", exemplo="12345678901", aliases=("pis",)),
+        Coluna("numero_ctps", "CTPS (número)", exemplo="1234567"),
+        Coluna("serie_ctps", "CTPS (série)", exemplo="0012"),
+    )
+
+    def normalizar_chave(self, valor) -> str:
+        # A ficha grava o CPF só com dígitos (`FuncionarioForm`).
+        return re.sub(r"\D", "", str(valor or ""))
+
+    def campos(self, dados: dict, tenant_id) -> dict:
+        saida = super().campos(dados, tenant_id)
+        # Situação em branco é "ativo", como na ficha — o `default` do model só
+        # vale quando o campo não é passado, e aqui ele sempre é.
+        saida["status_contrato"] = saida.get("status_contrato") or "ativo"
+        return saida
+
+    def validar_regras(self, objeto, dados, tenant_id) -> str:
+        from nucleo.documentos import cpf_valido
+
+        if not cpf_valido(objeto.cpf):
+            return f"CPF “{dados.get('cpf')}” não é válido (confira os dígitos)."
+        if objeto.salario_base is not None and objeto.salario_base < 0:
+            return "Salário base negativo."
+        if objeto.data_demissao and objeto.data_demissao < objeto.data_admissao:
+            return "Data de demissão anterior à de admissão."
+        return ""
 
 #: Espécies — o vocabulário que o motor repassa inteiro ao gancho.
 ESPECIE_DOCUMENTO = "documento"

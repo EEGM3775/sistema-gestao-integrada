@@ -7,6 +7,7 @@ import EmpreendimentoStatusBadge from '../components/EmpreendimentoStatusBadge'
 import EmpreendimentoForm from '../components/EmpreendimentoForm'
 import type { StatusEmpreendimento, EmpreendimentoFormData } from '@/types'
 import { formatCNPJ } from '@/utils/masks'
+import { BotaoExportar, WizardImportacao } from '@/components/malha'
 
 const STATUS_FILTER_OPTIONS: { value: StatusEmpreendimento | ''; label: string }[] = [
   { value: '', label: 'Todos os status' },
@@ -67,6 +68,9 @@ const EmpreendimentosListPage: React.FC = () => {
             </p>
           </div>
         </div>
+        <div className="flex items-center gap-2">
+        <BotaoExportar tam="md" recurso="obra.empreendimento" recorte={{ search: search.trim(), status }} />
+        <WizardImportacao tam="md" recurso="obra.empreendimento" onConcluida={() => refetch()} />
         <button
           onClick={() => setFormOpen(true)}
           className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors duration-150"
@@ -79,6 +83,7 @@ const EmpreendimentosListPage: React.FC = () => {
         >
           <Plus size={16} /> Novo Empreendimento
         </button>
+        </div>
       </div>
 
       {/* Filtros */}

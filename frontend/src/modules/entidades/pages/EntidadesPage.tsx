@@ -1,14 +1,16 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Building2, KeyRound, Landmark, Plus, Trash2, UserPlus, Users } from 'lucide-react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import apiClient from '@/api/apiClient'
-import { Btn, Card, Empty, Loading, Pill, SectionHead } from '@/components/malha'
+import {
+  BotaoExportar, Btn, Card, Empty, Loading, Pill, SectionHead, WizardImportacao,
+} from '@/components/malha'
 import { useAuth } from '@/hooks/useAuth'
 import { formatCPFCNPJ } from '@/utils/masks'
 import { parseApiErrors } from '@/utils/formErrors'
 import {
-  useAcessosDaEntidade, useConcederAcesso, useEntidades, useRevogarAcesso, type Entidade,
+  entidadesKeys, useAcessosDaEntidade, useConcederAcesso, useEntidades, useRevogarAcesso, type Entidade,
 } from '../api'
 import EntidadeForm from '../components/EntidadeForm'
 
@@ -26,6 +28,7 @@ export default function EntidadesPage() {
   const podeEditar = hasPermission('cadastro.entidade.edit')
   const podeConceder = hasPermission('cadastro.entidade.conceder')
   const { data, isLoading } = useEntidades()
+  const cache = useQueryClient()
   const [editando, setEditando] = useState<Entidade | 'nova' | null>(null)
   const [escolhida, setEscolhida] = useState<number | null>(null)
 
@@ -44,7 +47,16 @@ export default function EntidadesPage() {
             para escolher de qual empresa você está vendo.
           </p>
         </div>
-        {podeEditar && <Btn variant="primary" onClick={() => setEditando('nova')}><Plus size={15} /> Nova entidade</Btn>}
+        <div className="flex items-center gap-2">
+          {/* Sem recorte: a tela mostra todas, do grupo e externas. A matriz
+              precisa existir antes da filial que aponta para ela. */}
+          <BotaoExportar tam="md" recurso="cadastro.entidade" />
+          <WizardImportacao
+            tam="md" recurso="cadastro.entidade"
+            onConcluida={() => cache.invalidateQueries({ queryKey: entidadesKeys.all })}
+          />
+          {podeEditar && <Btn variant="primary" onClick={() => setEditando('nova')}><Plus size={15} /> Nova entidade</Btn>}
+        </div>
       </div>
 
       {isLoading && <Loading o="as entidades" />}

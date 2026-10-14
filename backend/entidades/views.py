@@ -41,23 +41,7 @@ class EntidadeViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
         with transaction.atomic():
             antes = list(regras.do_grupo(tenant_id).values_list("pk", flat=True))
             super().perform_create(serializer)
-            nova = serializer.instance
-            if nova.externa:
-                return
-            # Saindo do modo simples: quem já usava o sistema recebe a entidade que
-            # via, para ninguém perder o financeiro de ontem (entidades.md §4).
-            if len(antes) == 1:
-                from nucleo.models import Usuario
-                for usuario in Usuario.objects.filter(tenant_id=tenant_id, is_active=True):
-                    ConcessaoEntidade.objects.get_or_create(
-                        tenant_id=tenant_id, usuario=usuario, entidade_id=antes[0],
-                        defaults={"concedido_por": self.request.user},
-                    )
-            # Quem cria vê o que criou.
-            ConcessaoEntidade.objects.get_or_create(
-                tenant_id=tenant_id, usuario=self.request.user, entidade=nova,
-                defaults={"concedido_por": self.request.user},
-            )
+            regras.conceder_ao_criar(serializer.instance, antes, self.request.user)
 
     def destroy(self, request, *args, **kwargs):
         entidade = self.get_object()

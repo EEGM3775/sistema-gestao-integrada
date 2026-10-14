@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, Users } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Empty, Loading } from '@/components/malha'
+import { BotaoExportar, Empty, Loading, WizardImportacao } from '@/components/malha'
 import ClienteForm from '../components/ClienteForm'
 import { createCliente } from '../hooks/useCliente'
 import type { ClienteFormData } from '@/types'
@@ -202,10 +202,21 @@ export default function ClientesListPage() {
             Carteira de compradores — unidades, contratos e situação de pagamento
           </p>
         </div>
+        {/* Planilha da carteira: sai no recorte da barra (R7) e entra só nova. */}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <BotaoExportar
+            recurso="cadastro.cliente"
+            recorte={filtros as Record<string, string | number | undefined>}
+          />
+          <WizardImportacao
+            recurso="cadastro.cliente"
+            onConcluida={() => queryClient.invalidateQueries({ queryKey: ['clientes', 'carteira'] })}
+          />
+        </div>
         <button
           onClick={() => setFormAberto(true)}
           style={{
-            marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 7,
+            display: 'inline-flex', alignItems: 'center', gap: 7,
             padding: '8px 14px', borderRadius: 'var(--r-sm)', border: 'none', cursor: 'pointer',
             background: 'var(--accent)', color: '#1A1204', fontSize: 13, fontWeight: 650,
           }}

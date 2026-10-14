@@ -40,14 +40,14 @@ concreta a exigiu. **Declaração que viola a régua não entra.**
 
 | # | Regra | A falha que ela evita |
 |---|---|---|
-| **R1** | **Importar nunca é um `POST` que grava.** É `preparar → conferir → aplicar`, com veredito por linha (nova · duplicada · inválida) e parada obrigatória antes de tocar no destino. | Arquivo com coluna trocada entra inteiro e só aparece semanas depois, como dado estranho no meio de algo já aprovado. *(o `dry_run` do django-import-export, a prévia do HubSpot; já provado no ORC.5b)* |
+| **R1** | **Importar nunca é um `POST` que grava.** É `preparar → conferir → aplicar`, com veredito por linha (nova · duplicada · inválida) e parada obrigatória antes de tocar no destino. Confirmar só existe quando **todas** as linhas são novas (R20). | Arquivo com coluna trocada entra inteiro e só aparece semanas depois, como dado estranho no meio de algo já aprovado. *(o `dry_run` do django-import-export, a prévia do HubSpot; já provado no ORC.5b)* |
 | **R2** | **Uma declaração governa as três saídas:** a planilha-modelo que o usuário baixa, o validador da importação e o layout da exportação. Fonte única, sempre. | Modelo e validador nascem em lugares diferentes, um campo muda em um só, e o usuário preenche o modelo "certo" que a importação recusa — ou pior, aceita torto. |
-| **R3** | **Chave de identidade declarada** (o *upsert key*): a coluna que decide se a linha cria ou atualiza. Sem chave, a declaração não é aceita. | Sem chave, "importar de novo" significa **duplicar tudo**. *(external ID do Salesforce Data Loader)* |
+| **R3** | **Chave de identidade declarada**: a coluna que diz se a linha já existe no destino — e a que já existe trava o lote (R20). Sem chave, a declaração não é aceita. | Sem chave, "importar de novo" significa **duplicar tudo**. *(external ID do Salesforce Data Loader)* |
 | **R4** | **De-para de colunas explícito.** O motor tenta casar por sinônimos; quando não casa, **mostra os cabeçalhos que viu** e deixa o operador mapear à mão — **nos dois caminhos, inclusive no job** (§7.1). Nunca adivinha. O mapa fica salvável para a importação recorrente. | Adivinhar cabeçalho é como preço vai para a coluna errada em silêncio. *(Power Query, Shopify)* |
 | **R5** | **Erro volta como arquivo**: as linhas recusadas saem num XLSX com a linha original e o motivo, para corrigir e reenviar. | Numa carga de 4.000 linhas, "37 falharam" sem dizer quais obriga a refazer tudo. *(Shopify)* |
-| **R6** | **Lote reversível.** Toda aplicação é um lote identificado e desfazível enquanto for o último; desfazer restaura o valor **e a procedência**. | Sem desfazer, o único conserto de uma carga ruim é restaurar backup — o que joga fora o trabalho legítimo do mesmo período. *(já provado na reprecificação do ORC.5b)* |
+| **R6** | **Lote reversível.** Toda aplicação é um lote identificado e desfazível enquanto for o último; desfazer apaga o que o lote criou (e, nos lotes antigos que atualizavam, restaura o valor **e a procedência**). | Sem desfazer, o único conserto de uma carga ruim é restaurar backup — o que joga fora o trabalho legítimo do mesmo período. *(já provado na reprecificação do ORC.5b)* |
 | **R7** | **Exportar entrega o recorte da tela** — os mesmos filtros, ordem e agrupamento que a pessoa está vendo, e nunca mais linhas do que ela veria. | Um export que ignora o filtro entrega 40.000 linhas para quem pediu 12, e um que ignora a permissão de linha vira porta paralela mais permissiva que a UI. *(Metabase, Retool)* |
-| **R8** | **Número é número, data é data.** Nada de valor formatado como texto no XLSX. | A primeira coisa que o destinatário faz é reconverter a planilha inteira — e reconversão de `1.234,56` erra. |
+| **R8** | **Número é número, data é data** — nos dois sentidos. Nada de valor formatado como texto no XLSX; e na entrada, "abc" numa coluna de número, "31/02/2026" numa de data ou número obrigatório em branco tornam a linha **inválida** (nunca zero ou vazio em silêncio). Número opcional em branco é vazio, não zero. | A primeira coisa que o destinatário faz é reconverter a planilha inteira — e reconversão de `1.234,56` erra. |
 | **R9** | **Cabeçalho de procedência em toda saída:** o que é, de qual recorte, emitido por quem e quando, com os totais de conferência repetidos no rodapé. | Peça sem procedência não é conferível, e é a primeira coisa que um analista procura. |
 | **R10** | **Pequeno é síncrono; grande é job** com progresso e link de validade limitada. O corte é do motor, não de quem declara. | Request travado em 30.000 linhas estoura timeout no gateway e o usuário reenvia — dobrando a carga. *(Stripe, AWS)* |
 | **R11** | **Acesso total ou nada** (§3): quem não tem o conjunto inteiro de permissões do recurso não vê o botão. Meia permissão bloqueia; não existe arquivo parcial. | Arquivo parcial é arquivo silenciosamente errado: quem recebe não sabe que o CPF vazio é máscara, e soma uma coluna que não está toda lá. |
@@ -58,6 +58,7 @@ concreta a exigiu. **Declaração que viola a régua não entra.**
 | **R17** | **Porta única nos DOIS sentidos, e ela se adapta — não o contrário.** *(decisão do dono, 08/08/2026)* Todo arquivo que **entra** vindo do cliente e todo arquivo que **sai** para ele passam por aqui, qualquer que seja o tipo: planilha, prancha, foto, documento. Módulo não abre porta própria — declara o que aceita (`natureza = "arquivo"`, `formatos_arquivo`) e o que entrega (`entregar_arquivo`), e o motor cresce para atendê-lo. Item que o **sistema** cria (o XML que o worker baixa da NFE.io, a derivada que a Prancheta gera) **não é importação** — é registro, e não passa pela conferência; mas quando ele **sai**, sai por esta porta como tudo o mais. | A R16 já mandava decidir pelos bytes — e **a Prancheta decidia pelo nome**, porque tinha porta própria e a regra não a alcançava ([D75](../historico-correcoes.md)). Regra não herdada é regra que não existe: com seis portas, o guarda-corpo divergente aparece só na que ninguém revisou. Do lado da saída o preço era o mesmo: `moduloprancheta/entrega.py` reimplementava sozinha `nosniff`, `attachment`, o tipo declarado por nós e o saneamento do nome — quatro guarda-corpos certos, e em segunda cópia. É a razão de o [nucleo/orcamento.py](../../backend/nucleo/orcamento.py) ter subido para a fundação, aplicada a arquivo. |
 | **R18** | **Confere-se o que a PLATAFORMA adivinhou.** Lote em que o motor inferiu algo do arquivo — obra e disciplina do caminho da pasta (`TorreA/ARQ/p.dwg`) — para na conferência da R1. Envio avulso em que a pessoa escolheu o destino e digitou os campos **grava direto**, pela mesma porta e pelos mesmos guardas. O que decide não é o volume: é se há palpite nosso a confirmar. | Conferência de um item só, sobre dado que a própria pessoa acabou de digitar, é cerimônia — e cerimônia ensina o usuário a clicar "confirmar" sem ler, o que mata a R1 justamente onde ela vale. *(é o modelo do Procore: ao subir prancha ele roda OCR para inferir número e disciplina e por isso exige confirmação; Box, Drive e Dropbox não param nunca — o que eles fatiam é arquivo grande, e o "commit" é técnico, não humano)* |
 | **R19** | **O palpite se corrige na conferência — não se reenvia o arquivo.** *(15/08/2026)* A decisão deixou de ser só aceitar/recusar a linha: a coluna que o **recurso** declarar `editavel` abre na tela, com as opções que ele der em `opcoes_da_coluna` (`{valor, rotulo, cor?}`), uma linha por vez ou em massa. Três limites que ela não afrouxa: só em importação **pendente**, só em coluna declarada, e **corrigir não aceita** — a R1 é sobre a decisão, e corrigir não é decidir. | A R18 mandava conferir o palpite, e a tela só deixava recusá-lo inteiro. No acervo isso apareceu na cara: manda-se a pasta **da obra**, o palpite acerta as subpastas organizadas (`TorreA/ARQ/…`) e erra o arquivo solto no meio — e a única saída era recusar a linha e subir aquele arquivo à parte, o que faz a pessoa desistir de classificar. O gancho é do recurso porque o motor não conhece disciplina, obra nem centro de custo, e não deve conhecer: a alternativa era um `if recurso === "prancheta.acervo"` dentro do wizard compartilhado. |
+| **R20** | **Importar só cria, e é tudo ou nada.** *(decisão do dono, 14/10/2026)* Linha inválida **ou que já existe** no destino trava o lote inteiro: nada entra, e a conferência mostra o que houve (as recusadas da R5 trazem as duas). Não há "confirmar seleção" nem atualização por planilha — editar o que existe é pela tela do módulo. O `aplicar` reconfere: o que passou a existir entre conferir e confirmar desfaz o lote (transação). | Planilha que atualiza cadastro é uma segunda porta de edição, sem as regras da tela; e aplicar as linhas boas deixando as ruins de fora entrega um destino pela metade, que ninguém sabe que está pela metade. |
 | **R16** | **O que entra é reconhecido pelos BYTES; o que sai não é executável.** Entrada: allowlist por assinatura (§6), e o nome do arquivo nunca decide. Saída: nada que o Excel leia como fórmula sai sem neutralização (§6.2). | Sufixo é dado do atacante — `payload.exe` renomeado para `.xlsx` era gravado em disco antes de qualquer leitura. E exportar `=cmd\|'/c calc'!A1` transforma a plataforma no **veículo** de entrega contra quem recebe o arquivo. *(OWASP, CSV Injection — o defeito é de quem gera o arquivo)* |
 
 ## 3. Quem pode — acesso total ou nada
@@ -161,10 +162,12 @@ class PlanilhaOrcamentaria(Recurso):
 | `rotulo` | sim | nome do arquivo e cabeçalho de procedência (R9) |
 | `modulo` | sim | o módulo dono — de quem vem a autorização (§3) |
 | `permissoes_exigidas` | sim | o conjunto que caracteriza acesso total (§3). **Inclui a permissão de máscara de toda coluna sensível declarada** — ex.: exportou CPF, então `cadastro.cliente_doc.view` entra aqui |
-| `chave` | sim na importação | decide criar × atualizar (R3) |
-| `colunas` | sim | governa modelo, validador e export (R2); `exemplo` vira a linha-exemplo do modelo |
+| `chave` | sim na importação | identifica a linha que já existe — e ela trava (R3, R20) |
+| `chave_da_linha` | não | a chave como o destino a guarda (o CPF só com dígitos), para achar repetidas no arquivo |
+| `colunas` | sim | governa modelo, validador e export (R2); `exemplo` vira a linha-exemplo do modelo. Tipos: texto, inteiro, decimal, sim/não e **data** |
 | `queryset` | sim na exportação | o recorte, já escopado por tenant (R7) |
-| `aplicar_linha` | sim na importação | a gravação, com as regras de negócio do módulo |
+| `aplicar_linha` | sim na importação | a gravação — **só cria** (R20) —, com as regras de negócio do módulo |
+| `validar_no_destino` | não | regra que precisa do tenant (e-mail já usado por outro cadastro); roda só na linha que seria nova |
 | `formatos` | não | restringe o que o motor oferece; o padrão é XLSX + CSV + PDF |
 | `contexto_requerido` | não | chaves de **destino** que a tela pergunta antes do upload (§4.1) |
 | `validar_contexto` | não | resolve e valida o destino **antes** de ler o arquivo |
@@ -308,7 +311,7 @@ custaram caro para descobrir e **sobem inteiras** para o motor:
 upload ─→ valida tipo/tamanho ─→ lê ─→ de-para de colunas ─→ classifica linha a linha
    (nucleo/upload_validation)                                        │
                                                                      ▼
-                            CONFERINDO ──→ [confirmar tudo · confirmar seleção · negar tudo]
+                            CONFERINDO ──→ [confirmar (só com tudo novo) · negar tudo]
                                                                      │
                                                        ┌─────────────┴─────────────┐
                                                        ▼                           ▼
@@ -596,7 +599,7 @@ Um conjunto só serve todo recurso de todo módulo — **módulo novo não ganha
 | `GET /api/impexp/<recurso>/mapas/` · `POST` | os de-para salvos (R4) |
 | `DELETE /api/impexp/mapas/<id>/` | apaga um de-para salvo |
 | `GET /api/impexp/importacoes/<id>/` | resumo + linhas com veredito (e o progresso, no job) |
-| `POST /api/impexp/importacoes/<id>/{marcar,aplicar,descartar,desfazer}/` | a decisão |
+| `POST /api/impexp/importacoes/<id>/{aplicar,descartar,corrigir,desfazer}/` | a decisão (`aplicar` recusa com 400 se houver linha travada — R20) |
 | `POST /api/impexp/importacoes/<id>/remapear/` | relê o arquivo guardado com o de-para escolhido (§7.1) |
 | `GET /api/impexp/importacoes/<id>/recusadas/` | as recusadas de volta como XLSX (R5) |
 | `GET /api/impexp/exportacoes/<id>/` · `?baixar=1` | acompanha e baixa o que saiu por job (R10) |
@@ -730,3 +733,33 @@ fonte ainda ter os meses antigos.
 A base é catálogo de plataforma (sem tenant): quem leva o arquivo de um ambiente a outro é a
 operação, pela bancada — o mesmo lugar do `carregar_base_oficial`.
 
+
+## 14. Cadastros — o `RecursoDeCadastro`
+
+Toda tela de lista ganha **Exportar** e **Importar** (decisão do dono, 14/10/2026), e os cadastros
+pedem ao motor a mesma coisa: achar pela chave, validar como a tela valida, criar, desfazer apagando,
+respeitar a quota do plano e exportar o recorte da lista. Escrito sete vezes, cada um esqueceria uma
+parte diferente — por isso há uma base, [`cadastro.py`](../../backend/funcoesimpexp/cadastro.py), e cada
+cadastro declara só o que é dele (`modelo`, `colunas`, `chave`, permissões, `quota`).
+
+| O que a base faz | Como |
+|---|---|
+| Valida como a tela | `full_clean` do model (validador do campo, escolha fora da lista, obrigatório) + `validar_regras` do módulo (CPF/CNPJ pelo módulo 11 de [`nucleo/documentos.py`](../../backend/nucleo/documentos.py), datas em ordem, regras do serializer) |
+| Unicidade por tenant | `UniqueConstraint.validate` do Django, que respeita a **condição** da restrição; a frase é nossa ("Já existe outro cadastro com este E-mail") |
+| Escolhas | sai o **rótulo** ("Casado(a)"); volta o rótulo ou o código |
+| Outro cadastro (FK) | pelo **nome** (`referencias`): o cargo é "Mestre de obras"; nome que não existe ou é ambíguo trava a linha |
+| Quota | `checar_quota_objeto` soma o lote ao uso de `nucleo.quotas` antes de materializar (R13) |
+| Recorte (R7) | `campos_de_busca` + `filtros`; `busca_por_palavra` imita a tela — `SearchFilter` (palavra a palavra) ou `contemSemAcento` (a frase) |
+| Desfazer (R6) | apaga o que o lote criou; o que já está em uso (FK protegida) recusa com a frase |
+
+**Os sete:** `cadastro.cliente` (chave CPF/CNPJ; gate soma `cliente_doc.view`; recorte = filtros da
+carteira), `cadastro.fornecedor` (razão social), `rh.cargo` (nome), `rh.funcionario` (CPF; gate soma
+`rh.cpf.view` e `rh.folha.view/edit`, porque o salário vai no arquivo), `obra.empreendimento` (CNPJ),
+`obra.obra` (nome **+** empreendimento — a identidade do banco), `cadastro.entidade` (documento; quem
+importa fica no lote e recebe o acesso, como na tela — `entidades.regras.conceder_ao_criar`).
+
+**Ordem de carga:** o que é apontado entra antes de quem aponta — entidades → empreendimentos → obras;
+cargos → funcionários. A linha que cita um nome ainda inexistente trava, e diz qual.
+
+**Fica fora do arquivo** o que tem gate ou tela próprios: dados bancários, médicos, documentos,
+unidades, etapas, equipe.

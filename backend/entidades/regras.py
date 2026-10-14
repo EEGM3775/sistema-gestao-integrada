@@ -42,6 +42,35 @@ def modo_simples(tenant_id) -> bool:
     return do_grupo(tenant_id).count() <= 1
 
 
+def conceder_ao_criar(nova: Entidade, antes: list, criador) -> None:
+    """Os acessos que nascem com uma entidade do grupo (entidades.md §4).
+
+    `antes` são as entidades do grupo **antes** de `nova` existir. Saindo do modo
+    simples (havia uma só), quem já usava o sistema recebe a entidade que via —
+    ninguém perde o financeiro de ontem. E quem cria vê o que criou.
+
+    Um lugar só porque são duas portas: a tela e a importação de planilha.
+    """
+    if nova.externa:
+        return
+    from .models import ConcessaoEntidade
+
+    tenant_id = nova.tenant_id
+    if len(antes) == 1:
+        from nucleo.models import Usuario
+
+        for usuario in Usuario.objects.filter(tenant_id=tenant_id, is_active=True):
+            ConcessaoEntidade.objects.get_or_create(
+                tenant_id=tenant_id, usuario=usuario, entidade_id=antes[0],
+                defaults={"concedido_por": criador},
+            )
+    if criador is not None:
+        ConcessaoEntidade.objects.get_or_create(
+            tenant_id=tenant_id, usuario=criador, entidade=nova,
+            defaults={"concedido_por": criador},
+        )
+
+
 def dona_do_empreendimento(empreendimento) -> int | None:
     """A entidade do grupo que é dona do empreendimento, ou `None` se o dono é de
     fora (o empreendimento em que o tenant só executa)."""

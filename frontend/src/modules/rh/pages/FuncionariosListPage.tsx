@@ -8,6 +8,7 @@ import type { FuncionarioFormData, StatusContratoFuncionario } from '@/types'
 import { formatCPF } from '@/utils/masks'
 
 import { contemSemAcento } from '@/utils/texto'
+import { BotaoExportar, WizardImportacao } from '@/components/malha'
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -92,6 +93,12 @@ const FuncionariosListPage: React.FC = () => {
               color: 'var(--color-text)', textDecoration: 'none', fontFamily: 'var(--font-body)' }}>
             <Briefcase size={15} /> Cargos
           </Link>
+          {/* Admissão de turma por planilha; os cargos precisam existir antes. */}
+          <BotaoExportar
+            tam="md" recurso="rh.funcionario"
+            recorte={{ search: search.trim(), status_contrato: filterStatus }}
+          />
+          <WizardImportacao tam="md" recurso="rh.funcionario" onConcluida={() => refetch()} />
           <button
             onClick={() => setFormOpen(true)}
             className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold"

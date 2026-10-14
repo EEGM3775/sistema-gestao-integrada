@@ -6,10 +6,11 @@ import CargoForm from '../components/CargoForm'
 import type { Cargo, CargoFormData } from '@/types'
 
 import { contemSemAcento } from '@/utils/texto'
+import { BotaoExportar, WizardImportacao } from '@/components/malha'
 
 const CargosPage: React.FC = () => {
   const navigate = useNavigate()
-  const { cargos, loading, error, createCargo, updateCargo, deleteCargo } = useCargos()
+  const { cargos, loading, error, createCargo, updateCargo, deleteCargo, refetch } = useCargos()
   const [search, setSearch]         = useState('')
   const [form, setForm]             = useState<{ open: boolean; editing: Cargo | null }>({ open: false, editing: null })
   const [confirmId, setConfirmId]   = useState<number | null>(null)
@@ -59,11 +60,15 @@ const CargosPage: React.FC = () => {
             Cargos
           </h1>
         </div>
-        <button onClick={() => setForm({ open: true, editing: null })}
-          className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold"
-          style={{ background: 'var(--color-brand)', color: '#FFFFFF', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-body)' }}>
-          <Plus size={16} /> Novo Cargo
-        </button>
+        <div className="flex items-center gap-2">
+          <BotaoExportar tam="md" recurso="rh.cargo" recorte={{ search: search.trim() }} />
+          <WizardImportacao tam="md" recurso="rh.cargo" onConcluida={() => refetch()} />
+          <button onClick={() => setForm({ open: true, editing: null })}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold"
+            style={{ background: 'var(--color-brand)', color: '#FFFFFF', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-body)' }}>
+            <Plus size={16} /> Novo Cargo
+          </button>
+        </div>
       </div>
 
       {/* Busca */}

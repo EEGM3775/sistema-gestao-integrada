@@ -6,6 +6,7 @@ import { createFornecedor } from '../hooks/useFornecedor'
 import FornecedorForm from '../components/FornecedorForm'
 import type { FornecedorFormData } from '@/types'
 import { formatCNPJ } from '@/utils/masks'
+import { BotaoExportar, WizardImportacao } from '@/components/malha'
 
 function formatPhone(v: string) {
   const d = v.replace(/\D/g, '')
@@ -46,6 +47,10 @@ const FornecedoresListPage: React.FC = () => {
             </p>
           </div>
         </div>
+        <div className="flex items-center gap-2">
+        {/* Planilha: sai a busca da tela (R7) e entra só fornecedor novo. */}
+        <BotaoExportar tam="md" recurso="cadastro.fornecedor" recorte={{ search }} />
+        <WizardImportacao tam="md" recurso="cadastro.fornecedor" onConcluida={() => refetch()} />
         <button
           onClick={() => setFormOpen(true)}
           className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold"
@@ -54,6 +59,7 @@ const FornecedoresListPage: React.FC = () => {
           onMouseLeave={e => ((e.currentTarget as HTMLElement).style.background = 'var(--color-brand)')}>
           <Plus size={16} /> Novo Fornecedor
         </button>
+        </div>
       </div>
 
       {/* Filtros */}
