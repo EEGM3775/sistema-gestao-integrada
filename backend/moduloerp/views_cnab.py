@@ -5,6 +5,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from nucleo.permissions import RequireModule, RequirePermission
+from entidades.escopo import EscopoDeEntidadeMixin
 from nucleo.tenancy import TenantScopedViewSetMixin
 from payment.planos import ERP_CNAB_RETORNO_TETO_MB
 
@@ -16,6 +17,7 @@ from .models import ContaCobrancaBancaria, LoteCobranca, RemessaCnab, RetornoCna
 class ContaCobrancaSerializer(serializers.ModelSerializer):
     banco_nome = serializers.SerializerMethodField()
     problemas = serializers.SerializerMethodField()
+    entidade_nome = serializers.CharField(source='entidade.__str__', read_only=True, default='')
     # Aceita com pontuação ("66.774.885/0001-90" tem 18 caracteres); o
     # `validate_beneficiario_documento` devolve só os 14 dígitos que se gravam.
     beneficiario_documento = serializers.CharField(max_length=18)
@@ -24,6 +26,8 @@ class ContaCobrancaSerializer(serializers.ModelSerializer):
         model = ContaCobrancaBancaria
         exclude = ['tenant']
         read_only_fields = ['criado_em']
+        # Sem entidade, a matriz (docs/modulos/entidades.md §5).
+        extra_kwargs = {'entidade': {'required': False}}
 
     def get_banco_nome(self, obj):
         banco = BANCOS.get(obj.banco)
@@ -46,6 +50,8 @@ class ContaCobrancaSerializer(serializers.ModelSerializer):
         return valor
 
     def validate(self, attrs):
+        from .serializers import _validar_entidade_do_grupo
+        _validar_entidade_do_grupo(attrs.get('entidade'))
         banco = attrs.get('banco', getattr(self.instance, 'banco', None))
         layout = attrs.get('layout', getattr(self.instance, 'layout', '240'))
         if banco in BANCOS and layout not in BANCOS[banco].layouts:
@@ -53,9 +59,10 @@ class ContaCobrancaSerializer(serializers.ModelSerializer):
         return attrs
 
 
-class ContaCobrancaViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+class ContaCobrancaViewSet(EscopoDeEntidadeMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
     """As carteiras de cobrança da empresa — de onde sai o CNAB."""
     queryset = ContaCobrancaBancaria.objects.all()
+    campo_empreendimento_escopo = None
     serializer_class = ContaCobrancaSerializer
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"

@@ -51,6 +51,7 @@ from .pagination import ErpPageNumberPagination
 from . import cobranca_lote, limites_lote, listao
 from .models import ContaCobrancaBancaria, LoteCobranca
 from nucleo import autorizacao
+from entidades.escopo import EscopoDeEntidadeMixin, entidade_do_parametro, filtro as filtro_de_entidade, exigir_na_entidade
 from payment.planos import ERP_TETO_NIVEIS_AGRUPAMENTO
 from funcoescobrancas.segunda_via import VencimentoInvalido, planejar
 from django.http import HttpResponse
@@ -137,7 +138,7 @@ def _verificar_documento_nf(nf):
     if not nf.nfe_io_id:
         return _local('Nota sem ID na NFE.io — exibindo a versão local, se houver.')
 
-    client = cliente_do_tenant(nf.tenant_id)
+    client = cliente_do_tenant(nf.tenant_id, nf.entidade_id)
     try:
         dados = client.consultar_nfse(nf.nfe_io_id)
     except NFeIndisponivel:
@@ -219,6 +220,31 @@ def _conferir_tomador(cliente):
     return faltando
 
 
+def recusa_por_entidade(conta, documento: str):
+    """O que a entidade impede de emitir (docs/modulos/entidades.md §3 e §5).
+
+    O título intercompany não tem cliente: entre empresas do grupo não sai boleto
+    nem nota. E com mais de uma entidade, a dona do título precisa do CPF/CNPJ —
+    é nele que o documento sai. Com uma só, vale a conta do tenant, como sempre.
+    """
+    from entidades.regras import modo_simples
+
+    if conta.natureza or not conta.cliente_id:
+        return Response(
+            {'detail': f'Título entre entidades do grupo não gera {documento}: acerte pela baixa ou pelo encontro de contas.',
+             'code': 'intercompany'},
+            status=status_module.HTTP_400_BAD_REQUEST,
+        )
+    entidade = conta.entidade
+    if not entidade.documento and not modo_simples(conta.tenant_id):
+        return Response(
+            {'detail': f'Cadastre o CPF/CNPJ de {entidade} antes de emitir {documento} no nome dela.',
+             'code': 'entidade_sem_documento', 'entidade_id': entidade.pk},
+            status=status_module.HTTP_409_CONFLICT,
+        )
+    return None
+
+
 def _nf_substituivel(nf):
     """Nota que não impede outra: a que a prefeitura recusou ou que foi cancelada."""
     return nf is None or nf.status in (StatusNFE.ERRO, StatusNFE.CANCELADA)
@@ -239,6 +265,9 @@ def _emitir_nf_para_conta_receber(request, conta, tipo_nf, countdown=0):
     Python `emitir_nota_fiscal_servico`, que fala REST direto com a NFE.io.
     """
     try:
+        recusa = recusa_por_entidade(conta, 'nota fiscal')
+        if recusa is not None:
+            return recusa
         # A nota recusada ou cancelada fica no histórico (é documento) e sai do
         # caminho: a conta ganha uma nova.
         if tipo_nf == 'servico' and not _nf_substituivel(conta.nota_fiscal_servico):
@@ -268,6 +297,7 @@ def _emitir_nf_para_conta_receber(request, conta, tipo_nf, countdown=0):
 
             nf = NotaFiscalServico.objects.create(
                 tenant=conta.tenant,
+                entidade_id=conta.entidade_id,
                 city_service_code=request.data.get('city_service_code', '010701'),
                 description=descricao_servico,
                 services_amount=conta.valor,
@@ -286,6 +316,7 @@ def _emitir_nf_para_conta_receber(request, conta, tipo_nf, countdown=0):
 
             nf = NotaFiscalProduto.objects.create(
                 tenant=conta.tenant,
+                entidade_id=conta.entidade_id,
                 buyer_data=_dados_cliente_para_nf(conta.cliente),
                 items_data=items_data
             )
@@ -403,7 +434,7 @@ class ListaoMixin:
             'teto_niveis': ERP_TETO_NIVEIS_AGRUPAMENTO,
         })
 
-class TransacaoViewSet(TenantScopedViewSetMixin, viewsets.ReadOnlyModelViewSet):
+class TransacaoViewSet(EscopoDeEntidadeMixin, TenantScopedViewSetMixin, viewsets.ReadOnlyModelViewSet):
     """O ledger é somente leitura pela API (D204): quem escreve transação são os
     serviços que baixam título e conciliam retorno, nunca uma requisição direta.
     Era `ModelViewSet` com a escrita "bloqueada" por um `.edit` fora do catálogo —
@@ -420,9 +451,10 @@ class TransacaoViewSet(TenantScopedViewSetMixin, viewsets.ReadOnlyModelViewSet):
     ordering_fields = ['data_transacao', 'valor']
     ordering = ['-data_transacao']
 
-class NotaFiscalServicoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+class NotaFiscalServicoViewSet(EscopoDeEntidadeMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
     queryset = NotaFiscalServico.objects.all()
     serializer_class = NotaFiscalServicoSerializer
+    campo_empreendimento_escopo = None
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
     required_resource = "erp.nf"
@@ -493,9 +525,10 @@ class NotaFiscalServicoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
         )
 
 
-class NotaFiscalProdutoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+class NotaFiscalProdutoViewSet(EscopoDeEntidadeMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
     queryset = NotaFiscalProduto.objects.all()
     serializer_class = NotaFiscalProdutoSerializer
+    campo_empreendimento_escopo = None
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
     required_resource = "erp.nf"
@@ -546,12 +579,28 @@ class ERPDashboardView(TenantScopedAPIViewMixin, views.APIView):
         if empreendimento_id:
             filtro_empreendimento['empreendimento_id'] = empreendimento_id
 
+        # A camada (docs/modulos/entidades.md §6): uma entidade, ou o consolidado
+        # do que a pessoa alcança — que elimina o intercompany entre elas.
+        from django.db.models import Q
+        entidade = entidade_do_parametro(request)
+        escopo = filtro_de_entidade(request.user) or Q()
+        if entidade is not None:
+            escopo &= Q(entidade_id=entidade)
+            sem_intercompany = Q()
+            sem_intercompany_tx = Q()
+        else:
+            sem_intercompany = Q(natureza='')
+            sem_intercompany_tx = Q(conta_pagar__natureza='') | Q(conta_receber__natureza='')
+
+        def scope_qs(qs, *, transacao=False):
+            return self.scope_qs(qs).filter(escopo, sem_intercompany_tx if transacao else sem_intercompany)
+
         # Status em aberto — "Atrasado" não é persistido (StatusConta), é
         # derivado aqui mesmo via data_vencimento, junto com as faixas de aging.
         status_em_aberto = [StatusConta.ABERTO, StatusConta.PARCIAL]
 
         # 1. Aging Report - Contas a Receber (saldo em aberto, não o valor cheio)
-        contas_a_receber_aging = self.scope_qs(ContaReceber.objects.all()).filter(
+        contas_a_receber_aging = scope_qs(ContaReceber.objects.all()).filter(
             status__in=status_em_aberto,
             **filtro_empreendimento
         ).annotate(
@@ -568,7 +617,7 @@ class ERPDashboardView(TenantScopedAPIViewMixin, views.APIView):
         ).values('categoria').annotate(total=Sum('saldo')).order_by('categoria')
 
         # 2. Aging Report - Contas a Pagar (saldo em aberto, não o valor cheio)
-        contas_a_pagar_aging = self.scope_qs(ContaPagar.objects.all()).filter(
+        contas_a_pagar_aging = scope_qs(ContaPagar.objects.all()).filter(
             status__in=status_em_aberto,
             **filtro_empreendimento
         ).annotate(
@@ -586,7 +635,7 @@ class ERPDashboardView(TenantScopedAPIViewMixin, views.APIView):
 
         # 3. Annual Cash Flow (last 12 months, grouped by month, from transactions)
         fluxo_mensal = (
-            self.scope_qs(Transacao.objects.all())
+            scope_qs(Transacao.objects.all(), transacao=True)
             .filter(
                 data_transacao__date__gte=one_year_ago,
                 data_transacao__date__lte=today,
@@ -610,7 +659,7 @@ class ERPDashboardView(TenantScopedAPIViewMixin, views.APIView):
 
         return Response(dashboard_data)
 
-class NotaFiscalViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+class NotaFiscalViewSet(EscopoDeEntidadeMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
     """
     Endpoint da API para visualizar e editar notas fiscais.
     """
@@ -626,7 +675,7 @@ class NotaFiscalViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     ordering_fields = ['data_emissao', 'valor_total']
     ordering = ['-data_emissao']
 
-class ContaPagarViewSet(EstornoMixin, ListaoMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
+class ContaPagarViewSet(EscopoDeEntidadeMixin, EstornoMixin, ListaoMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
     """
     Endpoint da API para visualizar e editar contas a pagar.
     """
@@ -750,8 +799,17 @@ class ContaPagarViewSet(EstornoMixin, ListaoMixin, TenantScopedViewSetMixin, vie
         # Materializa os elegíveis ANTES do `set()`: vincular ao lote (GERADO) faz o
         # próprio queryset `contas` (que exclui títulos em lote ativo) voltar vazio.
         elegiveis_ids = list(contas.values_list('conta_pagar_id', flat=True))
+        # O lote vai ao banco de quem paga: uma entidade só (entidades.md §5).
+        pagadoras = set(contas.values_list('entidade_id', flat=True))
+        if len(pagadoras) > 1:
+            return Response(
+                {'error': 'Os títulos escolhidos são de entidades diferentes. Um lote de remessa sai do '
+                          'banco de uma entidade só — separe por entidade.'},
+                status=status_module.HTTP_400_BAD_REQUEST,
+            )
 
         lote = LoteRemessa.objects.create(
+            entidade_id=next(iter(pagadoras), None),
             tenant_id=getattr(request.user, 'tenant_id', None),
             banco=request.data.get('banco', ''),
             observacoes=request.data.get('observacoes', ''),
@@ -765,7 +823,7 @@ class ContaPagarViewSet(EstornoMixin, ListaoMixin, TenantScopedViewSetMixin, vie
         return Response(data, status=status_module.HTTP_201_CREATED)
 
 
-class ContaReceberViewSet(EstornoMixin, ListaoMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
+class ContaReceberViewSet(EscopoDeEntidadeMixin, EstornoMixin, ListaoMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
     """
     Endpoint da API para visualizar e editar contas a receber.
     """
@@ -876,6 +934,9 @@ class ContaReceberViewSet(EstornoMixin, ListaoMixin, TenantScopedViewSetMixin, v
                 {'detail': 'Conta já quitada/cancelada — não é possível gerar cobrança.'},
                 status=status_module.HTTP_400_BAD_REQUEST,
             )
+        recusa = recusa_por_entidade(conta, 'boleto')
+        if recusa is not None:
+            return recusa
 
         # A data que a pessoa escolheu na prévia (item 55). Conferida aqui, de
         # forma síncrona, para o "no passado" voltar como frase e não virar um
@@ -1031,7 +1092,7 @@ class ContaReceberViewSet(EstornoMixin, ListaoMixin, TenantScopedViewSetMixin, v
     def _contas_das_notas(self, request):
         """A escolha do lote de notas: a mesma da grade (ids, ou todas do filtro
         menos as desmarcadas). `conta_receber_ids` é o nome antigo de `ids`."""
-        base = self.get_queryset().select_related('nota_fiscal_servico')
+        base = self.get_queryset().filter(natureza='').select_related('nota_fiscal_servico')
         if request.data.get('todos_do_filtro'):
             contas = self.filter_queryset(base)
             excluir = request.data.get('excluir_ids') or []
@@ -1079,7 +1140,7 @@ class ContaReceberViewSet(EstornoMixin, ListaoMixin, TenantScopedViewSetMixin, v
         return Response(resultado, status=status_module.HTTP_201_CREATED)
 
 
-class CentroCustoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+class CentroCustoViewSet(EscopoDeEntidadeMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
     """
     Endpoint da API para visualizar e editar centros de custo (rateio).
     """
@@ -1096,7 +1157,7 @@ class CentroCustoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     ordering = ['nome']
 
 
-class RevisaoBaixaViewSet(TenantScopedViewSetMixin, viewsets.ReadOnlyModelViewSet):
+class RevisaoBaixaViewSet(EscopoDeEntidadeMixin, TenantScopedViewSetMixin, viewsets.ReadOnlyModelViewSet):
     """
     Fila de revisão do financeiro: baixas tentadas em títulos já QUITADOS/
     CANCELADOS (ver `BaixaRequerRevisao`). Somente leitura + ações `aprovar`/
@@ -1122,6 +1183,19 @@ class RevisaoBaixaViewSet(TenantScopedViewSetMixin, viewsets.ReadOnlyModelViewSe
             'conta_pagar', 'conta_receber', 'solicitado_por', 'revisado_por'
         )
 
+    def recortar(self, qs):
+        # A revisão é do título — de um a pagar ou de um a receber.
+        from django.db.models import Q
+        user = self.request.user
+        pagar = filtro_de_entidade(user, 'conta_pagar__entidade', 'conta_pagar__empreendimento')
+        receber = filtro_de_entidade(user, 'conta_receber__entidade', 'conta_receber__empreendimento')
+        if pagar is not None:
+            qs = qs.filter(pagar | receber)
+        entidade = entidade_do_parametro(self.request)
+        if entidade is not None:
+            qs = qs.filter(Q(conta_pagar__entidade=entidade) | Q(conta_receber__entidade=entidade))
+        return qs
+
     def _avaliar(self, request, metodo):
         revisao = self.get_object()
         if revisao.status != StatusRevisaoBaixa.PENDENTE:
@@ -1143,7 +1217,7 @@ class RevisaoBaixaViewSet(TenantScopedViewSetMixin, viewsets.ReadOnlyModelViewSe
         return self._avaliar(request, 'rejeitar')
 
 
-class LoteRemessaViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
+class LoteRemessaViewSet(EscopoDeEntidadeMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
     """
     Endpoint da API para visualizar e editar lotes de remessa bancária.
 
@@ -1153,6 +1227,7 @@ class LoteRemessaViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     """
     queryset = LoteRemessa.objects.all()
     serializer_class = LoteRemessaSerializer
+    campo_empreendimento_escopo = None
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
     # Catálogo tem só view+create (sem edit) → mapa explícito; a gestão de status
@@ -1180,13 +1255,14 @@ class CobrancaClienteViewSet(TenantScopedViewSetMixin, viewsets.ReadOnlyModelVie
     ordering_fields = ['data_vencimento', 'valor_nominal', 'status']
     ordering = ['-data_vencimento']
 
-class BoletoViewSet(ListaoMixin, TenantScopedViewSetMixin, viewsets.ReadOnlyModelViewSet):
+class BoletoViewSet(EscopoDeEntidadeMixin, ListaoMixin, TenantScopedViewSetMixin, viewsets.ReadOnlyModelViewSet):
     """
     Boletos, somente leitura (D204); o único ato de escrita é `cancelar`, com
     verbo próprio no catálogo.
     """
     queryset = Boleto.objects.all()
     serializer_class = BoletoListaSerializer
+    campo_empreendimento_escopo = 'conta_receber__empreendimento'
     permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
     required_module = "erp_financeiro"
     required_resource = "erp.cobranca"   # boleto é o instrumento da cobrança
@@ -1409,19 +1485,40 @@ class IntegracaoFiscalView(TenantScopedAPIViewMixin, views.APIView):
             "atualizado_em": cadastro.atualizado_em if cadastro else None,
         }
 
+    @staticmethod
+    def _entidade(request, bruto):
+        """Uma integração por entidade (docs/modulos/entidades.md §5); sem
+        escolha, a da matriz."""
+        from entidades.models import Entidade
+        from entidades.regras import matriz
+
+        if bruto in (None, ''):
+            entidade = matriz(request.user.tenant_id)
+        else:
+            entidade = Entidade.objects.filter(
+                tenant_id=request.user.tenant_id, externa=False, pk=bruto,
+            ).first()
+            if entidade is None:
+                from rest_framework.exceptions import NotFound
+                raise NotFound("Entidade não encontrada.")
+        exigir_na_entidade(request.user, entidade.pk)
+        return entidade
+
     def get(self, request):
         from .models import IntegracaoFiscal
 
-        cadastro = IntegracaoFiscal.objects.filter(tenant_id=request.user.tenant_id).first()
-        return Response(self._resumo(cadastro))
+        entidade = self._entidade(request, request.query_params.get("entidade"))
+        cadastro = IntegracaoFiscal.objects.filter(tenant_id=request.user.tenant_id, entidade=entidade).first()
+        return Response(self._resumo(cadastro) | {"entidade": entidade.pk, "entidade_nome": str(entidade)})
 
     def put(self, request):
         from .models import IntegracaoFiscal
 
+        entidade = self._entidade(request, request.data.get("entidade") or request.query_params.get("entidade"))
         company_id = (request.data.get("company_id") or "").strip()
         if len(company_id) > 80:
             return Response({"company_id": "ID longo demais."}, status=status_module.HTTP_400_BAD_REQUEST)
-        cadastro, _ = IntegracaoFiscal.objects.get_or_create(tenant_id=request.user.tenant_id)
+        cadastro, _ = IntegracaoFiscal.objects.get_or_create(tenant_id=request.user.tenant_id, entidade=entidade)
         cadastro.company_id = company_id
         if "api_key" in request.data:
             cadastro.definir_api_key(request.data.get("api_key") or "")
@@ -1434,7 +1531,7 @@ class IntegracaoFiscalView(TenantScopedAPIViewMixin, views.APIView):
             # Nunca a chave: só que ela mudou.
             detalhes={"company_id": company_id, "chave_trocada": "api_key" in request.data},
         )
-        return Response(self._resumo(cadastro))
+        return Response(self._resumo(cadastro) | {"entidade": entidade.pk, "entidade_nome": str(entidade)})
 
 
 class AtualizarStatusNFView(TenantScopedAPIViewMixin, views.APIView):
@@ -1563,7 +1660,11 @@ class FinanceiroObrasView(TenantScopedAPIViewMixin, views.APIView):
     def get(self, request):
         from . import financeiro_obra
 
-        return Response({"obras": financeiro_obra.resumo_das_obras(request.user.tenant_id)})
+        return Response({"obras": financeiro_obra.resumo_das_obras(
+            request.user.tenant_id,
+            escopo=filtro_de_entidade(request.user, "entidade", "empreendimento"),
+            entidade=entidade_do_parametro(request),
+        )})
 
 
 class DreObraView(TenantScopedAPIViewMixin, views.APIView):
@@ -1584,8 +1685,111 @@ class DreObraView(TenantScopedAPIViewMixin, views.APIView):
 
         from . import financeiro_obra
 
-        obra = get_object_or_404(Obra.objects.filter(tenant_id=request.user.tenant_id), pk=obra_id)
+        obras = Obra.objects.filter(tenant_id=request.user.tenant_id)
+        escopo = filtro_de_entidade(request.user, "entidade", "empreendimento")
+        if escopo is not None:
+            obras = obras.filter(escopo)
+        obra = get_object_or_404(obras, pk=obra_id)
         com_orcado = autorizacao.usa_modulo(request.user, "orcamento")
         corpo = financeiro_obra.dre(request.user.tenant_id, obra, com_orcado=com_orcado)
         corpo["orcado_disponivel"] = com_orcado
         return Response(corpo)
+
+
+# ---------------------------------------------------------------------------
+# Entidades no ERP — intercompany e DRE por entidade (docs/modulos/entidades.md)
+# ---------------------------------------------------------------------------
+
+
+def _entidades_alcancadas(request):
+    """As entidades do grupo que a pessoa alcança, estreitadas por `?entidade=`."""
+    from entidades.escopo import alcance
+    from entidades.regras import do_grupo, matriz
+
+    matriz(request.user.tenant_id)  # a conta nova ganha a matriz aqui
+    qs = do_grupo(request.user.tenant_id).order_by("entidade_id")
+    ids = alcance(request.user)
+    if ids is not None:
+        qs = qs.filter(pk__in=ids)
+    escolhida = entidade_do_parametro(request)
+    if escolhida is not None:
+        qs = qs.filter(pk=escolhida)
+    return list(qs)
+
+
+class IntercompanyView(TenantScopedAPIViewMixin, views.APIView):
+    """`GET /api/erp/intercompany/` — quem deve quanto a quem, em aberto, entre as
+    entidades do grupo (só os pares que a pessoa alcança)."""
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
+    required_module = "erp_financeiro"
+    required_permission = "erp.conta_receber.view"
+
+    def get(self, request):
+        from entidades.escopo import alcance
+        from . import intercompany
+
+        return Response({"saldos": intercompany.saldos(request.user.tenant_id, alcance(request.user))})
+
+
+class EncontroDeContasView(TenantScopedAPIViewMixin, views.APIView):
+    """O encontro de contas entre duas entidades (docs/modulos/entidades.md §3).
+
+    `GET ?a=&b=` — a prévia: quanto cada uma tem a receber da outra e quanto se
+    compensa. `POST {a, b, data}` — compensa e baixa os dois lados. Baixa dos dois
+    lados = as duas permissões de baixa, e acesso às duas entidades.
+    """
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
+    required_module = "erp_financeiro"
+    permission_map = {"view": "erp.conta_receber.view", "write": "erp.conta_receber.baixar"}
+
+    def _par(self, dados):
+        try:
+            a, b = int(dados.get("a")), int(dados.get("b"))
+        except (TypeError, ValueError):
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({"detail": "Escolha as duas entidades."})
+        exigir_na_entidade(self.request.user, a)
+        exigir_na_entidade(self.request.user, b)
+        return a, b
+
+    def get(self, request):
+        from . import intercompany
+
+        a, b = self._par(request.query_params)
+        previa = intercompany.previa_encontro(request.user.tenant_id, a, b)
+        previa.pop("_qs")
+        return Response(previa)
+
+    def post(self, request):
+        from . import intercompany
+
+        if not autorizacao.pode(request.user, "erp.conta_pagar.baixar"):
+            return Response({"detail": "Você não tem permissão para esta ação."}, status=status_module.HTTP_403_FORBIDDEN)
+        a, b = self._par(request.data)
+        try:
+            data = date.fromisoformat(str(request.data.get("data") or timezone.localdate().isoformat()))
+        except ValueError:
+            return Response({"data": "Data inválida."}, status=status_module.HTTP_400_BAD_REQUEST)
+        try:
+            resultado = intercompany.encontro_de_contas(request.user.tenant_id, a, b, data=data, usuario=request.user)
+        except intercompany.NadaACompensar as exc:
+            return Response({"detail": exc.mensagem}, status=status_module.HTTP_400_BAD_REQUEST)
+        return Response(resultado, status=status_module.HTTP_201_CREATED)
+
+
+class DreEntidadesView(TenantScopedAPIViewMixin, views.APIView):
+    """`GET /api/erp/entidades/dre/?entidade=&data_de=&data_ate=` — a DRE de cada
+    entidade que a pessoa alcança (própria + pelas cotas) e o consolidado."""
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
+    required_module = "erp_financeiro"
+    required_resource = "erp.relatorio"
+    throttle_scope = "relatorio"
+
+    def get(self, request):
+        from . import dre_entidade
+
+        try:
+            periodo = dre_entidade.periodo_da_requisicao(request.query_params)
+        except ValueError:
+            return Response({"detail": "Data inválida."}, status=status_module.HTTP_400_BAD_REQUEST)
+        return Response(dre_entidade.dre(request.user.tenant_id, _entidades_alcancadas(request), periodo))

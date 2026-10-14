@@ -11,6 +11,8 @@ import { useFornecedorOptions, useEmpreendimentoOptions } from '../../hooks/useE
 import { apiDecimalToCents, centsToApiDecimal, formatBRL } from '@/utils/money'
 import { FormErrorBanner, parseApiErrors } from '@/utils/formErrors'
 import { AvisoDeTrava, TextoTravado } from './trava'
+import { AvisoIntercompany, EntidadeField } from './EntidadeField'
+import { entidadeAtiva } from '@/modules/entidades/entidadeAtiva'
 import { ObraEtapaFields } from './ObraEtapaFields'
 import { distribuirErros, errosSemLugar } from './distribuirErros'
 import type { ContaPagar, ContaPagarPayload } from '../../types'
@@ -20,6 +22,7 @@ import { dateToBR, minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
 /** Lançamento de conta a pagar — criação e edição (D.1.1 §13). */
 
 const EMPTY_VALUES: ContaPagarFormValues = {
+  entidade: null,
   fornecedor: undefined as unknown as number,
   empreendimento: null,
   obra: null,
@@ -34,6 +37,7 @@ const EMPTY_VALUES: ContaPagarFormValues = {
 
 function toFormValues(conta: ContaPagar): ContaPagarFormValues {
   return {
+    entidade: conta.entidade,
     fornecedor: conta.fornecedor ?? (undefined as unknown as number),
     empreendimento: conta.empreendimento,
     obra: conta.obra,
@@ -67,14 +71,20 @@ export function ContaPagarForm({ initial, onSubmit, onCancel }: ContaPagarFormPr
 
   const methods = useForm<ContaPagarFormValues>({
     resolver: zodResolver(contaPagarSchema),
-    defaultValues: initial ? toFormValues(initial) : EMPTY_VALUES,
+    // O título novo nasce na entidade que a barra do ERP está mostrando.
+    defaultValues: initial ? toFormValues(initial) : { ...EMPTY_VALUES, entidade: entidadeAtiva() },
   })
   const { register, control, handleSubmit, setError, formState: { errors, isSubmitting } } = methods
 
   const submit = handleSubmit(async values => {
     setApiError(null)
     try {
+      // A entidade só vai quando a pessoa a escolheu ou trocou: sem ela, a
+      // regra decide — e trocar a obra de um título sem baixa troca a dona.
+      const entidade = values.entidade ?? null
+      const mandaEntidade = !travados.has('entidade') && (initial ? entidade !== initial.entidade : entidade !== null)
       await onSubmit({
+        ...(mandaEntidade ? { entidade } : {}),
         fornecedor: values.fornecedor,
         empreendimento: values.empreendimento ?? null,
         obra: values.obra ?? null,
@@ -92,10 +102,22 @@ export function ContaPagarForm({ initial, onSubmit, onCancel }: ContaPagarFormPr
     }
   }, invalidos => setApiError(errosSemLugar(invalidos)))
 
+  if (initial?.natureza) {
+    return (
+      <div className="flex flex-col gap-4">
+        <AvisoIntercompany contraparte={initial.contraparte_nome} natureza={initial.natureza_nome} />
+        <div className="flex justify-end">
+          <button type="button" onClick={onCancel} style={buttonSecondaryStyle}>Fechar</button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <FormProvider {...methods}>
       <form onSubmit={submit} className="flex flex-col gap-4">
         <AvisoDeTrava motivo={initial?.travado_porque ?? ''} />
+        <EntidadeField travada={travados.has('entidade')} nomeAtual={initial?.entidade_nome} />
         <Field label="Fornecedor" error={errors.fornecedor?.message}>
           {travados.has('fornecedor') ? (
             <TextoTravado>{opcoesFornecedor.find(o => o.id === initial?.fornecedor)?.label ?? '—'}</TextoTravado>

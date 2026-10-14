@@ -130,7 +130,8 @@ def carregar(queryset, ids: list[int] | None, *, usuario):
     o da empresa, dentro do plano, dentro da infraestrutura."""
     from .limites_lote import BOLETOS, recusa
 
-    qs = queryset.select_related('cliente', 'empreendimento', 'cliente_empreendimento').prefetch_related('boletos')
+    # O título entre entidades do grupo não tem cliente: fora de todo lote de boleto.
+    qs = queryset.filter(natureza='').select_related('cliente', 'empreendimento', 'cliente_empreendimento').prefetch_related('boletos')
     if ids is not None:
         qs = qs.filter(pk__in=ids)
     frase = recusa(usuario, BOLETOS, qs.count())

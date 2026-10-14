@@ -114,6 +114,8 @@ INSTALLED_APPS = [
     "nucleo",
     "clientes",
     "empreendimentos",
+    # Titulares jurídicos (CPF/CNPJ) do tenant — docs/modulos/entidades.md.
+    "entidades.apps.EntidadesConfig",
     "fornecedores",
     "catalogo",
     # Fundação de importação/exportação: motor único, sem entitlement próprio —

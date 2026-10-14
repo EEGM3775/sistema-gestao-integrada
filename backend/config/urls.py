@@ -23,6 +23,12 @@ from empreendimentos.views import (
     CustoEmpreendimentoViewSet,
     UnidadeViewSet
 )
+from entidades.views import (
+    ConcessaoEmpreendimentoViewSet,
+    ConcessaoEntidadeViewSet,
+    EntidadeViewSet,
+    ParticipacaoViewSet,
+)
 from fornecedores.views import (
     FornecedorViewSet,
     DadoBancarioFornecedorViewSet,
@@ -136,6 +142,12 @@ router.register(r'custos-empreendimentos', CustoEmpreendimentoViewSet, basename=
 # As unidades à venda — cadastro do empreendimento, consumido pela aba Unidades
 # e pelo seletor da aquisição.
 router.register(r'unidades', UnidadeViewSet, basename='unidade')
+
+# --- Rotas do App 'entidades' (docs/modulos/entidades.md) ---
+router.register(r'entidades', EntidadeViewSet, basename='entidade')
+router.register(r'participacoes-empreendimentos', ParticipacaoViewSet, basename='participacaoempreendimento')
+router.register(r'acessos-entidades', ConcessaoEntidadeViewSet, basename='concessaoentidade')
+router.register(r'acessos-empreendimentos', ConcessaoEmpreendimentoViewSet, basename='concessaoempreendimento')
 
 # --- Rotas do App 'fornecedores' ---
 router.register(r'fornecedores', FornecedorViewSet, basename='fornecedor')

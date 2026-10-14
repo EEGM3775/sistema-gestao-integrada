@@ -82,6 +82,17 @@ def emitir_por_remessa(triagem: Triagem, *, carteira: ContaCobrancaBancaria, usu
         titulos, boletos, recusas, baixas = [], [], [], []
         segunda_via = {conta.pk for conta, _ in triagem.segunda_via}
         for conta, vencimento in alvo:
+            # A carteira é de uma entidade: o boleto sai no CNPJ dela, e o título
+            # de outra entidade sairia com o beneficiário errado (entidades.md §5).
+            if conta.entidade_id != carteira.entidade_id:
+                frase = (f"Conta de {conta.entidade}: a carteira \"{carteira.nome}\" é de "
+                         f"{carteira.entidade}. Use uma carteira da mesma entidade.")
+                recusas.append(frase)
+                ItemLoteCobranca.objects.create(
+                    tenant=carteira.tenant, lote=lote, conta_receber=conta, vencimento=vencimento,
+                    situacao=ItemLoteCobranca.Situacao.ERRO, mensagem=frase,
+                )
+                continue
             pagador, falta = pagador_do_cliente(conta.cliente)
             if falta:
                 frase = f"Falta no cadastro de {conta.cliente.nome_completo}: {', '.join(falta)}."

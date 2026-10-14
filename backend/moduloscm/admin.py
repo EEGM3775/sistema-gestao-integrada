@@ -1,13 +1,8 @@
 from django.contrib import admin
 
-from .models import CentroCusto, FaixaPrecoOferta, OfertaFornecedor
+from .models import FaixaPrecoOferta, OfertaFornecedor
 
 
-@admin.register(CentroCusto)
-class CentroCustoAdmin(admin.ModelAdmin):
-    list_display = ["centro_custo_id", "nome", "codigo", "tipo", "ativo", "tenant"]
-    list_filter = ["tipo", "ativo"]
-    search_fields = ["nome", "codigo"]
 
 
 class FaixaPrecoOfertaInline(admin.TabularInline):

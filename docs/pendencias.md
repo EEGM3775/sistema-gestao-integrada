@@ -55,6 +55,25 @@ contêiner que faltava na frota geral — foi fechado em 07/08/2026, também no 
 A1 - Verificação sobre uso de hardware
 Uma observação: o ERP no servidor roda com o comando padrão da imagem, `gunicorn` com  **1 processo síncrono** , e não com os 2 processos × 4 threads do `base.yml`. Com mais gente usando ao mesmo tempo, isso pode voltar a deixar o sistema lento.
 
+### D293 — com mais de uma entidade, o boleto pelo Asaas sai na conta única do tenant · 🟠 aberto 14/10/2026
+
+As entidades ([modulos/entidades.md](modulos/entidades.md) §5) levaram NFS-e (NFE.io) e carteira CNAB para
+a entidade dona do título, mas a conta do **Asaas** continua uma por tenant (`funcoescobrancas`). Numa conta
+com matriz e SPE, o boleto de um lote da SPE pelo Asaas sai com o beneficiário da conta do Asaas — o CNPJ
+errado. Hoje o sistema só exige o CPF/CNPJ da entidade antes de emitir; não impede o Asaas.
+
+**Caminho:** subconta do Asaas por entidade (ou a chave da conta Asaas na entidade, como a NFE.io), e a
+emissão pelo Asaas recusar título de entidade sem conta própria quando o tenant tem mais de uma.
+
+### D294 — conceder acesso a uma entidade "muda quem pode", mas ficou na classe B · 🟡 aberto 14/10/2026
+
+`cadastro.entidade.conceder` dá a alguém o financeiro de outro CNPJ — é da família de `plataforma.papel.gerir`,
+que está nos atos críticos (classe C: sem cache, nega com o PDP fora). A lista da classe C foi fixada pelo dono
+(`funcoesautorizacao/classes.py`) e não se estende sem mudar a planta antes; por isso ficou em B. Nenhum papel
+padrão recebe a permissão — só o administrador concede.
+
+**Caminho:** decisão do dono — pôr `cadastro.entidade.conceder` na classe C (planta §10.8 e `CRITICOS`).
+
 ### D289 — o cookie `__Host-sgi_sessao` não é preso ao dispositivo, e não há tela de sessões ativas · 🟠 aberto 13/10/2026
 
 Revisão da sessão do BFF (`iam/identity/sessoes.py`, `models.Sessao`, `iam_project/settings.py`).

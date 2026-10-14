@@ -4,6 +4,8 @@ import apiClient from '@/api/apiClient'
 import type { Obra, ObraFormData, StatusObra, Empreendimento } from '@/types'
 import { FieldError, FormErrorBanner, parseApiErrors, type FieldErrors } from '@/utils/formErrors'
 import { validateISO_Vigencia, minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
+import { useAuth } from '@/hooks/useAuth'
+import { useEntidades } from '@/modules/entidades/api'
 
 /**
  * O 400 de nome repetido (decisão do dono, 13/09/2026).
@@ -93,6 +95,9 @@ export const ObraForm: React.FC<Props> = ({ open, onClose, onSave, initial }) =>
   /** O 400 de nome repetido, quando o servidor manda o conflito e a sugestão. */
   const [conflito, setConflito] = useState<ConflitoDeNome | null>(null)
   const [empreendimentos, setEmpreendimentos] = useState<Empreendimento[]>([])
+  const { hasPermission } = useAuth()
+  const entidades = useEntidades('grupo', open && hasPermission('cadastro.entidade.view'))
+  const executoras = hasPermission('cadastro.entidade.view') ? (entidades.data ?? []).filter(e => e.ativa) : []
 
   const overlayRef         = useRef<HTMLDivElement>(null)
   const mousedownOnOverlay = useRef(false)
@@ -111,6 +116,7 @@ export const ObraForm: React.FC<Props> = ({ open, onClose, onSave, initial }) =>
       setForm({
         nome_obra:             initial.nome_obra,
         empreendimento:        initial.empreendimento,
+        entidade:              initial.entidade,
         endereco:              initial.endereco,
         status_obra:           initial.status_obra,
         descricao:             initial.descricao ?? '',
@@ -279,6 +285,25 @@ export const ObraForm: React.FC<Props> = ({ open, onClose, onSave, initial }) =>
               </select>
               <FieldError msg={fieldErrors.empreendimento} />
             </div>
+            {executoras.length > 1 && (
+              <div className="col-span-2">
+                <label style={labelStyle}>Quem executa</label>
+                <select
+                  style={{ ...inputStyle, cursor: 'pointer' }}
+                  value={form.entidade ?? ''}
+                  onChange={e => set('entidade', e.target.value ? parseInt(e.target.value, 10) : null)}
+                >
+                  <option value="">Automático — a dona do empreendimento do grupo, ou a matriz</option>
+                  {executoras.map(ent => (
+                    <option key={ent.entidade_id} value={ent.entidade_id}>{ent.nome} — {ent.papel_nome}</option>
+                  ))}
+                </select>
+                <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>
+                  É no CNPJ dela que saem as contas, as notas e o caixa desta obra.
+                </p>
+                <FieldError msg={fieldErrors.entidade} />
+              </div>
+            )}
             <div>
               <label style={labelStyle}>Status</label>
               <select style={{ ...inputStyle, cursor: 'pointer' }}

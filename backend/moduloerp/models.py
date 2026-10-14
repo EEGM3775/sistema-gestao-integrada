@@ -30,6 +30,38 @@ from obras.models import Obra
 from nucleo.models import Usuario
 
 
+class NaturezaIntercompany(models.TextChoices):
+    """O que um título entre entidades do grupo é na DRE (docs/modulos/entidades.md §3).
+
+    Vazio = título comum (com cliente ou fornecedor). Com natureza, a contraparte
+    é a entidade e o título não gera boleto nem nota.
+    """
+    NENHUMA = '', _('—')
+    REPASSE_DESPESA = 'repasse_despesa', _('Repasse de despesa')
+    REPASSE_RECEITA = 'repasse_receita', _('Repasse de receita')
+
+
+def _entidade_fk(related_name='+'):
+    return models.ForeignKey(
+        'entidades.Entidade', on_delete=models.PROTECT, related_name=related_name,
+        verbose_name=_("Entidade"),
+    )
+
+
+def _contraparte_fk():
+    return models.ForeignKey(
+        'entidades.Entidade', on_delete=models.PROTECT, null=True, blank=True, related_name='+',
+        verbose_name=_("Entidade contraparte (intercompany)"),
+    )
+
+
+def _natureza_field():
+    return models.CharField(
+        max_length=20, choices=NaturezaIntercompany.choices, blank=True, default='',
+        verbose_name=_("Natureza intercompany"),
+    )
+
+
 class StatusConta(models.TextChoices):
     """
     Status do ciclo de vida de um título (ContaPagar/ContaReceber).
@@ -77,6 +109,8 @@ class Transacao(TenantScopedModel):
         SAIDA = 'SAIDA', _('Saída')
 
     transacao_id = models.BigAutoField(primary_key=True, verbose_name="ID da Transação")
+    # O caixa de quem: a entidade do título baixado (docs/modulos/entidades.md §2).
+    entidade = _entidade_fk()
     conta_pagar = models.ForeignKey('ContaPagar', on_delete=models.PROTECT, null=True, blank=True, related_name='transacoes', verbose_name=_("Conta a Pagar associada"))
     conta_receber = models.ForeignKey('ContaReceber', on_delete=models.PROTECT, null=True, blank=True, related_name='transacoes', verbose_name=_("Conta a Receber associada"))
     empreendimento = models.ForeignKey(Empreendimento, on_delete=models.CASCADE, related_name='transacoes_erp_empreendimento', null=True, blank=True, verbose_name="Empreendimento")
@@ -112,6 +146,12 @@ class Transacao(TenantScopedModel):
         titulo = self.conta_pagar_id or self.conta_receber_id
         return f"Transação de R$ {self.valor} — título #{titulo}"
 
+    def save(self, *args, **kwargs):
+        if not self.entidade_id:
+            conta = self.conta_pagar or self.conta_receber
+            self.entidade_id = conta.entidade_id
+        super().save(*args, **kwargs)
+
 
 # --- Specialized Nota Fiscal Models ---
 
@@ -131,6 +171,8 @@ def nf_file_path(instance, filename):
 class NotaFiscalServico(TenantScopedModel):
     """ Model for Service Invoices (NFS-e). """
     id = models.AutoField(primary_key=True)
+    # A emitente: a entidade dona do título (docs/modulos/entidades.md §5).
+    entidade = models.ForeignKey('entidades.Entidade', on_delete=models.PROTECT, null=True, blank=True, related_name='+', verbose_name=_("Entidade emitente"))
     status = models.CharField(max_length=20, choices=StatusNFE.choices, default=StatusNFE.AGUARDANDO)
     nfe_io_id = models.CharField(max_length=255, null=True, blank=True, db_index=True, help_text="ID retornado pela API NFE.io")
 
@@ -162,6 +204,7 @@ class NotaFiscalServico(TenantScopedModel):
 class NotaFiscalProduto(TenantScopedModel):
     """ Model for Product Invoices (NF-e). """
     id = models.AutoField(primary_key=True)
+    entidade = models.ForeignKey('entidades.Entidade', on_delete=models.PROTECT, null=True, blank=True, related_name='+', verbose_name=_("Entidade emitente"))
     status = models.CharField(max_length=20, choices=StatusNFE.choices, default=StatusNFE.AGUARDANDO)
     nfe_io_id = models.CharField(max_length=255, null=True, blank=True, db_index=True, help_text="ID retornado pela API NFE.io")
 
@@ -196,6 +239,8 @@ class NotaFiscal(TenantScopedModel, Excluivel):
     vinculadas a um empreendimento.
     """
     nota_fiscal_id = models.AutoField(primary_key=True)
+    # A destinatária: quem comprou (docs/modulos/entidades.md §2).
+    entidade = _entidade_fk()
     empreendimento = models.ForeignKey('empreendimentos.Empreendimento', on_delete=models.CASCADE, related_name='notas_fiscais', verbose_name=_("Empreendimento"))
     fornecedor = models.ForeignKey('fornecedores.Fornecedor', on_delete=models.CASCADE, related_name='notas_fiscais_emitidas', verbose_name=_("Fornecedor"))
     numero_nota = models.CharField(max_length=50, verbose_name=_("Número da Nota Fiscal"))
@@ -221,13 +266,24 @@ class NotaFiscal(TenantScopedModel, Excluivel):
     def __str__(self):
         return f"NF {self.numero_nota} - {self.fornecedor.razao_social}"
 
+    def save(self, *args, **kwargs):
+        from entidades.regras import preencher
+        preencher(self, obra_attr=None)
+        super().save(*args, **kwargs)
+
 
 class ContaPagar(TenantScopedModel, Excluivel):
     """
     Registra as contas a pagar da empresa, como pagamentos a fornecedores.
     """
     conta_pagar_id = models.AutoField(primary_key=True, verbose_name=_("ID da Conta a Pagar"))
-    fornecedor = models.ForeignKey('fornecedores.Fornecedor', on_delete=models.CASCADE, related_name='contas_a_pagar', verbose_name=_("Fornecedor"))
+    # Quem paga (docs/modulos/entidades.md §2). O `save()` aplica a regra quando
+    # quem cria o título não informa.
+    entidade = _entidade_fk()
+    # Vazio só no título entre entidades do grupo: lá a contraparte é a entidade.
+    fornecedor = models.ForeignKey('fornecedores.Fornecedor', on_delete=models.CASCADE, null=True, blank=True, related_name='contas_a_pagar', verbose_name=_("Fornecedor"))
+    contraparte = _contraparte_fk()
+    natureza = _natureza_field()
     empreendimento = models.ForeignKey('empreendimentos.Empreendimento', on_delete=models.SET_NULL, null=True, blank=True, verbose_name=_("Empreendimento"))
     # D.1.4 — a dimensão de obra na despesa. Sem ela, o "realizado" do Orçamento
     # só via o que passou por pedido de compra. A etapa é opcional e afina o
@@ -282,9 +338,29 @@ class ContaPagar(TenantScopedModel, Excluivel):
                 name='cp_vencimento_vivo',
             ),
         ]
+        constraints = [
+            models.CheckConstraint(
+                check=(
+                    models.Q(fornecedor__isnull=False, contraparte__isnull=True, natureza='')
+                    | models.Q(fornecedor__isnull=True, contraparte__isnull=False) & ~models.Q(natureza='')
+                ),
+                name='cp_fornecedor_ou_contraparte',
+            ),
+        ]
 
     def __str__(self):
-        return f"Pagar a {self.fornecedor.razao_social} - Vence em {self.data_vencimento}"
+        return f"Pagar a {self.nome_da_pessoa} - Vence em {self.data_vencimento}"
+
+    @property
+    def nome_da_pessoa(self) -> str:
+        if self.fornecedor_id:
+            return self.fornecedor.razao_social
+        return str(self.contraparte) if self.contraparte_id else ''
+
+    def save(self, *args, **kwargs):
+        from entidades.regras import preencher
+        preencher(self)
+        super().save(*args, **kwargs)
 
     @property
     def total_devido(self):
@@ -369,6 +445,11 @@ class ContaPagar(TenantScopedModel, Excluivel):
                         "meio_pagamento": meio_pagamento or "", "novo_status": self.status,
                     },
                 )
+                # Intercompany: o mesmo dinheiro quita o espelho na outra entidade.
+                if self.natureza and origem != 'espelho':
+                    from .intercompany import espelhar_baixa
+                    espelhar_baixa(self, valor=valor, data=data, juros=juros, multa=multa, desconto=desconto,
+                                   meio_pagamento=meio_pagamento, usuario=usuario)
                 return self
 
         # Represado (fora do lock): título já encerrado ou baixa em excesso (L6).
@@ -393,7 +474,12 @@ class ContaReceber(TenantScopedModel, Excluivel):
     Registra as contas a receber da empresa, como pagamentos de clientes.
     """
     conta_receber_id = models.AutoField(primary_key=True, verbose_name=_("ID da Conta a Receber"))
-    cliente = models.ForeignKey('clientes.Cliente', on_delete=models.CASCADE, related_name='contas_a_receber', verbose_name=_("Cliente"))
+    # Quem recebe — ver ContaPagar.entidade.
+    entidade = _entidade_fk()
+    # Vazio só no título entre entidades do grupo: lá a contraparte é a entidade.
+    cliente = models.ForeignKey('clientes.Cliente', on_delete=models.CASCADE, null=True, blank=True, related_name='contas_a_receber', verbose_name=_("Cliente"))
+    contraparte = _contraparte_fk()
+    natureza = _natureza_field()
     empreendimento = models.ForeignKey('empreendimentos.Empreendimento', on_delete=models.SET_NULL, null=True, blank=True, verbose_name=_("Empreendimento"))
     # D.1.4 — a receita da obra: a construtora contratada (empreitada,
     # administração) recebe por obra. A venda de unidade fica no empreendimento.
@@ -460,9 +546,29 @@ class ContaReceber(TenantScopedModel, Excluivel):
                 name='cr_vencimento_vivo',
             ),
         ]
+        constraints = [
+            models.CheckConstraint(
+                check=(
+                    models.Q(cliente__isnull=False, contraparte__isnull=True, natureza='')
+                    | models.Q(cliente__isnull=True, contraparte__isnull=False) & ~models.Q(natureza='')
+                ),
+                name='cr_cliente_ou_contraparte',
+            ),
+        ]
 
     def __str__(self):
-        return f"Receber de {self.cliente.nome_completo} - Vence em {self.data_vencimento}"
+        return f"Receber de {self.nome_da_pessoa} - Vence em {self.data_vencimento}"
+
+    @property
+    def nome_da_pessoa(self) -> str:
+        if self.cliente_id:
+            return self.cliente.nome_completo
+        return str(self.contraparte) if self.contraparte_id else ''
+
+    def save(self, *args, **kwargs):
+        from entidades.regras import preencher
+        preencher(self)
+        super().save(*args, **kwargs)
 
     @property
     def total_devido(self):
@@ -548,6 +654,11 @@ class ContaReceber(TenantScopedModel, Excluivel):
                         status=Boleto.StatusBoleto.PAGO,
                         data_pagamento=_data_baixa_para_datetime(data),
                     )
+                # Intercompany: ver ContaPagar.dar_baixa.
+                if self.natureza and origem != 'espelho':
+                    from .intercompany import espelhar_baixa
+                    espelhar_baixa(self, valor=valor, data=data, juros=juros, multa=multa, desconto=desconto,
+                                   meio_pagamento=meio_pagamento, usuario=usuario)
                 return self
 
         # Represado (fora do lock): título já encerrado ou baixa em excesso (L6).
@@ -640,18 +751,35 @@ class RevisaoBaixa(TenantScopedModel):
 
 class CentroCusto(TenantScopedModel):
     """
-    Centro de custo para rateio de contas a pagar/receber (D.1.1 adianta um
-    recorte mínimo de D.1.4 "Financeiro por obra" — aqui só o necessário para
-    o rateio nascer com o formato definitivo: nome + vínculo opcional a uma
-    obra/empreendimento).
+    O centro de custo da plataforma — um só, para o rateio do ERP e para a
+    alocação da compra no Suprimentos (docs/modulos/entidades.md §2). Nome +
+    vínculo opcional a obra/empreendimento + a entidade dona. Rateio para centro
+    de custo de outra entidade gera intercompany.
+
+    Vertical-agnóstico: obra é só um `tipo` (caso construtora); loja usa
+    filial/almoxarifado. `local_estoque_ref` é o seam leve para o modulosil.
     """
+    class Tipo(models.TextChoices):
+        OBRA = "obra", _("Obra")
+        EMPREENDIMENTO = "empreendimento", _("Empreendimento")
+        ALMOXARIFADO = "almoxarifado", _("Almoxarifado / Central")
+        FILIAL = "filial", _("Filial")
+        ADMINISTRATIVO = "administrativo", _("Administrativo")
+        OUTRO = "outro", _("Outro")
+
     centro_custo_id = models.AutoField(primary_key=True, verbose_name=_("ID do Centro de Custo"))
+    entidade = _entidade_fk()
     nome = models.CharField(max_length=150, verbose_name=_("Nome"))
     codigo = models.CharField(max_length=30, blank=True, verbose_name=_("Código"))
+    tipo = models.CharField(max_length=20, choices=Tipo.choices, default=Tipo.OUTRO, verbose_name=_("Tipo"))
     empreendimento = models.ForeignKey('empreendimentos.Empreendimento', on_delete=models.SET_NULL, null=True, blank=True, related_name='centros_custo', verbose_name=_("Empreendimento"))
     # D.1.4 — rateio para a obra: a parte da conta rateada a este centro conta
     # como despesa (ou receita) desta obra.
     obra = models.ForeignKey('obras.Obra', on_delete=models.SET_NULL, null=True, blank=True, related_name='centros_custo_erp', verbose_name=_("Obra"))
+    local_estoque_ref = models.CharField(
+        max_length=100, blank=True, verbose_name=_("Local de estoque (referência)"),
+        help_text=_("Seam p/ o modulosil: identifica o local de estoque até o módulo existir."),
+    )
     ativo = models.BooleanField(default=True, verbose_name=_("Ativo"))
 
     class Meta:
@@ -661,6 +789,11 @@ class CentroCusto(TenantScopedModel):
 
     def __str__(self):
         return f"{self.codigo} — {self.nome}" if self.codigo else self.nome
+
+    def save(self, *args, **kwargs):
+        from entidades.regras import preencher
+        preencher(self)
+        super().save(*args, **kwargs)
 
 
 class RateioContaPagar(TenantScopedModel):
@@ -752,6 +885,8 @@ class LoteRemessa(TenantScopedModel):
         CANCELADO = 'CANCELADO', _('Cancelado')
 
     lote_id = models.AutoField(primary_key=True)
+    # O pagador: um lote vai ao banco de uma entidade só.
+    entidade = models.ForeignKey('entidades.Entidade', on_delete=models.PROTECT, null=True, blank=True, related_name='+', verbose_name=_("Entidade pagadora"))
     status = models.CharField(max_length=20, choices=StatusLote.choices, default=StatusLote.GERADO, verbose_name=_("Status"))
     banco = models.CharField(max_length=100, blank=True, verbose_name=_("Banco de destino"))
     data_geracao = models.DateTimeField(auto_now_add=True, verbose_name=_("Data de Geração"))
@@ -827,7 +962,9 @@ class Boleto(TenantScopedModel):
         ERRO = 'ERRO', _('Erro')
 
     boleto_id = models.AutoField(primary_key=True)
-    
+    # O beneficiário: a entidade do título (docs/modulos/entidades.md §5).
+    entidade = _entidade_fk()
+
     conta_receber = models.ForeignKey(
         ContaReceber, 
         on_delete=models.SET_NULL, 
@@ -909,6 +1046,12 @@ class Boleto(TenantScopedModel):
     def __str__(self):
         return f"Boleto {self.boleto_id} - R$ {self.valor} - Venc: {self.data_vencimento}"
 
+    def save(self, *args, **kwargs):
+        if not self.entidade_id:
+            conta = self.conta_receber or self.conta_pagar
+            self.entidade_id = conta.entidade_id
+        super().save(*args, **kwargs)
+
 
 # --- Emissão em lote e cobrança registrada no banco (item 52) ---
 
@@ -970,6 +1113,8 @@ class ContaCobrancaBancaria(TenantScopedModel):
         CNAB400 = '400', _('CNAB 400')
 
     conta_cobranca_id = models.AutoField(primary_key=True)
+    # A beneficiária: a carteira é de uma entidade, e só cobra título dela.
+    entidade = _entidade_fk()
     nome = models.CharField(_("Nome"), max_length=80, help_text=_('Ex.: "Itaú — carteira 109".'))
     banco = models.CharField(_("Banco"), max_length=3)
     layout = models.CharField(_("Layout"), max_length=3, choices=Layout.choices, default=Layout.CNAB240)
@@ -1001,6 +1146,12 @@ class ContaCobrancaBancaria(TenantScopedModel):
 
     def __str__(self):
         return self.nome
+
+    def save(self, *args, **kwargs):
+        if not self.entidade_id:
+            from entidades.regras import matriz
+            self.entidade_id = matriz(self.tenant_id).pk
+        super().save(*args, **kwargs)
 
 
 class RemessaCnab(TenantScopedModel):
@@ -1074,7 +1225,11 @@ class IntegracaoFiscal(TenantScopedModel):
 
     A chave da API é guardada **cifrada** (`nucleo.cifra`) e nunca volta para a
     tela — só os últimos quatro caracteres, para a pessoa reconhecer qual é.
+
+    **Uma por entidade** (docs/modulos/entidades.md §5): a NFS-e sai no CNPJ dono
+    do título, e cada CNPJ é uma empresa diferente na NFE.io.
     """
+    entidade = _entidade_fk()
     company_id = models.CharField(_("ID da empresa na NFE.io"), max_length=80, blank=True)
     api_key_cifrada = models.TextField(_("Chave da API (cifrada)"), blank=True)
     api_key_final = models.CharField(_("Final da chave"), max_length=8, blank=True)
@@ -1085,8 +1240,14 @@ class IntegracaoFiscal(TenantScopedModel):
         verbose_name = _("Integração fiscal (NFE.io)")
         verbose_name_plural = _("Integrações fiscais (NFE.io)")
         constraints = [
-            models.UniqueConstraint(fields=['tenant'], name='integracao_fiscal_por_tenant'),
+            models.UniqueConstraint(fields=['tenant', 'entidade'], name='integracao_fiscal_por_entidade'),
         ]
+
+    def save(self, *args, **kwargs):
+        if not self.entidade_id:
+            from entidades.regras import matriz
+            self.entidade_id = matriz(self.tenant_id).pk
+        super().save(*args, **kwargs)
 
     @property
     def api_key(self) -> str:
@@ -1098,3 +1259,50 @@ class IntegracaoFiscal(TenantScopedModel):
         valor = (valor or "").strip()
         self.api_key_cifrada = cifrar(valor)
         self.api_key_final = valor[-4:] if valor else ""
+
+
+class ParIntercompany(TenantScopedModel):
+    """O par que um título gera para outra entidade do grupo (docs/modulos/entidades.md §3).
+
+    A origem é o título comum (com fornecedor ou cliente) de quem pagou ou
+    recebeu; o par são dois títulos com natureza — `credor` na entidade que tem
+    a receber e `devedor` na que tem a pagar. Um par por (origem, contraparte):
+    a fração do rateio e a da cota somam no mesmo par. Quem mantém o par é
+    `moduloerp.intercompany.sincronizar`, nunca a API.
+    """
+    par_id = models.AutoField(primary_key=True)
+    origem_pagar = models.ForeignKey(ContaPagar, on_delete=models.CASCADE, null=True, blank=True, related_name='pares_intercompany')
+    origem_receber = models.ForeignKey(ContaReceber, on_delete=models.CASCADE, null=True, blank=True, related_name='pares_intercompany')
+    entidade_origem = models.ForeignKey('entidades.Entidade', on_delete=models.PROTECT, related_name='+')
+    contraparte = models.ForeignKey('entidades.Entidade', on_delete=models.PROTECT, related_name='+')
+    natureza = models.CharField(max_length=20, choices=NaturezaIntercompany.choices)
+    valor = models.DecimalField(max_digits=15, decimal_places=2)
+    # Repasse de despesa: a receber na origem, a pagar na contraparte. Repasse de
+    # receita: a pagar na origem, a receber na contraparte.
+    titulo_receber = models.OneToOneField(ContaReceber, on_delete=models.PROTECT, related_name='par_intercompany')
+    titulo_pagar = models.OneToOneField(ContaPagar, on_delete=models.PROTECT, related_name='par_intercompany')
+    motivo = models.CharField(max_length=255, blank=True, verbose_name=_("De onde vem (rateio, cota)"))
+    criado_em = models.DateTimeField(auto_now_add=True)
+    atualizado_em = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _("Par intercompany")
+        verbose_name_plural = _("Pares intercompany")
+        constraints = [
+            models.CheckConstraint(
+                check=(
+                    models.Q(origem_pagar__isnull=False, origem_receber__isnull=True)
+                    | models.Q(origem_pagar__isnull=True, origem_receber__isnull=False)
+                ),
+                name='par_intercompany_uma_origem',
+            ),
+            models.UniqueConstraint(fields=['origem_pagar', 'contraparte'], name='par_unico_por_origem_pagar'),
+            models.UniqueConstraint(fields=['origem_receber', 'contraparte'], name='par_unico_por_origem_receber'),
+        ]
+
+    @property
+    def origem(self):
+        return self.origem_pagar or self.origem_receber
+
+    def __str__(self):
+        return f"Par #{self.par_id}: {self.entidade_origem} ↔ {self.contraparte} R$ {self.valor}"

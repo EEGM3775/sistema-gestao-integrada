@@ -48,6 +48,8 @@ interface ResumoIntegracao {
   tem_chave: boolean
   chave_final: string
   origem: 'empresa' | 'ambiente' | 'nenhuma'
+  entidade: number
+  entidade_nome: string
   atualizado_em: string | null
 }
 
@@ -86,10 +88,11 @@ function IntegracaoNfeIo({ podeEditar }: { podeEditar: boolean }) {
 
   return (
     <section style={{ border: '1px solid var(--line)', borderRadius: 'var(--r-lg)', background: 'var(--surface)', padding: 20 }}>
-      <h2 className="text-base font-bold flex items-center gap-2" style={{ color: 'var(--ink)' }}><KeyRound size={16} /> Emissão de NFS-e (NFE.io)</h2>
+      <h2 className="text-base font-bold flex items-center gap-2" style={{ color: 'var(--ink)' }}><KeyRound size={16} /> Emissão de NFS-e (NFE.io){data?.entidade_nome ? ` — ${data.entidade_nome}` : ''}</h2>
       <p className="text-sm mt-1" style={{ lineHeight: 1.5 }}>
         A conta da empresa na NFE.io: o ID da empresa e a chave da API, os dois no painel da NFE.io
-        (Conta › Chaves de acesso). {situacao}
+        (Conta › Chaves de acesso). Cada CNPJ tem a sua: com mais de uma entidade, a barra do
+        financeiro, no alto, escolhe de qual se está falando. {situacao}
       </p>
       {podeEditar ? (
         <div className="grid gap-4 mt-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>

@@ -273,6 +273,10 @@ de clientes, fornecedores, notas fiscais, funcionários"*. O ERP abre num **hub 
 └── CONTÁBIL / FISCAL          → plano de contas, DRE, apuração, SPED  (papel contador/fiscal)
 ```
 
+**Camada de entidade (o CNPJ dono):** acima de tudo, a barra Consolidado → Entidade escolhe de qual
+titular jurídico se está vendo; todo endpoint do ERP aceita `?entidade=` e recorta pelo acesso da pessoa —
+[entidades.md](entidades.md) §4 e §6.
+
 **Padrão de filtro unificado:** todo listão financeiro aceita os mesmos filtros (período,
 obra/empreendimento, cliente, fornecedor, status, centro de custo) — o "seletor de camada" é a barra de
 filtros, não telas duplicadas. Drill-down: card de KPI → lista filtrada → detalhe do título → ações.

@@ -1,6 +1,7 @@
 import { lazy, Suspense, type ReactNode } from 'react'
 import { Route } from 'react-router-dom'
 import ModuleRoute from '@/components/ModuleRoute'
+import CamadaDoErp from '@/modules/entidades/components/CamadaDoErp'
 
 // Code-splitting por sub-módulo (D.1.0 — o ERP é o maior módulo do app, não
 // deve inflar o bundle inicial das telas que a maioria dos usuários nem abre).
@@ -13,6 +14,8 @@ const NotasFiscaisPage = lazy(() => import('./pages/NotasFiscaisPage'))
 const CobrancaBancariaPage = lazy(() => import('./pages/CobrancaBancariaPage'))
 const ConfiguracoesFinanceiroPage = lazy(() => import('./pages/ConfiguracoesFinanceiroPage'))
 const FinanceiroObraPage = lazy(() => import('./pages/FinanceiroObraPage'))
+const IntercompanyPage = lazy(() => import('./pages/IntercompanyPage'))
+const DreEntidadesPage = lazy(() => import('./pages/DreEntidadesPage'))
 
 function ErpFallback() {
   return (
@@ -37,15 +40,19 @@ function withErpFallback(element: ReactNode) {
  */
 export const erpRoutes = (
   <Route element={<ModuleRoute module="erp_financeiro" />}>
-    <Route path="erp" element={withErpFallback(<ErpDashboardPage />)} />
-    <Route path="erp/contas-a-pagar" element={withErpFallback(<ContasAPagarPage />)} />
-    <Route path="erp/contas-a-receber" element={withErpFallback(<ContasAReceberPage />)} />
-    <Route path="erp/boletos" element={withErpFallback(<BoletosListPage />)} />
-    <Route path="erp/boletos/:id" element={withErpFallback(<BoletoDetailPage />)} />
-    <Route path="erp/notas-fiscais" element={withErpFallback(<NotasFiscaisPage />)} />
-    <Route path="erp/cobranca-bancaria" element={withErpFallback(<CobrancaBancariaPage />)} />
-    <Route path="erp/configuracoes" element={withErpFallback(<ConfiguracoesFinanceiroPage />)} />
-    <Route path="erp/obras" element={withErpFallback(<FinanceiroObraPage />)} />
-    <Route path="erp/obras/:obraId" element={withErpFallback(<FinanceiroObraPage />)} />
+    <Route element={<CamadaDoErp />}>
+      <Route path="erp" element={withErpFallback(<ErpDashboardPage />)} />
+      <Route path="erp/contas-a-pagar" element={withErpFallback(<ContasAPagarPage />)} />
+      <Route path="erp/contas-a-receber" element={withErpFallback(<ContasAReceberPage />)} />
+      <Route path="erp/boletos" element={withErpFallback(<BoletosListPage />)} />
+      <Route path="erp/boletos/:id" element={withErpFallback(<BoletoDetailPage />)} />
+      <Route path="erp/notas-fiscais" element={withErpFallback(<NotasFiscaisPage />)} />
+      <Route path="erp/cobranca-bancaria" element={withErpFallback(<CobrancaBancariaPage />)} />
+      <Route path="erp/configuracoes" element={withErpFallback(<ConfiguracoesFinanceiroPage />)} />
+      <Route path="erp/obras" element={withErpFallback(<FinanceiroObraPage />)} />
+      <Route path="erp/obras/:obraId" element={withErpFallback(<FinanceiroObraPage />)} />
+      <Route path="erp/intercompany" element={withErpFallback(<IntercompanyPage />)} />
+      <Route path="erp/entidades" element={withErpFallback(<DreEntidadesPage />)} />
+    </Route>
   </Route>
 )

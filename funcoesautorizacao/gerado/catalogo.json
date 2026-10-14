@@ -20,6 +20,18 @@
    "classe": "B",
    "modulo": "base"
   },
+  "cadastro.entidade.conceder": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "cadastro.entidade.edit": {
+   "classe": "B",
+   "modulo": "base"
+  },
+  "cadastro.entidade.view": {
+   "classe": "A",
+   "modulo": "base"
+  },
   "cadastro.fornecedor.edit": {
    "classe": "B",
    "modulo": "base"

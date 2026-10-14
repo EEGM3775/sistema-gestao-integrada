@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Building2, HardHat, Users, Truck,
   BarChart3, UserCog, TrendingUp, Brain, Plane, Package,
   PanelLeft, Lock, ShieldCheck, Warehouse, Calculator, DatabaseZap,
-  GanttChartSquare, Trash2, FileSignature,
+  GanttChartSquare, Trash2, FileSignature, Landmark,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { Quarteirao } from '@/components/brand/Quarteirao'
@@ -26,6 +26,8 @@ interface NavItem {
    *  admin da empresa, que é caminho real. O que se omite é o que não é dela de
    *  jeito nenhum, e a lixeira é da empresa. */
   permission?: string
+  /** O que o cadeado diz a quem não tem a `permission`. */
+  semPermissao?: string
   /** Só para o supervisor da plataforma — e **omitido**, não trancado.
    *
    *  A diferença com `adminOnly` é deliberada e é decisão do dono (22/08/2026):
@@ -62,6 +64,9 @@ const NAV_SECTIONS: NavSection[] = [
       { label: 'Obras',           icon: <HardHat />,         to: '/app/obras',           implemented: true },
       { label: 'Clientes',        icon: <Users />,           to: '/app/clientes',        implemented: true },
       { label: 'Fornecedores',    icon: <Truck />,           to: '/app/fornecedores',    implemented: true },
+      // Os CNPJs e CPFs da conta — matriz, filiais, SPEs e os donos externos dos
+      // empreendimentos em que a empresa executa (docs/modulos/entidades.md).
+      { label: 'Entidades',       icon: <Landmark />,        to: '/app/entidades',       permission: 'cadastro.entidade.view', semPermissao: 'Peça ao administrador o acesso ao cadastro de entidades', implemented: true },
       // **RH é Operação, não Gestão** *(decisão do dono, 15/09/2026)*. Ele
       // estava na seção de cima por parecer "área meio" junto com ERP e CRM, e
       // a régua da seção é outra: Operação é o **cadastro do que a obra tem** —
@@ -138,7 +143,7 @@ export const AppSidebar: React.FC = () => {
     if (!it.implemented) return { interativo: false, motivo: it.badge?.kind === 'soon' ? 'Em breve' : 'Em construção' }
     if (it.module && !hasModule(it.module)) return { interativo: false, motivo: 'Módulo não contratado' }
     if (it.adminOnly && !isTenantAdmin) return { interativo: false, motivo: 'Somente administradores' }
-    if (it.permission && !hasPermission(it.permission)) return { interativo: false, motivo: 'Somente o gestor da lixeira' }
+    if (it.permission && !hasPermission(it.permission)) return { interativo: false, motivo: it.semPermissao ?? 'Somente o gestor da lixeira' }
     return { interativo: true }
   }
 

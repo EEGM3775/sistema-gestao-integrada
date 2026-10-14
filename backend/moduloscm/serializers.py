@@ -23,10 +23,15 @@ from .models import (
 
 
 class CentroCustoSerializer(TenantScopedModelSerializer):
+    """O centro de custo do ERP, servido ao SCM (o mesmo cadastro)."""
+    entidade_nome = serializers.CharField(source="entidade.__str__", read_only=True, default="")
+
     class Meta:
         model = CentroCusto
         fields = "__all__"
         read_only_fields = ["tenant"]
+        # Sem entidade, vale a regra (a da obra, a do empreendimento ou a matriz).
+        extra_kwargs = {"entidade": {"required": False}}
 
 
 class OfertaFornecedorSerializer(TenantScopedModelSerializer):

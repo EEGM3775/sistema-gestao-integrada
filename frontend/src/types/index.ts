@@ -7,6 +7,8 @@ export interface Empreendimento {
   empreendimento: string
   razao_social: string
   cnpj: string
+  /** A entidade com CNPJ do empreendimento (SPE, SCP…) ou a externa dona dele. */
+  entidade_propria: number | null
   telefone: string
   endereco: string
   /** Cidade/UF do imóvel — não se confunde com a do cliente. */
@@ -604,6 +606,8 @@ export type StatusObra = 'planejamento' | 'em_execucao' | 'concluida' | 'cancela
 export interface Obra {
   obra_id: number
   empreendimento: number | null
+  /** Quem executa (docs/modulos/entidades.md §1). */
+  entidade: number | null
   nome_obra: string
   endereco: string
   status_obra: StatusObra
@@ -620,6 +624,8 @@ export interface Obra {
 export interface ObraFormData {
   nome_obra: string
   empreendimento: number | null
+  /** Quem executa; vazio = a regra (a dona do empreendimento do grupo, ou a matriz). */
+  entidade?: number | null
   endereco: string
   status_obra: StatusObra
   descricao: string

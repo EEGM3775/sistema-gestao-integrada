@@ -28,6 +28,9 @@ definition modulo_base {
     relation concede_cadastro__cliente_banco__edit: papel#portador
     relation concede_cadastro__cliente_banco__view: papel#portador
     relation concede_cadastro__cliente_doc__view: papel#portador
+    relation concede_cadastro__entidade__conceder: papel#portador
+    relation concede_cadastro__entidade__edit: papel#portador
+    relation concede_cadastro__entidade__view: papel#portador
     relation concede_cadastro__fornecedor__edit: papel#portador
     relation concede_cadastro__fornecedor__view: papel#portador
     relation concede_cadastro__fornecedor_banco__edit: papel#portador
@@ -64,6 +67,9 @@ definition modulo_base {
     permission cadastro__cliente_banco__edit = empresa->administrador + empresa->supervisor + concede_cadastro__cliente_banco__edit
     permission cadastro__cliente_banco__view = empresa->administrador + empresa->supervisor + concede_cadastro__cliente_banco__view
     permission cadastro__cliente_doc__view = empresa->administrador + empresa->supervisor + concede_cadastro__cliente_doc__view
+    permission cadastro__entidade__conceder = empresa->administrador + empresa->supervisor + concede_cadastro__entidade__conceder
+    permission cadastro__entidade__edit = empresa->administrador + empresa->supervisor + concede_cadastro__entidade__edit
+    permission cadastro__entidade__view = empresa->administrador + empresa->supervisor + concede_cadastro__entidade__view
     permission cadastro__fornecedor__edit = empresa->administrador + empresa->supervisor + concede_cadastro__fornecedor__edit
     permission cadastro__fornecedor__view = empresa->administrador + empresa->supervisor + concede_cadastro__fornecedor__view
     permission cadastro__fornecedor_banco__edit = empresa->administrador + empresa->supervisor + concede_cadastro__fornecedor_banco__edit

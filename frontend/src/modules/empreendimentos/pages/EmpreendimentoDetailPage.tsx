@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
-import { Pencil, Trash2, ChevronRight, Building2, Loader2, HardHat, Landmark, LayoutGrid, Receipt, Plus } from 'lucide-react'
+import { Pencil, Trash2, ChevronRight, Building2, Loader2, HardHat, Landmark, LayoutGrid, Receipt, Plus, Crown } from 'lucide-react'
 import {
   useEmpreendimento,
   updateEmpreendimento,
@@ -17,6 +17,8 @@ import EmpreendimentoForm from '../components/EmpreendimentoForm'
 import ContaBancariaForm from '../components/ContaBancariaForm'
 import CustoEmpreendimentoForm from '../components/CustoEmpreendimentoForm'
 import UnidadesTab from '../components/UnidadesTab'
+import DonoECotas from '@/modules/entidades/components/DonoECotas'
+import { useAuth } from '@/hooks/useAuth'
 import { useObras } from '@/modules/obras/hooks/useObras'
 import ObraStatusBadge from '@/modules/obras/components/ObraStatusBadge'
 import type {
@@ -28,9 +30,10 @@ import type {
 } from '@/types'
 import { formatCNPJ } from '@/utils/masks'
 
-type Tab = 'visao' | 'obras' | 'contas' | 'custos' | 'unidades'
+type Tab = 'visao' | 'dono' | 'obras' | 'contas' | 'custos' | 'unidades'
 const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
   { key: 'visao',    label: 'Visão Geral',      icon: <Building2 size={15} /> },
+  { key: 'dono',     label: 'Dono e cotas',      icon: <Crown size={15} /> },
   { key: 'obras',    label: 'Obras',             icon: <HardHat size={15} /> },
   { key: 'contas',   label: 'Contas Bancárias',  icon: <Landmark size={15} /> },
   { key: 'custos',   label: 'Custos',            icon: <Receipt size={15} /> },
@@ -64,6 +67,7 @@ const EmpreendimentoDetailPage: React.FC = () => {
   const numId = id ? parseInt(id, 10) : null
 
   const { data, contas, custos, loading, error, refetch } = useEmpreendimento(numId)
+  const { hasPermission } = useAuth()
   const { data: obras, loading: obrasLoading } = useObras({ empreendimentoId: numId })
 
   const [activeTab, setActiveTab]         = useState<Tab>('visao')
@@ -295,6 +299,12 @@ const EmpreendimentoDetailPage: React.FC = () => {
               </div>
             )}
           </dl>
+        )}
+
+        {/* ── Dono e cotas (docs/modulos/entidades.md) ── */}
+        {activeTab === 'dono' && (
+          <DonoECotas empreendimentoId={numId!} entidadePropria={data.entidade_propria ?? null}
+            podeEditar={hasPermission('obra.empreendimento.edit')} onMudou={refetch} />
         )}
 
         {/* ── Unidades ── */}

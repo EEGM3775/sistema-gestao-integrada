@@ -38,11 +38,13 @@ from django.utils import timezone
 from .models import Boleto, ContaPagar, ContaReceber, StatusConta, Transacao
 
 CAMPOS_FINANCEIROS = {
-    ContaPagar: ('fornecedor', 'valor', 'data_vencimento'),
-    ContaReceber: ('cliente', 'valor', 'data_vencimento'),
+    # A entidade é dinheiro também: a baixa saiu do caixa dela (entidades.md §2).
+    ContaPagar: ('fornecedor', 'valor', 'data_vencimento', 'entidade'),
+    ContaReceber: ('cliente', 'valor', 'data_vencimento', 'entidade'),
 }
 ROTULOS = {
     'fornecedor': 'fornecedor', 'cliente': 'cliente', 'valor': 'valor', 'data_vencimento': 'vencimento',
+    'entidade': 'entidade',
 }
 
 
@@ -63,6 +65,11 @@ def travas(conta) -> tuple[list[str], str]:
         return [], ""
     if conta.status == StatusConta.CANCELADO:
         return list(CAMPOS_FINANCEIROS[type(conta)]), "Conta cancelada: o financeiro dela não muda mais."
+    if conta.natureza:
+        return (
+            list(CAMPOS_FINANCEIROS[type(conta)]),
+            "Título intercompany: valor e vencimento acompanham o título de origem — mude a origem.",
+        )
     if conta.valor_pago > 0:
         return (
             list(CAMPOS_FINANCEIROS[type(conta)]),
@@ -81,7 +88,7 @@ def recusa_de_edicao(conta, novos: dict) -> dict:
     for campo in travados:
         if campo not in novos:
             continue
-        atual = getattr(conta, f"{campo}_id") if campo in ('fornecedor', 'cliente') else getattr(conta, campo)
+        atual = getattr(conta, f"{campo}_id") if campo in ('fornecedor', 'cliente', 'entidade') else getattr(conta, campo)
         novo = novos[campo]
         novo = getattr(novo, 'pk', novo)
         if novo != atual:
@@ -143,4 +150,11 @@ def estornar_baixas(conta, *, usuario, motivo: str):
             acao="estornar_baixa", instance=conta, usuario=usuario,
             detalhes={"valor_estornado": str(valor_pago), "motivo": motivo[:500]},
         )
+        # Intercompany: o espelho na outra entidade volta junto — foi um dinheiro só.
+        if conta.natureza and not getattr(conta, '_estorno_do_espelho', False):
+            from .intercompany import espelho_de
+            espelho = espelho_de(conta)
+            if espelho is not None and espelho.valor_pago > 0:
+                espelho._estorno_do_espelho = True
+                estornar_baixas(espelho, usuario=usuario, motivo=f"Espelho do estorno na outra entidade — {motivo}")
     return conta

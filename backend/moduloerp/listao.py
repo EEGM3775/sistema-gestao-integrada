@@ -390,7 +390,9 @@ _MES = Dimensao(campo="mes", rotulo="Mês de vencimento", filtro="mes", formatar
 
 def _anotacoes_receber(hoje: date) -> dict:
     return {
-        "cliente_nome": F("cliente__nome_completo"),
+        # No título intercompany a pessoa é a entidade contraparte.
+        "cliente_nome": Coalesce(F("cliente__nome_completo"), F("contraparte__nome")),
+        "entidade_nome": F("entidade__nome"),
         "empreendimento_nome": F("empreendimento__empreendimento"),
         "obra_nome": F("obra__nome_obra"),  # D.1.4
         "quadra_ord": chave_natural("cliente_empreendimento__unidade__quadra"),
@@ -408,6 +410,7 @@ RECEBER = Fonte(
         "vencimento": ["data_vencimento"],
         "cliente": ["cliente_nome"],
         "empreendimento": ["empreendimento_nome"],
+        "entidade": ["entidade_nome"],
         "obra": ["obra_nome"],
         "unidade": ["empreendimento_nome", "quadra_ord", "lote_ord", "apto_ord"],
         "descricao": ["descricao"],
@@ -440,7 +443,8 @@ RECEBER = Fonte(
 
 def _anotacoes_pagar(hoje: date) -> dict:
     return {
-        "fornecedor_nome": F("fornecedor__razao_social"),
+        "fornecedor_nome": Coalesce(F("fornecedor__razao_social"), F("contraparte__nome")),
+        "entidade_nome": F("entidade__nome"),
         "empreendimento_nome": F("empreendimento__empreendimento"),
         "obra_nome": F("obra__nome_obra"),  # D.1.4
         "saldo": saldo_de(),
@@ -455,6 +459,7 @@ PAGAR = Fonte(
         "vencimento": ["data_vencimento"],
         "fornecedor": ["fornecedor_nome"],
         "empreendimento": ["empreendimento_nome"],
+        "entidade": ["entidade_nome"],
         "obra": ["obra_nome"],
         "descricao": ["descricao"],
         "valor": ["valor"],
@@ -494,6 +499,7 @@ def _anotacoes_boletos(hoje: date) -> dict:
         ),
         "quadra_ord": chave_natural("conta_receber__cliente_empreendimento__unidade__quadra"),
         "lote_ord": chave_natural("conta_receber__cliente_empreendimento__unidade__lote"),
+        "entidade_nome": F("entidade__nome"),
         "mes": TruncMonth("data_vencimento"),
     }
 
@@ -509,6 +515,7 @@ BOLETOS = Fonte(
         "vencimento": ["data_vencimento"],
         "cliente": ["pessoa_nome"],
         "empreendimento": ["empreendimento_nome"],
+        "entidade": ["entidade_nome"],
         "unidade": ["empreendimento_nome", "quadra_ord", "lote_ord"],
         "valor": ["valor"],
         "status": ["status"],
@@ -531,3 +538,9 @@ BOLETOS = Fonte(
     },
     tem_saldo=False,
 )
+
+
+# A camada da entidade (docs/modulos/entidades.md §6): agrupar por quem é dono.
+_ENTIDADE = Dimensao(campo="entidade_id", rotulo_campo="entidade__nome", rotulo="Entidade", filtro="entidade")
+for _fonte in (RECEBER, PAGAR, BOLETOS):
+    _fonte.dimensoes["entidade"] = _ENTIDADE

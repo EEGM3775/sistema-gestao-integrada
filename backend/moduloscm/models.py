@@ -20,48 +20,11 @@ from django.utils.translation import gettext_lazy as _
 
 from nucleo.tenancy import TenantScopedModel
 
-
-class CentroCusto(TenantScopedModel):
-    """Destino/unidade de negócio a que uma compra se atribui — **próprio do SCM**
-    (padrão Coupa: o procurement tem sua dimensão de alocação e a mapeia p/ o
-    rateio do ERP ao virar ContaPagar). Vertical-agnóstico: obra é só UM `tipo`
-    (caso construtora); loja usa filial/almoxarifado. O vínculo é opcional e
-    polimórfico — só um dos campos preenchido conforme o `tipo`; `local_estoque_ref`
-    é o seam leve para o modulosil (que ainda não existe)."""
-
-    class Tipo(models.TextChoices):
-        OBRA = "obra", _("Obra")
-        EMPREENDIMENTO = "empreendimento", _("Empreendimento")
-        ALMOXARIFADO = "almoxarifado", _("Almoxarifado / Central")
-        FILIAL = "filial", _("Filial")
-        ADMINISTRATIVO = "administrativo", _("Administrativo")
-        OUTRO = "outro", _("Outro")
-
-    centro_custo_id = models.AutoField(primary_key=True)
-    nome = models.CharField(max_length=150, verbose_name=_("Nome"))
-    codigo = models.CharField(max_length=30, blank=True, verbose_name=_("Código"))
-    tipo = models.CharField(max_length=20, choices=Tipo.choices, default=Tipo.OUTRO, verbose_name=_("Tipo"))
-    empreendimento = models.ForeignKey(
-        "empreendimentos.Empreendimento", on_delete=models.SET_NULL,
-        null=True, blank=True, related_name="+", verbose_name=_("Empreendimento"),
-    )
-    obra = models.ForeignKey(
-        "obras.Obra", on_delete=models.SET_NULL,
-        null=True, blank=True, related_name="+", verbose_name=_("Obra"),
-    )
-    local_estoque_ref = models.CharField(
-        max_length=100, blank=True, verbose_name=_("Local de estoque (referência)"),
-        help_text=_("Seam p/ o modulosil: identifica o local de estoque até o módulo existir."),
-    )
-    ativo = models.BooleanField(default=True, verbose_name=_("Ativo"))
-
-    class Meta:
-        verbose_name = _("Centro de Custo (SCM)")
-        verbose_name_plural = _("Centros de Custo (SCM)")
-        ordering = ["nome"]
-
-    def __str__(self):
-        return f"{self.codigo} — {self.nome}" if self.codigo else self.nome
+# O centro de custo é um só, o do ERP (docs/modulos/entidades.md §2): a compra se
+# atribui ao mesmo centro que o rateio usa, e ele tem a entidade dona. Era um
+# modelo próprio do SCM (padrão Coupa) até 14/10/2026 — dois cadastros do mesmo
+# destino, um sem a entidade. O nome continua exportado daqui para o SCM e o PDCA.
+from moduloerp.models import CentroCusto  # noqa: E402,F401
 
 
 class OfertaFornecedor(TenantScopedModel):

@@ -50,6 +50,14 @@ class Empreendimento(TenantScopedModel, Excluivel):
     empreendimento = models.CharField(max_length=255, verbose_name=_("Nome do Empreendimento"))
     razao_social = models.CharField(max_length=255, verbose_name=_("Razão Social"))
     cnpj = models.CharField(max_length=18, verbose_name=_("CNPJ"))
+    # A entidade com CNPJ do empreendimento — a SPE, a SCP, o consórcio, o
+    # patrimônio de afetação, ou a entidade externa dona dele quando o tenant só
+    # executa (docs/modulos/entidades.md §1). Vazio: o empreendimento é das
+    # participantes (ou da matriz), lançado no CNPJ/CPF delas.
+    entidade_propria = models.ForeignKey(
+        'entidades.Entidade', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='empreendimentos_proprios', verbose_name=_("Entidade própria (dona)"),
+    )
     telefone = models.CharField(max_length=20, verbose_name=_("Telefone"))
     endereco = models.TextField(verbose_name=_("Endereço"))
     # Cidade/UF estruturados: `endereco` é texto livre e não serve para filtrar

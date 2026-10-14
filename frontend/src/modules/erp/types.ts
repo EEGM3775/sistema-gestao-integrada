@@ -109,6 +109,14 @@ export interface EventoWebhookAsaas {
 
 export interface ContaPagar extends TravaDeEdicao {
   conta_pagar_id: number
+  /** A dona do título (docs/modulos/entidades.md §2). */
+  entidade: number
+  entidade_nome: string
+  /** Título intercompany: a contraparte é a entidade, sem fornecedor. */
+  contraparte: number | null
+  contraparte_nome: string
+  natureza: '' | 'repasse_despesa' | 'repasse_receita'
+  natureza_nome: string
   fornecedor: number | null
   fornecedor_nome: string
   empreendimento: number | null
@@ -160,6 +168,8 @@ export interface AnotacaoContaPagar {
  * são somente leitura no backend e nunca aparecem aqui (alterados só via `dar-baixa`).
  */
 export interface ContaPagarPayload {
+  /** Vazio = a regra (a da obra, a dona do empreendimento, ou a matriz). */
+  entidade?: number | null
   fornecedor: number | null
   empreendimento: number | null
   obra?: number | null
@@ -175,6 +185,12 @@ export interface ContaPagarPayload {
 
 export interface ContaReceber extends TravaDeEdicao {
   conta_receber_id: number
+  entidade: number
+  entidade_nome: string
+  contraparte: number | null
+  contraparte_nome: string
+  natureza: '' | 'repasse_despesa' | 'repasse_receita'
+  natureza_nome: string
   cliente: number | null
   cliente_nome: string
   empreendimento: number | null
@@ -212,6 +228,7 @@ export interface ContaReceber extends TravaDeEdicao {
 
 /** Payload de escrita de uma `ContaReceber` — mesma regra do `ContaPagarPayload`. */
 export interface ContaReceberPayload {
+  entidade?: number | null
   cliente: number | null
   empreendimento: number | null
   obra?: number | null

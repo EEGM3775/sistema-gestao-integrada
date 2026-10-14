@@ -41,6 +41,7 @@
 7. **Prancheta e orçamento** — [D224](pendencias.md) (recalibrar escala), [D183](pendencias.md) / [D184](pendencias.md) (carga da base oficial), [D53](pendencias.md) (render vetorial).
 8. **VPS de teste real (www.gmaxis.com)** ✅ 12/10/2026 — staging sem drone + Cloudflare Tunnel, com o banco do staging local restaurado; procedimentos em [producao/](producao/README.md). Falta: SMTP real, redirecionar o domínio raiz, backup automático.
 9. **Passkey** (WebAuthn) como segundo método de login.
+10. **Entidades (multi-CNPJ)** — [planta](modulos/entidades.md). Fatias 1–2 ✅ 14/10/2026: entidades, participação com cota, dono do lançamento, centro de custo único (SCM → ERP), intercompany com encontro de contas, DRE por entidade, NFE.io e CNAB por entidade, recorte do ERP por entidade. Falta: recorte por empreendimento **fora do ERP** (fatia D do AD-9 — a concessão já existe); Asaas por entidade ([D293](pendencias.md)).
 
 ### ⏸ Final do desenvolvimento (não trabalhar agora)
 

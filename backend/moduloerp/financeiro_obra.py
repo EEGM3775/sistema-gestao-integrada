@@ -63,8 +63,10 @@ def _contas(modelo, tenant_id, obra_id=None):
     filtro = Q(obra__isnull=False) | Q(rateios__centro_custo__obra__isnull=False)
     if obra_id:
         filtro = Q(obra_id=obra_id) | Q(rateios__centro_custo__obra_id=obra_id)
+    # O par intercompany fica de fora: a obra já recebe a fração pelo rateio do
+    # título de origem, e somar o par contaria o mesmo real duas vezes.
     return (
-        modelo.objects.filter(filtro, tenant_id=tenant_id)
+        modelo.objects.filter(filtro, tenant_id=tenant_id, natureza="")
         .exclude(status=StatusConta.CANCELADO)
         .distinct()
         .prefetch_related("rateios__centro_custo")
@@ -211,18 +213,26 @@ def dre(tenant_id, obra, *, com_orcado: bool) -> dict:
     }
 
 
-def resumo_das_obras(tenant_id) -> list[dict]:
-    """Uma linha por obra com movimento financeiro — a lista da página."""
+def resumo_das_obras(tenant_id, escopo=None, entidade=None) -> list[dict]:
+    """Uma linha por obra com movimento financeiro — a lista da página.
+
+    `escopo` é o `Q` do recorte por entidade (sobre a obra) e `entidade` a camada
+    escolhida: a obra entra pela entidade que a executa."""
     from obras.models import Obra
 
     dados = por_obra(tenant_id)
-    nomes = dict(Obra.objects.filter(tenant_id=tenant_id, pk__in=list(dados)).values_list("pk", "nome_obra"))
+    obras = Obra.objects.filter(tenant_id=tenant_id, pk__in=list(dados))
+    if escopo is not None:
+        obras = obras.filter(escopo)
+    if entidade is not None:
+        obras = obras.filter(entidade_id=entidade)
+    nomes = {pk: (nome, ent) for pk, nome, ent in obras.values_list("pk", "nome_obra", "entidade_id")}
     linhas = []
     for obra_id, d in dados.items():
         if obra_id not in nomes:
             continue
         linhas.append({
-            "obra": obra_id, "obra_nome": nomes[obra_id],
+            "obra": obra_id, "obra_nome": nomes[obra_id][0], "entidade": nomes[obra_id][1],
             "receita": str(_q(d["receita"]["valor"])), "recebido": str(_q(d["receita"]["pago"])),
             "custo": str(_q(d["despesa"]["valor"])), "pago": str(_q(d["despesa"]["pago"])),
             "resultado": str(_q(d["receita"]["valor"] - d["despesa"]["valor"])),

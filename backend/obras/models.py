@@ -14,6 +14,12 @@ class Obra(TenantScopedModel, Excluivel):
 
     obra_id = models.AutoField(primary_key=True)
     empreendimento = models.ForeignKey('empreendimentos.Empreendimento', on_delete=models.SET_NULL, null=True, blank=True, verbose_name=_("Empreendimento"))
+    # Quem executa (docs/modulos/entidades.md §1): herda a dona do empreendimento
+    # do grupo; no empreendimento de terceiro ou sem empreendimento, é escolhida.
+    entidade = models.ForeignKey(
+        'entidades.Entidade', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='obras', verbose_name=_("Entidade executora"),
+    )
     nome_obra = models.CharField(max_length=255, verbose_name=_("Nome da Obra"))
     endereco = models.TextField(verbose_name=_("Endereço"))
     status_obra = models.CharField(max_length=50, choices=STATUS_OBRA_CHOICES, default="planejamento", verbose_name=_("Status da Obra"))
@@ -55,6 +61,17 @@ class Obra(TenantScopedModel, Excluivel):
 
     def __str__(self):
         return self.nome_obra
+
+    def save(self, *args, **kwargs):
+        # A obra sempre tem quem a executa: a escolhida, ou a regra de
+        # docs/modulos/entidades.md §1 (a dona do empreendimento do grupo, ou a matriz).
+        if not self.entidade_id:
+            from entidades.regras import SemEntidade, entidade_da_obra
+            try:
+                self.entidade_id = entidade_da_obra(self)
+            except SemEntidade:
+                pass
+        super().save(*args, **kwargs)
 
 class EtapaObra(TenantScopedModel, Excluivel):
     STATUS_ETAPA_CHOICES = [

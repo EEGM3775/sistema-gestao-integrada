@@ -48,11 +48,8 @@ class BoletoListaSerializer(BoletoSerializer):
         return obj.conta_receber or obj.conta_pagar
 
     def get_pessoa_nome(self, obj):
-        if obj.conta_receber_id:
-            return obj.conta_receber.cliente.nome_completo
-        if obj.conta_pagar_id:
-            return obj.conta_pagar.fornecedor.razao_social
-        return ''
+        conta = self._conta(obj)
+        return conta.nome_da_pessoa if conta else ''
 
     def get_cliente_id(self, obj):
         return obj.conta_receber.cliente_id if obj.conta_receber_id else None
@@ -108,10 +105,30 @@ class NotaFiscalSerializer(ArquivoGateadoSerializerMixin, TenantScopedUniqueSeri
         model = NotaFiscal
         fields = '__all__'
 
+def _validar_entidade_do_grupo(entidade, campo='entidade'):
+    """Título, centro de custo e carteira são de entidade do grupo — a externa não
+    tem financeiro aqui (docs/modulos/entidades.md §1)."""
+    if entidade is not None and entidade.externa:
+        raise serializers.ValidationError({
+            campo: _('%(nome)s é uma entidade externa: ela não tem financeiro neste sistema.') % {'nome': entidade},
+        })
+
+
 class CentroCustoSerializer(serializers.ModelSerializer):
+    entidade_nome = serializers.CharField(source='entidade.__str__', read_only=True, default='')
+
     class Meta:
         model = CentroCusto
-        fields = ['centro_custo_id', 'nome', 'codigo', 'empreendimento', 'obra', 'ativo']
+        fields = [
+            'centro_custo_id', 'entidade', 'entidade_nome', 'nome', 'codigo', 'tipo',
+            'empreendimento', 'obra', 'local_estoque_ref', 'ativo',
+        ]
+        # Sem entidade, vale a regra (a da obra, a do empreendimento ou a matriz).
+        extra_kwargs = {'entidade': {'required': False}}
+
+    def validate(self, attrs):
+        _validar_entidade_do_grupo(attrs.get('entidade'))
+        return attrs
 
 
 class RateioContaPagarSerializer(serializers.ModelSerializer):
@@ -214,7 +231,43 @@ class TravaDeEdicaoMixin(serializers.Serializer):
     def _foto_financeira(self, conta) -> dict:
         campos = {c: getattr(conta, c) for c in self.CAMPOS_AUDITADOS}
         campos['pessoa'] = conta.cliente_id if isinstance(conta, ContaReceber) else conta.fornecedor_id
+        campos['entidade'] = conta.entidade_id
         return campos
+
+    # ─── Entidade e intercompany (docs/modulos/entidades.md §2–§3) ─────────────
+
+    def _validar_entidade(self, attrs, campo_pessoa):
+        _validar_entidade_do_grupo(attrs.get('entidade'))
+        if self.instance is None and not attrs.get(campo_pessoa):
+            raise serializers.ValidationError({campo_pessoa: _('Informe o %(campo)s.') % {'campo': campo_pessoa}})
+        if self.instance is not None and self.instance.natureza:
+            mexe = {c for c in ('valor', 'data_vencimento', 'entidade', campo_pessoa) if c in attrs}
+            if mexe:
+                raise serializers.ValidationError({
+                    c: _('Título intercompany: ele acompanha o título de origem — mude a origem.') for c in mexe
+                })
+
+    def _criar_com_par(self, modelo, validated_data, rateio_modelo, campo_conta):
+        from .intercompany import sincronizar
+        rateios_data = validated_data.pop('rateios', [])
+        conta = modelo(**validated_data)
+        conta._sem_intercompany = True   # o par sai uma vez só, depois do rateio
+        conta.save()
+        for rateio in rateios_data:
+            rateio_modelo.objects.create(**{campo_conta: conta}, tenant=conta.tenant, **rateio)
+        sincronizar(conta)
+        return conta
+
+    def _rederivar_entidade(self, instance, validated_data):
+        """Trocar a obra ou o empreendimento de um título sem baixa troca a dona —
+        a não ser que a pessoa tenha escolhido a entidade."""
+        if 'entidade' in validated_data or instance.valor_pago > 0:
+            return
+        if any(
+            c in validated_data and getattr(validated_data[c], 'pk', validated_data[c]) != getattr(instance, f'{c}_id')
+            for c in ('obra', 'empreendimento')
+        ):
+            instance.entidade_id = None
 
     def _auditar_mudanca_financeira(self, conta, antes: dict, **extra):
         """Item 57 (01/10/2026): mudar valor, vencimento ou contraparte deixa rastro.
@@ -299,7 +352,11 @@ class ContaPagarSerializer(TravaDeEdicaoMixin, serializers.ModelSerializer):
     # Os nomes vêm prontos (item 53 do dono): a tela procurava o nome numa lista
     # de opções e mostrava "Fornecedor #12" quando ele não estava entre elas.
     permissao_estorno = 'erp.conta_pagar.estornar'
-    fornecedor_nome = serializers.CharField(source='fornecedor.razao_social', read_only=True, default='')
+    # No título intercompany a "pessoa" é a entidade contraparte.
+    fornecedor_nome = serializers.CharField(source='nome_da_pessoa', read_only=True, default='')
+    entidade_nome = serializers.CharField(source='entidade.__str__', read_only=True, default='')
+    contraparte_nome = serializers.CharField(source='contraparte.__str__', read_only=True, default='')
+    natureza_nome = serializers.CharField(source='get_natureza_display', read_only=True)
     empreendimento_nome = serializers.CharField(source='empreendimento.empreendimento', read_only=True, default='')
     obra_nome = serializers.CharField(source='obra.nome_obra', read_only=True, default='')
     etapa_nome = serializers.CharField(source='etapa.nome_etapa', read_only=True, default='')
@@ -311,7 +368,9 @@ class ContaPagarSerializer(TravaDeEdicaoMixin, serializers.ModelSerializer):
     class Meta:
         model = ContaPagar
         fields = [
-            'conta_pagar_id', 'fornecedor', 'fornecedor_nome', 'empreendimento', 'empreendimento_nome',
+            'conta_pagar_id', 'entidade', 'entidade_nome', 'fornecedor', 'fornecedor_nome',
+            'contraparte', 'contraparte_nome', 'natureza', 'natureza_nome',
+            'empreendimento', 'empreendimento_nome',
             'obra', 'obra_nome', 'etapa', 'etapa_nome',
             'nota_fiscal',
             'descricao', 'valor', 'data_emissao', 'data_vencimento', 'data_agendamento',
@@ -322,8 +381,10 @@ class ContaPagarSerializer(TravaDeEdicaoMixin, serializers.ModelSerializer):
         ]
         read_only_fields = [
             'status', 'valor_pago', 'juros', 'multa', 'desconto', 'data_pagamento',
-            'pedido_compra_ref', 'nfe_numero', 'nfe_situacao',
+            'pedido_compra_ref', 'nfe_numero', 'nfe_situacao', 'contraparte', 'natureza',
         ]
+        # Sem entidade, vale a regra de docs/modulos/entidades.md §2.
+        extra_kwargs = {'entidade': {'required': False}}
 
     def get_anotacoes(self, obj):
         """Só no detalhe: a trilha inteira de cem títulos numa página de lista
@@ -336,26 +397,27 @@ class ContaPagarSerializer(TravaDeEdicaoMixin, serializers.ModelSerializer):
         rateios = attrs.get('rateios')
         valor = attrs.get('valor', getattr(self.instance, 'valor', None))
         self._recusar_campos_travados(attrs)  # item 57: a trava fala primeiro, com a saída
+        self._validar_entidade(attrs, 'fornecedor')
         _validar_rateios(rateios, valor)
         _validar_edicao_valor(self.instance, valor, rateios is not None)  # L6
         _validar_obra_e_etapa(attrs, self.instance)  # D.1.4
         return attrs
 
     def create(self, validated_data):
-        rateios_data = validated_data.pop('rateios', [])
-        conta = super().create(validated_data)
-        for rateio in rateios_data:
-            RateioContaPagar.objects.create(conta_pagar=conta, tenant=conta.tenant, **rateio)
-        return conta
+        return self._criar_com_par(ContaPagar, validated_data, RateioContaPagar, 'conta_pagar')
 
     def update(self, instance, validated_data):
+        from .intercompany import sincronizar
         rateios_data = validated_data.pop('rateios', None)
         antes = self._foto_financeira(instance)
+        self._rederivar_entidade(instance, validated_data)
+        instance._sem_intercompany = True
         conta = super().update(instance, validated_data)
         if rateios_data is not None:
             conta.rateios.all().delete()
             for rateio in rateios_data:
                 RateioContaPagar.objects.create(conta_pagar=conta, tenant=conta.tenant, **rateio)
+        sincronizar(conta)
         self._auditar_mudanca_financeira(conta, antes)
         return conta
 
@@ -373,7 +435,11 @@ class ContaReceberSerializer(TravaDeEdicaoMixin, serializers.ModelSerializer):
     saldo_aberto = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
     # Nomes prontos (itens 53/54 do dono) — ver ContaPagarSerializer.
     permissao_estorno = 'erp.conta_receber.estornar'
-    cliente_nome = serializers.CharField(source='cliente.nome_completo', read_only=True, default='')
+    # No título intercompany a "pessoa" é a entidade contraparte.
+    cliente_nome = serializers.CharField(source='nome_da_pessoa', read_only=True, default='')
+    entidade_nome = serializers.CharField(source='entidade.__str__', read_only=True, default='')
+    contraparte_nome = serializers.CharField(source='contraparte.__str__', read_only=True, default='')
+    natureza_nome = serializers.CharField(source='get_natureza_display', read_only=True)
     empreendimento_nome = serializers.CharField(source='empreendimento.empreendimento', read_only=True, default='')
     obra_nome = serializers.CharField(source='obra.nome_obra', read_only=True, default='')
     unidade = serializers.SerializerMethodField()
@@ -385,7 +451,9 @@ class ContaReceberSerializer(TravaDeEdicaoMixin, serializers.ModelSerializer):
     class Meta:
         model = ContaReceber
         fields = [
-            'conta_receber_id', 'cliente', 'cliente_nome', 'empreendimento', 'empreendimento_nome',
+            'conta_receber_id', 'entidade', 'entidade_nome', 'cliente', 'cliente_nome',
+            'contraparte', 'contraparte_nome', 'natureza', 'natureza_nome',
+            'empreendimento', 'empreendimento_nome',
             'obra', 'obra_nome',
             'cliente_empreendimento', 'unidade',
             'nota_fiscal_recebida', 'nota_fiscal_servico', 'nota_fiscal_produto',
@@ -397,8 +465,9 @@ class ContaReceberSerializer(TravaDeEdicaoMixin, serializers.ModelSerializer):
         ]
         read_only_fields = [
             'status', 'valor_pago', 'juros', 'multa', 'desconto', 'data_recebimento',
-            'cliente_empreendimento',
+            'cliente_empreendimento', 'contraparte', 'natureza',
         ]
+        extra_kwargs = {'entidade': {'required': False}}
 
     def get_unidade(self, obj):
         return _rotulo_unidade(obj)
@@ -420,27 +489,28 @@ class ContaReceberSerializer(TravaDeEdicaoMixin, serializers.ModelSerializer):
             erros = recusa_por_boleto(self.instance, attrs, confirmado=confirmado)
             if erros:
                 raise serializers.ValidationError(erros)
+        self._validar_entidade(attrs, 'cliente')
         _validar_rateios(rateios, valor)
         _validar_edicao_valor(self.instance, valor, rateios is not None)  # L6
         return attrs
 
     def create(self, validated_data):
-        rateios_data = validated_data.pop('rateios', [])
-        conta = super().create(validated_data)
-        for rateio in rateios_data:
-            RateioContaReceber.objects.create(conta_receber=conta, tenant=conta.tenant, **rateio)
-        return conta
+        return self._criar_com_par(ContaReceber, validated_data, RateioContaReceber, 'conta_receber')
 
     def update(self, instance, validated_data):
         from .boleto_da_conta import reemitir_se_preciso
+        from .intercompany import sincronizar
 
         rateios_data = validated_data.pop('rateios', None)
         antes = self._foto_financeira(instance)
+        self._rederivar_entidade(instance, validated_data)
+        instance._sem_intercompany = True
         conta = super().update(instance, validated_data)
         if rateios_data is not None:
             conta.rateios.all().delete()
             for rateio in rateios_data:
                 RateioContaReceber.objects.create(conta_receber=conta, tenant=conta.tenant, **rateio)
+        sincronizar(conta)
         reemitido = reemitir_se_preciso(conta, antes=antes)
         self._auditar_mudanca_financeira(conta, antes, **({'boleto_reemitido': True} if reemitido else {}))
         return conta

@@ -31,6 +31,7 @@ from clientes import plano_pagamento
 from clientes import vencimento as vencimento_svc
 from clientes.models import Cliente, ClienteEmpreendimento, ContratoCliente, MeioPagamento
 from empreendimentos.models import Empreendimento, Unidade
+from entidades.regras import entidade_do_lancamento
 from moduloerp.models import ContaReceber, StatusConta
 from nucleo.documentos import gerar_cnpj, gerar_cpf
 from nucleo.models import Tenant
@@ -299,6 +300,8 @@ class Command(BaseCommand):
                 quitada = vencida and pontual
                 titulos.append(ContaReceber(
                     tenant=tenant, cliente=aquisicao.cliente,
+                    # `bulk_create` não passa pelo `save()`: a dona do título vem da regra.
+                    entidade_id=entidade_do_lancamento(tenant.pk, empreendimento=aquisicao.empreendimento),
                     empreendimento=aquisicao.empreendimento, cliente_empreendimento=aquisicao,
                     descricao=descricao,
                     valor=parcela.valor,

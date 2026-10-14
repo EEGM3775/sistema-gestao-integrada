@@ -398,10 +398,16 @@ class ClienteEmpreendimentoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewS
 
         descricoes = plano_pagamento.descricoes_do_carne(plano, aquisicao)
 
+        # A venda é da dona do empreendimento (docs/modulos/entidades.md §2). O
+        # `bulk_create` não passa pelo `save()`, então a regra roda aqui, uma vez.
+        from entidades.regras import entidade_do_lancamento
+        entidade_id = entidade_do_lancamento(aquisicao.tenant_id, empreendimento=aquisicao.empreendimento)
+
         with transaction.atomic():
             titulos = [
                 ContaReceber(
                     tenant=aquisicao.tenant,
+                    entidade_id=entidade_id,
                     cliente=aquisicao.cliente,
                     empreendimento=aquisicao.empreendimento,
                     cliente_empreendimento=aquisicao,
@@ -412,7 +418,13 @@ class ClienteEmpreendimentoViewSet(TenantScopedViewSetMixin, viewsets.ModelViewS
                 )
                 for parcela, descricao in zip(plano.parcelas, descricoes)
             ]
-            ContaReceber.objects.bulk_create(titulos)
+            titulos = ContaReceber.objects.bulk_create(titulos)
+            # Empreendimento de co-donas sem entidade própria: a cota das outras
+            # sai em intercompany, parcela a parcela (entidades.md §3).
+            from moduloerp.intercompany import precisa_de_par_de_cota, sincronizar
+            if precisa_de_par_de_cota(aquisicao.empreendimento):
+                for titulo in titulos:
+                    sincronizar(titulo)
             aquisicao.parcelas_geradas_em = timezone.now()
             aquisicao.save(update_fields=['parcelas_geradas_em'])
             from nucleo.notificacoes import avisar_quem_pode

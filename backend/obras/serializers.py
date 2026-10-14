@@ -29,6 +29,15 @@ class ObraSerializer(serializers.ModelSerializer):
         fields = [*(f.name for f in Obra._meta.fields), 'progresso_ponderado']
         read_only_fields = ['tenant']  # injetado pelo perform_create (Fase 8.2 / D3)
 
+    def validate_entidade(self, entidade):
+        """Quem executa é do grupo: a externa não tem financeiro aqui
+        (docs/modulos/entidades.md §1). Vazio = a regra escolhe."""
+        if entidade is not None and entidade.externa:
+            raise serializers.ValidationError(
+                f"{entidade} é externa: a obra é executada por uma entidade do grupo."
+            )
+        return entidade
+
     def validate(self, attrs):
         """O nome é único no empreendimento — e a recusa vem com um nome pronto.
 

@@ -18,6 +18,7 @@ import ClientesListPage from './modules/clientes/pages/ClientesListPage'
 import ClienteDetailPage from './modules/clientes/pages/ClienteDetailPage'
 import FornecedoresListPage from './modules/fornecedores/pages/FornecedoresListPage'
 import FornecedorDetailPage from './modules/fornecedores/pages/FornecedorDetailPage'
+import EntidadesPage from './modules/entidades/pages/EntidadesPage'
 import DiarioObraPage from './modules/diario/pages/DiarioObraPage'
 import CalendarPage from './modules/calendar/pages/CalendarPage'
 import DocumentosPage from './modules/documentos/pages/DocumentosPage'
@@ -81,6 +82,9 @@ function App() {
           {/* ── Fornecedores ── */}
           <Route path="fornecedores" element={<FornecedoresListPage />} />
           <Route path="fornecedores/:id" element={<FornecedorDetailPage />} />
+
+          {/* ── Entidades: os CNPJs/CPFs da conta (docs/modulos/entidades.md) ── */}
+          <Route path="entidades" element={<EntidadesPage />} />
 
           {/* ── Diário de Obra & IA ── */}
           <Route path="diario" element={<DiarioObraPage />} />

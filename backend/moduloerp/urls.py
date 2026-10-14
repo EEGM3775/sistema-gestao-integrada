@@ -21,6 +21,9 @@ from .views import (
     ConfiguracaoLotesView,
     IntegracaoFiscalView,
     NotasDasComprasView,
+    IntercompanyView,
+    EncontroDeContasView,
+    DreEntidadesView,
 )
 
 from .views_cnab import ContaCobrancaViewSet, LoteCobrancaViewSet, RemessaViewSet, RetornoViewSet
@@ -52,4 +55,8 @@ urlpatterns = [
     path('configuracao/integracao-fiscal/', IntegracaoFiscalView.as_view(), name='erp-integracao-fiscal'),
     path('atualizar-status-nf/', AtualizarStatusNFView.as_view(), name='atualizar-status-nf'),
     path('nf/<int:nf_id>/consultar/', ConsultarStatusNFView.as_view(), name='consultar-status-nf'),
+    # Entidades (docs/modulos/entidades.md §3 e §6)
+    path('intercompany/', IntercompanyView.as_view(), name='erp-intercompany'),
+    path('intercompany/encontro/', EncontroDeContasView.as_view(), name='erp-encontro-de-contas'),
+    path('entidades/dre/', DreEntidadesView.as_view(), name='erp-dre-entidades'),
 ]

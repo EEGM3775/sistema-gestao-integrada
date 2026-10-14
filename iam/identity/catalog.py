@@ -478,6 +478,12 @@ CATALOGO: tuple[Perm, ...] = (
     Perm("cadastro.fornecedor.edit", "Gerir fornecedores (produtos/serviços)", "base"),
     Perm("cadastro.fornecedor_banco.view", "Ver dados bancários do fornecedor (PII)", "base"),
     Perm("cadastro.fornecedor_banco.edit", "Editar dados bancários do fornecedor (PII)", "base"),
+    # Entidades — os titulares jurídicos (CPF/CNPJ) do tenant: matriz, filiais, SPEs
+    # e as externas (docs/modulos/entidades.md). Conceder acesso ao financeiro de
+    # uma entidade é ato próprio: quem edita o cadastro não se dá acesso a ele.
+    Perm("cadastro.entidade.view", "Ver as entidades (CNPJs/CPFs) da conta", "base"),
+    Perm("cadastro.entidade.edit", "Cadastrar e editar entidades e participações", "base"),
+    Perm("cadastro.entidade.conceder", "Dar e tirar acesso de usuários a entidades e empreendimentos", "base"),
     # Catálogo-mestre de plataforma (app-fundação `catalogo`; item bem/serviço/etc.)
     Perm("cadastro.item.view", "Ver itens do catálogo-mestre", "base"),
     Perm("cadastro.item.edit", "Gerir itens do catálogo-mestre", "base"),
@@ -537,7 +543,7 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
         "crm.campanha.view", "crm.lead.view", "crm.conta.view",
         "crm.oportunidade.view", "crm.interacao.view",
         "drone.projeto.view", "drone.medicao.view",
-        "obra.empreendimento.view", "obra.empreend_custo.view",
+        "obra.empreendimento.view", "obra.empreend_custo.view", "cadastro.entidade.view",
         "obra.obra.view", "obra.diario.view", "ia.analise.view",
         "calendario.evento.view",
         "cadastro.cliente.view", "cadastro.cliente_doc.view", "cadastro.fornecedor.view",
@@ -609,7 +615,7 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
     # ERP contas a pagar/receber + rateio + ledger + revisão de baixa + contas do empreendimento.
     # Gere os dados bancários de cliente e fornecedor (necessário p/ pagar/receber).
     "financeiro": [
-        "erp.conta_pagar.*", "erp.conta_receber.*", "erp.centro_custo.*",
+        "erp.conta_pagar.*", "erp.conta_receber.*", "erp.centro_custo.*", "cadastro.entidade.view",
         "erp.transacao.view", "erp.revisao_baixa.*", "erp.lote_remessa.*",
         "erp.relatorio.view",
         "obra.empreend_conta.*", "obra.empreend_custo.*",
@@ -642,7 +648,7 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
     # Georreferencia e desenha no mapa: quem responde pela obra é quem sabe onde
     # o canteiro começa e o que há dentro dele.
     "engenharia": [
-        "obra.empreendimento.*", "obra.empreend_custo.*", "obra.obra.*",
+        "obra.empreendimento.*", "obra.empreend_custo.*", "obra.obra.*", "cadastro.entidade.view",
         "obra.diario.*", "ia.analise.*", "calendario.evento.*",
         "cadastro.fornecedor.view", "drone.projeto.view", "drone.medicao.view",
         "mapa.local.*", "mapa.feicao.*", "mapa.ortofoto.view", "mapa.geofence.*",
@@ -780,7 +786,7 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
         "erp.transacao.view", "erp.relatorio.view",
         "crm.lead.view", "crm.oportunidade.view",
         "ia.analise.view", "calendario.evento.view",
-        "obra.empreendimento.view", "obra.empreend_custo.view",
+        "obra.empreendimento.view", "obra.empreend_custo.view", "cadastro.entidade.view",
         "obra.obra.view", "obra.diario.view",
         "cadastro.cliente.view", "cadastro.cliente_doc.view", "cadastro.fornecedor.view",
         "mapa.local.view",
