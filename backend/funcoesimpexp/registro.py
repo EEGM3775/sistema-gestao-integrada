@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 
 
@@ -52,7 +53,9 @@ class EntregaInvalida(Exception):
     """
 
 
-TIPOS_SUPORTADOS = (str, int, Decimal, bool)
+#: `date` desde 14/10/2026: os cadastros têm nascimento, admissão e início de
+#: obra, e a R8 manda data sair como data — não como texto que o Excel não soma.
+TIPOS_SUPORTADOS = (str, int, Decimal, bool, date)
 
 #: As duas naturezas de recurso (IE.3). Ver a nota em `Recurso.natureza`.
 NATUREZA_LINHA = "linha"
@@ -214,7 +217,7 @@ class Coluna:
         if self.tipo not in TIPOS_SUPORTADOS:
             raise RecursoInvalido(
                 f"Coluna '{self.campo}': tipo {self.tipo!r} não suportado. "
-                "Use str, int, Decimal ou bool."
+                "Use str, int, Decimal, bool ou date."
             )
 
     @property
@@ -465,6 +468,26 @@ class Recurso:
         Roda na conferência, antes de qualquer gravação — é aqui que "quantidade
         negativa" ou "obra de outro tenant" viram linha inválida em vez de erro
         no meio do lote.
+        """
+        return ""
+
+    def chave_da_linha(self, dados: dict) -> str:
+        """A chave como o destino a guarda — é por ela que o motor acha repetidas.
+
+        O padrão é o texto da coluna. Quem guarda a chave normalizada (o CPF só
+        com dígitos) sobrescreve, senão "123.456.789-00" e "12345678900" passariam
+        como duas linhas diferentes do mesmo arquivo.
+        """
+        return str(dados.get(self.chave) or "").strip()
+
+    def validar_no_destino(self, dados: dict, tenant_id) -> str:
+        """Regra que precisa do **tenant** — e-mail já usado por outro cadastro,
+        CNPJ repetido. Devolve o motivo da recusa, ou "".
+
+        Separada de `validar_linha` porque aquela não conhece o tenant, e mudar a
+        assinatura dela obrigaria todo recurso a reescrevê-la. Roda só para a
+        linha que seria **nova**: a que já existe trava como "já existe", que é
+        a frase certa para ela.
         """
         return ""
 

@@ -3,8 +3,14 @@
 
 **R1, o ponto do módulo inteiro:** nada é gravado no destino antes de alguém
 olhar. O arquivo é lido, cada linha recebe um veredito (nova · já existe ·
-inválida) e a importação fica parada em `CONFERINDO`. Só então vem *confirmar
-tudo*, *confirmar seleção* ou *negar tudo*.
+inválida) e a importação fica parada em `CONFERINDO`. Só então vem *confirmar*
+ou *negar* — e confirmar só existe quando **todas** as linhas são novas.
+
+**Importar só cria, e é tudo ou nada** *(decisão do dono, 14/10/2026)*. Linha
+inválida ou que já existe no destino trava o lote inteiro: nada entra, e a tela
+mostra o que houve (a planilha de recusadas da R5). Editar o que já existe é só
+pela tela do módulo, com as regras dela — uma planilha que atualizasse cadastro
+seria uma segunda porta de edição, sem nenhuma dessas regras.
 
 Isso não é zelo excessivo — é o que separa este caminho de um `POST` que grava.
 Planilha de origem externa sai do extrator com coluna trocada; base oficial muda
@@ -18,6 +24,7 @@ recurso.
 from __future__ import annotations
 
 import logging
+from datetime import date
 from decimal import Decimal
 
 from django.db import transaction
@@ -26,7 +33,9 @@ from django.utils import timezone
 from nucleo.orcamento import RecursoExcedido, orcamento
 from payment.planos import IMPEXP_LIMITE_SINCRONO_IMPORTACAO
 
-from .formatos.leitura import LeituraInvalida, extrair, ler_bytes, mapear_colunas
+from .formatos.leitura import (
+    LeituraInvalida, erros_da_linha, extrair, ler_bytes, mapear_colunas,
+)
 from .limites import Limites
 from .models import Importacao, LinhaImportacao
 from .registro import CAMPO_ARQUIVO, Recurso
@@ -256,9 +265,10 @@ def _preparar_sob_orcamento(
         if not any(c not in (None, "") for c in bruta):
             continue
         dados = extrair(list(bruta), mapa, recurso)
-        chave = str(dados.get(recurso.chave) or "").strip()
+        chave = recurso.chave_da_linha(dados)
         situacao, motivo = _classificar(
             recurso, dados, chave, vistos_no_arquivo, existentes, tenant_id,
+            erro_de_tipo=erros_da_linha(list(bruta), mapa, recurso),
         )
         if chave and situacao != LinhaImportacao.Situacao.INVALIDA:
             vistos_no_arquivo.add(chave)
@@ -270,9 +280,8 @@ def _preparar_sob_orcamento(
             valores=_jsonavel(dados),
             situacao=situacao,
             motivo=motivo[:255],
-            # Linha inválida nasce desmarcada: o padrão nunca deve ser gravar o
-            # que o próprio motor já sabe que está errado.
-            aceita=situacao != LinhaImportacao.Situacao.INVALIDA,
+            # Só a nova nasce marcada: inválida e já existente travam o lote.
+            aceita=situacao == LinhaImportacao.Situacao.NOVA,
             bruto=[None if c is None else str(c) for c in bruta],
         ))
         if lote is not None and len(linhas) % PASSO_PROGRESSO == 0:
@@ -367,7 +376,7 @@ def preparar_arquivos(
             # O módulo leu os bytes; o binário ainda vai ser gravado abaixo.
             if hasattr(conteudo, "seek"):
                 conteudo.seek(0)
-        chave = str(dados.get(recurso.chave) or "").strip()
+        chave = recurso.chave_da_linha(dados)
         situacao, motivo = _classificar(
             recurso, dados, chave, vistos_no_lote, existentes, tenant_id,
         )
@@ -382,7 +391,7 @@ def preparar_arquivos(
             valores=_jsonavel(dados),
             situacao=situacao,
             motivo=motivo[:255],
-            aceita=situacao != LinhaImportacao.Situacao.INVALIDA,
+            aceita=situacao == LinhaImportacao.Situacao.NOVA,
             # O "bruto" de um arquivo é a sua identidade como chegou — serve à R5
             # (a lista do que foi recusado, com o motivo) e a auditar a derivação
             # de `dados_do_arquivo`: quando a obra sai errada, é comparando o
@@ -395,11 +404,10 @@ def preparar_arquivos(
         # de um lote de arquivos é ordens de grandeza menor que o de linhas — 300
         # pranchas, não 90 mil.
         #
-        # **Inválida não guarda binário.** Ela não vai ser aplicada de jeito
-        # nenhum (o `aplicar` a exclui mesmo se marcada à mão), então gravar seus
-        # bytes seria pagar disco por um arquivo que já se sabe que será apagado.
-        # A linha fica, com o motivo — é o que a R5 devolve.
-        if situacao != LinhaImportacao.Situacao.INVALIDA:
+        # **Só a nova guarda binário.** Inválida e já existente travam o lote,
+        # então gravar seus bytes seria pagar disco por um arquivo que já se sabe
+        # que não entra. A linha fica, com o motivo — é o que a R5 devolve.
+        if situacao == LinhaImportacao.Situacao.NOVA:
             linha.arquivo.save(recebido.nome, conteudo, save=False)
         linha.save()
         total += 1
@@ -429,8 +437,15 @@ def _rotulo_do_lote(arquivos: list) -> str:
     return f"{len(arquivos)} arquivos"
 
 
-def _classificar(recurso, dados, chave, vistos, existentes, tenant_id):
-    """Veredito da linha. Ordem importa: o defeito mais barato de explicar primeiro."""
+def _classificar(recurso, dados, chave, vistos, existentes, tenant_id, *, erro_de_tipo=""):
+    """Veredito da linha. Ordem importa: o defeito mais barato de explicar primeiro.
+
+    `erro_de_tipo` vem da leitura (R8): número que não é número, data que não é
+    data. Vale antes de tudo porque o valor convertido já está errado — conferir
+    obrigatoriedade sobre um zero que era "abc" explicaria a coisa errada.
+    """
+    if erro_de_tipo:
+        return LinhaImportacao.Situacao.INVALIDA, erro_de_tipo
     for coluna in recurso.obrigatorias():
         valor = dados.get(coluna.campo)
         if valor in (None, "") or (coluna.tipo is Decimal and valor == Decimal("0")
@@ -447,13 +462,28 @@ def _classificar(recurso, dados, chave, vistos, existentes, tenant_id):
 
     if chave in existentes or recurso.localizar(dados, tenant_id) is not None:
         existentes.add(chave)
-        return LinhaImportacao.Situacao.DUPLICADA, "Já existe no destino — aceitar atualiza."
+        return LinhaImportacao.Situacao.DUPLICADA, MOTIVO_JA_EXISTE
+
+    motivo = recurso.validar_no_destino(dados, tenant_id)
+    if motivo:
+        return LinhaImportacao.Situacao.INVALIDA, motivo
     return LinhaImportacao.Situacao.NOVA, ""
 
 
+MOTIVO_JA_EXISTE = "Já está no sistema. A importação só cria — para mudar, edite pela tela."
+
+#: O que trava o lote. Uma só linha nestas situações e nada entra.
+SITUACOES_QUE_TRAVAM = (
+    LinhaImportacao.Situacao.INVALIDA, LinhaImportacao.Situacao.DUPLICADA,
+)
+
+
 def _jsonavel(dados: dict) -> dict:
-    """Decimal não é serializável em JSON; vai como texto e volta com `para_decimal`."""
-    return {k: (str(v) if isinstance(v, Decimal) else v) for k, v in dados.items()}
+    """Decimal e data não são JSON; vão como texto (data em ISO) e voltam tipados."""
+    return {
+        k: (str(v) if isinstance(v, Decimal) else v.isoformat() if isinstance(v, date) else v)
+        for k, v in dados.items()
+    }
 
 
 def _com_erro(*, recurso, tenant_id, nome_arquivo, mensagem, usuario_nome, lote=None,
@@ -518,19 +548,18 @@ def _checar_teto_por_operacao(quantidade: int, limites: dict | None) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 3. Decidir: confirmar tudo · confirmar seleção · negar tudo
+# 3. Decidir: confirmar · negar
 # ---------------------------------------------------------------------------
+#
+# **Não há "confirmar seleção"** desde 14/10/2026. Ela existia para gravar as
+# linhas boas e deixar as ruins de fora — e é exatamente o que o dono não quer:
+# arquivo com algo estranho não entra em parte. Corrige-se o arquivo e envia-se
+# de novo.
 
 
-@transaction.atomic
-def marcar(importacao: Importacao, *, aceitar: bool, linhas: list[int] | None = None) -> int:
-    """Marca/desmarca linhas antes de aplicar. `linhas=None` = todas."""
-    if not importacao.pendente:
-        raise ImportacaoInvalida("Esta importação já foi decidida.")
-    consulta = importacao.linhas.all()
-    if linhas is not None:
-        consulta = consulta.filter(linha_id__in=linhas)
-    return consulta.update(aceita=aceitar)
+def travadas(importacao: Importacao) -> int:
+    """Quantas linhas impedem o lote de ser aplicado (inválidas + já existentes)."""
+    return importacao.linhas.filter(situacao__in=SITUACOES_QUE_TRAVAM).count()
 
 
 @transaction.atomic
@@ -657,20 +686,21 @@ def aplicar(
     usuario_nome: str = "",
     limites: dict | None = None,
 ) -> int:
-    """Grava as linhas aceitas. Tudo ou nada — a transação é o lote.
+    """Grava o lote inteiro, ou nada. A transação é o lote.
 
-    Linha inválida nunca entra, mesmo marcada à mão: aceitar uma linha que o
-    motor classificou como inválida seria pedir para gravar o que ele já sabe
-    estar errado.
+    Recusa se houver **uma** linha inválida ou já existente — é a regra do dono,
+    e ela vale aqui e não só na tela, porque a tela é só um dos clientes da API.
     """
     if not importacao.pendente:
         raise ImportacaoInvalida("Esta importação já foi decidida.")
+    problemas = travadas(importacao)
+    if problemas:
+        raise ImportacaoInvalida(
+            f"{problemas} linha(s) com problema — nada foi importado. Baixe as "
+            "recusadas, corrija o arquivo e envie de novo."
+        )
 
-    aceitas = list(
-        importacao.linhas.filter(aceita=True)
-        .exclude(situacao=LinhaImportacao.Situacao.INVALIDA)
-        .order_by("numero")
-    )
+    aceitas = list(importacao.linhas.order_by("numero"))
     # Teto de acervo reconferido na aplicação, e não só na preparação: entre subir
     # o arquivo e confirmar cabe outra importação inteira, e a checagem de lá já
     # estaria velha. É o caso em que o usuário confere com calma — exatamente o
@@ -686,8 +716,14 @@ def aplicar(
             # ponto nenhum arquivo do lote existia para o módulo dono, que é a R1
             # aplicada a bytes e não só a valores.
             dados[CAMPO_ARQUIVO] = linha.arquivo or None
-        existente = recurso.localizar(dados, importacao.tenant_id)
-        estado = recurso.aplicar_linha(dados, existente, importacao.tenant_id)
+        # Reconferido aqui: entre conferir e confirmar alguém pode ter criado o
+        # mesmo registro pela tela. Levantar desfaz o que este lote já gravou.
+        if recurso.localizar(dados, importacao.tenant_id) is not None:
+            raise ImportacaoInvalida(
+                f"Linha {linha.numero}: “{linha.chave}” passou a existir depois da "
+                "conferência — nada foi importado. Envie o arquivo de novo."
+            )
+        estado = recurso.aplicar_linha(dados, None, importacao.tenant_id)
         linha.aplicada = True
         linha.estado_anterior = estado
         aplicadas += 1
@@ -750,12 +786,16 @@ def _valores_tipados(valores: dict, recurso: Recurso) -> dict:
     saida: dict = {}
     for coluna in recurso.colunas:
         cru = valores.get(coluna.campo)
-        if coluna.tipo is Decimal:
+        if coluna.tipo in (Decimal, int) and cru in (None, ""):
+            saida[coluna.campo] = None
+        elif coluna.tipo is Decimal:
             saida[coluna.campo] = para_decimal(cru)
         elif coluna.tipo is int:
             saida[coluna.campo] = int(para_decimal(cru))
         elif coluna.tipo is bool:
             saida[coluna.campo] = bool(cru)
+        elif coluna.tipo is date:
+            saida[coluna.campo] = date.fromisoformat(cru) if cru else None
         else:
             saida[coluna.campo] = "" if cru is None else str(cru)
     return saida
@@ -799,14 +839,17 @@ def resumo(importacao: Importacao) -> dict:
         "duplicadas": contagem.get(LinhaImportacao.Situacao.DUPLICADA, 0),
         "invalidas": contagem.get(LinhaImportacao.Situacao.INVALIDA, 0),
         "aceitas": importacao.linhas.filter(aceita=True).count(),
+        # Tudo ou nada: a tela só oferece "Confirmar" quando isto é zero.
+        "travadas": sum(contagem.get(s, 0) for s in SITUACOES_QUE_TRAVAM),
     }
 
 
 def recusadas_xlsx(importacao: Importacao, recurso: Recurso) -> bytes:
-    """R5 — as linhas recusadas de volta como planilha, com o motivo ao lado.
+    """R5 — as linhas que travaram o lote, de volta como planilha, com o motivo.
 
     Numa carga de 4.000 linhas, "37 falharam" sem dizer quais obriga a refazer
-    tudo. Aqui a pessoa corrige o arquivo que recebeu e reenvia.
+    tudo. Aqui a pessoa corrige o arquivo que recebeu e reenvia. Inclui as que
+    já existem: elas também travam, e quem corrige precisa vê-las.
     """
     from .formatos.escrita import escrever
     from .registro import Coluna
@@ -814,7 +857,7 @@ def recusadas_xlsx(importacao: Importacao, recurso: Recurso) -> bytes:
     colunas = (*recurso.colunas, Coluna("_motivo", "Motivo da recusa"))
     linhas = [
         {**_valores_tipados(l.valores, recurso), "_motivo": l.motivo}
-        for l in importacao.linhas.filter(situacao=LinhaImportacao.Situacao.INVALIDA)
+        for l in importacao.linhas.filter(situacao__in=SITUACOES_QUE_TRAVAM)
         .order_by("numero")
     ]
     conteudo, _ = escrever("xlsx", colunas=colunas, linhas=linhas, procedencia={

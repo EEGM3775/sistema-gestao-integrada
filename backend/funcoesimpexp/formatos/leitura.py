@@ -14,6 +14,7 @@ from __future__ import annotations
 import csv
 import io
 import unicodedata
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
 
@@ -53,6 +54,89 @@ def para_inteiro(valor) -> int:
 
 def para_booleano(valor) -> bool:
     return normalizar(valor) in {"1", "true", "verdadeiro", "sim", "s", "x", "v"}
+
+
+#: Os formatos de data aceitos no texto. O brasileiro primeiro; o ISO porque é
+#: o que sai de sistema; nunca `mm/dd`, que leria 03/04 como 4 de março.
+_FORMATOS_DE_DATA = ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d.%m.%Y")
+
+
+def para_data(valor) -> date | None:
+    """XLSX traz `datetime`; texto vem em `dd/mm/aaaa` ou ISO. `None` = não é data.
+
+    Ano de dois dígitos fica de fora de propósito: "01/02/30" é 1930 ou 2030
+    conforme o leitor, e adivinhar é o que a R4 proíbe.
+    """
+    if isinstance(valor, datetime):
+        return valor.date()
+    if isinstance(valor, date):
+        return valor
+    texto = str(valor or "").strip()
+    # "2026-10-14 00:00:00" — a data de planilha que passou por texto no caminho.
+    texto = texto.split(" ")[0] if len(texto) > 10 else texto
+    for formato in _FORMATOS_DE_DATA:
+        try:
+            return datetime.strptime(texto, formato).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _decimal_estrito(valor) -> Decimal | None:
+    """Como `para_decimal`, mas `None` onde aquele devolveria zero por não entender."""
+    if isinstance(valor, bool):
+        return None
+    if isinstance(valor, (int, float, Decimal)):
+        return Decimal(str(valor))
+    texto = str(valor).strip().replace("R$", "").replace(" ", "")
+    if "," in texto and "." in texto:
+        texto = texto.replace(".", "").replace(",", ".")
+    elif "," in texto:
+        texto = texto.replace(",", ".")
+    try:
+        numero = Decimal(texto)
+    except InvalidOperation:
+        return None
+    return numero if numero.is_finite() else None
+
+
+def erro_de_tipo(cru, coluna) -> str:
+    """O motivo de a célula não caber no tipo declarado, ou "" se cabe (R8).
+
+    Antes, "abc" numa coluna de valor virava **zero** em silêncio e "31/02/2026"
+    virava vazio — exatamente o dado estranho que entra sem ninguém ver. Célula
+    vazia não é erro de tipo: obrigatoriedade é outra regra, e o motor a confere
+    à parte.
+    """
+    if cru is None or (isinstance(cru, str) and not cru.strip()):
+        return ""
+    if coluna.tipo is date:
+        if para_data(cru) is None:
+            return f"{coluna.rotulo}: “{cru}” não é uma data (use dd/mm/aaaa)."
+    elif coluna.tipo in (Decimal, int):
+        numero = _decimal_estrito(cru)
+        if numero is None:
+            return f"{coluna.rotulo}: “{cru}” não é um número."
+        if coluna.tipo is int and numero != numero.to_integral_value():
+            return f"{coluna.rotulo}: “{cru}” precisa ser um número inteiro."
+    return ""
+
+
+def erros_da_linha(bruta: list, mapa: dict[str, int], recurso) -> str:
+    """O primeiro erro de tipo da linha — é o que a conferência mostra."""
+    for coluna in recurso.colunas:
+        pos = mapa.get(coluna.campo)
+        cru = bruta[pos] if pos is not None and pos < len(bruta) else None
+        vazio = cru is None or (isinstance(cru, str) and not cru.strip())
+        # Número obrigatório em branco: `extrair` o transforma em zero, e a
+        # checagem de obrigatoriedade do motor não distingue zero de vazio — um
+        # salário em branco entraria como R$ 0,00.
+        if vazio and coluna.obrigatoria and coluna.tipo in (Decimal, int):
+            return f"Sem {coluna.rotulo.lower()}."
+        motivo = erro_de_tipo(cru, coluna)
+        if motivo:
+            return motivo
+    return ""
 
 
 def detectar_delimitador(amostra: str) -> str:
@@ -141,12 +225,18 @@ def extrair(bruta: list, mapa: dict[str, int], recurso) -> dict:
     for coluna in recurso.colunas:
         pos = mapa.get(coluna.campo)
         cru = bruta[pos] if pos is not None and pos < len(bruta) else None
-        if coluna.tipo is Decimal:
+        # Número em branco é **vazio**, não zero: "orçamento previsto" sem valor
+        # é um campo nulo no cadastro, e R$ 0,00 seria uma afirmação que ninguém fez.
+        if coluna.tipo in (Decimal, int) and (cru is None or (isinstance(cru, str) and not cru.strip())):
+            dados[coluna.campo] = None
+        elif coluna.tipo is Decimal:
             dados[coluna.campo] = para_decimal(cru)
         elif coluna.tipo is int:
             dados[coluna.campo] = para_inteiro(cru)
         elif coluna.tipo is bool:
             dados[coluna.campo] = para_booleano(cru)
+        elif coluna.tipo is date:
+            dados[coluna.campo] = para_data(cru)
         else:
             dados[coluna.campo] = "" if cru is None else str(cru).strip()
     return dados

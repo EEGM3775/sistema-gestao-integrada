@@ -10,7 +10,7 @@ import { Pill } from '../Pill'
 import { Spinner } from '../States'
 import {
   aplicarImportacao, baixarModelo, baixarRecusadas, descartarImportacao, importar,
-  marcarLinhas, remapearImportacao, salvarMapa,
+  remapearImportacao, salvarMapa,
 } from './api'
 import type {
   LinhaConferencia, PedidoDeDePara, RecursoImpExp, ResumoImportacao, SituacaoLinha,
@@ -307,8 +307,9 @@ function PassoArquivo({ declaracao, recurso, ocupado, onEnviar }: {
   return (
     <div>
       <p style={{ margin: '0 0 14px', fontSize: 12.5, color: 'var(--ink-3)', lineHeight: 1.5 }}>
-        O arquivo é lido e conferido <b>linha a linha antes de gravar</b>. Você decide o que
-        entra — nada é aplicado sem a sua confirmação.
+        O arquivo é lido e conferido <b>linha a linha antes de gravar</b>. A importação só
+        cria registros novos e é <b>tudo ou nada</b>: se uma linha tiver problema ou já existir
+        no sistema, nada entra e a tela mostra o que houve.
       </p>
 
       <div
@@ -529,7 +530,6 @@ function PassoConferencia({ id, declaracao, onFechar, onConcluida }: {
   onConcluida: (resumo: ResumoImportacao) => void
 }) {
   const [filtro, setFiltro] = useState<'' | SituacaoLinha>('')
-  const [selecao, setSelecao] = useState<Set<number>>(new Set())
   const [erro, setErro] = useState('')
   const [ocupado, setOcupado] = useState(false)
 
@@ -592,6 +592,22 @@ function PassoConferencia({ id, declaracao, onFechar, onConcluida }: {
         <Pill kind="danger">{data.invalidas} inválidas</Pill>
       </div>
 
+      {data.travadas > 0 && (
+        <div style={{
+          display: 'flex', gap: 9, marginBottom: 11, padding: '10px 12px',
+          borderRadius: 'var(--r-sm)', background: 'var(--danger-soft)',
+          color: 'var(--danger-ink)', fontSize: 12.5, lineHeight: 1.5,
+        }}>
+          <AlertTriangle size={15} style={{ flex: 'none', marginTop: 2 }} />
+          <span>
+            <b>Nada será importado.</b> {data.travadas} linha(s) com problema
+            {data.duplicadas > 0 && ` — ${data.duplicadas} já existe(m) no sistema`}.
+            A importação só cria e é tudo ou nada: baixe as recusadas, corrija o arquivo e envie
+            de novo. Para mudar um registro que já existe, edite pela tela.
+          </span>
+        </div>
+      )}
+
       {erro && (
         <div style={{
           marginBottom: 11, padding: '9px 12px', borderRadius: 'var(--r-sm)',
@@ -607,8 +623,6 @@ function PassoConferencia({ id, declaracao, onFechar, onConcluida }: {
             onClick={() => setFiltro(f.valor)}
           >{f.rotulo}</Btn>
         ))}
-        <div style={{ flex: 1 }} />
-        <span style={CAPS}>{selecao.size} selecionada(s)</span>
       </div>
 
       <div style={{
@@ -618,7 +632,7 @@ function PassoConferencia({ id, declaracao, onFechar, onConcluida }: {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
           <thead>
             <tr>
-              {['', '#', 'Situação', ...declaracao.colunas.map(c => c.rotulo), 'Observação']
+              {['#', 'Situação', ...declaracao.colunas.map(c => c.rotulo), 'Observação']
                 .map((titulo, i) => (
                   <th key={`${titulo}-${i}`} style={{
                     ...CAPS, padding: '8px 11px', textAlign: 'left', whiteSpace: 'nowrap',
@@ -632,24 +646,14 @@ function PassoConferencia({ id, declaracao, onFechar, onConcluida }: {
             {linhas.length === 0 ? (
               <tr>
                 <td
-                  colSpan={declaracao.colunas.length + 4}
+                  colSpan={declaracao.colunas.length + 3}
                   style={{ padding: 24, textAlign: 'center', color: 'var(--ink-3)' }}
                 >
                   Nenhuma linha nesta situação.
                 </td>
               </tr>
             ) : linhas.map(linha => (
-              <LinhaTabela
-                key={linha.linha_id}
-                linha={linha}
-                colunas={declaracao.colunas}
-                marcada={selecao.has(linha.linha_id)}
-                onAlternar={() => setSelecao(s => {
-                  const p = new Set(s)
-                  if (p.has(linha.linha_id)) p.delete(linha.linha_id); else p.add(linha.linha_id)
-                  return p
-                })}
-              />
+              <LinhaTabela key={linha.linha_id} linha={linha} colunas={declaracao.colunas} />
             ))}
           </tbody>
         </table>
@@ -660,9 +664,9 @@ function PassoConferencia({ id, declaracao, onFechar, onConcluida }: {
         marginTop: 13, paddingTop: 13, borderTop: '1px solid var(--line)',
       }}>
         <span style={{ flex: 1, minWidth: 190, fontSize: 11.5, color: 'var(--ink-3)' }}>
-          Linhas inválidas nunca são gravadas, mesmo se selecionadas.
+          Tudo ou nada: o lote entra inteiro, ou não entra.
         </span>
-        {data.invalidas > 0 && (
+        {data.travadas > 0 && (
           <Btn tam="sm" onClick={() => baixarRecusadas(id)}>
             <Download size={13} />Baixar recusadas
           </Btn>
@@ -673,48 +677,27 @@ function PassoConferencia({ id, declaracao, onFechar, onConcluida }: {
           <X size={13} />Negar tudo
         </Btn>
         <Btn
-          tam="sm" disabled={ocupado || selecao.size === 0}
-          onClick={() => comErro(async () => {
-            await marcarLinhas(id, false)
-            await marcarLinhas(id, true, [...selecao])
-            onConcluida(await aplicarImportacao(id))
-          })}
+          tam="sm" variant="primary" disabled={ocupado || data.travadas > 0 || data.novas === 0}
+          title={data.travadas > 0 ? 'Há linhas com problema — nada pode ser importado.' : undefined}
+          onClick={() => comErro(async () => { onConcluida(await aplicarImportacao(id)) })}
         >
-          <Check size={13} />Confirmar seleção ({selecao.size})
-        </Btn>
-        <Btn tam="sm" variant="primary" disabled={ocupado} onClick={() => comErro(async () => {
-          await marcarLinhas(id, true)
-          onConcluida(await aplicarImportacao(id))
-        })}>
-          <CheckCheck size={13} />Confirmar tudo
+          <CheckCheck size={13} />Confirmar ({data.novas})
         </Btn>
       </div>
     </div>
   )
 }
 
-function LinhaTabela({ linha, colunas, marcada, onAlternar }: {
+function LinhaTabela({ linha, colunas }: {
   linha: LinhaConferencia
   colunas: RecursoImpExp['colunas']
-  marcada: boolean
-  onAlternar: () => void
 }) {
   const celula = {
     padding: '6px 11px', borderBottom: '1px solid var(--line-2)',
     maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const,
   }
   return (
-    <tr
-      onClick={onAlternar}
-      style={{
-        cursor: 'pointer',
-        background: marcada ? 'var(--accent-soft)' : undefined,
-        opacity: linha.situacao === 'invalida' ? 0.72 : 1,
-      }}
-    >
-      <td style={celula}>
-        <input type="checkbox" checked={marcada} readOnly style={{ accentColor: 'var(--accent)' }} />
-      </td>
+    <tr style={{ background: linha.situacao === 'nova' ? undefined : 'var(--danger-soft)' }}>
       <td style={{ ...celula, ...mono, color: 'var(--ink-3)' }}>{linha.numero}</td>
       <td style={celula}>
         <Pill kind={KIND[linha.situacao]}>{NOME_SITUACAO[linha.situacao]}</Pill>

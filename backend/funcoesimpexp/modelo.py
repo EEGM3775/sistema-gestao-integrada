@@ -96,6 +96,7 @@ def nome_do_modelo(recurso: Recurso) -> str:
 
 
 def _tipo_legivel(coluna) -> str:
+    from datetime import date
     from decimal import Decimal
 
     return {
@@ -103,10 +104,14 @@ def _tipo_legivel(coluna) -> str:
         int: "número inteiro",
         Decimal: "número decimal (use vírgula: 1.234,56)",
         bool: "Sim/Não",
+        date: "data (dd/mm/aaaa)",
     }.get(coluna.tipo, "texto")
 
 
 def _exemplo_padrao(coluna) -> str:
+    from datetime import date
     from decimal import Decimal
 
-    return {str: "texto", int: "10", Decimal: "0,00", bool: "Sim"}.get(coluna.tipo, "")
+    return {
+        str: "texto", int: "10", Decimal: "0,00", bool: "Sim", date: "31/01/2026",
+    }.get(coluna.tipo, "")

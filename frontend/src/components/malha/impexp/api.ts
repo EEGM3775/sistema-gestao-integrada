@@ -106,6 +106,11 @@ export interface ResumoImportacao {
   invalidas: number
   aceitas: number
   /**
+   * Inválidas + já existentes. **Tudo ou nada** (14/10/2026): com uma só, o
+   * lote não se aplica — a tela trava o Confirmar e oferece as recusadas.
+   */
+  travadas: number
+  /**
    * R4 no caminho de job: o cabeçalho não casou e o lote está **esperando** o
    * de-para, com o arquivo preservado. Não é um erro terminal — é um passo.
    */
@@ -310,16 +315,11 @@ export const consultarImportacao = async (
 ): Promise<DetalheImportacao> =>
   (await apiClient.get<DetalheImportacao>(`impexp/importacoes/${id}/`, { params })).data
 
-export const marcarLinhas = async (id: number, aceitar: boolean, linhas?: number[]) =>
-  (await apiClient.post<{ linhas_marcadas: number }>(
-    `impexp/importacoes/${id}/marcar/`, { aceitar, linhas },
-  )).data
-
 /**
  * R19 — corrige o palpite de colunas `editavel`, numa linha ou em várias.
  *
  * `linhas` ausente = todas as da importação, que é o gesto "aplicar a todos".
- * Corrigir **não** aceita a linha: os dois continuam sendo atos separados.
+ * Corrigir **não** confirma o lote: os dois continuam sendo atos separados.
  */
 export const corrigirLinhas = async (
   id: number, valores: Record<string, string>, linhas?: number[],

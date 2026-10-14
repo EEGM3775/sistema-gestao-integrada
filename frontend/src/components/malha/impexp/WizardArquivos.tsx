@@ -462,7 +462,7 @@ function PassoConferencia({ declaracao, remessas, onFechar, onConcluida }: {
   const carregando = consultas.some(c => c.isLoading)
   const detalhes = consultas.map(c => c.data).filter(Boolean)
 
-  const soma = (campo: 'total' | 'novas' | 'duplicadas' | 'invalidas') =>
+  const soma = (campo: 'total' | 'novas' | 'duplicadas' | 'invalidas' | 'travadas') =>
     detalhes.reduce((s, d) => s + (d?.[campo] ?? 0), 0)
 
   const linhas = useMemo(() => {
@@ -631,6 +631,23 @@ function PassoConferencia({ declaracao, remessas, onFechar, onConcluida }: {
         }}>{erro}</div>
       )}
 
+      {/* Tudo ou nada (14/10/2026): um arquivo inválido ou já presente no
+          acervo trava todas as remessas — nenhuma entra pela metade. */}
+      {soma('travadas') > 0 && (
+        <div style={{
+          display: 'flex', gap: 8, marginBottom: 11, padding: '9px 12px', flex: 'none',
+          borderRadius: 'var(--r-sm)', background: 'var(--danger-soft)',
+          color: 'var(--danger-ink)', fontSize: 12, lineHeight: 1.5,
+        }}>
+          <AlertTriangle size={15} style={{ flex: 'none', marginTop: 1 }} />
+          <span>
+            <b>Nada será gravado.</b> {soma('travadas')} arquivo(s) com problema
+            {soma('duplicadas') > 0 && ` — ${soma('duplicadas')} já está(ão) no sistema`}.
+            Tire-os da pasta e envie de novo: o envio entra inteiro, ou não entra.
+          </span>
+        </div>
+      )}
+
       {recusadas.length > 0 && (
         <div style={{
           display: 'flex', gap: 8, marginBottom: 11, padding: '9px 12px', flex: 'none',
@@ -713,14 +730,15 @@ function PassoConferencia({ declaracao, remessas, onFechar, onConcluida }: {
         <span style={{ flex: 1, minWidth: 190, fontSize: 11.5, color: 'var(--ink-3)' }}>
           {ocupado
             ? `Aplicando remessa ${aplicando} de ${ids.length}…`
-            : 'Arquivos inválidos nunca são gravados. Os repetidos já estão no acervo.'}
+            : 'Tudo ou nada: o envio entra inteiro, ou não entra.'}
         </span>
         <Btn tam="sm" disabled={ocupado} onClick={onFechar}>Fechar sem decidir</Btn>
         <Btn tam="sm" variant="perigo" disabled={ocupado} onClick={() => decidir('descartar')}>
           <X size={13} />Negar tudo
         </Btn>
         <Btn
-          tam="sm" variant="primary" disabled={ocupado || !soma('novas')}
+          tam="sm" variant="primary"
+          disabled={ocupado || !soma('novas') || soma('travadas') > 0 || recusadas.length > 0}
           onClick={() => decidir('aplicar')}
         >
           {ocupado ? <Spinner size={13} /> : <CheckCheck size={13} />}

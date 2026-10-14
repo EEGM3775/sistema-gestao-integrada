@@ -640,9 +640,23 @@ check(f"**R1**: nada gravado antes da decisão ({locais_antes} locais) -> "
       f"{(meio or {}).get('count')}",
       (meio or {}).get("count") == locais_antes)
 
+# Tudo ou nada (14/10/2026): com linha inválida, aplicar recusa e nada entra.
+status, _ = req("POST", f"/api/impexp/importacoes/{lote_id}/aplicar/", demo, {})
+check(f"com linha inválida, aplicar recusa (400) -> {status}", status == 400)
+status, travado = req("GET", "/api/maps/locais/?page_size=1", demo)
+check(f"e nem a linha boa entrou -> {(travado or {}).get('count')}",
+      (travado or {}).get("count") == locais_antes)
+req("POST", f"/api/impexp/importacoes/{lote_id}/descartar/", demo, {})
+
+# O arquivo corrigido (só a linha boa) entra inteiro.
+status, lote = upload("/api/impexp/maps.local/importar/", demo, "locais.csv", "\n".join([
+    "Nome;CEP;Logradouro;Número;Bairro;Cidade;UF;Longitude;Latitude;Precisão",
+    f"{TAG} — importado bom;40010-010;Rua da Grécia;10;Comércio;Salvador;BA;-38.5108;-12.9718;exata",
+]).encode("utf-8"))
+lote_id = (lote or {}).get("importacao_id")
 status, aplicado = req("POST", f"/api/impexp/importacoes/{lote_id}/aplicar/", demo, {})
-check(f"aplicar (200) -> {status}", status == 200)
-check(f"só a linha boa entrou -> {(aplicado or {}).get('aplicadas')}",
+check(f"aplicar o arquivo corrigido (200) -> {status}", status == 200)
+check(f"a linha entrou -> {(aplicado or {}).get('aplicadas')}",
       (aplicado or {}).get("aplicadas") == 1)
 status, depois_conta = req("GET", "/api/maps/locais/?page_size=1", demo)
 check(f"o acervo cresceu exatamente 1 -> {(depois_conta or {}).get('count')}",

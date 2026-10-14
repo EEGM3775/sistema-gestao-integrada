@@ -758,10 +758,13 @@ class ImportacaoDetalheView(_Base):
 
 
 class ImportacaoDecisaoView(_Base):
-    """Confirmar tudo · confirmar seleção · negar tudo · desfazer."""
+    """Confirmar · negar · corrigir · desfazer.
+
+    Não há "confirmar seleção" (14/10/2026): o lote entra inteiro ou não entra.
+    """
 
     #: Verbos que GRAVAM no destino (ou desfazem a gravação) — exigem, além do
-    #: conjunto de permissões, o módulo contratado. `marcar` e `descartar` ficam
+    #: conjunto de permissões, o módulo contratado. `corrigir` e `descartar` ficam
     #: de fora porque não tocam no destino: só mexem na área de conferência, que
     #: é do próprio tenant e já foi paga quando o arquivo subiu.
     ACOES_DE_ESCRITA = frozenset({"aplicar", "desfazer", "remapear"})
@@ -773,13 +776,6 @@ class ImportacaoDecisaoView(_Base):
             escrita=acao in self.ACOES_DE_ESCRITA,
         )
         try:
-            if acao == "marcar":
-                afetadas = motor_importacao.marcar(
-                    importacao,
-                    aceitar=bool(request.data.get("aceitar", True)),
-                    linhas=request.data.get("linhas"),
-                )
-                return Response({"linhas_marcadas": afetadas})
             if acao == "corrigir":
                 afetadas = motor_importacao.corrigir(
                     importacao,

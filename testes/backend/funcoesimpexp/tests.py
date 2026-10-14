@@ -300,21 +300,39 @@ class ConferenciaTests(MotorTestBase):
         invalida = importacao.linhas.get(situacao=LinhaImportacao.Situacao.INVALIDA)
         self.assertFalse(invalida.aceita)
 
-    def test_aplicar_grava_so_o_aceito(self):
+    def test_aplicar_grava_o_lote_inteiro(self):
         importacao = self._preparar([CABECALHO, "A-1;Cimento;10", "A-2;Areia;5"])
-        alvo = importacao.linhas.get(chave="A-2")
-        motor_importacao.marcar(importacao, aceitar=False, linhas=[alvo.linha_id])
         aplicadas = motor_importacao.aplicar(importacao, recurso=self.recurso)
 
-        self.assertEqual(aplicadas, 1)
-        self.assertEqual(sorted(BANCO), ["A-1"])
+        self.assertEqual(aplicadas, 2)
+        self.assertEqual(sorted(BANCO), ["A-1", "A-2"])
         self.assertEqual(BANCO["A-1"]["quantidade"], Decimal("10"))
 
-    def test_invalida_marcada_a_mao_ainda_nao_entra(self):
+    def test_uma_invalida_trava_o_lote_inteiro(self):
+        """Tudo ou nada (14/10/2026): a linha boa não entra sem a ruim."""
         importacao = self._preparar([CABECALHO, "A-1;Cimento;10", "A-3;Negativa;-4"])
-        motor_importacao.marcar(importacao, aceitar=True)  # marca tudo, inclusive a inválida
-        motor_importacao.aplicar(importacao, recurso=self.recurso)
+        self.assertEqual(motor_importacao.resumo(importacao)["travadas"], 1)
+        with self.assertRaises(motor_importacao.ImportacaoInvalida) as caso:
+            motor_importacao.aplicar(importacao, recurso=self.recurso)
+        self.assertIn("nada foi importado", str(caso.exception))
+        self.assertEqual(BANCO, {})
+        importacao.refresh_from_db()
+        self.assertEqual(importacao.status, Importacao.Status.CONFERINDO)
+
+    def test_registro_criado_depois_da_conferencia_recusa_o_lote(self):
+        """Entre conferir e confirmar alguém cria o mesmo registro pela tela.
+
+        O destino aqui é um dicionário, que a transação não desfaz — por isso o
+        conflito está na primeira linha. Num destino de banco, as linhas já
+        gravadas voltam com o rollback do `aplicar`.
+        """
+        importacao = self._preparar([CABECALHO, "A-1;Cimento;10", "A-2;Areia;5"])
+        BANCO["A-1"] = {"codigo": "A-1", "descricao": "Pela tela", "quantidade": Decimal("1")}
+        with self.assertRaises(motor_importacao.ImportacaoInvalida) as caso:
+            motor_importacao.aplicar(importacao, recurso=self.recurso)
+        self.assertIn("passou a existir", str(caso.exception))
         self.assertEqual(sorted(BANCO), ["A-1"])
+        self.assertEqual(BANCO["A-1"]["descricao"], "Pela tela", "o da tela não é tocado")
 
     def test_descartar_nao_grava_nada(self):
         importacao = self._preparar([CABECALHO, "A-1;Cimento;10"])
@@ -344,30 +362,32 @@ class ConferenciaTests(MotorTestBase):
 
 
 class IdentidadeTests(MotorTestBase):
-    def test_reimportar_atualiza_em_vez_de_duplicar(self):
+    def test_reimportar_trava_e_nao_altera_o_que_existe(self):
+        """Importar só cria (14/10/2026): o que já existe se edita pela tela."""
         primeira = self._preparar([CABECALHO, "A-1;Cimento;10"])
         motor_importacao.aplicar(primeira, recurso=self.recurso)
 
-        segunda = self._preparar([CABECALHO, "A-1;Cimento CP-II;25"])
+        segunda = self._preparar([CABECALHO, "A-1;Cimento CP-II;25", "A-2;Areia;5"])
         linha = segunda.linhas.get(chave="A-1")
         self.assertEqual(linha.situacao, LinhaImportacao.Situacao.DUPLICADA)
+        self.assertEqual(linha.motivo, motor_importacao.MOTIVO_JA_EXISTE)
+        self.assertFalse(linha.aceita)
 
-        motor_importacao.aplicar(segunda, recurso=self.recurso)
-        self.assertEqual(len(BANCO), 1, "R14: reimportar o mesmo arquivo não duplica")
-        self.assertEqual(BANCO["A-1"]["quantidade"], Decimal("25"))
+        with self.assertRaises(motor_importacao.ImportacaoInvalida):
+            motor_importacao.aplicar(segunda, recurso=self.recurso)
+        self.assertEqual(sorted(BANCO), ["A-1"], "R14: reimportar não duplica nem cria a nova")
+        self.assertEqual(BANCO["A-1"]["quantidade"], Decimal("10"), "e não atualiza")
 
-    def test_desfazer_restaura_o_estado_anterior(self):
+    def test_desfazer_apaga_o_que_o_lote_criou(self):
         primeira = self._preparar([CABECALHO, "A-1;Cimento;10"])
         motor_importacao.aplicar(primeira, recurso=self.recurso)
 
-        segunda = self._preparar([CABECALHO, "A-1;Trocado;99", "A-2;Areia;5"])
+        segunda = self._preparar([CABECALHO, "A-2;Areia;5"])
         motor_importacao.aplicar(segunda, recurso=self.recurso)
-        self.assertEqual(BANCO["A-1"]["quantidade"], Decimal("99"))
-
         motor_importacao.desfazer(segunda, recurso=self.recurso)
-        self.assertEqual(BANCO["A-1"]["quantidade"], Decimal("10"), "R6: valor anterior volta")
-        self.assertEqual(BANCO["A-1"]["descricao"], "Cimento", "R6: restaura a linha inteira")
+
         self.assertNotIn("A-2", BANCO, "R6: desfazer uma criação é apagar")
+        self.assertEqual(BANCO["A-1"]["quantidade"], Decimal("10"), "o lote anterior fica")
 
     def test_so_lote_aplicado_se_desfaz(self):
         importacao = self._preparar([CABECALHO, "A-1;Cimento;10"])
@@ -528,6 +548,21 @@ class RecusadasTests(MotorTestBase):
         self.assertEqual(linhas[0][-1], "Motivo da recusa")
         self.assertEqual(linhas[1][0], "A-3")
         self.assertEqual(linhas[1][-1], "Quantidade negativa.")
+
+    def test_recusadas_trazem_as_que_ja_existem(self):
+        """Elas também travam o lote — quem corrige o arquivo precisa vê-las."""
+        from openpyxl import load_workbook
+        import io
+
+        BANCO["A-1"] = {"codigo": "A-1", "descricao": "Cimento", "quantidade": Decimal("1")}
+        importacao = self._preparar([CABECALHO, "A-1;Cimento;10", "A-2;Areia;5"])
+        ws = load_workbook(io.BytesIO(
+            motor_importacao.recusadas_xlsx(importacao, self.recurso)
+        )).active
+        linhas = [[c.value for c in linha] for linha in ws.iter_rows(min_row=6)]
+        self.assertEqual(linhas[0][0], "A-1")
+        self.assertEqual(linhas[0][-1], motor_importacao.MOTIVO_JA_EXISTE)
+        self.assertNotIn("A-2", [l[0] for l in linhas], "a nova não é recusada")
 
 
 # ---------------------------------------------------------------------------

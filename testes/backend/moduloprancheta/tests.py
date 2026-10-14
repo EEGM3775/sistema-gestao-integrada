@@ -7438,7 +7438,7 @@ class CorrigirNaConferenciaTests(PranchetaTestBase):
         )
         self.assertEqual(resposta.status_code, 400, resposta.content)
 
-    def test_corrigir_nao_aceita_a_linha(self):
+    def test_corrigir_nao_decide_o_lote(self):
         """Corrigir e decidir continuam sendo dois atos: a R1 é sobre a decisão,
         e corrigir não é decidir."""
         self.autenticar()
@@ -7446,15 +7446,11 @@ class CorrigirNaConferenciaTests(PranchetaTestBase):
             pdf_falso("SOLTO5.pdf"), caminhos=["TorreA/SOLTO5.pdf"],
         ).json()["importacao_id"]
         self.client.post(
-            f"/api/impexp/importacoes/{importacao_id}/marcar/",
-            {"aceitar": False}, format="json",
-        )
-        self.client.post(
             f"/api/impexp/importacoes/{importacao_id}/corrigir/",
             {"valores": {"disciplina": "eletrica"}}, format="json",
         )
         depois = self.client.get(f"/api/impexp/importacoes/{importacao_id}/").json()
-        self.assertFalse(depois["linhas"][0]["aceita"])
+        self.assertEqual(depois["status"], "conferindo")
 
 
 # ===========================================================================

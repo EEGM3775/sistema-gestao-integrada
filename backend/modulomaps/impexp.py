@@ -6,8 +6,8 @@ acha candidatos num contrato ou num XML, mas **nada disso vira pin sozinho**.
 Extração de endereço em texto livre erra — troca número por CEP, pega a cidade
 do cabeçalho do documento —, e a resposta certa a isso não é um extrator melhor,
 é a régua **R1** do motor: zero linhas no destino antes da decisão. O operador vê
-nova/duplicada/inválida linha a linha, confirma o que reconhece, e o lote fica
-desfazível.
+nova/duplicada/inválida linha a linha e confirma o lote inteiro — que só entra se
+todas forem novas —, e o lote fica desfazível.
 
 Exportar também importa aqui: a carteira georreferenciada é o insumo de estudo
 de mercado, de rota e de laudo — sair em XLSX/CSV é o mínimo para o dado ser da
@@ -141,35 +141,24 @@ class LocaisGeorreferenciados(Recurso):
                 srid=4326,
             )
 
-        if existente is None:
-            local = Local.objects.create(
-                tenant_id=tenant_id,
-                nome=(dados.get("nome") or "").strip()[:180],
-                tipo=Local.Tipo.AVULSO,
-                ponto=ponto,
-                precisao=Precisao.EXATA if ponto else Precisao.DESCONHECIDA,
-                fonte=FonteGeo.IMPORTACAO if ponto else "",
-                **campos,
-            )
-            if ponto is None:
-                services.completar_localidade(local)
-                services.geocodificar_local(local)
-            return {"acao": "criou", "pk": local.pk}
-
-        antes = {campo: getattr(existente, campo) for campo in campos}
-        antes["ponto"] = existente.ponto.wkt if existente.ponto else None
-        antes["precisao"] = existente.precisao
-        antes["fonte"] = existente.fonte
-        for campo, valor in campos.items():
-            setattr(existente, campo, valor)
-        if ponto is not None:
-            existente.ponto = ponto
-            existente.precisao = Precisao.EXATA
-            existente.fonte = FonteGeo.IMPORTACAO
-        existente.save()
-        return {"acao": "atualizou", "pk": existente.pk, "antes": antes}
+        # Só cria: o motor trava o lote quando o nome já existe (14/10/2026).
+        local = Local.objects.create(
+            tenant_id=tenant_id,
+            nome=(dados.get("nome") or "").strip()[:180],
+            tipo=Local.Tipo.AVULSO,
+            ponto=ponto,
+            precisao=Precisao.EXATA if ponto else Precisao.DESCONHECIDA,
+            fonte=FonteGeo.IMPORTACAO if ponto else "",
+            **campos,
+        )
+        if ponto is None:
+            services.completar_localidade(local)
+            services.geocodificar_local(local)
+        return {"acao": "criou", "pk": local.pk}
 
     def desfazer_linha(self, estado_anterior: dict, tenant_id) -> None:
+        # O ramo "atualizou" abaixo serve só aos lotes aplicados antes de a
+        # importação passar a só criar (14/10/2026) — eles continuam desfazíveis.
         from django.contrib.gis.geos import GEOSGeometry
 
         local = Local.objects.filter(pk=estado_anterior.get("pk"), tenant_id=tenant_id).first()

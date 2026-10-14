@@ -20,6 +20,7 @@ from __future__ import annotations
 import csv
 import functools
 import io
+from datetime import date
 from decimal import Decimal
 
 from django.template.loader import render_to_string
@@ -124,7 +125,25 @@ def _valor_para_celula(coluna, valor):
         return int(valor)
     if coluna.tipo is bool:
         return "Sim" if valor else "Não"
+    if coluna.tipo is date:
+        # Data de verdade na célula (R8): o Excel ordena e filtra por ela.
+        return _como_data(valor)
     return str(valor)
+
+
+def _como_data(valor) -> date | None:
+    """Aceita `date`, `datetime` ou ISO em texto — o que vier do `queryset`."""
+    if isinstance(valor, date):
+        return valor if type(valor) is date else valor.date()
+    try:
+        return date.fromisoformat(str(valor)[:10])
+    except ValueError:
+        return None
+
+
+def _data_br(valor) -> str:
+    dia = _como_data(valor)
+    return dia.strftime("%d/%m/%Y") if dia else ""
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +242,9 @@ def _xlsx(colunas, linhas, procedencia: dict) -> bytes:
         if coluna.tipo is Decimal:
             for celula in ws[get_column_letter(pos)][linha_cabecalho:]:
                 celula.number_format = "#,##0.00"
+        elif coluna.tipo is date:
+            for celula in ws[get_column_letter(pos)][linha_cabecalho:]:
+                celula.number_format = "dd/mm/yyyy"
     ws.freeze_panes = ws.cell(row=linha_cabecalho + 1, column=1)
 
     buffer = io.BytesIO()
@@ -254,6 +276,8 @@ def _csv(colunas, linhas) -> bytes:
                 saida.append(str(valor).replace(".", ","))
             elif coluna.tipo is bool:
                 saida.append("Sim" if valor else "Não")
+            elif coluna.tipo is date:
+                saida.append(_data_br(valor))
             else:
                 saida.append(_neutraliza_csv(str(valor)))
         escritor.writerow(saida)
@@ -300,4 +324,6 @@ def _texto_pdf(coluna, valor) -> str:
         return f"{Decimal(valor):,.2f}".replace(",", "@").replace(".", ",").replace("@", ".")
     if coluna.tipo is bool:
         return "Sim" if valor else "Não"
+    if coluna.tipo is date:
+        return _data_br(valor)
     return str(valor)

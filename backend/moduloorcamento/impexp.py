@@ -154,27 +154,17 @@ class TabelaDePreco(Recurso):
             "custo_unitario": _decimal(dados.get("custo_unitario")),
             "grupo": str(dados.get("grupo") or "")[:150],
         }
-        if existente is None:
-            criado = ItemBancoPreco.objects.create(
-                tenant_id=tenant_id, banco_id=self.contexto["banco"],
-                tipo=self._tipo(dados), codigo=str(dados["codigo"])[:30], **campos,
-            )
-            self._marcar_importado(tenant_id)
-            return {"acao": "criou", "pk": criado.pk}
-
-        antes = {
-            "descricao": existente.descricao,
-            "unidade": existente.unidade,
-            "custo_unitario": str(existente.custo_unitario),
-            "grupo": existente.grupo,
-        }
-        for campo, valor in campos.items():
-            setattr(existente, campo, valor)
-        existente.save(update_fields=list(campos))
+        # Só cria: o motor trava o lote quando o código já existe (14/10/2026).
+        # Banco de usuário se cria ou se exclui; preço se edita pela tela.
+        criado = ItemBancoPreco.objects.create(
+            tenant_id=tenant_id, banco_id=self.contexto["banco"],
+            tipo=self._tipo(dados), codigo=str(dados["codigo"])[:30], **campos,
+        )
         self._marcar_importado(tenant_id)
-        return {"acao": "atualizou", "pk": existente.pk, "antes": antes}
+        return {"acao": "criou", "pk": criado.pk}
 
     def desfazer_linha(self, estado_anterior, tenant_id) -> None:
+        # O ramo "atualizou" serve só aos lotes aplicados antes de 14/10/2026.
         item = ItemBancoPreco.objects.filter(pk=estado_anterior.get("pk")).first()
         if item is None:
             return
@@ -277,21 +267,13 @@ class PublicacaoReferencial(TabelaDePreco):
             "custo_unitario": _decimal(dados.get("custo_unitario")),
             "grupo": str(dados.get("grupo") or "")[:150],
         }
-        if existente is None:
-            criado = InsumoReferencia.objects.create(
-                base_id=self.contexto["base"], tipo=self._tipo(dados),
-                codigo=str(dados["codigo"])[:30], **campos,
-            )
-            self._recontar_base()
-            return {"acao": "criou", "pk": criado.pk}
-        antes = {
-            "descricao": existente.descricao, "unidade": existente.unidade,
-            "custo_unitario": str(existente.custo_unitario), "grupo": existente.grupo,
-        }
-        for campo, valor in campos.items():
-            setattr(existente, campo, valor)
-        existente.save(update_fields=list(campos))
-        return {"acao": "atualizou", "pk": existente.pk, "antes": antes}
+        # Só cria: o motor trava o lote quando o código já existe (14/10/2026).
+        criado = InsumoReferencia.objects.create(
+            base_id=self.contexto["base"], tipo=self._tipo(dados),
+            codigo=str(dados["codigo"])[:30], **campos,
+        )
+        self._recontar_base()
+        return {"acao": "criou", "pk": criado.pk}
 
     def desfazer_linha(self, estado_anterior, tenant_id) -> None:
         referencia = InsumoReferencia.objects.filter(pk=estado_anterior.get("pk")).first()
@@ -340,7 +322,8 @@ class PlanilhaOrcamentaria(Recurso):
 
     Complementa (não substitui) a exportação formatada de
     [exportacao.py](exportacao.py): lá sai a peça com árvore indentada e totais,
-    para o edital; aqui sai a tabela plana, que volta editada.
+    para o edital; aqui sai a tabela plana. A importação só acrescenta linhas
+    novas — editar a que já existe é pela tela (14/10/2026).
     """
 
     rotulo = "Planilha orçamentária"
@@ -407,25 +390,14 @@ class PlanilhaOrcamentaria(Recurso):
             "quantidade": _decimal(dados.get("quantidade")),
             "custo_unitario": _decimal(dados.get("custo_unitario")),
         }
-        if existente is None:
-            criado = ItemOrcado.objects.create(
-                tenant_id=tenant_id, orcamento_id=self.contexto["orcamento"],
-                codigo_eap=str(dados["codigo_eap"])[:30],
-                tipo_linha=ItemOrcado.TipoLinha.ANALITICO, **campos,
-            )
-            self._recalcular()
-            return {"acao": "criou", "pk": criado.pk}
-
-        antes = {
-            "descricao": existente.descricao, "unidade": existente.unidade,
-            "quantidade": str(existente.quantidade),
-            "custo_unitario": str(existente.custo_unitario),
-        }
-        for campo, valor in campos.items():
-            setattr(existente, campo, valor)
-        existente.save(update_fields=list(campos))
+        # Só cria: o motor trava o lote quando o item já existe (14/10/2026).
+        criado = ItemOrcado.objects.create(
+            tenant_id=tenant_id, orcamento_id=self.contexto["orcamento"],
+            codigo_eap=str(dados["codigo_eap"])[:30],
+            tipo_linha=ItemOrcado.TipoLinha.ANALITICO, **campos,
+        )
         self._recalcular()
-        return {"acao": "atualizou", "pk": existente.pk, "antes": antes}
+        return {"acao": "criou", "pk": criado.pk}
 
     def desfazer_linha(self, estado_anterior, tenant_id) -> None:
         item = ItemOrcado.objects.filter(pk=estado_anterior.get("pk")).first()

@@ -591,17 +591,18 @@ class ImpexpTests(MapsTestBase):
         self.recurso.desfazer_linha(estado, self.tenant.pk)
         self.assertFalse(Local.objects.filter(pk=estado["pk"]).exists())
 
-    def test_reaplicar_atualiza_e_desfazer_restaura_o_valor_anterior(self):
+    def test_nome_ja_existente_e_reconhecido_pelo_localizar(self):
+        """Importar só cria (14/10/2026): é o `localizar` que faz o motor travar."""
+        local = self._local(nome="Depósito Sul")
+        self.assertEqual(self.recurso.localizar({"nome": " Depósito Sul "}, self.tenant.pk), local)
+
+    def test_lote_antigo_que_atualizou_continua_desfazivel(self):
+        """O ramo `atualizou` do desfazer serve aos lotes de antes de 14/10/2026."""
         local = self._local(nome="Depósito Sul")
         antes_cidade = local.cidade
-        estado = self.recurso.aplicar_linha(
-            {"nome": "Depósito Sul", "cidade": "Feira de Santana", "uf": "BA"},
-            local, self.tenant.pk,
-        )
-        self.assertEqual(estado["acao"], "atualizou")
-        local.refresh_from_db()
-        self.assertEqual(local.cidade, "Feira de Santana")
-
+        local.cidade = "Feira de Santana"
+        local.save()
+        estado = {"acao": "atualizou", "pk": local.pk, "antes": {"cidade": antes_cidade}}
         self.recurso.desfazer_linha(estado, self.tenant.pk)
         local.refresh_from_db()
         self.assertEqual(local.cidade, antes_cidade)

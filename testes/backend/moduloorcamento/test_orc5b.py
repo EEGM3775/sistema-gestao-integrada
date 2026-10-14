@@ -130,8 +130,9 @@ class ImportacaoConferenciaTests(PlanilhaTestBase):
     existe é a declaração `orcamento.banco_preco` ([impexp.py](impexp.py)) rodando
     no `funcoesimpexp`. Estes testes seguem aqui, e não no motor, porque o que
     eles verificam é a **declaração do Orçamento** — que a trava do banco é
-    respeitada, que o preço atualiza em vez de duplicar, que o total do banco
-    reconta. O motor tem os seus, com um destino de mentira.
+    respeitada, que código já existente trava o lote (importar só cria, desde
+    14/10/2026), que o total do banco reconta. O motor tem os seus, com um
+    destino de mentira.
     """
 
     def setUp(self):
@@ -181,7 +182,8 @@ class ImportacaoConferenciaTests(PlanilhaTestBase):
         self._preparar(["0001;AREIA;M3;89,50;"])
         self.assertEqual(ItemBancoPreco.objects.filter(banco=self.banco).count(), 0)
 
-    def test_invalida_nasce_desmarcada_e_nunca_grava(self):
+    def test_uma_invalida_trava_e_nada_grava(self):
+        """Tudo ou nada (14/10/2026): a linha boa não entra sem a ruim."""
         registro = self._preparar([
             "0001;AREIA;M3;89,50;",
             ";SEM CODIGO;UN;5,00;",
@@ -189,10 +191,9 @@ class ImportacaoConferenciaTests(PlanilhaTestBase):
         invalida = registro.linhas.get(situacao=LinhaImportacao.Situacao.INVALIDA)
         self.assertFalse(invalida.aceita)
 
-        # Mesmo marcando à força, aplicar não grava a inválida.
-        registro.linhas.update(aceita=True)
-        motor.aplicar(registro, recurso=self.recurso)
-        self.assertEqual(ItemBancoPreco.objects.filter(banco=self.banco).count(), 1)
+        with self.assertRaises(motor.ImportacaoInvalida):
+            motor.aplicar(registro, recurso=self.recurso)
+        self.assertEqual(ItemBancoPreco.objects.filter(banco=self.banco).count(), 0)
 
     def test_confirmar_tudo_grava_as_validas(self):
         registro = self._preparar([
@@ -206,21 +207,6 @@ class ImportacaoConferenciaTests(PlanilhaTestBase):
         self.banco.refresh_from_db()
         self.assertEqual(self.banco.total_itens, 2, "a declaração reconta o banco")
 
-    def test_confirmar_selecao_grava_so_o_escolhido(self):
-        registro = self._preparar([
-            "0001;AREIA MEDIA;M3;89,50;",
-            "0002;BRITA 1;M3;112,40;",
-        ])
-        escolhida = registro.linhas.get(chave="0001")
-        motor.marcar(registro, aceitar=False)
-        motor.marcar(registro, aceitar=True, linhas=[escolhida.linha_id])
-        motor.aplicar(registro, recurso=self.recurso)
-
-        codigos = set(
-            ItemBancoPreco.objects.filter(banco=self.banco).values_list("codigo", flat=True)
-        )
-        self.assertEqual(codigos, {"0001"})
-
     def test_negar_tudo_nao_grava_e_deixa_rastro(self):
         registro = self._preparar(["0001;AREIA;M3;89,50;"])
         motor.descartar(registro)
@@ -230,22 +216,21 @@ class ImportacaoConferenciaTests(PlanilhaTestBase):
         # O registro continua existindo — é o rastro do que foi recusado.
         self.assertTrue(Importacao.objects.filter(pk=registro.pk).exists())
 
-    def test_duplicada_aceita_atualiza_o_preco(self):
+    def test_codigo_ja_existente_trava_e_nao_muda_o_preco(self):
+        """Banco de usuário só se cria ou exclui; preço se edita pela tela."""
         ItemBancoPreco.objects.create(
             tenant=self.tenant, banco=self.banco, codigo="0001",
             descricao="AREIA", unidade="M3", custo_unitario=Decimal("50.00"),
         )
-        registro = self._preparar(["0001;AREIA MEDIA;M3;89,50;"])
-        motor.aplicar(registro, recurso=self.recurso)
+        registro = self._preparar(["0001;AREIA MEDIA;M3;89,50;", "0002;BRITA 1;M3;112,40;"])
+        with self.assertRaises(motor.ImportacaoInvalida):
+            motor.aplicar(registro, recurso=self.recurso)
         item = ItemBancoPreco.objects.get(banco=self.banco, codigo="0001")
-        self.assertEqual(item.custo_unitario, Decimal("89.5000"))
+        self.assertEqual(item.custo_unitario, Decimal("50.0000"))
+        self.assertFalse(ItemBancoPreco.objects.filter(banco=self.banco, codigo="0002").exists())
 
-    def test_desfazer_devolve_o_preco_anterior(self):
-        """R6 — o lote inteiro volta, criação apaga e atualização restaura."""
-        ItemBancoPreco.objects.create(
-            tenant=self.tenant, banco=self.banco, codigo="0001",
-            descricao="AREIA", unidade="M3", custo_unitario=Decimal("50.00"),
-        )
+    def test_desfazer_apaga_o_que_o_lote_criou(self):
+        """R6 — o lote inteiro volta, e desfazer uma criação é apagar."""
         registro = self._preparar([
             "0001;AREIA MEDIA;M3;89,50;",
             "0002;BRITA 1;M3;112,40;",
@@ -253,13 +238,9 @@ class ImportacaoConferenciaTests(PlanilhaTestBase):
         motor.aplicar(registro, recurso=self.recurso)
         motor.desfazer(registro, recurso=self.recurso)
 
-        antigo = ItemBancoPreco.objects.get(banco=self.banco, codigo="0001")
-        self.assertEqual(antigo.custo_unitario, Decimal("50.0000"))
-        self.assertEqual(antigo.descricao, "AREIA", "restaura a linha inteira, não só o preço")
-        self.assertFalse(
-            ItemBancoPreco.objects.filter(banco=self.banco, codigo="0002").exists(),
-            "desfazer uma criação é apagar",
-        )
+        self.assertFalse(ItemBancoPreco.objects.filter(banco=self.banco).exists())
+        self.banco.refresh_from_db()
+        self.assertEqual(self.banco.total_itens, 0, "a declaração reconta o banco")
 
     def test_arquivo_sem_cabecalho_reconhecivel_pede_de_para(self):
         """Mudou de forma no IE.1: era registro de ERRO, virou 422 com o que se viu.
