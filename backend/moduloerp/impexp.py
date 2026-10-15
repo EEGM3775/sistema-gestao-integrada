@@ -20,7 +20,15 @@ existiam assim, e forçá-los a coincidir aqui renomearia um dos dois.
 """
 from __future__ import annotations
 
+from datetime import date
+from decimal import Decimal
+
+from django.db import transaction
+
+from funcoesimpexp.cadastro import RecursoDeCadastro, RecursoDeLista
 from funcoesimpexp.entrega import buscar_do_tenant, entregar_campo
+from funcoesimpexp.importacao import ImportacaoInvalida
+from funcoesimpexp.relatorio import RecursoDeRelatorio
 from funcoesimpexp.registro import (
     NATUREZA_ARQUIVO,
     ArquivoEntregue,
@@ -31,9 +39,16 @@ from funcoesimpexp.registro import (
     registrar,
 )
 
-from .models import NotaFiscal, NotaFiscalProduto, NotaFiscalServico
+from .models import Boleto, ContaPagar, ContaReceber, NotaFiscal, NotaFiscalProduto, NotaFiscalServico
 
 RECURSO_NOTA_FISCAL = "erp.nota_fiscal"
+RECURSO_CONTAS_A_PAGAR = "erp.conta_pagar"
+RECURSO_CONTAS_A_RECEBER = "erp.conta_receber"
+RECURSO_BOLETOS = "erp.boleto"
+RECURSO_NFSE_EMITIDAS = "erp.nfse"
+RECURSO_SALDOS_INTERCOMPANY = "erp.intercompany"
+RECURSO_FINANCEIRO_OBRAS = "erp.financeiro_obras"
+RECURSO_DRE_ENTIDADES = "erp.dre_entidades"
 
 #: Espécie → (modelo, campo, nome de fallback). Tabela e não uma cadeia de `if`
 #: porque são seis casos idênticos: o que muda entre eles é só de onde o binário
@@ -250,3 +265,407 @@ class NotasDeEntradaPorXml(Recurso):
             nota.delete()
             if arquivo:
                 arquivo.delete(save=False)
+
+
+# ---------------------------------------------------------------------------
+# As listas do financeiro (15/10/2026)
+# ---------------------------------------------------------------------------
+#
+# **Títulos importam; o resto só exporta** (decisão do dono, 15/10/2026). A conta
+# a pagar e a receber é a carga clássica de quem chega de outro sistema — uma
+# linha é o título inteiro, e ele nasce **em aberto**: baixa, situação e saldo
+# só saem (a baixa tem caminho único, `dar_baixa`). Boleto e NFS-e são emissão
+# em terceiro (Asaas, NFE.io); DRE, saldo intercompany e financeiro por obra são
+# relatório calculado.
+#
+# **O arquivo vê o que a tela vê**: a saída roda o ViewSet da própria tela
+# (`viewset`), com o escopo por entidade e a busca do listão. A entrada confere o
+# mesmo alcance — calculado no "importar" e congelado no lote, como o plano na
+# Prancheta: o "sim" vem numa requisição posterior.
+
+
+def _decimal(valor):
+    return Decimal(str(valor)) if valor not in (None, "") else None
+
+
+class _TitulosDoErp(RecursoDeCadastro):
+    modulo = "erp_financeiro"
+    chave = "descricao"
+    ordem = ("data_vencimento", "pk")
+    #: "fornecedor" ou "cliente".
+    campo_pessoa: str = ""
+    #: Campo da última baixa ("data_pagamento" / "data_recebimento").
+    campo_baixa: str = ""
+    nao_validar = ("entidade",)
+
+    @property
+    def so_saida(self) -> tuple[str, ...]:
+        return ("saldo_aberto", "status", self.campo_baixa)
+
+    @property
+    def referencias(self) -> dict:
+        from empreendimentos.models import Empreendimento
+        from entidades.models import Entidade
+
+        return {
+            self.campo_pessoa: self._modelo_da_pessoa(),
+            "empreendimento": (Empreendimento, "empreendimento"),
+            "entidade": (Entidade, "nome"),
+        }
+
+    def _modelo_da_pessoa(self):
+        raise NotImplementedError
+
+    def _colunas(self, pessoa: Coluna) -> tuple[Coluna, ...]:
+        return (
+            pessoa,
+            Coluna("descricao", "Descrição", obrigatoria=True, exemplo="Concreto usinado — 1ª medição"),
+            Coluna("valor", "Valor", tipo=Decimal, obrigatoria=True, exemplo="12.500,00"),
+            Coluna("data_emissao", "Emissão", tipo=date, exemplo="01/11/2026"),
+            Coluna("data_vencimento", "Vencimento", tipo=date, obrigatoria=True, exemplo="30/11/2026"),
+            Coluna("empreendimento", "Empreendimento", exemplo="Residencial Aurora"),
+            Coluna("obra", "Obra", exemplo="Torre A"),
+            Coluna("entidade", "Entidade (CNPJ do grupo)", exemplo="",
+                   aliases=("entidade", "empresa do grupo")),
+            Coluna("saldo_aberto", "Em aberto (só sai)", tipo=Decimal),
+            Coluna(self.campo_baixa, "Última baixa (só sai)", tipo=date),
+            Coluna("status", "Situação (só sai)"),
+        )
+
+    # --- identidade: pessoa + descrição + vencimento + valor -------------------
+
+    def chave_da_linha(self, dados: dict) -> str:
+        return " · ".join(str(dados.get(c) or "").strip() for c in (
+            self.campo_pessoa, "descricao", "data_vencimento", "valor",
+        ))
+
+    def localizar(self, dados: dict, tenant_id):
+        pessoa = self._referencia(self.campo_pessoa, dados.get(self.campo_pessoa), tenant_id)
+        descricao = str(dados.get("descricao") or "").strip()
+        if pessoa is None or not descricao or not dados.get("data_vencimento") or dados.get("valor") is None:
+            return None
+        return self.modelo.objects.filter(
+            tenant_id=tenant_id, **{self.campo_pessoa: pessoa}, descricao__iexact=descricao,
+            data_vencimento=dados.get("data_vencimento"), valor=dados.get("valor"),
+        ).first()
+
+    # --- contexto: quem importa e o que alcança ---------------------------------
+
+    def validar_contexto(self, contexto, user, tenant_id) -> dict:
+        from entidades.escopo import alcance, empreendimentos_concedidos
+
+        entidades = alcance(user)
+        return {
+            **dict(contexto or {}),
+            "usuario": getattr(user, "pk", None),
+            "alcance": None if entidades is None else sorted(entidades),
+            "empreendimentos": sorted(empreendimentos_concedidos(user)),
+        }
+
+    # --- entrada ----------------------------------------------------------------
+
+    def campos(self, dados: dict, tenant_id) -> dict:
+        from obras.models import Obra
+
+        saida = super().campos(dados, tenant_id)
+        # A obra é "Torre A" **dentro** do empreendimento da linha — duas Torre A
+        # em empreendimentos diferentes são duas obras.
+        nome = str(dados.get("obra") or "").strip()
+        obras = Obra.objects.filter(tenant_id=tenant_id, nome_obra__iexact=nome) if nome else Obra.objects.none()
+        if saida.get("empreendimento") is not None:
+            obras = obras.filter(empreendimento=saida["empreendimento"])
+        achadas = list(obras[:2])
+        saida["obra"] = achadas[0] if len(achadas) == 1 else None
+        return saida
+
+    def validar_no_destino(self, dados: dict, tenant_id) -> str:
+        nome = str(dados.get("obra") or "").strip()
+        if nome and self.campos(dados, tenant_id).get("obra") is None:
+            return f"Obra “{nome}” não existe nesse empreendimento, ou há mais de uma com esse nome."
+        return super().validar_no_destino(dados, tenant_id)
+
+    def validar_regras(self, objeto, dados, tenant_id) -> str:
+        from entidades.regras import preencher
+
+        if objeto.valor is not None and objeto.valor <= 0:
+            return "Valor tem de ser maior que zero."
+        if objeto.data_emissao and objeto.data_vencimento and objeto.data_vencimento < objeto.data_emissao:
+            return "Vencimento anterior à emissão."
+        if objeto.entidade_id and objeto.entidade.externa:
+            return f"{objeto.entidade} é uma entidade externa: ela não tem financeiro neste sistema."
+        preencher(objeto)
+        alcance = self.contexto.get("alcance")
+        if alcance is not None and objeto.entidade_id not in alcance and (
+            objeto.empreendimento_id not in (self.contexto.get("empreendimentos") or [])
+        ):
+            return "Você não tem acesso ao financeiro da entidade deste título."
+        return ""
+
+    def aplicar_linha(self, dados: dict, existente, tenant_id) -> dict:
+        """Como o `_criar_com_par` da tela: grava sem o gatilho e sincroniza o par
+        intercompany uma vez (a despesa do empreendimento com sócio vira título
+        na outra entidade — e o `sincronizar` avisa quem cuida dela)."""
+        from .intercompany import sincronizar
+
+        ausente = self._referencia_ausente(dados, tenant_id)
+        if ausente:
+            raise ImportacaoInvalida(f"{ausente} Nada foi importado.")
+        conta = self.modelo(tenant_id=tenant_id, **self.campos(dados, tenant_id))
+        conta._sem_intercompany = True
+        with transaction.atomic():
+            conta.save()
+            sincronizar(conta)
+        return {"acao": "criou", "pk": conta.pk}
+
+    def desfazer_linha(self, estado_anterior: dict, tenant_id) -> None:
+        conta = self.modelo.objects.filter(pk=estado_anterior.get("pk"), tenant_id=tenant_id).first()
+        if conta is None:
+            return
+        if conta.valor_pago > 0:
+            raise ImportacaoInvalida(
+                f"“{conta.descricao}” já tem baixa — o lote não pode mais ser desfeito. "
+                "Estorne a baixa ou exclua pela tela."
+            )
+        with transaction.atomic():
+            for par in conta.pares_intercompany.all():
+                espelho = par.titulo_receber if self.modelo is ContaPagar else par.titulo_pagar
+                if espelho is not None and espelho.valor_pago > 0:
+                    raise ImportacaoInvalida(
+                        f"O título de {par.contraparte} gerado por “{conta.descricao}” já tem baixa — "
+                        "o lote não pode mais ser desfeito."
+                    )
+                par.delete()
+                if espelho is not None:
+                    espelho.delete()
+            conta.delete()
+
+
+@registrar(RECURSO_CONTAS_A_PAGAR)
+class ContasAPagar(_TitulosDoErp):
+    rotulo = "Contas a pagar"
+    permissoes_exigidas = ("erp.conta_pagar.view", "erp.conta_pagar.edit")
+    modelo = ContaPagar
+    campo_pessoa = "fornecedor"
+    campo_baixa = "data_pagamento"
+
+    @property
+    def viewset(self):
+        from .views import ContaPagarViewSet
+
+        return ContaPagarViewSet
+
+    def _modelo_da_pessoa(self):
+        from fornecedores.models import Fornecedor
+
+        return (Fornecedor, "razao_social")
+
+    @property
+    def colunas(self):
+        return self._colunas(Coluna(
+            "fornecedor", "Fornecedor", obrigatoria=True, exemplo="Concreto Forte Ltda",
+            aliases=("razao social", "credor"),
+        ))
+
+
+@registrar(RECURSO_CONTAS_A_RECEBER)
+class ContasAReceber(_TitulosDoErp):
+    """A receber avulso. A parcela do contrato de venda nasce do contrato, com
+    unidade e correção — não pela planilha."""
+
+    rotulo = "Contas a receber"
+    permissoes_exigidas = ("erp.conta_receber.view", "erp.conta_receber.edit")
+    modelo = ContaReceber
+    campo_pessoa = "cliente"
+    campo_baixa = "data_recebimento"
+
+    @property
+    def viewset(self):
+        from .views import ContaReceberViewSet
+
+        return ContaReceberViewSet
+
+    def _modelo_da_pessoa(self):
+        from clientes.models import Cliente
+
+        return (Cliente, "nome_completo")
+
+    @property
+    def colunas(self):
+        return self._colunas(Coluna(
+            "cliente", "Cliente", obrigatoria=True, exemplo="Maria da Silva",
+            aliases=("nome do cliente", "pagador", "devedor"),
+        ))
+
+
+@registrar(RECURSO_BOLETOS)
+class BoletosEmitidos(RecursoDeLista):
+    rotulo = "Boletos"
+    modulo = "erp_financeiro"
+    permissoes_exigidas = ("erp.cobranca.view",)
+    modelo = Boleto
+    ordem = ("-data_vencimento", "pk")
+
+    @property
+    def viewset(self):
+        from .views import BoletoViewSet
+
+        return BoletoViewSet
+
+    colunas = (
+        Coluna("pessoa", "Pagador"),
+        Coluna("conta", "Título"),
+        Coluna("empreendimento", "Empreendimento"),
+        Coluna("valor", "Valor", tipo=Decimal),
+        Coluna("data_vencimento", "Vencimento", tipo=date),
+        Coluna("status", "Situação"),
+        Coluna("data_pagamento", "Pago em", tipo=date),
+        Coluna("linha_digitavel", "Linha digitável"),
+    )
+
+    def serializar_objeto(self, obj) -> dict:
+        conta = obj.conta_receber or obj.conta_pagar
+        emp = getattr(conta, "empreendimento", None)
+        return {
+            "pessoa": conta.nome_da_pessoa if conta else "",
+            "conta": conta.descricao if conta else "",
+            "empreendimento": emp.empreendimento if emp else "",
+            "valor": obj.valor,
+            "data_vencimento": obj.data_vencimento,
+            "status": obj.get_status_display(),
+            "data_pagamento": obj.data_pagamento,
+            "linha_digitavel": obj.linha_digitavel or "",
+        }
+
+
+@registrar(RECURSO_NFSE_EMITIDAS)
+class NfseEmitidas(RecursoDeLista):
+    rotulo = "NFS-e emitidas"
+    modulo = "erp_financeiro"
+    permissoes_exigidas = ("erp.nf.view",)
+    modelo = NotaFiscalServico
+    ordem = ("-criado_em",)
+
+    @property
+    def viewset(self):
+        from .views import NotaFiscalServicoViewSet
+
+        return NotaFiscalServicoViewSet
+
+    colunas = (
+        Coluna("numero", "Número"),
+        Coluna("data_emissao", "Emissão", tipo=date),
+        Coluna("tomador", "Tomador"),
+        Coluna("description", "Discriminação"),
+        Coluna("services_amount", "Valor", tipo=Decimal),
+        Coluna("status", "Situação"),
+        Coluna("entidade", "Entidade emitente"),
+        Coluna("chave_acesso", "Chave de acesso"),
+    )
+
+    def serializar_objeto(self, obj) -> dict:
+        tomador = obj.borrower_data if isinstance(obj.borrower_data, dict) else {}
+        return {
+            "numero": obj.numero or "",
+            "data_emissao": obj.data_emissao,
+            "tomador": tomador.get("name") or tomador.get("nome") or "",
+            "description": obj.description,
+            "services_amount": obj.services_amount,
+            "status": obj.get_status_display(),
+            "entidade": str(obj.entidade) if obj.entidade_id else "",
+            "chave_acesso": obj.chave_acesso or "",
+        }
+
+
+@registrar(RECURSO_SALDOS_INTERCOMPANY)
+class SaldosIntercompany(RecursoDeRelatorio):
+    rotulo = "Saldos intercompany"
+    modulo = "erp_financeiro"
+    permissoes_exigidas = ("erp.conta_receber.view",)
+
+    @property
+    def view(self):
+        from .views import IntercompanyView
+
+        return IntercompanyView
+
+    colunas = (
+        Coluna("credora_nome", "Credora"),
+        Coluna("devedora_nome", "Devedora"),
+        Coluna("saldo", "Saldo em aberto", tipo=Decimal),
+    )
+
+    def linhas(self, dados) -> list[dict]:
+        return [{**s, "saldo": _decimal(s["saldo"])} for s in dados.get("saldos", [])]
+
+
+@registrar(RECURSO_FINANCEIRO_OBRAS)
+class FinanceiroPorObra(RecursoDeRelatorio):
+    rotulo = "Financeiro por obra"
+    modulo = "erp_financeiro"
+    permissoes_exigidas = ("erp.relatorio.view",)
+
+    @property
+    def view(self):
+        from .views import FinanceiroObrasView
+
+        return FinanceiroObrasView
+
+    colunas = (
+        Coluna("obra_nome", "Obra"),
+        Coluna("receita", "Receita", tipo=Decimal),
+        Coluna("recebido", "Recebido", tipo=Decimal),
+        Coluna("custo", "Custo", tipo=Decimal),
+        Coluna("pago", "Pago", tipo=Decimal),
+        Coluna("resultado", "Resultado", tipo=Decimal),
+    )
+
+    def linhas(self, dados) -> list[dict]:
+        campos = ("receita", "recebido", "custo", "pago", "resultado")
+        return [{**o, **{c: _decimal(o.get(c)) for c in campos}} for o in dados.get("obras", [])]
+
+
+@registrar(RECURSO_DRE_ENTIDADES)
+class DrePorEntidade(RecursoDeRelatorio):
+    """Uma linha por entidade e regime (competência e caixa), mais o consolidado."""
+
+    rotulo = "DRE por entidade"
+    modulo = "erp_financeiro"
+    permissoes_exigidas = ("erp.relatorio.view",)
+
+    @property
+    def view(self):
+        from .views import DreEntidadesView
+
+        return DreEntidadesView
+
+    colunas = (
+        Coluna("entidade", "Entidade"),
+        Coluna("regime", "Regime"),
+        Coluna("receita", "Receita", tipo=Decimal),
+        Coluna("despesa", "Despesa", tipo=Decimal),
+        Coluna("resultado", "Resultado próprio", tipo=Decimal),
+        Coluna("resultado_com_cotas", "Resultado com as cotas", tipo=Decimal),
+    )
+
+    def linhas(self, dados) -> list[dict]:
+        saida = []
+        regimes = (("competencia", "Competência"), ("caixa", "Caixa"))
+        for e in dados.get("entidades", []):
+            for chave, rotulo in regimes:
+                lado = e.get(chave) or {}
+                saida.append({
+                    "entidade": e.get("nome", ""), "regime": rotulo,
+                    "receita": _decimal(lado.get("receita")), "despesa": _decimal(lado.get("despesa")),
+                    "resultado": _decimal(lado.get("resultado")),
+                    "resultado_com_cotas": _decimal((e.get("resultado_com_cotas") or {}).get(chave)),
+                })
+        consolidado = dados.get("consolidado") or {}
+        for chave, rotulo in regimes:
+            lado = consolidado.get(chave) or {}
+            saida.append({
+                "entidade": "Consolidado", "regime": rotulo,
+                "receita": _decimal(lado.get("receita")), "despesa": _decimal(lado.get("despesa")),
+                "resultado": _decimal(lado.get("resultado")),
+                "resultado_com_cotas": _decimal((consolidado.get("resultado") or {}).get(chave)),
+            })
+        return saida

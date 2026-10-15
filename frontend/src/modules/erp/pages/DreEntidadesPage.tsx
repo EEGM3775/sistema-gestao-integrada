@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { ArrowLeft, Building2, PieChart } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { Card, Empty, Loading, Pill, SectionHead } from '@/components/malha'
+import { BotaoExportar } from '@/components/malha'
 import { formatBRL, apiDecimalToCents } from '@/utils/money'
 import { formatCPFCNPJ } from '@/utils/masks'
 import { erpClient } from '../api/erpClient'
@@ -85,6 +86,8 @@ export default function DreEntidadesPage() {
           </p>
         </div>
         <div className="flex items-end gap-2 flex-wrap text-xs">
+          {/* Relatório: só exporta, no período da tela (R7). */}
+          <BotaoExportar tam="md" recurso="erp.dre_entidades" recorte={{ data_de: de || undefined, data_ate: ate || undefined }} />
           <label className="flex flex-col gap-1">Vencimento de
             <input type="date" value={de} onChange={e => setDe(e.target.value)} style={campo} />
           </label>

@@ -2,6 +2,8 @@ import { useCallback, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Files, Plus, ScrollText, X } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
+import { useQueryClient } from '@tanstack/react-query'
+import { BotaoExportar, WizardImportacao } from '@/components/malha'
 import { TelaDaGrade } from '../grade/TelaDaGrade'
 import { estiloFiltro } from '../grade/estilos'
 import { useGrade } from '../grade/useGrade'
@@ -68,6 +70,7 @@ export default function ContasAReceberPage() {
 
   const grade = useGrade<ContaReceber>({ recurso: 'contas-a-receber', filtros, ordenarPadrao: 'vencimento' })
   const empreendimentos = useEmpreendimentoOptions(true)
+  const qc = useQueryClient()
   const criar = useCreateContaAReceber()
 
   const desmarcarTudo = () => { setMarcados(new Set()); setTodosDoFiltro(false); setExcluidos(new Set()) }
@@ -162,6 +165,9 @@ export default function ContasAReceberPage() {
         subtitulo="Parcelas, boletos e recebimentos — busque por cliente, CPF, empreendimento, quadra, lote ou parcela"
         acoes={
           <>
+            {/* Planilha: sai o recorte da grade (R7); entra só título novo, em aberto. */}
+            <BotaoExportar tam="md" recurso="erp.conta_receber" recorte={filtros} />
+            <WizardImportacao tam="md" recurso="erp.conta_receber" onConcluida={() => qc.invalidateQueries({ queryKey: ['erp'] })} />
             {selecionadas > 0 && (
               <button type="button" onClick={() => setLoteAberto(true)} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold"
                 style={{ background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer' }}>

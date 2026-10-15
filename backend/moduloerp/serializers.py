@@ -2,6 +2,7 @@
 from decimal import Decimal
 
 from django.utils.translation import gettext_lazy as _
+from nucleo.campos import NomeDoRelacionado
 from rest_framework import serializers
 from funcoesimpexp.entrega import ArquivoGateadoSerializerMixin
 from nucleo.tenant_validators import TenantScopedUniqueSerializerMixin
@@ -115,7 +116,7 @@ def _validar_entidade_do_grupo(entidade, campo='entidade'):
 
 
 class CentroCustoSerializer(serializers.ModelSerializer):
-    entidade_nome = serializers.CharField(source='entidade.__str__', read_only=True, default='')
+    entidade_nome = NomeDoRelacionado(source='entidade')
 
     class Meta:
         model = CentroCusto
@@ -354,8 +355,8 @@ class ContaPagarSerializer(TravaDeEdicaoMixin, serializers.ModelSerializer):
     permissao_estorno = 'erp.conta_pagar.estornar'
     # No título intercompany a "pessoa" é a entidade contraparte.
     fornecedor_nome = serializers.CharField(source='nome_da_pessoa', read_only=True, default='')
-    entidade_nome = serializers.CharField(source='entidade.__str__', read_only=True, default='')
-    contraparte_nome = serializers.CharField(source='contraparte.__str__', read_only=True, default='')
+    entidade_nome = NomeDoRelacionado(source='entidade')
+    contraparte_nome = NomeDoRelacionado(source='contraparte')
     natureza_nome = serializers.CharField(source='get_natureza_display', read_only=True)
     empreendimento_nome = serializers.CharField(source='empreendimento.empreendimento', read_only=True, default='')
     obra_nome = serializers.CharField(source='obra.nome_obra', read_only=True, default='')
@@ -437,8 +438,8 @@ class ContaReceberSerializer(TravaDeEdicaoMixin, serializers.ModelSerializer):
     permissao_estorno = 'erp.conta_receber.estornar'
     # No título intercompany a "pessoa" é a entidade contraparte.
     cliente_nome = serializers.CharField(source='nome_da_pessoa', read_only=True, default='')
-    entidade_nome = serializers.CharField(source='entidade.__str__', read_only=True, default='')
-    contraparte_nome = serializers.CharField(source='contraparte.__str__', read_only=True, default='')
+    entidade_nome = NomeDoRelacionado(source='entidade')
+    contraparte_nome = NomeDoRelacionado(source='contraparte')
     natureza_nome = serializers.CharField(source='get_natureza_display', read_only=True)
     empreendimento_nome = serializers.CharField(source='empreendimento.empreendimento', read_only=True, default='')
     obra_nome = serializers.CharField(source='obra.nome_obra', read_only=True, default='')

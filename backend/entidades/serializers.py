@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.db.models import Sum
+from nucleo.campos import NomeDoRelacionado
 from rest_framework import serializers
 
 from nucleo.tenant_validators import TenantScopedUniqueSerializerMixin
@@ -14,9 +15,9 @@ def so_digitos(valor) -> str:
 
 class EntidadeSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
     papel_nome = serializers.CharField(source="get_papel_display", read_only=True)
-    # Método, e não `source="matriz.__str__"`: sem matriz o DRF pegava o
-    # `__str__` do próprio None e a tela mostrava "Matriz de <method-wrapper…>".
-    matriz_nome = serializers.SerializerMethodField()
+    # Não `source="matriz.__str__"`: sem matriz a tela mostrava "Matriz de
+    # <method-wrapper…>" (ver `nucleo.campos`).
+    matriz_nome = NomeDoRelacionado(source="matriz")
     cliente_nome = serializers.CharField(source="cliente.nome_completo", read_only=True, default="")
     # Aceita com pontuação; grava só os dígitos.
     documento = serializers.CharField(max_length=18, required=False, allow_blank=True)
@@ -26,9 +27,6 @@ class EntidadeSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSer
         model = Entidade
         exclude = ["tenant"]
         read_only_fields = ["criado_em", "atualizado_em"]
-
-    def get_matriz_nome(self, obj) -> str:
-        return str(obj.matriz) if obj.matriz_id else ""
 
     def get_empreendimentos(self, obj):
         """Os empreendimentos de que ela é dona ou sócia — a integração que a tela mostra."""
@@ -78,7 +76,7 @@ class EntidadeSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSer
 
 
 class ParticipacaoSerializer(serializers.ModelSerializer):
-    entidade_nome = serializers.CharField(source="entidade.__str__", read_only=True)
+    entidade_nome = NomeDoRelacionado(source="entidade")
     entidade_externa = serializers.BooleanField(source="entidade.externa", read_only=True)
     empreendimento_nome = serializers.CharField(source="empreendimento.empreendimento", read_only=True)
 
@@ -117,7 +115,7 @@ class _ConcessaoBase(serializers.ModelSerializer):
 
 
 class ConcessaoEntidadeSerializer(_ConcessaoBase):
-    entidade_nome = serializers.CharField(source="entidade.__str__", read_only=True)
+    entidade_nome = NomeDoRelacionado(source="entidade")
 
     class Meta:
         model = ConcessaoEntidade

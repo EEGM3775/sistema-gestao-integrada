@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { ArrowLeft, ArrowRight, Handshake, Scale } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Btn, Card, Empty, Loading, Modal, SectionHead } from '@/components/malha'
+import { BotaoExportar } from '@/components/malha'
 import { formatBRL, apiDecimalToCents } from '@/utils/money'
 import { dateToBR, isoLocal } from '@/utils/dates'
 import { parseApiErrors } from '@/utils/formErrors'
@@ -57,7 +58,10 @@ export default function IntercompanyPage() {
         <Link to="/app/erp" className="inline-flex items-center gap-1.5 text-xs font-semibold mb-2" style={{ color: 'var(--ink-3)', textDecoration: 'none' }}>
           <ArrowLeft size={14} /> ERP / Financeiro
         </Link>
-        <h1 className="text-xl font-bold" style={{ color: 'var(--ink)' }}>Intercompany</h1>
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="text-xl font-bold" style={{ color: 'var(--ink)' }}>Intercompany</h1>
+          <BotaoExportar tam="md" recurso="erp.intercompany" />
+        </div>
         <p className="text-xs" style={{ color: 'var(--ink-3)', maxWidth: 680, lineHeight: 1.5 }}>
           Quando uma entidade paga ou recebe o que é de outra, o sistema gera na hora o par: a receber em uma,
           a pagar na outra. A despesa sai da DRE de quem pagou e entra na de quem consumiu. Aqui fica o saldo

@@ -5,6 +5,7 @@ import type { ColumnDef } from '@tanstack/react-table'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchNotasDasCompras, type NotaDaCompra } from '../api/endpoints/notasFiscais'
 import { WizardArquivos } from '@/components/malha/impexp/WizardArquivos'
+import { BotaoExportar } from '@/components/malha'
 import { erpKeys } from '../api/queryKeys'
 import { useEmpreendimentoOptions } from '../hooks/useEntityOptions'
 import { FinanceDataTable } from '../components/shared/FinanceDataTable'
@@ -75,6 +76,8 @@ export default function NotasFiscaisPage() {
           </div>
         </div>
         <div className="flex items-center gap-3">
+        {/* NFS-e é emissão na NFE.io: só exporta (dono, 15/10/2026). */}
+        <BotaoExportar tam="md" recurso="erp.nfse" rotulo="Exportar NFS-e" />
         <Link to="/app/erp/configuracoes" className="text-sm font-semibold"
           style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-body)', textDecoration: 'none' }}>
           Conta da NFE.io

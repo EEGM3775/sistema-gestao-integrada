@@ -42,7 +42,7 @@
 8. **VPS de teste real (www.gmaxis.com)** ✅ 12/10/2026 — staging sem drone + Cloudflare Tunnel, com o banco do staging local restaurado; procedimentos em [producao/](producao/README.md). Falta: SMTP real, redirecionar o domínio raiz, backup automático.
 9. **Passkey** (WebAuthn) como segundo método de login.
 10. **Entidades (multi-CNPJ)** — [planta](modulos/entidades.md). Fatias 1–2 ✅ 14/10/2026: entidades, participação com cota, dono do lançamento, centro de custo único (SCM → ERP), intercompany com encontro de contas, DRE por entidade, NFE.io e CNAB por entidade, recorte do ERP por entidade. Falta: recorte por empreendimento **fora do ERP** (fatia D do AD-9 — a concessão já existe); Asaas por entidade ([D293](pendencias.md)).
-11. **Exportar e importar em toda tela de lista** ([funcoesimpexp §14](modulos/funcoesimpexp.md)) — motor só cria e é tudo ou nada ✅ 14/10 · Cadastros ✅ 14/10 · CRM ✅ 15/10 · SCM ✅ 15/10 · ERP ❌ · Operação (PDCA, Logística, Diário, Locais; planilha do Orçamento pelo motor) ❌.
+11. **Exportar e importar em toda tela de lista** ([funcoesimpexp §14](modulos/funcoesimpexp.md)) — motor só cria e é tudo ou nada ✅ 14/10 · Cadastros ✅ 14/10 · CRM ✅ 15/10 · SCM ✅ 15/10 · ERP ✅ 15/10 · Operação (PDCA, Logística, Diário, Locais; planilha do Orçamento pelo motor) ❌.
 
 ### ⏸ Final do desenvolvimento (não trabalhar agora)
 
@@ -65,6 +65,7 @@ Cada fase concluída foi validada por um script E2E em [testes/e2e/](../testes/e
 - **Cadastros com Exportar/Importar ✅ 14/10/2026** — Clientes, Fornecedores, Funcionários, Cargos, Obras, Empreendimentos e Entidades, sobre o `RecursoDeCadastro`. → [funcoesimpexp.md §14](modulos/funcoesimpexp.md)
 - **CRM com Exportar/Importar ✅ 15/10/2026** — Leads, Contas, Contatos e Oportunidades; busca das quatro telas passa a filtrar no servidor; criar/editar contato pela tela deixa de dar 500. → [funcoesimpexp.md §14](modulos/funcoesimpexp.md)
 - **SCM com Exportar/Importar ✅ 15/10/2026** — itens do catálogo e ofertas importam; demandas, cotações e pedidos só exportam (documento de fluxo, decisão do dono). → [funcoesimpexp.md §14](modulos/funcoesimpexp.md)
+- **ERP com Exportar/Importar ✅ 15/10/2026** — contas a pagar e a receber importam (em aberto, no alcance por entidade, com o par intercompany); boletos, NFS-e, DRE por entidade, intercompany e financeiro por obra só exportam; "<method-wrapper…>" no nome de entidade/contraparte vazia corrigido (`nucleo.campos.NomeDoRelacionado`). → [funcoesimpexp.md §14](modulos/funcoesimpexp.md)
 
 ### Mudanças de 30/09/2026
 

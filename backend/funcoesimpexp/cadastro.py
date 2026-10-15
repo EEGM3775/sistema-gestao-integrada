@@ -59,6 +59,16 @@ class RecursoDeLista(Recurso):
     busca_por_palavra: bool = True
     #: R7 — filtros exatos da tela: `parâmetro -> lookup do ORM`.
     filtros: dict = {}
+    #: O ViewSet da tela, quando o recorte dela é mais que busca e filtro exato
+    #: (o escopo por entidade do ERP, a busca e os filtros do listão). Com ele,
+    #: o arquivo sai do `get_queryset` + `filter_queryset` da própria tela, com o
+    #: recorte como query string — a R7 por construção, sem segunda cópia da
+    #: regra. `campos_de_busca`/`filtros` ficam sem uso.
+    viewset = None
+    #: Colunas que só saem: o que o sistema calcula ou o fluxo decide (saldo,
+    #: situação). A importação as ignora — situação "Quitado" numa planilha não
+    #: quita título nenhum.
+    so_saida: tuple[str, ...] = ()
 
     # ------------------------------------------------------------------
     # Ganchos do módulo
@@ -100,11 +110,20 @@ class RecursoDeLista(Recurso):
         return self.ordem or ("pk",)
 
     def queryset(self, request, recorte: dict):
+        if self.viewset is not None:
+            return self._pela_tela(request, recorte).order_by(*self.ordem_padrao())
         tenant_id = getattr(getattr(request.user, "tenant", None), "id", None)
         qs = self.modelo._default_manager.filter(tenant_id=tenant_id)
         qs = self.escopo(qs, request)
         qs = self.recortar(qs, recorte, request)
         return qs.order_by(*self.ordem_padrao())
+
+    def _pela_tela(self, request, recorte: dict):
+        """O `get_queryset` + `filter_queryset` do ViewSet da tela, com o recorte
+        no lugar da query string. Paginação e ordem da tela ficam de fora."""
+        view = view_da_tela(self.viewset, request, recorte)
+        view.action = "list"
+        return self.escopo(view.filter_queryset(view.get_queryset()), request)
 
     def serializar_objeto(self, obj) -> dict:
         """A escolha sai pelo rótulo e a referência pelo nome — o que a pessoa lê,
@@ -169,7 +188,7 @@ class RecursoDeCadastro(RecursoDeLista):
         saida = {}
         for coluna in self.colunas:
             campo = nomes.get(coluna.campo)
-            if campo is None:
+            if campo is None or coluna.campo in self.so_saida:
                 continue
             valor = dados.get(coluna.campo)
             if coluna.campo in self.referencias:
@@ -335,6 +354,31 @@ class RecursoDeCadastro(RecursoDeLista):
                     return mensagens[0]
                 return f"{self._rotulo(campo)}: {mensagens[0]}"
         return exc.messages[0] if exc.messages else "Linha inválida."
+
+
+def view_da_tela(classe, request, recorte: dict):
+    """Uma instância da view da tela, com o recorte no lugar da query string.
+
+    É o que deixa a exportação devolver **o que a tela mostra** sem segunda
+    cópia da regra: o escopo por entidade, a busca e os filtros são os da view.
+    Paginação e ordem ficam de fora — o arquivo é o recorte inteiro.
+    """
+    from copy import copy
+
+    from django.http import QueryDict
+    from rest_framework.request import Request
+
+    http = copy(getattr(request, "_request", request))
+    http.GET = QueryDict(mutable=True)
+    for chave, valor in recorte.items():
+        if valor not in (None, "") and chave not in ("page", "page_size", "ordering", "ordenar"):
+            http.GET[chave] = str(valor)
+    tela = Request(http)
+    tela.user = request.user
+    view = classe()
+    view.request, view.args, view.kwargs = tela, (), {}
+    view.format_kwarg, view.headers = None, {}
+    return view
 
 
 _SIM = {"sim", "s", "1", "true", "x", "verdadeiro"}

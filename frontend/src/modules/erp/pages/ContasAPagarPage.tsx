@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { Link, useSearchParams } from 'react-router-dom'
 import { Plus, X } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { BotaoExportar, WizardImportacao } from '@/components/malha'
 import { useAuth } from '@/hooks/useAuth'
 import { TelaDaGrade } from '../grade/TelaDaGrade'
 import { estiloFiltro } from '../grade/estilos'
@@ -63,6 +64,7 @@ export default function ContasAPagarPage() {
   const grade = useGrade<ContaPagar>({ recurso: 'contas-a-pagar', filtros, ordenarPadrao: 'vencimento' })
   const empreendimentos = useEmpreendimentoOptions(true)
   const criar = useCreateContaAPagar()
+  const qc = useQueryClient()
 
   const abrirSoOGrupo = (no: NoGrupo) => {
     const f = filtrosDoGrupo({}, no)
@@ -95,10 +97,15 @@ export default function ContasAPagarPage() {
         titulo="Contas a pagar"
         subtitulo="Fornecedores, notas e pagamentos — busque por fornecedor, CNPJ, descrição, obra ou número da nota"
         acoes={
+          <>
+          {/* Planilha: sai o recorte da grade (R7); entra só título novo, em aberto. */}
+          <BotaoExportar tam="md" recurso="erp.conta_pagar" recorte={filtros} />
+          <WizardImportacao tam="md" recurso="erp.conta_pagar" onConcluida={() => qc.invalidateQueries({ queryKey: ['erp'] })} />
           <button type="button" onClick={() => setCriando(true)} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold"
             style={{ background: 'var(--brand)', color: '#fff', border: 'none', cursor: 'pointer' }}>
             <Plus size={16} /> Nova conta
           </button>
+          </>
         }
         busca={busca}
         onBuscar={setBusca}

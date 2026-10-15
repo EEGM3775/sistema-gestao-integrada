@@ -1,5 +1,6 @@
 """Carteiras de cobrança, remessas, retornos e lotes de boletos (item 52)."""
 from django.http import HttpResponse
+from nucleo.campos import NomeDoRelacionado
 from rest_framework import permissions, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -17,7 +18,7 @@ from .models import ContaCobrancaBancaria, LoteCobranca, RemessaCnab, RetornoCna
 class ContaCobrancaSerializer(serializers.ModelSerializer):
     banco_nome = serializers.SerializerMethodField()
     problemas = serializers.SerializerMethodField()
-    entidade_nome = serializers.CharField(source='entidade.__str__', read_only=True, default='')
+    entidade_nome = NomeDoRelacionado(source='entidade')
     # Aceita com pontuação ("66.774.885/0001-90" tem 18 caracteres); o
     # `validate_beneficiario_documento` devolve só os 14 dígitos que se gravam.
     beneficiario_documento = serializers.CharField(max_length=18)

@@ -782,3 +782,17 @@ medição, contrato, diário e verificação nascem pela tela, com aprovação e
 quota `catalogo_itens`), `scm.oferta` (código do item **+** fornecedor, como a restrição do banco;
 publicação na rede fica fora) importam; `scm.demanda` (as que esperam decisão), `scm.cotacao` e
 `scm.pedido` só exportam. Ordem: fornecedores e itens → ofertas.
+
+**Recorte pela própria tela** (`viewset`): quando a tela recorta mais que busca e filtro — o escopo por
+entidade e o listão do ERP —, a saída roda o `get_queryset` + `filter_queryset` do ViewSet dela, com o
+recorte no lugar da query string (`view_da_tela`). **Relatório** ([`relatorio.py`](../../backend/funcoesimpexp/relatorio.py),
+`RecursoDeRelatorio`): chama a view da tela e achata a resposta — o arquivo soma o mesmo que a tela.
+`so_saida`: colunas que só saem (saldo, situação, baixa); a importação as ignora.
+
+**ERP:** `erp.conta_pagar` (fornecedor pela razão social) e `erp.conta_receber` (cliente pelo nome)
+importam — identidade pessoa + descrição + vencimento + valor; nascem em aberto, com a entidade da regra
+(`preencher`), obra achada dentro do empreendimento da linha, alcance por entidade congelado no lote e o
+par intercompany sincronizado como no `_criar_com_par` da tela (o desfazer apaga o par e o espelho, e
+recusa o que já tem baixa). Só exportam: `erp.boleto`, `erp.nfse`, `erp.intercompany` (saldos),
+`erp.dre_entidades`, `erp.financeiro_obras`. Ordem: fornecedores/clientes, empreendimentos, obras →
+títulos.

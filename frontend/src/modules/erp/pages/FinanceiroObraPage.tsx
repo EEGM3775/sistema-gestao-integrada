@@ -1,6 +1,7 @@
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, ArrowUpRight, HardHat } from 'lucide-react'
 import { Card, Empty, Loading, Num, SectionHead } from '@/components/malha'
+import { BotaoExportar } from '@/components/malha'
 import { useAuth } from '@/hooks/useAuth'
 import { formatBRL, apiDecimalToCents } from '@/utils/money'
 import { useDreObra, useFinanceiroObras } from '../hooks/useFinanceiroObra'
@@ -31,7 +32,10 @@ export default function FinanceiroObraPage() {
         <Link to="/app/erp" className="inline-flex items-center gap-1.5 text-xs font-semibold mb-2" style={{ color: 'var(--ink-3)', textDecoration: 'none' }}>
           <ArrowLeft size={14} /> ERP / Financeiro
         </Link>
-        <h1 className="text-xl font-bold" style={{ color: 'var(--ink)' }}>Financeiro por obra</h1>
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="text-xl font-bold" style={{ color: 'var(--ink)' }}>Financeiro por obra</h1>
+          <BotaoExportar tam="md" recurso="erp.financeiro_obras" />
+        </div>
         <p className="text-xs" style={{ color: 'var(--ink-3)' }}>
           Receita, custo e resultado de cada obra — pela obra da conta ou pelo rateio ao centro de custo dela.
         </p>

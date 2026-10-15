@@ -1,4 +1,5 @@
 # backend/moduloscm/serializers.py
+from nucleo.campos import NomeDoRelacionado
 from rest_framework import serializers
 
 from nucleo.tenant_validators import TenantScopedModelSerializer
@@ -24,7 +25,7 @@ from .models import (
 
 class CentroCustoSerializer(TenantScopedModelSerializer):
     """O centro de custo do ERP, servido ao SCM (o mesmo cadastro)."""
-    entidade_nome = serializers.CharField(source="entidade.__str__", read_only=True, default="")
+    entidade_nome = NomeDoRelacionado(source="entidade")
 
     class Meta:
         model = CentroCusto

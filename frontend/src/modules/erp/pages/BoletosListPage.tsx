@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Ban, Building2, FileText } from 'lucide-react'
 import { TelaDaGrade } from '../grade/TelaDaGrade'
+import { BotaoExportar } from '@/components/malha'
 import { estiloFiltro } from '../grade/estilos'
 import { useGrade } from '../grade/useGrade'
 import { filtrosDoGrupo } from '../grade/arvore'
@@ -100,10 +101,14 @@ export default function BoletosListPage() {
         titulo="Boletos"
         subtitulo="Cobranças emitidas pelo Asaas e pelo banco — de quem é, de qual parcela e de qual lote"
         acoes={
+          <>
+          {/* Boleto é emissão no Asaas/banco: só exporta (dono, 15/10/2026). */}
+          <BotaoExportar tam="md" recurso="erp.boleto" recorte={filtros} />
           <Link to="/app/erp/cobranca-bancaria" className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold"
             style={{ border: '1.5px solid var(--line)', color: 'var(--ink-2)', textDecoration: 'none' }}>
             <Building2 size={16} /> Cobrança bancária (CNAB)
           </Link>
+          </>
         }
         abas={
           <div className="flex items-center gap-1 mb-3" style={{ borderBottom: '1px solid var(--line)' }}>
