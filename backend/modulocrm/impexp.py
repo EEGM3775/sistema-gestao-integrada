@@ -43,8 +43,7 @@ class _RecursoDoCrm(RecursoDeCadastro):
     def validar_contexto(self, contexto, user, tenant_id) -> dict:
         return {**dict(contexto or {}), "usuario": getattr(user, "pk", None)}
 
-    def queryset(self, request, recorte: dict):
-        qs = super().queryset(request, recorte)
+    def escopo(self, qs, request):
         if getattr(request.user, "is_staff", False):
             return qs
         return qs.filter(**{self.campo_do_dono: request.user})

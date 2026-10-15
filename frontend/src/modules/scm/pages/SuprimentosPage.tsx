@@ -7,7 +7,8 @@ import {
   Boxes, Star, Zap, Lock, PlusCircle, Trash2,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { BotaoExportar, WizardImportacao } from '@/components/malha'
 import {
   useScmDashboard, cotacoesHooks, pedidosHooks, ofertasHooks, centrosCustoHooks,
   demandasHooks, itensDemandaHooks, propostasHooks, itensPropostaHooks,
@@ -234,9 +235,15 @@ function ItensDoCatalogo({ onFicha, onComprar, onCotar, marcados, onMarcar }: {
     placeholderData: prev => prev,
   })
   const itens = data?.results ?? [], total = data?.count ?? 0
+  const queryClient = useQueryClient()
   return (
     <>
-      <SectHead right={<input value={busca} onChange={e => { setBusca(e.target.value); setPagina(1) }} placeholder="Buscar item (nome, código)…" style={{ fontSize: 13, padding: '7px 11px', border: '1px solid var(--line)', borderRadius: 'var(--r-sm)', background: 'var(--surface-2)', color: 'var(--ink)', minWidth: 240 }} />}>Itens do catálogo{total ? ` (${total.toLocaleString('pt-BR')})` : ''}</SectHead>
+      {/* Planilha: sai a busca da tela (R7); entra só item próprio novo. */}
+      <SectHead right={<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <input value={busca} onChange={e => { setBusca(e.target.value); setPagina(1) }} placeholder="Buscar item (nome, código)…" style={{ fontSize: 13, padding: '7px 11px', border: '1px solid var(--line)', borderRadius: 'var(--r-sm)', background: 'var(--surface-2)', color: 'var(--ink)', minWidth: 240 }} />
+        <BotaoExportar recurso="cadastro.item" recorte={{ search: busca }} />
+        <WizardImportacao recurso="cadastro.item" onConcluida={() => queryClient.invalidateQueries({ queryKey: ['scm', 'catalogo-itens'] })} />
+      </div>}>Itens do catálogo{total ? ` (${total.toLocaleString('pt-BR')})` : ''}</SectHead>
       {marcados.size > 0 && (
         <div style={{ position: 'sticky', top: 8, zIndex: 4, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '9px 14px', marginBottom: 10, borderRadius: 'var(--r-md)', background: 'var(--accent-soft)', border: '1px solid color-mix(in srgb,var(--accent) 35%,var(--line))', color: 'var(--accent-ink)', fontSize: 13, fontWeight: 600 }}>
           <span>{marcados.size} {marcados.size === 1 ? 'item selecionado' : 'itens selecionados'}</span>
@@ -301,13 +308,19 @@ function Catalogo({ say, onComprou, onCotou }: { say: Say; onComprou: (id: numbe
   const [ficha, setFicha] = useState<number | null>(null)
   const { data, isLoading } = ofertasHooks.useList({ search, page_size: 24 })
   const rows = data?.results ?? []
+  const queryClient = useQueryClient()
   return (
     <>
       <ItensDoCatalogo onFicha={setFicha} onComprar={podeComprar ? setCompraDe : undefined} onCotar={podeCotar ? setCotacaoDe : undefined} marcados={marcados} onMarcar={marcar} />
       {ficha != null && <FichaItemModal item={ficha} onClose={() => setFicha(null)} />}
       {compraDe && <NovaCompraModal say={say} iniciais={compraDe.map(it => ({ produto: it.item_id, descricao: it.descricao, unidade: it.unidade }))} onClose={() => setCompraDe(null)} onDone={id => { setCompraDe(null); setMarcados(new Map()); say('Pedido gerado'); onComprou(id) }} />}
       {cotacaoDe && <CotarModal itens={cotacaoDe} onClose={() => setCotacaoDe(null)} onDone={id => { setCotacaoDe(null); setMarcados(new Map()); say('Cotação aberta'); onCotou(id) }} />}
-      <SectHead right={<input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar oferta…" style={{ fontSize: 13, padding: '7px 11px', border: '1px solid var(--line)', borderRadius: 'var(--r-sm)', background: 'var(--surface-2)', color: 'var(--ink)', minWidth: 220 }} />}>Ofertas das lojas</SectHead>
+      {/* Planilha: a tabela de preço do fornecedor entra por aqui (só oferta nova). */}
+      <SectHead right={<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar oferta…" style={{ fontSize: 13, padding: '7px 11px', border: '1px solid var(--line)', borderRadius: 'var(--r-sm)', background: 'var(--surface-2)', color: 'var(--ink)', minWidth: 220 }} />
+        <BotaoExportar recurso="scm.oferta" recorte={{ search }} />
+        <WizardImportacao recurso="scm.oferta" onConcluida={() => queryClient.invalidateQueries({ queryKey: ['scm', 'ofertas'] })} />
+      </div>}>Ofertas das lojas</SectHead>
       {isLoading ? <Loading /> : rows.length === 0 ? <Empty>Nenhuma oferta no catálogo{search ? ' para a busca' : ''}.</Empty> : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(268px,1fr))', gap: 14 }}>
           {rows.map(o => {
@@ -380,12 +393,13 @@ function DemandasAbertas({ onCotou, onComprou, say }: { onCotou: (cotacao: numbe
   }
   return (
     <>
+      {/* Demanda é documento de fluxo: só exporta (dono, 15/10/2026). */}
       <SectHead right={podeCotar && marcadas.size > 0
         ? <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--ink-2)' }}>
             {marcadas.size} selecionada{marcadas.size > 1 ? 's' : ''}
             <Btn style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => setMarcadas(new Set())}>Limpar</Btn>
             <Btn variant="danger" style={{ padding: '4px 10px', fontSize: 12 }} disabled={remover.isPending} onClick={() => excluir([...marcadas])}><Trash2 size={12} /> Apagar selecionadas</Btn>
-          </div> : undefined}>Demandas para decidir ({rows.length})</SectHead>
+          </div> : <BotaoExportar recurso="scm.demanda" />}>Demandas para decidir ({rows.length})</SectHead>
       {erro &&<div style={{ background: 'var(--danger-soft)', color: 'var(--danger-ink)', padding: '9px 12px', borderRadius: 'var(--r-sm)', fontSize: 12.5, marginBottom: 10 }}>{erro}</div>}
       <Card pad={false} style={{ overflow: 'hidden', marginBottom: 18 }}>
         <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5, minWidth: 620 }}>
@@ -425,7 +439,7 @@ function CotacaoList({ onOpen, say, onComprou }: { onOpen: (id: number) => void;
   return (
     <>
       <DemandasAbertas onCotou={onOpen} onComprou={onComprou} say={say} />
-      <SectHead>Cotações</SectHead>
+      <SectHead right={<BotaoExportar recurso="scm.cotacao" />}>Cotações</SectHead>
       <Card pad={false} style={{ overflow: 'hidden' }}>
         <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5, minWidth: 560 }}>
           <thead><tr>{['Cotação', 'Demanda', 'Estado', 'Propostas', 'Encerra'].map((h, i) => <th key={i} style={{ ...CAPS, fontSize: 10.5, textAlign: i === 3 ? 'right' : 'left', padding: '11px 16px', borderBottom: '1px solid var(--line)', background: 'var(--surface-2)' }}>{h}</th>)}</tr></thead>
@@ -555,7 +569,11 @@ function PedidoList({ onOpen, say, onComprou }: { onOpen: (id: number) => void; 
   const rows = data?.results ?? []
   return (
     <>
-      <SectHead right={podeComprar ? <Btn variant="primary" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => setComprar(true)}><Zap size={14} /> Nova compra</Btn> : undefined}>Pedidos de compra</SectHead>
+      {/* Pedido é documento de fluxo: só exporta (dono, 15/10/2026). */}
+      <SectHead right={<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <BotaoExportar recurso="scm.pedido" />
+        {podeComprar && <Btn variant="primary" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => setComprar(true)}><Zap size={14} /> Nova compra</Btn>}
+      </div>}>Pedidos de compra</SectHead>
       {isLoading ? <Loading /> : rows.length === 0 ? <Empty>Nenhum pedido ainda.</Empty> : (
         <Card pad={false} style={{ overflow: 'hidden' }}>
           <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5, minWidth: 720 }}>

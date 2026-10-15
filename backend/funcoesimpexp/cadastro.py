@@ -28,24 +28,21 @@ from .importacao import ImportacaoInvalida, LimiteDoPlano
 from .registro import Recurso
 
 
-class RecursoDeCadastro(Recurso):
-    """Declare `modelo`, `colunas`, `chave` e as permissões; o resto vem pronto.
+class RecursoDeLista(Recurso):
+    """Só a saída: a lista da tela vira planilha, no recorte que a tela mostra.
 
-    Ganchos opcionais: `campos` (dados do arquivo → campos do model),
-    `normalizar_chave`, `validar_regras` (regra do módulo que precisa do objeto),
-    `recortar` (os filtros da tela — R7) e `depois_de_criar`.
+    **Por que separado do cadastro** (decisão do dono, 15/10/2026): toda lista
+    exporta, mas documento de fluxo — pedido, cotação, boleto, nota, medição,
+    contrato, diário — **não importa**: nasce pela tela, com aprovação e
+    efeitos. Sem `aplicar_linha`, o motor não oferece o Importar.
+
+    `colunas` aceita caminho (`fornecedor__razao_social`) e propriedade do
+    model; a escolha sai pelo rótulo. Gancho opcional: `escopo` (o que esta
+    pessoa enxerga na tela, além do tenant).
     """
 
     #: A classe do ORM. Obrigatória.
     modelo = None
-    #: Campo do model que guarda a chave, quando o nome difere do da coluna.
-    campo_da_chave: str = ""
-    #: Quota de `nucleo.quotas` que conta este cadastro ("clientes", "obras"…).
-    #: Vazio = cadastro sem teto de plano.
-    quota: str = ""
-    #: Campos do model que `full_clean` não confere — preenchidos pelo sistema
-    #: depois, ou que não vêm do arquivo.
-    nao_validar: tuple[str, ...] = ()
     #: Ordem da exportação.
     ordem: tuple[str, ...] = ()
     #: Colunas que apontam para outro cadastro **pelo nome**: `campo da FK ->
@@ -62,6 +59,93 @@ class RecursoDeCadastro(Recurso):
     busca_por_palavra: bool = True
     #: R7 — filtros exatos da tela: `parâmetro -> lookup do ORM`.
     filtros: dict = {}
+
+    # ------------------------------------------------------------------
+    # Ganchos do módulo
+    # ------------------------------------------------------------------
+
+    def escopo(self, qs, request):
+        """O que esta pessoa enxerga na tela, além do tenant (o padrão é tudo)."""
+        return qs
+
+    def recortar(self, qs, recorte: dict, request):
+        """R7 — os filtros da tela: a busca sem acento e os filtros exatos.
+
+        Parâmetro que a declaração não conhece é ignorado, e não erro: a tela
+        manda o estado inteiro dela (ordem, página), e o que não é filtro não
+        muda o conjunto.
+        """
+        for parametro, lookup in self.filtros.items():
+            valor = recorte.get(parametro)
+            if valor not in (None, ""):
+                qs = qs.filter(**{lookup: valor})
+        # Como a `BuscaSemAcento` da tela (o `SearchFilter` do DRF): cada palavra
+        # tem de casar em algum campo. Uma frase inteira num `icontains` só
+        # devolveria menos do que a tela mostra — e a R7 é "o mesmo recorte".
+        busca = str(recorte.get("search") or recorte.get("busca") or "").strip()
+        if self.campos_de_busca and busca:
+            termos = busca.replace(",", " ").split() if self.busca_por_palavra else [busca]
+            for palavra in termos:
+                condicao = Q()
+                for campo in self.campos_de_busca:
+                    condicao |= Q(**{f"{campo}__unaccent__icontains": palavra})
+                qs = qs.filter(condicao)
+        return qs
+
+    # ------------------------------------------------------------------
+    # Saída
+    # ------------------------------------------------------------------
+
+    def ordem_padrao(self) -> tuple[str, ...]:
+        return self.ordem or ("pk",)
+
+    def queryset(self, request, recorte: dict):
+        tenant_id = getattr(getattr(request.user, "tenant", None), "id", None)
+        qs = self.modelo._default_manager.filter(tenant_id=tenant_id)
+        qs = self.escopo(qs, request)
+        qs = self.recortar(qs, recorte, request)
+        return qs.order_by(*self.ordem_padrao())
+
+    def serializar_objeto(self, obj) -> dict:
+        """A escolha sai pelo rótulo e a referência pelo nome — o que a pessoa lê,
+        e o que a volta aceita. `a__b` segue a relação; vazio no meio é vazio."""
+        saida = {}
+        for coluna in self.colunas:
+            if coluna.campo in self.referencias:
+                alvo = getattr(obj, coluna.campo, None)
+                saida[coluna.campo] = getattr(alvo, self.referencias[coluna.campo][1], "") if alvo else ""
+                continue
+            *caminho, ultimo = coluna.campo.split("__")
+            dono = obj
+            for passo in caminho:
+                dono = getattr(dono, passo, None) if dono is not None else None
+            if dono is None:
+                saida[coluna.campo] = None
+                continue
+            exibir = getattr(dono, f"get_{ultimo}_display", None)
+            saida[coluna.campo] = exibir() if callable(exibir) else getattr(dono, ultimo, None)
+        return saida
+
+
+class RecursoDeCadastro(RecursoDeLista):
+    """Declare `modelo`, `colunas`, `chave` e as permissões; o resto vem pronto.
+
+    Ganchos opcionais: `campos` (dados do arquivo → campos do model),
+    `normalizar_chave`, `validar_regras` (regra do módulo que precisa do objeto),
+    `recortar` (os filtros da tela — R7) e `depois_de_criar`.
+    """
+
+    #: Campo do model que guarda a chave, quando o nome difere do da coluna.
+    campo_da_chave: str = ""
+    #: Quota de `nucleo.quotas` que conta este cadastro ("clientes", "obras"…).
+    #: Vazio = cadastro sem teto de plano.
+    quota: str = ""
+    #: Campos do model que `full_clean` não confere — preenchidos pelo sistema
+    #: depois, ou que não vêm do arquivo.
+    nao_validar: tuple[str, ...] = ()
+
+    def ordem_padrao(self) -> tuple[str, ...]:
+        return self.ordem or (self.campo_da_chave or self.chave,)
 
     # ------------------------------------------------------------------
     # Ganchos do módulo
@@ -104,55 +188,8 @@ class RecursoDeCadastro(Recurso):
         """Regra do módulo que precisa do objeto montado. "" = passa."""
         return ""
 
-    def recortar(self, qs, recorte: dict, request):
-        """R7 — os filtros da tela: a busca sem acento e os filtros exatos.
-
-        Parâmetro que a declaração não conhece é ignorado, e não erro: a tela
-        manda o estado inteiro dela (ordem, página), e o que não é filtro não
-        muda o conjunto.
-        """
-        for parametro, lookup in self.filtros.items():
-            valor = recorte.get(parametro)
-            if valor not in (None, ""):
-                qs = qs.filter(**{lookup: valor})
-        # Como a `BuscaSemAcento` da tela (o `SearchFilter` do DRF): cada palavra
-        # tem de casar em algum campo. Uma frase inteira num `icontains` só
-        # devolveria menos do que a tela mostra — e a R7 é "o mesmo recorte".
-        busca = str(recorte.get("search") or recorte.get("busca") or "").strip()
-        if self.campos_de_busca and busca:
-            termos = busca.replace(",", " ").split() if self.busca_por_palavra else [busca]
-            for palavra in termos:
-                condicao = Q()
-                for campo in self.campos_de_busca:
-                    condicao |= Q(**{f"{campo}__unaccent__icontains": palavra})
-                qs = qs.filter(condicao)
-        return qs
-
     def depois_de_criar(self, objeto, dados: dict, tenant_id) -> None:
         """Efeito do módulo depois de gravar (aviso a outro módulo, por exemplo)."""
-
-    # ------------------------------------------------------------------
-    # Saída
-    # ------------------------------------------------------------------
-
-    def queryset(self, request, recorte: dict):
-        tenant_id = getattr(getattr(request.user, "tenant", None), "id", None)
-        qs = self.modelo._default_manager.filter(tenant_id=tenant_id)
-        qs = self.recortar(qs, recorte, request)
-        return qs.order_by(*(self.ordem or (self.campo_da_chave or self.chave,)))
-
-    def serializar_objeto(self, obj) -> dict:
-        """A escolha sai pelo rótulo e a referência pelo nome — o que a pessoa lê,
-        e o que a volta aceita."""
-        saida = {}
-        for coluna in self.colunas:
-            if coluna.campo in self.referencias:
-                alvo = getattr(obj, coluna.campo, None)
-                saida[coluna.campo] = getattr(alvo, self.referencias[coluna.campo][1], "") if alvo else ""
-                continue
-            exibir = getattr(obj, f"get_{coluna.campo}_display", None)
-            saida[coluna.campo] = exibir() if callable(exibir) else getattr(obj, coluna.campo, None)
-        return saida
 
     # ------------------------------------------------------------------
     # Entrada
@@ -298,6 +335,23 @@ class RecursoDeCadastro(Recurso):
                     return mensagens[0]
                 return f"{self._rotulo(campo)}: {mensagens[0]}"
         return exc.messages[0] if exc.messages else "Linha inválida."
+
+
+_SIM = {"sim", "s", "1", "true", "x", "verdadeiro"}
+_NAO = {"nao", "n", "0", "false", "falso"}
+
+
+def sim_ou_nao(valor, padrao: bool):
+    """Coluna Sim/Não da planilha: em branco é o `padrao` da ficha; o que não for
+    sim nem não devolve `None`, e quem chama trava a linha dizendo o que veio."""
+    texto = normalizar(valor)
+    if not texto:
+        return padrao
+    if texto in _SIM:
+        return True
+    if texto in _NAO:
+        return False
+    return None
 
 
 def _codigo_da_escolha(campo, valor):

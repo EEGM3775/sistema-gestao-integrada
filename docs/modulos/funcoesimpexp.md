@@ -771,3 +771,14 @@ arquivo vê o que a tela vê**: quem não é staff exporta só o que é seu (`as
 conta), e o que entra fica com quem importou — o usuário vai no contexto do lote. Ordem: contas →
 contatos → oportunidades. Fora do arquivo: pontuação do lead, valor e produtos da oportunidade,
 interações, vínculo com o cliente do cadastro.
+
+**Documento de fluxo só exporta** (decisão do dono, 15/10/2026). A base de saída é o `RecursoDeLista`
+(o `RecursoDeCadastro` herda dele e acrescenta a entrada): `colunas` aceitam caminho
+(`fornecedor__razao_social`) e anotação, e o gancho `escopo` diz o que a pessoa vê na tela. Importa
+onde uma linha é um registro inteiro e criar não dispara fluxo; pedido, cotação, demanda, boleto, NF,
+medição, contrato, diário e verificação nascem pela tela, com aprovação e efeitos.
+
+**SCM e catálogo:** `cadastro.item` (código; só item próprio — fonte de referência fica fora, e conta na
+quota `catalogo_itens`), `scm.oferta` (código do item **+** fornecedor, como a restrição do banco;
+publicação na rede fica fora) importam; `scm.demanda` (as que esperam decisão), `scm.cotacao` e
+`scm.pedido` só exportam. Ordem: fornecedores e itens → ofertas.
