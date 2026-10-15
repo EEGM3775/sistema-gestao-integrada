@@ -5,6 +5,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from nucleo.busca import BuscaSemAcento
 from nucleo.tenancy import TenantScopedViewSetMixin
 from nucleo.permissions import RequireModule, RequirePermission
 from . import services
@@ -38,9 +39,13 @@ class BaseCrmViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
         return self.queryset.filter(assigned_to=user)
 
     def perform_create(self, serializer):
-        """Atribui o usuário logado como responsável e o tenant ao criar um novo objeto."""
+        """Atribui o usuário logado como responsável e o tenant ao criar um novo objeto.
+
+        O contato não tem responsável (é de quem gerencia a conta); passar
+        `assigned_to` a ele derrubava a criação com 500.
+        """
         tid = getattr(self.request.user, "tenant_id", None)
-        if self.request.user.is_authenticated:
+        if self.request.user.is_authenticated and hasattr(serializer.Meta.model, "assigned_to"):
             serializer.save(assigned_to=self.request.user, tenant_id=tid)
         else:
             serializer.save(tenant_id=tid)
@@ -49,8 +54,10 @@ class LeadViewSet(BaseCrmViewSet):
     queryset = Lead.objects.all()
     serializer_class = LeadSerializer
     required_resource = "crm.lead"
-    filter_backends = [DjangoFilterBackend]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento]
     filterset_fields = ['status', 'source', 'campaign']
+    # Os mesmos campos que o `crm.lead` do impexp percorre (R7: o arquivo é o recorte da tela).
+    search_fields = ["first_name", "last_name", "email", "company"]
 
     @action(detail=True, methods=['post'])
     def convert(self, request, pk=None):
@@ -72,10 +79,15 @@ class AccountViewSet(BaseCrmViewSet):
     queryset = Account.objects.all()
     serializer_class = AccountSerializer
     required_resource = "crm.conta"
+    filter_backends = [BuscaSemAcento]
+    search_fields = ["name", "email"]
 
 class ContactViewSet(BaseCrmViewSet):
     queryset = Contact.objects.all()
     required_resource = "crm.contato"
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento]
+    filterset_fields = ["account"]
+    search_fields = ["first_name", "last_name", "email", "account__name"]
     # A lógica de permissão para contatos pode precisar ser mais complexa
     # (ex: permitir ver contatos da mesma conta)
     # Por enquanto, segue o padrão do assigned_to.
@@ -94,6 +106,9 @@ class OpportunityViewSet(BaseCrmViewSet):
     queryset = Opportunity.objects.all()
     serializer_class = OpportunitySerializer
     required_resource = "crm.oportunidade"
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento]
+    filterset_fields = ["stage", "account"]
+    search_fields = ["name", "account__name"]
 
 
 class OpportunityProductViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):

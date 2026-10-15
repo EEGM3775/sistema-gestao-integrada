@@ -295,6 +295,7 @@ class ModoSimplesTests(_Base):
             outro = Usuario.objects.create(username="obra_ent", tenant=self.tenant)
         r = self.client.post("/api/entidades/", {"nome": "SPE Nova", "papel": "spe"}, format="json")
         self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["matriz_nome"], "")  # era "<method-wrapper '__str__' of NoneType…>"
         with rls_bypass():
             self.assertTrue(ConcessaoEntidade.objects.filter(usuario=outro, entidade=self.matriz()).exists())
         self.assertEqual({c["conta_pagar_id"] for c in self.client.get("/api/erp/contas-a-pagar/").data["results"]}, {conta.pk})

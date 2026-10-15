@@ -2,6 +2,7 @@ import { useTextoDaLixeira } from '@/hooks/useRetencaoDoLixo'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, Search, RefreshCw, BarChart3 } from 'lucide-react'
+import { BotaoExportar, WizardImportacao } from '@/components/malha'
 import { useOpportunities, useCreateOpportunity, useUpdateOpportunity, useDeleteOpportunity } from '../hooks/useOpportunities'
 import { formatBRL } from '@/utils/money'
 import type { Opportunity, OpportunityPayload } from '../types'
@@ -64,6 +65,10 @@ export default function OpportunitiesPage() {
             </p>
           </div>
         </div>
+        <div className="flex items-center gap-2">
+        {/* Planilha: sai a busca da tela (R7); entra só oportunidade nova, de conta que já existe. */}
+        <BotaoExportar tam="md" recurso="crm.oportunidade" recorte={{ search }} />
+        <WizardImportacao tam="md" recurso="crm.oportunidade" onConcluida={() => refetch()} />
         <button
           onClick={() => setFormOpen(true)}
           className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold"
@@ -71,6 +76,7 @@ export default function OpportunitiesPage() {
         >
           <Plus size={16} /> Nova Oportunidade
         </button>
+        </div>
       </div>
 
       {/* Filtros */}

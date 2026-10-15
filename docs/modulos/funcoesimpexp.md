@@ -763,3 +763,11 @@ cargos → funcionários. A linha que cita um nome ainda inexistente trava, e di
 
 **Fica fora do arquivo** o que tem gate ou tela próprios: dados bancários, médicos, documentos,
 unidades, etapas, equipe.
+
+**CRM** ([`modulocrm/impexp.py`](../../backend/modulocrm/impexp.py)): `crm.lead` (e-mail), `crm.conta`
+(nome), `crm.contato` (e-mail **+** conta — o e-mail só é único por conta), `crm.oportunidade` (nome
+**+** conta; o contato principal vem pelo e-mail, dentro da conta). Chave sem diferença de caixa. **O
+arquivo vê o que a tela vê**: quem não é staff exporta só o que é seu (`assigned_to`; no contato, o da
+conta), e o que entra fica com quem importou — o usuário vai no contexto do lote. Ordem: contas →
+contatos → oportunidades. Fora do arquivo: pontuação do lead, valor e produtos da oportunidade,
+interações, vínculo com o cliente do cadastro.

@@ -13,4 +13,7 @@ class IsOwnerOrReadOnly(permissions.BasePermission):
             return True
 
         # Permissões de escrita são permitidas apenas para o proprietário do objeto.
+        # O contato não tem responsável: o dono é quem gerencia a conta dele.
+        if not hasattr(obj, "assigned_to"):
+            return obj.account.assigned_to == request.user
         return obj.assigned_to == request.user

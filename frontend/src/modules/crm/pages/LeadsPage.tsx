@@ -1,6 +1,7 @@
 import { useTextoDaLixeira } from '@/hooks/useRetencaoDoLixo'
 import { useState } from 'react'
 import { Plus, Search, RefreshCw } from 'lucide-react'
+import { BotaoExportar, WizardImportacao } from '@/components/malha'
 import { useLeads, useCreateLead, useUpdateLead, useDeleteLead, useConvertLead } from '../hooks/useLeads'
 import type { Lead, StatusLead } from '../types'
 
@@ -69,6 +70,10 @@ export default function LeadsPage() {
             </p>
           </div>
         </div>
+        <div className="flex items-center gap-2">
+        {/* Planilha: sai a busca e o status da tela (R7) e entra só lead novo. */}
+        <BotaoExportar tam="md" recurso="crm.lead" recorte={{ search, status: statusFiltro || undefined }} />
+        <WizardImportacao tam="md" recurso="crm.lead" onConcluida={() => refetch()} />
         <button
           onClick={() => setFormOpen(true)}
           className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold"
@@ -76,6 +81,7 @@ export default function LeadsPage() {
         >
           <Plus size={16} /> Novo Lead
         </button>
+        </div>
       </div>
 
       {/* Filtros */}

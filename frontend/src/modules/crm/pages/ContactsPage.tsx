@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, Search, RefreshCw, User } from 'lucide-react'
+import { BotaoExportar, WizardImportacao } from '@/components/malha'
 import { useContacts, useCreateContact, useUpdateContact, useDeleteContact } from '../hooks/useContacts'
 import type { Contact, ContactPayload } from '../types'
 
@@ -59,6 +60,10 @@ export default function ContactsPage() {
             </p>
           </div>
         </div>
+        <div className="flex items-center gap-2">
+        {/* Planilha: sai a busca da tela (R7); entra só contato novo, de conta que já existe. */}
+        <BotaoExportar tam="md" recurso="crm.contato" recorte={{ search }} />
+        <WizardImportacao tam="md" recurso="crm.contato" onConcluida={() => refetch()} />
         <button
           onClick={() => setFormOpen(true)}
           className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold"
@@ -66,6 +71,7 @@ export default function ContactsPage() {
         >
           <Plus size={16} /> Novo Contato
         </button>
+        </div>
       </div>
 
       {/* Filtros */}

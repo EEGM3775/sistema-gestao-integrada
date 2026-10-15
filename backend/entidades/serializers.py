@@ -14,7 +14,9 @@ def so_digitos(valor) -> str:
 
 class EntidadeSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSerializer):
     papel_nome = serializers.CharField(source="get_papel_display", read_only=True)
-    matriz_nome = serializers.CharField(source="matriz.__str__", read_only=True, default="")
+    # Método, e não `source="matriz.__str__"`: sem matriz o DRF pegava o
+    # `__str__` do próprio None e a tela mostrava "Matriz de <method-wrapper…>".
+    matriz_nome = serializers.SerializerMethodField()
     cliente_nome = serializers.CharField(source="cliente.nome_completo", read_only=True, default="")
     # Aceita com pontuação; grava só os dígitos.
     documento = serializers.CharField(max_length=18, required=False, allow_blank=True)
@@ -24,6 +26,9 @@ class EntidadeSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSer
         model = Entidade
         exclude = ["tenant"]
         read_only_fields = ["criado_em", "atualizado_em"]
+
+    def get_matriz_nome(self, obj) -> str:
+        return str(obj.matriz) if obj.matriz_id else ""
 
     def get_empreendimentos(self, obj):
         """Os empreendimentos de que ela é dona ou sócia — a integração que a tela mostra."""

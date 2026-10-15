@@ -2,6 +2,7 @@ import { useTextoDaLixeira } from '@/hooks/useRetencaoDoLixo'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, Search, RefreshCw, Building2 } from 'lucide-react'
+import { BotaoExportar, WizardImportacao } from '@/components/malha'
 import { useAccounts, useCreateAccount, useUpdateAccount, useDeleteAccount } from '../hooks/useAccounts'
 import type { Account, AccountPayload } from '../types'
 
@@ -61,6 +62,10 @@ export default function AccountsPage() {
             </p>
           </div>
         </div>
+        <div className="flex items-center gap-2">
+        {/* Planilha: sai a busca da tela (R7) e entra só conta nova. */}
+        <BotaoExportar tam="md" recurso="crm.conta" recorte={{ search }} />
+        <WizardImportacao tam="md" recurso="crm.conta" onConcluida={() => refetch()} />
         <button
           onClick={() => setFormOpen(true)}
           className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold"
@@ -68,6 +73,7 @@ export default function AccountsPage() {
         >
           <Plus size={16} /> Nova Conta
         </button>
+        </div>
       </div>
 
       {/* Filtros */}
