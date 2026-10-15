@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { AlertTriangle, Link2, Lock, Plus, ShoppingCart, Unlock } from 'lucide-react'
-import { Btn, Card, Empty, Modal, Pill } from '@/components/malha'
+import { BotaoExportar, Btn, Card, Empty, Modal, Pill } from '@/components/malha'
 import { useAuth } from '@/hooks/useAuth'
 import { dateToBR, maxCalendarioISO, minCalendarioISO } from '@/utils/dates'
 import { FieldError, FormErrorBanner, parseApiErrors, type FieldErrors } from '@/utils/formErrors'
@@ -83,6 +83,7 @@ export function EsteiraDeRestricoes({
             {vencidas > 0 && ` · ${vencidas} vencida${vencidas > 1 ? 's' : ''}`}
           </div>
         </div>
+        <BotaoExportar recurso="pdca.restricao" rotulo="" recorte={{ atividade__cronograma__obra: obraId }} />
         {podeRegistrar && (
           <Btn tam="sm" onClick={() => setAbrindo(true)} title="Registrar uma trava">
             <Plus size={13} />

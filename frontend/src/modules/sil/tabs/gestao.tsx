@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { useCurvaABC, useAplicado, useObras, saldosHooks, useSilDashboard, useGerarDemanda } from '../hooks'
+import { BotaoExportar } from '@/components/malha'
 import { brl, qty, num, abcKind } from '../lib'
 import { mono, CAPS, inp, KIND, Pill, Card, Btn, SectHead, Loading, Empty, th, type Say } from '../ui'
 import type { CurvaABCItem, AplicadoLinha, SaldoEstoque } from '../types'
@@ -22,7 +23,7 @@ export function CurvaABC() {
         <Layers size={20} style={{ color: 'var(--ink-2)', flex: 'none' }} />
         <span style={{ fontSize: 12.5, color: 'var(--ink-2)', lineHeight: 1.5 }}>A <b>curva ABC</b> classifica os itens pelo peso no valor em estoque. A <b>Classe A</b> concentra ~80% do custo em poucos itens — é onde o controle rende mais. Priorize contagem, ponto de reposição e negociação nesses itens.</span>
       </div>
-      <SectHead right={<span style={{ ...mono, fontSize: 13, color: 'var(--ink-2)' }}>total {brl(data.total)}</span>}>Classificação por valor</SectHead>
+      <SectHead right={<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><BotaoExportar recurso="sil.curva_abc" /><span style={{ ...mono, fontSize: 13, color: 'var(--ink-2)' }}>total {brl(data.total)}</span></div>}>Classificação por valor</SectHead>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 14, marginBottom: 4 }}>
         {cards.map(c => (
           <Card key={c.classe} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { ChevronDown, ChevronRight, Plus, Search, Trash2 } from 'lucide-react'
-import { Btn, Card, Loading, Pill } from '@/components/malha'
+import { BotaoExportar, Btn, Card, Loading, Pill, WizardImportacao } from '@/components/malha'
+import { useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/hooks/useAuth'
 import { contemSemAcento } from '@/utils/texto'
 import { useEditarLocais, useLocais } from '../hooks'
@@ -44,6 +45,7 @@ export function PainelLocais({ obraId }: { obraId: number }) {
   const podeCriar = hasPermission('pdca.local.edit')
   const podeExcluir = hasPermission('pdca.local.delete')
   const editar = useEditarLocais(obraId)
+  const qc = useQueryClient()
   const [busca, setBusca] = useState('')
   const [fechados, setFechados] = useState<Set<number>>(new Set())
   const [novoEm, setNovoEm] = useState<{ pai: LocalObra | null } | null>(null)
@@ -92,6 +94,13 @@ export function PainelLocais({ obraId }: { obraId: number }) {
         pavimento, apartamento; numa obra linear (rede, drenagem, pavimentação), trecho, estaca, frente.
         Ligar a atividade a um local é <strong>opcional</strong>: é o que desenha a linha de balanço (vista
         Ritmo, "que trecho está em qual serviço") e permite apontar avanço e registrar restrição por frente.
+      </div>
+
+      {/* Planilha: a árvore entra nível a nível (o pai pelo caminho de códigos, "T1/P02"). */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+        <BotaoExportar recurso="pdca.local" recorte={{ obra: obraId }} />
+        <WizardImportacao recurso="pdca.local" contexto={{ obra: obraId }}
+          onConcluida={() => qc.invalidateQueries({ queryKey: ['pdca'] })} />
       </div>
 
       {erro && <div style={{ fontSize: 12, color: 'var(--danger-ink)' }}>{erro}</div>}

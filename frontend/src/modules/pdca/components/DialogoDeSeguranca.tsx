@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowUpRight, BookOpenCheck, Check, ChevronLeft, Users } from 'lucide-react'
-import { Btn, Card, CampoInteiro, Empty, Loading, Modal, Pill } from '@/components/malha'
+import { BotaoExportar, Btn, CampoInteiro, Card, Empty, Loading, Modal, Pill } from '@/components/malha'
 import { useAuth } from '@/hooks/useAuth'
 import { dateToBR, maxCalendarioISO, maxTodayISO, minCalendarioISO } from '@/utils/dates'
 import { useAbrirDds, useDds, useDdsDaObra, useEncerrarDds, useRegistrarPresenca } from '../hooks'
@@ -32,6 +32,7 @@ export function ListaDeDds({
           A roda antes do turno. A lista de presença é o que prova — e ela fecha no
           encerramento, que também escreve no diário da obra.
         </span>
+        <BotaoExportar tam="md" recurso="pdca.dds" recorte={{ obra: obraId }} />
         {pode && <Btn variant="primary" onClick={() => setAbrindo(true)}>Novo diálogo</Btn>}
       </div>
 

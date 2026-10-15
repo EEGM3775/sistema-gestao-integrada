@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle, Building2, ChevronRight, Crosshair, HardHat, Layers, MapPin, MapPinPlus, Move,
   Navigation, Radar, RefreshCw, Search, Trash2, Truck, Warehouse, X,
 } from 'lucide-react'
-import { Btn, Card, Empty, KpiTile, Loading, Mapa, Num, Pill, SectionHead } from '@/components/malha'
+import { BotaoExportar, Btn, Card, Empty, KpiTile, Loading, Mapa, Num, Pill, SectionHead, WizardImportacao } from '@/components/malha'
 import type { CamadaGeoJSON, PillKind, PontoMapa } from '@/components/malha'
 import { COR_TIPO } from '@/components/malha/mapaCores'
 import * as api from '../api'
@@ -139,6 +139,7 @@ export function MapaDaEmpresa({ say, ir, temMaps, foco = null, filtroInicial }: 
   const [tipo, setTipo] = useState(filtroInicial?.tipo ?? '')
   const [precisao, setPrecisao] = useState(filtroInicial?.precisao ?? '')
   const [busca, setBusca] = useState('')
+  const qcPlanilha = useQueryClient()
   const [selecionado, setSelecionado] = useState<number | null>(null)
   const [focoAtual, setFocoAtual] = useState<{ lon: number; lat: number; selo?: number } | null>(foco)
   const [modo, setModo] = useState<Modo | null>(null)
@@ -252,6 +253,12 @@ export function MapaDaEmpresa({ say, ir, temMaps, foco = null, filtroInicial }: 
   return (
     <>
       <AvisoDeProvedores status={status} quais={['geocodificacao_endereco']} />
+
+      {/* Planilha de endereços: sai no tipo escolhido; entra só local novo (a cascata geocodifica). */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 10 }}>
+        <BotaoExportar recurso="maps.local" recorte={{ tipo: tipo || undefined }} />
+        <WizardImportacao recurso="maps.local" onConcluida={() => qcPlanilha.invalidateQueries({ queryKey: ['maps', 'locais'] })} />
+      </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: 12, marginBottom: 14 }}>
         <KpiTile label="Locais no território" valor={<Num>{resumo.total}</Num>} base="obras, fornecedores, almoxarifados" />

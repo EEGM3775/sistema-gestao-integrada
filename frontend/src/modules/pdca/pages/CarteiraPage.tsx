@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ArrowRight, HardHat, Search } from 'lucide-react'
-import { Btn, Card, Empty, Loading, Num, Pill, SectionHead } from '@/components/malha'
+import { BotaoExportar, Btn, Card, Empty, Loading, Num, Pill, SectionHead } from '@/components/malha'
 import { useAuth } from '@/hooks/useAuth'
 import { contemSemAcento } from '@/utils/texto'
 import { dateToBR } from '@/utils/dates'
@@ -87,6 +87,7 @@ export default function CarteiraPage() {
         sub="Qual obra precisa de você esta semana. Clique para entrar — o trabalho acontece dentro de uma."
         right={
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <BotaoExportar recurso="pdca.carteira" />
             <div
               style={{
                 display: 'flex', alignItems: 'center', gap: 7,

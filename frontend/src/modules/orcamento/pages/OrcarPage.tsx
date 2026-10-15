@@ -9,6 +9,8 @@ import {
 } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { useAuth } from '@/hooks/useAuth'
+import { useQueryClient } from '@tanstack/react-query'
+import { WizardImportacao } from '@/components/malha'
 import PaginaShell from '../components/PaginaShell'
 import MedicaoDrawer from '../components/MedicaoDrawer'
 import GradeOrcamento, {
@@ -227,6 +229,7 @@ export default function OrcarPage() {
 
   const orcamento = arvore?.orcamento
   const podeEditar = hasPermission('orcamento.orcamento.edit') && !!orcamento?.editavel
+  const qcPlanilha = useQueryClient()
   const podeAprovar = hasPermission('orcamento.orcamento.aprovar')
   const podeRevisar = hasPermission('orcamento.orcamento.revisar')
   const podeDestravar = hasPermission('orcamento.orcamento.destravar')
@@ -859,6 +862,11 @@ export default function OrcarPage() {
       )}
       {hasPermission('orcamento.relatorio.view') && (
         <Btn tam="sm" onClick={() => setExportando(true)}><Download size={13} />Exportar</Btn>
+      )}
+      {/* Linhas por planilha, pelo motor (só cria, tudo ou nada); aprovado não recebe. */}
+      {podeEditar && orcamento.status === 'rascunho' && (
+        <WizardImportacao recurso="orcamento.planilha" contexto={{ orcamento: orcamento.orcamento_id }}
+          onConcluida={() => qcPlanilha.invalidateQueries({ queryKey: ['orcamento'] })} />
       )}
     </div>
   ) : null

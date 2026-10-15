@@ -7,6 +7,8 @@ import {
   entregasEpiHooks, ferramentasHooks, emprestimosHooks, itensHooks, locaisHooks,
   useFuncionarios, useObras, useDevolverEpi, useAlterarEstadoFerramenta, useDevolverEmprestimo,
 } from '../hooks'
+import { useQueryClient } from '@tanstack/react-query'
+import { BotaoExportar, WizardImportacao } from '@/components/malha'
 import { dataBR, epiEstado, ferramentaEstado } from '../lib'
 import {
   mono, inp, errBox, Pill, EstadoPill, Card, Btn, SectHead, Loading, Empty, Modal, Field, th, type Say,
@@ -50,7 +52,7 @@ export function EPI({ say }: { say: Say }) {
         <ShieldCheck size={20} style={{ color: 'var(--info-ink)', flex: 'none' }} />
         <span style={{ fontSize: 12.5, color: 'var(--info-ink)', lineHeight: 1.5 }}><b>NR-6:</b> a entrega de EPI é a prova trabalhista. Cada linha registra <b>quem recebeu</b>, o <b>CA</b> e sua validade, e a devolução/troca. EPI com CA vencido ou troca prevista aparece na fila do painel.</span>
       </div>
-      <SectHead right={podeEditar ? <Btn variant="primary" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => setNova(true)}><Plus size={14} /> Registrar entrega</Btn> : undefined}>Entregas de EPI</SectHead>
+      <SectHead right={<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><BotaoExportar recurso="sil.epi" />{podeEditar ? <Btn variant="primary" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => setNova(true)}><Plus size={14} /> Registrar entrega</Btn> : null}</div>}>Entregas de EPI</SectHead>
       {isLoading ? <Loading /> : rows.length === 0 ? <Empty>Nenhuma entrega de EPI registrada.</Empty> : (
         <Card pad={false} style={{ overflow: 'hidden' }}>
           <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 860 }}>
@@ -126,6 +128,7 @@ function NovaEntregaEPIModal({ onClose, onDone }: { onClose: () => void; onDone:
 
 /* ═══════════ FERRAMENTARIA ═══════════ */
 export function Ferramentaria({ say }: { say: Say }) {
+  const qcPlanilha = useQueryClient()
   const { hasPermission } = useAuth()
   const podeEditar = hasPermission('sil.ferramenta.edit')
   const [nova, setNova] = useState(false), [emprestar, setEmprestar] = useState<Ferramenta | null>(null), [manut, setManut] = useState<Ferramenta | null>(null)
@@ -136,7 +139,7 @@ export function Ferramentaria({ say }: { say: Say }) {
   const emprestimos = (empData?.results ?? []) as EmprestimoFerramenta[]
   return (
     <>
-      <SectHead right={podeEditar ? <Btn variant="primary" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => setNova(true)}><Plus size={14} /> Nova ferramenta</Btn> : undefined}>Ferramentaria (comodato interno)</SectHead>
+      <SectHead right={<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><BotaoExportar recurso="sil.ferramenta" /><WizardImportacao recurso="sil.ferramenta" onConcluida={() => qcPlanilha.invalidateQueries({ queryKey: ['sil'] })} />{podeEditar ? <Btn variant="primary" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => setNova(true)}><Plus size={14} /> Nova ferramenta</Btn> : null}</div>}>Ferramentaria (comodato interno)</SectHead>
       {isLoading ? <Loading /> : rows.length === 0 ? <Empty>Nenhuma ferramenta cadastrada.</Empty> : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(280px,1fr))', gap: 14 }}>
           {rows.map(f => (
@@ -168,7 +171,7 @@ export function Ferramentaria({ say }: { say: Say }) {
         </div>
       )}
 
-      <SectHead>Empréstimos em aberto</SectHead>
+      <SectHead right={<BotaoExportar recurso="sil.emprestimo" recorte={{ status: 'emprestada' }} />}>Empréstimos em aberto</SectHead>
       {emprestimos.length === 0 ? <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>Nenhum empréstimo em aberto.</div> : (
         <Card pad={false} style={{ overflow: 'hidden' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead><tr>{['Ferramenta', 'Colaborador', 'Emprestada', 'Prev. devolução', 'Status', ''].map((h, i) => <th key={i} style={th(h, i)}>{h}</th>)}</tr></thead>

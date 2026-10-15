@@ -4,6 +4,7 @@ import {
   AlertTriangle, NotebookPen, Images, Trash2, MessageSquare, Smartphone, Globe,
 } from 'lucide-react'
 import { useObras } from '@/modules/obras/hooks/useObras'
+import { BotaoExportar } from '@/components/malha'
 import { useDiarios } from '../hooks/useDiarios'
 import { contribuir, deleteEntrada, deleteDocumento } from '../hooks/useDiario'
 import { useAnalisesIA } from '../hooks/useAnalisesIA'
@@ -228,6 +229,9 @@ const DiarioObraPage: React.FC = () => {
             </p>
           </div>
         </div>
+        <div className="flex items-center gap-2">
+        {/* O diário é documento: só exporta, na obra e na busca da tela. */}
+        <BotaoExportar tam="md" recurso="obra.diario" recorte={{ obra: obraId ?? undefined, search }} />
         <button
           onClick={() => setFormOpen(true)}
           className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold"
@@ -237,6 +241,7 @@ const DiarioObraPage: React.FC = () => {
         >
           <Plus size={16} /> Novo registro
         </button>
+        </div>
       </div>
 
       {/* Filtros */}

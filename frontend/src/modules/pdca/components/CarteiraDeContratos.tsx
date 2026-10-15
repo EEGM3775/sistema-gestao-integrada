@@ -1,5 +1,6 @@
 import { AlertTriangle, Lock, Plus } from 'lucide-react'
-import { Btn, Card, Empty, Num, Pill, SectionHead } from '@/components/malha'
+import { BotaoExportar, Btn, Card, Empty, Num, Pill, SectionHead } from '@/components/malha'
+import { usePdca } from '../contexto'
 import { dateToBR } from '@/utils/dates'
 import { apiDecimalToCents, formatBRL } from '@/utils/money'
 import { percentual } from '../formato'
@@ -36,6 +37,7 @@ export function CarteiraDeContratos({
    *  de aparecer e recusar. */
   aoCriar?: () => void
 }) {
+  const { obraId } = usePdca()
   if (carteira.sem_permissao.length > 0) {
     return (
       <section>
@@ -54,12 +56,16 @@ export function CarteiraDeContratos({
             : undefined
         }
         right={
-          aoCriar ? (
-            <Btn tam="sm" onClick={aoCriar}>
-              <Plus size={13} />
-              Novo contrato
-            </Btn>
-          ) : undefined
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {/* As medições da obra (documento atestado): só exportam. */}
+            <BotaoExportar recurso="pdca.medicao" rotulo="Exportar medições" recorte={{ contrato__obra: obraId }} />
+            {aoCriar && (
+              <Btn tam="sm" onClick={aoCriar}>
+                <Plus size={13} />
+                Novo contrato
+              </Btn>
+            )}
+          </div>
         }
       >
         Contratos da obra

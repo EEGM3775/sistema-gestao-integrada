@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { useQueryClient } from '@tanstack/react-query'
+import { BotaoExportar, WizardImportacao } from '@/components/malha'
 import {
   useSilDashboard, saldosHooks, movimentacoesHooks, requisicoesHooks, itensRequisicaoHooks,
   transferenciasHooks, devolucoesHooks,
@@ -149,6 +150,7 @@ function Fila({ kind, icon, titulo, meta, acao }: { kind: Kind; icon: ReactNode;
 
 /* ═══════════ ALMOXARIFADOS (locais clicáveis + kardex do item) ═══════════ */
 export function Almoxarifados({ say }: { say: Say }) {
+  const qcPlanilha = useQueryClient()
   const { hasPermission } = useAuth()
   const podeSaldo = hasPermission('sil.saldo.edit'), podeLocal = hasPermission('sil.local.edit')
   const podeMover = hasPermission('sil.movimentacao.edit')
@@ -180,7 +182,7 @@ export function Almoxarifados({ say }: { say: Say }) {
 
   return (
     <>
-      <SectHead right={podeLocal ? <Btn variant="primary" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => setNovoLocal(true)}><Plus size={14} /> Novo local</Btn> : undefined}>Almoxarifados &amp; canteiros</SectHead>
+      <SectHead right={<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><BotaoExportar recurso="sil.local" /><WizardImportacao recurso="sil.local" onConcluida={() => qcPlanilha.invalidateQueries({ queryKey: ['sil'] })} />{podeLocal ? <Btn variant="primary" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => setNovoLocal(true)}><Plus size={14} /> Novo local</Btn> : null}</div>}>Almoxarifados &amp; canteiros</SectHead>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(230px,1fr))', gap: 12 }}>
         {locais.map(l => { const agg = porLocal.get(l.local_id) ?? { valor: 0, itens: 0 }; return (
           <Card key={l.local_id} className="sil-lift" style={{ cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 8 }} onClick={() => setLocalSel(l)}>
@@ -199,6 +201,7 @@ export function Almoxarifados({ say }: { say: Say }) {
 
       <SectHead right={
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <BotaoExportar recurso="sil.saldo" recorte={{ search, ...(soBaixo ? { abaixo_minimo: 1 } : {}) }} />
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--ink-2)', cursor: 'pointer' }}><input type="checkbox" checked={soBaixo} onChange={e => setSoBaixo(e.target.checked)} /> abaixo do mínimo</label>
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar item…" style={{ ...inp, width: 190, padding: '7px 11px' }} />
         </div>}>Saldos valorados</SectHead>
@@ -361,6 +364,7 @@ export function Movimentacoes({ say }: { say: Say }) {
     <>
       <SectHead right={
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <BotaoExportar recurso="sil.movimentacao" recorte={{ tipo }} />
           <select value={tipo} onChange={e => setTipo(e.target.value)} style={{ ...inp, width: 'auto', padding: '7px 10px' }}>
             <option value="">Todos os tipos</option><option value="entrada">Entrada</option><option value="saida">Saída</option><option value="ajuste">Ajuste</option>
             <option value="transf_saida">Transf. saída</option><option value="transf_entrada">Transf. entrada</option><option value="devolucao">Devolução</option>
@@ -442,7 +446,7 @@ export function Requisicoes({ say }: { say: Say }) {
   const rows = (data?.results ?? []) as Requisicao[]
   return (
     <>
-      <SectHead right={podeCriar ? <Btn variant="primary" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => setNova(true)}><Plus size={14} /> Nova requisição</Btn> : undefined}>Requisições de material</SectHead>
+      <SectHead right={<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><BotaoExportar recurso="sil.requisicao" />{podeCriar ? <Btn variant="primary" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => setNova(true)}><Plus size={14} /> Nova requisição</Btn> : null}</div>}>Requisições de material</SectHead>
       {isLoading ? <Loading /> : rows.length === 0 ? <Empty>Nenhuma requisição. A obra pede material do almoxarifado por aqui.</Empty> : (
         <Card pad={false} style={{ overflow: 'hidden' }}>
           <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 820 }}>
@@ -542,7 +546,7 @@ export function Logistica({ say }: { say: Say }) {
   const ts = (transf?.results ?? []) as Transferencia[], ds = (dev?.results ?? []) as Devolucao[]
   return (
     <>
-      <SectHead right={podeTransf ? <Btn variant="primary" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => setNovaT(true)}><ArrowLeftRight size={14} /> Nova transferência</Btn> : undefined}>Transferências entre locais</SectHead>
+      <SectHead right={<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><BotaoExportar recurso="sil.transferencia" />{podeTransf ? <Btn variant="primary" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => setNovaT(true)}><ArrowLeftRight size={14} /> Nova transferência</Btn> : null}</div>}>Transferências entre locais</SectHead>
       {ts.length === 0 ? <Empty>Nenhuma transferência. Mova material entre almoxarifado e canteiros.</Empty> : (
         <Card pad={false} style={{ overflow: 'hidden' }}>
           <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 680 }}>
@@ -560,7 +564,7 @@ export function Logistica({ say }: { say: Say }) {
           </table></div>
         </Card>
       )}
-      <SectHead right={podeDev ? <Btn variant="primary" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => setNovaD(true)}><RotateCcw size={14} /> Nova devolução</Btn> : undefined}>Devoluções</SectHead>
+      <SectHead right={<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><BotaoExportar recurso="sil.devolucao" />{podeDev ? <Btn variant="primary" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => setNovaD(true)}><RotateCcw size={14} /> Nova devolução</Btn> : null}</div>}>Devoluções</SectHead>
       {ds.length === 0 ? <Empty>Nenhuma devolução. Devolva ao fornecedor (saída) ou estorne ao estoque (entrada).</Empty> : (
         <Card pad={false} style={{ overflow: 'hidden' }}>
           <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 680 }}>
@@ -661,7 +665,7 @@ function InventarioList({ onOpen, say }: { onOpen: (id: number) => void; say: Sa
   const rows = (data?.results ?? []) as Inventario[]
   return (
     <>
-      <SectHead right={podeInv ? <Btn variant="primary" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => setNovo(true)}><Plus size={14} /> Novo inventário</Btn> : undefined}>Inventários</SectHead>
+      <SectHead right={<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><BotaoExportar recurso="sil.inventario" />{podeInv ? <Btn variant="primary" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => setNovo(true)}><Plus size={14} /> Novo inventário</Btn> : null}</div>}>Inventários</SectHead>
       {isLoading ? <Loading /> : rows.length === 0 ? <Empty>Nenhum inventário. Conte o estoque e feche para gerar os ajustes.</Empty> : (
         <Card pad={false} style={{ overflow: 'hidden' }}>
           <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 640 }}>

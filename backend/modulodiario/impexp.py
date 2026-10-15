@@ -21,6 +21,9 @@ está declarada como decisão em aberto na planta do módulo, com este gatilho.
 """
 from __future__ import annotations
 
+from datetime import date
+
+from funcoesimpexp.cadastro import RecursoDeLista
 from funcoesimpexp.entrega import buscar_do_tenant, entregar_campo
 from funcoesimpexp.registro import (
     NATUREZA_ARQUIVO,
@@ -32,9 +35,10 @@ from funcoesimpexp.registro import (
     registrar,
 )
 
-from .models import DocumentoDiario
+from .models import DocumentoDiario, EntradaDiario
 
 RECURSO_MIDIA = "obra.diario_midia"
+RECURSO_REGISTROS = "obra.diario"
 ESPECIE_MIDIA = "midia"
 
 
@@ -64,3 +68,45 @@ class MidiaDoDiario(Recurso):
             raise EntregaInvalida(f"Espécie '{especie}' não existe na mídia do diário.")
         doc = buscar_do_tenant(DocumentoDiario, chave, tenant_id)
         return entregar_campo(doc, doc.arquivo, alternativa="midia")
+
+
+# ---------------------------------------------------------------------------
+# Os registros do diário saem como planilha (15/10/2026)
+# ---------------------------------------------------------------------------
+#
+# **Só exporta** (decisão do dono, 15/10/2026): o diário é documento — cada
+# registro tem autor, hora e origem (web, WhatsApp, IA), e um registro em lote
+# por planilha seria um diário escrito depois, que é justamente o que ele não
+# pode ser. Uma linha por registro, no recorte da tela (a obra escolhida).
+
+
+@registrar(RECURSO_REGISTROS)
+class RegistrosDoDiario(RecursoDeLista):
+    rotulo = "Registros do diário de obra"
+    modulo = "obra"
+    entitlement = None  # diário é fundação: `obra.diario.*` mora no `base`
+    permissoes_exigidas = ("obra.diario.view",)
+    modelo = EntradaDiario
+    ordem = ("-diario_obra__data", "data_criacao")
+    filtros = {"obra": "diario_obra__obra_id", "data": "diario_obra__data"}
+    campos_de_busca = ("texto",)
+
+    colunas = (
+        Coluna("diario_obra__data", "Dia", tipo=date),
+        Coluna("diario_obra__obra__nome_obra", "Obra"),
+        Coluna("diario_obra__condicoes_climaticas", "Clima"),
+        Coluna("autor", "Autor"),
+        Coluna("origem", "Origem"),
+        Coluna("eh_ocorrencia", "Ocorrência"),
+        Coluna("texto", "Registro"),
+        Coluna("data_criacao", "Registrado em", tipo=date),
+    )
+
+    def escopo(self, qs, request):
+        return qs.select_related("diario_obra__obra", "autor")
+
+    def serializar_objeto(self, obj) -> dict:
+        saida = super().serializar_objeto(obj)
+        saida["autor"] = obj.autor.nome_completo if obj.autor_id else ""
+        saida["eh_ocorrencia"] = "Sim" if obj.eh_ocorrencia else "Não"
+        return saida

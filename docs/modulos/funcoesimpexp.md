@@ -796,3 +796,13 @@ par intercompany sincronizado como no `_criar_com_par` da tela (o desfazer apaga
 recusa o que já tem baixa). Só exportam: `erp.boleto`, `erp.nfse`, `erp.intercompany` (saldos),
 `erp.dre_entidades`, `erp.financeiro_obras`. Ordem: fornecedores/clientes, empreendimentos, obras →
 títulos.
+
+**Operação:** importam `pdca.local` (contexto: a obra; o pai pelo caminho de códigos "T1/P02" — a árvore
+entra nível a nível, porque o lote é conferido inteiro contra o banco), `sil.local` (nome) e
+`sil.ferramenta` (patrimônio, ou o nome sem patrimônio; "Emprestada" não entra). Só exportam, pelo
+ViewSet da tela: `pdca.restricao`, `pdca.nc`, `pdca.ocorrencia` (sem dado de saúde nem o acidentado),
+`pdca.verificacao`, `pdca.dds`, `pdca.medicao`, `pdca.atividade`, `sil.saldo`, `sil.movimentacao`,
+`sil.requisicao`, `sil.transferencia`, `sil.devolucao`, `sil.inventario`, `sil.epi`, `sil.emprestimo`,
+`obra.diario`; relatórios `pdca.carteira` e `sil.curva_abc`. Restrição e programação ficam no Exportar
+porque dependem de uma atividade do cronograma e têm fluxo próprio (remover/reabrir, compromisso e
+PPC). `maps.local` e `orcamento.planilha`, que já existiam no motor, ganharam a porta na tela.

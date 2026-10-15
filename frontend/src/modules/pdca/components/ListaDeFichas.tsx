@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Btn, Card, Empty, Loading, Modal, Num, Pill } from '@/components/malha'
+import { BotaoExportar, Btn, Card, Empty, Loading, Modal, Num, Pill } from '@/components/malha'
 import { dateToBR, maxCalendarioISO, maxTodayISO, minCalendarioISO } from '@/utils/dates'
 import { percentual, primeiraFrase } from '../formato'
 import { useAplicarFicha, useFichas, useModelos } from '../hooks'
@@ -33,6 +33,7 @@ export function ListaDeFichas({
           A ficha é a inspeção de um serviço contra o modelo da empresa — o que se
           confere e com que critério.
         </span>
+        <BotaoExportar tam="md" recurso="pdca.verificacao" recorte={{ obra: obraId }} />
         {podeAplicar && (
           <Btn variant="primary" onClick={() => setAplicando(true)}>Aplicar uma ficha</Btn>
         )}

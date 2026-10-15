@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import {
   Calculator, CalendarDays, ChevronDown, ClipboardPaste, Columns3, Diamond, GanttChartSquare, Keyboard, Layers, LayoutTemplate, Link2, ListTree, Plus, TrendingUp, Truck, Undo2, X,
 } from 'lucide-react'
-import { Btn, Card, Empty, Loading, Pill } from '@/components/malha'
+import { BotaoExportar, Btn, Card, Empty, Loading, Pill } from '@/components/malha'
 import { useAuth } from '@/hooks/useAuth'
 import { dateToBR } from '@/utils/dates'
 import * as api from '../api/pdcaApi'
@@ -322,6 +322,9 @@ export default function PlanoPage() {
         />
 
         <span style={{ flex: 1 }} />
+
+        {/* A EAP desta versão do plano, com as datas calculadas. */}
+        <BotaoExportar recurso="pdca.atividade" recorte={{ cronograma: cronogramaId }} />
 
         <div style={{ display: 'flex', gap: 2, background: 'var(--inset)', borderRadius: 'var(--r-sm)', padding: 2 }}>
           {VISTAS.map(({ chave, rotulo, icone: Icone }) => (

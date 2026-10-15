@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Btn, Card, Empty, Loading, Pill } from '@/components/malha'
+import { BotaoExportar, Btn, Card, Empty, Loading, Pill } from '@/components/malha'
 import { contemSemAcento } from '@/utils/texto'
 import { useOcorrencias } from '../hooks'
 import { entrada } from '../estilos'
@@ -48,6 +48,8 @@ export function ListaDeOcorrencias({
           style={{ ...entrada, maxWidth: 320 }}
         />
         <span style={{ flex: 1 }} />
+        {/* Sem dado de saúde nem o acidentado: o arquivo é para contar, não é prontuário. */}
+        <BotaoExportar tam="md" recurso="pdca.ocorrencia" recorte={{ obra: obraId }} />
         {aoRegistrar && <Btn variant="primary" onClick={aoRegistrar}>Registrar ocorrência</Btn>}
       </div>
 

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Search } from 'lucide-react'
-import { Btn, Card, Empty, Loading, Pill } from '@/components/malha'
+import { BotaoExportar, Btn, Card, Empty, Loading, Pill } from '@/components/malha'
 import { contemSemAcento } from '@/utils/texto'
 import { emDias } from '../formato'
 import { useNcs } from '../hooks'
@@ -56,6 +56,7 @@ export function ListaDeNcs({
           />
         </div>
         <span style={{ flex: 1 }} />
+        <BotaoExportar tam="md" recurso="pdca.nc" recorte={{ obra: obraId }} />
         {aoRegistrar && <Btn variant="primary" onClick={aoRegistrar}>Registrar defeito</Btn>}
       </div>
 

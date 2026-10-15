@@ -365,10 +365,16 @@ def view_da_tela(classe, request, recorte: dict):
     """
     from copy import copy
 
-    from django.http import QueryDict
+    from django.http import HttpRequest, QueryDict
     from rest_framework.request import Request
 
-    http = copy(getattr(request, "_request", request))
+    original = getattr(request, "_request", request)
+    if isinstance(original, HttpRequest):
+        http = copy(original)
+    else:
+        # O job de exportação (`RequisicaoDiferida`): só o usuário, sem HTTP.
+        http = HttpRequest()
+        http.method = "GET"
     http.GET = QueryDict(mutable=True)
     for chave, valor in recorte.items():
         if valor not in (None, "") and chave not in ("page", "page_size", "ordering", "ordenar"):
