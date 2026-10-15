@@ -803,6 +803,9 @@ entra nível a nível, porque o lote é conferido inteiro contra o banco), `sil.
 ViewSet da tela: `pdca.restricao`, `pdca.nc`, `pdca.ocorrencia` (sem dado de saúde nem o acidentado),
 `pdca.verificacao`, `pdca.dds`, `pdca.medicao`, `pdca.atividade`, `sil.saldo`, `sil.movimentacao`,
 `sil.requisicao`, `sil.transferencia`, `sil.devolucao`, `sil.inventario`, `sil.epi`, `sil.emprestimo`,
-`obra.diario`; relatórios `pdca.carteira` e `sil.curva_abc`. Restrição e programação ficam no Exportar
-porque dependem de uma atividade do cronograma e têm fluxo próprio (remover/reabrir, compromisso e
-PPC). `maps.local` e `orcamento.planilha`, que já existiam no motor, ganharam a porta na tela.
+`obra.diario`; relatórios `pdca.carteira` e `sil.curva_abc`. Restrição fica no Exportar (fluxo de
+remover/reabrir). `pdca.programacao` importa e exporta (pedido do dono): contexto é a semana aberta; a
+atividade vem pelo código no plano vigente (só folha) e o local pelo caminho; os cartões entram **pelo
+`ItemProgramacaoSerializer`** — só em rascunho, sem restrição aberta, sem cartão repetido, no teto do
+quadro, com o peso congelado na gravação; cumprido, concluído e causa só saem. `maps.local` e
+`orcamento.planilha`, que já existiam no motor, ganharam a porta na tela.

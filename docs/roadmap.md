@@ -66,7 +66,7 @@ Cada fase concluída foi validada por um script E2E em [testes/e2e/](../testes/e
 - **CRM com Exportar/Importar ✅ 15/10/2026** — Leads, Contas, Contatos e Oportunidades; busca das quatro telas passa a filtrar no servidor; criar/editar contato pela tela deixa de dar 500. → [funcoesimpexp.md §14](modulos/funcoesimpexp.md)
 - **SCM com Exportar/Importar ✅ 15/10/2026** — itens do catálogo e ofertas importam; demandas, cotações e pedidos só exportam (documento de fluxo, decisão do dono). → [funcoesimpexp.md §14](modulos/funcoesimpexp.md)
 - **ERP com Exportar/Importar ✅ 15/10/2026** — contas a pagar e a receber importam (em aberto, no alcance por entidade, com o par intercompany); boletos, NFS-e, DRE por entidade, intercompany e financeiro por obra só exportam; "<method-wrapper…>" no nome de entidade/contraparte vazia corrigido (`nucleo.campos.NomeDoRelacionado`). → [funcoesimpexp.md §14](modulos/funcoesimpexp.md)
-- **Operação com Exportar/Importar ✅ 15/10/2026** — locais da obra, almoxarifados e ferramentas importam; restrições, NCs, ocorrências, fichas, DDS, medições, atividades, estoque, diário, carteira e curva ABC só exportam; Território e planilha do Orçamento ganharam os botões. → [funcoesimpexp.md §14](modulos/funcoesimpexp.md)
+- **Operação com Exportar/Importar ✅ 15/10/2026** — locais da obra, programação semanal, almoxarifados e ferramentas importam; restrições, NCs, ocorrências, fichas, DDS, medições, atividades, estoque, diário, carteira e curva ABC só exportam; Território e planilha do Orçamento ganharam os botões. → [funcoesimpexp.md §14](modulos/funcoesimpexp.md)
 
 ### Mudanças de 30/09/2026
 

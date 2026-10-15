@@ -4,7 +4,8 @@ import {
   ChevronLeft, ChevronRight, ClipboardCheck, Gavel, LayoutGrid, Lock,
   RotateCcw, Save, TrendingUp,
 } from 'lucide-react'
-import { Btn, Card, Empty, Loading, Modal, Pill, SectionHead } from '@/components/malha'
+import { BotaoExportar, Btn, Card, Empty, Loading, Modal, Pill, SectionHead, WizardImportacao } from '@/components/malha'
+import { useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/hooks/useAuth'
 import { dateToBR } from '@/utils/dates'
 import { parseApiErrors } from '@/utils/formErrors'
@@ -70,6 +71,7 @@ export default function SemanaPage() {
   const arrastar = useArrastarPendentes(obraId)
 
   const podeMontar = hasPermission('pdca.programacao.comprometer')
+  const qcPlanilha = useQueryClient()
   const podeJulgar = hasPermission('pdca.programacao.encerrar')
 
   const linhas = useMemo(() => itens.data ?? [], [itens.data])
@@ -157,6 +159,18 @@ export default function SemanaPage() {
         {programacao && <SeloDaSemana programacao={programacao} />}
 
         <span style={{ flex: 1 }} />
+
+        {/* Planilha da semana: sai o quadro; entram cartões enquanto ele é rascunho
+            (as mesmas travas do "puxar para o quadro"). */}
+        {programacao && (
+          <>
+            <BotaoExportar recurso="pdca.programacao" recorte={{ programacao: programacao.programacao_id }} />
+            {podeMontar && programacao.status === 'rascunho' && (
+              <WizardImportacao recurso="pdca.programacao" contexto={{ programacao: programacao.programacao_id }}
+                onConcluida={() => qcPlanilha.invalidateQueries({ queryKey: ['pdca'] })} />
+            )}
+          </>
+        )}
 
         <div
           style={{

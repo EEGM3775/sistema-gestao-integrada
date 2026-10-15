@@ -41,6 +41,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 
 from funcoesimpexp.cadastro import RecursoDeCadastro, RecursoDeLista
 from funcoesimpexp.entrega import buscar_do_tenant, entregar_campo
+from funcoesimpexp.importacao import ImportacaoInvalida
 from funcoesimpexp.registro import (
     NATUREZA_ARQUIVO,
     ArquivoEntregue,
@@ -55,8 +56,9 @@ from funcoesimpexp.relatorio import RecursoDeRelatorio
 
 from . import services
 from .models import (
-    AnexoOcorrencia, ApontamentoAvanco, Atividade, DialogoSeguranca, ItemVerificacao, LocalObra,
-    Medicao, NaoConformidade, Ocorrencia, Restricao, Verificacao, VerificacaoEficacia,
+    AnexoOcorrencia, ApontamentoAvanco, Atividade, Cronograma, DialogoSeguranca, ItemProgramacao,
+    ItemVerificacao, LocalObra, Medicao, NaoConformidade, Ocorrencia, ProgramacaoSemanal, Restricao,
+    Verificacao, VerificacaoEficacia,
 )
 
 RECURSO_LOCAIS = "pdca.local"
@@ -68,6 +70,7 @@ RECURSO_DDS = "pdca.dds"
 RECURSO_MEDICOES = "pdca.medicao"
 RECURSO_ATIVIDADES = "pdca.atividade"
 RECURSO_CARTEIRA = "pdca.carteira"
+RECURSO_PROGRAMACAO = "pdca.programacao"
 
 RECURSO_FOTO = "pdca.avanco_foto"
 ESPECIE_FOTO = "foto"
@@ -306,12 +309,14 @@ class AtestadoDaOcorrencia(Recurso):
 # As listas da obra (15/10/2026)
 # ---------------------------------------------------------------------------
 #
-# **Os locais importam; o resto só exporta** (decisão do dono, 15/10/2026). O
-# local é cadastro — a árvore de torres, pavimentos e trechos que se monta de uma
-# vez. Restrição e programação dependem de uma atividade do cronograma e têm
-# fluxo próprio (remover/reabrir, compromisso e PPC); medição, verificação, NC,
-# DDS e ocorrência são documentos com assinatura, encerramento e efeitos. Todos
-# saem pelo ViewSet da tela (o recorte da obra e o que a pessoa enxerga).
+# **Locais e a programação da semana importam; o resto só exporta** (decisão do
+# dono, 15/10/2026). O local é cadastro — a árvore de torres, pavimentos e
+# trechos que se monta de uma vez. A programação semanal o dono pediu
+# expressamente ("tem que ter"): os cartões entram no quadro em rascunho, pelo
+# serializer do próprio quadro. Restrição tem fluxo próprio (remover/reabrir);
+# medição, verificação, NC, DDS e ocorrência são documentos com assinatura,
+# encerramento e efeitos. Todos saem pelo ViewSet da tela (o recorte da obra e o
+# que a pessoa enxerga).
 
 
 def _num(valor):
@@ -326,6 +331,19 @@ def _caminho(local) -> str:
         partes.append(local.codigo)
         local = local.pai
     return "/".join(reversed(partes))
+
+
+def _local_pelo_caminho(caminho, obra_id, tenant_id):
+    """'T1/P02' → o local, descendo da raiz; `None` se algum degrau não existe
+    (ou se o caminho é vazio)."""
+    local = None
+    for codigo in [c.strip() for c in str(caminho or "").split("/") if c.strip()]:
+        local = LocalObra.objects.filter(
+            tenant_id=tenant_id, obra_id=obra_id, pai=local, codigo__iexact=codigo,
+        ).first()
+        if local is None:
+            return None
+    return local
 
 
 @registrar(RECURSO_LOCAIS)
@@ -389,14 +407,7 @@ class LocaisDaObra(RecursoDeCadastro):
     # --- entrada ----------------------------------------------------------------
 
     def _pai(self, caminho, tenant_id):
-        pai = None
-        for codigo in [c.strip() for c in str(caminho or "").split("/") if c.strip()]:
-            pai = LocalObra.objects.filter(
-                tenant_id=tenant_id, obra_id=self.contexto.get("obra"), pai=pai, codigo__iexact=codigo,
-            ).first()
-            if pai is None:
-                return None
-        return pai
+        return _local_pelo_caminho(caminho, self.contexto.get("obra"), tenant_id)
 
     def chave_da_linha(self, dados: dict) -> str:
         pai = str(dados.get("pai") or "").strip().strip("/")
@@ -648,3 +659,185 @@ class CarteiraDeObras(RecursoDeRelatorio):
                 "pendencias": "; ".join(f"{p['rotulo']} ({p['quantas']})" for p in o.get("pendencias", [])),
             })
         return saida
+
+
+@registrar(RECURSO_PROGRAMACAO)
+class ProgramacaoDaSemana(RecursoDeCadastro):
+    """Os cartões do quadro da semana (`contexto`: a programação aberta na tela).
+
+    **Entra pelo serializer do quadro**, não por uma cópia das regras: só a semana
+    em rascunho recebe cartão, atividade com restrição aberta não entra, o mesmo
+    serviço no mesmo local não entra duas vezes, o teto do quadro vale, a equipe
+    de mesmo nome é ligada sozinha e o peso é congelado na gravação — exatamente
+    como no "puxar para o quadro". A atividade vem pelo **código** no plano
+    vigente da obra (só folha: a sintética é a soma dos filhos) e o local pelo
+    caminho de códigos ("T1/P02"). Cumprido, concluído e causa só saem: são o
+    julgamento do fim da semana.
+    """
+
+    rotulo = "Programação semanal"
+    modulo = "pdca"
+    permissoes_exigidas = ("pdca.programacao.view", "pdca.programacao.comprometer")
+    modelo = ItemProgramacao
+    chave = "atividade"
+    contexto_requerido = ("programacao",)
+    ordem = ("ordem", "item_programacao_id")
+    so_saida = ("atividade__nome", "percentual_concluido", "cumprido", "causa__nome")
+
+    @property
+    def viewset(self):
+        from .views import ItemProgramacaoViewSet
+
+        return ItemProgramacaoViewSet
+
+    colunas = (
+        Coluna("atividade", "Atividade (código)", obrigatoria=True, exemplo="3.2.1",
+               aliases=("codigo", "código", "atividade")),
+        Coluna("atividade__nome", "Atividade (só sai)"),
+        Coluna("local", "Local (caminho)", exemplo="T1/P02", aliases=("local", "frente")),
+        Coluna("responsavel", "Responsável / equipe", exemplo="Equipe do João",
+               aliases=("equipe", "responsavel")),
+        Coluna("percentual_previsto", "Previsto na semana (%)", tipo=Decimal, exemplo="30",
+               aliases=("previsto", "meta")),
+        Coluna("nota", "Nota"),
+        Coluna("percentual_concluido", "Concluído (só sai)", tipo=Decimal),
+        Coluna("cumprido", "Cumprido (só sai)"),
+        Coluna("causa__nome", "Causa (só sai)"),
+    )
+
+    # --- contexto -----------------------------------------------------------------
+
+    def validar_contexto(self, contexto, user, tenant_id) -> dict:
+        programacao = ProgramacaoSemanal.objects.filter(
+            pk=(contexto or {}).get("programacao") or 0, tenant_id=tenant_id,
+        ).first()
+        if programacao is None:
+            raise ContextoInvalido("Abra a semana da obra antes de importar a programação.")
+        return {**dict(contexto or {}), "programacao": programacao.pk}
+
+    def rotulo_do_contexto(self) -> str:
+        p = self._programacao()
+        return f"{p.obra.nome_obra} · semana de {p.semana_inicio:%d/%m/%Y}" if p else ""
+
+    def _programacao(self):
+        return ProgramacaoSemanal.objects.select_related("obra").filter(
+            pk=self.contexto.get("programacao") or 0,
+        ).first()
+
+    # --- saída --------------------------------------------------------------------
+
+    def escopo(self, qs, request):
+        return qs.filter(programacao_id=self.contexto.get("programacao"))
+
+    def serializar_objeto(self, obj) -> dict:
+        saida = super().serializar_objeto(obj)
+        saida["atividade"] = obj.atividade.codigo
+        saida["local"] = _caminho(obj.local) if obj.local_id else ""
+        saida["cumprido"] = "" if obj.cumprido is None else ("Sim" if obj.cumprido else "Não")
+        return saida
+
+    # --- entrada ------------------------------------------------------------------
+
+    def _atividade(self, codigo, tenant_id):
+        programacao = self._programacao()
+        texto = str(codigo or "").strip()
+        if programacao is None or not texto:
+            return None
+        cronograma = Cronograma.objects.filter(
+            tenant_id=tenant_id, obra_id=programacao.obra_id, status=Cronograma.Status.VIGENTE,
+        ).first()
+        if cronograma is None:
+            return None
+        return Atividade.objects.filter(
+            tenant_id=tenant_id, cronograma=cronograma, codigo__iexact=texto,
+        ).first()
+
+    def _local(self, caminho, tenant_id):
+        programacao = self._programacao()
+        return _local_pelo_caminho(caminho, programacao.obra_id, tenant_id) if programacao else None
+
+    def chave_da_linha(self, dados: dict) -> str:
+        codigo = str(dados.get("atividade") or "").strip()
+        local = str(dados.get("local") or "").strip()
+        return f"{codigo} @ {local}" if local else codigo
+
+    def localizar(self, dados: dict, tenant_id):
+        atividade = self._atividade(dados.get("atividade"), tenant_id)
+        caminho = str(dados.get("local") or "").strip()
+        local = self._local(caminho, tenant_id) if caminho else None
+        if atividade is None or (caminho and local is None):
+            return None
+        return ItemProgramacao.objects.filter(
+            programacao_id=self.contexto.get("programacao"), atividade=atividade, local=local,
+        ).first()
+
+    def _serializer(self, dados: dict, tenant_id):
+        from types import SimpleNamespace
+
+        from .serializers import ItemProgramacaoSerializer
+
+        caminho = str(dados.get("local") or "").strip()
+        local = self._local(caminho, tenant_id) if caminho else None
+        corpo = {
+            "programacao": self.contexto.get("programacao"),
+            "atividade": getattr(self._atividade(dados.get("atividade"), tenant_id), "pk", None),
+            "local": getattr(local, "pk", None),
+            "responsavel": str(dados.get("responsavel") or "").strip(),
+            "percentual_previsto": dados.get("percentual_previsto"),
+            "nota": str(dados.get("nota") or "").strip(),
+        }
+        pedido = SimpleNamespace(user=SimpleNamespace(tenant_id=tenant_id))
+        return ItemProgramacaoSerializer(data=corpo, context={"request": pedido})
+
+    def validar_no_destino(self, dados: dict, tenant_id) -> str:
+        programacao = self._programacao()
+        if programacao is None:
+            return "A semana não existe mais."
+        if not programacao.esta_aberta_para_montagem:
+            return (f"A semana está {programacao.get_status_display().lower()}: cartão novo só "
+                    "entra enquanto o quadro é rascunho.")
+        codigo = str(dados.get("atividade") or "").strip()
+        atividade = self._atividade(codigo, tenant_id)
+        if atividade is None:
+            return f"Atividade “{codigo}” não existe no plano vigente desta obra."
+        if atividade.filhos.exists():
+            return (f"“{codigo}” é uma atividade de resumo — o compromisso é com as atividades "
+                    "de baixo dela.")
+        caminho = str(dados.get("local") or "").strip()
+        if caminho and self._local(caminho, tenant_id) is None:
+            return f"Local “{caminho}” não existe nesta obra."
+        previsto = dados.get("percentual_previsto")
+        if previsto is not None and not 0 <= previsto <= 100:
+            return "Previsto na semana fora de 0 a 100."
+        serializer = self._serializer(dados, tenant_id)
+        if not serializer.is_valid():
+            return _primeira_mensagem(serializer.errors)
+        return ""
+
+    def aplicar_linha(self, dados: dict, existente, tenant_id) -> dict:
+        serializer = self._serializer(dados, tenant_id)
+        if not serializer.is_valid():
+            # A semana foi comprometida, ou a atividade travou, depois da conferência.
+            raise ImportacaoInvalida(f"{_primeira_mensagem(serializer.errors)} Nada foi importado.")
+        item = serializer.save(tenant_id=tenant_id)
+        return {"acao": "criou", "pk": item.pk}
+
+    def desfazer_linha(self, estado_anterior: dict, tenant_id) -> None:
+        item = ItemProgramacao.objects.select_related("programacao").filter(
+            pk=estado_anterior.get("pk"), tenant_id=tenant_id,
+        ).first()
+        if item is None:
+            return
+        if not item.programacao.esta_aberta_para_montagem:
+            raise ImportacaoInvalida(
+                "A semana já foi comprometida — o lote não pode mais ser desfeito. "
+                "Devolva os cartões pela tela, se a semana for reaberta."
+            )
+        item.delete()
+
+
+def _primeira_mensagem(erros) -> str:
+    """O primeiro texto de um `serializer.errors` (dict, lista ou texto)."""
+    while isinstance(erros, (dict, list)) and erros:
+        erros = next(iter(erros.values())) if isinstance(erros, dict) else erros[0]
+    return str(erros) if erros else "Linha inválida."

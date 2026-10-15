@@ -152,3 +152,72 @@ class ExportacaoDaOperacaoTests(APITestCase):
         for rid in SO_EXPORTAM:
             resposta = self.client.get(f"/api/impexp/{rid}/exportar/", {"formato": "csv", **recorte})
             self.assertEqual(resposta.status_code, 200, (rid, getattr(resposta, "data", "")))
+
+
+class ProgramacaoDaSemanaTests(OperacaoBase):
+    """O dono pediu (15/10/2026): a programação semanal tem Exportar e Importar."""
+
+    CAB = "Atividade (código);Local (caminho);Responsável / equipe;Previsto na semana (%)"
+
+    def setUp(self):
+        from modulopdca import services
+        from modulopdca.models import Atividade, CalendarioTrabalho, Cronograma
+
+        calendario = CalendarioTrabalho.objects.create(tenant=self.tenant, nome="Comercial", obra=self.obra)
+        self.plano = Cronograma.objects.create(
+            tenant=self.tenant, obra=self.obra, descricao="Plano", data_inicio=date(2026, 6, 1),
+            calendario=calendario, status=Cronograma.Status.VIGENTE,
+        )
+        resumo = Atividade.objects.create(tenant=self.tenant, cronograma=self.plano, codigo="1",
+                                          nome="Estrutura", duracao_dias=10)
+        self.alvenaria = Atividade.objects.create(tenant=self.tenant, cronograma=self.plano, codigo="1.1",
+                                                  nome="Alvenaria", duracao_dias=5, pai=resumo, profundidade=2)
+        LocalObra.objects.create(tenant=self.tenant, obra=self.obra, codigo="T1", nome="Torre 1", nivel="bloco")
+        self.prog = services.abrir_programacao(
+            obra=self.obra, semana_inicio=date(2026, 6, 1), tenant_id=self.tenant.pk,
+        )
+
+    def test_cartao_entra_no_quadro_em_rascunho_pelo_codigo_e_local(self):
+        from modulopdca.models import ItemProgramacao
+
+        lote = self.preparar("pdca.programacao", [self.CAB, "1.1;T1;Equipe do João;40"],
+                             programacao=self.prog.pk)
+        self.assertEqual(self.situacoes(lote), [(NOVA, "")])
+        self.aplicar("pdca.programacao", lote)
+        item = ItemProgramacao.objects.get(programacao=self.prog)
+        self.assertEqual((item.atividade, item.local.codigo, item.responsavel, item.percentual_previsto),
+                         (self.alvenaria, "T1", "Equipe do João", Decimal("40")))
+        self.assertIsNotNone(item.peso_origem)  # o peso congela na gravação, como no quadro
+
+    def test_resumo_inexistente_e_repetido_travam(self):
+        from modulopdca.models import ItemProgramacao
+
+        ItemProgramacao.objects.create(tenant=self.tenant, programacao=self.prog, atividade=self.alvenaria)
+        lote = self.preparar("pdca.programacao", [self.CAB, "1;;;", "9.9;;;", "1.1;;;"],
+                             programacao=self.prog.pk)
+        (s1, m1), (s2, m2), (s3, _) = self.situacoes(lote)
+        self.assertEqual((s1, s2), (INVALIDA, INVALIDA))
+        self.assertIn("resumo", m1)
+        self.assertIn("9.9", m2)
+        with self.assertRaises(motor.ImportacaoInvalida):
+            self.aplicar("pdca.programacao", lote)
+
+    def test_semana_comprometida_nao_recebe(self):
+        from modulopdca.models import ProgramacaoSemanal
+
+        ProgramacaoSemanal.objects.filter(pk=self.prog.pk).update(status=ProgramacaoSemanal.Status.COMPROMETIDA)
+        lote = self.preparar("pdca.programacao", [self.CAB, "1.1;;;"], programacao=self.prog.pk)
+        situacao, motivo = self.situacoes(lote)[0]
+        self.assertEqual(situacao, INVALIDA)
+        self.assertIn("rascunho", motivo)
+
+    def test_exporta_o_quadro_da_semana_tambem_no_job(self):
+        from funcoesimpexp.tasks import RequisicaoDiferida
+        from modulopdca.models import ItemProgramacao
+
+        ItemProgramacao.objects.create(tenant=self.tenant, programacao=self.prog, atividade=self.alvenaria,
+                                       percentual_previsto=Decimal("25"))
+        recurso = self.recurso("pdca.programacao", programacao=self.prog.pk)
+        linhas = [recurso.serializar_objeto(o) for o in recurso.queryset(RequisicaoDiferida(self.user), {})]
+        self.assertEqual(len(linhas), 1)
+        self.assertEqual((linhas[0]["atividade"], linhas[0]["atividade__nome"]), ("1.1", "Alvenaria"))
