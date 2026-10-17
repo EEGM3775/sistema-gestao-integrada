@@ -89,8 +89,7 @@ export default function LixoPage() {
         <div style={{ marginBottom: 18 }}>
           <h1 style={{ fontSize: 20, fontWeight: 680, color: 'var(--ink)', margin: 0 }}>Lixo</h1>
           <p style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 5, maxWidth: 780 }}>
-            O que foi excluído continua aqui pelo prazo do seu plano e pode voltar inteiro —
-            nada foi apagado ainda. Passado o prazo, é apagado de vez, e aí não há como desfazer.
+            O que foi excluído permanece aqui ate o final do prazo contratado pelo plano.
           </p>
         </div>
 

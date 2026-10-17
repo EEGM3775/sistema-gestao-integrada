@@ -413,8 +413,7 @@ class RevisaoDocumentoSerializer(TenantScopedModelSerializer):
         if self.instance is not None and arquivo is not None:
             raise serializers.ValidationError({
                 "arquivo": (
-                    "O arquivo de uma revisão não pode ser trocado. Registre uma "
-                    "revisão nova — é ela que o campo compara com a anterior."
+                    "O arquivo de uma revisão não pode ser trocado. Registre uma revisão nova."
                 )
             })
 
@@ -727,7 +726,7 @@ class DisciplinaProjetoSerializer(TenantScopedModelSerializer):
     def validate_codigo(self, valor):
         if not valor:
             raise serializers.ValidationError(
-                "Dê um nome à disciplina — é dele que sai o código."
+                "Dê um nome à disciplina."
             )
         return valor
 
@@ -949,7 +948,7 @@ def _validar_pontos(pontos, *, minimo: int) -> list[dict]:
             raise serializers.ValidationError({"pontos": "Coordenada inválida (infinita ou NaN)."})
         if abs(x) > _LIMITE_COORDENADA or abs(y) > _LIMITE_COORDENADA:
             raise serializers.ValidationError({
-                "pontos": "Coordenada fora da folha — os vértices são normalizados pela largura."
+                "pontos": "Coordenada fora da folha."
             })
         limpos.append({"x": x, "y": y})
     return limpos
@@ -1248,8 +1247,8 @@ class CalibracaoSerializer(serializers.Serializer):
         if separacao < 0.01:
             raise serializers.ValidationError({
                 "b": (
-                    "Os dois pontos estão muito próximos para servir de referência. "
-                    "Trace sobre uma cota conhecida, de ponta a ponta."
+                    "Os dois pontos estão muito próximos. Trace sobre uma cota conhecida, de ponta "
+                    "a ponta."
                 )
             })
         attrs["pontos"] = pontos

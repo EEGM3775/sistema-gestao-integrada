@@ -56,7 +56,10 @@ class ClienteViewSet(QuotaEnforcedMixin, TenantScopedViewSetMixin, viewsets.Mode
     filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_class = ClienteFilter
     search_fields = ['nome_completo', 'email', 'telefone', 'bairro', 'cidade', 'cep']
-    ordering_fields = ['nome_completo', 'data_cadastro', 'cidade', 'estado', 'email', 'telefone']
+    #: `cliente_id` é o desempate: paginar ordenando só pelo nome deixa os
+    #: homônimos sem ordem garantida entre uma página e a outra — um aparece
+    #: duas vezes e outro some (o `SelectComBusca` pede `nome_completo,cliente_id`).
+    ordering_fields = ['nome_completo', 'data_cadastro', 'cidade', 'estado', 'email', 'telefone', 'cliente_id']
     ordering = ['nome_completo']
     pagination_class = ClientePageNumberPagination
     permission_classes = [permissions.IsAuthenticated, RequirePermission]

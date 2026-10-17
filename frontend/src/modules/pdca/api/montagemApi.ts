@@ -266,8 +266,17 @@ export async function renomearEtapa(etapaId: number, nome: string): Promise<Etap
   return data
 }
 
+/** Tem acesso ao RH? Uma página de um item só — o seletor de responsável
+ *  (`SeletorDeFuncionario`) busca no servidor; isto só decide se a tela mostra
+ *  o seletor ou diz que falta o módulo RH (403). */
+export async function temAcessoAoRh(): Promise<boolean> {
+  await apiClient.get('/funcionarios/', { params: { page: 1, page_size: 1 } })
+  return true
+}
+
 /** O responsável vem do RH. Quem não tem o módulo recebe 403, e a tela diz
- *  isso no seletor em vez de mostrar uma lista vazia. */
+ *  isso no seletor em vez de mostrar uma lista vazia. Lista inteira: é a da
+ *  grade do plano e a da composição de equipe (caixas de marcar com filtro). */
 export async function buscarFuncionarios(): Promise<FuncionarioCurto[]> {
   const { data } = await apiClient.get('/funcionarios/', { params: { page_size: 500 } })
   return lista<FuncionarioCurto>(data)

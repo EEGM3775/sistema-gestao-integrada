@@ -65,7 +65,7 @@ export default function CobrancaBancariaPage() {
           </div>
         ) : (
           <p className="text-sm">
-            {carteiras.isLoading ? 'Carregando…' : 'Nenhuma carteira cadastrada. Os dados vêm do contrato de cobrança que a empresa assinou com o banco (agência, conta, carteira e convênio).'}
+            {carteiras.isLoading ? 'Carregando…' : 'Nenhuma carteira cadastrada.'}
           </p>
         )}
       </Secao>
@@ -241,7 +241,7 @@ const cabecalho: CSSProperties = {
 
 function TabelaRemessas({ remessas, carregando }: { remessas: RemessaCnab[]; carregando: boolean }) {
   const baixar = useBaixarRemessa()
-  if (!remessas.length) return <p className="text-sm">{carregando ? 'Carregando…' : 'Nenhuma remessa ainda. Gere boletos pelo banco em Contas a receber.'}</p>
+  if (!remessas.length) return <p className="text-sm">{carregando ? 'Carregando…' : 'Nenhuma remessa ainda.'}</p>
   return (
     <div style={{ overflowX: 'auto' }}>
       <table className="w-full text-sm" style={{ borderCollapse: 'collapse' }}>

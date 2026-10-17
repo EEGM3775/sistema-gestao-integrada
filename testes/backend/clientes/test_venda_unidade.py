@@ -417,6 +417,28 @@ class MeiosDaVendaTests(VendaBaseTestCase):
         self.assertEqual([m["tipo"] for m in r.data["meios"]], ["permuta", "cartao"])
         self.assertEqual(r.data["plano"]["foraDoCarne"], "40000.00")
 
+    def test_datas_livres_gravam_a_lista_e_viram_titulos(self):
+        """Item 76: o valor do meio vem da soma das linhas (o enviado é
+        ignorado), a lista fica gravada em ordem de data, e cada linha vira um
+        título com a data que o vendedor digitou."""
+        self.autenticar()
+        criada = self._vender([
+            {"tipo": "entrada", "valor": "40000"},
+            {"tipo": "datas_livres", "valor": "1", "cronograma": [
+                {"vencimento": "2026-12-20", "valor": "35000"},
+                {"vencimento": "2026-06-20", "valor": "25000"},
+            ]},
+        ])
+        self.assertEqual(criada.status_code, 201, criada.data)
+        meio = MeioPagamento.objects.get(tipo="datas_livres")
+        self.assertEqual(meio.valor, Decimal("60000.00"))
+        self.assertEqual([l["vencimento"] for l in meio.cronograma], ["2026-06-20", "2026-12-20"])
+        r = self.client.post(
+            f"/api/clientes-empreendimentos/{criada.data['cliente_empreendimento_id']}/gerar-parcelas/")
+        self.assertEqual(r.status_code, 201, r.data)
+        descricoes = set(ContaReceber.objects.values_list("descricao", flat=True))
+        self.assertIn("Parcela 2/2 — Residencial Ipê · QD 1 · LT 01", descricoes)
+
     def test_carne_numera_por_meio(self):
         """Dois financiamentos diretos são duas séries no boleto."""
         self.autenticar()
@@ -494,6 +516,56 @@ class ResumoDeUnidadesTests(VendaBaseTestCase):
         rotulos = {s["valor"]: s["rotulo"] for s in self._resumo()["situacoes"]}
         self.assertEqual(rotulos["disponivel"], "Disponível")
         self.assertEqual(len(rotulos), 4)
+
+
+class BuscaDeUnidadesTests(VendaBaseTestCase):
+    """Item 78: a busca da aba Unidades acha a unidade como a tela a escreve.
+
+    Antes era `icontains` sobre cada campo: "QD 2 LT 01" procurava "QD" num
+    campo que guarda "2" e não voltava nada, e "1" trazia a quadra 10 junto.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        for quadra, lote in [("2", "01"), ("2", "10"), ("10", "01"), ("12", "05")]:
+            Unidade.objects.create(
+                tenant=cls.tenant, empreendimento=cls.emp, quadra=quadra, lote=lote,
+                valor_base=Decimal("50000.00"),
+            )
+        cls.vendida = Unidade.objects.get(quadra="12", lote="05")
+        ClienteEmpreendimento.objects.create(
+            tenant=cls.tenant, cliente=cls.cliente, empreendimento=cls.emp,
+            unidade=cls.vendida, data_compra=date(2026, 1, 10),
+            valor_tabela=Decimal("50000.00"), valor_compra=Decimal("50000.00"),
+            condicoes_pagamento="a_vista",
+        )
+
+    def _rotulos(self, busca):
+        self.autenticar()
+        r = self.client.get("/api/unidades/", {"empreendimento": self.emp.pk, "search": busca})
+        self.assertEqual(r.status_code, 200, r.data)
+        return [u["rotulo"] for u in r.data["results"]]
+
+    def test_acha_pelo_rotulo_que_a_tela_mostra(self):
+        self.assertEqual(self._rotulos("QD 2 · LT 01"), ["QD 2 · LT 01"])
+        self.assertEqual(self._rotulos("qd2 lt1"), ["QD 2 · LT 01"])
+        self.assertEqual(self._rotulos("quadra 12"), ["QD 12 · LT 05"])
+
+    def test_numero_solto_e_o_nivel_inteiro_e_nao_um_trecho(self):
+        """"1" é a quadra 1 ou o lote 1 — não a quadra 10 nem o lote 10."""
+        self.assertEqual(self._rotulos("1"), [
+            "QD 1 · LT 01", "QD 2 · LT 01", "QD 10 · LT 01",
+        ])
+
+    def test_acha_pelo_comprador_e_combina_com_o_endereco(self):
+        self.assertEqual(self._rotulos("marina"), ["QD 12 · LT 05"])
+        self.assertEqual(self._rotulos("rocha qd 12"), ["QD 12 · LT 05"])
+
+    def test_o_resumo_conta_pela_mesma_busca(self):
+        self.autenticar()
+        r = self.client.get("/api/unidades/resumo/", {"empreendimento": self.emp.pk, "search": "QD 2"})
+        self.assertEqual(r.data["total"], 2)
 
 
 class ContagemDaCarteiraAgrupadaTests(VendaBaseTestCase):

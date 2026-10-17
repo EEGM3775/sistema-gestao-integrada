@@ -68,8 +68,8 @@ export function BoletoNaTela({ boleto, desatualizado }: { boleto: Boleto; desatu
         {linha ? <LinhaParaCopiar linha={linha} /> : (
           <span className="flex items-center gap-1.5" style={{ fontSize: 12, color: 'var(--ink-3)' }}>
             {boleto.status === 'AGUARDANDO' ? 'Aguardando o registro no banco.'
-              : aoVivo.buscando ? <><Loader2 size={12} className="animate-spin" /> Buscando a linha digitável no Asaas…</>
-              : 'O Asaas não devolveu a linha digitável agora — ela está impressa no boleto (Ver boleto).'}
+              : aoVivo.buscando ? <><Loader2 size={12} className="animate-spin" /> Buscando a linha digitável na API…</>
+              : 'A API não devolveu a linha digitável. Ela está impressa no boleto (Ver boleto).'}
           </span>
         )}
         {ajuste && (

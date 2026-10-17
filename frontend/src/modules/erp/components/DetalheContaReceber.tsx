@@ -70,11 +70,11 @@ export function DetalheContaReceber({ contaId, modoInicial = 'ver', onTitulo }: 
       setAguardandoDesde(null)
       const novo = conta.boletos[0]
       setAviso(novo?.status === 'ERRO'
-        ? { tom: 'erro', texto: 'O Asaas recusou a cobrança. Veja o motivo no boleto abaixo.' }
+        ? { tom: 'erro', texto: 'A API recusou a cobrança. Veja o motivo no boleto abaixo.' }
         : { tom: 'ok', texto: 'Boleto emitido.' })
     } else if (Date.now() - aguardandoDesde > ESPERA_DO_BOLETO_MS) {
       setAguardandoDesde(null)
-      setAviso({ tom: 'ok', texto: 'O Asaas ainda não respondeu. O boleto aparece aqui e em Boletos assim que chegar.' })
+      setAviso({ tom: 'ok', texto: 'A API ainda não respondeu. O boleto aparece aqui e em Boletos quando chegar.' })
     }
   }, [conta, aguardandoDesde, boletosAntes])
 
@@ -148,7 +148,7 @@ export function DetalheContaReceber({ contaId, modoInicial = 'ver', onTitulo }: 
 
       <Secao titulo="Boleto">
         {aguardandoDesde && (
-          <p className="flex items-center gap-2" style={{ color: 'var(--ink-3)' }}><Loader2 size={15} className="animate-spin" /> Pedindo o boleto ao Asaas…</p>
+          <p className="flex items-center gap-2" style={{ color: 'var(--ink-3)' }}><Loader2 size={15} className="animate-spin" /> Pedindo o boleto à API…</p>
         )}
         {ativo ? <BoletoNaTela boleto={ativo} desatualizado={conta.boleto_desatualizado} /> : !aguardandoDesde && (
           <p style={{ color: 'var(--ink-3)' }}>{aberta ? 'Nenhum boleto válido para esta conta.' : 'Conta encerrada.'}</p>

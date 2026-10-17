@@ -256,7 +256,7 @@ function ModalTipoItem({ tipo, naturezas, salvando, onFechar, onSalvar }: {
           <Btn variant="primary" disabled={salvando} onClick={async () => {
             const nome = form.nome.trim()
             const codigo = (form.codigo || paraCodigo(nome)).trim()
-            if (!nome || !codigo) { setErro('Nome é obrigatório — é por ele que o tipo aparece na lista.'); return }
+            if (!nome || !codigo) { setErro('Informe o nome do tipo.'); return }
             if (form.leva_encargo_social && encargoBloqueado) {
               setErro('Encargo social só em natureza "Mão de obra".'); return
             }

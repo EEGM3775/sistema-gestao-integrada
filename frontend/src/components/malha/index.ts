@@ -17,6 +17,9 @@ export { SectionHead } from './SectionHead'
 export { Spinner, Loading, Empty, EmBreve } from './States'
 export { Btn } from './Btn'
 export { Modal } from './Modal'
+export { SelectComBusca } from './SelectComBusca'
+/** Os cadastros grandes já configurados para o `SelectComBusca` (F2). */
+export { SeletorDeFornecedor, SeletorDeFuncionario, SeletorDeObra, SeletorDeEmpreendimento } from './Seletores'
 
 /**
  * Entrada numérica — dinheiro, contagem e decimal. Promovidos do `MoneyInput`

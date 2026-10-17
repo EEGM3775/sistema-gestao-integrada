@@ -749,8 +749,7 @@ function DialogoDoVerbo({
     reprovar: {
       titulo: 'Devolver o boletim',
       explica:
-        'O boletim volta para quem o montou. Diga o que está errado — sem isso '
-        + 'a próxima versão volta com o mesmo problema.',
+        'O boletim volta para quem o montou. Informe o que está errado.',
       rotulo: 'O que precisa ser corrigido',
       exige: true,
       acao: 'Devolver',

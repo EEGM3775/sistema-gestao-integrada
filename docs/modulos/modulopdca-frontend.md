@@ -9,7 +9,7 @@
 
 ## 1. O problema que este desenho resolve
 
-O backend do PDCA tem **45 models, 24 recursos REST, ~75 verbos e 40 permissões**. Transformado em
+O backend do PDCA tem **45 models, 24 recursos REST, ~75 verbos**. Transformado em
 tela pelo caminho óbvio — um item de menu por assunto que o backend tem — isso produz um depósito:
 foi o que aconteceu, e a queixa do dono foi exata: *"simplesmente jogando várias coisas lá dentro"*.
 
@@ -93,9 +93,7 @@ número que todo indicador acima consome. Frontend de campo ruim é indicador in
 ### 3.3 O papel escolhe a porta, e nunca esconde o resto
 
 Sete personas ([modulopdca.md §5.3](modulopdca.md)) não viram sete produtos. O papel decide **onde
-você cai** ao abrir a obra e **qual vista o posto abre primeiro** — não o que existe. Quem tem a
-permissão vê o posto; quem não tem vê o cadeado com o motivo, pela régua omitir × trancar
-([frontend-convencoes.md](../frontend-convencoes.md)).
+você cai** ao abrir a obra e **qual vista o posto abre primeiro** — não o que existe.
 
 | Papel | Cai em | Vista inicial |
 |---|---|---|
@@ -113,7 +111,9 @@ A chave é o **nome da persona de fábrica** (`roles` do `/auth/me/`; o engenhei
 endereço sem posto (`/app/pdca/o/:id`, e o nome da obra na carteira) passa pela porta; a fila, a
 paleta e o link colado levam ao posto que nomeiam. Quem acumula papéis cai pelo de **quem assina**
 (fiscal, diretoria → `HOJE`) e, depois, pela ordem de consequência da §4.5 (segurança, medição,
-semana, qualidade, plano). Papel renomeado ou montado à mão não casa com nada e cai em `HOJE`, e o
+semana, qualidade, plano). A vista inicial de cada posto já é a do papel que mora nele; o Controle,
+que serve a dois, abre em **Hoje** para quem assina e na **Semana** para o engenheiro de obra
+(`entradaDoPapel`, `?aba=semana`). Papel renomeado ou montado à mão não casa com nada e cai em `HOJE`, e o
 papel cujo posto está trancado para a pessoa passa a vez ao seguinte. **O campo não tira ninguém da
 obra**: a superfície de campo não é de obra nenhuma, então o encarregado que abre uma obra no
 escritório cai em `HOJE`; a porta dele é a **passagem para o campo** no topo da carteira.
@@ -434,7 +434,7 @@ contrato**, como informação ao lado dele.
   sem querer ([D202](../historico-correcoes.md)): o servidor congela o que está *gravado*, não o que
   está na tela. Passar do saldo acende a trava **na linha, na digitação**, com o saldo do servidor
   ao lado.
-- **Escada de atesto** — submeter, atestar, cancelar; cada degrau com a sua permissão. Cancelar
+- **Escada de atesto** — submeter, atestar, cancelar; Cancelar
   medição aprovada cancela o título no ERP, e o aviso sai do mesmo lugar da trava.
 - **Aditivo** e **deduções** como painéis do posto, porque só existem em função do contrato. O
   aditivo se monta no `EditorDeAditivo`, como um contrato: termo (objeto, motivo, prorrogação, nova
@@ -472,8 +472,8 @@ recortada (B8) — as duas não podem discordar sobre o mesmo defeito.
 para ninguém se machucar, e o que fazemos quando alguém se machuca?*
 
 Posto separado da qualidade **de propósito**, e a razão não é organizacional: uma ocorrência tem
-**prazo legal** (a CAT é devida no 1º dia útil, imediata na morte), tem **PII clínica** atrás de
-permissão própria, e não pode entrar numa fila atrás de um defeito de pintura.
+**prazo legal** (a CAT é devida no 1º dia útil, imediata na morte), tem **dado clínico sensível**,
+e não pode entrar numa fila atrás de um defeito de pintura.
 
 - **Fila da SSMA** com a CAT no topo e o prazo em contagem regressiva.
 - **DDS** — a roda antes do turno: tema, lista de presença, encerramento que escreve no Diário.
@@ -544,8 +544,8 @@ Quatro atos, e cada um cabe num polegar:
 A lição do Fieldwire/Dalux aplicada ao que já existe no backend: `NaoConformidade` tem `local` e pino
 da Prancheta — o campo abre **no lugar**, e o formulário é consequência do toque.
 
-**As rotas.** A home ganha um bloco *Registrar* com os três atos que nascem no canteiro, cada um
-sumindo para quem não tem a permissão: `/campo/defeito` (abre pela câmera), `/campo/ocorrencia` e
+**As rotas.** A home ganha um bloco *Registrar* com os três atos que nascem no canteiro:
+`/campo/defeito` (abre pela câmera), `/campo/ocorrencia` e
 `/campo/dds` → `/campo/dds/:id` (a roda, um nome por vez, e o encerramento que escreve no diário).
 Obra, local e serviço chegam preenchidos pela query string quando se vem da frente. A ficha
 pendente no nome da pessoa vira link para `/campo/ficha/:id` — uma pergunta por tela, *conforme*
@@ -579,8 +579,7 @@ Tudo sai de `components/malha/` e dos tokens de `index.css` — nada de cor fixa
 `FilaDeDecisao` (a linha que diz o que decidir e traz o botão) e `CascaDeCampo` (a casca da segunda
 superfície). E uma correção no `Modal` da Malha, que vale para todos os módulos: ele se anuncia como
 `role="dialog"`, com `aria-modal` e o próprio cabeçalho como rótulo — sem isso um leitor de tela lê o
-cartão como mais um trecho da página, e quem não enxerga não sabe que o resto ficou inerte. Junto deles nasceu o `SemPermissaoAviso` — a faixa que diz **o que a leitura deixou de
-fora e a quem pedir**, e que é o par obrigatório de todo agregado com recorte por bloco (§10.1).
+cartão como mais um trecho da página, e quem não enxerga não sabe que o resto ficou inerte.
 
 **Percentual passa pelo `formato.ts` do módulo.** O avanço atravessa como `float` e o PPC e a
 conformidade como string (é assim que o DRF serializa `Decimal`, e é assim que centavo não vira
@@ -630,7 +629,7 @@ montam as faixas pelas mesmas funções da fila do dia (`faixas_da_qualidade`,
 | B8 | **Posto da qualidade** — a fila do laço (as faixas de retrabalho da fila do dia) e o painel de conformidade | §5.5 | `services.posto_da_qualidade`, em `GET qualidade/` |
 | B9 | **Posto da segurança** — as faixas de prazo legal e segurança, os indicadores e as frentes interditadas | §5.6 | `services.posto_da_seguranca`, em `GET seguranca/` |
 
-### 10.1 As três regras que as leituras que atravessam seguem
+### 10.1 As duas regras que as leituras que atravessam seguem
 
 Valem para o B7 quando nascer, e para qualquer agregado novo que cruze assunto ou obra.
 
@@ -640,15 +639,6 @@ implementação da mesma média ponderada é o D138 em escala de carteira: o coc
 diria 64%, e ninguém saberia qual acreditar. Quando a leitura precisa de um número **por obra** e
 chamar a função N vezes seria caro, a agregação é em SQL — e o teste cobra que os dois caminhos
 dão o mesmo.
-
-**A permissão é por bloco, e a leitura nunca devolve 403 inteira.** Uma leitura que junta cinco
-assuntos não tem um dono: exigir `pdca.nc.view` para abrir a carteira recusaria a página ao técnico
-de segurança, e exigir o menor denominador não recusaria nada. As portas declaram só
-`RequireModule`; o recorte acontece no serviço, por uma função `pode(codigo) -> bool` que o
-chamador monta das claims. O bloco que a pessoa não pode ver vem **nulo**, e a permissão que falta
-vem nomeada em `sem_permissao` — é a régua omitir × trancar aplicada a um agregado, e a alternativa
-(omitir em silêncio) faria a fila parecer vazia, que é a pior das três saídas porque não parece
-falha.
 
 **São `APIView` pura, então a tenancy é explícita.** Todo o resto do módulo é `ModelViewSet` e
 herda a RLS do `TenantScopedViewSetMixin`; uma `APIView` não arma nada, e foi exatamente o achado
@@ -686,9 +676,8 @@ Um posto está pronto quando:
 6. **O texto é de quem opera** — sem número de fatia, sem referência a documento interno, sem o
    software se defendendo;
 7. **Estado vazio que pede ação traz o botão** que leva até ela;
-8. **Omitir × trancar** aplicado: cadeado com motivo onde a pessoa pode destravar;
-9. **O objeto atravessa** — selecionar aqui mantém selecionado no posto vizinho;
-10. **Campo, quando o posto produz dado de campo**, entregue junto e não depois.
+8. **O objeto atravessa** — selecionar aqui mantém selecionado no posto vizinho;
+9. **Campo, quando o posto produz dado de campo**, entregue junto e não depois.
 
 ## 13. Limites declarados
 

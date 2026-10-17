@@ -211,16 +211,14 @@ class TipoItemProprio(TenantScopedModel):
         if self.leva_encargo_social and self.natureza != Item.Tipo.MAO_DE_OBRA:
             raise ValidationError({
                 "leva_encargo_social": _(
-                    "Encargo social incide sobre salário: só tipo de natureza "
-                    "'Mão de obra' pode levá-lo. Se este custo já vem com encargo "
-                    "embutido (serviço de terceiro), deixe desmarcado."
+                    "Encargo social incide sobre salários. Serviços terceirizados, "
+                    "deixe desmarcado."
                 ),
             })
         if self.natureza == Item.Tipo.COMPOSICAO and (self.compravel or self.estocavel):
             raise ValidationError({
                 "compravel": _(
-                    "Composição não se compra nem se estoca — quem se compra são "
-                    "os insumos dela."
+                    "Compre os insumos, não as composições."
                 ),
             })
 

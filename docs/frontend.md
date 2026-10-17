@@ -232,6 +232,8 @@ Os primitivos da Malha vivem em [components/malha/](../frontend/src/components/m
 | `SectionHead` | Cabeçalho de seção, opcionalmente com a cor de estágio (`--st-*`) |
 | `Spinner`/`Loading`/`Empty`/`EmBreve` | Estados; `Loading` sempre diz **o quê** carrega |
 | `CampoMoeda`/`CampoInteiro`/`CampoDecimal` | Entrada numérica. **Nenhum é `<input type="number">`**, e a ausência é o conteúdo — ver abaixo |
+| `SeletorDeFornecedor`/`SeletorDeFuncionario`/`SeletorDeObra`/`SeletorDeEmpreendimento` | O `SelectComBusca` já configurado para cada cadastro grande (recurso, rótulo, segunda linha, desempate pelo id). Os quatro endpoints paginam **sob pedido** (`nucleo/paginacao.py`): o seletor manda `?page=`; a tela de lista do cadastro, que não manda, recebe tudo. Formulário escolhe cadastro por eles — nunca `<select>` montado com a lista inteira |
+| `SelectComBusca` | Escolher um item de cadastro grande (cliente) **pela busca no servidor** (`?search=`), com **rolagem infinita** até o último resultado — buscar refina, mas nunca é obrigatório para alcançar alguém; homônimos com desempate por id. Fechado, mostra o nome do escolhido mesmo fora da primeira página; Enter escolhe sem enviar o formulário. `<select>` montado com "a lista inteira" corta em silêncio no `PAGINA_MAXIMA` |
 | `BotaoExportar`/`WizardImportacao`/`WizardArquivos` | As três portas de import/export de **todo** módulo ([impexp §10](modulos/funcoesimpexp.md)). Somem sozinhos quando `/api/impexp/recursos/` não lista o recurso para esta pessoa — nenhum recebe prop de permissão. **Toda tela de lista** tem Exportar no cabeçalho, ao lado do "Novo", e Importar onde a linha é um registro inteiro — documento de fluxo (pedido, boleto, medição, diário…) e relatório só exportam; o `recorte` do Exportar é o estado dos filtros da tela (R7) |
 | `RetomarImportacao`/`podeRetomar` | O mesmo diálogo do wizard, **entrando pelo meio**: reabre o lote que parou em `lendo`/`conferindo`/`erro`. Existe porque o wizard só vivia enquanto a janela estava aberta, e fechar a aba obrigava a subir a planilha de novo — inclusive quando o que faltava era responder o de-para, que é uma **pergunta** |
 
@@ -501,8 +503,9 @@ Utiliza `createBrowserRouter` com rotas aninhadas.
   /app/crm              → CrmDashboardPage     (hasModule: crm)
   /app/crm/leads        → LeadsPage            (hasModule: crm)
   /app/diario           → DiarioObraPage       (base)
-  /app/drone            → DroneWrapperPage     (hasModule: drone)
+  /app/drone            → DroneWrapperPage ✅   (hasModule: drone — o app do drone em moldura, §5.14)
   /app/calendario       → CalendarioPage       (base)
+  /app/auditoria        → AuditoriaPage ✅      (permission: plataforma.auditoria.view — as duas trilhas, D17)
   /app/admin/papeis     → PersonasPage ✅       (adminOnly — Papéis e Acessos, Fase 9.A)
   /app/admin/usuarios   → UsuariosPage ✅       (adminOnly — Usuários e seus papéis, Fase 9.A)
   /app/lixo             → LixoPage ✅            (permission: plataforma.lixo.view — a lixeira, D116)
@@ -968,8 +971,10 @@ andamento das obras do empreendimento comprado, com o percentual declarado como
 > RHF+zod, `MoneyInput`/centavos inteiros, code-splitting).
 
 - **`ErpDashboardPage`** (`/app/erp`, hub) ✅ — `KpiCard` (a receber/a pagar/saldo projetado/fluxo do
-  mês) + `FluxoCaixaChart` (receitas x despesas mensais) + `AgingChart` (aging a receber/a pagar),
-  todos sobre `useErpDashboard()` → `GET /api/erp/dashboard/` (cacheado, React Query); cards
+  mês) + `FluxoCaixaPainel` na largura toda (período 3M/6M/12M/Ano/personalizado, barras ou linha
+  com o resultado do mês, total do período) + `AgingChart` compacto lado a lado (barra empilhada +
+  faixas com valor e %), todos sobre `useErpDashboard(_, periodo)` → `GET /api/erp/dashboard/`
+  (cacheado, React Query, o painel anterior fica na tela ao trocar o período); cards
   `WorkspaceLinkCard` → `/app/erp/contas-a-{pagar,receber}`. No header, `DivergenciasErpButton` —
   botão-alerta (colorido + contagem quando há divergências banco × Asaas) que abre modal com o
   `DivergenciasAsaasPanel`; visível só com as permissões de usuário `erp.cobranca.view` + `cadastro.cliente.view`
@@ -1079,15 +1084,23 @@ Módulo completo. Rotas: `/app/rh` · `/app/rh/cargos` · `/app/rh/:id`.
 
 ### 5.14 DroneWrapperPage (`/app/drone`) — hasModule: drone
 
-- Topbar da rota injeta `empreendimento_id` e `obra_id` da URL
-- `<iframe src="/drone/?token=JWT&empreendimento_id=X&obra_id=Y">`
-- Spinner enquanto carrega
-- Badge "Módulo Drone" no Topbar
+- O drone (Angular, `funcoesODM/`) é servido pelo gateway na **mesma origem**, em `/drone/`; a sessão
+  é o cookie do BFF, que o gateway troca pelo access do drone em `/odm-api/`. **Nenhum token na URL.**
+- `<iframe src="/drone/?empreendimento_id=X&obra_id=Y">` — o contexto que o
+  `project-context.service.ts` do drone lê. A obra se escolhe no topo (`SeletorDeObra`) e fica na URL
+  do SGI (`?obra=&empreendimento=`), então o link é colável; "Abrir em outra aba" leva o mesmo endereço.
+- Antes de desenhar a moldura a página confere se quem responde em `/drone/` é o drone (o `<app-root>`
+  do Angular). Servidor sem o drone cai na rota do próprio SGI: a página diz que o módulo não está
+  instalado, em vez de abrir o SGI dentro dele mesmo.
 
 ### 5.15 CalendarioPage (`/app/calendario`)
 
-- Grade mensal de `CalendarEvent`
-- Eventos coloridos por tipo (obra, reunião, prazo financeiro)
+- Grade (mês/semana/dia/agenda) do feed agregado: eventos, CRM, diário e feriados por localidade
+- Painel de **agendas** à esquerda (pessoal/equipe/empresa: mostrar/ocultar, cor, membros, `.ics`);
+  a cor da agenda pinta o evento; convite pendente tracejado, recusado apagado
+- Evento que a pessoa não altera abre o convite (aceitar/recusar); `?evento=<id>` (o link do sino) abre
+  o evento direto; a busca no cabeçalho acha pelo título, descrição ou local
+- Planta: [modulocalendar.md](modulos/modulocalendar.md)
 
 ### 5.16 Plano e quotas (D24) — 📋 planejado
 
@@ -1548,7 +1561,7 @@ src/
 │   │   │   │                            MoneyInput, MoneyDisplay, KpiCard, StatusContaBadge
 │   │   │   ├── forms/                ← ContaPagarForm/ContaReceberForm/BaixaForm/RateioField/FormField
 │   │   │   │                            (RHF + zod, 1º uso no projeto) · schemas.ts · formStyles.ts
-│   │   │   └── charts/               ← FluxoCaixaChart, AgingChart (Recharts)
+│   │   │   └── charts/               ← FluxoCaixaPainel, FluxoCaixaChart, AgingChart (Recharts)
 │   │   └── pages/
 │   │       ├── ErpDashboardPage.tsx  ← /app/erp (hub: KPIs + gráficos + cards p/ workspaces)
 │   │       ├── ContasAPagarPage.tsx  ← /app/erp/contas-a-pagar   (workspace: listão + Sheet)

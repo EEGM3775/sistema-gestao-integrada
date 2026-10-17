@@ -73,9 +73,7 @@ function erroDeInfra(status: number | undefined, semResposta: boolean): string |
     return 'Muitas tentativas seguidas. Espere um instante e tente de novo.'
   }
   if (status && status >= 500) {
-    return 'O servidor encontrou um erro inesperado ao processar isto. Nada foi '
-      + 'gravado. Se acontecer de novo, avise o suporte com o que você estava '
-      + 'fazendo.'
+    return 'Erro inesperado no servidor. Nada foi gravado. Se repetir, contate o suporte.'
   }
   return null
 }
@@ -92,7 +90,7 @@ export function parseApiErrors(err: unknown): FieldErrors {
   if (infra) return { _form: infra }
   if (!data || pareceHtml(data)) {
     return {
-      _form: 'O servidor respondeu de um jeito que esta tela não entende. '
+      _form: 'Resposta inesperada do servidor. '
         + 'Tente de novo; se persistir, avise o suporte.',
     }
   }
@@ -115,7 +113,7 @@ export function parseApiErrors(err: unknown): FieldErrors {
   // estar a explicação. Um erro que não diz nada é pior que nenhum erro: ele
   // deixa a pessoa sem saber se o que ela fez valeu.
   if (!Object.keys(out).length) {
-    out._form = 'A operação foi recusada, mas o servidor não disse por quê. '
+    out._form = 'Operação recusada sem motivo informado. '
       + 'Tente de novo; se persistir, avise o suporte.'
   }
   return out

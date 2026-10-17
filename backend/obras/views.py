@@ -3,6 +3,9 @@
 from rest_framework import viewsets
 from rest_framework import permissions
 from django_filters.rest_framework import DjangoFilterBackend
+from nucleo.busca import BuscaSemAcento
+from nucleo.paginacao import PaginaSobPedido
+from rest_framework.filters import OrderingFilter
 from nucleo.tenancy import TenantScopedViewSetMixin
 from nucleo.permissions import RequirePermission
 from nucleo.quotas import QuotaEnforcedMixin
@@ -25,8 +28,12 @@ class ObraViewSet(QuotaEnforcedMixin, TenantScopedViewSetMixin, viewsets.ModelVi
     """
     queryset = Obra.objects.all()
     serializer_class = ObraSerializer
-    filter_backends = [DjangoFilterBackend]
+    # Busca e página (sob pedido) para o seletor de obra dos formulários.
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, OrderingFilter]
     filterset_class = ObraFilter
+    search_fields = ['nome_obra', 'endereco']
+    ordering_fields = ['nome_obra', 'obra_id']
+    pagination_class = PaginaSobPedido
     permission_classes = [permissions.IsAuthenticated, RequirePermission]
     required_resource = "obra.obra"
     quota_recurso = "obras"  # D24

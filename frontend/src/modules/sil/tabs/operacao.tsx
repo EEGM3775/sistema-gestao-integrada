@@ -6,11 +6,11 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { useQueryClient } from '@tanstack/react-query'
-import { BotaoExportar, WizardImportacao } from '@/components/malha'
+import { BotaoExportar, SeletorDeFornecedor, SeletorDeObra, WizardImportacao } from '@/components/malha'
 import {
   useSilDashboard, saldosHooks, movimentacoesHooks, requisicoesHooks, itensRequisicaoHooks,
   transferenciasHooks, devolucoesHooks,
-  inventariosHooks, itensInventarioHooks, locaisHooks, itensHooks, useObras, useFornecedores, useEtapas,
+  inventariosHooks, itensInventarioHooks, locaisHooks, itensHooks, useEtapas,
   useRegistrarMov, useDefinirMinimo, useGerarDemanda, useAprovarRequisicao, useAtenderRequisicao,
   useExecutarTransferencia, useExecutarDevolucao, useFecharInventario, useReabrirInventario,
 } from '../hooks'
@@ -328,19 +328,18 @@ function DefinirMinimoModal({ saldo, onClose, onDone }: { saldo: SaldoEstoque; o
 }
 function NovoLocalModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
   const create = locaisHooks.useCreate()
-  const { data: obras } = useObras()
   const [nome, setNome] = useState(''), [tipo, setTipo] = useState('central'), [obra, setObra] = useState(''), [err, setErr] = useState('')
   const salvar = async () => {
     if (!nome.trim()) return setErr('Informe o nome.')
     try { await create.mutateAsync({ nome, tipo, obra: obra ? Number(obra) : null }); onDone() }
-    catch { setErr('Falha ao criar (nome duplicado?).') }
+    catch { setErr('Não foi possível criar. O nome já existe?') }
   }
   return <Modal title="Novo local de estoque" onClose={onClose} footer={<><Btn onClick={onClose}>Cancelar</Btn><Btn variant="primary" onClick={salvar} disabled={create.isPending}>Criar</Btn></>}>
     {err && <div style={errBox}>{err}</div>}
     <Field label="Nome"><input style={inp} value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex.: Canteiro — Torre B" /></Field>
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
       <Field label="Tipo"><select style={inp} value={tipo} onChange={e => setTipo(e.target.value)}><option value="central">Almoxarifado central</option><option value="canteiro">Canteiro de obra</option><option value="outro">Outro</option></select></Field>
-      <Field label="Obra (canteiro)"><select style={inp} value={obra} onChange={e => setObra(e.target.value)}><option value="">— nenhuma —</option>{(obras ?? []).map(o => <option key={o.obra_id} value={o.obra_id}>{o.nome_obra}</option>)}</select></Field>
+      <Field label="Obra (canteiro)"><SeletorDeObra valor={obra ? Number(obra) : null} aoMudar={id => setObra(id == null ? '' : String(id))} permiteLimpar placeholder="— nenhuma — busque a obra" aria-label="Obra" style={inp} /></Field>
     </div>
   </Modal>
 }
@@ -401,7 +400,6 @@ function RegistrarMovModal({ inicial, onClose, onDone }: { inicial?: { item: num
   const registrar = useRegistrarMov()
   const { data: itens } = itensHooks.useAll({ estocavel: true })
   const { data: locais } = locaisHooks.useAll({ ativo: true })
-  const { data: obras } = useObras()
   const [item, setItem] = useState(inicial ? String(inicial.item) : ''), [local, setLocal] = useState(inicial ? String(inicial.local) : ''), [tipo, setTipo] = useState(inicial?.tipo ?? 'entrada')
   const [quantidade, setQuantidade] = useState(''), [custo, setCusto] = useState(''), [obra, setObra] = useState(''), [etapa, setEtapa] = useState('')
   const { data: etapas } = useEtapas(obra ? Number(obra) : undefined)
@@ -428,7 +426,7 @@ function RegistrarMovModal({ inicial, onClose, onDone }: { inicial?: { item: num
       {tipo !== 'saida' && <Field label="Custo unitário"><input style={{ ...inp, ...mono }} type="number" min={0} step="0.0001" value={custo} onChange={e => setCusto(e.target.value)} placeholder="0,00" /></Field>}
     </div>
     {tipo === 'saida' && <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-      <Field label="Obra (apropriação)"><select style={inp} value={obra} onChange={e => { setObra(e.target.value); setEtapa('') }}><option value="">— nenhuma —</option>{(obras ?? []).map(o => <option key={o.obra_id} value={o.obra_id}>{o.nome_obra}</option>)}</select></Field>
+      <Field label="Obra (apropriação)"><SeletorDeObra valor={obra ? Number(obra) : null} aoMudar={id => { setObra(id == null ? '' : String(id)); setEtapa('') }} permiteLimpar placeholder="— nenhuma — busque a obra" aria-label="Obra" style={inp} /></Field>
       <Field label="Etapa"><select style={inp} value={etapa} onChange={e => setEtapa(e.target.value)} disabled={!obra}><option value="">— nenhuma —</option>{(etapas ?? []).map(et => <option key={et.etapa_id} value={et.etapa_id}>{et.nome_etapa}</option>)}</select></Field>
     </div>}
     <p style={{ fontSize: 11.5, color: 'var(--ink-3)', lineHeight: 1.5 }}>{tipo === 'entrada' ? 'A entrada recalcula o custo médio ponderado móvel.' : tipo === 'saida' ? 'A saída valoriza pelo custo médio e apropria o consumo à obra/etapa (físico-financeiro).' : 'O ajuste leva o saldo à quantidade contada.'}</p>
@@ -503,7 +501,6 @@ function NovaRequisicaoModal({ onClose, onDone }: { onClose: () => void; onDone:
   const qc = useQueryClient()
   const { data: locais } = locaisHooks.useAll({ ativo: true })
   const { data: itens } = itensHooks.useAll({ estocavel: true })
-  const { data: obras } = useObras()
   const [local, setLocal] = useState(''), [obra, setObra] = useState(''), [etapa, setEtapa] = useState(''), [observacao, setObservacao] = useState('')
   const { data: etapas } = useEtapas(obra ? Number(obra) : undefined)
   const [linhas, setLinhas] = useState<Linha[]>([{ item: '', quantidade: '', key: Date.now() }])
@@ -520,13 +517,13 @@ function NovaRequisicaoModal({ onClose, onDone }: { onClose: () => void; onDone:
       const rid = (req as Requisicao).requisicao_id
       for (const l of validas) await itensRequisicaoApi.create({ requisicao: rid, item: Number(l.item), quantidade: l.quantidade })
       await qc.invalidateQueries({ queryKey: silKeys.all }); onDone()
-    } catch { setErr('Falha ao criar requisição.'); setSaving(false) }
+    } catch { setErr('Não foi possível criar a requisição.'); setSaving(false) }
   }
   return <Modal title="Nova requisição" onClose={onClose} wide footer={<><Btn onClick={onClose}>Cancelar</Btn><Btn variant="primary" onClick={salvar} disabled={saving}>{saving ? 'Salvando…' : 'Criar requisição'}</Btn></>}>
     {err && <div style={errBox}>{err}</div>}
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
       <Field label="Local (de onde sai)"><select style={inp} value={local} onChange={e => setLocal(e.target.value)}><option value="">— selecione —</option>{opLocais.map(l => <option key={l.local_id} value={l.local_id}>{l.nome}</option>)}</select></Field>
-      <Field label="Obra"><select style={inp} value={obra} onChange={e => { setObra(e.target.value); setEtapa('') }}><option value="">— nenhuma —</option>{(obras ?? []).map(o => <option key={o.obra_id} value={o.obra_id}>{o.nome_obra}</option>)}</select></Field>
+      <Field label="Obra"><SeletorDeObra valor={obra ? Number(obra) : null} aoMudar={id => { setObra(id == null ? '' : String(id)); setEtapa('') }} permiteLimpar placeholder="— nenhuma — busque a obra" aria-label="Obra" style={inp} /></Field>
       <Field label="Etapa"><select style={inp} value={etapa} onChange={e => setEtapa(e.target.value)} disabled={!obra}><option value="">— nenhuma —</option>{(etapas ?? []).map(et => <option key={et.etapa_id} value={et.etapa_id}>{et.nome_etapa}</option>)}</select></Field>
     </div>
     <ItemLines linhas={linhas} setLinhas={setLinhas} itens={opItens} />
@@ -607,7 +604,7 @@ function NovaTransferenciaModal({ onClose, onDone }: { onClose: () => void; onDo
       const tid = (t as Transferencia).transferencia_id
       for (const l of validas) await itensTransferenciaApi.create({ transferencia: tid, item: Number(l.item), quantidade: l.quantidade })
       await qc.invalidateQueries({ queryKey: silKeys.all }); onDone()
-    } catch { setErr('Falha ao criar transferência.'); setSaving(false) }
+    } catch { setErr('Não foi possível criar a transferência.'); setSaving(false) }
   }
   return <Modal title="Nova transferência" onClose={onClose} wide footer={<><Btn onClick={onClose}>Cancelar</Btn><Btn variant="primary" onClick={salvar} disabled={saving}>{saving ? 'Salvando…' : 'Criar (rascunho)'}</Btn></>}>
     {err && <div style={errBox}>{err}</div>}
@@ -623,7 +620,6 @@ function NovaDevolucaoModal({ onClose, onDone }: { onClose: () => void; onDone: 
   const qc = useQueryClient()
   const { data: locais } = locaisHooks.useAll({ ativo: true })
   const { data: itens } = itensHooks.useAll({ estocavel: true })
-  const { data: fornecedores } = useFornecedores()
   const [tipo, setTipo] = useState('fornecedor'), [local, setLocal] = useState(''), [fornecedor, setFornecedor] = useState('')
   const [linhas, setLinhas] = useState<Linha[]>([{ item: '', quantidade: '', key: Date.now() }])
   const [saving, setSaving] = useState(false), [err, setErr] = useState('')
@@ -639,7 +635,7 @@ function NovaDevolucaoModal({ onClose, onDone }: { onClose: () => void; onDone: 
       const did = (dv as Devolucao).devolucao_id
       for (const l of validas) await itensDevolucaoApi.create({ devolucao: did, item: Number(l.item), quantidade: l.quantidade })
       await qc.invalidateQueries({ queryKey: silKeys.all }); onDone()
-    } catch { setErr('Falha ao criar devolução.'); setSaving(false) }
+    } catch { setErr('Não foi possível criar a devolução.'); setSaving(false) }
   }
   return <Modal title="Nova devolução" onClose={onClose} wide footer={<><Btn onClick={onClose}>Cancelar</Btn><Btn variant="primary" onClick={salvar} disabled={saving}>{saving ? 'Salvando…' : 'Criar (rascunho)'}</Btn></>}>
     {err && <div style={errBox}>{err}</div>}
@@ -647,7 +643,7 @@ function NovaDevolucaoModal({ onClose, onDone }: { onClose: () => void; onDone: 
       <Field label="Tipo"><select style={inp} value={tipo} onChange={e => setTipo(e.target.value)}><option value="fornecedor">Ao fornecedor (saída)</option><option value="estoque">Ao estoque (entrada)</option></select></Field>
       <Field label="Local"><select style={inp} value={local} onChange={e => setLocal(e.target.value)}><option value="">— selecione —</option>{opLocais.map(l => <option key={l.local_id} value={l.local_id}>{l.nome}</option>)}</select></Field>
     </div>
-    {tipo === 'fornecedor' && <Field label="Fornecedor"><select style={inp} value={fornecedor} onChange={e => setFornecedor(e.target.value)}><option value="">— nenhum —</option>{(fornecedores ?? []).map(f => <option key={f.fornecedor_id} value={f.fornecedor_id}>{f.razao_social}</option>)}</select></Field>}
+    {tipo === 'fornecedor' && <Field label="Fornecedor"><SeletorDeFornecedor valor={fornecedor ? Number(fornecedor) : null} aoMudar={id => setFornecedor(id == null ? '' : String(id))} permiteLimpar aria-label="Fornecedor" style={inp} /></Field>}
     <ItemLines linhas={linhas} setLinhas={setLinhas} itens={opItens} />
   </Modal>
 }
@@ -695,7 +691,7 @@ function NovoInventarioModal({ onClose, onDone }: { onClose: () => void; onDone:
   const salvar = async () => {
     if (!local) return setErr('Escolha o local.')
     try { const iv = await create.mutateAsync({ local: Number(local), tipo }); onDone((iv as Inventario).inventario_id) }
-    catch { setErr('Falha ao abrir inventário.') }
+    catch { setErr('Não foi possível abrir o inventário.') }
   }
   return <Modal title="Novo inventário" onClose={onClose} footer={<><Btn onClick={onClose}>Cancelar</Btn><Btn variant="primary" onClick={salvar} disabled={create.isPending}>Abrir contagem</Btn></>}>
     {err && <div style={errBox}>{err}</div>}
@@ -731,7 +727,7 @@ function InventarioDetail({ id, onBack, say }: { id: number; onBack: () => void;
     await agir(async () => { await itensInventarioApi.remove(id); await qc.invalidateQueries({ queryKey: silKeys.all }) }, 'Linha removida da contagem')
   }
   return (
-    <div style={{ maxWidth: 900 }}>
+    <div>
       <button onClick={onBack} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--ink-3)', background: 'none', border: 'none', cursor: 'pointer', marginBottom: 6 }}><ArrowLeft size={13} /> Todos os inventários</button>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
         <h2 style={{ fontFamily: 'var(--display)', fontSize: 19, fontWeight: 750, letterSpacing: '-0.02em', color: 'var(--ink)' }}>Inventário #{inv.inventario_id}</h2>
@@ -769,7 +765,7 @@ function AddContagemModal({ inventarioId, itens, onClose, onDone }: { inventario
     if (!item) return setErr('Escolha o item.')
     setSaving(true)
     try { await itensInventarioApi.create({ inventario: inventarioId, item: Number(item), quantidade_sistema: sistema, quantidade_contada: contada || '0' }); onDone() }
-    catch { setErr('Falha ao adicionar.'); setSaving(false) }
+    catch { setErr('Não foi possível adicionar.'); setSaving(false) }
   }
   return <Modal title="Adicionar contagem" onClose={onClose} footer={<><Btn onClick={onClose}>Cancelar</Btn><Btn variant="primary" onClick={salvar} disabled={saving}>Adicionar</Btn></>}>
     {err && <div style={errBox}>{err}</div>}

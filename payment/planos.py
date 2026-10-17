@@ -1033,6 +1033,20 @@ IMPEXP_LIMITE_SINCRONO_IMPORTACAO: int = 3_000
 # séculos e ela fica na fila para sempre.
 CALENDAR_MAX_OFFSET_LEMBRETE_MIN: int = 4 * 7 * 24 * 60
 
+# Quantos convidados um evento aceita (Fatia D). Uma reunião de obra junta a
+# equipe, o cliente e os empreiteiros — algumas dezenas; 100 é folga e é o freio
+# contra "convidar a empresa inteira" num evento, que vira um aviso por pessoa.
+# Para a empresa inteira existe o calendário de escopo `empresa`.
+CALENDAR_TETO_CONVIDADOS: int = 100
+
+# Importação de agenda em `.ics` (Fatia E). O arquivo vem de outro calendário
+# (Google, Outlook) e é lido inteiro na requisição — não é job. 2 MB cabem
+# alguns milhares de eventos; o teto de eventos é o que de fato segura a
+# gravação. Arquivo maior é exportação da conta inteira de alguém: recusa com
+# o motivo, em vez de prender o worker.
+CALENDAR_ICS_TETO_KB: int = 2048
+CALENDAR_ICS_TETO_EVENTOS: int = 2_000
+
 # Quantas notificações a lista do sino devolve numa chamada.
 NOTIFICACOES_LIMITE_LISTA: int = 50
 
@@ -1076,6 +1090,18 @@ ORCAMENTO_TETO_PASSOS_DESFAZER: int = 50
 # Módulo que ganhar paginador e não aparecer aqui falha no teste do `nucleo`.
 PAGINA_PADRAO: dict[str, int] = {
     "catalogo": 25,
+    # O calendário (Fatias D e E) pagina duas coisas: as pessoas da empresa no
+    # seletor de convidados e a busca de eventos. As duas são lista de escolha,
+    # que rola infinita no `SelectComBusca` — 25 enche a caixa.
+    "calendario": 25,
+    # A trilha de auditoria (D17) junta a do backend e a da IAM numa tela; cada
+    # fonte pagina por si, com o mesmo número dos dois lados. 50 é uma tela de
+    # conferência; o teto é o que impede `?page_size=` de virar exportação sem gate.
+    "auditoria": 50,
+    # Fornecedores, funcionários, obras e empreendimentos no seletor dos
+    # formulários (`nucleo/paginacao.py`): só paginam quando o cliente pede
+    # `?page=` — a lista de tela continua inteira.
+    "cadastros": 50,
     # O registro de arquivos do DMS junta as três lentes (guardados, entraram,
     # saíram) de todos os módulos: 50 é uma tela de conferência.
     "dms": 50,
@@ -1095,6 +1121,9 @@ PAGINA_PADRAO: dict[str, int] = {
 }
 PAGINA_MAXIMA: dict[str, int] = {
     "catalogo": 100,
+    "calendario": 100,
+    "auditoria": 200,
+    "cadastros": 200,
     "dms": 200,
     "lixo": 200,
     "clientes": 300,
@@ -1893,6 +1922,13 @@ SUPORTE_CONSENTIMENTO_MAX_DIAS: int = 7
 # pela fronteira da §5.6.
 VENDA_TETO_MEIOS_DE_PAGAMENTO: int = 12
 
+# Quantas linhas um meio "Parcelas com datas livres" comporta (item 76 do dono,
+# 16/10/2026). Cada linha é digitada à mão — data e valor —, e a lista é
+# recalculada a cada tecla da simulação. **240** é vinte anos de parcela mensal,
+# mais do que qualquer cronograma digitado à mão; série longa e regular é o
+# financiamento direto. *(Número proposto pela engenharia, a confirmar pelo dono.)*
+VENDA_TETO_PARCELAS_LIVRES: int = 240
+
 # ---------------------------------------------------------------------------
 # 5.5s O ERP financeiro — a grade dos títulos, a cobrança e a remessa (itens 51–58)
 # ---------------------------------------------------------------------------
@@ -1995,10 +2031,19 @@ ERP_TETO_NOTAS_POR_LOTE: int = 1_000
 #   - `CATALOGO_FICHA_HISTORICO_LINHAS` — quantas compras a linha do tempo de
 #     preço da ficha do item mostra. É tela de conferência ("quanto paguei nas
 #     últimas vezes"), não relatório: 30 compras são anos de um item comum.
+#   - `CATALOGO_FICHA_GRAFICO_PONTOS` — quantos pontos o gráfico "preço por
+#     fornecedor ao longo do tempo" da ficha recebe **por série**: as últimas N
+#     compras pagas e as últimas N cotações do item. *(Dono, 16/10/2026: "25 por
+#     item no início".)*
+#   - `SCM_MAPA_TETO_COTACOES` — quantas cotações saem num pacote de mapas
+#     comparativos (PDF/XLSX para reunião, 16/10/2026). É geração síncrona de PDF:
+#     cada mapa é uma página, e 20 é a pauta de uma reunião de compras longa.
 SCM_COBRANCA_TETO_MEIOS: int = 10
 SCM_COBRANCA_TETO_PARCELAS: int = 60
 SCM_NFE_ARQUIVO_TETO_MB: int = 5
 CATALOGO_FICHA_HISTORICO_LINHAS: int = 30
+CATALOGO_FICHA_GRAFICO_PONTOS: int = 25
+SCM_MAPA_TETO_COTACOES: int = 20
 
 # ---------------------------------------------------------------------------
 # 5.6 O que NÃO é limite — e por isso continua no código de engenharia

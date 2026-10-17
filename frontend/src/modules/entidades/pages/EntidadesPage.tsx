@@ -42,9 +42,7 @@ export default function EntidadesPage() {
         <div className="flex-1" style={{ minWidth: 260 }}>
           <h1 className="text-xl font-bold" style={{ color: 'var(--ink)' }}>Entidades (CNPJs e CPFs)</h1>
           <p className="text-xs" style={{ color: 'var(--ink-3)', maxWidth: 680, lineHeight: 1.5 }}>
-            Quem é o dono jurídico de cada coisa. Cada entidade do grupo tem o próprio financeiro, nota fiscal,
-            boleto e DRE. Com uma só, o sistema funciona como sempre; a partir da segunda, o ERP ganha a barra
-            para escolher de qual empresa você está vendo.
+            Responsavel Juridico
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -158,7 +156,7 @@ function Detalhe({ entidade: e, podeEditar, podeConceder, onEditar }: {
         </SectionHead>
         {e.empreendimentos.length === 0 ? (
           <p className="text-sm" style={{ color: 'var(--ink-3)' }}>
-            Nenhum. A dona e as cotas de um empreendimento se definem na ficha dele.
+            Nenhum.
           </p>
         ) : (
           <div className="flex flex-col gap-1.5">
@@ -210,7 +208,7 @@ function Acessos({ entidade, podeConceder }: { entidade: Entidade; podeConceder:
 
   return (
     <Card>
-      <SectionHead sub="No ERP, cada pessoa vê só as entidades liberadas para ela. O administrador vê todas.">
+      <SectionHead sub="Usuarios permitidos ao ERP de Entidades, Admnistrador ve todas">
         <span className="inline-flex items-center gap-2"><KeyRound size={16} /> Quem acessa o financeiro</span>
       </SectionHead>
       {acessos.isLoading && <Loading o="os acessos" />}

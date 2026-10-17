@@ -1,14 +1,15 @@
-import { useMemo, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { Wallet, TrendingUp, TrendingDown, Scale, ArrowRight, ArrowDownCircle, ArrowUpCircle, FileText, ScrollText, Lock, Building2, Settings2, HardHat } from 'lucide-react'
 import { useErpDashboard } from '../hooks/useErpDashboard'
 import { KpiCard } from '../components/shared/KpiCard'
 import { DivergenciasErpButton } from '../components/DivergenciasErpButton'
-import { FluxoCaixaChart } from '../components/charts/FluxoCaixaChart'
+import { FluxoCaixaPainel } from '../components/charts/FluxoCaixaPainel'
+import { periodoDoAtalho } from '../components/charts/fluxo'
 import { AgingChart } from '../components/charts/AgingChart'
 import { formatBRL, apiDecimalToCents } from '@/utils/money'
 import { mesToBR } from '@/utils/dates'
-import type { AgingFaixa } from '../types'
+import type { AgingFaixa, PeriodoFluxo } from '../types'
 
 const sumCents = (faixas: AgingFaixa[]) => faixas.reduce((acc, f) => acc + apiDecimalToCents(f.total), 0)
 
@@ -19,7 +20,8 @@ const sumCents = (faixas: AgingFaixa[]) => faixas.reduce((acc, f) => acc + apiDe
  * e este hub se atualiza sozinho (sem refresh manual).
  */
 export default function ErpDashboardPage() {
-  const { data, isLoading, isError, error } = useErpDashboard()
+  const [periodo, setPeriodo] = useState<PeriodoFluxo>(() => periodoDoAtalho('12m'))
+  const { data, isLoading, isError, error, isPlaceholderData } = useErpDashboard(undefined, periodo)
 
   // Tem o módulo ERP mas não a permissão `erp.relatorio.view` → 403 no hub.
   // Em vez do banner de erro cru, degrada amigavelmente: os atalhos de
@@ -165,26 +167,27 @@ export default function ErpDashboardPage() {
         />
       </div>
 
-      {/* Gráficos */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <ChartCard title="Fluxo de caixa mensal">
-          {isLoading ? <ChartPlaceholder /> : data && data.fluxoDeCaixaMensal.length > 0
-            ? <FluxoCaixaChart data={data.fluxoDeCaixaMensal} />
-            : <ChartEmpty />}
-        </ChartCard>
+      {/* Gráficos — o fluxo na largura toda; os dois agings, compactos, lado a lado */}
+      <FluxoCaixaPainel
+        data={data?.fluxoDeCaixaMensal}
+        periodo={data?.fluxoPeriodo ?? periodo}
+        onPeriodo={setPeriodo}
+        carregando={isLoading}
+        atualizando={isPlaceholderData}
+      />
 
-        <div className="grid grid-cols-1 gap-4">
-          <ChartCard title="Aging — contas a receber">
-            {isLoading ? <ChartPlaceholder height={220} /> : data && data.agingContasAReceber.length > 0
-              ? <AgingChart data={data.agingContasAReceber} color="#16a34a" />
-              : <ChartEmpty />}
-          </ChartCard>
-          <ChartCard title="Aging — contas a pagar">
-            {isLoading ? <ChartPlaceholder height={220} /> : data && data.agingContasAPagar.length > 0
-              ? <AgingChart data={data.agingContasAPagar} color="#dc2626" />
-              : <ChartEmpty />}
-          </ChartCard>
-        </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+        {isLoading || !data ? (
+          <>
+            <div className="rounded-xl animate-pulse" style={{ height: 150, background: '#f1f5f9' }} />
+            <div className="rounded-xl animate-pulse" style={{ height: 150, background: '#f1f5f9' }} />
+          </>
+        ) : (
+          <>
+            <AgingChart titulo="A receber — por vencimento" data={data.agingContasAReceber} to="/app/erp/contas-a-receber" cor="#16a34a" />
+            <AgingChart titulo="A pagar — por vencimento" data={data.agingContasAPagar} to="/app/erp/contas-a-pagar" cor="#dc2626" />
+          </>
+        )}
       </div>
         </>
       )}
@@ -222,27 +225,3 @@ function WorkspaceLinkCard({ to, label, description, icon, accentBg, accentColor
   )
 }
 
-function ChartCard({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <div className="rounded-xl p-4" style={{ border: '1.5px solid #e2e8f0', background: '#FFFFFF' }}>
-      <h2 className="text-sm font-semibold mb-3" style={{ fontFamily: 'var(--font-heading)', color: 'var(--color-text)' }}>
-        {title}
-      </h2>
-      {children}
-    </div>
-  )
-}
-
-function ChartPlaceholder({ height = 280 }: { height?: number }) {
-  return (
-    <div className="rounded-lg animate-pulse" style={{ height, background: '#f1f5f9' }} />
-  )
-}
-
-function ChartEmpty() {
-  return (
-    <div className="flex items-center justify-center" style={{ height: 160, color: 'var(--color-text-muted)', fontSize: '0.85rem', fontFamily: 'var(--font-body)' }}>
-      Sem dados no período.
-    </div>
-  )
-}

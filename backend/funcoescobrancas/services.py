@@ -94,6 +94,64 @@ class CobrancaRejeitada(CobrancaBloqueada):
         super().__init__(mensagem, contexto={'payload': payload, 'status_code': status_code})
 
 
+class EntidadeSemContaAsaas(CobrancaBloqueada):
+    """D293: com mais de uma entidade, o boleto de quem não é a matriz só sai
+    pela conta Asaas **dela** — a do ambiente imprimiria o CNPJ errado."""
+    code = 'entidade_sem_conta_asaas'
+
+
+# ─── Qual conta do Asaas (D293) ──────────────────────────────────────────────
+#
+# A conta do ambiente (`ASAAS_API_KEY`) é a da matriz. Cada entidade pode ter a
+# sua (`moduloerp.IntegracaoAsaas`, cadastrada em ERP › Configurações). O
+# boleto guarda em qual nasceu (`Boleto.conta_asaas`) para o cancelamento e a
+# conferência irem à mesma conta — o id do payment só existe lá.
+
+CONTA_DO_AMBIENTE = ''
+CONTA_DA_ENTIDADE = 'entidade'
+
+
+def _cadastro_asaas(tenant_id, entidade_id):
+    from moduloerp.models import IntegracaoAsaas  # import tardio: evita ciclo de apps
+
+    cadastro = IntegracaoAsaas.objects.filter(tenant_id=tenant_id, entidade_id=entidade_id).first()
+    return cadastro if cadastro is not None and cadastro.api_key else None
+
+
+def conta_asaas_da_entidade(tenant_id, entidade):
+    """(cliente, conta) para emitir no nome de `entidade`.
+
+    A conta própria, se ela cadastrou; senão a do ambiente — que só vale para a
+    matriz, ou para quem tem uma entidade só. A outra entidade do grupo sem
+    conta própria é recusada: o boleto sairia no CNPJ da matriz.
+    """
+    from entidades.regras import matriz, modo_simples
+
+    cadastro = _cadastro_asaas(tenant_id, entidade.pk)
+    if cadastro is not None:
+        return AsaasClient(api_key=cadastro.api_key), CONTA_DA_ENTIDADE
+    if modo_simples(tenant_id) or entidade.pk == matriz(tenant_id).pk:
+        return AsaasClient(), CONTA_DO_AMBIENTE
+    raise EntidadeSemContaAsaas(
+        f'{entidade} não tem conta própria no Asaas. Pela conta da matriz o boleto sairia com o '
+        f'CNPJ da matriz, e não com o de {entidade}. Cadastre a chave da conta Asaas de '
+        f'{entidade} em ERP › Configurações, ou emita pelo banco (CNAB) da entidade.',
+        contexto={'entidade_id': entidade.pk},
+    )
+
+
+def cliente_asaas_do_boleto(boleto):
+    """O cliente da conta em que o boleto nasceu."""
+    if boleto.conta_asaas == CONTA_DA_ENTIDADE:
+        cadastro = _cadastro_asaas(boleto.tenant_id, boleto.entidade_id)
+        if cadastro is None:
+            raise AsaasAPIError(
+                'A conta da API desta entidade foi removida. Não é possível consultar o boleto.'
+            )
+        return AsaasClient(api_key=cadastro.api_key)
+    return AsaasClient()
+
+
 # Traduz o status cru de um payment do Asaas para o `StatusBoleto` local.
 # Usado pela verificação ao vivo (a UI abre o documento e confere o gateway).
 def _mapear_status_boleto(asaas_status):
@@ -130,7 +188,7 @@ def _normalizar_nome(nome):
     return ' '.join(texto.upper().split())
 
 
-def validar_cliente_para_cobranca(cliente):
+def validar_cliente_para_cobranca(cliente, client=None):
     """
     Pré-checagem **não destrutiva** (só leituras) executada ANTES de emitir a
     cobrança — é o "método de o usuário saber o que está acontecendo": a view
@@ -160,7 +218,8 @@ def validar_cliente_para_cobranca(cliente):
             'sem ele o boleto não pode ser vinculado ao cliente correto.'
         )
 
-    existente = AsaasClient().buscar_customer_por_cpf_cnpj(documento)
+    # O customer existe por conta: na conta da entidade é outro cadastro (D293).
+    existente = (client or AsaasClient()).buscar_customer_por_cpf_cnpj(documento)
     if existente:
         nome_gateway = existente.get('name', '') or ''
         if _normalizar_nome(nome_gateway) != _normalizar_nome(nome):
@@ -266,7 +325,7 @@ def analisar_divergencias_asaas(clientes):
     }
 
 
-def garantir_customer_asaas(cliente):
+def garantir_customer_asaas(cliente, client=None):
     """
     Retorna o `asaas_customer_id` do cliente, criando-o no Asaas (e
     espelhando em `Cliente.id_cliente_gateway`) se ainda não existir.
@@ -277,12 +336,12 @@ def garantir_customer_asaas(cliente):
     um cadastro alheio (ver docs/pendencias.md). Assim, o vínculo se autocorrige
     e a trava de nome/CPF vale também para o caminho assíncrono da task.
     """
-    diagnostico = validar_cliente_para_cobranca(cliente)  # levanta CobrancaBloqueada se divergir
+    diagnostico = validar_cliente_para_cobranca(cliente, client)  # levanta CobrancaBloqueada se divergir
 
     if diagnostico['situacao'] == 'reusar':
         customer_id = diagnostico['customer_id']
     else:
-        criado = AsaasClient().criar_customer(
+        criado = (client or AsaasClient()).criar_customer(
             nome=cliente.nome_completo,
             cpf_cnpj=_documento_valido(cliente.cpf_cnpj),
             email=cliente.email,
@@ -290,6 +349,10 @@ def garantir_customer_asaas(cliente):
         )
         customer_id = criado['id']
 
+    # O espelho no cadastro é o da conta do ambiente; o da conta de uma
+    # entidade é outro id, e gravá-lo ali trocaria o vínculo da matriz.
+    if client is not None:
+        return customer_id
     if cliente.id_cliente_gateway != customer_id:
         cliente.id_cliente_gateway = customer_id
         cliente.save(update_fields=['id_cliente_gateway'])
@@ -390,11 +453,15 @@ def gerar_cobranca_asaas(conta_receber, vencimento_pedido=None):
     anterior = boleto_ativo(conta_receber)
     if anterior and anterior.data_vencimento == vencimento and anterior.valor == valor:
         return anterior
+    # A conta do Asaas do dono do título (D293) — antes de tocar no gateway: a
+    # entidade sem conta própria é recusada sem cancelar o boleto anterior.
+    client, conta_asaas = conta_asaas_da_entidade(conta_receber.tenant_id, conta_receber.entidade)
     try:
         if anterior:
             cancelar_cobranca_asaas(anterior)
-        customer_id = garantir_customer_asaas(conta_receber.cliente)
-        client = AsaasClient()
+        customer_id = garantir_customer_asaas(
+            conta_receber.cliente, client if conta_asaas == CONTA_DA_ENTIDADE else None,
+        )
         pagamento = client.criar_payment(
             customer_id=customer_id,
             valor=valor,
@@ -420,6 +487,7 @@ def gerar_cobranca_asaas(conta_receber, vencimento_pedido=None):
         valor_juros=plano['juros'],
         data_vencimento=vencimento,
         gateway_id=pagamento.get('id', ''),
+        conta_asaas=conta_asaas,
         url_pdf=pagamento.get('bankSlipUrl') or pagamento.get('invoiceUrl') or '',
         linha_digitavel=linha.get('linha_digitavel', ''),
         codigo_barras=linha.get('codigo_barras', ''),
@@ -478,7 +546,7 @@ def cancelar_cobranca_asaas(boleto):
         return boleto
     resposta = {}
     if boleto.gateway_id:
-        resposta = AsaasClient().cancelar_payment(boleto.gateway_id)
+        resposta = cliente_asaas_do_boleto(boleto).cancelar_payment(boleto.gateway_id)
     boleto.status = Boleto.StatusBoleto.CANCELADO
     boleto.data_cancelamento = timezone.now()
     dados = boleto.dados_retorno_api if isinstance(boleto.dados_retorno_api, dict) else {}
@@ -507,8 +575,8 @@ def verificar_cobranca_asaas(boleto):
             'linha_digitavel': boleto.linha_digitavel or '',
             'mensagem': 'Boleto sem vínculo no gateway — exibindo a versão local.',
         }
-    client = AsaasClient()
     try:
+        client = cliente_asaas_do_boleto(boleto)
         pagamento = client.buscar_payment(boleto.gateway_id)
     except AsaasAPIError as exc:
         logger.warning("Asaas indisponível ao verificar boleto #%s: %s", boleto.boleto_id, exc)

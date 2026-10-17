@@ -997,6 +997,10 @@ class Boleto(TenantScopedModel):
 
     # Dados específicos do boleto/gateway
     gateway_id = models.CharField(max_length=512, null=True, blank=True, db_index=True, verbose_name=_("ID no Gateway de Pagamento"))
+    # Em que conta do Asaas a cobrança nasceu (D293): `''` = a conta do
+    # ambiente, que é a da matriz; `entidade` = a conta própria da entidade do
+    # boleto (`IntegracaoAsaas`). Cancelar e conferir vão à mesma conta.
+    conta_asaas = models.CharField(_("Conta do Asaas"), max_length=10, blank=True, default='')
     url_pdf = models.URLField(max_length=512, null=True, blank=True, verbose_name=_("Link do Boleto (PDF)"))
     linha_digitavel = models.CharField(max_length=100, null=True, blank=True, verbose_name=_("Linha Digitável"))
     # Payloads crus do gateway: erro de emissão (códigos+descrições do Asaas),
@@ -1258,6 +1262,41 @@ class IntegracaoFiscal(TenantScopedModel):
         from nucleo.cifra import cifrar
         valor = (valor or "").strip()
         self.api_key_cifrada = cifrar(valor)
+        self.api_key_final = valor[-4:] if valor else ""
+
+
+class IntegracaoAsaas(TenantScopedModel):
+    """A conta da entidade no Asaas (D293) — o beneficiário do boleto.
+
+    A conta do ambiente (`ASAAS_API_KEY`) é a da **matriz**. Num grupo com mais
+    de uma entidade, o boleto de outra entidade só sai pelo Asaas se ela tiver a
+    conta própria cadastrada aqui — senão sairia com o CNPJ da conta do
+    ambiente, que não é o dono do título (docs/modulos/entidades.md §5). Mesmo
+    molde da `IntegracaoFiscal`: uma por entidade, a chave **cifrada**
+    (`nucleo.cifra`) e nunca devolvida à tela, só os quatro últimos caracteres.
+    """
+    entidade = _entidade_fk()
+    api_key_cifrada = models.TextField(_("Chave da API (cifrada)"), blank=True)
+    api_key_final = models.CharField(_("Final da chave"), max_length=8, blank=True)
+    atualizado_em = models.DateTimeField(auto_now=True)
+    atualizado_por = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+
+    class Meta:
+        verbose_name = _("Integração de cobrança (Asaas)")
+        verbose_name_plural = _("Integrações de cobrança (Asaas)")
+        constraints = [
+            models.UniqueConstraint(fields=['tenant', 'entidade'], name='integracao_asaas_por_entidade'),
+        ]
+
+    @property
+    def api_key(self) -> str:
+        from nucleo.cifra import decifrar
+        return decifrar(self.api_key_cifrada)
+
+    def definir_api_key(self, valor: str) -> None:
+        from nucleo.cifra import cifrar
+        valor = (valor or "").strip()
+        self.api_key_cifrada = cifrar(valor) if valor else ""
         self.api_key_final = valor[-4:] if valor else ""
 
 

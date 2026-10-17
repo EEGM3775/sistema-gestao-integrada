@@ -8,4 +8,6 @@ export const calendarKeys = {
     feed: (range: CalendarRange) => ['calendar', 'events', 'feed', range] as const,
     detail: (id: number | string) => ['calendar', 'events', 'detail', String(id)] as const,
   },
+  /** Agendas (Fatia D). */
+  agendas: ['calendar', 'agendas'] as const,
 }

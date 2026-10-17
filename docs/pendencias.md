@@ -13,7 +13,7 @@
 
 | O que                                | Para onde                                                  | Por quê                                                                  |
 | ------------------------------------ | ---------------------------------------------------------- | ------------------------------------------------------------------------- |
-| 145 achados corrigidos               | [historico-correcoes.md](historico-correcoes.md)            | Corrigido não é pendência — é histórico                             |
+| 148 achados corrigidos               | [historico-correcoes.md](historico-correcoes.md)            | Corrigido não é pendência — é histórico                             |
 | D29 · D30 · D32 (Maps)             | [modulos/modulomaps.md](modulos/modulomaps.md)              | Desvio consciente da planta, com gatilho de reabertura                    |
 | D35 · D36 · D37 · D55 (Prancheta) | [modulos/moduloprancheta.md](modulos/moduloprancheta.md)    | Limite declarado do desenho, não defeito                                 |
 | D74 (antivírus)                     | [modulos/funcoesimpexp.md](modulos/funcoesimpexp.md)        | Decisão do dono, adiada com método definido                             |
@@ -55,16 +55,6 @@ contêiner que faltava na frota geral — foi fechado em 07/08/2026, também no 
 A1 - Verificação sobre uso de hardware
 Uma observação: o ERP no servidor roda com o comando padrão da imagem, `gunicorn` com  **1 processo síncrono** , e não com os 2 processos × 4 threads do `base.yml`. Com mais gente usando ao mesmo tempo, isso pode voltar a deixar o sistema lento.
 
-### D293 — com mais de uma entidade, o boleto pelo Asaas sai na conta única do tenant · 🟠 aberto 14/10/2026
-
-As entidades ([modulos/entidades.md](modulos/entidades.md) §5) levaram NFS-e (NFE.io) e carteira CNAB para
-a entidade dona do título, mas a conta do **Asaas** continua uma por tenant (`funcoescobrancas`). Numa conta
-com matriz e SPE, o boleto de um lote da SPE pelo Asaas sai com o beneficiário da conta do Asaas — o CNPJ
-errado. Hoje o sistema só exige o CPF/CNPJ da entidade antes de emitir; não impede o Asaas.
-
-**Caminho:** subconta do Asaas por entidade (ou a chave da conta Asaas na entidade, como a NFE.io), e a
-emissão pelo Asaas recusar título de entidade sem conta própria quando o tenant tem mais de uma.
-
 ### D294 — conceder acesso a uma entidade "muda quem pode", mas ficou na classe B · 🟡 aberto 14/10/2026
 
 `cadastro.entidade.conceder` dá a alguém o financeiro de outro CNPJ — é da família de `plataforma.papel.gerir`,
@@ -94,22 +84,6 @@ por `X-SGI-CSRF`; step-up por `auth_time`/`amr`.
 
 **Caminho:** guardar hash do user-agent (e IP de criação) na `Sessao` — migration no IAM — e derrubar a sessão
 quando o user-agent mudar; tela de sessões ativas; unificar os cabeçalhos.
-
-### F2 — Selects carregam tabelas inteiras · 🟠 parcial 25/07/2026
-
-Formulários carregam todos os clientes/fornecedores/empreendimentos para montar selects.
-**Correção:** select assíncrono com busca server-side paginada (o backend precisa de
-`SearchFilter` + paginação nesses endpoints).
-**Andamento (25/07):** o SCM já resolveu dentro dele (`AsyncEntitySelect`) e a **listagem de
-clientes** deixou de ser client-side — virou a carteira paginada com rolagem infinita
-([frontend.md §5.8](frontend.md)). Efeito colateral tratado: como `/api/clientes/` passou a ser
-paginado, `useClienteOptions` ([useEntityOptions.ts](../frontend/src/modules/erp/hooks/useEntityOptions.ts))
-truncaria a lista em 50 **em silêncio** — pediria a primeira página e o cliente nº 200 sumiria do
-formulário do ERP. Mitigado com `page_size=300` e comentário no código. **Andamento (30/09):** as
-grades do ERP deixaram de depender dessas opções (os nomes vêm da API — [D232](historico-correcoes.md)),
-o diálogo de NFS-e busca a conta no servidor, e os formulários de conta mantêm na lista a pessoa da
-conta aberta. **Falta** o select com busca server-side de verdade nos formulários (clientes,
-fornecedores, empreendimentos).
 
 ### D39 — Os planos vendem 6 formatos geo, e o motor `gdal` não tem adaptador · 🟠 aberto
 
@@ -161,23 +135,6 @@ teto e snap) — este é o terceiro, e é o que mais aperta.
 Enquanto isso não chega, o número está declarado e o acervo típico não sofre: a prancha de disciplina
 comum (`UFRB…-IE`, 35.401 traços) sai com 3,4 MB.
 
-### D17 — Duas trilhas de auditoria sem leitura unificada · 🟠 aberto
-
-Criado junto do **D11**. A plataforma passou a ter **duas** trilhas append-only e independentes:
-`nucleo.AuditLog` (backend — escritas de RH, leitura de PII, baixa financeira, NF, LGPD) e
-`identity.EventoSeguranca` (IAM — reset de senha, troca de e-mail, escalada de privilégio,
-desativação). A separação é consequência de a IAM ser autocontida (mesma razão de ela ter ganhado
-SMTP próprio), mas **o auditor não tem onde ver as duas juntas**: `GET /api/auditoria/` só enxerga a
-do backend, e a da IAM hoje só é legível por shell/admin.
-
-Isso importa no incidente que motivou o D11: reconstituir "admin comprometido" exige cruzar o
-`reset_assistido` (IAM) com o que a conta fez depois (backend), hoje manualmente e sem correlação por
-`request_id`.
-**Correção sugerida:** endpoint de leitura na IAM (`GET /iam/eventos-seguranca/`, gateado por
-`plataforma.auditoria.view` — permissão que **já existe** no catálogo) + uma visão no frontend que
-consulte as duas fontes, ou envio dos eventos da IAM ao `AuditLog` por JWT de serviço (Fase 10.8) com
-outbox local para não perder evento se o backend estiver fora.
-
 ## 🟠 Altas
 
 ### D189 — a ocorrência de segurança não entra na trilha de LGPD, e entrar do jeito de hoje apagaria prova legal · 🟠 aberto 20/09/2026
@@ -205,84 +162,6 @@ dado sensível com retenção legal obrigatória é do dono.
 **Enquanto isso, o que vale:** a ocorrência **não** é exportada nem esquecida, e este parágrafo é o
 registro de que a ausência é conhecida. O mascaramento por permissão (`pdca.ocorrencia.dado_medico`)
 funciona e está testado — o que falta é o outro lado, o do titular.
-
----
-
-### D195 — dois roteiros de navegador do PDCA dirigem a tela que foi apagada · 🟠 parcial 24/09/2026
-
-Achado ao verificar a fatia da semana, rodando os roteiros vizinhos para conferir que nada quebrou.
-Cinco dos sete `pdca*_browser_test.py` falhavam com `TimeoutError` esperando um botão que não existe
-mais; **dois deles fecharam com a F.4 em 23/09/2026 e o terceiro com a F.5 em 24/09/2026**, e
-restam dois — os dois que já têm tela nova cobrindo o mesmo assunto.
-
-Não é regressão: em 20/09/2026 o frontend do módulo foi **zerado e redesenhado do eixo**, e o
-endereço mudou de `/app/pdca/obra/{id}/<assunto>` para `/app/pdca/o/{id}/<posto>`. Os roteiros
-continuam pedindo o antigo, então abrem uma página que redireciona e ficam esperando um elemento que
-nunca chega. O que cada um cobria continua valendo como **régua**; o que envelheceu foi o caminho até
-a tela.
-
-| Roteiro                                   | O que ele prova                                                     | Quando volta a ter tela                                                                                                                                                                                                     |
-| ----------------------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ~~`pdca3_formulario_browser_test.py`~~ | Os seis achados do formulário de contrato (D132)                   | ✅ 23/09 —`pdca_medicao_browser_test.py` §11b, com a pessoa certa (só a engenharia monta contrato)                                                                                                                     |
-| ~~`pdca3_grade_browser_test.py`~~      | A grade de medição: prévia somente-leitura, memória de cálculo | ✅ 23/09 —`pdca_medicao_browser_test.py` §7, §10 e §11c; o autosave e a trava do saldo voltaram com ele ([D202](historico-correcoes.md))                                                                               |
-| `pdca5_quadro_browser_test.py`          | O quadro da semana, o encerramento e o PPC                          | **já tem** — `pdca_semana_campo_browser_test.py` cobre o posto novo                                                                                                                                               |
-| `pdca6_ritmo_browser_test.py`           | A linha de balanço, o ritmo e o gargalo                            | **já tem** — a vista *Ritmo* do posto `PLANO` (F.3)                                                                                                                                                             |
-| ~~`pdca7_ficha_browser_test.py`~~      | Responder a ficha uma pergunta por vez, e a fila do laço           | ✅ 24/09 —`pdca_qualidade_seguranca_browser_test.py`, que porta a régua dele (critério junto da pergunta, desvio sem requisição, peso no item, F5, conclusão com o peso, "executada" que não encerra, 502 forjado) |
-
-**Os dois de medição saíram do repositório em 23/09/2026**, com a F.4, e o da ficha em 24/09/2026,
-com a F.5: cada sucessor nomeia o roteiro que substitui no cabeçalho e carrega a régua dele.
-Restam duas linhas.
-
-**Por que fica aberto em vez de ser consertado agora.** Dois dos três (`pdca5_quadro`, `pdca6_ritmo`)
-são reescrita sobre telas que já existem, e é trabalho de portar assertiva por assertiva — não de
-trocar a URL, porque a física mudou (o quadro deixou de ser uma página e virou um posto com esteira e
-julgamento no cartão).
-
-**O risco enquanto isso**: a régua que cada um guardava fica sem quem a cobre no navegador. O backend
-correspondente continua coberto — `pdca5_programacao_test.py`, `pdca6_linha_de_balanco_test.py` e
-`pdca7_verificacao_test.py` passam —, então o que está descoberto é a **tela**, e só a das fatias que
-ainda não foram reconstruídas.
-
-**E a F.4 mostrou por que isto não é burocracia:** ao portar a régua do `pdca3_grade`, apareceu que a
-grade nova tinha **reconstruído o D137** — o botão de salvar que aquela correção removeu, e com ele o
-caminho de aprovar os números antigos em silêncio ([D202](historico-correcoes.md)). O roteiro morto
-era o único lugar onde aquela lição ainda estava escrita como cobrança.
-
-**Gatilho de fechamento:** os dois restantes podem ser apagados ao portar a última assertiva que
-eles têm e os novos não. O `pdca6_ritmo` ainda não tem sucessor escrito: o posto `PLANO` não tem
-roteiro de navegador próprio. *(O D223 os tinha listado como troca de URL — não é; 30/09/2026.)*
-
----
-
-### D190 — o teste que fia os tetos é cego em 47 dos 74, e o motivo é o cache de inteiros do CPython · 🟠 aberto 20/09/2026
-
-O `CLAUDE.md` diz que quem cobra a régua "todo teto vive em `payment/planos.py`" é
-[`testes/backend/nucleo/test_tetos_no_payment.py`](../testes/backend/nucleo/test_tetos_no_payment.py). Ele prende cada
-constante ao consumidor com `assertIs(services.X, planos.X)` — 29 ocorrências.
-
-**`assertIs` compara identidade de objeto, e o CPython interna todo inteiro de −5 a 256.** Para qualquer
-teto nessa faixa a asserção passa **mesmo que o módulo de engenharia tenha redeclarado o literal** em
-vez de importar de `planos.py`, que é precisamente a regressão que a regra existe para impedir.
-Verificado no Python 3.12 do projeto, com dois módulos independentes:
-
-| valor | `a is b` | o`assertIs` prova algo? |
-| ----- | ---------- | ------------------------- |
-| 150   | `True`   | não                      |
-| 500   | `False`  | sim                       |
-| 1000  | `False`  | sim                       |
-
-Contando as constantes escalares de `planos.py`: **27 são fiscalizadas de verdade** (valor > 256) e
-**47 estão na faixa cega** — entre elas `PDCA_TETO_ITENS_POR_MODELO_VERIFICACAO` (150),
-`PDCA_TETO_MODELOS_POR_TENANT` (200), `PDCA_TETO_ACOES_POR_NC` (10), `PDCA_PROFUNDIDADE_MAXIMA_WBS`
-(12) e `ORCAMENTO_PROFUNDIDADE_MAXIMA_COMPOSICAO` (12).
-
-**Nenhum teto está errado hoje** — todos os módulos importam de `payment.planos` como manda a regra.
-É o guarda-corpo que não pegaria a regressão futura, e por isso é 🟠 e não 🔴.
-
-**O caminho já existe e está exercido**: a PDCA.8 declarou seus três tetos (todos ≤ 256) e escreveu a
-prova de procedência por AST em `TetosDaSsmaTests` — o nome tem de chegar ao `services` por
-`ImportFrom` de `payment.planos` e não pode existir como atribuição no módulo. **Falta estender isso
-aos outros 44**, de preferência como uma varredura única que dispense o par escrito à mão.
 
 ---
 
@@ -665,6 +544,17 @@ sobre um acervo que não é o real, e o Essencial em 150 mil agora fica **abaixo
 Decisão do dono, com o número novo na mão. Não trava nada hoje.
 
 ## 🟡 Médias
+
+### D300 — itens da EMBASA "incompletos" no Orçamento (M080401525 e outros) · 🟡 aberto 16/10/2026
+
+Item 79 do dono: *"CONEXAO TIPO TE C/ DERIVACAO C/ PERFURADOR (COLAR DE TOMADA) PEAD"* e outros ficaram
+incompletos. **Apurado:** no PDF de insumos carregado (`1-tabela-de-precos-2026-insumos-junho-r2`, pág. 394)
+a descrição **termina em "PEAD"** — renderizada e extraída caractere a caractere, sem texto oculto, anotação
+ou segunda linha; 29 códigos (M080401501…613) têm a mesma descrição e preços diferentes, e ~365 de 6.992 por
+tabela de serviços repetem descrição (cortes como "…ELEVADO COM", "…CARTÃO DE", "APACITOR"). A EMBASA só
+publica PDF nessa página. **Em aberto:** o dono viu a lista completa — falta saber qual documento (link) e
+se "incompleto" é a descrição ou a linha sem unidade/preço no orçamento. A consulta ao gmaxis (onde está o
+orçamento) não foi feita: leitura de produção depende de autorização.
 
 ### D258 — os contêineres de aplicação rodam como root · 🟡 aberto 03/10/2026
 

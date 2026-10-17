@@ -368,7 +368,7 @@ function Entrega({
             variant="primary"
             disabled={publicar.isPending}
             onClick={() => publicar.mutate(revisao.revisao_id, {
-              onSuccess: () => say(`${revisao.revisao} publicada — é ela que o campo executa agora.`),
+              onSuccess: () => say(`${revisao.revisao} publicada. O campo passa a executar esta revisão.`),
               onError: () => say('Não foi possível publicar esta revisão.'),
             })}
           >

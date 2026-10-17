@@ -171,13 +171,13 @@ export function MapaDaEmpresa({ say, ir, temMaps, foco = null, filtroInicial }: 
     if (!modo?.ponto) return
     if (modo.tipo === 'posicionar') {
       salvar.mutate({ local_id: modo.local.local_id, ponto: modo.ponto }, {
-        onSuccess: () => { say(`Pin de ${modo.local.nome} salvo — precisão exata (posicionado à mão).`); setModo(null) },
-        onError: (e) => say(motivo(e, 'Não deu para salvar o pin.')),
+        onSuccess: () => { say(`Pin de ${modo.local.nome} salvo (posição manual).`); setModo(null) },
+        onError: (e) => say(motivo(e, 'Não foi possível salvar o pin.')),
       })
     } else {
       salvar.mutate({ nome: modo.nome.trim(), tipo: 'avulso', ponto: modo.ponto }, {
         onSuccess: (novo) => { say(`Ponto "${novo.nome}" criado.`); setModo(null); setSelecionado(novo.local_id) },
-        onError: (e) => say(motivo(e, 'Não deu para criar o ponto.')),
+        onError: (e) => say(motivo(e, 'Não foi possível criar o ponto.')),
       })
     }
   }
@@ -363,7 +363,7 @@ function PainelDeLocais({
   const rodarCascata = (local: Local, forcar = false) =>
     geocodificar.mutate({ id: local.local_id, forcar }, {
       onSuccess: (r) => say(r.geocodificado ? `Localizado: ${r.local.precisao_rotulo}` : r.motivo),
-      onError: (e) => say(motivo(e, 'Não deu para localizar agora — tente de novo em instantes.')),
+      onError: (e) => say(motivo(e, 'Não foi possível localizar agora. Tente de novo.')),
     })
 
   return (
@@ -463,7 +463,7 @@ function PainelDeLocais({
                           if (!window.confirm(`Excluir o ponto "${local.nome}"?`)) return
                           excluir.mutate(local.local_id, {
                             onSuccess: () => say(`Ponto "${local.nome}" excluído.`),
-                            onError: (e) => say(motivo(e, 'Não deu para excluir.')),
+                            onError: (e) => say(motivo(e, 'Não foi possível excluir.')),
                           })
                         }}>
                         <Trash2 size={13} />

@@ -245,6 +245,33 @@ class S1TenantIsolationAPIViewTests(APITestCase):
         total = sum(float(f["total"]) for f in resp.json()["agingContasAReceber"])
         self.assertEqual(total, 1000.0)
 
+    def test_dashboard_fluxo_respeita_o_periodo_pedido(self):
+        from datetime import datetime
+        from django.utils import timezone as tz
+
+        conta = ContaReceber.objects.create(
+            cliente=self.cli_a, descricao="Fluxo A", valor=Decimal("300"),
+            data_vencimento=date(2026, 1, 10), tenant=self.tenant_a,
+        )
+        for dia, valor in ((datetime(2026, 1, 15, 12), "100"), (datetime(2026, 3, 15, 12), "200")):
+            Transacao.objects.create(
+                tenant=self.tenant_a, conta_receber=conta, descricao="Baixa", valor=Decimal(valor),
+                tipo="ENTRADA", meio_pagamento="PIX", data_transacao=tz.make_aware(dia),
+            )
+        self._auth_user_a()
+
+        resp = self.client.get("/api/erp/dashboard/", {"fluxo_inicio": "2026-02", "fluxo_fim": "2026-03"})
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["fluxoPeriodo"], {"inicio": "2026-02", "fim": "2026-03"})
+        self.assertEqual([float(m["receitas"]) for m in body["fluxoDeCaixaMensal"]], [200.0])
+
+        # Mês inválido e período invertido são recusados com mensagem.
+        self.assertEqual(self.client.get("/api/erp/dashboard/", {"fluxo_inicio": "2026-13"}).status_code, 400)
+        self.assertEqual(
+            self.client.get("/api/erp/dashboard/", {"fluxo_inicio": "2026-04", "fluxo_fim": "2026-03"}).status_code, 400,
+        )
+
     def test_atualizar_status_nf_cross_tenant_da_404_e_nao_grava(self):
         self._auth_user_a()
         resp = self.client.post(

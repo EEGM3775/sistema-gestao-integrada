@@ -38,8 +38,20 @@ O `GET` agrega, para o período consultado, quatro origens já no formato FullCa
 - **Resposta (list):** array de eventos FullCalendar; só os `type === 'local'` trazem `id` numérico
   (edição/exclusão via CRUD do ViewSet).
 - **CRUD (`CalendarEvent`):** `GET/POST/PATCH/DELETE /api/calendar/events/{id}/`. `tenant` **e**
-  `user` são read-only, injetados no `perform_create` (o dono é sempre quem cria; o `get_queryset`
-  filtra por `user`). Escopo por tenant pelo `TenantScopedViewSetMixin` + RLS.
+  `user` são read-only, injetados no `perform_create` (o dono é sempre quem cria). O `get_queryset`
+  devolve o que a pessoa **vê** (`modulocalendar/acesso.py`): os eventos dela, os das agendas que ela vê
+  e os convites. Alterar é do dono ou de quem vê a agenda do evento; o convidado só responde (403).
+  Escopo por tenant pelo `TenantScopedViewSetMixin` + RLS.
+- **Agendas (Fatia D):** `GET/POST/PATCH/DELETE /api/calendar/calendars/` — as que a pessoa vê; mexer
+  numa existente é do dono (ou do admin da empresa).
+- **Convite (Fatia D):** `POST /api/calendar/events/{id}/responder/ {status: aceito|recusado}` — exige
+  só `calendario.evento.view`.
+- **Pessoas (Fatia D):** `GET /api/calendar/pessoas/?search=` — usuários ativos da empresa (só o nome),
+  paginado (`PAGINA_*["calendario"]`), para o seletor de convidados e membros.
+- **Busca (Fatia E):** `GET /api/calendar/events/busca/?search=` — título, descrição ou local, sem
+  acento, paginado; a série aparece uma vez (o mestre).
+- **iCalendar (Fatia E):** `GET /api/calendar/events/exportar-ics/?calendar=<id|meus>` e
+  `POST /api/calendar/events/importar-ics/` (multipart `arquivo` + `calendar`).
 
 ### Modelo `CalendarEvent`
 
@@ -146,19 +158,38 @@ executor Celery (Fase 10.9, já no compose).
 
 ### Fatia D — Compartilhamento, equipe e convidados
 
-**Backend:** modelo `Calendar` (dono, nome, cor, escopo: pessoal / equipe / tenant) e
-`CalendarEvent.calendar` (FK); `get_queryset` passa a considerar **membresia/visibilidade** em vez de
-só `user`. **Convidados:** modelo de participante (`attendee`) com **RSVP** (pendente/aceito/recusado),
-ligado ao espelho `nucleo.Usuario`. **Frontend:** seletor de calendários (mostrar/ocultar, cor por
-calendário), convidar participantes, responder convite. **Decisão de acesso:** visibilidade de
-calendário de equipe por permissão/associação; nunca cruza tenant (RLS).
+**Modelos:** `Calendar` (`owner`, `name`, `color`, `scope`: `pessoal` / `equipe` / `empresa`),
+`CalendarMember` (tabela explícita para levar `tenant_id` e entrar na RLS) e `EventAttendee` (`user`,
+`status` pendente/aceito/recusado, `responded_at`). `CalendarEvent.calendar` vazio = a agenda pessoal
+implícita do dono ("Meus eventos") — o comportamento anterior, sem migração de dado.
+
+**Acesso** (`modulocalendar/acesso.py`, um lugar para o feed, o CRUD, a recorrência e os lembretes):
+vê a agenda o dono; os membros, se é de equipe; todos, se é da empresa. **Ver a agenda é poder lançar
+nela.** Vê o evento quem é dono dele, vê a agenda dele ou foi convidado; altera o dono ou quem vê a
+agenda. O convidado de fora da agenda só responde. Nunca cruza tenant (RLS).
+
+**Convite:** convidar avisa no sino (nível *decidir*, com link `/app/calendario?evento=<id>`); tirar da
+lista e cancelar o evento avisam (quem recusou não recebe o cancelamento); responder avisa o organizador.
+Numa série, o convite e a resposta valem para a série; o override e o novo mestre de "futuras" herdam
+os convidados com as respostas, sem novo convite. **Lembrete** vai ao dono e a quem aceitou. Teto de
+convidados por evento: `CALENDAR_TETO_CONVIDADOS` (`payment/planos.py`).
+
+**Frontend:** painel de agendas ao lado do grid (mostrar/ocultar, cor, nova/editar com escopo e
+membros); a cor da agenda pinta o evento; convite pendente tracejado e recusado apagado; o evento que a
+pessoa não altera abre o `ConviteDialog` (quando, onde, quem organiza, quem vai, aceitar/recusar);
+convidados e membros escolhidos pelo `PessoasPicker` (busca no servidor pelo `SelectComBusca`).
 
 ### Fatia E — Extras (paridade fina)
 
-**Backend:** campo `location`; `SearchFilter` + paginação para busca server-side; **import/export
-iCal (`.ics`)** (endpoints de exportação por calendário e importação de arquivo). **Frontend:** busca,
-campo de local, botões de importar/exportar. Opcionais avaliados aqui: anexos, link de reunião,
-fuso horário por evento.
+**Local** (`CalendarEvent.location`) no diálogo, no convite e no `.ics`. **Busca** no servidor pela
+caixa do cabeçalho (o `SelectComBusca` sobre `events/busca/`): escolher leva o grid à data e abre o
+evento. **iCalendar** (`modulocalendar/ics.py`, sem biblioteca nova — o `dateutil` resolve fuso):
+exporta por agenda (ou "Meus eventos") em UTC, com série (`RRULE`/`EXDATE`) e exceção
+(`RECURRENCE-ID`); importa `VEVENT` com data, hora UTC, hora com `TZID` ou flutuante, `DURATION`,
+série e exceção da série do mesmo arquivo. A importação **só cria e é tudo ou nada**, como toda
+importação da plataforma: evento ilegível, UID repetido no arquivo ou UID já importado na agenda
+recusam o arquivo inteiro com a lista do porquê. Tetos: `CALENDAR_ICS_TETO_KB` e
+`CALENDAR_ICS_TETO_EVENTOS`. Ficaram fora: anexos, link de reunião e fuso por evento.
 
 ### Fatia F — Feriados por localidade (federais, estaduais e municipais) ✅ 13/07/2026
 

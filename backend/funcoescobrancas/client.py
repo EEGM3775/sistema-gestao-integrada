@@ -52,7 +52,7 @@ class AsaasClient:
             erros = corpo.get('errors') if isinstance(corpo, dict) else None
             descricao = erros[0].get('description') if erros else response.text
             raise AsaasAPIError(
-                f"Asaas respondeu {response.status_code}: {descricao}",
+                f"A API respondeu {response.status_code}: {descricao}",
                 status_code=response.status_code,
                 payload=corpo,
             )

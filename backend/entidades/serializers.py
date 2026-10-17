@@ -60,7 +60,7 @@ class EntidadeSerializer(TenantScopedUniqueSerializerMixin, serializers.ModelSer
         if matriz is not None and (matriz.externa or matriz.pk == getattr(self.instance, "pk", None)):
             raise serializers.ValidationError({"matriz": "A matriz tem de ser outra entidade do grupo."})
         if externa and papel in (Entidade.Papel.MATRIZ, Entidade.Papel.FILIAL):
-            raise serializers.ValidationError({"externa": "Matriz e filial são do grupo, nunca externas."})
+            raise serializers.ValidationError({"externa": "Matriz e filial são do grupo e não podem ser externas."})
         if documento:
             esperado = 11 if tipo == Entidade.TipoPessoa.PF else 14
             if len(documento) != esperado:

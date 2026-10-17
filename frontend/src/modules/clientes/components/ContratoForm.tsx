@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react'
 import { X } from 'lucide-react'
-import apiClient from '@/api/apiClient'
 import type {
   ContratoCliente, ContratoClienteFormData, StatusContrato,
-  Empreendimento, ClienteEmpreendimento,
+  ClienteEmpreendimento,
 } from '@/types'
+import { SeletorDeEmpreendimento } from '@/components/malha'
 import { FieldError, FormErrorBanner, parseApiErrors, type FieldErrors } from '@/utils/formErrors'
 import { validateISO_Vigencia, minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
 
@@ -43,13 +43,8 @@ const labelCls: React.CSSProperties = {
 
 const ContratoForm: React.FC<Props> = ({ open, clienteId, aquisicoes, onClose, onSave, initial }) => {
   const [form, setForm]           = useState<ContratoClienteFormData>(EMPTY)
-  const [empreendimentos, setEmp] = useState<Empreendimento[]>([])
   const [saving, setSaving]       = useState(false)
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
-
-  useEffect(() => {
-    apiClient.get('/empreendimentos/').then(r => setEmp(r.data.results ?? r.data)).catch(() => {})
-  }, [])
 
   useEffect(() => {
     if (initial) {
@@ -128,13 +123,14 @@ const ContratoForm: React.FC<Props> = ({ open, clienteId, aquisicoes, onClose, o
 
           <div>
             <label style={labelCls}>Empreendimento *</label>
-            <select required style={inputCls} value={form.empreendimento}
-              onChange={e => set('empreendimento', Number(e.target.value))}>
-              <option value="">Selecione…</option>
-              {empreendimentos.map(emp => (
-                <option key={emp.empreendimento_id} value={emp.empreendimento_id}>{emp.empreendimento}</option>
-              ))}
-            </select>
+            {/* Busca no servidor (F2): a lista inteira de empreendimentos não vem mais. */}
+            <SeletorDeEmpreendimento
+              valor={form.empreendimento ? Number(form.empreendimento) : null}
+              rotuloAtual={initial && initial.empreendimento === form.empreendimento ? initial.empreendimento_nome : undefined}
+              aoMudar={id => set('empreendimento', id ?? '')}
+              aria-label="Empreendimento"
+              style={inputCls}
+            />
             <FieldError msg={fieldErrors.empreendimento} />
           </div>
 

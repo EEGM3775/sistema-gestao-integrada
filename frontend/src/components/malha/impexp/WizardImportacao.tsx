@@ -411,8 +411,8 @@ function PassoDePara({ pedido, recurso, ocupado, onMapear }: {
       }}>
         <AlertTriangle size={15} style={{ flex: 'none', marginTop: 2, color: 'var(--ink-3)' }} />
         <span>
-          Não reconheci as colunas deste arquivo — e prefiro perguntar a adivinhar.
-          Diga qual coluna é cada campo.
+          Não foi possível reconhecer as colunas deste arquivo.
+          Indique a coluna de cada campo.
         </span>
       </div>
 

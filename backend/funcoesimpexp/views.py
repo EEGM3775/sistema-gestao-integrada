@@ -321,7 +321,7 @@ class EntregarArquivoView(_Base):
         except FileNotFoundError as erro:
             raise NotFound(
                 "O registro existe, mas o arquivo não está no armazenamento deste "
-                "servidor. É falha de infraestrutura, não de permissão."
+                "servidor. Contate o suporte."
             ) from erro
 
         # Depois de servir, nunca antes: trilha de download é registro de um ato
@@ -819,7 +819,7 @@ class ImportacaoDecisaoView(_Base):
         exatamente para esta segunda passada.
         """
         if not (importacao.parametros or {}).get("aguarda_de_para"):
-            raise ValidationError("Esta importação não está esperando um de-para.")
+            raise ValidationError("Esta importação não aceita este método. Contate o suporte.")
         if not importacao.arquivo:
             raise ValidationError(
                 "O arquivo desta importação não está mais no servidor. Suba de novo."

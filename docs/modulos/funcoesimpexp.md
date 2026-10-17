@@ -781,7 +781,10 @@ medição, contrato, diário e verificação nascem pela tela, com aprovação e
 **SCM e catálogo:** `cadastro.item` (código; só item próprio — fonte de referência fica fora, e conta na
 quota `catalogo_itens`), `scm.oferta` (código do item **+** fornecedor, como a restrição do banco;
 publicação na rede fica fora) importam; `scm.demanda` (as que esperam decisão), `scm.cotacao` e
-`scm.pedido` só exportam. Ordem: fornecedores e itens → ofertas.
+`scm.pedido` só exportam. Ordem: fornecedores e itens → ofertas. `scm.proposta` (**planilha da
+cotação**, contexto `cotacao` + `fornecedor`): a ida sai com as linhas da demanda e o preço em branco
+para o fornecedor preencher; a volta vira a proposta dele (linha sem preço = não cotou, não trava;
+`recebida_em`/`prazo_entrega_dias` vêm do contexto; fornecedor que já tem proposta é recusado).
 
 **Recorte pela própria tela** (`viewset`): quando a tela recorta mais que busca e filtro — o escopo por
 entidade e o listão do ERP —, a saída roda o `get_queryset` + `filter_queryset` do ViewSet dela, com o

@@ -64,7 +64,7 @@ def exigir_acesso_total(user, recurso: Recurso, *, escrita: bool = False) -> Non
         return
     raise PermissionDenied(
         f"Importar e exportar '{recurso.rotulo}' exige acesso total ao recurso, e faltam: "
-        f"{', '.join(faltam)}. Arquivo sai inteiro ou não sai — não há exportação parcial."
+        f"{', '.join(faltam)}. Não sai arquivo parcial."
     )
 
 

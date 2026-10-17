@@ -389,7 +389,7 @@ escondendo o número: no dia em que a apropriação existir, `apropriado` entra 
 sem reinterpretar o passado.)*
 
 **`FluxoAprovacao`** / **`NivelAprovacao`** / **`Atesto`** — a aprovação em **mais de um nível**
-(§11.5): engenheiro → gerente de contrato → fiscal, cada nível exigindo uma permissão e registrando
+(§11.5): engenheiro → gerente de contrato → fiscal, cada nível registrando
 atesto com autor, data e observação. Aprovada no último nível, a medição **congela**; correção exige
 medição **retificadora**, nunca edição.
 
@@ -415,18 +415,13 @@ medição **retificadora**, nunca edição.
 > **Como ela ficou (PDCA.0).** Rota `/api/aprovacao/`; o alvo é um `ContentType`, e não o par de FKs
 > nuláveis do `modulomaps.Local`, porque aqui o conjunto de alvos é aberto por desenho — o `nucleo` é
 > importado por todos e não pode importar nenhum de volta. Quem for alvo declara uma `GenericRelation`
-> e o pedido morre junto com o objeto. Quatro regras que a tela não redecide: **quem solicitou não
-> ateste** (salvo `permite_autoatesto`, escolha escrita do cliente para a obra pequena); a permissão é
-> a **do degrau atual**; **reprovar encerra** em qualquer degrau; e **uma escada por objeto**,
+> e o pedido morre junto com o objeto. Três regras que a tela não redecide: **quem solicitou não
+> ateste** (salvo `permite_autoatesto`, escolha escrita do cliente para a obra pequena);
+> **reprovar encerra** em qualquer degrau; e **uma escada por objeto**,
 > garantida por constraint parcial no banco. Terminada a escada, o `nucleo` emite o sinal
 > `aprovacao_concluida` — congelar a medição e gerar o título é do módulo dono do alvo. Falha de um
 > receptor **não** desfaz o atesto: a decisão de quem tem alçada é verdade independente de o efeito
 > colateral ter dado certo.
->
-> **Configurar a escada é do administrador do tenant** (`plataforma.fluxo_aprovacao.edit`). Criar um
-> degrau que exige a permissão X é decidir quem tem alçada sobre o dinheiro — mesma classe de ato que
-> `plataforma.papel.gerir`. Uma persona de fábrica com esse verbo poderia rebaixar a escada que a
-> controla.
 
 ### 4.5 Qualidade, segurança e entrega — uma máquina, quatro domínios
 
@@ -539,26 +534,22 @@ os limites que a construção do Gantt fixou (§5.4).
 A API do módulo é um `DefaultRouter` sobre 24 recursos, mais `status/` e **cinco leituras que
 atravessam** — registradas à mão em `urls.py` porque não têm dono:
 
-| Rota | O que devolve | Permissão |
-|---|---|---|
-| `GET /api/pdca/carteira/` | As obras lado a lado, com as pendências discriminadas. `?obras=1,2` recorta | só o módulo; cada coluna cobra a sua |
-| `GET /api/pdca/hoje/?obra=N` | **Fila + pulso + o que mudou**, numa leitura. `?mudancas=0` e `?dias=` ajustam a terceira | idem |
-| `GET /api/pdca/busca/?q=` | As sete espécies do módulo, sem acento, cortadas por espécie. `?obra=N` restringe | idem |
-| `GET /api/pdca/minhas-frentes/` | **O que está no nome de quem pede**, na semana corrente: compromisso, trava, conserto e ficha. `?obra=N` recorta; `?como=` troca o nome procurado | idem |
-| `GET /api/pdca/medicao/?obra=N` | **Os contratos com saldo + a fila do dinheiro**, numa leitura (B3): boletim parado em rascunho, boletim esperando atesto, retenção pedida e aditivo sem decisão | idem |
-| `GET /api/pdca/contratos/{id}/ficha/` | **A ficha do contrato**: os títulos do ERP (emitido, pago, em aberto — um título contado uma vez), os itens com medido e saldo, e a linha do tempo (medições, inclusive a retificada, aditivos e liberações) | `pdca.contrato.view` |
-| `GET /api/pdca/qualidade/?obra=N` | **O laço aberto + o painel de conformidade** (B8). A fila é a das quatro faixas de retrabalho da fila do dia (`faixas_da_qualidade`); o painel vem nulo, com a permissão nomeada, para quem não vê NC. `?desde=&ate=` recortam o painel | idem |
-| `GET /api/pdca/seguranca/?obra=N` | **A fila da SSMA + os indicadores + as frentes interditadas** (B9). A fila é a das três faixas de prazo legal e segurança (`faixas_da_seguranca`); as taxas de frequência e de gravidade voltam nulas com a frase. O EPI vencido **não** vem aqui — exige a permissão do SIL, e fica em `ocorrencias/epi-vencido/` | idem |
+| Rota | O que devolve |
+|---|---|
+| `GET /api/pdca/carteira/` | As obras lado a lado, com as pendências discriminadas. `?obras=1,2` recorta |
+| `GET /api/pdca/hoje/?obra=N` | **Fila + pulso + o que mudou**, numa leitura. `?mudancas=0` e `?dias=` ajustam a terceira |
+| `GET /api/pdca/busca/?q=` | As sete espécies do módulo, sem acento, cortadas por espécie. `?obra=N` restringe |
+| `GET /api/pdca/minhas-frentes/` | **O que está no nome de quem pede**, na semana corrente: compromisso, trava, conserto e ficha. `?obra=N` recorta; `?como=` troca o nome procurado |
+| `GET /api/pdca/medicao/?obra=N` | **Os contratos com saldo + a fila do dinheiro**, numa leitura (B3): boletim parado em rascunho, boletim esperando atesto, retenção pedida e aditivo sem decisão |
+| `GET /api/pdca/contratos/{id}/ficha/` | **A ficha do contrato**: os títulos do ERP (emitido, pago, em aberto — um título contado uma vez), os itens com medido e saldo, e a linha do tempo (medições, inclusive a retificada, aditivos e liberações) |
+| `GET /api/pdca/qualidade/?obra=N` | **O laço aberto + o painel de conformidade** (B8). A fila é a das quatro faixas de retrabalho da fila do dia (`faixas_da_qualidade`). `?desde=&ate=` recortam o painel |
+| `GET /api/pdca/seguranca/?obra=N` | **A fila da SSMA + os indicadores + as frentes interditadas** (B9). A fila é a das três faixas de prazo legal e segurança (`faixas_da_seguranca`); as taxas de frequência e de gravidade voltam nulas com a frase. O EPI vencido **não** vem aqui — é do SIL, e fica em `ocorrencias/epi-vencido/` |
 
-As cinco declaram **só `RequireModule`**, e o recorte por permissão acontece dentro do serviço —
-uma leitura que junta cinco assuntos não tem um recurso dono, e exigir um recusaria a página a
-quem trabalha nos outros quatro. O desenho e as três regras que elas seguem estão na
-[§10.1 do documento da tela](modulopdca-frontend.md).
+As leituras ficam registradas à mão em `urls.py` porque juntam assuntos e não têm um recurso dono. O
+desenho e as duas regras que elas seguem estão na [§10.1 do documento da tela](modulopdca-frontend.md).
 
-**A do posto da medição atravessa assunto, e não obra**, e é o caso que mostra por que a régua não é
-formalidade: ela junta contrato e medição, que têm permissões diferentes. Exigir `pdca.contrato.view`
-no portão recusaria o posto inteiro a quem só ateste — que é justamente quem mais o usa. E ela
-existe como leitura única porque a alternativa é a tela pedir `contratos/` e depois `saldo/` **uma
+**A do posto da medição atravessa assunto, e não obra**: junta contrato e medição. Ela existe como
+leitura única porque a alternativa é a tela pedir `contratos/` e depois `saldo/` **uma
 vez por contrato**: numa obra com doze empreiteiros, treze idas ao servidor para desenhar doze
 linhas, cada resposta de um instante diferente. O saldo de cada linha é o mesmo
 `saldo_do_contrato` que `GET contratos/{id}/saldo/` devolve — não há segunda soma, e o E2E cobra a
@@ -782,138 +773,7 @@ aniversário (período que o atravessa divide pelos dias), com número-índice o
 
 ## 8. Contrato de módulo
 
-Entitlement `pdca` (já reservado). Grupo de permissões `pdca`, com a segregação que o ORC.6 provou
-necessária — quem executa não aprova:
-
-`pdca.local.*` · `pdca.cronograma.view|edit|publicar|replanejar` · `pdca.avanco.view|apontar` ·
-`pdca.programacao.view|comprometer|encerrar` (✅ PDCA.5) · `pdca.restricao.view|edit|remover`
-(✅ PDCA.5) · `pdca.contrato.view|edit` ·
-`pdca.medicao.view|apurar|atestar` · `pdca.aditivo.edit|aprovar` (✅ PDCA.4) ·
-`pdca.verificacao.view|modelo_edit|aplicar` · `pdca.nc.view|abrir|tratar|verificar_eficacia`
-(✅ PDCA.7) · `pdca.dds.view|registrar` ·
-`pdca.ocorrencia.view|registrar|classificar|emitir_cat|dado_medico` (✅ PDCA.8) ·
-`pdca.apropriacao.*` · `pdca.risco.*` · `pdca.garantia.*`
-
-> **O `pdca.ssma.*` que esta lista reservava não era realizável, e virou dois recursos.** O catálogo
-> cobra código com **exatamente dois pontos** (`modulo.recurso.acao`, conferido em
-> `testes/iam/identity/tests.py`), então `pdca.ssma.dds.registrar` quebraria a suíte — e um recurso `ssma`
-> único empilharia num só nome coisas com donos diferentes. A PDCA.8 fez o que a PDCA.7 fez com
-> `verificacao` e `nc`: dois recursos, porque são dois objetos com ciclos de vida distintos.
->
-> **A segregação da fatia é `registrar` × `classificar`**, e ela é nova nesta casa. As anteriores
-> separavam quem faz de quem aprova (`apurar` × `atestar`, `tratar` × `verificar_eficacia`); esta
-> separa **quem é medido de quem classifica a própria medida**. Registrar tem de ser de baixo atrito
-> — o quase-acidente é o dado mais valioso da segurança e o mais fácil de não anotar —, mas dizer
-> *"foi com afastamento, nove dias"* muda o indicador pelo qual a frente é cobrada.
->
-> **`emitir_cat` não vai para a persona de segurança.** Quem protocola CAT no INSS é o RH, e duas
-> portas para um ato com prazo legal e multa criariam duas verdades sobre se ela foi comunicada.
-> **`dado_medico`** abre lesão, CID e atestado: é a primeira PII do grupo `pdca` (LGPD art. 11), e
-> para classificar o acidente ninguém precisa do diagnóstico.
-
-> **Os dois `view` da PDCA.7 não estavam nesta lista, e entraram.** A linha
-> acima enumerava só os verbos de escrita da verificação; todo recurso desta
-> casa tem um `view`, e sem eles as duas telas de leitura da fatia — a fila de
-> decisão e o painel de conformidade — não teriam porta.
-
-O nível de aprovação da medição **não** cria permissões numeradas: cada `NivelAprovacao` declara
-**qual permissão** ele exige, e o tenant compõe a escada com os papéis que já tem.
-
-Uma permissão nasce **fora** deste grupo, no grupo `base`: **`obra.etapa.percentual_manual`** (§11.2)
-— com o prefixo `obra.`, que é o do grupo, e não `obras.` do nome do app.
-
-> **Por que `avanco` tem dois verbos e nenhum deles é `edit`.** Ler o percentual da obra é do gestor e
-> de quem recebe relatório; *apontar* é o ato de canteiro que vira dinheiro na medição — são pessoas
-> diferentes, e o par `view`/`edit` de CRUD as trataria como uma só. E o verbo de escrita não se chama
-> `edit` porque nada aqui se edita: o lançamento nasce e não muda mais, e um interruptor chamado
-> "editar" prometeria na tela de papéis um poder que a API não tem.
-
-Personas de fábrica: `planejador`, `engenheiro_de_obra`, `gestor_contratos`, `tecnico_qualidade`,
-`fiscal_de_obra`, `tecnico_seguranca`. As existentes (`orcamentista`, `almoxarife`, `suprimentos`)
-ganham só leitura do que lhes diz respeito.
-
-> **A PDCA.8 estreou a `tecnico_seguranca`, que a lista acima não previa** — é o TST do SESMT (NR-4),
-> o cargo que a obra acima de certo porte é obrigada a ter. Ela passa no teste da gêmea, e por pouco:
-> divide com o `tecnico_qualidade` o miolo da verificação (aplicar ficha, abrir e tratar NC, travar a
-> frente), porque inspeção de segurança **é** a máquina da §4.5 com outro domínio. O que as separa são
-> os dois extremos — ela tem `dds.*` e `ocorrencia.*`, que nenhuma outra persona de obra tem, e **não**
-> tem `verificacao.modelo_edit`, que é o verbo exclusivo do técnico de qualidade. É por isso que os
-> verbos de SSMA **não** foram dados ao técnico de qualidade: dar-lhe os dois tornaria as personas a
-> mesma lista.
->
-> Ela leva também `sil.epi.view` — é o que faz o seam do EPI funcionar sem duplicar a entrega (§4.6) —
-> e **não** leva `emitir_cat` nem `dado_medico`.
-
-> **A PDCA.3 estreou a `gestor_contratos`, e ela é nova de verdade** — não é gêmea de ninguém, que é o
-> teste que a nota abaixo impõe. A `engenharia` responde pela execução (aponta avanço, assina diário),
-> o `financeiro` paga o título depois de pronto, e entre os dois havia um vazio: quem fecha o contrato
-> com o empreiteiro, confere a medição do período e a leva à assinatura. Ela **apura e não ateste** —
-> leva `pdca.medicao.apurar`, nunca `atestar`.
->
-> **Quem ateste é a `diretoria`**, que já existe e é o "gerente" da §5.3. Ela recebeu da PDCA.3 o
-> **único verbo de escrita que tem em todo o catálogo**, e ele é uma assinatura, não uma edição:
-> `pdca.medicao.atestar`. Dar o atesto a quem já lê contrato e medição é o que torna a escada montável
-> no primeiro dia, sem o tenant precisar desenhar uma persona antes de emitir a primeira medição.
-
-> **O nome do fiscal.** `fiscal` já é a persona de **nota fiscal** no catálogo da IAM, e são pessoas
-> diferentes em empresas diferentes — daí `fiscal_de_obra`.
->
-> **Cada persona entra com a fatia que lhe dá verbo.** A PDCA.0 estreia a `planejador` (desenha a
-> árvore e o calendário, que é o que existe para fazer) e enxerta `pdca.local.*` na `engenharia` —
-> quem responde pela obra desenha o esqueleto dela. As outras chegam na PDCA.3, .5 e .7; criá-las
-> antes produziria papéis indistinguíveis entre si, que é a lição do D28 pelo avesso — permissão sem
-> persona não se exerce, persona sem permissão não se explica.
->
-> **A PDCA.2 não criou a `engenheiro_de_obra`, e a decisão é a mesma lição.** Esta casa já tem a
-> `engenharia` — quem responde pela obra, assina o diário e desenha a árvore de locais —, e uma
-> persona nova ao lado dela seria a gêmea que o parágrafo acima proíbe. O que a fatia fez foi dar-lhe
-> o **verbo**: `pdca.avanco.*` e `obra.etapa.percentual_manual`. A `campo` ganhou
-> `pdca.avanco.apontar` (apontar quanto a frente andou é o gesto do canteiro, e é a razão de a fatia
-> existir) sem poder editar o plano; `planejador` e `diretoria` ganharam só `pdca.avanco.view` — o
-> planejador que apontasse o próprio avanço estaria conferindo o próprio dever de casa.
->
-> **A PDCA.5 confirmou a decisão em vez de revê-la.** Era a fatia que mais teria pretexto para criar
-> a `engenheiro_de_obra` — a §5.3 põe esse cargo no quadro de programação, no apontamento e nas
-> restrições —, e criá-la produziria exatamente a gêmea da `engenharia`: os dois papéis teriam a
-> mesma lista. A `engenharia` levou os cinco verbos do ciclo (`pdca.restricao.*`,
-> `pdca.programacao.*`), porque ele é dela de ponta a ponta: registra a trava, declara que ela saiu,
-> monta o quadro, assume e julga.
->
-> **A `campo` ganhou `pdca.restricao.edit`, e o argumento é o mesmo do apontamento**: quem descobre
-> que o material não chegou e que a frente anterior não liberou a área é quem está no canteiro, e
-> obrigá-lo a telefonar para alguém registrar isso é o que faz o log de restrição nascer
-> desatualizado. O que ela **não** tem é `remover` — declarar que a trava saiu libera o serviço para
-> ser assumido, e esse é ato de quem responde pela obra. `planejador` e `diretoria` ficaram na
-> leitura: o PPC é indicador de direção, e o planejador que julgasse o próprio plano cumprido
-> estaria, de novo, conferindo o próprio dever de casa. A `suprimentos` ganhou
-> `pdca.restricao.view` — é o outro lado do seam, e quem compra precisa ver o que a demanda está
-> segurando na obra.
->
-> **Por que `remover` é verbo, e não um `edit` mais forte.** A §5.4 põe "remover restrição" ao lado
-> de atestar e comprometer — é **ato que conclui**: ele libera a atividade para entrar na
-> programação, e carrega a nota que a reunião seguinte lê. Quem abre a pendência não é
-> necessariamente quem pode declarar que ela acabou.
->
-> **A PDCA.7 estreou as duas últimas personas previstas — e as duas passam no teste da gêmea.**
-> O **`tecnico_qualidade`** é o único cargo desta casa cujo trabalho *é* a máquina de verificação:
-> ele leva o `verificacao.modelo_edit`, que nenhuma outra persona tem (escrever o método da empresa
-> muda o que **toda** obra confere), aplica a ficha e monta o plano de ação — e não toca em
-> cronograma, contrato nem medição, que é o que o separa da `engenharia`. O **`fiscal_de_obra`** é o
-> outro lado: **não executa nada** e assina os dois atos que encerram, a medição e a
-> não-conformidade. Nenhum dos dois repete a lista de alguém que já existe.
->
-> **A segregação desta fatia é `tratar` × `verificar_eficacia`**, e ela é a forma que a medição já
-> tem entre `apurar` e `atestar`: quem montou o conserto não assina que o conserto funcionou. Por
-> isso `tecnico_qualidade`, `engenharia` e `campo` **não** têm `verificar_eficacia`, e `diretoria` e
-> `fiscal_de_obra` o têm sem ter `tratar`. Não vira beco de D130: `fiscal_de_obra` nasce de fábrica e
-> o admin de tenant atravessa, então a primeira NC de um tenant de uma pessoa só encerra no dia um.
->
-> **`modelo_edit` é separado de `aplicar` pelo mesmo raciocínio, com um detalhe que decide.** Um
-> `edit` único daria a quem está na frente o poder de afrouxar o critério da FVS **no momento exato
-> em que ela reprovasse** — que é quando alguém quer. A `campo` ganhou `verificacao.aplicar` e
-> `nc.abrir` (responder a ficha e fotografar o defeito são o gesto do canteiro, e é a razão de a
-> fatia existir) sem `tratar`: decidir o que a obra vai fazer a respeito é de quem responde por ela.
-> A `suprimentos` não ganhou nada aqui — NC não vira compra.
+Entitlement `pdca` (já reservado).
 
 **Tetos em [`payment/planos.py`](../../payment/planos.py)**, como todo limite do sistema: atividades por
 cronograma, profundidade da WBS, locais por obra e profundidade da hierarquia, itens por contrato,
@@ -982,12 +842,11 @@ macro-fase não comporta a granularidade de um cronograma real.
 compartilham — é **explícita**, feita pelo vínculo, e a cobertura dela é declarada na resposta da API,
 no molde do `realizado_cobertura` do Orçamento. Vínculo que não existe não é inventado.
 
-### 11.2 O percentual digitado continua existindo, sob permissão
+### 11.2 O percentual digitado continua existindo
 
 *(22/08/2026.)* `EtapaObra.percentual_conclusao` hoje é digitado à mão e pondera quatro leituras
 (resumo da obra, serializer, portal do cliente, curva S real). Havendo vínculo direto com uma atividade
-do PDCA, ele passa a ser **apurado** — e a edição manual continua **possível**, liberada ou bloqueada
-por **`obra.etapa.percentual_manual`**, do usuário ou do admin.
+do PDCA, ele passa a ser **apurado** — e a edição manual continua **possível**.
 
 A tela **sempre diz de onde veio o número** — apurado ou informado. Duas fontes silenciosas para o
 mesmo número é como se perde a confiança nas duas.
@@ -1002,8 +861,8 @@ a árvore inteira para escrever uma etapa. É barato hoje e tem saída óbvia se
 da fatia do CPM assíncrono —, mas o custo fica escrito em vez de descoberto.
 A etapa ligada ao **pai e também a uma filha** conta uma vez só (entram apenas as mais altas de cada
 ramo), senão a filha seria contada dentro do peso do pai e outra vez por fora. Do lado do `obras`, o
-serializer expõe `percentual_origem` (`apurado` / `informado`) e recusa a digitação sem a permissão —
-dizendo, na mesma mensagem, que o valor digitado **vale até o próximo apontamento**, que é o que
+serializer expõe `percentual_origem` (`apurado` / `informado`) e avisa, na digitação,
+que o valor digitado **vale até o próximo apontamento**, que é o que
 evita a descoberta pelo susto. A dependência é de mão única: `obras` é fundação sem entitlement e não
 importa módulo pago; quem oferece a leitura é o `pdca`, e a ausência dele devolve a etapa ao que ela
 sempre foi.
@@ -1098,9 +957,7 @@ mesmo impedimento físico.
 
 **Exige a atividade, e a recusa diz isso.** Restrição sem alvo não bloqueia nada (regra da PDCA.5), e
 a NC do canteiro nem sempre tem uma — a trinca vista a caminho do almoxarifado não sabe de que
-serviço veio. E exige **duas** permissões: `pdca.nc.tratar` mais `pdca.restricao.edit`, na régua do
-`gerar-demanda` da restrição — parar a frente é ato do quadro da semana, e deixar que só a permissão
-de tratar o fizesse criaria uma porta lateral para ele.
+serviço veio.
 
 **O caminho de volta é o da PDCA.5, não um novo:** quem destrava é quem remove a restrição, com a
 nota de como. A NC encerra pelo seu próprio laço, e as duas coisas são independentes de propósito —
@@ -1303,9 +1160,6 @@ clique, e com baixa em cima o botão de confirmar nem arma. Dois lugares para a 
 na primeira mudança dela. O campo fica **fora** do `MedicaoResumoSerializer` — é uma consulta por
 linha, e a lista desenha o status do boletim, não o do título (a lição do D136).
 
-**A permissão é a de atestar, não a de apurar:** derrubar um título a pagar é alçada de quem autorizou
-o dinheiro a sair.
-
 ### 11.9 A semana errada tem volta, e a volta é registrada
 
 *(decisão de desenho, 15/09/2026, respondendo a "e se o usuário tiver errado na semana?".)*
@@ -1331,9 +1185,7 @@ declarado**, não se apaga.
 | `comprometida` → `rascunho` | **é apagado** — semana não assumida não tem julgamento | quem assume (`programacao.comprometer`) |
 
 Descer dois degraus custa duas reaberturas, cada uma com a sua frase — porque é exatamente o gesto que
-merece dois registros. E a permissão muda com o degrau de propósito: um código só para os dois daria a
-quem julga o poder de desmontar o quadro que a equipe assumiu, ou — pior — daria a quem monta a parede
-o poder de apagar o índice que ela produziu.
+merece dois registros.
 
 **Enquanto reaberta, a semana sai da série de PPC e do ranking de causas.** Ela deixou de ser apurada,
 e contá-la com o julgamento velho seria publicar um número que o próprio sistema declarou em revisão.
@@ -1365,10 +1217,10 @@ O **commit não acompanha a fatia**: ele é do dono e vem ao final do módulo (�
 
 | Fatia | O que entrega |
 |---|---|
-| **PDCA.0** | Fundação: `LocalObra` + gerador em lote, `CalendarioTrabalho`, permissões, personas, RLS fail-closed, contrato de módulo — e a **máquina de fluxo de aprovação em `nucleo`** |
+| **PDCA.0** | Fundação: `LocalObra` + gerador em lote, `CalendarioTrabalho`, RLS fail-closed, contrato de módulo — e a **máquina de fluxo de aprovação em `nucleo`** |
 | **PDCA.1** | Cronograma versionado, `Atividade` (WBS), `Precedencia`, CPM, linha de base, vínculos opcionais com `EtapaObra` e `ItemOrcado` |
 | **PDCA.1b** | Plano modelo (biblioteca de padrões da empresa, com quota de plano), escrita em lote, renumeração da EAP, tela de expediente, filtros de trabalho, ações em bloco e exportação (PNG/CSV) |
-| **PDCA.2** | `ApontamentoAvanco`, avanço ponderado, curva S física × financeira, e a tomada do `percentual_conclusao` com a permissão de override |
+| **PDCA.2** | `ApontamentoAvanco`, avanço ponderado, curva S física × financeira, e a tomada do `percentual_conclusao` |
 | **PDCA.3** | `ContratoObra`, `ItemContrato`, `Medicao` nascendo do avanço, retenção **e sua liberação**, escada de atesto, título ao ERP |
 | **PDCA.4** | `AditivoContrato`/`ItemAditivo` com as três travas, `DeducaoMedicao` tipada, material estocado (coluna E da G703), período encadeado, e a medição como **documento com endereço próprio** (apurar × boletim) |
 | **PDCA.5** | Last Planner: `Restricao`, `ProgramacaoSemanal`, PPC e catálogo de causas |

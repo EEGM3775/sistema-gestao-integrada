@@ -7,7 +7,7 @@ import { RateioField } from './RateioField'
 import { Field } from './FormField'
 import { inputStyle, selectStyle, buttonPrimaryStyle, buttonSecondaryStyle } from './formStyles'
 import { contaPagarSchema, type ContaPagarFormValues } from './schemas'
-import { useFornecedorOptions, useEmpreendimentoOptions } from '../../hooks/useEntityOptions'
+import { SeletorDeEmpreendimento, SeletorDeFornecedor } from '@/components/malha'
 import { apiDecimalToCents, centsToApiDecimal, formatBRL } from '@/utils/money'
 import { FormErrorBanner, parseApiErrors } from '@/utils/formErrors'
 import { AvisoDeTrava, TextoTravado } from './trava'
@@ -58,16 +58,8 @@ interface ContaPagarFormProps {
 }
 
 export function ContaPagarForm({ initial, onSubmit, onCancel }: ContaPagarFormProps) {
-  const fornecedorOptions = useFornecedorOptions(true)
-  const empreendimentoOptions = useEmpreendimentoOptions(true)
   const [apiError, setApiError] = useState<string | null>(null)
   const travados = new Set(initial?.campos_travados ?? [])
-  // A pessoa da conta pode não estar entre as opções carregadas (a lista vem
-  // limitada): sem ela no select, o valor some e o formulário não salva.
-  const opcoesFornecedor = [...(fornecedorOptions.data ?? [])]
-  if (initial?.fornecedor && !opcoesFornecedor.some(o => o.id === initial.fornecedor)) {
-    opcoesFornecedor.unshift({ id: initial.fornecedor, label: initial.fornecedor_nome || `#${initial.fornecedor}` })
-  }
 
   const methods = useForm<ContaPagarFormValues>({
     resolver: zodResolver(contaPagarSchema),
@@ -120,37 +112,46 @@ export function ContaPagarForm({ initial, onSubmit, onCancel }: ContaPagarFormPr
         <EntidadeField travada={travados.has('entidade')} nomeAtual={initial?.entidade_nome} />
         <Field label="Fornecedor" error={errors.fornecedor?.message}>
           {travados.has('fornecedor') ? (
-            <TextoTravado>{opcoesFornecedor.find(o => o.id === initial?.fornecedor)?.label ?? '—'}</TextoTravado>
+            <TextoTravado>{initial?.fornecedor_nome || '—'}</TextoTravado>
           ) : (
-            <select style={selectStyle} disabled={fornecedorOptions.isLoading} defaultValue="" {...register('fornecedor', { valueAsNumber: true })}>
-            <option value="" disabled>Selecione um fornecedor…</option>
-            {opcoesFornecedor.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-          </select>
+            // Busca no servidor (F2): a lista inteira de fornecedores não vem mais.
+            <Controller
+              control={control}
+              name="fornecedor"
+              render={({ field }) => (
+                <SeletorDeFornecedor
+                  valor={field.value ?? null}
+                  rotuloAtual={initial?.fornecedor === field.value ? initial?.fornecedor_nome : undefined}
+                  aoMudar={id => field.onChange(id ?? undefined)}
+                  aria-label="Fornecedor"
+                  style={selectStyle}
+                />
+              )}
+            />
           )}
         </Field>
 
         <Field label="Empreendimento (opcional)">
-          {/* Controlado, não registrado: o `<select>` nativo devolvia "" para
-              "sem obra" (a validação reprovava sem mensagem — item 57) e perdia a
-              obra gravada quando o valor chegava antes das opções. */}
+          {/* Controlado: vazio é `null` ("sem empreendimento" — item 57), e o
+              nome do gravado aparece mesmo antes de qualquer busca. */}
           <Controller
             control={control}
             name="empreendimento"
             render={({ field }) => (
-              <select
+              <SeletorDeEmpreendimento
+                valor={field.value ?? null}
+                rotuloAtual={initial?.empreendimento === field.value ? initial?.empreendimento_nome : undefined}
+                aoMudar={id => field.onChange(id ?? null)}
+                permiteLimpar
+                placeholder="Sem empreendimento — busque para escolher"
+                aria-label="Empreendimento"
                 style={selectStyle}
-                value={field.value == null ? '' : String(field.value)}
-                onChange={e => field.onChange(e.target.value === '' ? null : Number(e.target.value))}
-                onBlur={field.onBlur}
-              >
-                <option value="">Sem empreendimento</option>
-                {(empreendimentoOptions.data ?? []).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-              </select>
+              />
             )}
           />
         </Field>
 
-        <ObraEtapaFields comEtapa />
+        <ObraEtapaFields comEtapa obraNome={initial?.obra_nome} />
 
         <Field label="Descrição" error={errors.descricao?.message}>
           <input type="text" style={inputStyle} placeholder="Ex.: Compra de cimento — NF 1234" {...register('descricao')} />

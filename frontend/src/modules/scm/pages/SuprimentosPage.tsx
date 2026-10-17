@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState, type CSSProperties, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   LayoutDashboard, Tags, FileSpreadsheet, ShoppingCart, ClipboardList,
@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { BotaoExportar, WizardImportacao } from '@/components/malha'
+import { BotaoExportar, SeletorDeFornecedor, WizardImportacao } from '@/components/malha'
 import {
   useScmDashboard, cotacoesHooks, pedidosHooks, ofertasHooks, centrosCustoHooks,
   demandasHooks, itensDemandaHooks, propostasHooks, itensPropostaHooks,
@@ -17,6 +17,7 @@ import {
 import { CompraPeloCronograma } from '../components/CompraPeloCronograma'
 import { PedidoDetail } from '../components/PedidoDetalhe'
 import { FichaItemModal } from '../components/FichaItem'
+import { AcoesDaProposta, BotaoMapa, PlanilhaDaCotacao, PropostaModal } from '../components/PropostaManual'
 import { cadastrarItem, cotarItens, abrirCotacaoDaDemanda } from '../api/scmApi'
 import { brl, qty, dataBR, num, cotacaoEstado, demandaEstado, pedidoEstado, propostaEstado, origemPedido, type Kind } from '../lib'
 import { minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
@@ -354,13 +355,14 @@ function DemandasAbertas({ onCotou, onComprou, say }: { onCotou: (cotacao: numbe
   const [compra, setCompra] = useState<{ demanda: Demanda; linhas: LinhaInicial[] } | null>(null)
   const [erro, setErro] = useState('')
   const [marcadas, setMarcadas] = useState<Set<number>>(new Set())
+  const [apagar, setApagar] = useState<number[] | null>(null)
   const remover = demandasHooks.useRemove()
   const rows = (data?.results ?? []).filter(d => d.status === 'rascunho' || d.status === 'aberta' || d.status === 'em_cotacao')
   if (isLoading || rows.length === 0) return null
   const alternar = (ids: number[], on: boolean) => setMarcadas(prev => { const n = new Set(prev); for (const id of ids) on ? n.add(id) : n.delete(id); return n })
   /** Apaga uma a uma; as que já têm pedido ou proposta o servidor recusa e o motivo aparece. */
   const excluir = async (ids: number[]) => {
-    if (!window.confirm(ids.length === 1 ? `Apagar a demanda #${ids[0]}? Isso não pode ser desfeito.` : `Apagar ${ids.length} demandas? Isso não pode ser desfeito.`)) return
+    setApagar(null)
     setErro('')
     const falhas: string[] = []
     let apagadas = 0
@@ -398,7 +400,7 @@ function DemandasAbertas({ onCotou, onComprou, say }: { onCotou: (cotacao: numbe
         ? <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--ink-2)' }}>
             {marcadas.size} selecionada{marcadas.size > 1 ? 's' : ''}
             <Btn style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => setMarcadas(new Set())}>Limpar</Btn>
-            <Btn variant="danger" style={{ padding: '4px 10px', fontSize: 12 }} disabled={remover.isPending} onClick={() => excluir([...marcadas])}><Trash2 size={12} /> Apagar selecionadas</Btn>
+            <Btn variant="danger" style={{ padding: '4px 10px', fontSize: 12 }} disabled={remover.isPending} onClick={() => setApagar([...marcadas])}><Trash2 size={12} /> Apagar selecionadas</Btn>
           </div> : <BotaoExportar recurso="scm.demanda" />}>Demandas para decidir ({rows.length})</SectHead>
       {erro &&<div style={{ background: 'var(--danger-soft)', color: 'var(--danger-ink)', padding: '9px 12px', borderRadius: 'var(--r-sm)', fontSize: 12.5, marginBottom: 10 }}>{erro}</div>}
       <Card pad={false} style={{ overflow: 'hidden', marginBottom: 18 }}>
@@ -419,12 +421,24 @@ function DemandasAbertas({ onCotou, onComprou, say }: { onCotou: (cotacao: numbe
               <td style={{ padding: '12px 16px', textAlign: 'right', whiteSpace: 'nowrap' }}>
                 {podeCotar && <Btn style={{ padding: '4px 10px', fontSize: 12 }} disabled={ocupada === d.demanda_id} onClick={() => cotar(d)}><FileSpreadsheet size={12} /> Abrir cotação</Btn>}
                 {podeComprar && <Btn variant="primary" style={{ padding: '4px 10px', fontSize: 12, marginLeft: 6 }} disabled={ocupada === d.demanda_id} onClick={() => comprar(d)}><ShoppingCart size={12} /> Comprar</Btn>}
-                {podeCotar && <Btn variant="danger" style={{ padding: '4px 8px', fontSize: 12, marginLeft: 6 }} title="Apagar demanda" aria-label={`Apagar demanda #${d.demanda_id}`} disabled={remover.isPending} onClick={() => excluir([d.demanda_id])}><Trash2 size={12} /></Btn>}
+                {podeCotar && <Btn variant="danger" style={{ padding: '4px 8px', fontSize: 12, marginLeft: 6 }} title="Apagar demanda" aria-label={`Apagar demanda #${d.demanda_id}`} disabled={remover.isPending} onClick={() => setApagar([d.demanda_id])}><Trash2 size={12} /></Btn>}
               </td>
             </tr>
           ))}</tbody>
         </table></div>
       </Card>
+      {apagar && (
+        <Modal
+          title={apagar.length === 1 ? `Apagar a demanda #${apagar[0]}?` : `Apagar ${apagar.length} demandas?`}
+          onClose={() => setApagar(null)}
+          footer={<><Btn onClick={() => setApagar(null)}>Cancelar</Btn><Btn variant="danger" onClick={() => excluir(apagar)}><Trash2 size={13} /> Apagar</Btn></>}
+        >
+          <p style={{ fontSize: 13.5, color: 'var(--ink-2)', lineHeight: 1.55 }}>
+            {apagar.length === 1 ? 'A demanda sai da lista de cotação' : 'As demandas saem da lista de cotação'} e não volta.
+            As que já têm pedido ou proposta o sistema recusa e mostra o motivo.
+          </p>
+        </Modal>
+      )}
       {compra && <NovaCompraModal say={say} iniciais={compra.linhas} demanda={{ id: compra.demanda.demanda_id, centro_custo: compra.demanda.centro_custo }}
         onClose={() => setCompra(null)} onDone={id => { setCompra(null); say('Pedido gerado da demanda'); onComprou(id) }} />}
     </>
@@ -433,18 +447,33 @@ function DemandasAbertas({ onCotou, onComprou, say }: { onCotou: (cotacao: numbe
 
 function CotacaoList({ onOpen, say, onComprou }: { onOpen: (id: number) => void; say: Say; onComprou: (id: number) => void }) {
   const { data, isLoading } = cotacoesHooks.useList({})
+  // Marcadas para exportar os mapas num arquivo só (dono, 16/10/2026).
+  const [marcadas, setMarcadas] = useState<Set<number>>(new Set())
   const rows = data?.results ?? []
   if (isLoading) return <Loading />
   if (rows.length === 0) return <><DemandasAbertas onCotou={onOpen} onComprou={onComprou} say={say} /><SectHead>Cotações</SectHead><Empty>Nenhuma cotação ainda. Abra uma pela demanda acima, ou cote direto do Catálogo.</Empty></>
+  const marcar = (id: number) => setMarcadas(m => { const n = new Set(m); if (n.has(id)) n.delete(id); else n.add(id); return n })
+  const todas = rows.length > 0 && rows.every(c => marcadas.has(c.cotacao_id))
   return (
     <>
       <DemandasAbertas onCotou={onOpen} onComprou={onComprou} say={say} />
-      <SectHead right={<BotaoExportar recurso="scm.cotacao" />}>Cotações</SectHead>
+      <SectHead right={<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <BotaoMapa ids={[...marcadas]} rotulo={marcadas.size ? `Exportar mapas (${marcadas.size})` : 'Exportar mapas'} say={say} />
+        <BotaoExportar recurso="scm.cotacao" />
+      </div>}>Cotações</SectHead>
       <Card pad={false} style={{ overflow: 'hidden' }}>
-        <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5, minWidth: 560 }}>
-          <thead><tr>{['Cotação', 'Demanda', 'Estado', 'Propostas', 'Encerra'].map((h, i) => <th key={i} style={{ ...CAPS, fontSize: 10.5, textAlign: i === 3 ? 'right' : 'left', padding: '11px 16px', borderBottom: '1px solid var(--line)', background: 'var(--surface-2)' }}>{h}</th>)}</tr></thead>
+        <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5, minWidth: 600 }}>
+          <thead><tr>
+            <th style={{ width: 40, padding: '11px 0 11px 16px', borderBottom: '1px solid var(--line)', background: 'var(--surface-2)' }}>
+              <input type="checkbox" aria-label="Marcar todas" checked={todas} onChange={() => setMarcadas(todas ? new Set() : new Set(rows.map(c => c.cotacao_id)))} />
+            </th>
+            {['Cotação', 'Demanda', 'Estado', 'Propostas', 'Encerra'].map((h, i) => <th key={i} style={{ ...CAPS, fontSize: 10.5, textAlign: i === 3 ? 'right' : 'left', padding: '11px 16px', borderBottom: '1px solid var(--line)', background: 'var(--surface-2)' }}>{h}</th>)}
+          </tr></thead>
           <tbody>{rows.map((c, i) => (
             <tr key={c.cotacao_id} className="scm-row" style={{ cursor: 'pointer', borderBottom: i < rows.length - 1 ? '1px solid var(--line-2)' : undefined }} onClick={() => onOpen(c.cotacao_id)}>
+              <td style={{ padding: '13px 0 13px 16px' }} onClick={e => e.stopPropagation()}>
+                <input type="checkbox" aria-label={`Marcar a cotação #${c.cotacao_id}`} checked={marcadas.has(c.cotacao_id)} onChange={() => marcar(c.cotacao_id)} />
+              </td>
               <td style={{ ...mono, padding: '13px 16px', fontWeight: 700, color: 'var(--ink)' }}>#{c.cotacao_id}</td>
               <td style={{ ...mono, padding: '13px 16px', color: 'var(--ink-3)' }}>#{c.demanda}</td>
               <td style={{ padding: '13px 16px' }}><EstadoPill e={cotacaoEstado[c.status]} /></td>
@@ -458,10 +487,10 @@ function CotacaoList({ onOpen, say, onComprou }: { onOpen: (id: number) => void;
   )
 }
 
-const H = { head: 122, cell: 66, total: 80, act: 70 }
 function CotacaoDetail({ id, onBack, openPed, say }: { id: number; onBack: () => void; openPed: (id: number) => void; say: Say }) {
   const { hasPermission } = useAuth()
   const podeAdjudicar = hasPermission('scm.cotacao.adjudicar'), podeGerar = hasPermission('scm.pedido.criar')
+  const podeEditar = hasPermission('scm.cotacao.edit')
   const { data: cot, isLoading } = cotacoesHooks.useDetail(id)
   const { data: itens } = itensDemandaHooks.useAll({ demanda: cot?.demanda ?? 0 }, cot?.demanda != null)
   const { data: propostas } = propostasHooks.useAll({ cotacao: id })
@@ -476,10 +505,23 @@ function CotacaoDetail({ id, onBack, openPed, say }: { id: number; onBack: () =>
   const menorItem = useMemo(() => { const mn = new Map<number, number>(); for (const it of lista) { let m: number | null = null; for (const p of props) { const v = num(cells.get(`${p.proposta_id}:${it.item_demanda_id}`)); if (v != null && (m == null || v < m)) m = v } if (m != null) mn.set(it.item_demanda_id, m) } return mn }, [lista, props, cells])
   const totais = props.filter(p => p.status !== 'recusada').map(p => num(p.valor_total)).filter((v): v is number => v != null)
   const menorTotal = totais.length ? Math.min(...totais) : null
-  const recomendada = useMemo(() => { const val = props.filter(p => p.status !== 'recusada' && p.valor_total != null); return val.length ? val.reduce((a, b) => (Number(a.valor_total) <= Number(b.valor_total) ? a : b)) : null }, [props])
+  // Menor total entre as que cotaram TUDO — a que deixou item de fora parece
+  // mais barata só porque cobra menos coisa (o mesmo critério do mapa exportado).
+  const recomendada = useMemo(() => {
+    const val = props.filter(p => p.status !== 'recusada' && p.valor_total != null)
+    const completas = val.filter(p => lista.every(it => cells.has(`${p.proposta_id}:${it.item_demanda_id}`)))
+    const base = completas.length ? completas : val
+    return base.length ? base.reduce((a, b) => (Number(a.valor_total) <= Number(b.valor_total) ? a : b)) : null
+  }, [props, lista, cells])
+  const precosDa = (p: Proposta) => new Map(lista.flatMap(it => {
+    const v = cells.get(`${p.proposta_id}:${it.item_demanda_id}`)
+    return v == null ? [] : [[it.item_demanda_id, v] as [number, string]]
+  }))
+  const [registrar, setRegistrar] = useState(false)
 
   if (isLoading || !cot) return <Loading />
   const adjudicada = cot.status === 'adjudicada'
+  const aberta = cot.status === 'aberta'
 
   return (
     <>
@@ -495,52 +537,107 @@ function CotacaoDetail({ id, onBack, openPed, say }: { id: number; onBack: () =>
         iniciais={lista.filter(i => (num(i.saldo ?? i.quantidade) ?? 0) > 0).map(i => ({ produto: i.produto, descricao: i.produto ? (i.produto_descricao ?? '') : i.descricao_servico, unidade: i.unidade, quantidade: i.saldo ?? i.quantidade }))}
         demanda={{ id: cot.demanda, centro_custo: demanda?.centro_custo ?? null }}
         onClose={() => setDireto(false)} onDone={id => { setDireto(false); say('Pedido gerado da cotação'); openPed(id) }} />}
+      {registrar && <PropostaModal cotacao={id} itens={lista} onClose={() => setRegistrar(false)} say={say} />}
 
-      {props.length === 0 ? <Empty>Nenhuma proposta registrada nesta cotação ainda.</Empty> : (
+      {/* A cotação alimentada por quem compra (dono, 16/10/2026): digitar, importar a planilha preenchida, exportar o mapa. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', margin: '12px 0 4px' }}>
+        {aberta && podeEditar && lista.length > 0 && <>
+          <Btn variant="brand" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => setRegistrar(true)} title="O preço chegou por telefone, e-mail ou WhatsApp: digite aqui"><PlusCircle size={14} /> Registrar proposta</Btn>
+          <PlanilhaDaCotacao cotacao={id} say={say} />
+        </>}
+        {props.length > 0 && <span style={{ marginLeft: 'auto' }}><BotaoMapa ids={[id]} say={say} /></span>}
+      </div>
+
+      {props.length === 0 ? <Empty>Nenhuma proposta registrada nesta cotação ainda.{aberta && podeEditar ? ' Registre a que chegou por telefone ou e-mail, ou importe a planilha que o fornecedor devolveu.' : ''}</Empty> : (
         <>
           <SectHead right={<span style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>menor por linha em verde</span>}>Mapa comparativo de propostas</SectHead>
-          <div style={{ overflowX: 'auto' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: `220px repeat(${props.length},minmax(190px,1fr))`, border: '1px solid var(--line)', borderRadius: 'var(--r-lg)', overflow: 'hidden', background: 'var(--surface)', minWidth: 560 }}>
-              <div style={{ display: 'flex', flexDirection: 'column' }}>
-                <div style={{ height: H.head, padding: 16, background: 'var(--surface-2)', borderBottom: '1px solid var(--line)', display: 'flex', alignItems: 'flex-end' }}><span style={CAPS}>Item da demanda</span></div>
-                {lista.map(it => <div key={it.item_demanda_id} style={{ height: H.cell, padding: 16, borderBottom: '1px solid var(--line-2)', background: 'var(--surface-2)', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}><b style={{ fontSize: 13.5, fontWeight: 650, color: 'var(--ink)' }}>{it.produto_descricao ?? it.descricao_servico ?? `Item #${it.item_demanda_id}`}</b><span style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>{qty(it.quantidade)} {it.unidade || 'un'}</span></div>)}
-                <div style={{ height: H.total, padding: 16, borderTop: '2px solid var(--line)', background: 'var(--surface-2)', display: 'flex', alignItems: 'center' }}><span style={CAPS}>Total da proposta</span></div>
-                <div style={{ height: H.act, borderTop: '1px solid var(--line-2)', background: 'var(--surface-2)' }} />
-              </div>
-              {props.map(p => {
-                const rec = recomendada?.proposta_id === p.proposta_id && !adjudicada, win = p.status === 'vencedora'
-                const val = num(p.valor_total), dl = val != null && menorTotal != null && menorTotal > 0 && val !== menorTotal ? ((val - menorTotal) / menorTotal) * 100 : null
-                return (
-                  <div key={p.proposta_id} style={{ display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--line-2)', ...(win ? { boxShadow: 'inset 0 0 0 2px var(--good)', background: 'linear-gradient(180deg,var(--good-soft),transparent 32%)' } : rec ? { boxShadow: 'inset 0 0 0 2px var(--accent)', background: 'linear-gradient(180deg,var(--accent-soft),transparent 32%)' } : {}) }}>
-                    <div style={{ height: H.head, padding: '14px 16px', borderBottom: '1px solid var(--line)', display: 'flex', flexDirection: 'column', gap: 7 }}>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Avatar name={p.fornecedor_label ?? p.fornecedor_nome ?? '?'} size={24} /><b style={{ fontSize: 13, fontWeight: 650, color: 'var(--ink)' }}>{p.fornecedor_label ?? p.fornecedor_nome}</b></span>
-                      <StarsMini media={p.fornecedor_avaliacao_media} count={p.fornecedor_avaliacao_count} prazo={p.prazo_entrega_dias} />
-                      <span>{win ? <Pill kind="good"><Check size={12} /> Vencedora</Pill> : rec ? <Pill kind="amber"><Sparkles size={12} /> Menor total</Pill> : <EstadoPill e={propostaEstado[p.status]} />}</span>
-                    </div>
-                    {lista.map(it => {
-                      const pr = cells.get(`${p.proposta_id}:${it.item_demanda_id}`), v = num(pr)
-                      const cmp = props.reduce((n, q) => n + (num(cells.get(`${q.proposta_id}:${it.item_demanda_id}`)) != null ? 1 : 0), 0)
-                      const best = cmp >= 2 && v != null && v === menorItem.get(it.item_demanda_id)
+          {/* Tabela de verdade: a linha cresce com o nome mais longo e o item fica
+              sempre na mesma altura do seu preço — as colunas soltas de altura
+              fixa desalinhavam quando a descrição quebrava em três linhas. */}
+          <div style={{ overflowX: 'auto', border: '1px solid var(--line)', borderRadius: 'var(--r-lg)', background: 'var(--surface)' }}>
+            <table style={{ width: '100%', minWidth: 300 + props.length * 230, borderCollapse: 'separate', borderSpacing: 0 }}>
+              <colgroup><col style={{ minWidth: 280 }} />{props.map(p => <col key={p.proposta_id} style={{ width: 230 }} />)}</colgroup>
+              {(() => {
+                const destaque = (p: Proposta) => p.status === 'vencedora' ? 'var(--good)' : recomendada?.proposta_id === p.proposta_id && !adjudicada ? 'var(--accent)' : null
+                //: A moldura da coluna escolhida: laterais em toda célula, topo no cabeçalho, base na última.
+                const moldura = (p: Proposta, lado: 'topo' | 'meio' | 'base'): CSSProperties => {
+                  const c = destaque(p)
+                  if (!c) return { borderLeft: '1px solid var(--line-2)' }
+                  const s = [`inset 2px 0 0 ${c}`, `inset -2px 0 0 ${c}`]
+                  if (lado === 'topo') s.push(`inset 0 2px 0 ${c}`)
+                  if (lado === 'base') s.push(`inset 0 -2px 0 ${c}`)
+                  return { borderLeft: '1px solid var(--line-2)', boxShadow: s.join(', ') }
+                }
+                const rotulo: CSSProperties = { padding: '12px 16px', background: 'var(--surface-2)', textAlign: 'left', verticalAlign: 'middle' }
+                return <>
+                  <thead><tr>
+                    <th style={{ ...rotulo, verticalAlign: 'bottom', borderBottom: '1px solid var(--line)' }}><span style={CAPS}>Item da demanda</span></th>
+                    {props.map(p => {
+                      const rec = recomendada?.proposta_id === p.proposta_id && !adjudicada, win = p.status === 'vencedora'
+                      const nome = p.fornecedor_label ?? p.fornecedor_nome ?? '?'
                       return (
-                        <div key={it.item_demanda_id} style={{ height: H.cell, padding: '10px 16px', borderBottom: '1px solid var(--line-2)', textAlign: 'right', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 1, background: best ? 'var(--good-soft)' : undefined }}>
-                          <span style={{ ...mono, fontSize: 14, fontWeight: best ? 700 : 500, color: best ? 'var(--good-ink)' : v != null ? 'var(--ink)' : 'var(--ink-3)' }}>{pr ? brl(pr) : '—'}</span>
-                          {v != null && <span style={{ ...mono, fontSize: 10.5, color: 'var(--ink-3)' }}>= {brl(v * (num(it.quantidade) ?? 0))}</span>}
-                          {best && <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--good-ink)' }}>menor</span>}
-                        </div>
+                        <th key={p.proposta_id} style={{ padding: '14px 16px', textAlign: 'left', verticalAlign: 'top', fontWeight: 400, borderBottom: '1px solid var(--line)', background: win ? 'var(--good-soft)' : rec ? 'var(--accent-soft)' : undefined, ...moldura(p, 'topo') }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                            <span style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}><Avatar name={nome} size={24} /><b title={nome} style={{ fontSize: 13, fontWeight: 650, color: 'var(--ink)', lineHeight: 1.3, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{nome}</b></span>
+                            <StarsMini media={p.fornecedor_avaliacao_media} count={p.fornecedor_avaliacao_count} prazo={p.prazo_entrega_dias} recebida={p.recebida_em} />
+                            <span>{win ? <Pill kind="good"><Check size={12} /> Vencedora</Pill> : rec ? <Pill kind="amber"><Sparkles size={12} /> Menor total</Pill> : <EstadoPill e={propostaEstado[p.status]} />}</span>
+                          </div>
+                        </th>
                       )
                     })}
-                    <div style={{ height: H.total, padding: '12px 16px', borderTop: '2px solid var(--line)', textAlign: 'right', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                      <span style={{ ...mono, fontSize: 19, fontWeight: 750, color: 'var(--ink)' }}>{brl(p.valor_total)}</span>
-                      {p.status !== 'recusada' && <span style={{ fontSize: 11, fontWeight: 600, color: val === menorTotal ? 'var(--good-ink)' : 'var(--ink-3)' }}>{val === menorTotal ? 'menor total' : dl != null ? `+${dl.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%` : ''}</span>}
-                    </div>
-                    <div style={{ height: H.act, padding: '14px 16px', borderTop: '1px solid var(--line-2)', display: 'flex', alignItems: 'center' }}>
-                      {!adjudicada && podeAdjudicar && p.status !== 'recusada' && <Btn variant={rec ? 'primary' : 'ghost'} style={{ width: '100%', justifyContent: 'center', padding: '7px' }} onClick={() => { adjudicar.mutate({ cotacao: id, proposta: p.proposta_id }); say(`Cotação adjudicada a ${p.fornecedor_label ?? p.fornecedor_nome}`) }} disabled={adjudicar.isPending}><Check size={14} /> Adjudicar</Btn>}
-                      {win && <Pill kind="good"><Check size={12} /> Adjudicada</Pill>}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
+                  </tr></thead>
+                  <tbody>
+                    {lista.map(it => (
+                      <tr key={it.item_demanda_id}>
+                        <td style={{ ...rotulo, borderBottom: '1px solid var(--line-2)' }}>
+                          <b style={{ display: 'block', fontSize: 13.5, fontWeight: 650, color: 'var(--ink)', lineHeight: 1.35 }}>{it.produto_descricao ?? it.descricao_servico ?? `Item #${it.item_demanda_id}`}</b>
+                          <span className="mono" style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>{qty(it.quantidade)} {it.unidade || 'un'}</span>
+                        </td>
+                        {props.map(p => {
+                          const pr = cells.get(`${p.proposta_id}:${it.item_demanda_id}`), v = num(pr)
+                          const cmp = props.reduce((n, q) => n + (num(cells.get(`${q.proposta_id}:${it.item_demanda_id}`)) != null ? 1 : 0), 0)
+                          const best = cmp >= 2 && v != null && v === menorItem.get(it.item_demanda_id)
+                          return (
+                            <td key={p.proposta_id} style={{ padding: '10px 16px', borderBottom: '1px solid var(--line-2)', textAlign: 'right', verticalAlign: 'middle', background: best ? 'var(--good-soft)' : undefined, ...moldura(p, 'meio') }}>
+                              <div style={{ ...mono, fontSize: 14, fontWeight: best ? 700 : 500, color: best ? 'var(--good-ink)' : v != null ? 'var(--ink)' : 'var(--ink-3)' }}>{pr ? brl(pr) : '—'}</div>
+                              {v != null && <div style={{ ...mono, fontSize: 10.5, color: 'var(--ink-3)' }}>= {brl(v * (num(it.quantidade) ?? 0))}</div>}
+                              {best && <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--good-ink)' }}>menor</div>}
+                            </td>
+                          )
+                        })}
+                      </tr>
+                    ))}
+                    <tr>
+                      <td style={{ ...rotulo, borderTop: '1px solid var(--line)' }}><span style={CAPS}>Total da proposta</span></td>
+                      {props.map(p => {
+                        const val = num(p.valor_total), dl = val != null && menorTotal != null && menorTotal > 0 && val !== menorTotal ? ((val - menorTotal) / menorTotal) * 100 : null
+                        return (
+                          <td key={p.proposta_id} style={{ padding: '12px 16px', borderTop: '1px solid var(--line)', textAlign: 'right', verticalAlign: 'middle', ...moldura(p, 'meio') }}>
+                            <div style={{ ...mono, fontSize: 19, fontWeight: 750, color: 'var(--ink)' }}>{brl(p.valor_total)}</div>
+                            {p.status !== 'recusada' && <div style={{ fontSize: 11, fontWeight: 600, color: val === menorTotal ? 'var(--good-ink)' : 'var(--ink-3)' }}>{val === menorTotal ? 'menor total' : dl != null ? `+${dl.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%` : ''}</div>}
+                          </td>
+                        )
+                      })}
+                    </tr>
+                    <tr>
+                      <td style={{ ...rotulo, borderTop: '1px solid var(--line-2)' }} />
+                      {props.map(p => {
+                        const rec = recomendada?.proposta_id === p.proposta_id && !adjudicada, win = p.status === 'vencedora'
+                        return (
+                          <td key={p.proposta_id} style={{ padding: '12px 16px', borderTop: '1px solid var(--line-2)', verticalAlign: 'middle', ...moldura(p, 'base') }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              {aberta && podeEditar && !win && <AcoesDaProposta cotacao={id} proposta={p} itens={lista} precos={precosDa(p)} say={say} />}
+                              {!adjudicada && podeAdjudicar && p.status !== 'recusada' && <Btn variant={rec ? 'primary' : 'ghost'} style={{ flex: 1, justifyContent: 'center', padding: '7px' }} onClick={() => { adjudicar.mutate({ cotacao: id, proposta: p.proposta_id }); say(`Cotação adjudicada a ${p.fornecedor_label ?? p.fornecedor_nome}`) }} disabled={adjudicar.isPending}><Check size={14} /> Adjudicar</Btn>}
+                              {win && <Pill kind="good"><Check size={12} /> Adjudicada</Pill>}
+                            </div>
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  </tbody>
+                </>
+              })()}
+            </table>
           </div>
 
           <div style={{ display: 'flex', gap: 15, padding: '18px 20px', borderRadius: 'var(--r-lg)', marginTop: 18, background: 'linear-gradient(120deg,var(--net-soft),var(--surface) 78%)', border: '1px solid color-mix(in srgb,var(--net) 32%,var(--line))' }}>
@@ -555,9 +652,9 @@ function CotacaoDetail({ id, onBack, openPed, say }: { id: number; onBack: () =>
     </>
   )
 }
-function StarsMini({ media, count, prazo }: { media?: string | null; count?: number; prazo?: number | null }) {
+function StarsMini({ media, count, prazo, recebida }: { media?: string | null; count?: number; prazo?: number | null; recebida?: string }) {
   const m = media == null || media === '' ? null : Number(media)
-  return <span style={{ fontSize: 11, color: 'var(--ink-3)', display: 'inline-flex', alignItems: 'center', gap: 5 }}>{m == null ? <span>sem avaliação</span> : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}><Star size={11} style={{ color: 'var(--accent)', fill: 'var(--accent)' }} /><b className="mono" style={{ color: 'var(--ink-2)' }}>{m.toFixed(1)}</b>{count ? ` (${count})` : ''}</span>}{prazo != null && <span>· {prazo} d</span>}</span>
+  return <span style={{ fontSize: 11, color: 'var(--ink-3)', display: 'inline-flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>{m == null ? <span>sem avaliação</span> : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}><Star size={11} style={{ color: 'var(--accent)', fill: 'var(--accent)' }} /><b className="mono" style={{ color: 'var(--ink-2)' }}>{m.toFixed(1)}</b>{count ? ` (${count})` : ''}</span>}{prazo != null && <span>· {prazo} d</span>}{recebida && <span title="Quando o preço chegou">· {dataBR(recebida).slice(0, 5)}</span>}</span>
 }
 
 /* ═══ PEDIDOS ═══ */
@@ -675,13 +772,6 @@ function NovaCompraModal({ onClose, onDone, say, iniciais, demanda }: {
   const comprar = useCompraAvulsa()
   const { data: cc } = centrosCustoHooks.useAll({ ativo: true })
   const centros = (cc ?? []) as CentroCusto[]
-  const { data: fornecedores = [] } = useQuery({
-    queryKey: ['scm', 'fornecedores-da-compra'],
-    queryFn: async () => {
-      const { data } = await apiClient.get<{ results?: { fornecedor_id: number; razao_social: string }[] } | { fornecedor_id: number; razao_social: string }[]>('/fornecedores/', { params: { page_size: 500 } })
-      return Array.isArray(data) ? data : (data.results ?? [])
-    },
-  })
   const [fornecedor, setFornecedor] = useState('')
   const [centro, setCentro] = useState(demanda?.centro_custo != null ? String(demanda.centro_custo) : '')
   const [entrega, setEntrega] = useState('')
@@ -704,7 +794,7 @@ function NovaCompraModal({ onClose, onDone, say, iniciais, demanda }: {
   /** O item que é só texto vira item do catálogo (e a loja dele, com o preço
    *  digitado). O código gerado aparece no aviso embaixo (dono, 11/10/2026). */
   const cadastrar = async (l: LinhaDeCompra) => {
-    if (!l.descricao.trim()) return setErr('Escreva o item antes de cadastrar.')
+    if (!l.descricao.trim()) return setErr('Informe o item antes de cadastrar.')
     setErr(''); setCadastrando(l.chave)
     try {
       const r = await cadastrarItem({
@@ -741,10 +831,13 @@ function NovaCompraModal({ onClose, onDone, say, iniciais, demanda }: {
   return <Modal title="Nova compra" largura={920} onClose={onClose} footer={<><Btn onClick={onClose}>Cancelar</Btn><Btn variant="primary" onClick={salvar} disabled={comprar.isPending}>{comprar.isPending ? 'Gerando…' : `Gerar pedido · ${brl(total.toFixed(2))}`}</Btn></>}>
     {err && <div style={{ background: 'var(--danger-soft)', color: 'var(--danger-ink)', padding: '9px 12px', borderRadius: 'var(--r-sm)', fontSize: 12.5, marginBottom: 12 }}>{err}</div>}
     <Field label="Fornecedor">
-      <select style={inp} value={fornecedor} onChange={e => setFornecedor(e.target.value)}>
-        <option value="">— escolha —</option>
-        {fornecedores.map(f => <option key={f.fornecedor_id} value={f.fornecedor_id}>{f.razao_social}</option>)}
-      </select>
+      {/* Busca no servidor (F2): a lista inteira de fornecedores não vem mais. */}
+      <SeletorDeFornecedor
+        valor={fornecedor ? Number(fornecedor) : null}
+        aoMudar={id => setFornecedor(id == null ? '' : String(id))}
+        aria-label="Fornecedor"
+        style={inp}
+      />
     </Field>
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
       <Field label="Centro de custo"><select style={inp} value={centro} onChange={e => setCentro(e.target.value)}><option value="">— nenhum —</option>{centros.map(c => <option key={c.centro_custo_id} value={c.centro_custo_id}>{c.nome}</option>)}</select></Field>

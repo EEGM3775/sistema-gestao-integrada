@@ -17,9 +17,9 @@ Mascaramento de campos por papel é pendência da Fase 9.
 
 | Modelo | Campos principais |
 |---|---|
-| `Cliente` | `nome_completo`, `cpf_cnpj` (único), `email` (único), `telefone`, endereço completo (`endereco`, `numero_endereco`, `complemento_endereco`, `bairro`, `cidade`, `estado`, `cep`, `cidade_ibge`), `data_nascimento`, `estado_civil` (choices), `profissao`, `data_cadastro`, `id_cliente_gateway` |
+| `Cliente` | `nome_completo`, `cpf_cnpj` (único), `email` (opcional; único quando preenchido), `telefone`, endereço completo (`endereco`, `numero_endereco`, `complemento_endereco`, `bairro`, `cidade`, `estado`, `cep`, `cidade_ibge`), `data_nascimento`, `estado_civil` (choices), `profissao`, `data_cadastro`, `id_cliente_gateway` |
 | `ClienteEmpreendimento` | `cliente` FK, `unidade` FK → `empreendimentos.Unidade`, `empreendimento` FK (denormalizado, mantido a partir da unidade no `save()`), `data_compra`, `condicoes_pagamento` (choices, **derivada** dos meios), `observacoes_compra` **+ preço e carnê** (abaixo) |
-| `MeioPagamento` | `aquisicao` FK (`related_name='meios'`, CASCADE), `ordem`, `tipo` (choices), `valor`, `descricao`, `parcelas`, `primeiro_vencimento`, `juros_mensal`, `sistema_amortizacao`, `periodicidade` — uma linha por forma de pagamento da venda; RLS fail-closed |
+| `MeioPagamento` | `aquisicao` FK (`related_name='meios'`, CASCADE), `ordem`, `tipo` (choices), `valor`, `descricao`, `parcelas`, `primeiro_vencimento`, `juros_mensal`, `sistema_amortizacao`, `periodicidade`, `cronograma` (JSON `[{vencimento, valor}]`, só em `datas_livres`) — uma linha por forma de pagamento da venda; RLS fail-closed |
 | `ContratoCliente` | `cliente` FK, `empreendimento` FK, `cliente_empreendimento` FK (opcional), `numero_contrato` (único), `data_assinatura`, `objeto_contrato`, `arquivo_contrato` (URLField), `status_contrato` (choices), `responsavel` FK `rh.Funcionario`, `vendedor` FK `fornecedores.Fornecedor` |
 | `DocumentoCliente` | `cliente` FK, `tipo_documento` (choices), `nome_documento`, `arquivo` (FileField → `media/documentos_clientes/`), `data_upload` |
 | `DadoBancarioCliente` | `cliente` FK, `codigo_banco`, `agencia`, `agencia_dv`, `conta`, `conta_dv`, `tipo_conta` (choices), `titular_nome`, `titular_cpf_cnpj`, `chave_pix`, `codigo_cedente`, `carteira`, `observacoes` |
@@ -30,7 +30,7 @@ Mascaramento de campos por papel é pendência da Fase 9.
 |---|---|
 | `estado_civil` | `solteiro`, `casado`, `divorciado`, `viuvo`, `uniao_estavel` |
 | `condicoes_pagamento` | `a_vista`, `financiamento_bancario`, `financiamento_direto`, `permuta`, `cartao`, `outro` |
-| `MeioPagamento.tipo` | `a_vista`, `entrada`, `financiamento_direto`, `anuais`, `financiamento_bancario`, `fgts`, `permuta`, `cartao`, `outro` |
+| `MeioPagamento.tipo` | `a_vista`, `entrada`, `financiamento_direto`, `anuais`, `datas_livres`, `financiamento_bancario`, `fgts`, `permuta`, `cartao`, `outro` |
 | `status_contrato` | `ativo`, `inativo`, `cancelado`, `concluido` |
 | `tipo_documento` | `rg`, `cpf`, `cnh`, `comprovante_residencia`, `certidao_casamento`, `outros` |
 | `tipo_conta` | `corrente`, `poupanca`, `investimento`, `salario`, `outros` |
@@ -58,7 +58,14 @@ assume, alinhadas à prática de venda direta de loteadora/incorporadora:
   com taxa a entrada vira um Price curto. Entrada em 1x ignora a taxa — não há prazo para o juro.
 - **Cada meio carrega só o seu principal.** As anuais são um meio com valor próprio, então não pagam
   os juros do financiamento direto.
+- **As anuais têm taxa opcional**, que parte de zero — o mercado usa os dois jeitos. Sem taxa, cada
+  anual vale o digitado (reajuste só pela correção). Com taxa, o digitado é o principal e o juro corre
+  **da data da venda até cada vencimento**, em série de valor igual: `cada = P / Σ (1+i)^-mₖ`, com mₖ
+  em meses de calendário (`_anuais_com_juros`).
 - **Juros correm a partir da 1ª parcela do meio**, não da data da venda ("juros inicia na 1ª parcela").
+- **Parcelas com datas livres** (`datas_livres`): cada linha é data + valor digitados; o valor do meio
+  é a soma (o enviado é ignorado), a lista é ordenada por data e nada rende juros. Teto de linhas em
+  `VENDA_TETO_PARCELAS_LIVRES`.
 
 `price()` com taxa zero degenera em saldo ÷ n — a venda "sem juros" não precisa de um terceiro
 sistema. A última parcela absorve a sobra de centavos, senão o título fecha com R$ 0,03 em aberto.
@@ -113,7 +120,8 @@ pelo motor, pelo serializer e pela tela. Cada tipo declara os campos que comport
 | `a_vista` | 1 título | — | — | — | — | — | `a_vista` |
 | `entrada` | ✔ | ✔ | opcional | — | — | — | `financiamento_direto` |
 | `financiamento_direto` | ✔ | ✔ | ✔ | ✔ | — | — | `financiamento_direto` |
-| `anuais` | ✔ | ✔ | — | — | ✔ | — | `financiamento_direto` |
+| `anuais` | ✔ | ✔ | opcional | — | ✔ | — | `financiamento_direto` |
+| `datas_livres` | ✔ | uma linha por data | — | — | — | — | `financiamento_direto` |
 | `financiamento_bancario` | — | — | — | — | — | banco | `financiamento_bancario` |
 | `fgts` | — | — | — | — | — | — | `financiamento_bancario` |
 | `permuta` | — | — | — | — | — | **obrigatória** | `permuta` |

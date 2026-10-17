@@ -1,6 +1,6 @@
 import { Navigate } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
-import { portaDoPapel } from '../postos'
+import { entradaDoPapel } from '../postos'
 
 /** **Abrir a obra cai no posto do seu papel** (§3.3 da planta): o planejador
  *  no `PLANO`, o técnico de segurança na `SEGURANÇA`, quem assina no `HOJE`.
@@ -15,6 +15,7 @@ import { portaDoPapel } from '../postos'
  *  carteira, que é onde se chega antes de escolher obra. */
 export function PortaDaObra() {
   const { roles, hasPermission } = useAuth()
-  const porta = portaDoPapel(roles, hasPermission)
-  return <Navigate to={porta === 'campo' ? 'controle' : porta} replace />
+  // O posto do papel e, dentro dele, a vista com que o papel abre (§3.3):
+  // o engenheiro de obra cai no Controle já no quadro da semana.
+  return <Navigate to={entradaDoPapel(roles, hasPermission)} replace />
 }

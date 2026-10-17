@@ -84,7 +84,7 @@ export default function ApontarPage() {
     const valor = quanto.trim().replace(',', '.')
     const numero = Number(valor)
     if (!valor || !Number.isFinite(numero) || numero <= 0) {
-      setErro('Escreva quanto o serviço andou. Precisa ser um número maior que zero.')
+      setErro('Informe quanto o serviço andou (maior que zero).')
       return
     }
     if (foto) {

@@ -49,7 +49,7 @@ export default function LogisticaPage() {
   const trocarModo = (m: Modo) => { setModo(m); setTab(TABS[m][0].id) }
 
   return (
-    <div style={{ padding: '24px 26px 64px', maxWidth: 1240, margin: '0 auto' }}>
+    <div style={{ padding: '24px 26px 64px' }}>
       <SilStyles />
 
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 20, flexWrap: 'wrap', marginBottom: 18 }}>

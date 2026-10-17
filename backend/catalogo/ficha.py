@@ -13,9 +13,12 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from django.db.models import Count, Sum
+from django.db.models import Count, Exists, OuterRef, Sum
 
-from payment.planos import CATALOGO_FICHA_HISTORICO_LINHAS as HISTORICO_LINHAS
+from payment.planos import (
+    CATALOGO_FICHA_GRAFICO_PONTOS as GRAFICO_PONTOS,
+    CATALOGO_FICHA_HISTORICO_LINHAS as HISTORICO_LINHAS,
+)
 
 
 def _dec(v) -> str | None:
@@ -73,6 +76,57 @@ def _ofertas_e_precos(item) -> tuple[list, list]:
             "ultimo_preco_pago": ultima["preco_unitario"], "ultima_compra": ultima["data"],
         })
     return lojas, historico
+
+
+def _grafico_precos(item) -> dict:
+    """Preço do item por fornecedor ao longo do tempo: cada compra paga e cada
+    preço cotado é um ponto (sem média — o ponto diz de qual pedido/cotação veio).
+    Últimos `GRAFICO_PONTOS` de cada série, devolvidos em ordem cronológica."""
+    try:
+        from moduloscm.models import ItemPedido, ItemProposta, PedidoCompra
+    except ImportError:  # pragma: no cover - instalação sem Suprimentos
+        return {"pagos": [], "cotados": []}
+
+    pagos = list(
+        ItemPedido.objects.filter(tenant_id=item.tenant_id, produto=item)
+        .exclude(pedido__status=PedidoCompra.Status.CANCELADO)
+        .select_related("pedido__fornecedor")
+        .order_by("-pedido__data_pedido", "-item_pedido_id")[:GRAFICO_PONTOS]
+    )
+    # A cotação que virou compra é substituída pelo preço pago (dono, 16/10/2026):
+    # sai a proposta que gerou um pedido vivo deste item. Pedido cancelado não
+    # comprou nada — a cotação volta a aparecer.
+    virou_compra = ItemPedido.objects.filter(
+        tenant_id=item.tenant_id, produto=item,
+        pedido__proposta_vencedora=OuterRef("proposta"),
+    ).exclude(pedido__status=PedidoCompra.Status.CANCELADO)
+    cotados = list(
+        ItemProposta.objects.filter(tenant_id=item.tenant_id, item_demanda__produto=item)
+        .exclude(Exists(virou_compra))
+        .select_related("proposta__fornecedor")
+        .order_by("-proposta__recebida_em", "-item_proposta_id")[:GRAFICO_PONTOS]
+    )
+    return {
+        "pagos": [{
+            "data": c.pedido.data_pedido.isoformat(),
+            "fornecedor": c.pedido.fornecedor_id,
+            "fornecedor_nome": c.pedido.fornecedor.razao_social,
+            "pedido": c.pedido_id,
+            "quantidade": _dec(c.quantidade),
+            "preco_unitario": _dec(c.preco_unitario),
+        } for c in reversed(pagos)],
+        "cotados": [{
+            "data": p.proposta.recebida_em.isoformat(),
+            # Proposta da rede não tem FK: o rótulo durável é o que identifica.
+            "fornecedor": p.proposta.fornecedor_id,
+            "fornecedor_nome": (p.proposta.fornecedor.razao_social if p.proposta.fornecedor
+                                else p.proposta.fornecedor_nome or "Fornecedor da rede"),
+            "cotacao": p.proposta.cotacao_id,
+            "status": p.proposta.status,
+            "quantidade": _dec(p.quantidade),
+            "preco_unitario": _dec(p.preco_unitario),
+        } for p in reversed(cotados)],
+    }
 
 
 def _orcamentos(item) -> list:
@@ -144,6 +198,7 @@ def ficha_do_item(item) -> dict:
         },
         "lojas": lojas,
         "historico_precos": historico,
+        "grafico_precos": _grafico_precos(item),
         "preco_resumo": {
             "ultimo": historico[0]["preco_unitario"] if historico else None,
             "menor": _dec(min(precos)) if precos else None,

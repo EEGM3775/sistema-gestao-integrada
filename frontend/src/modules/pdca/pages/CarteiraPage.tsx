@@ -67,8 +67,7 @@ export default function CarteiraPage() {
         <Card>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-start' }}>
             <span style={{ fontSize: 13.5, color: 'var(--ink-2)', lineHeight: 1.6 }}>
-              Não foi possível carregar as obras. Nada do que você fez se perdeu —
-              é a consulta que não voltou.
+              Não foi possível carregar as obras. Consulte o suporte se o problema persistir.
             </span>
             <Btn variant="primary" onClick={() => carteira.refetch()}>
               Tentar de novo

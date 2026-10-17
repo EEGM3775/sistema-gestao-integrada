@@ -71,8 +71,8 @@ export function useAprovacoes() {
       } catch { /* seletor cai para texto livre */ }
     } catch {
       setErro(
-        'Não deu para carregar as escadas de aprovação. Configurar alçada é ato '
-        + 'de administrador do tenant (plataforma.fluxo_aprovacao.edit).',
+        'Não foi possível carregar as escadas de aprovação. Exige administrador do '
+        + 'tenant (plataforma.fluxo_aprovacao.edit).',
       )
     } finally {
       setCarregando(false)

@@ -5,15 +5,15 @@ import {
 import { useAuth } from '@/hooks/useAuth'
 import {
   entregasEpiHooks, ferramentasHooks, emprestimosHooks, itensHooks, locaisHooks,
-  useFuncionarios, useObras, useDevolverEpi, useAlterarEstadoFerramenta, useDevolverEmprestimo,
+  useTemRh, useDevolverEpi, useAlterarEstadoFerramenta, useDevolverEmprestimo,
 } from '../hooks'
 import { useQueryClient } from '@tanstack/react-query'
-import { BotaoExportar, WizardImportacao } from '@/components/malha'
+import { BotaoExportar, SeletorDeFuncionario, SeletorDeObra, WizardImportacao } from '@/components/malha'
 import { dataBR, epiEstado, ferramentaEstado } from '../lib'
 import {
   mono, inp, errBox, Pill, EstadoPill, Card, Btn, SectHead, Loading, Empty, Modal, Field, th, type Say,
 } from '../ui'
-import type { Item, LocalEstoque, EntregaEPI, Ferramenta, EmprestimoFerramenta, FuncionarioOpt } from '../types'
+import type { Item, LocalEstoque, EntregaEPI, Ferramenta, EmprestimoFerramenta } from '../types'
 
 import { minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
 
@@ -21,16 +21,16 @@ import { minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
 type EstadoAlteravel = 'disponivel' | 'manutencao' | 'baixada'
 
 /* ── campo de colaborador: usa o RH quando há; senão, texto livre ── */
-function ColaboradorField({ funcionarios, colaborador, setColaborador, nome, setNome }: {
-  funcionarios: FuncionarioOpt[]; colaborador: string; setColaborador: (v: string) => void; nome: string; setNome: (v: string) => void
+function ColaboradorField({ temRh, colaborador, setColaborador, nome, setNome }: {
+  temRh: boolean; colaborador: string; setColaborador: (v: string) => void; nome: string; setNome: (v: string) => void
 }) {
-  if (funcionarios.length > 0) {
+  if (temRh) {
     return (
       <Field label="Colaborador (RH)">
-        <select style={inp} value={colaborador} onChange={e => setColaborador(e.target.value)}>
-          <option value="">— texto livre —</option>
-          {funcionarios.map(f => <option key={f.funcionario_id} value={f.funcionario_id}>{f.nome_completo}</option>)}
-        </select>
+        {/* Busca no servidor (F2); vazio = terceirizado, em texto livre. */}
+        <SeletorDeFuncionario valor={colaborador ? Number(colaborador) : null}
+          aoMudar={id => setColaborador(id == null ? '' : String(id))} permiteLimpar
+          placeholder="— texto livre — busque no RH" aria-label="Colaborador" style={inp} />
         {!colaborador && <input style={{ ...inp, marginTop: 8 }} value={nome} onChange={e => setNome(e.target.value)} placeholder="Nome do colaborador (terceirizado)" />}
       </Field>
     )
@@ -79,8 +79,7 @@ function NovaEntregaEPIModal({ onClose, onDone }: { onClose: () => void; onDone:
   const create = entregasEpiHooks.useCreate()
   const { data: epiItens } = itensHooks.useAll({ tipo: 'epi' })
   const { data: locais } = locaisHooks.useAll({ ativo: true })
-  const { data: funcs } = useFuncionarios()
-  const { data: obras } = useObras()
+  const { data: temRh = false } = useTemRh()
   const [item, setItem] = useState(''), [colaborador, setColaborador] = useState(''), [nome, setNome] = useState('')
   const [local, setLocal] = useState(''), [obra, setObra] = useState(''), [quantidade, setQuantidade] = useState('1')
   const [ca, setCa] = useState(''), [caVal, setCaVal] = useState(''), [troca, setTroca] = useState('')
@@ -101,13 +100,13 @@ function NovaEntregaEPIModal({ onClose, onDone }: { onClose: () => void; onDone:
         assinado, baixar_estoque: baixar,
       })
       onDone()
-    } catch { setErr('Falha ao registrar.'); setSaving(false) }
+    } catch { setErr('Não foi possível registrar.'); setSaving(false) }
   }
   return <Modal title="Registrar entrega de EPI" onClose={onClose} wide footer={<><Btn onClick={onClose}>Cancelar</Btn><Btn variant="primary" onClick={salvar} disabled={saving}>{saving ? 'Salvando…' : 'Registrar'}</Btn></>}>
     {err && <div style={errBox}>{err}</div>}
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
       <Field label="EPI"><select style={inp} value={item} onChange={e => setItem(e.target.value)}><option value="">— selecione —</option>{opItens.map(i => <option key={i.item_id} value={i.item_id}>{i.descricao}</option>)}</select></Field>
-      <ColaboradorField funcionarios={(funcs ?? []) as FuncionarioOpt[]} colaborador={colaborador} setColaborador={setColaborador} nome={nome} setNome={setNome} />
+      <ColaboradorField temRh={temRh} colaborador={colaborador} setColaborador={setColaborador} nome={nome} setNome={setNome} />
     </div>
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
       <Field label="Quantidade"><input style={{ ...inp, ...mono }} type="number" min={1} step="1" value={quantidade} onChange={e => setQuantidade(e.target.value)} /></Field>
@@ -118,7 +117,7 @@ function NovaEntregaEPIModal({ onClose, onDone }: { onClose: () => void; onDone:
       <Field label="Local (baixa)"><select style={inp} value={local} onChange={e => setLocal(e.target.value)}><option value="">— nenhum —</option>{opLocais.map(l => <option key={l.local_id} value={l.local_id}>{l.nome}</option>)}</select></Field>
       <Field label="Troca prevista"><input style={inp} type="date" min={minCalendarioISO} max={maxCalendarioISO} value={troca} onChange={e => setTroca(e.target.value)} /></Field>
     </div>
-    <Field label="Obra (apropriação)"><select style={inp} value={obra} onChange={e => setObra(e.target.value)}><option value="">— nenhuma —</option>{(obras ?? []).map(o => <option key={o.obra_id} value={o.obra_id}>{o.nome_obra}</option>)}</select></Field>
+    <Field label="Obra (apropriação)"><SeletorDeObra valor={obra ? Number(obra) : null} aoMudar={id => setObra(id == null ? '' : String(id))} permiteLimpar placeholder="— nenhuma — busque a obra" aria-label="Obra" style={inp} /></Field>
     <div style={{ display: 'flex', gap: 18, fontSize: 13, color: 'var(--ink-2)' }}>
       <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}><input type="checkbox" checked={baixar} onChange={e => setBaixar(e.target.checked)} /> baixar do estoque</label>
       <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}><input type="checkbox" checked={assinado} onChange={e => setAssinado(e.target.checked)} /> comprovante assinado</label>
@@ -205,7 +204,7 @@ function NovaFerramentaModal({ onClose, onDone }: { onClose: () => void; onDone:
     try {
       await create.mutateAsync({ nome, patrimonio, local: local ? Number(local) : null, calibravel, proxima_calibracao: proxCal || null, proxima_manutencao: proxMan || null, valor: valor || null })
       onDone()
-    } catch { setErr('Falha (patrimônio duplicado?).') }
+    } catch { setErr('Não foi possível salvar. O patrimônio já existe?') }
   }
   return <Modal title="Nova ferramenta" onClose={onClose} wide footer={<><Btn onClick={onClose}>Cancelar</Btn><Btn variant="primary" onClick={salvar} disabled={create.isPending}>Cadastrar</Btn></>}>
     {err && <div style={errBox}>{err}</div>}
@@ -226,8 +225,7 @@ function NovaFerramentaModal({ onClose, onDone }: { onClose: () => void; onDone:
 }
 function EmprestarModal({ ferramenta, onClose, onDone }: { ferramenta: Ferramenta; onClose: () => void; onDone: () => void }) {
   const create = emprestimosHooks.useCreate()
-  const { data: funcs } = useFuncionarios()
-  const { data: obras } = useObras()
+  const { data: temRh = false } = useTemRh()
   const [colaborador, setColaborador] = useState(''), [nome, setNome] = useState(''), [obra, setObra] = useState(''), [prev, setPrev] = useState('')
   const [err, setErr] = useState('')
   const salvar = async () => {
@@ -235,13 +233,13 @@ function EmprestarModal({ ferramenta, onClose, onDone }: { ferramenta: Ferrament
     try {
       await create.mutateAsync({ ferramenta: ferramenta.ferramenta_id, colaborador: colaborador ? Number(colaborador) : null, colaborador_nome: colaborador ? '' : nome, obra: obra ? Number(obra) : null, data_prevista_devolucao: prev || null })
       onDone()
-    } catch { setErr('Falha ao emprestar.') }
+    } catch { setErr('Não foi possível emprestar.') }
   }
   return <Modal title={`Emprestar — ${ferramenta.nome}`} onClose={onClose} footer={<><Btn onClick={onClose}>Cancelar</Btn><Btn variant="primary" onClick={salvar} disabled={create.isPending}>Emprestar</Btn></>}>
     {err && <div style={errBox}>{err}</div>}
-    <ColaboradorField funcionarios={(funcs ?? []) as FuncionarioOpt[]} colaborador={colaborador} setColaborador={setColaborador} nome={nome} setNome={setNome} />
+    <ColaboradorField temRh={temRh} colaborador={colaborador} setColaborador={setColaborador} nome={nome} setNome={setNome} />
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-      <Field label="Obra"><select style={inp} value={obra} onChange={e => setObra(e.target.value)}><option value="">— nenhuma —</option>{(obras ?? []).map(o => <option key={o.obra_id} value={o.obra_id}>{o.nome_obra}</option>)}</select></Field>
+      <Field label="Obra"><SeletorDeObra valor={obra ? Number(obra) : null} aoMudar={id => setObra(id == null ? '' : String(id))} permiteLimpar placeholder="— nenhuma — busque a obra" aria-label="Obra" style={inp} /></Field>
       <Field label="Devolução prevista"><input style={inp} type="date" min={minCalendarioISO} max={maxCalendarioISO} value={prev} onChange={e => setPrev(e.target.value)} /></Field>
     </div>
   </Modal>

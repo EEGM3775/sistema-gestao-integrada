@@ -57,7 +57,7 @@ export default function AprovacoesPage() {
       const corpo = (e as { response?: { data?: unknown } })?.response?.data
       setFalha(
         typeof corpo === 'string' ? corpo
-          : corpo ? JSON.stringify(corpo) : 'Não deu para concluir.',
+          : corpo ? JSON.stringify(corpo) : 'Não foi possível concluir.',
       )
     }
   }

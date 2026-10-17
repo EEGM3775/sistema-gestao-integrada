@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowUpRight, X } from 'lucide-react'
-import { Btn, Pill } from '@/components/malha'
+import { Btn, Pill, SeletorDeFuncionario } from '@/components/malha'
 import { useAuth } from '@/hooks/useAuth'
 import { dateToBR, maxCalendarioISO, minCalendarioISO } from '@/utils/dates'
 import { usePdca } from '../contexto'
@@ -14,7 +14,7 @@ import {
 } from '../hooks'
 import { TIPOS_QUE_VIRAM_COMPRA } from '../vocabulario'
 import {
-  buscarFuncionarios, buscarItensOrcados, buscarNoCatalogo, materiaisDaAtividade, plano as planoApi,
+  buscarItensOrcados, buscarNoCatalogo, materiaisDaAtividade, plano as planoApi, temAcessoAoRh,
   type ItemOrcadoCurto,
 } from '../api/montagemApi'
 import { pdcaKeys } from '../api/queryKeys'
@@ -166,8 +166,8 @@ function FaceDoLote(
   const folhas = lista.filter((a) => !a.tem_filhos)
   const { data: locais = [] } = useLocais(obraId, editavel)
   const { data: calendarios = [] } = useCalendarios(obraId, editavel)
-  const { data: funcionarios, isError: semRh } = useQuery({
-    queryKey: ['pdca', 'funcionarios'], queryFn: buscarFuncionarios, enabled: editavel,
+  const { isError: semRh } = useQuery({
+    queryKey: ['pdca', 'funcionarios', 'acesso'], queryFn: temAcessoAoRh, enabled: editavel,
     staleTime: 5 * 60_000, retry: false,
   })
   const [duracao, setDuracao] = useState('')
@@ -246,16 +246,19 @@ function FaceDoLote(
             </Campo>
             {!semRh && (
               <Campo rotulo="Responsável">
-                <select
-                  value=""
-                  onChange={(e) => e.target.value && montagem.salvarVarias(lista, { responsavel: e.target.value === '-' ? null : Number(e.target.value) }, 'responsável do lote')}
-                  style={ESTILO_SELECT}
+                {/* Busca no servidor (F2). Escolher aplica ao lote; o × tira o
+                    responsável de todas as marcadas. */}
+                <SeletorDeFuncionario
+                  valor={null}
+                  aoMudar={(id) => { if (id != null) montagem.salvarVarias(lista, { responsavel: id }, 'responsável do lote') }}
+                  placeholder="Escolher para o lote…"
                   aria-label="Responsável do lote"
-                >
-                  <option value="">escolher…</option>
-                  <option value="-">ninguém</option>
-                  {(funcionarios ?? []).map((f) => <option key={f.funcionario_id} value={f.funcionario_id}>{f.nome_completo}</option>)}
-                </select>
+                  style={ESTILO_SELECT}
+                />
+                <button type="button" onClick={() => montagem.salvarVarias(lista, { responsavel: null }, 'responsável do lote')}
+                  style={{ marginTop: 4, alignSelf: 'flex-start', border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontSize: 11.5, color: 'var(--ink-3)', textDecoration: 'underline' }}>
+                  tirar o responsável das marcadas
+                </button>
               </Campo>
             )}
             <Campo rotulo="Expediente">
@@ -1203,9 +1206,9 @@ function SeletorDeExpediente(
 function SeletorDeResponsavel(
   { atividade, montagem, editavel }: { atividade: Atividade; montagem: Montagem; editavel: boolean },
 ) {
-  const { data, isError } = useQuery({
-    queryKey: ['pdca', 'funcionarios'],
-    queryFn: buscarFuncionarios,
+  const { isError } = useQuery({
+    queryKey: ['pdca', 'funcionarios', 'acesso'],
+    queryFn: temAcessoAoRh,
     enabled: editavel,
     staleTime: 5 * 60_000,
     retry: false,
@@ -1217,15 +1220,16 @@ function SeletorDeResponsavel(
   }
   return (
     <Campo rotulo="Responsável">
-      <select
-        value={atividade.responsavel ?? ''}
-        onChange={(e) => montagem.salvar(atividade, { responsavel: e.target.value ? Number(e.target.value) : null }, 'responsável')}
-        style={ESTILO_SELECT}
+      {/* Busca no servidor (F2); o × volta para "ninguém". */}
+      <SeletorDeFuncionario
+        valor={atividade.responsavel ?? null}
+        rotuloAtual={atividade.responsavel_nome}
+        aoMudar={(id) => montagem.salvar(atividade, { responsavel: id }, 'responsável')}
+        permiteLimpar
+        placeholder="ninguém — busque para escolher"
         aria-label="Responsável"
-      >
-        <option value="">ninguém</option>
-        {(data ?? []).map((f) => <option key={f.funcionario_id} value={f.funcionario_id}>{f.nome_completo}</option>)}
-      </select>
+        style={ESTILO_SELECT}
+      />
     </Campo>
   )
 }

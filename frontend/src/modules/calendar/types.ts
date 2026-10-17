@@ -38,6 +38,72 @@ export interface CalendarEvent {
   recurrence_rule: string
   /** Lembretes (Fatia C): offsets em minutos antes do início (0 = na hora). */
   reminders: number[]
+  /** Agenda (Fatia D); `null` = a agenda pessoal implícita do dono. */
+  calendar: number | null
+  /** Onde acontece (Fatia E). */
+  location: string
+  /** Convidados com a resposta de cada um (Fatia D). */
+  attendees: Attendee[]
+  owner_name: string
+  /** Quem pergunta pode alterar o evento (dono ou quem vê a agenda dele). */
+  can_edit: boolean
+  /** A resposta de quem pergunta, se foi convidado. */
+  my_status: RsvpStatus | null
+}
+
+/** Resposta a um convite (Fatia D). */
+export type RsvpStatus = 'pendente' | 'aceito' | 'recusado'
+
+export interface Attendee {
+  user: number
+  nome: string
+  status: RsvpStatus
+}
+
+/** Pessoa da empresa que pode ser convidada (`/calendar/pessoas/`). */
+export interface Pessoa {
+  id: number
+  nome: string
+  username: string
+}
+
+/** Escopo de uma agenda: quem a vê (e lança nela). */
+export type AgendaScope = 'pessoal' | 'equipe' | 'empresa'
+
+/** Agenda (Fatia D). */
+export interface Agenda {
+  id: number
+  name: string
+  color: string
+  scope: AgendaScope
+  owner: number
+  owner_name: string
+  members: { id: number; nome: string }[]
+  /** Quem pergunta pode renomear, recolorir, mudar membros e apagar. */
+  can_manage: boolean
+}
+
+export interface AgendaPayload {
+  name: string
+  color: string
+  scope: AgendaScope
+  /** Ids dos membros (só no escopo `equipe`). */
+  members: number[]
+}
+
+/** Resultado da busca de eventos (Fatia E). */
+export interface EventoAchado {
+  id: number
+  title: string
+  start_time: string
+  end_time: string
+  all_day: boolean
+  location: string
+  calendar: number | null
+  calendar_name: string | null
+  color: string | null
+  recurrence_rule: string
+  owner_name: string
 }
 
 /** Payload de criação/edição de um evento próprio. */
@@ -52,6 +118,11 @@ export interface CalendarEventPayload {
   recurrence_rule?: string
   /** Lembretes (Fatia C): offsets em minutos antes do início. Ausente = não altera. */
   reminders?: number[]
+  /** Agenda (Fatia D); `null` = Meus eventos. */
+  calendar?: number | null
+  location?: string
+  /** Ids dos convidados. Ausente = não altera; presente = substitui. */
+  attendees?: number[]
 }
 
 /** Alcance de uma edição/exclusão numa série recorrente. */

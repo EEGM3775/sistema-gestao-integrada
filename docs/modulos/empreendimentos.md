@@ -75,7 +75,7 @@ e a aquisição apenas aponta para ela.
 | `/contas-bancarias-empreendimentos/:id/` | `GET` · `PUT`/`PATCH` · `DELETE` | — |
 | `/custos-empreendimentos/` | `GET` lista · `POST` cria | `?empreendimento=<id>`, `?search=` (descrição/nota fiscal) |
 | `/custos-empreendimentos/:id/` | `GET` · `PUT`/`PATCH` · `DELETE` | — |
-| `/unidades/` | `GET` lista · `POST` cria | `?empreendimento=`, `?situacao=`, `?tipo=`, `?quadra=`, `?bloco_torre=`, `?search=`, `?ordering=`. Paginado; ordem padrão é a do endereço (quadra › lote › bloco › andar › apto), **numérica** |
+| `/unidades/` | `GET` lista · `POST` cria | `?empreendimento=`, `?situacao=`, `?tipo=`, `?quadra=`, `?bloco_torre=`, `?search=`, `?ordering=`. Paginado; ordem padrão é a do endereço (quadra › lote › bloco › andar › apto), **numérica**. O `?search=` entende o endereço como a tela o escreve (`QD 12 LT 5`, `Torre A 302`) e acha pelo comprador — regra em `clientes.carteira.buscar_no_estoque`, a mesma da carteira |
 | `/unidades/:id/` | `GET` · `PUT`/`PATCH` · `DELETE` | `DELETE` fecha em 409 se a unidade tem aquisição |
 | `/unidades/resumo/` | `GET` | Mesmos filtros da lista. Devolve `total`, `por_situacao`/`situacoes` (as **quatro**, com rótulo) e `quadras` |
 

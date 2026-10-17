@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Building2, HardHat, Users, Truck,
   BarChart3, UserCog, TrendingUp, Brain, Plane, Package,
   PanelLeft, Lock, ShieldCheck, Warehouse, Calculator, DatabaseZap,
-  GanttChartSquare, Trash2, FileSignature, Landmark,
+  GanttChartSquare, Trash2, FileSignature, Landmark, ScrollText,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { Quarteirao } from '@/components/brand/Quarteirao'
@@ -92,7 +92,7 @@ const NAV_SECTIONS: NavSection[] = [
       // ferramentas dele. Ela é alcançada pela obra, dentro de `/app/pdca`, que
       // é a unidade de trabalho declarada do módulo (§5.1).
       { label: 'Planejamento & Execução (PDCA)', icon: <GanttChartSquare />, to: '/app/pdca',   module: 'pdca',           implemented: true },
-      { label: 'Drone',            icon: <Plane />,       to: '/app/drone',      module: 'drone',          implemented: false },
+      { label: 'Drone',            icon: <Plane />,       to: '/app/drone',      module: 'drone',          implemented: true },
     ],
   },
   {
@@ -104,6 +104,8 @@ const NAV_SECTIONS: NavSection[] = [
       // Acessos" — definir alçada é decidir quem manda no dinheiro, como
       // definir papel é decidir quem vê o quê (D130).
       { label: 'Aprovações',       icon: <FileSignature />, to: '/app/admin/aprovacoes', adminOnly: true, implemented: true },
+      // D17 — a trilha do sistema e a das contas numa linha do tempo.
+      { label: 'Auditoria',        icon: <ScrollText />,  to: '/app/auditoria',      permission: 'plataforma.auditoria.view', implemented: true },
       { label: 'Lixo',             icon: <Trash2 />,      to: '/app/lixo',           permission: 'plataforma.lixo.view', implemented: true },
     ],
   },

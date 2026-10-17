@@ -156,6 +156,63 @@ class PropostaTests(SimpleTestCase):
         self.assertEqual(plano.saldo_financiado, Decimal("60000.00"))
         self.assertEqual(anuais[0].vencimento, date(2027, 1, 10))
 
+    def test_anuais_podem_cobrar_juros_desde_a_venda(self):
+        """Item 76: com taxa, a anual é parte do saldo financiado. 20.000 em 2
+        anuais a 1% a.m., venda em 10/01/2026: vencem a 12 e 24 meses, e
+        cada = 20.000 / (1,01⁻¹² + 1,01⁻²⁴) = 11.940,19. Os juros da 1ª são os
+        12 meses sobre o principal inteiro: 20.000 × (1,01¹² − 1) = 2.536,50."""
+        plano = pp.montar(
+            valor_tabela=Decimal("20000"),
+            meios=[dict(tipo="anuais", valor="20000", parcelas=2, juros_mensal="1")],
+            data_compra=date(2026, 1, 10),
+        )
+        anuais = plano.parcelas
+        self.assertEqual([p.valor for p in anuais], [Decimal("11940.19")] * 2)
+        self.assertEqual(anuais[0].juros, Decimal("2536.50"))
+        self.assertEqual(sum(p.amortizacao for p in anuais), Decimal("20000.00"))
+        self.assertEqual(anuais[-1].saldo, Decimal("0"))
+        self.assertEqual(plano.meios[0].detalhe, "2 anuais de R$ 11.940,19, 1% a.m.")
+        # O principal continua sendo o que fecha a conta da venda.
+        self.assertEqual(plano.valor_negociado, Decimal("20000.00"))
+
+    def test_parcelas_com_datas_livres(self):
+        """Item 76: cada parcela com a sua data. O valor do meio é a soma das
+        linhas, a ordem do carnê é a das datas, e nenhuma rende juros."""
+        plano = pp.montar(
+            valor_tabela=Decimal("30000"),
+            meios=[
+                entrada("10000"),
+                dict(tipo="datas_livres", cronograma=[
+                    {"vencimento": "2026-12-15", "valor": "12000"},
+                    {"vencimento": "2026-05-03", "valor": "8000"},
+                ]),
+            ],
+            data_compra=date(2026, 1, 10),
+        )
+        livres = [p for p in plano.parcelas if p.tipo == "livre"]
+        self.assertEqual([(p.vencimento, p.valor) for p in livres], [
+            (date(2026, 5, 3), Decimal("8000.00")), (date(2026, 12, 15), Decimal("12000.00")),
+        ])
+        self.assertEqual(plano.total_juros, Decimal("0"))
+        self.assertEqual(plano.meios[1].valor, Decimal("20000.00"))
+        self.assertEqual(plano.meios[1].detalhe, "2x de 03/05/2026 a 15/12/2026")
+        self.assertEqual(plano.condicao, "financiamento_direto")
+
+    def test_datas_livres_exige_data_e_valor_em_cada_linha(self):
+        with self.assertRaisesMessage(ValueError, "parcela 2: informe a data"):
+            pp.montar(valor_tabela=Decimal("100"), meios=[dict(tipo="datas_livres", cronograma=[
+                {"vencimento": "2026-05-03", "valor": "50"}, {"valor": "50"},
+            ])])
+        with self.assertRaisesMessage(ValueError, "ao menos uma parcela"):
+            pp.montar(valor_tabela=Decimal("100"), meios=[dict(tipo="datas_livres", cronograma=[])])
+
+    def test_teto_de_parcelas_livres_vem_do_payment(self):
+        from payment.planos import VENDA_TETO_PARCELAS_LIVRES
+
+        linhas = [{"vencimento": "2027-01-01", "valor": "1"}] * (VENDA_TETO_PARCELAS_LIVRES + 1)
+        with self.assertRaisesMessage(ValueError, f"até {VENDA_TETO_PARCELAS_LIVRES} parcelas"):
+            pp.montar(valor_tabela=Decimal("1"), meios=[dict(tipo="datas_livres", cronograma=linhas)])
+
     def test_total_e_a_soma_do_carne(self):
         plano = pp.montar(
             valor_tabela=Decimal("250000"), desconto_percentual=Decimal("5"),

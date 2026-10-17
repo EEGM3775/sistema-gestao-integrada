@@ -137,7 +137,7 @@ class ClienteTests(CadastroTestBase):
         lote = self.preparar("cadastro.cliente", [
             CAB_CLIENTE,
             f"{gerar_cpf(7)};Boa;boa@x.com;01/01/1990;;",
-            f"{gerar_cpf(8)};Sem e-mail;;01/01/1990;;",
+            f"{gerar_cpf(8)};;ruim@x.com;01/01/1990;;",
         ])
         with self.assertRaises(motor.ImportacaoInvalida):
             motor.aplicar(lote, recurso=self.recurso("cadastro.cliente"))

@@ -1,13 +1,14 @@
 """A porta por papel do PDCA **na tela** — §3.3 da planta do frontend.
 
 Abrir a obra sem nomear posto (`/app/pdca/o/<id>`) cai no posto do papel, e o
-rail continua com os seis: a porta escolhe onde se entra, não o que existe.
+rail continua com os cinco: a porta escolhe onde se entra, não o que existe.
+*(Desde 10/10/2026 o CONTROLE absorve o Hoje e a Semana — decisão do dono.)*
 
   1. `demo` — acumula `gestor_contratos`, `engenharia`, `tecnico_qualidade` e
      `planejador`: a precedência (dinheiro antes do compromisso) o põe em MEDIÇÃO;
-  2. `gerente` — `diretoria`, quem assina: cai em HOJE, a fila de decisão;
+  2. `gerente` — `diretoria`, quem assina: cai no CONTROLE, a fila de decisão;
   3. `campo` — só o papel de canteiro: a carteira mostra a passagem para a
-     superfície de campo, e abrir a obra cai em HOJE (o campo não tira ninguém
+     superfície de campo, e abrir a obra cai no CONTROLE (o campo não tira ninguém
      da obra que pediu).
 
 Também cobra que clicar no **nome** da obra na carteira passa pela porta.
@@ -93,8 +94,8 @@ with sync_playwright() as p:
     obra_id = obra["obra"]
     check("abrir a obra sem posto cai em MEDIÇÃO", abre_em(pagina, obra_id, "medicao"))
     rail = pagina.locator("nav[aria-label='Postos de trabalho da obra']")
-    check("o rail continua com os seis postos",
-          rail.locator("a, div[title^='Requer']").count() == 6)
+    check("o rail continua com os cinco postos",
+          rail.locator("a, div[title^='Requer']").count() == 5)
     pagina.goto(f"{GW}/app/pdca", wait_until="networkidle")
     pagina.get_by_text(obra["nome"][:18], exact=False).first.click()
     try:
@@ -112,7 +113,7 @@ with sync_playwright() as p:
 
     print("\n2. `gerente` (diretoria)")
     ctx, pagina = entrar(navegador, "gerente", "gerente123")
-    check("abrir a obra sem posto cai em HOJE", abre_em(pagina, obra_id, "hoje"))
+    check("abrir a obra sem posto cai no CONTROLE", abre_em(pagina, obra_id, "controle"))
     ctx.close()
     time.sleep(INTERVALO_S)
 
@@ -133,7 +134,8 @@ with sync_playwright() as p:
         except Exception:
             pass
         check("a passagem leva à superfície de campo", pagina.url.rstrip("/").endswith("/campo"))
-    check("abrir a obra sem posto cai em HOJE, sem sair da obra", abre_em(pagina, obra_id, "hoje"))
+    check("abrir a obra sem posto cai no CONTROLE, sem sair da obra",
+          abre_em(pagina, obra_id, "controle"))
     ctx.close()
 
     navegador.close()

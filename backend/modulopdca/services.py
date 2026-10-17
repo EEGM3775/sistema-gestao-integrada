@@ -546,9 +546,9 @@ class CalendarioEmMemoria:
     def _estourou(self) -> None:
         if self._caminhados > _MAXIMO_DIAS_CORRIDOS_CPM:
             raise ValidationError(
-                f"O calendário '{self.calendario.nome}' não produz dias úteis suficientes "
-                "para este cronograma — verifique se algum dia da semana está marcado como "
-                "trabalhado e se as exceções não param a obra indefinidamente."
+                f"O calendário '{self.calendario.nome}' não produz dias úteis suficientes para este "
+                "cronograma. Verifique se há dia da semana marcado como trabalhado e se as exceções "
+                "não bloqueiam a obra indefinidamente."
             )
 
     # -- conversões --------------------------------------------------------
@@ -822,8 +822,8 @@ def _ordem_topologica(folhas: list[Atividade],
         presos = {a.atividade_id: a for a in folhas if grau[a.atividade_id] > 0}
         nomes = ", ".join(sorted(f"{a.codigo} {a.nome}".strip() for a in list(presos.values())[:8]))
         raise ValidationError(
-            "As precedências formam um ciclo — há atividades que dependem umas das "
-            f"outras em círculo e nenhuma pode começar. Envolvidas: {nomes}."
+            "As precedências formam um ciclo: há atividades que dependem umas das outras e nenhuma "
+            f"pode começar. Envolvidas: {nomes}."
         )
     return ordem
 
@@ -875,8 +875,7 @@ def calcular_cpm(cronograma: Cronograma, *, gravar: bool = True) -> dict:
     if cronograma.calendario_id is None and any(a.calendario_id is None for a in folhas):
         raise ValidationError(
             "Há atividades sem calendário e o cronograma não tem um padrão. "
-            "Defina o calendário do cronograma — sem ele, converter duração em data "
-            "seria inventar quando a obra trabalha."
+            "Defina o calendário do cronograma."
         )
 
     calendarios = _calendarios_do_cronograma(cronograma, atividades)
@@ -1184,8 +1183,7 @@ def replanejar(cronograma: Cronograma, *, motivo: str) -> Cronograma:
     motivo = (motivo or "").strip()
     if not motivo:
         raise ValidationError(
-            "Replanejar exige o motivo — é ele que transforma a versão anterior "
-            "numa linha de base com legenda."
+            "Replanejar exige o motivo, que fica registrado na versão anterior como linha de base."
         )
     if cronograma.status == Cronograma.Status.RASCUNHO:
         raise ValidationError(
@@ -1518,8 +1516,7 @@ def marcar_como_modelo(cronograma: Cronograma, *, nome: str) -> Cronograma:
     nome = (nome or "").strip()
     if not nome:
         raise ValidationError(
-            "O modelo precisa de nome — é por ele que alguém o escolhe seis meses "
-            "depois, e 'Plano da Obra 47 v3' não diz o que ele padroniza."
+            "O modelo precisa de nome."
         )
     if not cronograma.atividades.exists():
         raise ValidationError(
@@ -1532,8 +1529,7 @@ def marcar_como_modelo(cronograma: Cronograma, *, nome: str) -> Cronograma:
     if colisao is not None:
         raise ValidationError(
             f"Já existe um plano modelo chamado '{colisao.nome_modelo}'. "
-            "Dois com o mesmo nome é a forma mais rápida de alguém aplicar o "
-            "padrão errado numa obra inteira."
+            "Para não aplicar o padrão errado, renomeie."
         )
 
     cronograma.eh_modelo = True
@@ -1573,9 +1569,8 @@ def aplicar_modelo(modelo: Cronograma, *, obra, descricao: str, data_inicio,
                  .order_by("-versao").first())
     if existente is not None:
         raise ValidationError(
-            f"Esta obra já tem cronograma (v{existente.versao}). Aplicar um modelo "
-            "cria o primeiro plano da obra — para trocar o plano de uma obra que "
-            "já tem, replaneje."
+            f"Esta obra já tem cronograma (v{existente.versao}). Aplicar um modelo só cria o primeiro "
+            "plano da obra. Para trocar o plano, replaneje."
         )
 
     with transaction.atomic():
@@ -2762,8 +2757,7 @@ def estornar(apontamento: "ApontamentoAvanco", *, motivo: str, por: str = "",
     motivo = (motivo or "").strip()
     if not motivo:
         raise ValidationError(
-            "Estornar exige o motivo — é ele que separa a correção do erro no "
-            "livro que vai virar medição."
+            "Estornar exige o motivo."
         )
     if apontamento.estorna_id:
         raise ValidationError(
@@ -4259,12 +4253,9 @@ def criar_medicao(*, contrato: ContratoObra, inicio: date, fim: date,
     conflito = _conflito_de_periodo(contrato, inicio=inicio, fim=fim)
     if conflito is not None:
         raise ValidationError(
-            f"O período {inicio:%d/%m/%Y}–{fim:%d/%m/%Y} se sobrepõe ao da "
-            f"medição {conflito.numero} ({conflito.periodo_inicio:%d/%m/%Y}–"
-            f"{conflito.periodo_fim:%d/%m/%Y}), que já está "
-            f"{conflito.get_status_display().lower()}. Dois períodos que se "
-            f"cruzam pagam o mesmo avanço duas vezes — comece no dia seguinte "
-            f"ao fim dela, ou retifique-a."
+            f"O período {inicio}–{fim} se sobrepõe ao da medição {conflito.numero} ({conflito.periodo_inicio}–{conflito.periodo_fim}), "
+            f"que já está {conflito.get_status_display().lower()}. Períodos que se cruzam pagam o "
+            "mesmo avanço duas vezes. Comece no dia seguinte ao fim dela ou retifique-a."
         )
 
     proposta = {
@@ -5210,8 +5201,7 @@ def criar_aditivo(*, contrato: ContratoObra, objeto: str, justificativa: str,
         )
     if not (justificativa or "").strip():
         raise ValidationError(
-            "O aditivo exige justificativa — é o campo que a auditoria lê "
-            "primeiro, e é o que separa a correção do erro."
+            "O aditivo exige justificativa."
         )
     abertos = contrato.aditivos.filter(
         status__in=(
@@ -5220,9 +5210,7 @@ def criar_aditivo(*, contrato: ContratoObra, objeto: str, justificativa: str,
     ).count()
     if abertos >= PDCA_TETO_ADITIVOS_ABERTOS_POR_CONTRATO:
         raise ValidationError(
-            f"Este contrato já tem {_milhar(abertos)} aditivos em aberto — "
-            f"conclua-os antes de abrir outro. Dois aditivos abertos sobre as "
-            f"mesmas linhas se conferem contra o mesmo saldo e passam os dois."
+            f"Este contrato já tem {_milhar(abertos)} aditivos em aberto."
         )
 
     proximo = (
@@ -5826,7 +5814,7 @@ def cancelar_medicao(*, medicao: Medicao, motivo: str = "", por: str = "",
     if medicao.status in (Medicao.Status.CANCELADA, Medicao.Status.REPROVADA):
         raise ValidationError(
             f"A medição já está {medicao.get_status_display().lower()} e não "
-            f"se cancela de novo — ela já não produz efeito."
+            f"se cancela de novo."
         )
 
     era_aprovada = medicao.status == Medicao.Status.APROVADA
@@ -5835,7 +5823,7 @@ def cancelar_medicao(*, medicao: Medicao, motivo: str = "", por: str = "",
             raise ValidationError(
                 f"A medição {medicao.numero} já substituiu a medição "
                 f"{medicao.retifica.numero} e mexeu no financeiro. Para corrigir de "
-                f"novo, retifique esta — a correção da correção também é documento."
+                f"novo, retifique esta."
             )
         # *Decisão do dono, 11/10/2026:* retificadora retirada antes de valer não
         # deixa rastro — nunca produziu título nem efeito, e guardá-la como
@@ -5852,9 +5840,8 @@ def cancelar_medicao(*, medicao: Medicao, motivo: str = "", por: str = "",
 
     if era_aprovada and not motivo:
         raise ValidationError(
-            "Cancelar uma medição aprovada exige motivo por escrito. Ela já "
-            "virou título a pagar, e o financeiro precisa da frase que explica "
-            "por que o título sumiu."
+            "Cancelar uma medição aprovada exige motivo por escrito. Ela já virou título a pagar, "
+            "e o financeiro precisa do motivo do cancelamento."
         )
 
     if titulo is not None:
@@ -5869,7 +5856,7 @@ def cancelar_medicao(*, medicao: Medicao, motivo: str = "", por: str = "",
                 f"paga não se cancela: o dinheiro saiu do caixa e existe uma "
                 f"transação lançada em cima dele. Para corrigir o valor, abra "
                 f"uma medição retificadora — ela aponta para esta, e a soma das "
-                f"duas dá o número certo."
+                f"duas calcula o valor."
             )
         if titulo.status != "CANCELADO":
             titulo.status = "CANCELADO"
@@ -6473,9 +6460,7 @@ def validar_teto_de_causas(tenant_id, *, acrescentando: int = 1) -> None:
             f"O catálogo de causas do seu plano vai até "
             f"{_milhar(PDCA_TETO_CAUSAS_POR_TENANT)} itens, e você já tem "
             f"{_milhar(atual)}. Desative as causas que não se usam mais — elas "
-            f"continuam legíveis no histórico — em vez de acrescentar novas: "
-            f"uma lista que ninguém percorre até o fim faz o ranking de causas "
-            f"deixar de ranquear."
+            f"continuam legíveis no histórico."
         )
 
 
@@ -6504,6 +6489,32 @@ def restricoes_abertas_por_atividade(atividade_ids: list[int],
     return {linha["atividade_id"]: linha["n"] for linha in linhas}
 
 
+def travas_abertas_por_atividade(atividade_ids: list[int],
+                                 *, tenant_id) -> dict[int, list[dict]]:
+    """`{atividade_id: [o que trava]}` — a resposta a "travado por quê?".
+
+    Irmã do `restricoes_abertas_por_atividade`: aquela diz **quantas**, esta diz
+    **quais**, e também em uma consulta. Quem vê "2 travas" num cartão
+    bloqueado precisa saber o que destravar sem abrir a esteira.
+    """
+    if not atividade_ids:
+        return {}
+    mapa: dict[int, list[dict]] = {}
+    linhas = Restricao.objects.filter(
+        tenant_id=tenant_id, atividade_id__in=atividade_ids,
+        status=Restricao.Status.ABERTA,
+    ).order_by("prazo", "restricao_id")
+    for r in linhas:
+        mapa.setdefault(r.atividade_id, []).append({
+            "restricao": r.pk,
+            "tipo": r.get_tipo_display(),
+            "descricao": r.descricao,
+            "responsavel": r.responsavel,
+            "prazo": r.prazo,
+        })
+    return mapa
+
+
 def validar_teto_de_restricoes(obra_id, *, tenant_id,
                                acrescentando: int = 1) -> None:
     """O *constraint log* existe para ser zerado — §5.5j do `planos.py`."""
@@ -6514,10 +6525,8 @@ def validar_teto_de_restricoes(obra_id, *, tenant_id,
     ).count()
     if atual + acrescentando > PDCA_TETO_RESTRICOES_ABERTAS_POR_OBRA:
         raise ValidationError(
-            f"Esta obra já tem {_milhar(atual)} restrições abertas, e o teto do "
-            f"seu plano é {_milhar(PDCA_TETO_RESTRICOES_ABERTAS_POR_OBRA)}. O "
-            f"log de restrição é para zerar, não para acumular: remova ou "
-            f"cancele as que já não travam nada antes de abrir mais."
+            f"Esta obra já tem {_milhar(atual)} restrições abertas, e o teto do seu plano é {_milhar(PDCA_TETO_RESTRICOES_ABERTAS_POR_OBRA)}. "
+            "Remova ou cancele as que já não travam nada antes de abrir mais."
         )
 
 
@@ -6538,8 +6547,7 @@ def remover_restricao(*, restricao: Restricao, por: str = "",
         )
     if not (nota or "").strip():
         raise ValidationError(
-            "Diga como a restrição foi removida. Sem isso, a reunião da semana "
-            "que vem não sabe se ela foi resolvida ou apenas esquecida."
+            "Complete com a resolução da restrição."
         )
     restricao.status = Restricao.Status.REMOVIDA
     restricao.removida_em = timezone.now()
@@ -6618,9 +6626,7 @@ def gerar_demanda_scm(*, restricao: Restricao, quantidade=None,
         raise ValidationError(
             f"Restrição de {restricao.get_tipo_display().lower()} não vira "
             f"compra. Só material, equipamento e mão de obra geram demanda no "
-            f"Suprimentos — o resto se destrava com projeto, decisão ou licença, "
-            f"e forçar uma demanda aqui encheria a fila de compras de pendência "
-            f"que ninguém compra."
+            f"Suprimentos — o resto se destrava com projeto, decisão ou licença."
         )
     if restricao.status != Restricao.Status.ABERTA:
         raise ValidationError(
@@ -6721,9 +6727,7 @@ def validar_teto_de_itens_da_programacao(programacao: ProgramacaoSemanal, *,
         raise ValidationError(
             f"Uma programação semanal do seu plano comporta "
             f"{_milhar(PDCA_TETO_ITENS_POR_PROGRAMACAO)} compromissos, e esta "
-            f"já tem {_milhar(atual)}. O quadro é uma parede de reunião: acima "
-            f"disso ninguém mais o lê inteiro, e compromisso que não se lê não "
-            f"se cobra."
+            f"já tem {_milhar(atual)}."
         )
 
 
@@ -6749,9 +6753,7 @@ def validar_pode_comprometer(atividade: Atividade, *, tenant_id) -> None:
     )
     raise ValidationError(
         f"«{atividade.nome}» tem {len(abertas)} restrição(ões) aberta(s) e não "
-        f"pode ser comprometida — {lista}. Remova a trava primeiro: assumir um "
-        f"serviço que se sabe travado é o que faz o PPC medir o próprio "
-        f"fracasso em vez de evitá-lo."
+        f"pode ser comprometida — {lista}. Remova a trava primeiro."
     )
 
 
@@ -6776,8 +6778,8 @@ def comprometer(*, programacao: ProgramacaoSemanal, por: str = "") -> dict:
     itens = list(programacao.itens.select_related("atividade"))
     if not itens:
         raise ValidationError(
-            "Não dá para se comprometer com uma semana vazia. Puxe pelo menos "
-            "um serviço do plano para o quadro."
+            "Não é possível comprometer uma semana vazia. Puxe ao menos um "
+            "serviço do plano para o quadro."
         )
     travados = []
     for item in itens:
@@ -6865,18 +6867,15 @@ def encerrar(*, programacao: ProgramacaoSemanal, por: str = "",
     pendentes = por_julgar.filter(percentual_concluido__isnull=True).count()
     if pendentes:
         raise ValidationError(
-            f"Ainda há {pendentes} compromisso(s) sem julgamento. Diga de cada "
-            f"um se saiu ou não — e, quando não saiu, por quê: é dessa resposta "
-            f"que sai o ranking que muda a obra, e não do índice."
+            f"Ainda há {pendentes} compromisso(s) sem julgamento."
         )
     if sem_causa:
         if not aceitar_sem_causa:
             raise EncerramentoSemCausa(sem_causa, pode=pode_aceitar_sem_causa)
         if not pode_aceitar_sem_causa:
             raise ValidationError(
-                "Encerrar a semana com compromisso sem causa exige a permissão "
-                "'pdca.programacao.encerrar_sem_causa'. Informe a causa de cada "
-                "um, ou peça a quem a tem."
+                "Encerrar com compromisso sem causa exige a permissão 'pdca.programacao.encerrar_sem_causa'. "
+                "Informe a causa de cada um."
             )
 
     hoje = hoje or timezone.localdate()
@@ -6886,19 +6885,12 @@ def encerrar(*, programacao: ProgramacaoSemanal, por: str = "",
         faltam = (programacao.semana_fim - hoje).days
         if not pode_antecipar:
             raise ValidationError(
-                f"Esta semana só termina em "
-                f"{programacao.semana_fim:%d/%m/%Y} — faltam {faltam} dia(s). "
-                f"Encerrar agora julga como fracasso o que ainda tem prazo para "
-                f"acontecer, e o PPC que sair daí entra na série valendo o mesmo "
-                f"que os outros. Se a obra realmente para antes (feriado "
-                f"prolongado, paralisação), quem tem "
-                f"'pdca.programacao.encerrar_antecipado' encerra dando o motivo."
+                f"Esta semana só termina em {programacao.semana_fim} — faltam {faltam} dia(s). Encerrar "
+                "antes exige a permissão 'pdca.programacao.encerrar_antecipado' e um motivo."
             )
         if not motivo:
             raise ValidationError(
-                f"Encerrar {faltam} dia(s) antes do fim da semana exige motivo "
-                f"por escrito. É a frase que a reunião seguinte lê para saber "
-                f"por que aquele ponto da série foi apurado mais cedo."
+                f"Encerrar {faltam} dia(s) antes do fim da semana exige motivo por escrito."
             )
 
     if sem_causa:
@@ -6977,9 +6969,7 @@ def arrastar_pendentes(*, programacao: ProgramacaoSemanal,
     """
     if programacao.status != ProgramacaoSemanal.Status.ENCERRADA:
         raise ValidationError(
-            f"Só uma semana encerrada arrasta pendências — esta está "
-            f"{programacao.get_status_display().lower()}. O que não saiu só se "
-            f"sabe depois do julgamento."
+            f"Só uma semana encerrada arrasta pendências — esta está {programacao.get_status_display().lower()}."
         )
 
     falhados = list(
@@ -7163,14 +7153,11 @@ def reabrir(*, programacao: ProgramacaoSemanal, por: str = "",
     """
     if not (motivo or "").strip():
         raise ValidationError(
-            "Diga por que a semana está sendo reaberta. O PPC dela já foi lido "
-            "por alguém — mudar o número sem deixar a razão escrita contraria "
-            "em silêncio a reunião que olhou para ele."
+            "Informe o motivo da reabertura da semana."
         )
     if programacao.status == ProgramacaoSemanal.Status.RASCUNHO:
         raise ValidationError(
-            "Esta semana já é um rascunho: o quadro está aberto e recebe cartão. "
-            "Não há degrau abaixo deste."
+            "Esta semana já é um rascunho."
         )
 
     de = programacao.status
@@ -7589,6 +7576,9 @@ def candidatos_da_semana(*, programacao: ProgramacaoSemanal) -> list[dict]:
     travas = restricoes_abertas_por_atividade(
         ids, tenant_id=programacao.tenant_id
     )
+    detalhe_travas = travas_abertas_por_atividade(
+        ids, tenant_id=programacao.tenant_id
+    )
     #: **A qualidade na tela do Last Planner** (PDCA.7). Não é decoração: o
     #: cartão que a equipe está prestes a assumir pode ser um serviço com
     #: defeito aberto, e descobrir isso ao chegar na frente é o que produz o
@@ -7607,11 +7597,31 @@ def candidatos_da_semana(*, programacao: ProgramacaoSemanal) -> list[dict]:
             "fim_previsto": a.termino_cedo,
             "critica": getattr(a, "critica", False),
             "restricoes_abertas": travas.get(a.pk, 0),
+            "travas": detalhe_travas.get(a.pk, []),
             "ncs_abertas": defeitos.get(a.pk, 0),
             "ja_no_quadro": a.pk in ja_no_quadro,
         }
         for a in atividades
     ]
+
+
+def _meta_pela_fatia_do_plano(atividade, programacao: ProgramacaoSemanal,
+                              inicio: Decimal) -> Decimal:
+    """Meta de um cartão sem avanço prometido: início + a fatia da semana.
+
+    A fatia é a parte dos dias do plano (CPM) que cai dentro da semana. Atividade
+    sem datas, que termina na semana ou que já passou do prazo continua devendo
+    100% — não há mais semana para diluir.
+    """
+    cem = Decimal("100")
+    ini, fim = atividade.inicio_cedo, atividade.termino_cedo
+    if not ini or not fim or fim <= programacao.semana_fim:
+        return cem
+    total = (fim - ini).days + 1
+    sobreposto = (min(fim, programacao.semana_fim) - max(ini, programacao.semana_inicio)).days + 1
+    if total <= 0 or sobreposto <= 0:
+        return cem
+    return min(cem, (inicio + cem * Decimal(sobreposto) / Decimal(total)).quantize(Decimal("0.01")))
 
 
 def andamento_dos_itens(programacao: ProgramacaoSemanal) -> dict[int, dict]:
@@ -7622,7 +7632,9 @@ def andamento_dos_itens(programacao: ProgramacaoSemanal) -> dict[int, dict]:
     - `inicio`: o acumulado quando a semana começou — o atual menos o que se
       apontou dentro dela;
     - `meta`: onde a atividade tinha de chegar. Com avanço prometido, início +
-      prometido; sem ele, o compromisso era **concluir** — 100%.
+      prometido; sem ele, vale a **fatia da semana no prazo do plano** (a
+      atividade de 8 semanas não deve 100% numa só — achado do dono,
+      17/10/2026), e só a que termina na semana (ou sem datas) deve **concluir**.
 
     Uma consulta por versão do plano, não uma por cartão.
     """
@@ -7655,7 +7667,7 @@ def andamento_dos_itens(programacao: ProgramacaoSemanal) -> dict[int, dict]:
             if item.percentual_previsto is not None:
                 meta = min(Decimal("100"), inicio + item.percentual_previsto)
             else:
-                meta = Decimal("100")
+                meta = _meta_pela_fatia_do_plano(item.atividade, programacao, inicio)
             resposta[item.pk] = {"atual": agora, "inicio": inicio, "meta": meta}
     return resposta
 
@@ -7742,7 +7754,7 @@ def julgar_itens(*, programacao: ProgramacaoSemanal,
                 a_apontar.append((item, concluido - conta["atual"]))
             item.percentual_concluido = concluido
         if cumprido is None:
-            erros.append(f"Diga se «{item.atividade.nome}» saiu ou não.")
+            erros.append(f"Informe se «{item.atividade.nome}» saiu ou não.")
             continue
         if not cumprido and not causa_id:
             # **Avisa, não impede de salvar** *(dono, 11/10/2026)*. O avanço
@@ -8061,11 +8073,8 @@ def validar_teto_de_locais_do_ritmo(quantos: int) -> None:
     """Um gesto de desenhar a linha é uma transação — §5.5k do `planos.py`."""
     if quantos > PDCA_TETO_LOCAIS_POR_RITMO:
         raise ValidationError(
-            f"Um traço da linha de balanço alcança até "
-            f"{_milhar(PDCA_TETO_LOCAIS_POR_RITMO)} locais, e você pediu "
-            f"{_milhar(quantos)}. Gerar mais que isso de uma vez cria um plano "
-            f"que ninguém revisa antes de publicar — desenhe a torre, confira, "
-            f"e desenhe a seguinte."
+            f"Um traço da linha de balanço alcança até {_milhar(PDCA_TETO_LOCAIS_POR_RITMO)} locais, "
+            f"e você pediu {_milhar(quantos)}. Gere em partes menores."
         )
 
 
@@ -8095,25 +8104,20 @@ def gerar_ritmo(*, cronograma: Cronograma, locais: list[int], inicio: date,
     tid = tenant_id if tenant_id is not None else cronograma.tenant_id
     if not cronograma.editavel:
         raise ValidationError(
-            "Só um cronograma em rascunho recebe traço novo. Para mudar o plano "
-            "vigente, replaneje — a linha de balanço desenha o plano, e o plano "
-            "vigente é a régua contra a qual o atraso já está sendo medido."
+            "Só um cronograma em rascunho recebe traço novo. Para mudar o plano vigente, replaneje."
         )
     if not locais:
         raise ValidationError("Escolha ao menos um local para o serviço percorrer.")
     if duracao_por_local < 1:
         raise ValidationError(
-            "A duração em cada local tem de ser de pelo menos um dia. Serviço de "
-            "duração zero é marco, e marco não tem ritmo."
+            "A duração em cada local tem de ser de pelo menos um dia."
         )
     validar_teto_de_locais_do_ritmo(len(locais))
 
     passo = duracao_por_local if ritmo_dias is None else ritmo_dias
     if passo < 1:
         raise ValidationError(
-            "O ritmo tem de ser de pelo menos um dia por local. Ritmo zero faria "
-            "todos os locais começarem no mesmo dia — isso não é ritmo, é a obra "
-            "inteira de uma vez."
+            "O ritmo tem de ser de pelo menos um dia por local."
         )
 
     #: Os locais têm de ser **desta obra**, e vêm na ordem em que foram pedidos —
@@ -8140,7 +8144,7 @@ def gerar_ritmo(*, cronograma: Cronograma, locais: list[int], inicio: date,
             raise ValidationError("O serviço escolhido não é deste cronograma.")
     elif not (nome or "").strip():
         raise ValidationError(
-            "Diga qual é o serviço — ou escolha um que já existe no plano."
+            "Informe o serviço ou escolha um do plano."
         )
 
     nome_do_servico = (pai.nome if pai else nome).strip()
@@ -8275,13 +8279,8 @@ def validar_teto_de_modelos(tenant_id, *, acrescentando: int = 1) -> None:
     atual = ModeloVerificacao.objects.filter(tenant_id=tenant_id).count()
     if atual + acrescentando > PDCA_TETO_MODELOS_POR_TENANT:
         raise ValidationError(
-            f"A biblioteca de modelos do seu plano vai até "
-            f"{_milhar(PDCA_TETO_MODELOS_POR_TENANT)} fichas, e você já tem "
-            f"{_milhar(atual)}. Desative as que não se aplicam mais — elas "
-            f"continuam legíveis em tudo que já foi verificado — em vez de "
-            f"acrescentar novas: com mil modelos cadastrados cada engenheiro "
-            f"escolhe o seu, e a conformidade de duas obras deixa de ser "
-            f"comparável."
+            f"A biblioteca de modelos do seu plano vai até {_milhar(PDCA_TETO_MODELOS_POR_TENANT)} "
+            f"fichas, e você já tem {_milhar(atual)}. Desative as que não se aplicam mais."
         )
 
 
@@ -8291,11 +8290,8 @@ def validar_teto_de_itens_do_modelo(modelo: "ModeloVerificacao", *,
     atual = modelo.itens.count()
     if atual + acrescentando > PDCA_TETO_ITENS_POR_MODELO_VERIFICACAO:
         raise ValidationError(
-            f"Esta ficha já tem {_milhar(atual)} perguntas, e o teto do seu "
-            f"plano é {_milhar(PDCA_TETO_ITENS_POR_MODELO_VERIFICACAO)}. Quem "
-            f"responde está de pé no canteiro: ficha que não termina numa "
-            f"visita volta pela metade, e ficha pela metade não se distingue de "
-            f"serviço reprovado. Quebre-a em duas."
+            f"Esta ficha já tem {_milhar(atual)} perguntas, e o teto do seu plano é {_milhar(PDCA_TETO_ITENS_POR_MODELO_VERIFICACAO)}. "
+            "Quebre-a em duas."
         )
 
 
@@ -8363,18 +8359,12 @@ def aplicar_verificacao(*, modelo: "ModeloVerificacao", obra, data: date,
     """
     if not modelo.ativo:
         raise ValidationError(
-            f"O modelo '{modelo.codigo}' está inativo — ele saiu da lista de "
-            f"escolha porque a empresa deixou de usá-lo. Reative-o se ele "
-            f"voltou a valer, ou escolha o que o substituiu: inspecionar contra "
-            f"um método abandonado registra uma conformidade que não significa "
-            f"nada."
+            f"O modelo '{modelo.codigo}' está inativo. Reative-o ou escolha outro."
         )
     itens_modelo = list(modelo.itens.all().order_by("ordem", "item_modelo_id"))
     if not itens_modelo:
         raise ValidationError(
-            f"O modelo '{modelo.codigo}' não tem nenhuma pergunta. Uma ficha "
-            f"vazia conclui com 100% de conformidade sem ninguém ter olhado "
-            f"nada — monte os itens antes de aplicá-la."
+            f"O modelo '{modelo.codigo}' não tem nenhuma pergunta. Monte os itens antes de aplicá-lo."
         )
 
     tenant_id = tenant_id if tenant_id is not None else modelo.tenant_id
@@ -8417,9 +8407,8 @@ def responder_itens(*, verificacao: "Verificacao", respostas: list[dict],
     """
     if not verificacao.esta_aberta:
         raise ValidationError(
-            "Esta ficha já foi concluída: ela virou prova e não recebe mais "
-            "resposta. Corrigir uma inspeção concluída é reinspecionar — "
-            "aplique o modelo de novo, que é o que o canteiro também exige."
+            "Esta ficha já foi concluída e não recebe mais resposta. Para corrigir, aplique o modelo "
+            "de novo."
         )
 
     por_id = {
@@ -8440,10 +8429,7 @@ def responder_itens(*, verificacao: "Verificacao", respostas: list[dict],
         if _exige_observacao(resultado) and not observacao:
             rotulo = dict(ResultadoItem.choices)[resultado].lower()
             raise ValidationError(
-                f"O item {item.ordem} ficou como '{rotulo}' sem explicação. "
-                f"Diga o quê: não conforme sem o defeito descrito não vira ação "
-                f"nenhuma, e não aplicável sem o motivo é a porta pela qual uma "
-                f"ficha inteira passa sem ninguém verificar coisa alguma."
+                f"O item {item.ordem} ficou como '{rotulo}' sem explicação. Informe o quê."
             )
         #: **A gravidade é perguntada aqui, no item**, e não uma vez na
         #: conclusão da ficha (decisão do dono, 16/09/2026 — ver a docstring do
@@ -8451,11 +8437,7 @@ def responder_itens(*, verificacao: "Verificacao", respostas: list[dict],
         #: ou se para o serviço; quem lê a lista depois, não.
         if resultado == ResultadoItem.NAO_CONFORME and not gravidade:
             raise ValidationError(
-                f"O item {item.ordem} reprovou sem dizer **quanto** pesa. Um "
-                f"desalinhamento que se corrige na frente e a falta de uma peça "
-                f"que impede aceitar o serviço são dois defeitos diferentes, e "
-                f"contá-los com o mesmo rótulo faz o painel de gravidade deixar "
-                f"de servir para escolher o que tratar primeiro."
+                f"O item {item.ordem} reprovou sem informar a gravidade."
             )
         item.resultado = resultado
         item.observacao = observacao
@@ -8602,10 +8584,8 @@ def concluir_verificacao(*, verificacao: "Verificacao", por: str = "") -> dict:
         quais = ", ".join(str(o) for o in pendentes[:10])
         resto = f" (e mais {len(pendentes) - 10})" if len(pendentes) > 10 else ""
         raise ValidationError(
-            f"Faltam responder os itens obrigatórios {quais}{resto}. Uma ficha "
-            f"assinada com o essencial em branco é pior do que nenhuma: ela "
-            f"parece completa. Responda, ou marque como não aplicável dizendo o "
-            f"porquê."
+            f"Faltam responder os itens obrigatórios {quais}{resto}. Responda, ou marque como não "
+            "aplicável com o motivo."
         )
 
     verificacao.status = Verificacao.Status.CONCLUIDA
@@ -8645,12 +8625,8 @@ def validar_teto_de_ncs(obra_id, *, tenant_id, acrescentando: int = 1) -> None:
     ).count()
     if atual + acrescentando > PDCA_TETO_NCS_ABERTAS_POR_OBRA:
         raise ValidationError(
-            f"Esta obra já tem {_milhar(atual)} não-conformidades em aberto, e "
-            f"o teto do seu plano é "
-            f"{_milhar(PDCA_TETO_NCS_ABERTAS_POR_OBRA)}. Um log com milhares de "
-            f"linhas abertas não é controle de qualidade: é um aterro onde a NC "
-            f"que vai virar retrabalho caro fica invisível. Trate ou cancele o "
-            f"que já não vale antes de abrir mais."
+            f"Esta obra já tem {_milhar(atual)} não-conformidades em aberto, e o teto do seu plano "
+            f"é {_milhar(PDCA_TETO_NCS_ABERTAS_POR_OBRA)}. Trate ou cancele as que não valem mais."
         )
 
 
@@ -8660,10 +8636,8 @@ def validar_teto_de_acoes(nc: "NaoConformidade", *,
     atual = nc.acoes.count()
     if atual + acrescentando > PDCA_TETO_ACOES_POR_NC:
         raise ValidationError(
-            f"Esta não-conformidade já tem {_milhar(atual)} planos de ação, e o "
-            f"teto do seu plano é {_milhar(PDCA_TETO_ACOES_POR_NC)}. Uma NC que "
-            f"pede tantas ações não é uma NC: é um problema que precisa ser "
-            f"quebrado em vários — e quebrado, cada um encerra o seu."
+            f"Esta não-conformidade já tem {_milhar(atual)} planos de ação, e o teto do seu plano "
+            f"é {_milhar(PDCA_TETO_ACOES_POR_NC)}. Divida em mais de uma NC."
         )
 
 
@@ -8775,14 +8749,12 @@ def gerar_restricao_da_nc(*, nc: "NaoConformidade", prazo: date | None = None,
         return nc.restricao_id
     if not nc.atividade_id:
         raise ValidationError(
-            "Esta não-conformidade não aponta para uma atividade, e restrição "
-            "sem alvo não trava nada. Vincule a NC ao "
-            "serviço em que o defeito está antes de parar a frente."
+            "Esta não-conformidade não aponta para uma atividade. Vincule-a ao serviço antes de "
+            "parar a frente."
         )
     if not nc.esta_aberta:
         raise ValidationError(
-            "Só não-conformidade aberta trava serviço — a que já foi encerrada "
-            "não impede mais ninguém de trabalhar."
+            "Só não-conformidade aberta trava serviço."
         )
 
     validar_teto_de_restricoes(
@@ -8824,8 +8796,7 @@ def concluir_acao(*, plano: "PlanoAcao", por: str = "") -> "PlanoAcao":
         return plano
     if plano.status == PlanoAcao.Status.CANCELADA:
         raise ValidationError(
-            "Este plano de ação foi cancelado — um plano cancelado não se "
-            "conclui. Abra outro se a ação voltou a valer."
+            "Este plano de ação foi cancelado e não se conclui. Abra outro."
         )
     plano.status = PlanoAcao.Status.CONCLUIDA
     plano.concluida_em = timezone.now()
@@ -8864,15 +8835,11 @@ def registrar_eficacia(*, nc: "NaoConformidade", data: date, eficaz: bool,
     """
     if nc.status == NaoConformidade.Status.CANCELADA:
         raise ValidationError(
-            "Esta NC foi cancelada — não há o que verificar. Cancelada quer "
-            "dizer que ela não era uma não-conformidade; se era, reabra-a em "
-            "vez de verificar a eficácia de um tratamento que não houve."
+            "Esta NC foi cancelada — não há o que verificar. Se era uma não-conformidade, reabra-a."
         )
     if not (evidencia or "").strip():
         raise ValidationError(
-            "Diga o que você olhou para concluir isso. Verificação de eficácia "
-            "sem evidência é um carimbo — e é exatamente o que a auditoria "
-            "procura quando quer saber se o sistema de qualidade funciona."
+            "Informe o que foi verificado. A verificação de eficácia exige evidência."
         )
 
     registro = VerificacaoEficacia.objects.create(
@@ -8908,27 +8875,19 @@ def encerrar_nc(*, nc: "NaoConformidade", por: str = "",
         return nc
     if nc.status == NaoConformidade.Status.CANCELADA:
         raise ValidationError(
-            "Esta NC está cancelada. Cancelar e encerrar são coisas "
-            "diferentes de propósito: encerrada é defeito tratado, cancelada é "
-            "registro que não era defeito — contar as duas juntas inflaria a "
-            "leitura de quanto esta obra conserta de fato."
+            "Esta NC está cancelada. Cancelada não é o mesmo que encerrada."
         )
 
     vigente = eficacia_vigente(nc)
     if vigente is None:
         raise ValidationError(
-            "Esta não-conformidade ainda não teve a eficácia verificada. O que "
-            "fecha uma NC não é o plano de ação estar concluído — é alguém "
-            "voltar à frente e registrar que o conserto pegou. Sem isso, o "
-            "sistema arquiva em vez de tratar."
+            "Esta não-conformidade ainda não teve a eficácia verificada. Registre a verificação "
+            "antes de encerrar."
         )
     if not vigente.eficaz:
         raise ValidationError(
-            f"A última verificação de eficácia, de {vigente.data:%d/%m/%Y}, "
-            f"disse que o tratamento **não** funcionou. Monte um plano de ação "
-            f"novo e verifique de novo — encerrar agora registraria como "
-            f"resolvido um defeito que a própria empresa constatou que continua "
-            f"lá."
+            f"A última verificação de eficácia, de {vigente.data}, disse que o tratamento **não** "
+            "funcionou. Monte um plano de ação novo e verifique de novo."
         )
 
     # D191 — a mesma trava de `encerrar_ocorrencia`: encerrar por cima de uma
@@ -8938,11 +8897,8 @@ def encerrar_nc(*, nc: "NaoConformidade", por: str = "",
     restricao = nc.restricao
     if restricao is not None and restricao.status == Restricao.Status.ABERTA:
         raise ValidationError(
-            f"A frente continua interditada pela restrição #{restricao.pk}, "
-            f"aberta por esta não-conformidade. Encerrar aqui deixaria o "
-            f"serviço travado sem nada explicando por quê. Declare que o "
-            f"risco cessou removendo a restrição — é ato de quem responde "
-            f"pela obra."
+            f"A frente continua interditada pela restrição #{restricao.pk}, aberta por esta não-conformidade. "
+            "Remova a restrição antes de encerrar."
         )
 
     nc.status = NaoConformidade.Status.ENCERRADA
@@ -9267,11 +9223,8 @@ def validar_teto_de_participantes(dds: "DialogoSeguranca", *,
     atual = dds.participantes.count()
     if atual + acrescentando > PDCA_TETO_PARTICIPANTES_POR_DDS:
         raise ValidationError(
-            f"Um diálogo de segurança comporta até "
-            f"{PDCA_TETO_PARTICIPANTES_POR_DDS} participantes, e este já tem "
-            f"{atual}. Acima disso a roda deixa de ser uma roda: ninguém ouve, "
-            f"ninguém pergunta, e a lista vira assinatura colhida por fora do "
-            f"diálogo. Registre uma roda por frente."
+            f"Um diálogo de segurança comporta até {PDCA_TETO_PARTICIPANTES_POR_DDS} participantes, "
+            f"e este já tem {atual}. Registre uma roda por frente."
         )
 
 
@@ -9281,10 +9234,8 @@ def validar_teto_de_anexos(ocorrencia: "Ocorrencia", *,
     atual = ocorrencia.anexos.count()
     if atual + acrescentando > PDCA_TETO_ANEXOS_POR_OCORRENCIA:
         raise ValidationError(
-            f"Uma ocorrência comporta até {PDCA_TETO_ANEXOS_POR_OCORRENCIA} "
-            f"anexos, e esta já tem {atual}. Ocorrência com dezenas de arquivos "
-            f"não é ocorrência documentada: é o acervo da obra despejado no "
-            f"registro que a perícia precisa conseguir ler."
+            f"Uma ocorrência comporta até {PDCA_TETO_ANEXOS_POR_OCORRENCIA} anexos, e esta já tem "
+            f"{atual}."
         )
 
 
@@ -9298,8 +9249,7 @@ def abrir_dds(*, obra, data: date, tema: str, tenant_id,
     """Abre a roda. Nasce em rascunho — a lista de presença se colhe depois."""
     if not (tema or "").strip():
         raise ValidationError(
-            "O diálogo precisa de um tema. 'DDS realizado' não é tema: o que "
-            "faz o registro servir de prova é dizer sobre o que se falou."
+            "O diálogo precisa de um tema específico. 'DDS realizado' não serve."
         )
     return DialogoSeguranca.objects.create(
         tenant_id=tenant_id, obra=obra, local=local, atividade=atividade,
@@ -9323,9 +9273,7 @@ def registrar_presenca(*, dds: "DialogoSeguranca",
     """
     if not dds.esta_aberto:
         raise ValidationError(
-            "Este diálogo já foi encerrado, e a lista de presença fechou com "
-            "ele. Acrescentar um nome depois do encerramento é exatamente o que "
-            "faz a lista deixar de provar quem estava lá."
+            "Este diálogo já foi encerrado. A lista de presença não aceita mais nomes."
         )
 
     novos = []
@@ -9334,8 +9282,7 @@ def registrar_presenca(*, dds: "DialogoSeguranca",
         nome = (linha.get("nome") or "").strip()
         if not funcionario_id and not nome:
             raise ValidationError(
-                "Participante sem funcionário e sem nome é linha em branco na "
-                "lista de presença — e lista com linha em branco não prova nada."
+                "Informe o funcionário ou o nome do participante."
             )
         novos.append(ParticipanteDDS(
             tenant_id=dds.tenant_id, dds=dds,
@@ -9372,9 +9319,7 @@ def encerrar_dds(*, dds: "DialogoSeguranca", por: str = "",
     presentes = dds.participantes.filter(presente=True).count()
     if not presentes:
         raise ValidationError(
-            "Não dá para encerrar um diálogo sem nenhum presente. A lista de "
-            "presença é a única parte do DDS que prova alguma coisa — sem ela o "
-            "registro afirma que houve conversa e não mostra com quem."
+            "Não é possível encerrar um diálogo sem nenhum presente."
         )
 
     dds.status = DialogoSeguranca.Status.ENCERRADO
@@ -9454,13 +9399,11 @@ def registrar_ocorrencia(*, obra, ocorrido_em, tipo: str, descricao: str,
     """
     if not (descricao or "").strip():
         raise ValidationError(
-            "Diga o que aconteceu. Uma ocorrência sem descrição não vira "
-            "investigação nenhuma, e é ela que a perícia lê primeiro."
+            "Descreva o que aconteceu."
         )
     if ocorrido_em and ocorrido_em > timezone.now():
         raise ValidationError(
-            "A data da ocorrência está no futuro. Confira o dia e a hora: o "
-            "registro adiantado entra na série do indicador e ninguém o vê lá."
+            "A data da ocorrência está no futuro. Confira o dia e a hora."
         )
 
     campos = {
@@ -9495,9 +9438,7 @@ def classificar_ocorrencia(*, ocorrencia: "Ocorrencia", classificacao: str,
     """
     if not ocorrencia.esta_aberta:
         raise ValidationError(
-            "Esta ocorrência está encerrada. Reclassificar um fato encerrado "
-            "muda o indicador de um período que já foi lido e discutido — "
-            "reabra-a, se for o caso, para a mudança ficar visível."
+            "Esta ocorrência está encerrada. Reabra-a para reclassificar."
         )
     if ocorrencia.tipo in (
         TipoOcorrencia.QUASE_ACIDENTE, TipoOcorrencia.INCIDENTE,
@@ -9505,19 +9446,17 @@ def classificar_ocorrencia(*, ocorrencia: "Ocorrencia", classificacao: str,
         ClassificacaoOcorrencia.COM_AFASTAMENTO, ClassificacaoOcorrencia.OBITO,
     ):
         raise ValidationError(
-            "Quase-acidente e incidente não têm vítima, e por isso não têm "
-            "afastamento nem óbito. Se houve alguém ferido, o tipo é que está "
-            "errado — corrija-o antes, porque é dele que a CAT depende."
+            "Quase-acidente e incidente não têm vítima, afastamento nem óbito. Se houve ferido, "
+            "corrija o tipo."
         )
     if classificacao == ClassificacaoOcorrencia.COM_AFASTAMENTO and not dias_perdidos:
         raise ValidationError(
-            "Afastamento sem dias perdidos é classificação pela metade: é "
-            "exatamente desse número que a taxa de gravidade nasce."
+            "Informe os dias perdidos do afastamento."
         )
     if classificacao == ClassificacaoOcorrencia.OBITO and not dias_debitados:
         raise ValidationError(
-            "O óbito entra na taxa de gravidade por dias **debitados**, não por "
-            "dias perdidos — a NBR 14280 fixa 6.000. Informe o débito."
+            "Óbito entra na taxa de gravidade por dias **debitados** (NBR 14280: 6.000). Informe "
+            "o débito."
         )
 
     ocorrencia.classificacao = classificacao
@@ -9587,8 +9526,7 @@ def registrar_cat(*, ocorrencia: "Ocorrencia", tipo: str, emitida_em: date,
     """
     if not ocorrencia.exige_cat:
         raise ValidationError(
-            "Este tipo de ocorrência não gera CAT — quase-acidente e incidente "
-            "não têm vítima. Se houve alguém ferido, corrija o tipo primeiro."
+            "Este tipo de ocorrência não gera CAT. Se houve ferido, corrija o tipo."
         )
     if emitida_em and emitida_em > timezone.localdate():
         raise ValidationError("A data de emissão da CAT está no futuro.")
@@ -9635,13 +9573,11 @@ def gerar_restricao_da_ocorrencia(*, ocorrencia: "Ocorrencia",
         return ocorrencia.restricao
     if not ocorrencia.atividade_id:
         raise ValidationError(
-            "Esta ocorrência não aponta para nenhuma atividade, e restrição sem "
-            "alvo não trava nada. Diga qual serviço fica interditado."
+            "Esta ocorrência não aponta para nenhuma atividade. Informe qual serviço fica interditado."
         )
     if not ocorrencia.esta_aberta:
         raise ValidationError(
-            "Ocorrência encerrada não interdita frente: se o risco voltou, o "
-            "registro é de um fato novo."
+            "Ocorrência encerrada não interdita frente. Se o risco voltou, registre um fato novo."
         )
 
     validar_teto_de_restricoes(ocorrencia.obra_id, tenant_id=ocorrencia.tenant_id)
@@ -9724,18 +9660,14 @@ def encerrar_ocorrencia(*, ocorrencia: "Ocorrencia", por: str = "",
 
     if ocorrencia.classificacao == ClassificacaoOcorrencia.PENDENTE:
         raise ValidationError(
-            "Classifique a ocorrência antes de encerrá-la. Sem classificação "
-            "ela sai da fila de decisão e não entra em indicador nenhum — some "
-            "das duas leituras de uma vez."
+            "Classifique a ocorrência antes de encerrá-la."
         )
 
     restricao = ocorrencia.restricao
     if restricao is not None and restricao.status == Restricao.Status.ABERTA:
         raise ValidationError(
-            f"A frente continua interditada pela restrição #{restricao.pk}, "
-            f"aberta por esta ocorrência. Encerrar aqui deixaria o serviço "
-            f"travado sem nada explicando por quê. Declare que o risco cessou "
-            f"removendo a restrição — é ato de quem responde pela obra."
+            f"A frente continua interditada pela restrição #{restricao.pk}, aberta por esta ocorrência. "
+            "Remova a restrição antes de encerrar."
         )
 
     ocorrencia.status = Ocorrencia.Status.ENCERRADA
@@ -10022,8 +9954,7 @@ def _sem_permissao(bloco: str, oque: str, permissao: str) -> dict:
         "o_que": oque,
         "permissao": permissao,
         "motivo": (
-            f"Você não tem permissão para ver {oque}. "
-            f"Quem libera é o administrador, pela permissão '{permissao}'."
+            f"Você não tem permissão para ver {oque}. Peça ao administrador a permissão '{permissao}'."
         ),
     }
 
@@ -11465,7 +11396,7 @@ def busca_unica(*, tenant_id, termo: str, pode=_pode_tudo,
             "especies_varridas": 0,
             "total": 0,
             "sem_permissao": [],
-            "aviso": f"Escreva pelo menos {MINIMO_DE_LETRAS} letras.",
+            "aviso": f"Informe ao menos {MINIMO_DE_LETRAS} letras.",
         }
 
     teto = PDCA_TETO_RESULTADOS_POR_ESPECIE
@@ -12034,7 +11965,7 @@ def minhas_frentes(*, tenant_id, quem: str, pode=_pode_tudo, obra_id=None,
         ]
         corpo["restricoes"] = _bloco_da_frente(
             "restricoes", "O que está no seu nome para destravar",
-            "Diga como foi removida",
+            "Informe como foi removida",
             linhas,
             vazio_porque="Nenhuma trava da obra está esperando você.",
         )

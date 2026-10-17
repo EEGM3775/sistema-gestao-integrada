@@ -245,6 +245,11 @@ class Proposta(TenantScopedModel):
     valor_total = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True, verbose_name=_("Valor total"))
     prazo_entrega_dias = models.PositiveIntegerField(null=True, blank=True, verbose_name=_("Prazo de entrega (dias)"))
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.RECEBIDA, verbose_name=_("Status"))
+    # Quando o preço chegou — por telefone, e-mail ou planilha, o comprador digita
+    # dias depois; é esta data que vai ao mapa e ao gráfico de preço do item, não
+    # a do registro (dono, 16/10/2026).
+    recebida_em = models.DateField(default=timezone.localdate, verbose_name=_("Recebida em"))
+    observacao = models.TextField(blank=True, verbose_name=_("Observação"))
     criado_em = models.DateTimeField(auto_now_add=True, verbose_name=_("Criado em"))
 
     class Meta:

@@ -51,8 +51,7 @@ class NivelAprovacaoSerializer(TenantScopedModelSerializer):
         """
         if valor not in funcoesautorizacao.catalogo()["codigos"]:
             raise ValidationError(
-                f"'{valor}' não é uma permissão do catálogo. Use o código exato "
-                "(modulo.recurso.acao), como aparece na tela de papéis."
+                f"'{valor}' não é uma permissão do catálogo. Use o código exato (modulo.recurso.acao)."
             )
         return valor
 

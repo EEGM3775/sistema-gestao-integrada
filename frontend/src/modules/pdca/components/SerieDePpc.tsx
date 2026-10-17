@@ -22,6 +22,7 @@ export function SerieDePpc({
   escolhida?: string
 }) {
   const [sobre, setSobre] = useState<PontoDaSerie | null>(null)
+  const [emTabela, setEmTabela] = useState(false)
 
   const ultimo = serie[serie.length - 1]
   const media = useMemo(() => {
@@ -66,14 +67,50 @@ export function SerieDePpc({
             </span>
           </span>
         )}
+        <button
+          type="button"
+          onClick={() => setEmTabela((v) => !v)}
+          style={{
+            background: 'none', border: '1px solid var(--line)', borderRadius: 6,
+            padding: '3px 9px', fontSize: 11.5, fontWeight: 650, cursor: 'pointer',
+            color: 'var(--ink-2)', fontFamily: 'inherit',
+          }}
+        >
+          {emTabela ? 'Ver gráfico' : 'Ver tabela'}
+        </button>
       </div>
 
+      {emTabela ? (
+        <TabelaDaSerie serie={serie} escolhida={escolhida} aoEscolher={aoEscolher} />
+      ) : (
+      <div style={{ display: 'flex', gap: 6 }}>
+      {/* O eixo, escrito: sem ele a barra não se LÊ, só se estima (D295). Fora
+          do SVG porque o `preserveAspectRatio="none"` esticaria o texto. */}
+      <div
+        aria-hidden
+        style={{
+          position: 'relative', width: 30, height: 92, flexShrink: 0,
+          fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-3)',
+        }}
+      >
+        {[100, 50, 0].map((v) => (
+          <span
+            key={v}
+            style={{
+              position: 'absolute', right: 0, top: `${100 - v}%`,
+              transform: 'translateY(-50%)', lineHeight: 1,
+            }}
+          >
+            {v}%
+          </span>
+        ))}
+      </div>
       <svg
         viewBox="0 0 100 34"
         preserveAspectRatio="none"
         role="img"
         aria-label={`Cumprimento das últimas ${serie.length} semanas encerradas`}
-        style={{ width: '100%', height: 92, display: 'block', overflow: 'visible' }}
+        style={{ flex: 1, minWidth: 0, height: 92, display: 'block', overflow: 'visible' }}
       >
         {/* As linhas de 50% e 100% — a régua sem a qual a barra não mede nada */}
         {[0, 17, 34].map((y) => (
@@ -93,6 +130,10 @@ export function SerieDePpc({
           const marcada = escolhida === ponto.semana_inicio
           return (
             <g key={ponto.programacao}>
+              {/* A coluna é a semana INTEIRA — o que a equipe assumiu —, e a
+                  barra é a parte que saiu. Sem o fundo, 50% vira um bloco solto
+                  sem dizer contra o quê (D295). */}
+              <rect x={cx} y="0" width={w} height="34" fill="var(--inset)" rx="0.4" />
               <rect
                 x={cx} y={34 - altura} width={w} height={Math.max(altura, 0.4)}
                 fill={marcada ? 'var(--accent)' : 'var(--brand)'}
@@ -127,8 +168,16 @@ export function SerieDePpc({
           )
         })}
       </svg>
+      </div>
+      )}
 
-      <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginTop: 9 }}>
+      <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginTop: 9, alignItems: 'center' }}>
+        {/* As duas partes da coluna, nomeadas: a identidade não depende só da cor. */}
+        <Amostra cor="var(--brand)" rotulo="saiu" />
+        <Amostra cor="var(--inset)" rotulo="não saiu" />
+        {escolhida && serie.some((p) => p.semana_inicio === escolhida) && (
+          <Amostra cor="var(--accent)" rotulo="semana aberta no quadro" />
+        )}
         {serie.some((p) => p.vezes_reaberta > 0) && (
           <Pill kind="accent" title="Semanas cujo julgamento foi refeito depois de alguém já ter lido o índice.">
             traço no topo = semana reaberta
@@ -140,6 +189,74 @@ export function SerieDePpc({
           </Pill>
         )}
       </div>
+    </div>
+  )
+}
+
+function Amostra({ cor, rotulo }: { cor: string; rotulo: string }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: 'var(--ink-2)' }}>
+      <span
+        aria-hidden
+        style={{
+          width: 10, height: 10, borderRadius: 2, background: cor,
+          border: '1px solid var(--line)', display: 'inline-block',
+        }}
+      />
+      {rotulo}
+    </span>
+  )
+}
+
+/** **A tabela-gêmea** — obrigatória, não enfeite (D295). O acento da Malha fica
+ *  abaixo de 3:1 contra a superfície clara, e a régua de dataviz só aceita isso
+ *  com rótulo visível ou tabela: aqui nenhum valor fica só no gráfico, e o
+ *  denominador tem coluna própria. */
+function TabelaDaSerie({
+  serie, escolhida, aoEscolher,
+}: {
+  serie: PontoDaSerie[]
+  escolhida?: string
+  aoEscolher?: (inicio: string) => void
+}) {
+  const celula: React.CSSProperties = { padding: '6px 9px', borderBottom: '1px solid var(--line-2)', textAlign: 'left' }
+  const numero: React.CSSProperties = { ...celula, textAlign: 'right', fontFamily: 'var(--mono)' }
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, color: 'var(--ink)' }}>
+        <thead>
+          <tr style={{ color: 'var(--ink-3)', fontSize: 11 }}>
+            <th style={celula}>Semana</th>
+            <th style={{ ...numero, fontFamily: 'inherit' }}>Cumprimento</th>
+            <th style={{ ...numero, fontFamily: 'inherit' }}>Saíram</th>
+            <th style={{ ...numero, fontFamily: 'inherit' }}>Assumidos</th>
+            <th style={celula}>Observação</th>
+          </tr>
+        </thead>
+        <tbody>
+          {[...serie].reverse().map((p) => (
+            <tr
+              key={p.programacao}
+              onClick={() => aoEscolher?.(p.semana_inicio)}
+              style={{
+                cursor: aoEscolher ? 'pointer' : 'default',
+                background: escolhida === p.semana_inicio ? 'var(--accent-soft)' : 'transparent',
+              }}
+            >
+              <td style={celula}>{intervaloDaSemana(p.semana_inicio, somaDias(p.semana_inicio, 6))}</td>
+              <td style={numero}>{percentual(p.ppc)}</td>
+              <td style={numero}>{p.cumpridos}</td>
+              <td style={numero}>{p.comprometidos}</td>
+              <td style={{ ...celula, color: 'var(--ink-3)' }}>
+                {[
+                  p.vezes_reaberta > 0 ? `reaberta ${p.vezes_reaberta}×` : '',
+                  p.encerrada_antes_do_fim ? 'encerrada antes do fim' : '',
+                ].filter(Boolean).join(' · ') || '—'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }

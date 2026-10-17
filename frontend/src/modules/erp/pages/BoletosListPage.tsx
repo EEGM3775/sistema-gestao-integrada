@@ -48,7 +48,7 @@ export default function BoletosListPage() {
   const grade = useGrade<BoletoLista>({ recurso: 'boletos', filtros, ordenarPadrao: '-vencimento' })
 
   const aoCancelar = (b: BoletoLista) => {
-    if (!window.confirm(`Cancelar o boleto de ${b.pessoa_nome} (${dateToBR(b.data_vencimento)})? O cancelamento no Asaas não se desfaz.`)) return
+    if (!window.confirm(`Cancelar o boleto de ${b.pessoa_nome} (${dateToBR(b.data_vencimento)})? O cancelamento na API não se desfaz.`)) return
     cancelar.mutate(b.boleto_id, {
       onSuccess: r => setAviso({ tom: 'ok', texto: r.detail }),
       onError: e => setAviso({ tom: 'erro', texto: parseApiErrors(e)._form ?? 'Não foi possível cancelar o boleto agora.' }),

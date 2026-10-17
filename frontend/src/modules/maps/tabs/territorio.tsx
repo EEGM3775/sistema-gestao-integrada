@@ -193,7 +193,7 @@ export function Voos({ say }: { say: Say }) {
         say(edicao.plano_id ? 'Área atualizada — recalculando o voo…' : 'Plano criado — calculando o voo…')
         rodarCalculo(plano.plano_id)
       },
-      onError: (e) => say(motivo(e, 'Não deu para salvar o plano.')),
+      onError: (e) => say(motivo(e, 'Não foi possível salvar o plano.')),
     })
   }
 
@@ -299,7 +299,7 @@ export function Voos({ say }: { say: Say }) {
               if (!window.confirm(`Excluir o plano "${p.nome}"? Isto não pode ser desfeito.`)) return
               excluir.mutate(p.plano_id, {
                 onSuccess: () => { say(`Plano "${p.nome}" excluído.`); if (selecionado === p.plano_id) setSelecionado(null) },
-                onError: (e) => say(motivo(e, 'Não deu para excluir o plano.')),
+                onError: (e) => say(motivo(e, 'Não foi possível excluir o plano.')),
               })
             }}
             say={say}
@@ -363,7 +363,7 @@ function CartaoDoPlano({ plano, aberto, memoria, aoAbrir, aoCalcular, calculando
                 <Btn key={formato} tam="sm"
                   onClick={() => exportarPlano(plano.plano_id, formato, plano.nome)
                     .then(() => say(`${rotulo} baixado`))
-                    .catch((e) => say(motivo(e, 'Não deu para exportar.')))}>
+                    .catch((e) => say(motivo(e, 'Não foi possível exportar.')))}>
                   {rotulo}
                 </Btn>
               ))}
@@ -419,7 +419,7 @@ function NovoPlanoDoLocal({ say, aoCriar }: { say: Say; aoCriar: (p: PlanoVoo) =
                 : `Plano criado num círculo de ${r.raio_m} m em volta de ${escolhido?.nome}. Ajuste a área em "Editar área" e calcule.`)
               aoCriar(r.plano)
             },
-            onError: (e) => say(motivo(e, 'Não deu para criar o plano — confira se o local tem coordenada.')),
+            onError: (e) => say(motivo(e, 'Não foi possível criar o plano. O local precisa ter coordenada.')),
           },
         )}>
         <Plus size={13} /> Criar plano
@@ -567,7 +567,7 @@ export function Rotas({ say }: { say: Say }) {
                         if (!window.confirm(`Excluir a rota "${r.nome}"?`)) return
                         excluir.mutate(r.rota_id, {
                           onSuccess: () => { say(`Rota "${r.nome}" excluída.`); setSelecionada(null) },
-                          onError: (e) => say(motivo(e, 'Não deu para excluir a rota.')),
+                          onError: (e) => say(motivo(e, 'Não foi possível excluir a rota.')),
                         })
                       }}>
                       <Trash2 size={13} />
@@ -666,7 +666,7 @@ function NovaRota({ say, aoCancelar, aoCriar }: { say: Say; aoCancelar: () => vo
             { nome: nome.trim() || `Rota — ${nomeDe(origem)}`, origem, paradas_locais: paradas },
             {
               onSuccess: (r) => { say(`Rota "${r.nome}" criada — traçando…`); aoCriar(r) },
-              onError: (e) => say(motivo(e, 'Não deu para criar a rota.')),
+              onError: (e) => say(motivo(e, 'Não foi possível criar a rota.')),
             },
           )}>
           Criar e traçar

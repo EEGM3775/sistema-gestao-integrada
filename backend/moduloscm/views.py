@@ -136,16 +136,16 @@ class DemandaViewSet(BaseScmViewSet):
 
         demanda = self.get_object()
         if demanda.pedidos.exists():
-            return Response({"detail": f"A demanda #{demanda.pk} já gerou pedido — não dá para apagar."},
+            return Response({"detail": f"A demanda #{demanda.pk} já gerou pedido e não pode ser apagada."},
                             status=status.HTTP_409_CONFLICT)
         if Proposta.objects.filter(cotacao__demanda=demanda).exists():
-            return Response({"detail": f"A demanda #{demanda.pk} já tem proposta de fornecedor — não dá para apagar."},
+            return Response({"detail": f"A demanda #{demanda.pk} já tem proposta de fornecedor e não pode ser apagada."},
                             status=status.HTTP_409_CONFLICT)
         try:
             with transaction.atomic():
                 demanda.delete()  # itens e cotações vazias saem junto
         except ProtectedError:
-            return Response({"detail": f"A demanda #{demanda.pk} é usada por outro registro — não dá para apagar."},
+            return Response({"detail": f"A demanda #{demanda.pk} é usada por outro registro e não pode ser apagada."},
                             status=status.HTTP_409_CONFLICT)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -362,6 +362,103 @@ class CotacaoViewSet(BaseScmViewSet):
         cotacao.status = Cotacao.Status.ADJUDICADA
         cotacao.save(update_fields=["status"])
         return Response(self.get_serializer(cotacao).data)
+
+    # --- a proposta que o comprador digita (dono, 16/10/2026) ---------------------
+
+    def _dados_da_proposta(self, request) -> dict:
+        from rest_framework.exceptions import ValidationError
+
+        from fornecedores.models import Fornecedor
+
+        dados = request.data
+        fornecedor = Fornecedor.objects.filter(pk=dados.get("fornecedor") or 0, tenant_id=self._tenant_id()).first()
+        recebida = dados.get("recebida_em") or None
+        prazo = dados.get("prazo_entrega_dias")
+        try:
+            recebida = date.fromisoformat(recebida) if recebida else None
+            prazo = int(prazo) if prazo not in (None, "") else None
+        except (TypeError, ValueError):
+            raise ValidationError({"detail": "Data ou prazo inválido."})
+        return {
+            "fornecedor": fornecedor, "itens": dados.get("itens") or [], "recebida_em": recebida,
+            "prazo_entrega_dias": prazo, "observacao": dados.get("observacao") or "",
+        }
+
+    @action(detail=True, methods=["post"], url_path="propostas")
+    def registrar_proposta(self, request, pk=None):
+        """`{fornecedor, itens: [{item_demanda, preco_unitario}], recebida_em, prazo_entrega_dias, observacao}`."""
+        from . import propostas
+
+        cotacao = self.get_object()
+        try:
+            proposta = propostas.registrar(cotacao, **self._dados_da_proposta(request))
+        except propostas.PropostaInvalida as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(PropostaSerializer(proposta, context=self.get_serializer_context()).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["put", "delete"], url_path=r"propostas/(?P<proposta_id>\d+)")
+    def alterar_proposta(self, request, pk=None, proposta_id=None):
+        """PUT reescreve a proposta (mesmo corpo do registrar); DELETE a apaga. Só com a cotação aberta."""
+        from . import propostas
+
+        cotacao = self.get_object()
+        proposta = cotacao.propostas.filter(pk=proposta_id).first()
+        if proposta is None:
+            return Response({"detail": "Proposta não encontrada nesta cotação."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            if request.method == "DELETE":
+                propostas.apagar(proposta)
+                return Response(status=status.HTTP_204_NO_CONTENT)
+            proposta = propostas.registrar(cotacao, proposta=proposta, **self._dados_da_proposta(request))
+        except propostas.PropostaInvalida as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(PropostaSerializer(proposta, context=self.get_serializer_context()).data)
+
+    # --- o mapa para a reunião ----------------------------------------------------
+
+    def _mapa(self, cotacoes):
+        from django.http import HttpResponse
+
+        from .documento_cotacao import XLSX, nome_do_arquivo, pdf_dos_mapas, xlsx_dos_mapas
+
+        formato = (self.request.query_params.get("formato") or "pdf").lower()
+        try:
+            if formato == "xlsx":
+                conteudo, tipo = xlsx_dos_mapas(cotacoes), XLSX
+            else:
+                formato = "pdf"
+                conteudo, tipo = pdf_dos_mapas(cotacoes), "application/pdf"
+        except Exception as exc:  # noqa: BLE001 - motor de PDF fora do ar vira 503 legível
+            return Response({"detail": f"Não foi possível gerar o mapa: {exc}"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        resposta = HttpResponse(conteudo, content_type=tipo)
+        disposicao = "inline" if formato == "pdf" else "attachment"
+        resposta["Content-Disposition"] = f'{disposicao}; filename="{nome_do_arquivo(cotacoes, formato)}"'
+        return resposta
+
+    @action(detail=True, methods=["get"])
+    def mapa(self, request, pk=None):
+        """O mapa comparativo desta cotação, `?formato=pdf|xlsx`."""
+        return self._mapa([self.get_object()])
+
+    @action(detail=False, methods=["get"])
+    def mapas(self, request):
+        """Várias cotações num arquivo: `?ids=1,2,3&formato=pdf|xlsx` — capa com o resumo e um mapa por cotação."""
+        from payment.planos import SCM_MAPA_TETO_COTACOES
+
+        try:
+            ids = [int(x) for x in (request.query_params.get("ids") or "").split(",") if x.strip()]
+        except ValueError:
+            return Response({"detail": "Lista de cotações inválida."}, status=status.HTTP_400_BAD_REQUEST)
+        if not ids:
+            return Response({"detail": "Escolha ao menos uma cotação."}, status=status.HTTP_400_BAD_REQUEST)
+        if len(ids) > SCM_MAPA_TETO_COTACOES:
+            return Response({"detail": f"No máximo {SCM_MAPA_TETO_COTACOES} cotações por arquivo."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        por_id = {c.pk: c for c in self.get_queryset().filter(pk__in=ids).select_related("demanda")}
+        cotacoes = [por_id[i] for i in ids if i in por_id]
+        if not cotacoes:
+            return Response({"detail": "Nenhuma dessas cotações é da sua empresa."}, status=status.HTTP_404_NOT_FOUND)
+        return self._mapa(cotacoes)
 
 
 class PropostaViewSet(BaseScmViewSet):
@@ -927,7 +1024,7 @@ class NotaFiscalCompraViewSet(BaseScmViewSet):
                              "remover": "scm.recebimento.edit"}
 
     def create(self, request, *args, **kwargs):
-        return Response({"detail": "Lance a nota pelo pedido: POST /api/scm/pedidos/{id}/notas/."},
+        return Response({"detail": "Lance a nota pelo pedido."},
                         status=status.HTTP_405_METHOD_NOT_ALLOWED)
 
     @action(detail=True, methods=["post"])

@@ -59,7 +59,19 @@ class TenantScopedUniqueTogetherValidator(UniqueTogetherValidator):
 
     `fields` são os campos do constraint **sem** o `tenant` — a unicidade dos
     demais é verificada dentro do tenant do usuário autenticado.
+
+    Mensagem curta, no campo: o texto padrão do DRF ("Os campos tenant, email
+    devem criar um set único") não diz nada a quem preenche.
     """
+    message = "Já cadastrado."
+
+    def __call__(self, attrs, serializer):
+        try:
+            super().__call__(attrs, serializer)
+        except serializers.ValidationError as exc:
+            if len(self.fields) == 1:
+                raise serializers.ValidationError({self.fields[0]: [self.message]}) from exc
+            raise
 
     def filter_queryset(self, attrs, queryset, serializer):
         queryset = super().filter_queryset(attrs, queryset, serializer)

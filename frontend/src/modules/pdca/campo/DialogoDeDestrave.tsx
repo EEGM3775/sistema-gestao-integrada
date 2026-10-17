@@ -80,7 +80,7 @@ export function DialogoDeDestrave({
           }}
         />
         <span style={{ fontSize: 12.5, color: 'var(--ink-3)', lineHeight: 1.5 }}>
-          Escreva o que aconteceu. É o que a reunião da semana que vem lê.
+          Descreva o que aconteceu. A reunião da semana seguinte lê este texto.
         </span>
       </div>
     </Modal>

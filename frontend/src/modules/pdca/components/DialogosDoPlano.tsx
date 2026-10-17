@@ -44,7 +44,7 @@ export function DialogoDeImportacao(
     const nome = f.name.toLowerCase()
     if (nome.endsWith('.mpp')) {
       setArquivo(null)
-      setErro('O arquivo .mpp não abre fora do MS Project. No Project: Arquivo › Salvar como › XML, e traga o .xml.')
+      setErro('Arquivo .mpp não é aceito. No MS Project: Arquivo › Salvar como › XML e envie o .xml.')
       return
     }
     const conteudo = await f.text()
@@ -373,7 +373,7 @@ export function DialogoDeModelo(
   async function salvar() {
     setErro(null)
     const r = await montagem.executar(() => planoApi.marcarModelo(cronogramaId, nome.trim()), { recalcular: false })
-    if (r) setMensagem(`Este plano agora é o modelo "${r.nome_modelo}" da empresa — dá para trazê-lo em outras obras.`)
+    if (r) setMensagem(`Plano salvo como modelo '${r.nome_modelo}'.`)
     else setErro(montagem.ultimoErro())
   }
 

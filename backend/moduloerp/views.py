@@ -59,7 +59,7 @@ from funcoescobrancas.documento import DocumentoIndisponivel, baixar_pdf, miniat
 from funcoescobrancas.tasks import criar_cobranca
 from funcoescobrancas.client import AsaasAPIError
 from funcoescobrancas.services import (
-    validar_cliente_para_cobranca, CobrancaBloqueada,
+    validar_cliente_para_cobranca, CobrancaBloqueada, conta_asaas_da_entidade,
     cancelar_cobranca_asaas, verificar_cobranca_asaas,
 )
 from .tasks import (
@@ -569,9 +569,41 @@ class ERPDashboardView(TenantScopedAPIViewMixin, views.APIView):
     # tenant — é a chamada mais cara da API e a que mais dói se alguém a repetir em
     # laço. Muito mais apertado que o teto geral de usuário.
     throttle_scope = "relatorio"
+
+    @staticmethod
+    def _mes_do_parametro(valor, nome):
+        """`AAAA-MM` → primeiro dia do mês; `ValueError` com a mensagem para a tela."""
+        try:
+            ano, mes = (int(p) for p in valor.split('-'))
+            return date(ano, mes, 1)
+        except (ValueError, TypeError):
+            raise ValueError(f'{nome} deve ser um mês no formato AAAA-MM.')
+
     def get(self, request, *args, **kwargs):
         today = timezone.localdate()
-        one_year_ago = today - timedelta(days=365)
+
+        # Período do fluxo de caixa (`fluxo_inicio`/`fluxo_fim`, AAAA-MM, inclusivos).
+        # Sem parâmetro: os 12 meses até o atual, a partir do dia 1 — o primeiro
+        # mês não sai pela metade.
+        mes_atual = today.replace(day=1)
+        try:
+            fluxo_inicio = (
+                self._mes_do_parametro(request.query_params['fluxo_inicio'], 'fluxo_inicio')
+                if request.query_params.get('fluxo_inicio')
+                else date(mes_atual.year - (mes_atual.month < 12), mes_atual.month % 12 + 1, 1)
+            )
+            fluxo_fim_mes = (
+                self._mes_do_parametro(request.query_params['fluxo_fim'], 'fluxo_fim')
+                if request.query_params.get('fluxo_fim') else mes_atual
+            )
+        except ValueError as erro:
+            return Response({'error': str(erro)}, status=status_module.HTTP_400_BAD_REQUEST)
+        if fluxo_inicio > fluxo_fim_mes:
+            return Response({'error': 'fluxo_inicio não pode ser depois de fluxo_fim.'},
+                            status=status_module.HTTP_400_BAD_REQUEST)
+        # Último dia do mês final.
+        fluxo_fim = date(fluxo_fim_mes.year + fluxo_fim_mes.month // 12,
+                         fluxo_fim_mes.month % 12 + 1, 1) - timedelta(days=1)
 
         # Allow filtering by empreendimento
         empreendimento_id = request.query_params.get('empreendimento_id')
@@ -633,12 +665,12 @@ class ERPDashboardView(TenantScopedAPIViewMixin, views.APIView):
             saldo=F('valor') + F('juros') + F('multa') - F('desconto') - F('valor_pago'),
         ).values('categoria').annotate(total=Sum('saldo')).order_by('categoria')
 
-        # 3. Annual Cash Flow (last 12 months, grouped by month, from transactions)
+        # 3. Fluxo de caixa por mês no período pedido (realizado: transações)
         fluxo_mensal = (
             scope_qs(Transacao.objects.all(), transacao=True)
             .filter(
-                data_transacao__date__gte=one_year_ago,
-                data_transacao__date__lte=today,
+                data_transacao__date__gte=fluxo_inicio,
+                data_transacao__date__lte=fluxo_fim,
                 **filtro_empreendimento
             )
             .annotate(mes=TruncMonth('data_transacao'))
@@ -655,6 +687,8 @@ class ERPDashboardView(TenantScopedAPIViewMixin, views.APIView):
             'agingContasAReceber': list(contas_a_receber_aging),
             'agingContasAPagar': list(contas_a_pagar_aging),
             'fluxoDeCaixaMensal': list(fluxo_mensal),
+            # O período efetivo, para a tela completar os meses sem movimento.
+            'fluxoPeriodo': {'inicio': fluxo_inicio.isoformat()[:7], 'fim': fluxo_fim_mes.isoformat()[:7]},
         }
 
         return Response(dashboard_data)
@@ -746,7 +780,7 @@ class ContaPagarViewSet(EscopoDeEntidadeMixin, EstornoMixin, ListaoMixin, Tenant
         conta = self.get_object()
         texto = (request.data.get('texto') or '').strip()
         if not texto:
-            return Response({'texto': 'Escreva a anotação.'}, status=status_module.HTTP_400_BAD_REQUEST)
+            return Response({'texto': 'Informe a anotação.'}, status=status_module.HTTP_400_BAD_REQUEST)
         AnotacaoContaPagar.objects.create(
             tenant_id=conta.tenant_id, conta_pagar=conta, tipo=AnotacaoContaPagar.Tipo.NOTA,
             origem='manual', texto=texto[:4000], autor=request.user,
@@ -955,7 +989,10 @@ class ContaReceberViewSet(EscopoDeEntidadeMixin, EstornoMixin, ListaoMixin, Tena
         # têm de bater com o cadastro no gateway. Devolve mensagem clara ao
         # usuário e impede boleto no cliente errado (ver funcoescobrancas).
         try:
-            validar_cliente_para_cobranca(conta.cliente)
+            # A conta Asaas do dono do título (D293): a entidade sem conta
+            # própria é recusada aqui, com o motivo, e não minutos depois.
+            client, conta_asaas = conta_asaas_da_entidade(conta.tenant_id, conta.entidade)
+            validar_cliente_para_cobranca(conta.cliente, client if conta_asaas else None)
         except CobrancaBloqueada as exc:
             return Response(
                 {'detail': exc.mensagem, 'code': exc.code, **exc.contexto},
@@ -1364,7 +1401,7 @@ class BoletoViewSet(EscopoDeEntidadeMixin, ListaoMixin, TenantScopedViewSetMixin
         except AsaasAPIError as exc:
             logger.warning("Asaas recusou o cancelamento do boleto #%s: %s", boleto.boleto_id, exc)
             return Response(
-                {'detail': f'O Asaas não conseguiu cancelar o boleto agora: {exc}'},
+                {'detail': f'A API não conseguiu cancelar o boleto agora: {exc}'},
                 status=status_module.HTTP_502_BAD_GATEWAY,
             )
         from nucleo.auditoria import registrar_auditoria
@@ -1372,7 +1409,7 @@ class BoletoViewSet(EscopoDeEntidadeMixin, ListaoMixin, TenantScopedViewSetMixin
             acao="cancelar_boleto", instance=boleto, usuario=getattr(request, "user", None),
             detalhes={"boleto_id": boleto.boleto_id, "gateway_id": boleto.gateway_id},
         )
-        return Response({'detail': 'Boleto cancelado no Asaas.', 'boleto': BoletoSerializer(boleto).data})
+        return Response({'detail': 'Boleto cancelado na API.', 'boleto': BoletoSerializer(boleto).data})
 
 
 class NotasDasComprasView(TenantScopedAPIViewMixin, views.APIView):
@@ -1534,6 +1571,70 @@ class IntegracaoFiscalView(TenantScopedAPIViewMixin, views.APIView):
         return Response(self._resumo(cadastro) | {"entidade": entidade.pk, "entidade_nome": str(entidade)})
 
 
+class IntegracaoAsaasView(TenantScopedAPIViewMixin, views.APIView):
+    """A conta da entidade no Asaas (D293) — o beneficiário do boleto.
+
+    `GET ?entidade=` — o que está cadastrado, **sem a chave** (só o final), de
+    onde vem a conta que vale para ela (`entidade`, `ambiente` ou `nenhuma`) e se
+    o boleto dela sai pelo Asaas. `PUT` — grava a `api_key` (cifrada); vazia,
+    tira a conta própria. Mesma permissão da integração fiscal.
+    """
+    permission_classes = [permissions.IsAuthenticated, RequireModule, RequirePermission]
+    required_module = "erp_financeiro"
+    permission_map = {"view": "erp.cobranca.view", "write": limites_lote.PERMISSAO}
+
+    @staticmethod
+    def _resumo(request, entidade, cadastro) -> dict:
+        from entidades.regras import matriz, modo_simples
+
+        propria = bool(cadastro and cadastro.api_key_cifrada)
+        do_ambiente = bool(settings.ASAAS_API_KEY)
+        vale_o_ambiente = modo_simples(request.user.tenant_id) or entidade.pk == matriz(request.user.tenant_id).pk
+        origem = "entidade" if propria else ("ambiente" if do_ambiente and vale_o_ambiente else "nenhuma")
+        return {
+            "entidade": entidade.pk,
+            "entidade_nome": str(entidade),
+            "tem_chave": propria,
+            "chave_final": cadastro.api_key_final if cadastro else "",
+            "origem": origem,
+            # Sem conta própria, fora da matriz, o boleto pelo Asaas é recusado.
+            "emite_pelo_asaas": origem != "nenhuma",
+            "atualizado_em": cadastro.atualizado_em if cadastro else None,
+        }
+
+    def get(self, request):
+        from .models import IntegracaoAsaas
+
+        entidade = IntegracaoFiscalView._entidade(request, request.query_params.get("entidade"))
+        cadastro = IntegracaoAsaas.objects.filter(tenant_id=request.user.tenant_id, entidade=entidade).first()
+        return Response(self._resumo(request, entidade, cadastro))
+
+    def put(self, request):
+        from .models import IntegracaoAsaas
+
+        entidade = IntegracaoFiscalView._entidade(
+            request, request.data.get("entidade") or request.query_params.get("entidade"),
+        )
+        if "api_key" not in request.data:
+            return Response({"api_key": "Informe a chave da conta Asaas (vazia para tirar)."},
+                            status=status_module.HTTP_400_BAD_REQUEST)
+        chave = (request.data.get("api_key") or "").strip()
+        if len(chave) > 400:
+            return Response({"api_key": "Chave longa demais."}, status=status_module.HTTP_400_BAD_REQUEST)
+        cadastro, _ = IntegracaoAsaas.objects.get_or_create(tenant_id=request.user.tenant_id, entidade=entidade)
+        cadastro.definir_api_key(chave)
+        cadastro.atualizado_por = request.user
+        cadastro.save()
+
+        from nucleo.auditoria import registrar_auditoria
+        registrar_auditoria(
+            acao="configurar_integracao_asaas", instance=cadastro, usuario=request.user,
+            # Nunca a chave: só se ela ficou ou saiu.
+            detalhes={"entidade": entidade.pk, "com_conta_propria": bool(chave)},
+        )
+        return Response(self._resumo(request, entidade, cadastro))
+
+
 class AtualizarStatusNFView(TenantScopedAPIViewMixin, views.APIView):
     """
     Atualização manual do status de uma NF (escopada ao tenant do usuário).
@@ -1596,7 +1697,7 @@ class AtualizarStatusNFView(TenantScopedAPIViewMixin, views.APIView):
             
             logger.info(f"Status da {nf_tipo.upper()} ID {nf_id} atualizado para {status}")
             
-            return Response({'message': 'Status atualizado com sucesso'})
+            return Response({'message': 'Status atualizado.'})
             
         except nf_model.DoesNotExist:
             return Response(
@@ -1633,7 +1734,7 @@ class ConsultarStatusNFView(TenantScopedAPIViewMixin, views.APIView):
                 return Response({'error': 'Esta NF não possui um ID externo (nfe_io_id) para consulta.'}, status=status_module.HTTP_400_BAD_REQUEST)
 
             consultar_nota_fiscal_servico.delay(nf.id)
-            return Response({'message': 'Consulta de status agendada — a NF é atualizada quando a NFE.io responder.'},
+            return Response({'message': 'Consulta de status agendada — a NF é atualizada quando a API responder.'},
                             status=status_module.HTTP_202_ACCEPTED)
 
         except NotaFiscalServico.DoesNotExist:

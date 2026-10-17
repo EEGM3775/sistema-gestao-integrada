@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft, Files, KeyRound, Loader2, Lock, ScrollText } from 'lucide-react'
+import { ArrowLeft, Banknote, Files, KeyRound, Loader2, Lock, ScrollText } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import apiClient from '@/api/apiClient'
 import { buttonPrimaryStyle, inputStyle } from '../components/forms/formStyles'
@@ -38,6 +38,7 @@ export default function ConfiguracoesFinanceiroPage() {
       {limites.isLoading && <p className="flex items-center gap-2 text-sm"><Loader2 size={15} className="animate-spin" /> Carregando…</p>}
       {limites.error && <p className="text-sm" style={{ color: 'var(--danger-ink)' }}>{parseApiErrors(limites.error)._form ?? 'Não foi possível carregar a configuração.'}</p>}
       {d && <IntegracaoNfeIo podeEditar={d.pode_editar} />}
+      {d && <IntegracaoAsaas podeEditar={d.pode_editar} />}
       {d && <LimitesDosLotes dados={d} />}
     </div>
   )
@@ -118,6 +119,94 @@ function IntegracaoNfeIo({ podeEditar }: { podeEditar: boolean }) {
           {erro && <span className="text-sm" style={{ color: 'var(--danger-ink)' }}>{erro}</span>}
           <button type="button" onClick={() => void salvar()} disabled={estado === 'salvando'} style={{ ...buttonPrimaryStyle, opacity: estado === 'salvando' ? 0.7 : 1 }}>
             {estado === 'salvando' ? 'Salvando…' : 'Salvar conta da NFE.io'}
+          </button>
+        </div>
+      )}
+    </section>
+  )
+}
+
+interface ResumoAsaas {
+  entidade: number
+  entidade_nome: string
+  tem_chave: boolean
+  chave_final: string
+  origem: 'entidade' | 'ambiente' | 'nenhuma'
+  emite_pelo_asaas: boolean
+  atualizado_em: string | null
+}
+
+/** **A conta da entidade no Asaas** (D293) — o beneficiário do boleto.
+ *
+ *  A conta padrão da plataforma é a da matriz. Num grupo com mais de uma
+ *  entidade, o boleto de outra entidade pelo Asaas só sai com a conta dela:
+ *  pela da matriz, sairia com o CNPJ da matriz. A tela diz qual conta vale para
+ *  a entidade da barra do financeiro, e se o boleto dela sai pelo Asaas. */
+function IntegracaoAsaas({ podeEditar }: { podeEditar: boolean }) {
+  const qc = useQueryClient()
+  const { data } = useQuery({
+    queryKey: ['erp', 'integracao-asaas'],
+    queryFn: async () => (await apiClient.get<ResumoAsaas>('erp/configuracao/integracao-asaas/')).data,
+  })
+  const [chave, setChave] = useState('')
+  const [estado, setEstado] = useState<'' | 'salvando' | 'salvo'>('')
+  const [erro, setErro] = useState('')
+
+  async function gravar(valor: string) {
+    setEstado('salvando'); setErro('')
+    try {
+      await apiClient.put('erp/configuracao/integracao-asaas/', { api_key: valor })
+      setChave('')
+      await qc.invalidateQueries({ queryKey: ['erp', 'integracao-asaas'] })
+      setEstado('salvo')
+    } catch (e) {
+      const erros = parseApiErrors(e)
+      setErro(erros.api_key ?? erros._form ?? 'Não foi possível salvar.'); setEstado('')
+    }
+  }
+
+  const situacao = !data ? '' : data.origem === 'entidade'
+    ? `Os boletos de ${data.entidade_nome} saem pela conta dela${data.chave_final ? ` (chave terminada em ${data.chave_final})` : ''}.`
+    : data.origem === 'ambiente'
+      ? `Os boletos de ${data.entidade_nome} saem pela conta padrão da plataforma.`
+      : `${data.entidade_nome} não tem conta no Asaas: o boleto dela pelo Asaas é recusado — pela conta da matriz sairia com o CNPJ errado. Cadastre a chave da conta dela, ou emita pelo banco (CNAB).`
+
+  return (
+    <section style={{ border: '1px solid var(--line)', borderRadius: 'var(--r-lg)', background: 'var(--surface)', padding: 20 }}>
+      <h2 className="text-base font-bold flex items-center gap-2" style={{ color: 'var(--ink)' }}><Banknote size={16} /> Boleto pelo Asaas{data?.entidade_nome ? ` — ${data.entidade_nome}` : ''}</h2>
+      <p className="text-sm mt-1" style={{ lineHeight: 1.5 }}>
+        A conta Asaas é o beneficiário que sai impresso no boleto — cada CNPJ tem a sua (no painel
+        do Asaas: Integrações › Chave de API). No webhook dessa conta, use o mesmo token de
+        autenticação da conta da matriz, para o pagamento dar baixa sozinho.{' '}
+        <span style={{ color: data && !data.emite_pelo_asaas ? 'var(--danger-ink)' : undefined }}>{situacao}</span>
+      </p>
+      {podeEditar ? (
+        <div className="grid gap-4 mt-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>Chave da API do Asaas</span>
+            <input type="password" value={chave} onChange={e => setChave(e.target.value)} style={inputStyle} autoComplete="new-password"
+              placeholder={data?.tem_chave ? `•••• ${data.chave_final} (cole outra para trocar)` : 'Cole a chave da conta Asaas desta entidade'} />
+          </label>
+        </div>
+      ) : (
+        <p className="flex items-start gap-2 text-sm mt-4" style={{ padding: '10px 12px', borderRadius: 'var(--r-md)', background: 'var(--surface-2)', color: 'var(--ink-3)' }}>
+          <Lock size={15} style={{ flex: 'none', marginTop: 2 }} />
+          Quem cadastra a conta é o administrador da empresa, ou quem tem a permissão das configurações do financeiro.
+        </p>
+      )}
+      {podeEditar && (
+        <div className="flex items-center justify-end gap-3 mt-4">
+          {estado === 'salvo' && <span className="text-sm" style={{ color: 'var(--good-ink)' }}>Salvo.</span>}
+          {erro && <span className="text-sm" style={{ color: 'var(--danger-ink)' }}>{erro}</span>}
+          {data?.tem_chave && (
+            <button type="button" onClick={() => void gravar('')} disabled={estado === 'salvando'}
+              className="text-sm" style={{ border: 'none', background: 'none', color: 'var(--ink-3)', textDecoration: 'underline', cursor: 'pointer' }}>
+              Tirar a conta própria
+            </button>
+          )}
+          <button type="button" onClick={() => void gravar(chave)} disabled={estado === 'salvando' || !chave.trim()}
+            style={{ ...buttonPrimaryStyle, opacity: estado === 'salvando' || !chave.trim() ? 0.7 : 1 }}>
+            {estado === 'salvando' ? 'Salvando…' : 'Salvar conta do Asaas'}
           </button>
         </div>
       )}

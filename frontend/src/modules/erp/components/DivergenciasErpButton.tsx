@@ -123,7 +123,7 @@ export function DivergenciasErpButton() {
               <DivergenciasAsaasPanel
                 loading={isLoading}
                 divergencias={data?.divergencias ?? []}
-                error={isError ? 'Não foi possível verificar as divergências com o Asaas agora.' : null}
+                error={isError ? 'Não foi possível verificar as divergências com a API agora.' : null}
               />
               {!isLoading && !isError && total === 0 && (
                 <div className="px-4 py-3 rounded-lg text-xs" style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#166534' }}>

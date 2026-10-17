@@ -64,6 +64,15 @@ export async function listFornecedores() {
   const { data } = await apiClient.get<Paginated<FornecedorOpt> | FornecedorOpt[]>('fornecedores/', { params: { page_size: 200 } })
   return Array.isArray(data) ? data : data.results
 }
+/** O tenant tem RH? Uma página de um item: o colaborador é escolhido pelo
+ *  `SeletorDeFuncionario` (busca no servidor); isto só decide entre ele e o
+ *  texto livre (403 sem o módulo). */
+export async function temRh(): Promise<boolean> {
+  try {
+    await apiClient.get('funcionarios/', { params: { page: 1, page_size: 1 } })
+    return true
+  } catch { return false }
+}
 export async function listFuncionarios() {
   // Colaborador vem do RH (integração). 403 se o tenant não tiver RH → o front cai em texto livre.
   try {

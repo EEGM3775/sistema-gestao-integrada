@@ -286,8 +286,8 @@ export default function PainelCargaOficial() {
           <Aviso tom="amber">
             <AlertTriangle size={15} style={{ flex: 'none', marginTop: 1 }} />
             <span>
-              Não deu para ler a lista de tabelas da fonte: {menu.data.erro} O envio
-              manual do arquivo continua valendo.
+              Não foi possível ler a lista de tabelas da fonte: {menu.data.erro} O envio
+              manual do arquivo continua disponível.
             </span>
           </Aviso>
         )}

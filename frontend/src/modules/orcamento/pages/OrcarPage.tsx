@@ -10,7 +10,7 @@ import {
 import { createPortal } from 'react-dom'
 import { useAuth } from '@/hooks/useAuth'
 import { useQueryClient } from '@tanstack/react-query'
-import { WizardImportacao } from '@/components/malha'
+import { SeletorDeObra, WizardImportacao } from '@/components/malha'
 import PaginaShell from '../components/PaginaShell'
 import MedicaoDrawer from '../components/MedicaoDrawer'
 import GradeOrcamento, {
@@ -70,10 +70,11 @@ const AJUDA_DA_PLANILHA: AjudaDaTela = {
       + 'travar preço), e o botão direito do mouse abre o mesmo menu.',
     'Para digitar numa célula, clique nela e comece a escrever — ou aperte Enter '
       + 'para abrir. Tab e as setas andam pela grade, como no Excel.',
-    'Clique numa linha para marcá-la. Shift marca a faixa, Ctrl soma uma linha, e '
-      + 'a barra que aparece embaixo age sobre tudo o que estiver marcado.',
-    'Errou? Ctrl+Z desfaz e Ctrl+Y refaz — inclusive exclusão. A pilha vale '
-      + 'enquanto esta planilha estiver aberta.',
+    'Clique numa linha para marcá-la. O quadrado à esquerda soma ou tira a linha, '
+      + 'Shift marca a faixa, e a barra que aparece embaixo age sobre tudo o que '
+      + 'estiver marcado.',
+    'Ctrl+Z desfaz e Ctrl+Y refaz, inclusive exclusão, enquanto a planilha '
+      + 'estiver aberta.',
     'Alt com as setas reorganiza a EAP: ← e → tiram e põem nível, ↑ e ↓ movem a '
       + 'linha. Arrastar com o mouse faz o mesmo.',
   ],
@@ -94,6 +95,7 @@ const AJUDA_DA_PLANILHA: AjudaDaTela = {
       titulo: 'Escolher linhas',
       itens: [
         { gesto: 'clique na linha', faz: 'marca só ela' },
+        { gesto: 'clique no quadrado', faz: 'marca ou desmarca a linha sem mexer nas outras' },
         { gesto: 'Shift+clique', faz: 'marca a faixa entre a última marcada e esta' },
         { gesto: 'Ctrl+clique', faz: 'soma ou tira uma linha da marcação' },
         { gesto: 'Ctrl+Shift+clique', faz: 'soma a faixa inteira ao que já estava marcado' },
@@ -1359,9 +1361,14 @@ function ModalDuplicar({ orcamento, obras, onFechar, onDuplicado }: {
       </Aviso>
       <div style={{ height: 14 }} />
       <Field label="Obra de destino">
-        <Select value={obra} onChange={e => setObra(e.target.value)} style={{ width: '100%', maxWidth: 'none' }}>
-          {obras.map(o => <option key={o.obra_id} value={o.obra_id}>{o.nome_obra}</option>)}
-        </Select>
+        {/* Busca no servidor (F2): a obra de destino se acha pelo nome. */}
+        <SeletorDeObra
+          valor={obra ? Number(obra) : null}
+          rotuloAtual={obras.find(o => o.obra_id === Number(obra))?.nome_obra}
+          aoMudar={id => { if (id != null) setObra(String(id)) }}
+          aria-label="Obra de destino"
+          style={{ ...inp, width: '100%', maxWidth: 'none' }}
+        />
       </Field>
       <Field label="Descrição">
         <input value={descricao} onChange={e => setDescricao(e.target.value)} style={inp} />
@@ -1635,7 +1642,7 @@ function ModalExportar({ orcamentoId, onFechar, onRecado }: {
       onRecado(`${nome} baixado.`)
       onFechar()
     } catch {
-      setErro('Não foi possível gerar o arquivo. Se for PDF, o servidor precisa do WeasyPrint.')
+      setErro('Não foi possível gerar o arquivo.')
     } finally {
       setBaixando('')
     }
@@ -1940,7 +1947,7 @@ function ModalRevisar({ salvando, onFechar, onRevisar }: {
         <>
           <Btn onClick={onFechar}>Cancelar</Btn>
           <Btn variant="primary" disabled={salvando} onClick={() => {
-            if (!motivo.trim()) { setErro('Escreva o motivo — é ele que justifica a revisão no histórico.'); return }
+            if (!motivo.trim()) { setErro('Informe o motivo da revisão.'); return }
             onRevisar(tipo, motivo.trim())
           }}>Criar próxima versão</Btn>
         </>

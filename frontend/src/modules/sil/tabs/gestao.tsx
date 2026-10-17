@@ -4,8 +4,8 @@ import {
   Building2,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
-import { useCurvaABC, useAplicado, useObras, saldosHooks, useSilDashboard, useGerarDemanda } from '../hooks'
-import { BotaoExportar } from '@/components/malha'
+import { useCurvaABC, useAplicado, saldosHooks, useSilDashboard, useGerarDemanda } from '../hooks'
+import { BotaoExportar, SeletorDeObra } from '@/components/malha'
 import { brl, qty, num, abcKind } from '../lib'
 import { mono, CAPS, inp, KIND, Pill, Card, Btn, SectHead, Loading, Empty, th, type Say } from '../ui'
 import type { CurvaABCItem, AplicadoLinha, SaldoEstoque } from '../types'
@@ -61,7 +61,6 @@ export function CurvaABC() {
 
 /* ═══════════ CUSTO POR OBRA — ORÇADO × APLICADO ═══════════ */
 export function CustoPorObra() {
-  const { data: obras } = useObras()
   const [obra, setObra] = useState('')
   const { data, isLoading } = useAplicado(obra ? Number(obra) : undefined)
   const linhas = (data ?? []) as AplicadoLinha[]
@@ -84,7 +83,7 @@ export function CustoPorObra() {
         <TrendingUp size={20} style={{ color: 'var(--accent-ink)', flex: 'none' }} />
         <span style={{ fontSize: 12.5, color: 'var(--ink-2)', lineHeight: 1.55 }}>O <b>físico-financeiro</b> da obra: quanto de material foi <b>aplicado</b> (consumido, valorizado pelo custo médio) contra o <b>orçado</b> do <b>módulo Orçamento</b>, por obra e etapa. O orçado é o <b>custo direto</b> do orçamento aprovado vigente — material sai do estoque a custo, então comparar com preço+BDI faria toda obra parecer economia. Etapa sem régua aprovada aparece sem orçado, não com zero. É a resposta para "a obra está estourando o material?".</span>
       </div>
-      <SectHead right={<select value={obra} onChange={e => setObra(e.target.value)} style={{ ...inp, width: 'auto', padding: '7px 10px' }}><option value="">Todas as obras</option>{(obras ?? []).map(o => <option key={o.obra_id} value={o.obra_id}>{o.nome_obra}</option>)}</select>}>Aplicado por obra e etapa</SectHead>
+      <SectHead right={<div style={{ width: 240 }}><SeletorDeObra valor={obra ? Number(obra) : null} aoMudar={id => setObra(id == null ? '' : String(id))} permiteLimpar placeholder="Todas as obras" aria-label="Filtrar por obra" style={{ ...inp, padding: '7px 10px' }} /></div>}>Aplicado por obra e etapa</SectHead>
       {isLoading ? <Loading /> : grupos.length === 0 ? <Empty>Nenhum consumo apropriado a obra ainda. Atenda uma requisição ou registre uma saída com obra/etapa.</Empty> : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {grupos.map(g => (

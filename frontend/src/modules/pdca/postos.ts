@@ -53,6 +53,21 @@ const PORTA_DO_PAPEL: [string, Porta][] = [
   ['campo', 'campo'],
 ]
 
+/** O papel que decide a porta: o primeiro da precedência que a pessoa tem e
+ *  cujo posto ela pode abrir. `null` = nenhum casou (cai no Controle). */
+function papelDaPorta(
+  papeis: readonly string[],
+  pode: (permissao: string) => boolean,
+): [string, Porta] | null {
+  for (const [papel, porta] of PORTA_DO_PAPEL) {
+    if (!papeis.includes(papel)) continue
+    if (porta === 'campo') return [papel, porta]
+    const posto = POSTOS.find((p) => p.codigo === porta)
+    if (posto && pode(posto.permissao)) return [papel, porta]
+  }
+  return null
+}
+
 /** A porta de quem tem estes papéis. **A permissão vence o nome**: papel
  *  recomposto sem o verbo do posto não manda ninguém para um cadeado, passa
  *  para o próximo papel da pessoa. */
@@ -60,13 +75,29 @@ export function portaDoPapel(
   papeis: readonly string[],
   pode: (permissao: string) => boolean,
 ): Porta {
-  for (const [papel, porta] of PORTA_DO_PAPEL) {
-    if (!papeis.includes(papel)) continue
-    if (porta === 'campo') return porta
-    const posto = POSTOS.find((p) => p.codigo === porta)
-    if (posto && pode(posto.permissao)) return porta
-  }
-  return 'controle'
+  return papelDaPorta(papeis, pode)?.[1] ?? 'controle'
+}
+
+/** **A vista com que o posto abre para este papel** (§3.3, coluna "Vista
+ *  inicial"). Quase todo posto já abre na vista do papel que mora nele — o
+ *  Plano no cronograma, a Medição na fila do dinheiro, a Qualidade no laço
+ *  aberto, a Segurança na fila da CAT. O Controle é o que serve a dois papéis:
+ *  quem assina (fiscal, diretoria) abre na fila de decisão (`Hoje`), e o
+ *  engenheiro de obra no **quadro da semana**, que é o que ele conduz. */
+const VISTA_DO_PAPEL: Record<string, string> = {
+  engenharia: '?aba=semana',
+}
+
+/** O endereço relativo da entrada na obra: posto + vista inicial do papel. O
+ *  campo não tira ninguém da obra — cai no Controle (ver `PortaDaObra`). */
+export function entradaDoPapel(
+  papeis: readonly string[],
+  pode: (permissao: string) => boolean,
+): string {
+  const achado = papelDaPorta(papeis, pode)
+  if (!achado || achado[1] === 'campo') return 'controle'
+  const [papel, porta] = achado
+  return `${porta}${VISTA_DO_PAPEL[papel] ?? ''}`
 }
 
 /** **O endereço do documento, e não só do posto.**

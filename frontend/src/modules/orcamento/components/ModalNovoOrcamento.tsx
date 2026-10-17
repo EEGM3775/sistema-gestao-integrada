@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Aviso, Btn, Field, inp, Modal, mono, Select } from '../ui'
+import { SeletorDeObra } from '@/components/malha'
+import { Aviso, Btn, Field, inp, Modal, mono } from '../ui'
 import { paraDecimal } from '../lib'
 import SeletorDeBase from './SeletorDeBase'
 import type { BaseResumo, ObraOpt, Orcamento } from '../types'
@@ -71,15 +72,15 @@ export default function ModalNovoOrcamento({ obras, bases, existentes, obraFixa,
         label="Obra"
         dica={daObra.length ? `Esta obra já tem ${daObra.length} planilha(s) — esta nasce como v${proximaVersao}.` : undefined}
       >
-        <Select
-          value={form.obra}
+        {/* Busca no servidor (F2): a obra se acha pelo nome, sem a lista inteira. */}
+        <SeletorDeObra
+          valor={form.obra ? Number(form.obra) : null}
+          rotuloAtual={obras.find(o => o.obra_id === Number(form.obra))?.nome_obra}
           disabled={obraFixa != null}
-          onChange={e => setForm(f => ({ ...f, obra: e.target.value }))}
-          style={{ width: '100%', maxWidth: 'none' }}
-        >
-          <option value="">Selecione</option>
-          {obras.map(o => <option key={o.obra_id} value={o.obra_id}>{o.nome_obra}</option>)}
-        </Select>
+          aoMudar={id => setForm(f => ({ ...f, obra: id == null ? '' : String(id) }))}
+          aria-label="Obra"
+          style={{ ...inp, width: '100%', maxWidth: 'none' }}
+        />
       </Field>
       <Field label="Descrição"><input value={form.descricao} onChange={e => setForm(f => ({ ...f, descricao: e.target.value }))} placeholder="Ex.: Orçamento executivo — Residencial Alfa" style={inp} /></Field>
       {/* Deixou de ser a escolha que decide se a planilha nasce zerada: desde a

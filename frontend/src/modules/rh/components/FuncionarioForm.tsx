@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import apiClient from '@/api/apiClient'
-import type { Funcionario, FuncionarioFormData, Cargo, Empreendimento } from '@/types'
+import type { Funcionario, FuncionarioFormData, Cargo } from '@/types'
+import { SeletorDeEmpreendimento } from '@/components/malha'
 import { FieldError, FormErrorBanner, parseApiErrors, type FieldErrors } from '@/utils/formErrors'
 import { maskCPF, validateCPF, maskPISPASEP, validatePISPASEP } from '@/utils/masks'
 import {
@@ -87,7 +88,6 @@ interface Props {
 const FuncionarioForm: React.FC<Props> = ({ open, onClose, onSave, initial }) => {
   const [form, setForm]                       = useState<FuncionarioFormData>(EMPTY)
   const [cargos, setCargos]                   = useState<Cargo[]>([])
-  const [empreendimentos, setEmpreendimentos] = useState<Empreendimento[]>([])
   const [saving, setSaving]                   = useState(false)
   const [fieldErrors, setFieldErrors]         = useState<FieldErrors>({})
 
@@ -95,13 +95,9 @@ const FuncionarioForm: React.FC<Props> = ({ open, onClose, onSave, initial }) =>
     if (!open) return
     setForm(initial ? toFormData(initial) : { ...EMPTY })
     setFieldErrors({})
-    Promise.all([
-      apiClient.get('/cargos/'),
-      apiClient.get('/empreendimentos/'),
-    ]).then(([c, e]) => {
-      setCargos(c.data.results ?? c.data)
-      setEmpreendimentos(e.data.results ?? e.data)
-    }).catch(() => {})
+    apiClient.get('/cargos/')
+      .then(c => setCargos(c.data.results ?? c.data))
+      .catch(() => {})
   }, [open, initial])
 
   const set = <K extends keyof FuncionarioFormData>(k: K, v: FuncionarioFormData[K]) =>
@@ -265,12 +261,15 @@ const FuncionarioForm: React.FC<Props> = ({ open, onClose, onSave, initial }) =>
                 </select>
               </Field>
               <Field label="Empreendimento Vinculado" error={fieldErrors.empreendimento_vinculado}>
-                <select value={form.empreendimento_vinculado}
-                  onChange={e => set('empreendimento_vinculado', e.target.value === '' ? '' : Number(e.target.value))}
-                  style={inp}>
-                  <option value="">Nenhum</option>
-                  {empreendimentos.map(em => <option key={em.empreendimento_id} value={em.empreendimento_id}>{em.empreendimento}</option>)}
-                </select>
+                {/* Busca no servidor (F2); vazio = nenhum. */}
+                <SeletorDeEmpreendimento
+                  valor={form.empreendimento_vinculado === '' ? null : Number(form.empreendimento_vinculado)}
+                  aoMudar={id => set('empreendimento_vinculado', id ?? '')}
+                  permiteLimpar
+                  placeholder="Nenhum — busque para escolher"
+                  aria-label="Empreendimento vinculado"
+                  style={inp}
+                />
               </Field>
             </Row2>
             <Row2>

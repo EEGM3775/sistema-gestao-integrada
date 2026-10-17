@@ -291,6 +291,19 @@ class JulgarPeloConcluidoTests(_BaseSemana):
         item.refresh_from_db()
         self.assertTrue(item.cumprido)
 
+    def test_sem_promessa_atividade_longa_deve_so_a_fatia_da_semana(self):
+        # 8 semanas no plano (56 dias), a semana do quadro é a 1ª: meta = início + 1/8.
+        Atividade.objects.filter(pk=self.a1.pk).update(
+            inicio_cedo=date(2026, 6, 1), termino_cedo=date(2026, 7, 26))
+        item = self._cartao()
+        andamento = services.andamento_dos_itens(self.prog)[item.pk]
+        self.assertEqual(andamento["meta"], andamento["inicio"] + Decimal("12.50"))
+        services.julgar_itens(programacao=self.prog, julgamentos=[
+            {"item": item.pk, "percentual_concluido": Decimal("17.5")},
+        ])
+        item.refresh_from_db()
+        self.assertTrue(item.cumprido)
+
     def test_concluido_abaixo_do_apontado_e_recusado(self):
         item = self._cartao(previsto=Decimal("20"))
         with self.assertRaises(ValidationError) as ctx:

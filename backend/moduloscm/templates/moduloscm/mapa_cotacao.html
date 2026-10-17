@@ -1,0 +1,127 @@
+<!--
+  Mapa comparativo de cotação para reunião (dono, 16/10/2026). A4 deitado: itens
+  nas linhas, um fornecedor por coluna, o menor preço de cada linha em verde, o
+  rodapé com total, itens cotados, prazo, data em que o preço chegou e a
+  situação — e o campo de aprovação. Várias cotações: capa com o resumo e um
+  mapa por página.
+-->
+<meta charset="utf-8">
+<style>
+  @page {
+    size: A4 landscape;
+    margin: 12mm 11mm 14mm 11mm;
+    @bottom-left { content: "{{ empresa }} · mapa comparativo · gerado em {{ gerado_em|date:'d/m/Y H:i' }}"; font: 7pt "DejaVu Sans", sans-serif; color: #64748b; }
+    @bottom-right { content: "página " counter(page) " de " counter(pages); font: 7pt "DejaVu Sans", sans-serif; color: #64748b; }
+  }
+  body { font-family: "DejaVu Sans", sans-serif; font-size: 8.5pt; color: #0f172a; }
+  .pagina + .pagina { page-break-before: always; }
+  .topo { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 0.6mm solid #0A2A5B; padding-bottom: 2.5mm; margin-bottom: 4mm; }
+  .empresa { font-size: 12pt; font-weight: bold; color: #0A2A5B; }
+  .titulo { text-align: right; }
+  .titulo h1 { font-size: 14pt; margin: 0; }
+  .meta { color: #475569; font-size: 8pt; margin-top: 1mm; }
+  table { width: 100%; border-collapse: collapse; }
+  thead { display: table-header-group; }
+  tr { page-break-inside: avoid; }
+  th { background: #e8edf5; text-align: left; padding: 1.8mm 1.6mm; border-bottom: 0.4mm solid #c9d2e0; font-size: 7.8pt; vertical-align: bottom; }
+  td { padding: 1.5mm 1.6mm; border-bottom: 0.15mm solid #e2e8f0; vertical-align: top; }
+  .compacto th, .compacto td { font-size: 7pt; padding: 1.2mm 1.1mm; }
+  .num { text-align: right; white-space: nowrap; }
+  .cod { color: #64748b; font-size: 7pt; }
+  .menor { background: #dcfce7; font-weight: bold; color: #14532d; }
+  .vazio { color: #94a3b8; }
+  .rodape td { background: #f8fafc; font-weight: bold; }
+  .rodape .rotulo { text-align: right; color: #475569; }
+  .destaque { background: #fef3c7 !important; }
+  .vencedora { background: #dcfce7 !important; }
+  .selo { display: inline-block; margin-top: 0.8mm; padding: 0.3mm 1.6mm; border-radius: 1mm; font-size: 6.8pt; font-weight: bold; }
+  .selo.v { background: #16a34a; color: #fff; }
+  .selo.r { background: #d97706; color: #fff; }
+  .aviso { margin-top: 3mm; padding: 2mm 3mm; background: #fef9e7; border: 0.3mm solid #f3d38a; border-radius: 1.5mm; font-size: 8pt; }
+  .obs { margin-top: 3mm; font-size: 7.6pt; color: #334155; }
+  .obs b { color: #0f172a; }
+  .aprovacao { margin-top: 8mm; display: flex; gap: 12mm; font-size: 8.5pt; }
+  .aprovacao div { flex: 1; border-top: 0.25mm solid #475569; padding-top: 1.2mm; color: #475569; }
+  .capa h2 { font-size: 11pt; margin: 0 0 3mm; }
+</style>
+
+{% if capa %}
+<div class="pagina capa">
+  <div class="topo">
+    <div class="empresa">{{ empresa }}</div>
+    <div class="titulo"><h1>Mapas comparativos de cotação</h1><div class="meta">{{ capa|length }} cotações · gerado em {{ gerado_em|date:"d/m/Y H:i" }}</div></div>
+  </div>
+  <h2>Resumo</h2>
+  <table>
+    <thead><tr><th>Cotação</th><th>Demanda</th><th>Obra / centro de custo</th><th>Situação</th><th class="num">Itens</th><th class="num">Propostas</th><th>Escolhido</th><th class="num">Total</th></tr></thead>
+    <tbody>
+    {% for r in capa %}
+      <tr>
+        <td>#{{ r.cotacao }}</td><td>#{{ r.demanda }}</td><td>{{ r.obra|default:"—" }}</td><td>{{ r.status }}</td>
+        <td class="num">{{ r.itens }}</td><td class="num">{{ r.propostas }}</td>
+        <td>{% if r.fornecedor %}{{ r.fornecedor }} <span class="selo {% if r.vencedora %}v{% else %}r{% endif %}">{% if r.vencedora %}vencedor{% else %}menor total{% endif %}</span>{% else %}<span class="vazio">sem proposta</span>{% endif %}</td>
+        <td class="num">{{ r.total_fmt }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% for m in mapas %}
+<div class="pagina">
+  <div class="topo">
+    <div>
+      <div class="empresa">{{ empresa }}</div>
+      <div class="meta">{% if m.obra %}{{ m.obra }}{% endif %}{% if m.obra and m.centro_custo %} · {% endif %}{{ m.centro_custo }}</div>
+    </div>
+    <div class="titulo">
+      <h1>Mapa comparativo — Cotação nº {{ m.cotacao }}</h1>
+      <div class="meta">Demanda nº {{ m.demanda }} · {{ m.status }} · aberta em {{ m.criada_em|date:"d/m/Y" }}{% if m.data_limite %} · limite {{ m.data_limite|date:"d/m/Y" }}{% endif %}</div>
+    </div>
+  </div>
+
+  {% if not m.propostas %}
+    <p class="vazio">Nenhuma proposta registrada nesta cotação.</p>
+  {% else %}
+  <table class="{% if m.compacto %}compacto{% endif %}">
+    <thead>
+      <tr>
+        <th>Item</th><th>Und</th><th class="num">Qtd.</th>
+        {% for c in m.propostas %}
+          <th class="num {% if c.proposta == m.vencedora %}vencedora{% elif c.proposta == m.recomendada and not m.vencedora %}destaque{% endif %}">
+            {{ c.fornecedor }}
+            {% if c.proposta == m.vencedora %}<br><span class="selo v">vencedora</span>{% elif c.proposta == m.recomendada and not m.vencedora %}<br><span class="selo r">menor total</span>{% endif %}
+          </th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for it in m.itens %}
+      <tr>
+        <td>{{ it.descricao }}{% if it.codigo %} <span class="cod">{{ it.codigo }}</span>{% endif %}</td>
+        <td>{{ it.unidade }}</td>
+        <td class="num">{{ it.quantidade_fmt }}</td>
+        {% for p in it.precos %}
+          <td class="num {% if p.menor %}menor{% elif p.valor is None %}vazio{% endif %}">{{ p.fmt }}</td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+      <tr class="rodape"><td colspan="3" class="rotulo">Total</td>{% for c in m.propostas %}<td class="num">{{ c.total_fmt }}</td>{% endfor %}</tr>
+      <tr class="rodape"><td colspan="3" class="rotulo">Itens cotados</td>{% for c in m.propostas %}<td class="num">{{ c.cotados }} de {{ m.itens|length }}</td>{% endfor %}</tr>
+      <tr class="rodape"><td colspan="3" class="rotulo">Prazo de entrega</td>{% for c in m.propostas %}<td class="num">{% if c.prazo_entrega_dias is not None %}{{ c.prazo_entrega_dias }} dias{% else %}—{% endif %}</td>{% endfor %}</tr>
+      <tr class="rodape"><td colspan="3" class="rotulo">Recebida em</td>{% for c in m.propostas %}<td class="num">{{ c.recebida_em|date:"d/m/Y" }}</td>{% endfor %}</tr>
+      <tr class="rodape"><td colspan="3" class="rotulo">Situação</td>{% for c in m.propostas %}<td class="num">{{ c.situacao }}</td>{% endfor %}</tr>
+    </tbody>
+  </table>
+  {% if m.nenhuma_completa %}<div class="aviso">Nenhuma proposta cotou todos os itens: o menor total compara listas diferentes.</div>{% endif %}
+  {% for c in m.propostas %}{% if c.observacao %}<div class="obs"><b>{{ c.fornecedor }}:</b> {{ c.observacao }}</div>{% endif %}{% endfor %}
+  {% endif %}
+
+  <div class="aprovacao">
+    <div>Comprador</div>
+    <div>Aprovado por</div>
+    <div>Data ____/____/________</div>
+  </div>
+</div>
+{% endfor %}

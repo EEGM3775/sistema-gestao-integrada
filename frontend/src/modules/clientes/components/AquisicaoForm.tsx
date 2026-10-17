@@ -2,10 +2,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, X } from 'lucide-react'
 import apiClient from '@/api/apiClient'
 import type {
-  ClienteEmpreendimento, ClienteEmpreendimentoFormData, Empreendimento, IndiceEconomico,
+  ClienteEmpreendimento, ClienteEmpreendimentoFormData, IndiceEconomico,
   MeioPagamento, SimulacaoPlano, TipoDeMeio, TipoMeioPagamento, Unidade,
 } from '@/types'
 import { buscarUnidadesDisponiveis } from '@/modules/empreendimentos/hooks/useUnidades'
+import { SeletorDeEmpreendimento } from '@/components/malha'
 import { FieldError, FormErrorBanner, parseApiErrors, type FieldErrors } from '@/utils/formErrors'
 import { validateISO_Pagamento, minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
 
@@ -39,6 +40,14 @@ interface Props {
 interface MeioForm extends MeioPagamento {
   chave: number
   valorTexto: string
+  /** Nas parcelas com datas livres, cada linha como está nos campos. */
+  linhas: LinhaLivre[]
+}
+
+interface LinhaLivre {
+  chave: number
+  vencimento: string
+  valorTexto: string
 }
 
 interface FormState extends Omit<ClienteEmpreendimentoFormData, 'meios'> {
@@ -48,11 +57,12 @@ interface FormState extends Omit<ClienteEmpreendimentoFormData, 'meios'> {
 /** A ordem em que "+ Adicionar" sugere o próximo meio: a de uma venda típica. */
 const SUGESTAO: TipoMeioPagamento[] = [
   'entrada', 'financiamento_direto', 'anuais', 'financiamento_bancario', 'fgts',
-  'permuta', 'cartao', 'outro', 'a_vista',
+  'datas_livres', 'permuta', 'cartao', 'outro', 'a_vista',
 ]
 
 const NOME_DA_LINHA: Record<string, string> = {
-  a_vista: 'À vista', entrada: 'Entrada', parcela: 'Parcela', balao: 'Anual', cartao: 'Cartão',
+  a_vista: 'À vista', entrada: 'Entrada', parcela: 'Parcela', balao: 'Anual',
+  livre: 'Data livre', cartao: 'Cartão',
 }
 
 function maskCurrency(v: string) {
@@ -95,6 +105,10 @@ function vencimentoPadrao(tipo: TipoMeioPagamento, dataCompra: string) {
   return base
 }
 
+function novaLinha(vencimento: string, valorTexto = ''): LinhaLivre {
+  return { chave: proximaChave++, vencimento, valorTexto }
+}
+
 function novoMeio(tipo: TipoMeioPagamento, dataCompra: string): MeioForm {
   return {
     chave: proximaChave++,
@@ -107,6 +121,7 @@ function novoMeio(tipo: TipoMeioPagamento, dataCompra: string): MeioForm {
     juros_mensal: '0',
     sistema_amortizacao: 'price',
     periodicidade: 'anual',
+    linhas: tipo === 'datas_livres' ? [novaLinha(somarMeses(dataCompra || hojeISO(), 1))] : [],
   }
 }
 
@@ -118,11 +133,17 @@ function meioDaApi(m: MeioPagamento): MeioForm {
     valorTexto: decimalParaTexto(cada),
     descricao: m.descricao ?? '',
     primeiro_vencimento: m.primeiro_vencimento ?? '',
+    linhas: (m.cronograma ?? []).map(l => novaLinha(l.vencimento, decimalParaTexto(l.valor))),
   }
 }
 
-/** O total do meio a partir do que está no campo — nas anuais, cada × quantas. */
-function valorDoMeio(m: Pick<MeioForm, 'tipo' | 'valorTexto' | 'parcelas'>) {
+/** O total do meio a partir do que está nos campos — nas anuais, cada ×
+ *  quantas; nas datas livres, a soma das linhas. */
+function valorDoMeio(m: Pick<MeioForm, 'tipo' | 'valorTexto' | 'parcelas' | 'linhas'>) {
+  if (m.tipo === 'datas_livres') {
+    const soma = m.linhas.reduce((s, l) => s + centavos(currencyToDecimal(l.valorTexto) || '0'), 0)
+    return (soma / 100).toFixed(2)
+  }
   const digitado = currencyToDecimal(m.valorTexto) || '0'
   if (m.tipo !== 'anuais') return digitado
   return ((centavos(digitado) * Math.max(1, m.parcelas || 1)) / 100).toFixed(2)
@@ -171,6 +192,9 @@ function meioParaApi(m: MeioForm): MeioPagamento {
     juros_mensal: m.juros_mensal || '0',
     sistema_amortizacao: m.sistema_amortizacao,
     periodicidade: m.periodicidade,
+    cronograma: m.tipo === 'datas_livres'
+      ? m.linhas.map(l => ({ vencimento: l.vencimento, valor: currencyToDecimal(l.valorTexto) || '0' }))
+      : [],
   }
 }
 
@@ -197,7 +221,6 @@ const SectionTitle: React.FC<{ children: React.ReactNode }> = ({ children }) => 
 
 const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, initial }) => {
   const [form, setForm] = useState<FormState>(EMPTY(clienteId))
-  const [empreendimentos, setEmpreendimentos] = useState<Empreendimento[]>([])
   const [empSelecionado, setEmpSelecionado] = useState<number | ''>('')
   const [unidades, setUnidades] = useState<Unidade[]>([])
   const [carregandoUnidades, setCarregandoUnidades] = useState(false)
@@ -212,9 +235,6 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
   const [tetoMeios, setTetoMeios] = useState(12)
 
   useEffect(() => {
-    apiClient.get('/empreendimentos/')
-      .then(r => setEmpreendimentos(r.data.results ?? r.data))
-      .catch(() => {})
     apiClient.get('/indices-economicos/')
       .then(r => setIndices(r.data))
       .catch(() => setIndices([]))
@@ -318,16 +338,37 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
    *  descrição não fica: o nome do banco não explica um "outro". */
   const trocarTipo = (m: MeioForm, codigo: TipoMeioPagamento) => {
     const regra = tipoDe(codigo)
-    const cada = m.tipo === 'anuais' ? m.valor : currencyToDecimal(m.valorTexto) || '0'
+    const cada = m.tipo === 'anuais' || m.tipo === 'datas_livres' ? m.valor : currencyToDecimal(m.valorTexto) || '0'
+    const texto = Number(cada) > 0 ? decimalParaTexto(cada) : ''
     alterarMeio(m.chave, {
       tipo: codigo,
-      valorTexto: Number(cada) > 0 ? decimalParaTexto(cada) : '',
+      valorTexto: texto,
       parcelas: regra?.parcelas ? (codigo === 'financiamento_direto' ? Math.max(m.parcelas, 12) : m.parcelas) : 1,
       juros_mensal: regra?.juros ? m.juros_mensal : '0',
       descricao: '',
       primeiro_vencimento: regra?.vencimento ? vencimentoPadrao(codigo, form.data_compra) : '',
+      // Virar "datas livres" leva o valor para a primeira linha: quem troca o
+      // tipo está reorganizando o mesmo dinheiro, não recomeçando.
+      linhas: codigo === 'datas_livres'
+        ? [novaLinha(somarMeses(form.data_compra || hojeISO(), 1), texto)]
+        : [],
     })
   }
+
+  const alterarLinha = (m: MeioForm, chave: number, mudanca: Partial<LinhaLivre>) =>
+    alterarMeio(m.chave, { linhas: m.linhas.map(l => (l.chave === chave ? { ...l, ...mudanca } : l)) })
+
+  /** A linha nova nasce um mês depois da última — o passo mais comum, que a
+   *  pessoa corrige quando a data combinada é outra. */
+  const adicionarLinha = (m: MeioForm) => {
+    const ultima = m.linhas[m.linhas.length - 1]?.vencimento
+    alterarMeio(m.chave, {
+      linhas: [...m.linhas, novaLinha(somarMeses(ultima || form.data_compra || hojeISO(), 1))],
+    })
+  }
+
+  const removerLinha = (m: MeioForm, chave: number) =>
+    alterarMeio(m.chave, { linhas: m.linhas.filter(l => l.chave !== chave) })
 
   const adicionarMeio = () => setForm(anterior => {
     const usados = new Set(anterior.meios.map(m => m.tipo))
@@ -347,13 +388,23 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
     if (falta == null) return
     const livre = falta + centavos(m.valor)
     if (livre <= 0) return
+    if (m.tipo === 'datas_livres') {
+      // Nas datas livres, o acerto vai na última linha: as outras são datas e
+      // valores que a pessoa digitou um a um, e não se mexe nelas.
+      const ultima = m.linhas[m.linhas.length - 1]
+      if (!ultima) return
+      const resto = falta + centavos(currencyToDecimal(ultima.valorTexto) || '0')
+      if (resto > 0) alterarLinha(m, ultima.chave, { valorTexto: decimalParaTexto(resto / 100) })
+      return
+    }
     const cada = m.tipo === 'anuais' ? Math.floor(livre / Math.max(1, m.parcelas)) : livre
     alterarMeio(m.chave, { valorTexto: decimalParaTexto(cada / 100) })
   }
 
   const temSac = form.meios.some(m => m.tipo === 'financiamento_direto' && m.sistema_amortizacao === 'sac')
   const temPrazo = form.meios.some(m =>
-    m.tipo === 'financiamento_direto' || m.tipo === 'anuais' || (m.tipo === 'entrada' && m.parcelas > 1))
+    m.tipo === 'financiamento_direto' || m.tipo === 'anuais' || m.tipo === 'datas_livres'
+    || (m.tipo === 'entrada' && m.parcelas > 1))
   const repetidos = new Set(
     form.meios.map(m => m.tipo).filter((t, i, todos) => todos.indexOf(t) !== i),
   )
@@ -408,16 +459,18 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
           <SectionTitle>Unidade</SectionTitle>
           <div>
             <label style={labelCls}>Empreendimento</label>
-            <select style={inputCls} value={empSelecionado}
-              onChange={e => {
-                setEmpSelecionado(e.target.value === '' ? '' : Number(e.target.value))
+            {/* Busca no servidor (F2). Vazio = as unidades à venda de todos. */}
+            <SeletorDeEmpreendimento
+              valor={empSelecionado === '' ? null : empSelecionado}
+              aoMudar={id => {
+                setEmpSelecionado(id ?? '')
                 set('unidade', '')
-              }}>
-              <option value="">Todos</option>
-              {empreendimentos.map(emp => (
-                <option key={emp.empreendimento_id} value={emp.empreendimento_id}>{emp.empreendimento}</option>
-              ))}
-            </select>
+              }}
+              permiteLimpar
+              placeholder="Todos — busque para filtrar"
+              aria-label="Empreendimento"
+              style={inputCls}
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -501,10 +554,57 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
                   </button>
                 </div>
 
+                {regra?.cronograma ? (
+                  /* Datas livres: uma linha por parcela, data e valor. O total
+                     do meio é a soma — não há campo de valor à parte para
+                     discordar dela. */
+                  <div className="flex flex-col gap-1.5">
+                    <div className="grid gap-2" style={{ gridTemplateColumns: '1fr 1fr 24px' }}>
+                      <span style={{ ...labelCls, marginBottom: 0 }}>Vencimento</span>
+                      <span style={{ ...labelCls, marginBottom: 0 }}>Valor (R$)</span>
+                      <span />
+                    </div>
+                    {m.linhas.map((l, n) => (
+                      <div key={l.chave} className="grid gap-2 items-center" style={{ gridTemplateColumns: '1fr 1fr 24px' }}>
+                        <input type="date" min={minCalendarioISO} max={maxCalendarioISO} style={inputCls}
+                          value={l.vencimento} aria-label={`Vencimento da parcela ${n + 1}`}
+                          onChange={e => alterarLinha(m, l.chave, { vencimento: e.target.value })} />
+                        <input style={inputCls} value={l.valorTexto} placeholder="0,00" inputMode="numeric"
+                          aria-label={`Valor da parcela ${n + 1}`}
+                          onChange={e => alterarLinha(m, l.chave, { valorTexto: maskCurrency(e.target.value) })} />
+                        <button type="button" onClick={() => removerLinha(m, l.chave)}
+                          title="Remover esta parcela" aria-label={`Remover a parcela ${n + 1}`}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)', padding: 0 }}>
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ))}
+                    <div className="flex items-center gap-4">
+                      <button type="button" onClick={() => adicionarLinha(m)}
+                        className="inline-flex items-center gap-1"
+                        style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                          fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-brand)' }}>
+                        <Plus size={13} /> Adicionar parcela
+                      </button>
+                      {falta != null && falta !== 0 && m.linhas.length > 0 && (
+                        <button type="button" onClick={() => usarRestante(m)}
+                          style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                            fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-brand)' }}>
+                          {falta > 0 ? 'Restante na última' : 'Ajustar a última ao negociado'}
+                        </button>
+                      )}
+                      <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                        {m.linhas.length} parcela{m.linhas.length !== 1 ? 's' : ''} · <strong>{brl(m.valor)}</strong>
+                      </span>
+                    </div>
+                  </div>
+                ) : (
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label style={labelCls}>
-                      {m.tipo === 'anuais' ? 'Valor de cada (R$)' : m.tipo === 'cartao' ? 'Valor no cartão (R$)' : 'Valor (R$)'}
+                      {m.tipo === 'anuais'
+                        ? (Number(m.juros_mensal) > 0 ? 'Principal de cada (R$)' : 'Valor de cada (R$)')
+                        : m.tipo === 'cartao' ? 'Valor no cartão (R$)' : 'Valor (R$)'}
                     </label>
                     <input style={inputCls} value={m.valorTexto} placeholder="0,00" inputMode="numeric"
                       onChange={e => alterarMeio(m.chave, { valorTexto: maskCurrency(e.target.value) })} />
@@ -524,6 +624,7 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
                     </div>
                   )}
                 </div>
+                )}
 
                 {(regra?.sistema || regra?.periodicidade || (regra?.juros && (m.tipo !== 'entrada' || m.parcelas > 1)) || regra?.vencimento) && (
                   <div className="grid grid-cols-3 gap-3">
@@ -551,7 +652,9 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
                         zero: a entrada curta é vendida sem juros. */}
                     {regra?.juros && (m.tipo !== 'entrada' || m.parcelas > 1) && (
                       <div>
-                        <label style={labelCls}>{m.tipo === 'entrada' ? 'Juros (% a.m.) — opcional' : 'Juros (% a.m.)'}</label>
+                        <label style={labelCls}>
+                          {m.tipo === 'entrada' || m.tipo === 'anuais' ? 'Juros (% a.m.)' : 'Juros (% a.m.)'}
+                        </label>
                         <input style={inputCls} value={m.juros_mensal} inputMode="decimal"
                           onChange={e => alterarMeio(m.chave, { juros_mensal: e.target.value.replace(',', '.') })} />
                       </div>
@@ -589,7 +692,10 @@ const AquisicaoForm: React.FC<Props> = ({ open, clienteId, onClose, onSave, init
                 <p style={{ ...notaCls, marginTop: 0 }}>
                   {regra?.nota}
                   {m.tipo === 'anuais' && m.parcelas > 1 && Number(m.valor) > 0 && (
-                    <> Total das {m.parcelas}: <strong>{brl(m.valor)}</strong>.</>
+                    <> {Number(m.juros_mensal) > 0 ? 'Principal' : 'Total'} das {m.parcelas}: <strong>{brl(m.valor)}</strong>.</>
+                  )}
+                  {m.tipo === 'anuais' && resumo && Number(resumo.juros) > 0 && (
+                    <> Cada anual sai por <strong>{brl(resumo.primeiraParcela)}</strong>.</>
                   )}
                   {resumo && Number(resumo.juros) > 0 && (
                     <> Juros deste meio: <strong>{brl(resumo.juros)}</strong>.</>

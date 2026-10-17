@@ -113,8 +113,7 @@ def reordenar_niveis(fluxo: FluxoAprovacao, ids: list[int]) -> FluxoAprovacao:
     atuais = {n.pk: n for n in fluxo.niveis.all()}
     if sorted(ids) != sorted(atuais):
         raise ValidationError(
-            "A lista precisa conter exatamente os degraus deste fluxo, cada um "
-            "uma vez — reordenar não cria nem apaga degrau."
+            "A lista precisa conter exatamente os degraus deste fluxo, cada um uma vez."
         )
 
     for posicao, nivel_id in enumerate(ids, start=1):
@@ -221,8 +220,7 @@ def decidir(*, pedido: PedidoAprovacao, usuario, aprovar: bool,
     nivel = pedido.nivel_atual
     if nivel is None:
         raise ValidationError(
-            "O pedido está em aprovação sem degrau atual — o fluxo foi alterado "
-            "embaixo dele. Cancele e reabra."
+            "O fluxo foi alterado e o pedido ficou sem degrau atual. Cancele e reabra."
         )
 
     # Segregação (§8): quem executa não aprova.
@@ -238,13 +236,9 @@ def decidir(*, pedido: PedidoAprovacao, usuario, aprovar: bool,
         # com um documento parado e nenhum caminho: a válvula existe desde a
         # PDCA.0 e ninguém tinha como descobri-la.
         raise PermissionDenied(
-            "Quem solicitou não pode atestar o próprio pedido — é a segregação "
-            "que protege a empresa: quem executa não aprova. Três saídas: peça a "
-            f"outra pessoa com '{nivel.permissao_exigida}' que ateste; cancele o "
-            "pedido e reabra em nome de quem vai assinar; ou, se na sua operação "
-            "a mesma pessoa apura e assina mesmo, o administrador liga "
-            f"'Permitir autoatesto' no fluxo '{pedido.fluxo.nome}' "
-            "(Administração → Aprovações)."
+            f"Quem solicitou não pode atestar o próprio pedido. Peça a outra pessoa com '{nivel.permissao_exigida}', "
+            "ou reabra em nome de quem vai assinar. O administrador pode ligar 'Permitir autoatesto' "
+            f"no fluxo '{pedido.fluxo.nome}' (Administração → Aprovações)."
         )
     if not pode_atestar(usuario, nivel):
         raise PermissionDenied(

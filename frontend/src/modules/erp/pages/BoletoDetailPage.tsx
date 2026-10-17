@@ -50,14 +50,14 @@ export default function BoletoDetailPage() {
         if (doc.url_pdf && win) win.location.href = doc.url_pdf
         else if (win) win.close()
         if (!doc.gateway_online) setMensagem({ tom: 'erro', texto: doc.mensagem })
-        else if (!doc.url_pdf) setMensagem({ tom: 'erro', texto: 'Documento ainda indisponível no Asaas.' })
+        else if (!doc.url_pdf) setMensagem({ tom: 'erro', texto: 'Documento ainda indisponível na API.' })
       },
-      onError: () => { if (win) win.close(); setMensagem({ tom: 'erro', texto: 'Não foi possível verificar o documento no Asaas.' }) },
+      onError: () => { if (win) win.close(); setMensagem({ tom: 'erro', texto: 'Não foi possível verificar o documento na API.' }) },
     })
   }
 
   function aoCancelar() {
-    if (!boletoId || !window.confirm(`Cancelar o boleto #${boletoId} no Asaas? A ação não pode ser desfeita.`)) return
+    if (!boletoId || !window.confirm(`Cancelar o boleto #${boletoId} na API? A ação não pode ser desfeita.`)) return
     cancelar.mutate(boletoId, {
       onSuccess: r => setMensagem({ tom: 'ok', texto: r.detail }),
       onError: () => setMensagem({ tom: 'erro', texto: 'Não foi possível cancelar o boleto agora.' }),
@@ -133,7 +133,7 @@ export default function BoletoDetailPage() {
             <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-lg mb-6"
               style={{ background: '#fff5f5', border: '1px solid #fed7d7', fontFamily: 'var(--font-body)' }}>
               <span className="text-sm flex items-center gap-2" style={{ color: '#991b1b' }}>
-                <AlertTriangle size={16} /> A cobrança foi recusada pelo Asaas.
+                <AlertTriangle size={16} /> A cobrança foi recusada pela API.
               </span>
               <button type="button" onClick={() => setErroAberto(true)}
                 className="text-xs font-semibold px-3 py-1.5 rounded-lg"
@@ -146,7 +146,7 @@ export default function BoletoDetailPage() {
           {erroAberto && (
             <GatewayErroDialog
               dados={boleto.dados_retorno_api}
-              titulo="Erro na cobrança (Asaas)"
+              titulo="Erro na cobrança (API)"
               onClose={() => setErroAberto(false)}
             />
           )}

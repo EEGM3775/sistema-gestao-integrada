@@ -1,4 +1,6 @@
-import { useMemo, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
@@ -8,6 +10,11 @@ import ptBrLocale from '@fullcalendar/core/locales/pt-br'
 import type { DateSelectArg, EventClickArg, EventDropArg, DatesSetArg } from '@fullcalendar/core'
 import type { EventResizeDoneArg } from '@fullcalendar/interaction'
 import { Plus, RefreshCw, CalendarDays } from 'lucide-react'
+import { SelectComBusca } from '@/components/malha'
+import { calendarKeys } from '../api/queryKeys'
+import { fetchEvent } from '../api/endpoints/events'
+import { AgendasPanel, type ChaveAgenda } from '../components/AgendasPanel'
+import { ConviteDialog } from '../components/ConviteDialog'
 import { useCalendarEvents, useUpdateEvent } from '../hooks/useCalendarEvents'
 import { useFeriadosStatus } from '../hooks/useLocalidades'
 import { usePersistedState } from '../hooks/usePersistedState'
@@ -15,7 +22,7 @@ import { EventDialog } from '../components/EventDialog'
 import { EventInfoDialog, type EventInfo } from '../components/EventInfoDialog'
 import { LocalidadeSelector } from '../components/LocalidadeSelector'
 import { SOURCE_STYLE, HOLIDAY_SCOPE_STYLE } from '../utils'
-import type { CalendarRange, EventSource, HolidayScope, LocalidadeSelecionada, OccurrenceRef } from '../types'
+import type { CalendarRange, EventoAchado, EventSource, HolidayScope, LocalidadeSelecionada, OccurrenceRef } from '../types'
 
 /** Variáveis de tema do FullCalendar alinhadas ao design navy do SGI. */
 const fcTheme: CSSProperties = {
@@ -96,6 +103,10 @@ const CALENDAR_CSS = `
 .sgi-calendar .fc .fc-list-day-cushion { background: #f8fafc; }
 .sgi-calendar .fc .fc-list-event td { font-size: 0.85rem; }
 .sgi-calendar .fc .fc-list-event-dot { border-width: 5px; }
+/* Convite ainda sem resposta: tracejado; recusado: apagado e riscado (Fatia D) */
+.sgi-calendar .fc .sgi-convite-pendente { outline: 2px dashed rgba(255,255,255,0.85); outline-offset: -3px; }
+.sgi-calendar .fc .sgi-convite-recusado { opacity: 0.45; }
+.sgi-calendar .fc .sgi-convite-recusado .fc-event-title { text-decoration: line-through; }
 `
 
 /** Itens da legenda: origens dos eventos + escopos de feriado. */
@@ -134,6 +145,38 @@ const CalendarPage: React.FC = () => {
   )
   const [dialog, setDialog] = useState<DialogState>(CLOSED)
   const [info, setInfo] = useState<EventInfo | null>(null)
+  // Fatia D: o evento que a pessoa vê mas não altera (convite) e as agendas ocultas.
+  const [convite, setConvite] = useState<{ id: number; cor?: string | null } | null>(null)
+  const [ocultas, setOcultas] = usePersistedState<ChaveAgenda[]>('sgi_calendar_ocultas', [])
+  const calendarRef = useRef<FullCalendar>(null)
+  const queryClient = useQueryClient()
+  const [params, setParams] = useSearchParams()
+
+  /** Abre um evento pelo id (busca, ou o link `?evento=` do sino): leva o grid
+   *  até a data e abre a edição — ou a leitura, se a pessoa não pode alterá-lo
+   *  ou se é uma série (que se edita pela ocorrência, no grid). */
+  const abrirEvento = useCallback(async (id: number) => {
+    try {
+      const ev = await queryClient.fetchQuery({
+        queryKey: calendarKeys.events.detail(id), queryFn: () => fetchEvent(id),
+      })
+      calendarRef.current?.getApi().gotoDate(ev.start_time)
+      if (ev.can_edit && !ev.recurrence_rule) setDialog({ open: true, mode: 'edit', eventId: String(id) })
+      else setConvite({ id })
+    } catch {
+      /* evento apagado ou fora do alcance: o grid fica onde está */
+    }
+  }, [queryClient])
+
+  // `?evento=<id>` — o aviso de convite no sino leva direto ao evento.
+  useEffect(() => {
+    const alvo = Number(params.get('evento'))
+    if (!alvo) return
+    void abrirEvento(alvo)
+    const resto = new URLSearchParams(params)
+    resto.delete('evento')
+    setParams(resto, { replace: true })
+  }, [params, setParams, abrirEvento])
 
   // Janela do FullCalendar + localidade escolhida = consulta ao feed.
   const range: CalendarRange | null = janela
@@ -146,7 +189,15 @@ const CalendarPage: React.FC = () => {
 
   const fcEvents = useMemo(
     () =>
-      (data ?? []).map((e, i) => {
+      (data ?? []).filter(e => {
+        // Agenda oculta no painel: some do grid. Convite numa agenda que não é
+        // da pessoa não tem chave no painel e sempre aparece.
+        if (e.extendedProps.type !== 'local') return true
+        const p = e.extendedProps
+        const chave: ChaveAgenda | null = p.calendarId != null ? (p.calendarId as number)
+          : p.ownerName ? null : 'meus'
+        return chave == null || !ocultas.includes(chave)
+      }).map((e, i) => {
         // Feriados: cor por escopo (nacional/estadual/municipal); demais: por origem.
         const scope = e.extendedProps.scope as HolidayScope | undefined
         const style = e.extendedProps.type === 'holiday' && scope && HOLIDAY_SCOPE_STYLE[scope]
@@ -155,21 +206,25 @@ const CalendarPage: React.FC = () => {
         const isRecurring = e.extendedProps.isRecurring === true
         // Ocorrências virtuais de série não arrastam (o mover exige escolher o
         // alcance no diálogo); únicos e overrides concretos seguem editáveis.
-        const editable = e.extendedProps.type === 'local' && !isRecurring
+        const p = e.extendedProps
+        const editable = p.type === 'local' && !isRecurring && p.canEdit !== false
+        const corAgenda = p.type === 'local' && typeof p.color === 'string' ? p.color : null
         return {
           id: e.id != null ? String(e.id) : `${e.extendedProps.type}-${i}`,
           title: e.title,
           start: e.start,
           end: e.end,
           allDay: e.allDay,
-          backgroundColor: style.bg,
-          borderColor: style.border,
+          backgroundColor: corAgenda ?? style.bg,
+          borderColor: corAgenda ?? style.border,
           textColor: style.text,
           editable,
+          classNames: p.myStatus === 'pendente' ? ['sgi-convite-pendente']
+            : p.myStatus === 'recusado' ? ['sgi-convite-recusado'] : [],
           extendedProps: e.extendedProps,
         }
       }),
-    [data],
+    [data, ocultas],
   )
 
   const handleDatesSet = (arg: DatesSetArg) => {
@@ -197,6 +252,11 @@ const CalendarPage: React.FC = () => {
       })
       return
     }
+    if (p.canEdit === false) {
+      // Convite numa agenda que a pessoa não vê: ela lê e responde (Fatia D).
+      setConvite({ id: (p.masterId as number | undefined) ?? Number(arg.event.id), cor: p.color as string | null })
+      return
+    }
     if (p.isRecurring) {
       // Ocorrência virtual de uma série: edita via mestre + data da ocorrência.
       setDialog({
@@ -219,7 +279,7 @@ const CalendarPage: React.FC = () => {
   // Persiste arrastar/redimensionar de eventos próprios; reverte no erro.
   const persistMove = (arg: EventDropArg | EventResizeDoneArg) => {
     const { event } = arg
-    if (event.extendedProps.type !== 'local' || !event.start) {
+    if (event.extendedProps.type !== 'local' || event.extendedProps.canEdit === false || !event.start) {
       arg.revert()
       return
     }
@@ -255,6 +315,24 @@ const CalendarPage: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          {/* Busca de eventos no servidor (Fatia E): título, descrição ou local. */}
+          <div style={{ width: 260 }}>
+            <SelectComBusca<EventoAchado>
+              recurso="calendar/events/busca/"
+              idDe={ev => ev.id}
+              rotuloDe={ev => ev.title}
+              detalheDe={ev => [
+                new Date(ev.start_time).toLocaleDateString('pt-BR'),
+                ev.location, ev.calendar_name, ev.recurrence_rule ? 'repete' : null,
+              ].filter(Boolean).join(' · ')}
+              valor={null}
+              aoMudar={id => { if (id != null) void abrirEvento(id) }}
+              placeholder="Buscar evento…"
+              vazio="Nenhum evento ainda."
+              aria-label="Buscar evento"
+              style={{ width: '100%', padding: '8px 12px', borderRadius: 10, border: '1.5px solid #e2e8f0', fontSize: '0.85rem', fontFamily: 'var(--font-body)' }}
+            />
+          </div>
           {/* Seletor de localidade dos feriados (obra → estado → município) */}
           <LocalidadeSelector value={localidade} onChange={setLocalidade} />
           <button
@@ -279,8 +357,14 @@ const CalendarPage: React.FC = () => {
         </div>
       )}
 
+      <div className="flex flex-col lg:flex-row flex-1 min-h-0 gap-4">
+      {/* Agendas (Fatia D): mostrar/ocultar, cor, compartilhar, .ics (Fatia E) */}
+      <div className="lg:w-64 shrink-0">
+        <AgendasPanel ocultas={ocultas} aoMudarOcultas={setOcultas} />
+      </div>
+
       {/* Card do calendário */}
-      <div className="flex flex-col flex-1 min-h-0 rounded-2xl bg-white overflow-hidden"
+      <div className="flex flex-col flex-1 min-h-0 min-w-0 rounded-2xl bg-white overflow-hidden"
         style={{ boxShadow: 'var(--shadow-md)', border: '1px solid #e9edf3' }}>
 
         {/* Legenda em pills */}
@@ -306,6 +390,7 @@ const CalendarPage: React.FC = () => {
         {/* Calendário */}
         <div className="flex-1 min-h-0 p-3 sm:p-4 sgi-calendar" style={fcTheme}>
           <FullCalendar
+            ref={calendarRef}
             plugins={[dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin]}
             initialView="dayGridMonth"
             locale={ptBrLocale}
@@ -332,6 +417,8 @@ const CalendarPage: React.FC = () => {
         </div>
       </div>
 
+      </div>
+
       <EventDialog
         open={dialog.open}
         mode={dialog.mode}
@@ -344,6 +431,7 @@ const CalendarPage: React.FC = () => {
       />
 
       <EventInfoDialog info={info} onClose={() => setInfo(null)} />
+      <ConviteDialog eventId={convite?.id ?? null} cor={convite?.cor} onClose={() => setConvite(null)} />
     </div>
   )
 }

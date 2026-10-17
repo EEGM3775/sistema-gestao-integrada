@@ -13,12 +13,7 @@ const ICONE: Record<string, typeof FileText> = {
   xlsx: FileSpreadsheet, csv: FileSpreadsheet, pdf: FileText,
 }
 const NOME_FORMATO: Record<string, string> = {
-  xlsx: 'Excel (.xlsx)', csv: 'CSV (.csv)', pdf: 'PDF (.pdf)',
-}
-const PARA_QUE: Record<string, string> = {
-  xlsx: 'Para trabalhar: número sai como número, pronto para filtrar e somar.',
-  csv: 'Para ler com script ou importar em outro sistema.',
-  pdf: 'Para arquivar e assinar: layout fixo, sem célula editável no caminho.',
+  xlsx: 'Excel', csv: 'CSV', pdf: 'PDF',
 }
 
 interface Props {
@@ -93,8 +88,7 @@ export function BotaoExportar({ recurso, recorte = {}, rotulo = 'Exportar', tam 
           ) : (
             <>
               <p style={{ margin: '0 0 14px', fontSize: 12.5, color: 'var(--ink-3)', lineHeight: 1.5 }}>
-                O arquivo sai com <b>o mesmo recorte desta tela</b> e traz no cabeçalho de onde
-                veio, quem emitiu e quando.
+                Recorte da tela
               </p>
               <div style={{ display: 'grid', gap: 8 }}>
                 {declaracao.formatos_saida.map(formato => {
@@ -115,13 +109,8 @@ export function BotaoExportar({ recurso, recorte = {}, rotulo = 'Exportar', tam 
                       {ocupado === formato
                         ? <Spinner size={17} />
                         : <Icone size={17} style={{ color: 'var(--ink-3)' }} />}
-                      <span style={{ flex: 1 }}>
-                        <span style={{ display: 'block', fontSize: 13, fontWeight: 650 }}>
-                          {NOME_FORMATO[formato] ?? formato.toUpperCase()}
-                        </span>
-                        <span style={{ display: 'block', fontSize: 11.5, color: 'var(--ink-3)', marginTop: 2 }}>
-                          {PARA_QUE[formato] ?? ''}
-                        </span>
+                      <span style={{ flex: 1, fontSize: 13, fontWeight: 650 }}>
+                        {NOME_FORMATO[formato] ?? formato.toUpperCase()}
                       </span>
                     </button>
                   )

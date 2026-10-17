@@ -16,7 +16,7 @@ App **base** — sem `required_module`. Isolado por tenant.
 
 | Modelo | Campos principais |
 |---|---|
-| `Fornecedor` | `razao_social` (único), `cnpj` (único, **nullable** — pessoa física ou estrangeiro sem CNPJ), `contato` (nome da pessoa), `email` (único), `telefone` |
+| `Fornecedor` | `razao_social` (único), `cnpj` (único, **nullable** — pessoa física ou estrangeiro sem CNPJ), `contato` (nome da pessoa), `email` (opcional; único quando preenchido), `emails_adicionais` (lista; o conjunto com o principal é único no tenant), `telefone` |
 | `DadoBancarioFornecedor` | `fornecedor` FK, `tipo_conta` (choices), `codigo_banco`, `agencia`, `agencia_dv`, `conta`, `conta_dv`, `chave_pix`, `codigo_cedente`, `carteira`, `observacoes` |
 | `ProdutoServicoFornecedor` | `fornecedor` FK, `nome_produto_servico`, `tipo_produto_servico` (choices — lista extensa de materiais/serviços de construção), `unidade_medida`, `preco_unitario`, `descricao` |
 

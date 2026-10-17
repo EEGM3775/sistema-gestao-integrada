@@ -263,8 +263,14 @@ export interface ClienteFormData {
 export type SistemaAmortizacao = 'price' | 'sac'
 export type PeriodicidadeBalao = 'anual' | 'semestral'
 export type TipoMeioPagamento =
-  | 'a_vista' | 'entrada' | 'financiamento_direto' | 'anuais'
+  | 'a_vista' | 'entrada' | 'financiamento_direto' | 'anuais' | 'datas_livres'
   | 'financiamento_bancario' | 'fgts' | 'permuta' | 'cartao' | 'outro'
+
+/** Uma linha das parcelas com datas livres: a data e o que se paga nela. */
+export interface ParcelaLivre {
+  vencimento: string
+  valor: string
+}
 
 /** Um meio de pagamento da venda, como a API grava e recebe. A venda é uma
  *  lista livre destes, e a soma dos valores é o valor negociado. */
@@ -280,6 +286,8 @@ export interface MeioPagamento {
   juros_mensal: string
   sistema_amortizacao: SistemaAmortizacao
   periodicidade: PeriodicidadeBalao
+  /** Só nas parcelas com datas livres; o `valor` do meio é a soma delas. */
+  cronograma?: ParcelaLivre[]
 }
 
 /** O que cada tipo de meio comporta — catálogo do backend
@@ -300,6 +308,8 @@ export interface TipoDeMeio {
   rotuloVencimento: string
   descricao: 'obrigatoria' | 'opcional' | ''
   rotuloDescricao: string
+  /** O meio é uma lista de (data, valor) digitada linha a linha. */
+  cronograma?: boolean
 }
 
 /** Uma linha do resumo da proposta: o meio pelo nome do dinheiro
@@ -349,7 +359,7 @@ export interface ResumoPlano {
 
 export interface ParcelaPlano {
   numero: number
-  tipo: 'a_vista' | 'entrada' | 'parcela' | 'balao' | 'cartao'
+  tipo: 'a_vista' | 'entrada' | 'parcela' | 'balao' | 'livre' | 'cartao'
   /** A ordem do meio que gerou a linha. */
   meio?: number
   /** A data **pagável** — já no dia útil bancário. */
@@ -731,6 +741,7 @@ export interface Fornecedor {
   cnpj: string
   contato: string
   email: string
+  emails_adicionais: string[]
   telefone: string
   tenant: number
 }
@@ -742,6 +753,7 @@ export interface FornecedorFormData {
   cnpj: string | null
   contato: string
   email: string
+  emails_adicionais: string[]
   telefone: string
 }
 

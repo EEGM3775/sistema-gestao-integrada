@@ -74,7 +74,7 @@ export function useAutosave<T>({
       setEstado('erro')
       setErro(
         (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-        || 'Não deu para gravar. A digitação continua aqui — tente de novo.',
+        || 'Não foi possível gravar. A digitação foi mantida. Tente de novo.',
       )
       return false
     }

@@ -661,8 +661,7 @@ def pedir_material_da_semana(item_programacao, *, solicitante=None):
     local = local_de_estoque_da_obra(obra_id, tenant_id=item_programacao.tenant_id) if obra_id else None
     if local is None:
         raise ValidationError(
-            "A obra não tem local de estoque (canteiro) no módulo Estoque. Cadastre o "
-            "canteiro da obra para a requisição ter de onde sair."
+            "A obra não tem local de estoque (canteiro). Cadastre o canteiro no módulo Estoque."
         )
     linhas = [
         l for l in necessidade_de_material(cronograma)["linhas"]
@@ -670,8 +669,8 @@ def pedir_material_da_semana(item_programacao, *, solicitante=None):
     ]
     if not linhas:
         raise ValidationError(
-            "Esta atividade não tem material calculado: ligue-a a um item do orçamento "
-            "com composição explodida (Inspetor › Ligar ao orçamento)."
+            "Esta atividade não tem material calculado. Ligue-a a um item do orçamento (Inspetor "
+            "› Ligar ao orçamento)."
         )
     previsto = item_programacao.percentual_previsto
     por_id = {a.atividade_id: a for a in cronograma.atividades.all()}

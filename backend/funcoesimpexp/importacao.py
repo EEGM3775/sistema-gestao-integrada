@@ -720,8 +720,8 @@ def aplicar(
         # mesmo registro pela tela. Levantar desfaz o que este lote já gravou.
         if recurso.localizar(dados, importacao.tenant_id) is not None:
             raise ImportacaoInvalida(
-                f"Linha {linha.numero}: “{linha.chave}” passou a existir depois da "
-                "conferência — nada foi importado. Envie o arquivo de novo."
+                f"Linha {linha.numero}: “{linha.chave}” — nada foi importado. "
+                "Envie o arquivo de novo."
             )
         estado = recurso.aplicar_linha(dados, None, importacao.tenant_id)
         linha.aplicada = True

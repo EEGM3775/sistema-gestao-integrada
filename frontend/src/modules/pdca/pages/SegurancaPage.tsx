@@ -11,6 +11,7 @@ import { FilaDeDecisao } from '../components/FilaDeDecisao'
 import { FormularioDeOcorrencia } from '../components/FormularioDeOcorrencia'
 import { ListaDeOcorrencias } from '../components/ListaDeOcorrencias'
 import { PainelDeSeguranca } from '../components/PainelDeSeguranca'
+import { OcorrenciasRecentes } from '../components/OcorrenciasRecentes'
 import { SemPermissaoAviso } from '../components/SemPermissaoAviso'
 import { VistasDoPosto, type VistaDoPosto } from '../components/VistasDoPosto'
 
@@ -109,6 +110,13 @@ export default function SegurancaPage() {
                   <Btn variant="primary" onClick={() => setRegistrando(true)} style={{ alignSelf: 'flex-start' }}>
                     Registrar ocorrência
                   </Btn>
+                )}
+                {podeVer && (
+                  <OcorrenciasRecentes
+                    obraId={obraId}
+                    aoAbrir={(id) => ir('ocorrencias', { ocorrencia: id })}
+                    aoVerTodas={() => ir('ocorrencias')}
+                  />
                 )}
               </div>
               {dados.indicadores ? (

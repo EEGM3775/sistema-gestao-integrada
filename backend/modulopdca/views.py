@@ -610,9 +610,8 @@ class CronogramaViewSet(BasePdcaViewSet):
         if existente is not None:
             raise ValidationError({
                 "obra": (
-                    f"Esta obra já tem cronograma (v{existente.versao}). Para mudar o "
-                    "plano, replaneje a versão vigente — é o que preserva a anterior "
-                    "como linha de base."
+                    f"Esta obra já tem cronograma (v{existente.versao}). Para mudar o plano, replaneje "
+                    "a versão vigente."
                 ),
             })
         super().perform_create(serializer)
@@ -1748,9 +1747,8 @@ class ItemContratoViewSet(BasePdcaViewSet):
         if instance.medicoes.exists():
             raise ValidationError({
                 "detail": (
-                    f"O item {instance.codigo} já foi medido — excluí-lo apagaria "
-                    f"a razão de uma linha paga. Se ele não vale mais, a saída é "
-                    f"o aditivo de supressão."
+                    f"O item {instance.codigo} já foi medido e não pode ser excluído. Use o aditivo "
+                    "de supressão."
                 ),
             })
         super().perform_destroy(instance)
@@ -2153,9 +2151,8 @@ class MedicaoViewSet(TenantScopedViewSetMixin,
         if medicao.status != Medicao.Status.RASCUNHO:
             raise ValidationError({
                 "detail": (
-                    f"A medição está {medicao.get_status_display().lower()} e não "
-                    f"aceita mais mudança. Para corrigir uma medição aprovada, "
-                    f"use 'retificar'."
+                    f"A medição está {medicao.get_status_display().lower()} e não aceita mudança. "
+                    "Para corrigir uma medição aprovada, use 'retificar'."
                 ),
             })
 
@@ -2351,8 +2348,7 @@ class AditivoContratoViewSet(TenantScopedViewSetMixin,
         if instance.status != AditivoContrato.Status.RASCUNHO:
             raise ValidationError({
                 "detail": (
-                    f"O aditivo está {instance.get_status_display().lower()} e não "
-                    f"vai para a lixeira — documento com decisão registrada fica."
+                    f"O aditivo está {instance.get_status_display().lower()} e não vai para a lixeira."
                 ),
             })
         super().perform_destroy(instance)
@@ -2595,15 +2591,11 @@ class CausaNaoCumprimentoViewSet(BasePdcaViewSet):
         #: legível no passado.
         if instance.itens.exists():
             raise ValidationError({"detail": [
-                "Esta causa já foi usada para explicar um compromisso que não "
-                "saiu. Apagá-la deixaria aquele histórico sem rótulo — "
-                "desative-a: ela sai da lista de escolha e continua legível no "
-                "que já passou."
+                "Esta causa já foi usada em compromissos. Desative-a em vez de apagar."
             ]})
         if instance.de_fabrica:
             raise ValidationError({"detail": [
-                "Causa de fábrica não se apaga — desative-a. Ela é a âncora que "
-                "permite comparar o histórico de duas obras."
+                "Causa de fábrica não se apaga. Desative-a."
             ]})
         super().perform_destroy(instance)
 
@@ -2698,10 +2690,8 @@ class ItemProgramacaoViewSet(BasePdcaViewSet):
     def perform_destroy(self, instance):
         if not instance.programacao.esta_aberta_para_montagem:
             raise ValidationError({"detail": [
-                "Esta semana já foi comprometida: o cartão não sai mais do "
-                "quadro. Tirar um compromisso depois de assumido é apagar a "
-                "aposta em vez de julgá-la — no encerramento, diga que não saiu "
-                "e por quê."
+                "Esta semana já foi comprometida: o cartão não sai mais do quadro. No encerramento, "
+                "marque que não saiu e a causa."
             ]})
         super().perform_destroy(instance)
 
@@ -2997,10 +2987,7 @@ class ModeloVerificacaoViewSet(BasePdcaViewSet):
     def perform_destroy(self, instance):
         if instance.verificacoes.exists():
             raise ValidationError({"detail": [
-                "Este modelo já foi aplicado em fichas de verificação. Apagá-lo "
-                "deixaria aquelas inspeções sem o nome do que responderam — "
-                "desative-o: ele sai da lista de escolha e continua legível em "
-                "tudo que já foi verificado com ele."
+                "Este modelo já foi aplicado em fichas. Desative-o em vez de apagar."
             ]})
         super().perform_destroy(instance)
 
@@ -3378,9 +3365,7 @@ class NaoConformidadeViewSet(BasePdcaViewSet):
         entrada.is_valid(raise_exception=True)
         if nc.status == NaoConformidade.Status.ENCERRADA:
             raise ValidationError({"detail": [
-                "Esta NC já foi encerrada com eficácia verificada — cancelá-la "
-                "agora apagaria da estatística um defeito que existiu e foi "
-                "consertado."
+                "Esta NC já foi encerrada com eficácia verificada e não pode ser cancelada."
             ]})
         nc.status = NaoConformidade.Status.CANCELADA
         nc.encerrada_em = timezone.now()

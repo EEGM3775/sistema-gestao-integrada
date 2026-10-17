@@ -2,6 +2,8 @@
 # Este arquivo define a lógica da API (endpoints) para o app 'rh'.
 # Cada ViewSet agrupa as operações CRUD (Create, Retrieve, Update, Delete) para um modelo.
 from nucleo.busca import BuscaSemAcento
+from nucleo.paginacao import PaginaSobPedido
+from rest_framework.filters import OrderingFilter
 from rest_framework import viewsets, permissions, filters
 from django.db.models import Q
 import re
@@ -43,9 +45,11 @@ class FuncionarioViewSet(AuditedModelViewSetMixin, TenantScopedViewSetMixin, vie
     serializer_class = FuncionarioSerializer
     permission_classes = [permissions.IsAuthenticated, RequireModule]
     required_module = "rh"
-    filter_backends = [DjangoFilterBackend, BuscaSemAcento]
+    filter_backends = [DjangoFilterBackend, BuscaSemAcento, OrderingFilter]
     filterset_fields = ['status_contrato', 'cargo']
     search_fields = ['nome_completo', 'cpf', 'email_pessoal']
+    ordering_fields = ['nome_completo', 'funcionario_id']
+    pagination_class = PaginaSobPedido
     
     def get_queryset(self):
         """

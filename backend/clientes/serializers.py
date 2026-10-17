@@ -34,6 +34,22 @@ class ClienteSerializer(FieldMaskingSerializerMixin, TenantScopedUniqueSerialize
         "cpf_cnpj": "cadastro.cliente_doc.view",
     }
 
+    def validate_email(self, valor):
+        # A constraint ignora e-mail vazio, então o validador automático some:
+        # a duplicata é checada aqui, no campo.
+        if not valor:
+            return valor
+        request = self.context.get('request')
+        tenant_id = getattr(getattr(request, 'user', None), 'tenant_id', None)
+        outros = Cliente.objects.filter(email__iexact=valor)
+        if tenant_id is not None:
+            outros = outros.filter(tenant_id=tenant_id)
+        if self.instance:
+            outros = outros.exclude(pk=self.instance.pk)
+        if outros.exists():
+            raise serializers.ValidationError('E-mail já cadastrado.')
+        return valor
+
 
 class MeioPagamentoSerializer(serializers.ModelSerializer):
     """Um meio de pagamento da venda. A ordem é a da lista enviada, e quem diz
@@ -44,8 +60,11 @@ class MeioPagamentoSerializer(serializers.ModelSerializer):
         fields = [
             'meio_pagamento_id', 'ordem', 'tipo', 'valor', 'descricao', 'parcelas',
             'primeiro_vencimento', 'juros_mensal', 'sistema_amortizacao', 'periodicidade',
+            'cronograma',
         ]
         read_only_fields = ['meio_pagamento_id', 'ordem']
+        # Nas datas livres o valor sai da soma das linhas (o motor recalcula).
+        extra_kwargs = {'valor': {'required': False}}
 
 
 class ClienteEmpreendimentoSerializer(serializers.ModelSerializer):

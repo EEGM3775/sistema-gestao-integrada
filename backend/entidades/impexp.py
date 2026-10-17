@@ -109,7 +109,7 @@ class CadastroDeEntidades(RecursoDeCadastro):
         if objeto.matriz is not None and objeto.matriz.externa:
             return "A matriz tem de ser uma entidade do grupo."
         if objeto.externa and objeto.papel in (Entidade.Papel.MATRIZ, Entidade.Papel.FILIAL):
-            return "Matriz e filial são do grupo, nunca externas."
+            return "Matriz e filial são do grupo e não podem ser externas."
         return ""
 
     def aplicar_linha(self, dados: dict, existente, tenant_id) -> dict:

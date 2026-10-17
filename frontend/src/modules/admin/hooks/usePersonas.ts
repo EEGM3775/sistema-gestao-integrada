@@ -22,7 +22,7 @@ export function usePersonas() {
       setPerfis(listOf<Perfil>(pf.data).sort((a, b) => a.nome.localeCompare(b.nome)))
       setCatalogo(cat.data)
     } catch {
-      setError('Erro ao carregar papéis e permissões. Você precisa ser administrador do tenant.')
+      setError('Erro ao carregar papéis e permissões. Exige administrador do tenant.')
     } finally {
       setLoading(false)
     }

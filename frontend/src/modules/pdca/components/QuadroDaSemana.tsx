@@ -116,7 +116,11 @@ export function QuadroDaSemana({
 
   return (
     <div style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0 }}>
-      {/* ---- a área de rascunho: o que o plano diz que é desta semana ---- */}
+      {/* ---- a área de rascunho: o que o plano diz que é desta semana ----
+          Só existe no rascunho: assumida a semana, não há mais o que puxar, e
+          os candidatos nem são lidos — a coluna vazia diria que o plano não tem
+          serviço na semana, o que é falso (D296). */}
+      {programacao.status === 'rascunho' && (
       <aside
         onDragOver={(e) => { if (montavel) { e.preventDefault(); setBatendo('rascunho') } }}
         onDragLeave={() => setBatendo(null)}
@@ -201,6 +205,7 @@ export function QuadroDaSemana({
           </footer>
         )}
       </aside>
+      )}
 
       {/* ---- o quadro: uma coluna por equipe ---- */}
       <div
@@ -274,6 +279,9 @@ function CartaoCandidato({
       onClick={() => selecionar({ tipo: 'atividade', id: candidato.atividade })}
       title={travado
         ? `Este serviço tem ${candidato.restricoes_abertas} trava(s) aberta(s) e não entra no quadro. Destrave primeiro, na esteira à esquerda.`
+          + (candidato.travas?.length
+            ? '\n\n' + candidato.travas.map((t) => `• ${t.tipo}: ${t.descricao}`).join('\n')
+            : '')
         : undefined}
       style={{
         background: travado ? 'var(--inset)' : 'var(--ground)',
@@ -328,6 +336,27 @@ function CartaoCandidato({
           {' → '}
           {candidato.fim_previsto ? dateToBR(candidato.fim_previsto) : '—'}
         </div>
+      )}
+      {travado && !!candidato.travas?.length && (
+        <ul
+          style={{
+            margin: '6px 0 0', padding: 0, listStyle: 'none',
+            display: 'grid', gap: 3, fontSize: 11, lineHeight: 1.35,
+            color: 'var(--danger-ink)',
+          }}
+        >
+          {candidato.travas.map((t) => (
+            <li key={t.restricao}>
+              <strong>{t.tipo}:</strong> {t.descricao}
+              {t.responsavel && (
+                <span style={{ color: 'var(--ink-3)' }}> · {t.responsavel}</span>
+              )}
+              {t.prazo && (
+                <span style={{ color: 'var(--ink-3)' }}> · até {dateToBR(t.prazo)}</span>
+              )}
+            </li>
+          ))}
+        </ul>
       )}
       <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 6 }}>
         <SeloDoMaterial atividade={candidato.atividade} />

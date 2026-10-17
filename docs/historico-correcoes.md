@@ -10,6 +10,331 @@ IDs: `S*` segurança · `L*` bugs de lógica · `A*` backend/arquitetura · `F*`
 `D*` achados de auditoria posteriores.
 
 ---
+### D300 — e-mail de fornecedor e cliente era obrigatório, único e só um · ✅ corrigido 16/10/2026
+
+Itens 82 e 87 do dono. O e-mail era obrigatório nos dois cadastros, e a duplicata saía como *"Os campos
+tenant, email devem criar um set único"* — a frase padrão do DRF, em inglês traduzido, sem dizer nada a
+quem preenchia. **Correção:** e-mail opcional em `Cliente` e `Fornecedor` (a constraint única ignora o
+vazio); o fornecedor ganhou `emails_adicionais` (lista) e o conjunto principal + adicionais é único no
+tenant — nenhum endereço em dois fornecedores, nem repetido no mesmo. `TenantScopedUniqueTogetherValidator`
+passou a responder **no campo** e curto (*"Já cadastrado."*; e-mail: *"E-mail já cadastrado."*) para
+todo cadastro. A importação deixou de exigir a coluna E-mail. Testes: `test_email_opcional`. A planilha
+`docs/mensagens-do-sistema.xlsx` lista as ~1.100 mensagens do sistema para o dono escolher o texto novo.
+
+### D301 — o anel de foco do campo era cortado em célula de tabela e cartão · ✅ corrigido 16/10/2026
+
+Item 83 do dono. O `:focus-visible` global desenha o contorno 2 px **fora** da caixa; dentro de tabela
+com `overflow` (código do item novo do aditivo) ele era cortado. **Correção:** em `input`, `select` e
+`textarea` o anel fica por dentro (`outline-offset: -2px`), em `index.css`.
+
+### D302 — o diálogo de Estoque e Logística ficava uma caixa mínima · ✅ corrigido 16/10/2026
+
+Item 84 do dono. O `Modal` do SIL (`modules/sil/ui.tsx`) crescia só com o conteúdo: "Novo local de
+estoque" tem dois campos, e a lista do seletor de obra, que abre para baixo, atravessava a caixa.
+**Correção:** miolo com altura mínima `min(52vh, 460px)` e largura de 760/1180 px — vale para os 14
+diálogos do módulo, que usam o mesmo componente.
+
+### D304 — a janela do Estoque não acompanhava a área de trabalho · ✅ corrigido 17/10/2026
+
+Item 95 do dono. O D302 deu altura mínima à caixa, mas ela continuava ancorada no topo e do tamanho do
+conteúdo e, pior, ficava presa ao contêiner da tela (posicionava relativo a ele, não à janela). **Correção:** `Modal` e `Drawer` do SIL vão ao `body` por portal; o diálogo largo ocupa a altura da tela (94vh) —
+cabeçalho e botões presos, o miolo rola — e a centrar e nunca passar da tela nos estreitos; vale para
+todos os diálogos do módulo (operação, gestão, pessoas).
+
+### D305 — a semana cobrava 100% de atividade longa sem promessa · ✅ corrigido 17/10/2026
+
+Item 92 do dono. Cartão sem avanço prometido tinha meta 100% — 1000 m de manilha em 8 semanas "não
+saíam" se não fechassem na semana. **Correção:** `andamento_dos_itens` usa a fatia da semana no prazo
+do plano (CPM) quando não há promessa; atividade que termina na semana, atrasada ou sem datas segue
+devendo 100%. O PPC continua binário.
+
+### D306 — a Segurança não mostrava as ocorrências na tela inicial · ✅ corrigido 17/10/2026
+
+Item 96 do dono. A vista "Hoje" tinha a fila e os indicadores, mas nenhuma ocorrência. **Correção:**
+cartão "Ocorrências recentes" (5 últimas, com tipo, estado e CAT pendente) e "Ver todas".
+
+### D307 — "Apagar a demanda" usava o `confirm` do navegador · ✅ corrigido 17/10/2026
+
+Item 91 do dono. A cotação do Suprimentos confirmava a exclusão com o popup nativo. **Correção:**
+diálogo do próprio sistema, com título, texto e botão Apagar em vermelho.
+
+### D303 — o fluxo de caixa não somava título quitado que não passou pela baixa · ✅ corrigido 16/10/2026
+
+Item 88 do dono. O fluxo lê o ledger (`Transacao`), e só `dar_baixa` grava ledger e título juntos. O
+semeador da carteira demo quitava recebíveis por `bulk_create` sem lançar no caixa: no banco de dev,
+**32.595 recebíveis pagos e zero lançamentos**. Os caminhos reais (UI, webhook Asaas, espelho
+intercompany, estorno) passam por `dar_baixa`/`estornar_baixas` e batem. **Correção:** o semeador lança
+a `Transacao` junto; novo `manage.py reconciliar_caixa [--aplicar]` relata (ou lança, datado do dia do
+pagamento) o que falta e é idempotente — rodado no dev, 32.595 lançadas e a segunda rodada zerou.
+Testes: `test_reconciliar_caixa`. O fluxo do hub segue **realizado** (o a vencer está no aging); fluxo
+projetado continua no roadmap do ERP.
+
+*Item 50 (juros na entrada dividida), repetido pelo dono em 16/10/2026: já entregue no D210 — a taxa
+aparece no meio "Entrada" quando as vezes passam de 1.*
+
+---
+### D297 — a busca da aba Unidades não achava a unidade como a tela a escreve · ✅ corrigido 16/10/2026
+
+Item 78 do dono. A busca era o `icontains` genérico (`BuscaSemAcento`) sobre quadra, lote, bloco, andar,
+apto e endereço, e só disparava no Enter ou ao sair do campo. "QD 12 · LT 05" — o rótulo da própria grade —
+procurava a palavra "QD" num campo que guarda "12" e não voltava nada; "5" trazia o lote 15, o 25 e a quadra
+105. **Correção:** `clientes.carteira.buscar_no_estoque` reusa o leitor da carteira (`termos_da_busca`,
+nível exato sem zero à esquerda): prefixo vai ao nível (`QD 12`, `LT5`, `Torre A`, `apto 302`), palavra
+solta é qualquer nível do endereço e, se não for número, também o endereço e o **comprador** (subconsulta,
+para o `resumo/` não contar duas vezes). `empreendimentos.views.BuscaDoEstoque` liga isso ao `?search=`
+da lista e do resumo — e ao seletor de unidade da Nova Aquisição, que usa o mesmo endpoint. Na tela, a
+busca filtra enquanto se digita (300 ms, como a carteira). Testes: `BuscaDeUnidadesTests`.
+
+### D298 — o quadrado de seleção da planilha do Orçamento trocava a marcação em vez de somar · ✅ corrigido 16/10/2026
+
+Item 80 do dono. A caixinha de cada linha chamava o mesmo `clicarNaLinha` do clique na linha: sem Ctrl,
+**substituía** a seleção — clicar no quadrado de outra linha desmarcava a anterior, e clicar de novo no
+mesmo quadrado só o re-marcava. **Correção:** a caixa passa `caixa=true`, que vale como Ctrl — alterna a
+linha sem mexer nas outras, e Shift soma a faixa. O clique na linha segue como estava. A Ajuda da planilha
+ganhou o gesto "clique no quadrado".
+
+### D299 — nas anuais não entrava juros, e nenhum meio aceitava parcela com data própria · ✅ corrigido 16/10/2026
+
+Item 76 do dono. As anuais (`anuais`) eram sempre nominais, sem taxa; e o plano só gerava séries de passo
+fixo (mês, 6 ou 12 meses). **Correção:** (1) as anuais aceitam taxa opcional (`juros_mensal`, parte de
+zero) — com ela, o valor digitado é o principal e os juros correm da data da venda até cada vencimento,
+em série de valor igual: `cada = P / Σ (1+i)^-mₖ` (`plano_pagamento._anuais_com_juros`). Sem taxa, nada
+muda: anual nominal, reajustada só pela correção do contrato — as incorporadoras usam os dois jeitos.
+(2) Meio novo **Parcelas com datas livres** (`datas_livres`): lista de data + valor digitada linha a linha
+(`MeioPagamento.cronograma`, JSON; migration `clientes 0017`), valor do meio = soma das linhas, ordenada
+por data, sem juros calculados, títulos "Parcela n/N"; teto `VENDA_TETO_PARCELAS_LIVRES` (240) no
+`payment/planos.py`, a confirmar pelo dono. Testes em `test_plano_pagamento` e `test_venda_unidade`.
+
+### D293 — com mais de uma entidade, o boleto pelo Asaas sai na conta única do tenant · ✅ corrigido 15/10/2026
+
+As entidades ([modulos/entidades.md](modulos/entidades.md) §5) levaram NFS-e (NFE.io) e carteira CNAB para
+a entidade dona do título, mas a conta do **Asaas** continua uma por tenant (`funcoescobrancas`). Numa conta
+com matriz e SPE, o boleto de um lote da SPE pelo Asaas sai com o beneficiário da conta do Asaas — o CNPJ
+errado. Hoje o sistema só exige o CPF/CNPJ da entidade antes de emitir; não impede o Asaas.
+
+**Caminho:** subconta do Asaas por entidade (ou a chave da conta Asaas na entidade, como a NFE.io), e a
+emissão pelo Asaas recusar título de entidade sem conta própria quando o tenant tem mais de uma.
+
+**Correção (15/10/2026).** A conta Asaas passou a ser **da entidade**, no molde da NFE.io:
+`moduloerp.IntegracaoAsaas` (uma por entidade, chave cifrada por `nucleo.cifra`, só o final volta à tela;
+migration `moduloerp 0026`, que liga o bypass da RLS antes de criar a FK). A conta do ambiente
+(`ASAAS_API_KEY`) é a **da matriz**. `funcoescobrancas.services.conta_asaas_da_entidade` escolhe a conta
+do dono do título; com mais de uma entidade, a entidade que não é a matriz e não tem conta própria é
+recusada (`EntidadeSemContaAsaas`, 409 na tela antes de enfileirar, e erro no item do lote) — **antes** de
+qualquer chamada ao gateway, sem cancelar o boleto anterior. O boleto grava em que conta nasceu
+(`Boleto.conta_asaas`), e cancelar e conferir vão à mesma. O customer é buscado por CPF/CNPJ na conta da
+entidade; o `Cliente.id_cliente_gateway` segue sendo o da conta da matriz. Tela em ERP › Configurações
+("Boleto pelo Asaas"), que diz qual conta vale para a entidade da barra e se o boleto dela sai.
+`test_asaas_por_entidade.py` **6/6**; `funcoescobrancas` + `moduloerp` verdes.
+
+### D17 — Duas trilhas de auditoria sem leitura unificada · ✅ corrigido 15/10/2026
+
+Criado junto do **D11**. A plataforma passou a ter **duas** trilhas append-only e independentes:
+`nucleo.AuditLog` (backend — escritas de RH, leitura de PII, baixa financeira, NF, LGPD) e
+`identity.EventoSeguranca` (IAM — reset de senha, troca de e-mail, escalada de privilégio,
+desativação). A separação é consequência de a IAM ser autocontida (mesma razão de ela ter ganhado
+SMTP próprio), mas **o auditor não tem onde ver as duas juntas**: `GET /api/auditoria/` só enxerga a
+do backend, e a da IAM hoje só é legível por shell/admin.
+
+Isso importa no incidente que motivou o D11: reconstituir "admin comprometido" exige cruzar o
+`reset_assistido` (IAM) com o que a conta fez depois (backend), hoje manualmente e sem correlação por
+`request_id`.
+**Correção sugerida:** endpoint de leitura na IAM (`GET /iam/eventos-seguranca/`, gateado por
+`plataforma.auditoria.view` — permissão que **já existe** no catálogo) + uma visão no frontend que
+consulte as duas fontes, ou envio dos eventos da IAM ao `AuditLog` por JWT de serviço (Fase 10.8) com
+outbox local para não perder evento se o backend estiver fora.
+
+**Correção (15/10/2026).** Seguida a primeira sugestão. **IAM:** `GET /iam/eventos-seguranca/`
+(`identity/auditoria.py`) com `plataforma.auditoria.view` — a mesma da trilha do backend —, recortado pela
+empresa de quem pergunta; o supervisor da plataforma vê a dele e as que liberaram o suporte (§10.7), como
+nas pessoas e papéis. **Backend:** `GET /api/auditoria/`, que devolvia a tabela inteira, passou a paginar
+(`PAGINA_*["auditoria"]` do `payment`, o mesmo número dos dois lados) e ganhou `?desde=`/`?ate=` (data vale
+o dia inteiro — o `parse_datetime` do Django aceitava "2026-10-10" como meia-noite sem fuso) e `?pessoa=`.
+**Tela:** `/app/auditoria` ("Administração › Auditoria"), a linha do tempo das duas trilhas intercaladas
+pelo instante, sem furo: uma linha só aparece quando nenhuma da outra trilha pode cair acima dela, e
+"Carregar mais" puxa a página de quem segura a fronteira; clicar num nome recorta as duas pela pessoa. A
+correlação é por pessoa e horário — nenhuma das trilhas guarda `request_id`. `test_eventos_seguranca.py`
+**7/7** (IAM), `test_auditoria_leitura.py` **5/5**.
+
+### D295 — a série do PPC perdeu a tabela-gêmea, o eixo rotulado e a legenda das duas partes · ✅ corrigido 15/10/2026
+
+Achado ao portar o `pdca5_quadro` (D195). A régua antiga cobrava, na série do PPC: **tabela-gêmea**
+("Ver tabela", com semana, PPC, saiu e assumidos — "obrigatória, não enfeite": o acento da Malha fica
+abaixo de 3:1 contra a superfície clara, e a régua de dataviz só aceita rótulo visível ou tabela), **eixo
+de 0 a 100 rotulado** e **legenda saiu/não saiu**. A `SerieDePpc.tsx` do redesenho tem as linhas de 0,
+50 e 100 sem texto, o valor só no `<title>`/foco de uma barra por vez, e nenhuma tabela.
+
+**Caminho:** devolver a tabela-gêmea (alternável) e o rótulo do eixo à `SerieDePpc`, e cobrar no
+`pdca_semana_quadro_browser_test.py` §12.
+
+**Correção (15/10/2026).** `SerieDePpc.tsx`: a coluna é a semana inteira (fundo "não saiu") com a parte que
+saiu por cima; eixo escrito 0/50/100% fora do SVG (o `preserveAspectRatio="none"` esticaria o texto);
+legenda das duas partes e da semana aberta no quadro; **"Ver tabela"** com semana, cumprimento, saíram,
+assumidos e a observação (reaberta, encerrada antes do fim). Cobrado em
+`pdca_semana_quadro_browser_test.py` §12 — **70/70**.
+
+### F2 — Selects carregam tabelas inteiras · ✅ corrigido 15/10/2026
+
+Formulários carregam todos os clientes/fornecedores/empreendimentos para montar selects.
+**Correção:** select assíncrono com busca server-side paginada (o backend precisa de
+`SearchFilter` + paginação nesses endpoints).
+**Andamento (25/07):** a **listagem de
+clientes** deixou de ser client-side — virou a carteira paginada com rolagem infinita
+([frontend.md §5.8](frontend.md)). Efeito colateral tratado: como `/api/clientes/` passou a ser
+paginado, `useClienteOptions` ([useEntityOptions.ts](../frontend/src/modules/erp/hooks/useEntityOptions.ts))
+truncaria a lista em 50 **em silêncio** — pediria a primeira página e o cliente nº 200 sumiria do
+formulário do ERP. Mitigado com `page_size=300` e comentário no código. **Andamento (30/09):** as
+grades do ERP deixaram de depender dessas opções (os nomes vêm da API — [D232](historico-correcoes.md)),
+o diálogo de NFS-e busca a conta no servidor, e os formulários de conta mantêm na lista a pessoa da
+conta aberta. **Falta** o select com busca server-side de verdade nos formulários (clientes,
+fornecedores, empreendimentos).
+**Verificado (15/10/2026):** não existe mais `AsyncEntitySelect` no frontend. **Clientes cortam em
+silêncio**: `PAGINA_MAXIMA["clientes"] = 300`, e o formulário de conta a receber do ERP
+(`useClienteOptions`) e o de contrato do PDCA (`FormularioDeContrato.tsx`) pedem uma página só — no tenant
+demo do dev (2.003 clientes) a lista para em "Carla Lima"; o tenant real tem poucos clientes, por isso
+nunca apareceu. **Fornecedores e empreendimentos não cortam**: as duas views não têm paginação e voltam
+inteiras (peso, não perda). O `FilterBar` do ERP não é usado por nenhuma página. O backend já tem
+`search_fields` nos três.
+
+**Correção (15/10/2026).** `SelectComBusca` na Malha (`components/malha/SelectComBusca.tsx`): busca no
+servidor (`?search=`, o `BuscaSemAcento` do cadastro — o CPF só entra para quem tem
+`cadastro.cliente_doc.view`), lista com **rolagem infinita** até o último resultado da busca (páginas de 50, "N de M — role para ver mais"; decisão do dono: se há 21 nomes parecidos, rolar acha o 21º), desempate por `cliente_id` para homônimos não repetirem nem sumirem entre páginas, o escolhido sempre com nome (o que a
+tela já sabe ou o detalhe do recurso), Enter escolhe sem enviar o formulário. Trocado o campo Cliente da
+**conta a receber** (ERP) e do **contrato com o cliente** (PDCA) — os dois que cortavam. Sem mudança de
+backend. **Deixado como está, de propósito:** fornecedores e empreendimentos voltam inteiros (sem
+paginação; peso, não perda — poucos por tenant e com quota), e o `useClienteOptions` ficou só para o
+`FilterBar` do ERP, que nenhuma página monta, com aviso no código. Prova:
+`f2_select_com_busca_browser_test.py` **18/18** (buscando "Paulo", os 138 resultados aparecem rolando, uma vez cada) — no demo (2.003 clientes), "Paulo Souza", o último do
+alfabeto, é achado, gravado na conta (lido de volta na API), reaparece com nome ao reabrir, e escolhido no
+contrato acende o cadastro.
+
+
+**Segunda passada (15/10/2026, pedido do dono: "troque o select pelo SelectComBusca").** Os outros três
+cadastros também: fornecedores, funcionários, obras e empreendimentos ganharam busca e **página sob
+pedido** (`nucleo/paginacao.py` — só paginam quando o cliente manda `?page=`, então a tela de lista de
+cada um segue recebendo tudo e nada corta em silêncio), com desempate pelo id. A Malha ganhou
+`SeletorDeFornecedor`/`SeletorDeFuncionario`/`SeletorDeObra`/`SeletorDeEmpreendimento` sobre o
+`SelectComBusca`, e os selects dos formulários trocaram: conta a pagar (fornecedor, empreendimento) e a
+receber (empreendimento), obra/etapa do ERP, contrato do PDCA (empreiteiro), responsável da atividade e do
+lote no plano, compra avulsa e edição de pedido no Suprimentos, entrada/saída/transferência/inventário e
+EPI/ferramenta no Estoque, novo orçamento e duplicar, aquisição e contrato do cliente, obra e funcionário.
+**Ficam como estão, de propósito:** os filtros de cabeçalho das listas do ERP (empreendimentos, poucos por
+empresa) e a composição de equipe da semana (caixas de marcar com filtro, não um select).
+### D296 — a semana encerrada dizia "sem apuração", e a assumida dizia que o plano não tinha serviço · ✅ corrigido 15/10/2026
+
+Achado ao portar o `pdca5_quadro` (D195), no Controle › Semana.
+
+**Causas.**
+- O `ppc` do `ProgramacaoSemanalSerializer` é a **leitura inteira** (`services.ppc_de`, um objeto — é o
+  contrato que o `pdca5_programacao_test.py` lê em `ppc["ppc"]`), mas o `types.ts` o declarava `string`.
+  `percentual(programacao.ppc)` dava `NaN` → `null`, e o cabeçalho mostrava "sem apuração" na semana
+  encerrada; o diálogo de reabertura dizia que "sem apuração" deixaria de valer.
+- A coluna "O plano sugere" ficava na tela em todo estado, mas os candidatos só são lidos no rascunho:
+  assumida ou encerrada, ela dizia "0 serviços atravessam esta semana — o plano vigente desta obra não
+  tem serviço nesta semana", o que é falso.
+
+**Correção.** `ProgramacaoSemanal.ppc: LeituraDePpc | null` e as duas leituras em `SemanaPage.tsx` por
+`ppc?.ppc`; a coluna de puxar só existe no rascunho (`QuadroDaSemana.tsx`). Coberto por
+`pdca_semana_quadro_browser_test.py` §7, §9 e §11 ("cumprimento 50", "cumprimento 100", a coluna some).
+
+### D195 — dois roteiros de navegador do PDCA dirigem a tela que foi apagada · ✅ corrigido 15/10/2026
+
+Achado ao verificar a fatia da semana, rodando os roteiros vizinhos para conferir que nada quebrou.
+Cinco dos sete `pdca*_browser_test.py` falhavam com `TimeoutError` esperando um botão que não existe
+mais; **dois deles fecharam com a F.4 em 23/09/2026 e o terceiro com a F.5 em 24/09/2026**, e
+restam dois — os dois que já têm tela nova cobrindo o mesmo assunto.
+
+Não é regressão: em 20/09/2026 o frontend do módulo foi **zerado e redesenhado do eixo**, e o
+endereço mudou de `/app/pdca/obra/{id}/<assunto>` para `/app/pdca/o/{id}/<posto>`. Os roteiros
+continuam pedindo o antigo, então abrem uma página que redireciona e ficam esperando um elemento que
+nunca chega. O que cada um cobria continua valendo como **régua**; o que envelheceu foi o caminho até
+a tela.
+
+| Roteiro                                   | O que ele prova                                                     | Quando volta a ter tela                                                                                                                                                                                                     |
+| ----------------------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ~~`pdca3_formulario_browser_test.py`~~ | Os seis achados do formulário de contrato (D132)                   | ✅ 23/09 —`pdca_medicao_browser_test.py` §11b, com a pessoa certa (só a engenharia monta contrato)                                                                                                                     |
+| ~~`pdca3_grade_browser_test.py`~~      | A grade de medição: prévia somente-leitura, memória de cálculo | ✅ 23/09 —`pdca_medicao_browser_test.py` §7, §10 e §11c; o autosave e a trava do saldo voltaram com ele ([D202](historico-correcoes.md))                                                                               |
+| `pdca5_quadro_browser_test.py`          | O quadro da semana, o encerramento e o PPC                          | **já tem** — `pdca_semana_campo_browser_test.py` cobre o posto novo                                                                                                                                               |
+| `pdca6_ritmo_browser_test.py`           | A linha de balanço, o ritmo e o gargalo                            | **já tem** — a vista *Ritmo* do posto `PLANO` (F.3)                                                                                                                                                             |
+| ~~`pdca7_ficha_browser_test.py`~~      | Responder a ficha uma pergunta por vez, e a fila do laço           | ✅ 24/09 —`pdca_qualidade_seguranca_browser_test.py`, que porta a régua dele (critério junto da pergunta, desvio sem requisição, peso no item, F5, conclusão com o peso, "executada" que não encerra, 502 forjado) |
+
+**Os dois de medição saíram do repositório em 23/09/2026**, com a F.4, e o da ficha em 24/09/2026,
+com a F.5: cada sucessor nomeia o roteiro que substitui no cabeçalho e carrega a régua dele.
+Restam duas linhas.
+
+**Por que fica aberto em vez de ser consertado agora.** Dois dos três (`pdca5_quadro`, `pdca6_ritmo`)
+são reescrita sobre telas que já existem, e é trabalho de portar assertiva por assertiva — não de
+trocar a URL, porque a física mudou (o quadro deixou de ser uma página e virou um posto com esteira e
+julgamento no cartão).
+
+**O risco enquanto isso**: a régua que cada um guardava fica sem quem a cobre no navegador. O backend
+correspondente continua coberto — `pdca5_programacao_test.py`, `pdca6_linha_de_balanco_test.py` e
+`pdca7_verificacao_test.py` passam —, então o que está descoberto é a **tela**, e só a das fatias que
+ainda não foram reconstruídas.
+
+**E a F.4 mostrou por que isto não é burocracia:** ao portar a régua do `pdca3_grade`, apareceu que a
+grade nova tinha **reconstruído o D137** — o botão de salvar que aquela correção removeu, e com ele o
+caminho de aprovar os números antigos em silêncio ([D202](historico-correcoes.md)). O roteiro morto
+era o único lugar onde aquela lição ainda estava escrita como cobrança.
+
+**Gatilho de fechamento:** os dois restantes podem ser apagados ao portar a última assertiva que
+eles têm e os novos não. O `pdca6_ritmo` ainda não tem sucessor escrito: o posto `PLANO` não tem
+roteiro de navegador próprio. *(O D223 os tinha listado como troca de URL — não é; 30/09/2026.)*
+
+**Correção (15/10/2026).** Os dois restantes ganharam sucessor e saíram do repositório:
+`pdca_semana_quadro_browser_test.py` (aba Semana do Controle, numa obra do próprio teste — **65/65**)
+carrega a régua do `pdca5_quadro`, e `pdca_plano_ritmo_browser_test.py` (vista Ritmo do posto PLANO —
+**24/24**) a do `pdca6_ritmo`; cada um diz no cabeçalho o que veio e o que não veio, e por quê
+("desenhar pela tela" e "simular" saíram no redesenho; a tabela-gêmea da série virou o **D295**).
+Portar achou o que o D202 já tinha ensinado — o roteiro morto era o único lugar onde a régua estava
+escrita: a semana encerrada mostrava "sem apuração" no cabeçalho e a coluna "O plano sugere" afirmava,
+na semana assumida, que o plano não tinha serviço (D296, acima). E a mesma doença tinha pegado os
+**sucessores**: desde 10/10/2026 a Semana é aba do Controle e o julgamento é pelo % concluído, e o
+`pdca_semana_campo` ainda pedia `/semana` e o botão "Não saiu"; o `pdca_porta_por_papel` esperava `hoje`
+e seis postos. Os dois foram atualizados. Ficou de fora da prova: o `pdca_semana_campo` precisa de um
+compromisso semeado na semana corrente (o `semear_pdca_execucao` só refaz com `--limpar`), e o
+`pdca_porta_por_papel` deu 6/8 porque o `demo` do banco de dev tem `diretoria` e `fiscal_de_obra`, que o
+`seed_demo.py` não dá — dado do dev, não do código.
+
+### D190 — o teste que fia os tetos é cego em 47 dos 74, e o motivo é o cache de inteiros do CPython · ✅ corrigido 15/10/2026
+
+O `CLAUDE.md` diz que quem cobra a régua "todo teto vive em `payment/planos.py`" é
+[`testes/backend/nucleo/test_tetos_no_payment.py`](../testes/backend/nucleo/test_tetos_no_payment.py). Ele prende cada
+constante ao consumidor com `assertIs(services.X, planos.X)` — 29 ocorrências.
+
+**`assertIs` compara identidade de objeto, e o CPython interna todo inteiro de −5 a 256.** Para qualquer
+teto nessa faixa a asserção passa **mesmo que o módulo de engenharia tenha redeclarado o literal** em
+vez de importar de `planos.py`, que é precisamente a regressão que a regra existe para impedir.
+Verificado no Python 3.12 do projeto, com dois módulos independentes:
+
+| valor | `a is b` | o`assertIs` prova algo? |
+| ----- | ---------- | ------------------------- |
+| 150   | `True`   | não                      |
+| 500   | `False`  | sim                       |
+| 1000  | `False`  | sim                       |
+
+Contando as constantes escalares de `planos.py`: **27 são fiscalizadas de verdade** (valor > 256) e
+**47 estão na faixa cega** — entre elas `PDCA_TETO_ITENS_POR_MODELO_VERIFICACAO` (150),
+`PDCA_TETO_MODELOS_POR_TENANT` (200), `PDCA_TETO_ACOES_POR_NC` (10), `PDCA_PROFUNDIDADE_MAXIMA_WBS`
+(12) e `ORCAMENTO_PROFUNDIDADE_MAXIMA_COMPOSICAO` (12).
+
+**Nenhum teto está errado hoje** — todos os módulos importam de `payment.planos` como manda a regra.
+É o guarda-corpo que não pegaria a regressão futura, e por isso é 🟠 e não 🔴.
+
+**O caminho já existe e está exercido**: a PDCA.8 declarou seus três tetos (todos ≤ 256) e escreveu a
+prova de procedência por AST em `TetosDaSsmaTests` — o nome tem de chegar ao `services` por
+`ImportFrom` de `payment.planos` e não pode existir como atribuição no módulo. **Falta estender isso
+aos outros 44**, de preferência como uma varredura única que dispense o par escrito à mão.
+
+**Correção (15/10/2026).** `ProcedenciaMixin.assertVemDoPayment` troca os 30 `assertIs` por prova de
+procedência (o nome chega por `from payment.planos import` e não é reatribuído), e
+`VarreduraDeProcedenciaTests` é a varredura única: todo escalar do `planos.py` (126 nomes; 71 inteiros
+na faixa cega, não mais 47) contra todo módulo de engenharia (~420 arquivos, mais `funcoesautorizacao`
+e `funcoesemail`) — nenhum atribui literal a um nome do dono, nem ao apelido do `import … as`. A
+varredura se autotesta (um detector quebrado passaria verde) e exige ter lido arquivos e importadores
+de verdade (raiz errada passaria calada). Prova da mutação: `PDCA_TETO_ACOES_POR_NC = 10` redeclarado
+no `services` — o `assertIs` antigo passava; os dois testes novos falham. Arquivo: 83 testes verdes.
+
 ### D292 — a semana assumida antes de um replanejamento não fechava · ✅ corrigido 13/10/2026
 
 Relato do dono: não conseguia fechar a semana 05–11/10 (Plano › Controle › Semana).

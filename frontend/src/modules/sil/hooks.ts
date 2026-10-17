@@ -4,7 +4,7 @@ import {
   itens, locais, saldos, movimentacoes, lotes, requisicoes, itensRequisicao,
   transferencias, itensTransferencia, devolucoes, itensDevolucao, inventarios, itensInventario,
   entregasEpi, ferramentas, emprestimos,
-  getSilDashboard, getCurvaABC, getAplicado, listObras, listFornecedores, listFuncionarios, listEtapas,
+  getSilDashboard, getCurvaABC, getAplicado, listObras, listFornecedores, listFuncionarios, listEtapas, temRh,
   registrarMov, definirMinimo, gerarDemanda, aprovarRequisicao, atenderRequisicao,
   executarTransferencia, executarDevolucao, fecharInventario, reabrirInventario,
   devolverEpi, alterarEstadoFerramenta, devolverEmprestimo,
@@ -66,6 +66,9 @@ export function useFornecedores() {
 }
 export function useFuncionarios() {
   return useQuery({ queryKey: silKeys.funcionarios, queryFn: listFuncionarios })
+}
+export function useTemRh() {
+  return useQuery({ queryKey: [...silKeys.funcionarios, 'acesso'], queryFn: temRh, staleTime: 5 * 60_000 })
 }
 export function useEtapas(obra: number | undefined) {
   return useQuery({ queryKey: silKeys.etapas(obra ?? 0), queryFn: () => listEtapas(obra as number), enabled: obra != null })

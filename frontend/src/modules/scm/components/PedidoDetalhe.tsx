@@ -12,11 +12,11 @@ import {
   History, AlertTriangle, PlusCircle, Download, Paperclip, Mail, MessageCircle, Link2,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
+import { SeletorDeFornecedor } from '@/components/malha'
 import { parseApiErrors } from '@/utils/formErrors'
 import { maskChaveNFe, validateChaveNFe, numeroDaChaveNFe } from '@/utils/masks'
 import { minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
 import { baixarParaDisco } from '@/lib/arquivo'
-import apiClient from '@/api/apiClient'
 import {
   painelPedido, receberPedido, lancarNota, anexarDocumentoNota, corrigirNota, removerNota, definirCobranca, editarPedido,
   cancelarPedido, enviarPedido, pdfDoPedido, cadastrarItem, avaliacoes as avaliacoesApi, type MeioDigitado,
@@ -512,7 +512,7 @@ function CobrancaModal({ painel, onClose, onDone }: { painel: PainelPedido; onCl
         <Btn variant="primary" onClick={salvar} disabled={salvando || diferenca !== 0 || pagos}>{salvando ? 'Lançando…' : 'Lançar no contas a pagar'}</Btn>
       </>}>
       <Erro msg={err} />
-      {pagos && <Erro msg="Um título deste pedido já tem pagamento no financeiro. Para mudar a cobrança, o financeiro precisa estornar a baixa antes." />}
+      {pagos && <Erro msg="Um título deste pedido já tem pagamento. O financeiro precisa estornar a baixa antes." />}
       {c.meios.length > 0 && !pagos && <p style={{ fontSize: 12.5, color: 'var(--ink-3)', marginBottom: 12 }}>Os títulos atuais (sem pagamento) serão cancelados e os novos lançados.</p>}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {meios.map(m => {
@@ -548,14 +548,6 @@ function EditarModal({ painel, onClose, onDone }: { painel: PainelPedido; onClos
   const livre = painel.regime === 'livre'
   const { data: cc } = centrosCustoHooks.useAll({ ativo: true })
   const centros = (cc ?? []) as CentroCusto[]
-  const { data: fornecedores = [] } = useQuery({
-    queryKey: ['scm', 'fornecedores-da-compra'],
-    queryFn: async () => {
-      const { data } = await apiClient.get<{ results?: { fornecedor_id: number; razao_social: string }[] } | { fornecedor_id: number; razao_social: string }[]>('/fornecedores/', { params: { page_size: 500 } })
-      return Array.isArray(data) ? data : (data.results ?? [])
-    },
-    enabled: livre,
-  })
   const [fornecedor, setFornecedor] = useState(String(p.fornecedor))
   const [centro, setCentro] = useState(p.centro_custo ? String(p.centro_custo) : '')
   const [entrega, setEntrega] = useState(p.data_entrega_prevista ?? '')
@@ -572,7 +564,7 @@ function EditarModal({ painel, onClose, onDone }: { painel: PainelPedido; onClos
   const salvar = async () => {
     setErr('')
     const abaixo = linhas.find(l => (lerDecimal(l.quantidade) ?? 0) < l.recebido)
-    if (abaixo) return setErr(`${abaixo.descricao}: já chegaram ${abaixo.recebido.toLocaleString('pt-BR')}; a quantidade não pode ficar abaixo disso.`)
+    if (abaixo) return setErr(`${abaixo.descricao}: já chegaram ${abaixo.recebido.toLocaleString('pt-BR')}. A quantidade não pode ser menor.`)
     setSalvando(true)
     const corpo: Record<string, unknown> = {
       data_entrega_prevista: entrega || null, observacao: obs, motivo,
@@ -595,7 +587,7 @@ function EditarModal({ painel, onClose, onDone }: { painel: PainelPedido; onClos
       <Erro msg={err} />
       {!livre && <div style={{ fontSize: 12.5, color: 'var(--accent-ink)', background: 'var(--accent-soft)', padding: '9px 12px', borderRadius: 'var(--r-sm)', marginBottom: 12 }}>Este pedido já teve recebimento: só as quantidades (saldos) mudam, nunca abaixo do que já chegou. Preço e fornecedor ficam como estão.</div>}
       {livre && <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-        <Field label="Fornecedor"><select style={inp} value={fornecedor} onChange={e => setFornecedor(e.target.value)}>{fornecedores.map(f => <option key={f.fornecedor_id} value={f.fornecedor_id}>{f.razao_social}</option>)}{!fornecedores.length && <option value={p.fornecedor}>{p.fornecedor_nome}</option>}</select></Field>
+        <Field label="Fornecedor"><SeletorDeFornecedor valor={fornecedor ? Number(fornecedor) : null} rotuloAtual={Number(fornecedor) === p.fornecedor ? p.fornecedor_nome : undefined} aoMudar={id => setFornecedor(id == null ? '' : String(id))} aria-label="Fornecedor" style={inp} /></Field>
         <Field label="Centro de custo"><select style={inp} value={centro} onChange={e => setCentro(e.target.value)}><option value="">— nenhum —</option>{centros.map(c => <option key={c.centro_custo_id} value={c.centro_custo_id}>{c.nome}</option>)}</select></Field>
       </div>}
       <div style={{ display: 'grid', gridTemplateColumns: '170px 1fr', gap: 12 }}>

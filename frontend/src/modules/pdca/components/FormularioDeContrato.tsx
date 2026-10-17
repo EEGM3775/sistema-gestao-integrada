@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
-  Btn, CampoDecimal, CampoInteiro, CampoMoeda, Modal, paraNumero,
+  Btn, CampoDecimal, CampoInteiro, CampoMoeda, Modal, SelectComBusca, SeletorDeFornecedor, paraNumero,
 } from '@/components/malha'
 import apiClient from '@/api/apiClient'
 import { centsToApiDecimal } from '@/utils/money'
@@ -16,14 +16,11 @@ interface PedidoDeServico {
   centro_custo: number | null
 }
 
-interface FornecedorOpcao {
-  fornecedor_id: number
-  razao_social: string
-}
-
 interface ClienteOpcao {
   cliente_id: number
   nome_completo: string
+  cidade?: string
+  estado?: string
 }
 
 interface IndiceOpcao {
@@ -82,11 +79,7 @@ export function FormularioDeContrato({
   aoFechar: () => void
   aoSalvar: (corpo: Record<string, unknown>) => void
 }) {
-  const [fornecedores, setFornecedores] = useState<FornecedorOpcao[]>([])
-  const [carregandoFornecedores, setCarregando] = useState(true)
-
   const [lado, setLado] = useState<'custo' | 'receita'>('custo')
-  const [clientes, setClientes] = useState<ClienteOpcao[]>([])
   const [cliente, setCliente] = useState<number | ''>('')
   const [indices, setIndices] = useState<IndiceOpcao[]>([])
   const [reajustavel, setReajustavel] = useState(false)
@@ -111,33 +104,9 @@ export function FormularioDeContrato({
   const [pedido, setPedido] = useState<number | ''>('')
   const [pedidos, setPedidos] = useState<PedidoDeServico[]>([])
 
-  /** `/api/fornecedores/` responde **lista crua**, não página — ler `.results`
-   *  aqui deixava o select vazio sem erro nenhum (D132). As duas formas são
-   *  aceitas, porque o dia em que ele virar paginado não pode esvaziar a
-   *  tela. */
-  useEffect(() => {
-    let vivo = true
-    apiClient
-      .get<{ results?: FornecedorOpcao[] } | FornecedorOpcao[]>('/fornecedores/', {
-        params: { page_size: 300, ordering: 'razao_social' },
-      })
-      .then(({ data }) => {
-        if (!vivo) return
-        setFornecedores(Array.isArray(data) ? data : data.results ?? [])
-      })
-      .finally(() => { if (vivo) setCarregando(false) })
-    return () => { vivo = false }
-  }, [])
-
-  /** O contratante (lado da receita) e os índices da série única — só quando a
-   *  pessoa pede, para não pesar quem abre o formulário de custo. */
-  useEffect(() => {
-    if (lado !== 'receita' || clientes.length) return
-    apiClient
-      .get<{ results?: ClienteOpcao[] } | ClienteOpcao[]>('/clientes/', { params: { page_size: 300 } })
-      .then(({ data }) => setClientes(Array.isArray(data) ? data : data.results ?? []))
-      .catch(() => { /* sem o módulo de clientes: o seletor fica vazio e diz */ })
-  }, [lado, clientes.length])
+  /** Os índices da série única — só quando a pessoa pede, para não pesar quem
+   *  abre o formulário. O contratante (lado da receita) é buscado no servidor
+   *  pelo `SelectComBusca` (F2): a lista inteira parava no cliente nº 300. */
   useEffect(() => {
     if (!reajustavel || indices.length) return
     apiClient
@@ -258,37 +227,31 @@ export function FormularioDeContrato({
         <Linha>
           {lado === 'receita' ? (
             <Campo rotulo="Cliente" larga>
-              <select value={cliente} onChange={(e) => setCliente(e.target.value ? Number(e.target.value) : '')} style={entrada}>
-                <option value="">Escolha o cliente</option>
-                {clientes.map((c) => (
-                  <option key={c.cliente_id} value={c.cliente_id}>{c.nome_completo}</option>
-                ))}
-              </select>
+              <SelectComBusca<ClienteOpcao>
+                recurso="/clientes/"
+                idDe={(c) => c.cliente_id}
+                rotuloDe={(c) => c.nome_completo}
+                detalheDe={(c) => [c.cidade, c.estado].filter(Boolean).join(' / ')}
+                ordenacao="nome_completo,cliente_id"
+                valor={cliente === '' ? null : cliente}
+                aoMudar={(id) => setCliente(id ?? '')}
+                placeholder="Busque o cliente pelo nome…"
+                aria-label="Cliente"
+                style={entrada}
+              />
               <Ajuda>Quem encomendou a obra — o cadastro de clientes da casa.</Ajuda>
             </Campo>
           ) : (
           <Campo rotulo="Empreiteiro" larga>
-            <select
-              value={fornecedor}
-              onChange={(e) => setFornecedor(e.target.value ? Number(e.target.value) : '')}
-              disabled={carregandoFornecedores}
+            {/* Busca no servidor (F2): a lista inteira de fornecedores não vem mais. */}
+            <SeletorDeFornecedor
+              valor={fornecedor === '' ? null : fornecedor}
+              aoMudar={(id) => setFornecedor(id ?? '')}
+              placeholder="Busque o empreiteiro pelo nome ou CNPJ…"
+              vazio="Nenhum fornecedor cadastrado ainda — cadastre em Compras › Fornecedores."
+              aria-label="Empreiteiro"
               style={entrada}
-            >
-              <option value="">
-                {carregandoFornecedores ? 'Carregando…' : 'Escolha o empreiteiro'}
-              </option>
-              {fornecedores.map((f) => (
-                <option key={f.fornecedor_id} value={f.fornecedor_id}>
-                  {f.razao_social}
-                </option>
-              ))}
-            </select>
-            {!carregandoFornecedores && fornecedores.length === 0 && (
-              <Ajuda>
-                Nenhum fornecedor cadastrado ainda — o contrato usa o cadastro da
-                casa, em Compras › Fornecedores.
-              </Ajuda>
-            )}
+            />
           </Campo>
           )}
           {lado === 'custo' && pedidos.length > 0 && (

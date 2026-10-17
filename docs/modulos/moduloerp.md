@@ -78,7 +78,7 @@ local + aviso) · `/notas-fiscais-produto/` · `/notas-fiscais/` · `/cobrancas-
 `/boletos/` (+ `cancelar` → Asaas `cancelar_payment`, exige `erp.cobranca.emitir`; `documento` — verifica
 o Asaas ao vivo, mesmo contrato de fallback offline; `pdf` e `miniatura` — o PDF servido pelo backend,
 para abrir dentro da tela) · `/carteiras-cobranca/` (+ `bancos`) · `/remessas-cnab/` (+ `arquivo`) ·
-`/retornos-cnab/` (+ `enviar`) · `/lotes-cobranca/` (andamento) · `/dashboard/` (aging + fluxo de caixa) ·
+`/retornos-cnab/` (+ `enviar`) · `/lotes-cobranca/` (andamento) · `/dashboard/` (aging + fluxo de caixa; período em `fluxo_inicio`/`fluxo_fim` AAAA-MM, padrão 12 meses, devolvido em `fluxoPeriodo`) ·
 `/atualizar-status-nf/` · `/nf/<id>/consultar/`.
 
 Erros ficam visíveis: NFS-e e `Boleto` guardam o retorno cru do gateway em `dados_retorno_api` (na falha,
@@ -366,7 +366,8 @@ modules/erp/
 │   │             StatusBoletoBadge (+ statusBoleto.ts) · StatusNfeBadge (+ statusNfe.ts)
 │   ├── forms/    ContaPagarForm · ContaReceberForm · BaixaForm · RateioField · FormField ·
 │   │             schemas.ts (zod) · formStyles.ts          ← RHF + zod, 1º uso no projeto
-│   └── charts/   FluxoCaixaChart · AgingChart (Recharts)
+│   └── charts/   FluxoCaixaPainel (período + barras/linha) · FluxoCaixaChart (Recharts) ·
+│                 AgingChart (barra empilhada + faixas)
 └── pages/
     ├── ErpDashboardPage.tsx      ← hub /app/erp: KPIs + gráficos + cards de navegação aos workspaces
     ├── ContasAPagarPage.tsx      ← workspace: FilterBar+FinanceDataTable+Sheet (criar/editar/baixa/ver)

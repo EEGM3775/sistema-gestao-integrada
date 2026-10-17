@@ -564,3 +564,37 @@ class RotuloUnidadeTests(CarteiraBaseTestCase):
 
     def test_aquisicao_le_o_rotulo_da_unidade(self):
         self.assertEqual(self.ana_lote5.rotulo_unidade, self.un_lote5.rotulo)
+
+
+class HomonimosPaginadosTests(CarteiraBaseTestCase):
+    """F2 — o `SelectComBusca` rola página a página até o último resultado.
+
+    Ordenar só pelo nome deixa os homônimos sem ordem garantida entre uma página
+    e a outra: um aparece duas vezes e outro some — justamente o "21º Paulo
+    Souza" que a pessoa rolou para achar. O campo pede `nome_completo,cliente_id`,
+    e a API tem de aceitar o desempate.
+    """
+
+    def test_homonimos_saem_todos_uma_vez_pagina_a_pagina(self):
+        criados = [
+            Cliente.objects.create(
+                tenant=self.tenant, nome_completo="Paulo Souza",
+                cpf_cnpj=f"000000000{n:02d}", cidade="Palhoça", estado="SC",
+                data_nascimento=date(1980, 1, 1), email=f"paulo{n}@exemplo.com",
+            ).pk
+            for n in range(7)
+        ]
+        self.autenticar()
+        vistos, pagina = [], 1
+        while True:
+            r = self.client.get("/api/clientes/", {
+                "search": "Paulo Souza", "ordering": "nome_completo,cliente_id",
+                "page": pagina, "page_size": 3,
+            })
+            self.assertEqual(r.status_code, 200)
+            vistos += [c["cliente_id"] for c in r.data["results"]]
+            if not r.data["next"]:
+                break
+            pagina += 1
+        self.assertEqual(r.data["count"], 7)
+        self.assertEqual(vistos, sorted(criados))

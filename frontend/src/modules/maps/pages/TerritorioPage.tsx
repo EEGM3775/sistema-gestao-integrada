@@ -54,7 +54,7 @@ export default function TerritorioPage() {
     // Aba paga sem entitlement mostra o cadeado; mandar para lá seria trocar
     // uma pendência acionável por uma parede. O item fica onde está e avisa.
     if (PAGA.has(d.tab) && !temMaps) {
-      say('Essa pendência é do módulo Maps, que não está contratado.')
+      say('Pendência do módulo Maps, que não está contratado.')
       return
     }
     setTab(d.tab)

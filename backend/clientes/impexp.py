@@ -61,7 +61,7 @@ class CarteiraDeClientes(RecursoDeCadastro):
                aliases=("cpf", "cnpj", "documento")),
         Coluna("nome_completo", "Nome completo", obrigatoria=True, exemplo="Maria da Silva",
                aliases=("nome", "cliente", "razao social")),
-        Coluna("email", "E-mail", obrigatoria=True, exemplo="maria@exemplo.com",
+        Coluna("email", "E-mail", obrigatoria=False, exemplo="maria@exemplo.com",
                aliases=("email", "e mail")),
         Coluna("telefone", "Telefone", exemplo="(71) 99999-0000", aliases=("celular", "fone")),
         Coluna("data_nascimento", "Data de nascimento", tipo=date, obrigatoria=True,

@@ -182,8 +182,8 @@ const ClienteForm: React.FC<Props> = ({ open, onClose, onSave, initial }) => {
           <SectionTitle>Contato</SectionTitle>
 
           <div className="mb-3">
-            <label style={labelCls}>E-mail *</label>
-            <input required type="email" style={inputCls} value={form.email}
+            <label style={labelCls}>E-mail</label>
+            <input type="email" style={inputCls} value={form.email}
               onChange={e => set('email', e.target.value)} />
             <FieldError msg={fieldErrors.email} />
           </div>

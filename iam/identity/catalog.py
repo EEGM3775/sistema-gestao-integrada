@@ -795,7 +795,7 @@ TEMPLATES_PAPEL: dict[str, list[str]] = {
     # `mapa.local.view` + `mapa.rota.view` porque distância entrega→canteiro é
     # critério de compra tanto quanto preço e reputação.
     "suprimentos": [
-        "scm.*", "cadastro.fornecedor.view", "cadastro.item.*", "cadastro.tipo_item.view",
+        "scm.*", "cadastro.fornecedor.view", "cadastro.fornecedor.edit", "cadastro.item.*", "cadastro.tipo_item.view",
         # PDCA.5 — o outro lado do seam: a restrição de material vira demanda
         # nesta fila, e quem compra precisa ver **o que ela está segurando** na
         # obra. Sem isso, a demanda gerada por uma restrição chega aqui como

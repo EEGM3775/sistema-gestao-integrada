@@ -20,7 +20,7 @@ com documento aleatório não emite um boleto sequer.
 **Dev/staging apenas** — `--limpar` apaga carteira, unidades e títulos do tenant.
 """
 import random
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 from decimal import Decimal
 
 from django.core.management.base import BaseCommand, CommandError
@@ -32,7 +32,7 @@ from clientes import vencimento as vencimento_svc
 from clientes.models import Cliente, ClienteEmpreendimento, ContratoCliente, MeioPagamento
 from empreendimentos.models import Empreendimento, Unidade
 from entidades.regras import entidade_do_lancamento
-from moduloerp.models import ContaReceber, StatusConta
+from moduloerp.models import ContaReceber, StatusConta, Transacao
 from nucleo.documentos import gerar_cnpj, gerar_cpf
 from nucleo.models import Tenant
 from nucleo.tenancy import rls_bypass
@@ -320,6 +320,19 @@ class Command(BaseCommand):
 
         with transaction.atomic():
             ContaReceber.objects.bulk_create(titulos, batch_size=1000)
+            # O fluxo de caixa lê o ledger: título quitado sem `Transacao` é
+            # dinheiro que o caixa não viu (item 88).
+            Transacao.objects.bulk_create([
+                Transacao(
+                    tenant=tenant, entidade_id=t.entidade_id, conta_receber=t,
+                    empreendimento_id=t.empreendimento_id,
+                    descricao=f"Baixa de recebimento (demo) — {t.descricao[:200]}",
+                    valor=t.valor_pago, tipo=Transacao.TipoTransacao.ENTRADA,
+                    meio_pagamento="Boleto",
+                    data_transacao=timezone.make_aware(datetime.combine(t.data_recebimento, time.min)),
+                )
+                for t in titulos if t.valor_pago > 0
+            ], batch_size=1000)
             ClienteEmpreendimento.objects.bulk_update(
                 geradas, ["valor_total_plano", "parcelas_geradas_em"], batch_size=500,
             )

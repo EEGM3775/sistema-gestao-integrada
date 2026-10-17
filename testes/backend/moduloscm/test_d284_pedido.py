@@ -421,3 +421,40 @@ class FichaDoItemTests(PedidoBase):
         self.assertEqual(resp.data["historico_precos"][0]["pedido"], self.pedido.pk)
         self.assertEqual(Decimal(resp.data["estoque_total"]), Decimal("10"))
         self.assertEqual(resp.data["uso"]["pedidos"], 1)
+
+    def test_grafico_de_precos_traz_pagos_e_cotados_por_fornecedor(self):
+        """Dono, 16/10/2026: preço do item ao longo do tempo, por fornecedor."""
+        from moduloscm.models import Cotacao, Demanda, ItemDemanda, ItemProposta, Proposta
+
+        demanda = Demanda.objects.create(tenant=self.tenant, centro_custo=self.centro)
+        linha = ItemDemanda.objects.create(tenant=self.tenant, demanda=demanda, produto=self.luva, quantidade=Decimal("10"))
+        cotacao = Cotacao.objects.create(tenant=self.tenant, demanda=demanda)
+        # Proposta da rede: sem FK de fornecedor, só o rótulo.
+        proposta = Proposta.objects.create(tenant=self.tenant, cotacao=cotacao, fornecedor_nome="LOJA DA REDE")
+        ItemProposta.objects.create(
+            tenant=self.tenant, proposta=proposta, item_demanda=linha,
+            preco_unitario=Decimal("4.70"), quantidade=Decimal("10"),
+        )
+        self.user.iam_permissions = ["cadastro.item.view"]
+        grafico = self.client.get(f"/api/catalogo/itens/{self.luva.pk}/ficha/").data["grafico_precos"]
+
+        self.assertEqual(
+            [(p["fornecedor_nome"], p["preco_unitario"], p["pedido"]) for p in grafico["pagos"]],
+            [("MENEZES MATERIAIS", "5.00", self.pedido.pk)],
+        )
+        self.assertEqual(
+            [(p["fornecedor"], p["fornecedor_nome"], p["preco_unitario"], p["cotacao"]) for p in grafico["cotados"]],
+            [(None, "LOJA DA REDE", "4.70", cotacao.pk)],
+        )
+
+        # A cotação que vira compra sai do gráfico: o preço pago a substitui.
+        self.pedido.proposta_vencedora = proposta
+        self.pedido.save(update_fields=["proposta_vencedora"])
+        grafico = self.client.get(f"/api/catalogo/itens/{self.luva.pk}/ficha/").data["grafico_precos"]
+        self.assertEqual(grafico["cotados"], [])
+        self.assertEqual(len(grafico["pagos"]), 1)
+
+        # Pedido cancelado não comprou nada — a cotação volta.
+        PedidoCompra.objects.filter(pk=self.pedido.pk).update(status=PedidoCompra.Status.CANCELADO)
+        grafico = self.client.get(f"/api/catalogo/itens/{self.luva.pk}/ficha/").data["grafico_precos"]
+        self.assertEqual([p["cotacao"] for p in grafico["cotados"]], [cotacao.pk])

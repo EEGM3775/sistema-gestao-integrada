@@ -25,7 +25,7 @@ function maskPhone(v: string) {
 // ─── helpers de form ──────────────────────────────────────────────────────────
 
 const EMPTY: FornecedorFormData = {
-  razao_social: '', cnpj: '', contato: '', email: '', telefone: '',
+  razao_social: '', cnpj: '', contato: '', email: '', emails_adicionais: [], telefone: '',
 }
 
 function toForm(f: Fornecedor): FornecedorFormData {
@@ -34,6 +34,7 @@ function toForm(f: Fornecedor): FornecedorFormData {
     cnpj: f.cnpj ?? '',
     contato: f.contato,
     email: f.email,
+    emails_adicionais: f.emails_adicionais ?? [],
     telefone: f.telefone,
   }
 }
@@ -94,7 +95,11 @@ const FornecedorForm: React.FC<Props> = ({ open, onClose, onSave, initial }) => 
     setSaving(true)
     setFieldErrors({})
     try {
-      await onSave({ ...form, cnpj: semDoc ? null : cnpjDigits })
+      await onSave({
+        ...form,
+        cnpj: semDoc ? null : cnpjDigits,
+        emails_adicionais: form.emails_adicionais.map(e => e.trim()).filter(Boolean),
+      })
       onClose()
     } catch (err: unknown) {
       setFieldErrors(parseApiErrors(err))
@@ -194,10 +199,38 @@ const FornecedorForm: React.FC<Props> = ({ open, onClose, onSave, initial }) => 
           <SectionTitle>Contato</SectionTitle>
 
           <div className="mb-3">
-            <label style={labelCls}>E-mail *</label>
-            <input required type="email" style={inputCls} value={form.email}
+            <label style={labelCls}>E-mail</label>
+            <input type="email" style={inputCls} value={form.email}
               onChange={e => set('email', e.target.value)} />
             <FieldError msg={fieldErrors.email} />
+          </div>
+
+          <div className="mb-3">
+            <label style={labelCls}>Outros e-mails</label>
+            {form.emails_adicionais.map((em, i) => (
+              <div key={i} className="flex items-center gap-2 mb-2">
+                <input type="email" style={inputCls} value={em}
+                  onChange={e => setForm(prev => ({
+                    ...prev,
+                    emails_adicionais: prev.emails_adicionais.map((x, j) => j === i ? e.target.value : x),
+                  }))} />
+                <button type="button" aria-label="Remover e-mail"
+                  onClick={() => setForm(prev => ({
+                    ...prev,
+                    emails_adicionais: prev.emails_adicionais.filter((_, j) => j !== i),
+                  }))}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)' }}>
+                  <X size={16} />
+                </button>
+              </div>
+            ))}
+            <button type="button"
+              onClick={() => setForm(prev => ({ ...prev, emails_adicionais: [...prev.emails_adicionais, ''] }))}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-brand)', fontFamily: 'var(--font-body)' }}>
+              + Adicionar e-mail
+            </button>
+            <FieldError msg={fieldErrors.emails_adicionais} />
           </div>
 
           <div className="mb-3">

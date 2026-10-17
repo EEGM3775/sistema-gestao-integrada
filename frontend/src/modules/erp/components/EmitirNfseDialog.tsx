@@ -89,7 +89,7 @@ export function EmitirNfseDialog({ open, onClose, onEmitted, contaInicial }: Pro
     emitir.mutate(
       { contaId: contaId as number, payload: { city_service_code: cityCode || undefined, descricao: descricao || undefined } },
       {
-        onSuccess: () => onEmitted('Emissão de NFS-e iniciada — a nota aparece como "Processando" na aba Emitidas e é atualizada quando a NFE.io responder.'),
+        onSuccess: () => onEmitted('Emissão de NFS-e iniciada. A nota aparece como "Processando" na aba Emitidas e é atualizada quando a API responder.'),
         onError: e => setErro(mensagemDeErro(e)),
       },
     )

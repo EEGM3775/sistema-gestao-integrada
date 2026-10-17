@@ -260,8 +260,7 @@ def reabrir_inventario(inventario):
             saldo = _saldo(tenant_id, it.item_id, inventario.local_id)
             if saldo.quantidade - it.ajuste_aplicado < 0:
                 raise ValidationError(
-                    f"{it.item.descricao}: estornar o ajuste deixaria o saldo negativo — "
-                    f"o material já saiu depois do inventário."
+                    f"{it.item.descricao}: estornar o ajuste deixaria o saldo negativo."
                 )
         for it in itens:
             if it.ajuste_aplicado:

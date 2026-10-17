@@ -4,6 +4,60 @@ from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from nucleo.tenancy import TenantScopedModel
 
+
+class Calendar(TenantScopedModel):
+    """Uma agenda com nome e cor (Fatia D) — o que se mostra e se esconde.
+
+    O **escopo** decide quem a vê; ver é também poder lançar nela:
+
+    - `pessoal` — só o dono;
+    - `equipe` — o dono e os membros (`CalendarMember`);
+    - `empresa` — todos da empresa (a RLS já fecha o tenant).
+
+    Evento sem calendário é da agenda pessoal implícita do seu dono ("Meus
+    eventos") — o comportamento de antes da Fatia D, sem migração de dado.
+    Renomear, recolorir, mexer nos membros ou apagar é só do dono.
+    """
+
+    class Scope(models.TextChoices):
+        PESSOAL = 'pessoal', 'Pessoal'
+        EQUIPE = 'equipe', 'Equipe'
+        EMPRESA = 'empresa', 'Empresa'
+
+    name = models.CharField(max_length=120)
+    # Cor da agenda no grid (hex `#rrggbb`).
+    color = models.CharField(max_length=7, default='#1e40af')
+    scope = models.CharField(max_length=10, choices=Scope.choices, default=Scope.PESSOAL)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='calendars',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name', 'id']
+
+    def __str__(self):
+        return self.name
+
+
+class CalendarMember(TenantScopedModel):
+    """Membro de uma agenda de equipe. Tabela explícita (não um M2M solto) para
+    carregar `tenant_id` e entrar na RLS como toda tabela de negócio."""
+
+    calendar = models.ForeignKey(Calendar, on_delete=models.CASCADE, related_name='members')
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='calendar_memberships',
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['calendar', 'user'], name='uniq_calendar_member'),
+        ]
+
+    def __str__(self):
+        return f"{self.user_id} em {self.calendar_id}"
+
+
 class CalendarEvent(TenantScopedModel):
     EVENT_TYPE_CHOICES = [
         ('tarefa', 'Tarefa'),
@@ -18,6 +72,15 @@ class CalendarEvent(TenantScopedModel):
     all_day = models.BooleanField(default=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='calendar_events')
     event_type = models.CharField(max_length=20, choices=EVENT_TYPE_CHOICES, default='tarefa')
+    # Agenda do evento (Fatia D). Vazio = a agenda pessoal implícita do `user`.
+    calendar = models.ForeignKey(
+        Calendar, on_delete=models.CASCADE, null=True, blank=True, related_name='events',
+    )
+    # Onde acontece (Fatia E): texto livre — endereço, sala, "canteiro da obra X".
+    location = models.CharField(max_length=255, blank=True, default='')
+    # Identidade do evento num `.ics` importado (Fatia E): reimportar o mesmo
+    # arquivo não duplica. Vazio para o que nasceu aqui.
+    ical_uid = models.CharField(max_length=255, blank=True, default='', db_index=True)
 
     # --- Recorrência (Fatia B) ---
     # Regra RRULE do iCalendar (RFC 5545), SEM o DTSTART — a âncora é sempre
@@ -49,6 +112,36 @@ class CalendarEvent(TenantScopedModel):
 
     def __str__(self):
         return self.title
+
+
+class EventAttendee(TenantScopedModel):
+    """Convidado de um evento, com a resposta dele (Fatia D).
+
+    Convidar é mostrar: o convidado vê o evento no próprio calendário, mesmo
+    que a agenda não seja dele, e responde aceito / recusado. Quem aceita
+    recebe os lembretes do evento. Numa série, o convite vale para a série
+    (o convidado responde no mestre)."""
+
+    class Status(models.TextChoices):
+        PENDENTE = 'pendente', 'Pendente'
+        ACEITO = 'aceito', 'Aceito'
+        RECUSADO = 'recusado', 'Recusado'
+
+    event = models.ForeignKey(CalendarEvent, on_delete=models.CASCADE, related_name='attendees')
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='calendar_invites',
+    )
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDENTE)
+    responded_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['event', 'user'], name='uniq_event_attendee'),
+        ]
+        ordering = ['id']
+
+    def __str__(self):
+        return f"{self.user_id} · {self.event_id} · {self.status}"
 
 
 class EventReminder(TenantScopedModel):

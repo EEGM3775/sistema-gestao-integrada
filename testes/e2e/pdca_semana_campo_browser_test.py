@@ -170,7 +170,10 @@ with sync_playwright() as p:
     pagina.wait_for_timeout(1800)
     corpo = pagina.inner_text("body")
     baixo = corpo.lower()
-    check("a rota do posto responde", f"/o/{obra_id}/semana" in pagina.url)
+    #: Desde 10/10/2026 a Semana é uma aba do Controle (decisão do dono); o
+    #: endereço antigo redireciona, com a query que trazia (D195).
+    check("o endereço da semana chega à aba Semana do Controle",
+          f"/o/{obra_id}/controle" in pagina.url and "aba=semana" in pagina.url)
     check(
         "e NÃO é mais a página que diz o que o posto fará",
         "ainda não está no ar" not in baixo,
@@ -284,7 +287,8 @@ with sync_playwright() as p:
     pagina.wait_for_timeout(1800)
     corpo = pagina.inner_text("body")
     baixo = corpo.lower()
-    check("a vista troca sem trocar de rota", f"/o/{obra_id}/semana" in pagina.url)
+    check("a vista troca sem trocar de rota",
+          f"/o/{obra_id}/controle" in pagina.url and "aba=semana" in pagina.url)
     check("o cumprimento da programação está lá", "cumprimento da programação" in baixo)
     check(
         "e o ranking de causas — o que muda a obra, e não o índice",
@@ -391,10 +395,13 @@ with sync_playwright() as p:
             if entrar_no_julgamento.count():
                 entrar_no_julgamento.click()
                 pagina.wait_for_timeout(900)
-            check("e cada cartão pergunta se saiu ou não, no lugar onde está",
-                  pagina.get_by_role("button", name="Não saiu").count() > 0)
-
-            pagina.get_by_role("button", name="Não saiu").first.click()
+            #: O julgamento é pelo **% concluído** (decisão do dono, 09/10/2026):
+            #: o "saiu" deriva de bater a meta da semana. Lançar o que o campo já
+            #: apontou (o `placeholder`) fica abaixo da meta — é o "não saiu".
+            campo = pagina.get_by_label(f"Quanto de {nome_puxado} está concluído")
+            check("e cada cartão pergunta quanto está concluído, no lugar onde está",
+                  campo.count() == 1)
+            campo.fill(campo.get_attribute("placeholder") or "0")
             pagina.wait_for_timeout(600)
             check(
                 "marcar 'não saiu' cobra a causa ali mesmo",

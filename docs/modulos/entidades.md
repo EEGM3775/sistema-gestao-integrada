@@ -100,9 +100,18 @@ objeto** (a fatia D do AD-9):
 
 ## 5. Fiscal e cobrança por entidade
 
-`IntegracaoFiscal` (NFE.io) e `ContaCobrancaBancaria` (CNAB) são **da entidade**. A NFS-e sai pela
-integração da entidade dona do título (sem cadastro dela, a do ambiente); a carteira usada na remessa
-tem de ser da entidade de cada título. A entidade sem `documento` não emite: a tela pede o cadastro.
+`IntegracaoFiscal` (NFE.io), `IntegracaoAsaas` e `ContaCobrancaBancaria` (CNAB) são **da entidade**.
+A NFS-e sai pela integração da entidade dona do título (sem cadastro dela, a do ambiente); a carteira
+usada na remessa tem de ser da entidade de cada título. A entidade sem `documento` não emite: a tela
+pede o cadastro.
+
+O **boleto pelo Asaas** sai na conta Asaas da entidade dona do título — é ela o beneficiário impresso.
+A conta do ambiente (`ASAAS_API_KEY`) é a **da matriz**: vale para ela e para a conta de uma entidade
+só. Num grupo, a outra entidade sem conta própria é recusada antes de chegar ao gateway
+(`EntidadeSemContaAsaas`), com o caminho na frase: cadastrar a chave em ERP › Configurações, ou emitir
+pelo CNAB dela. O boleto guarda em que conta nasceu (`Boleto.conta_asaas`), e cancelar e conferir vão
+à mesma; o customer é buscado por CPF/CNPJ na conta da entidade (o `Cliente.id_cliente_gateway` é o da
+conta da matriz). O webhook de cada conta usa o mesmo token de autenticação.
 
 ## 6. As visões do ERP
 

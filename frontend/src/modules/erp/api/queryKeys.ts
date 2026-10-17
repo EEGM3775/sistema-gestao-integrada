@@ -1,6 +1,6 @@
 import type {
   BoletoFiltros, ContaPagarFiltros, ContaReceberFiltros,
-  NotaFiscalRecebidaFiltros, NotaFiscalServicoFiltros,
+  NotaFiscalRecebidaFiltros, NotaFiscalServicoFiltros, PeriodoFluxo,
 } from '../types'
 
 /**
@@ -74,6 +74,7 @@ export const erpKeys = {
 
   dashboard: {
     all: ['erp', 'dashboard'] as const,
-    summary: (empreendimentoId?: number) => ['erp', 'dashboard', 'summary', empreendimentoId ?? null] as const,
+    summary: (empreendimentoId?: number, periodo?: PeriodoFluxo) =>
+      ['erp', 'dashboard', 'summary', empreendimentoId ?? null, periodo?.inicio ?? null, periodo?.fim ?? null] as const,
   },
 }

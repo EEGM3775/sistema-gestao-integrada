@@ -6,7 +6,8 @@
   (`_feriados_no_boot`) — o intervalo de 7 dias só dispara a primeira volta uma
   semana depois, e o servidor novo ficava sem feriado estadual nem municipal.
 - `despachar_lembretes` (Fatia C): varre os `EventReminder` vencendo e emite uma
-  `Notificacao` in-app (e e-mail, se configurado) por ocorrência, uma única vez.
+  `Notificacao` in-app (e e-mail, se configurado) por ocorrência, uma única vez —
+  ao dono do evento e, desde a Fatia D, a cada convidado que **aceitou**.
 
 Ambas rodam no `beat`/`worker` já no compose (Fase 10.9), agendadas em
 `CELERY_BEAT_SCHEDULE`.
@@ -26,7 +27,7 @@ from nucleo.tasks import DLQTask
 from nucleo.tenancy import rls_bypass
 
 from . import recurrence
-from .models import EventReminder
+from .models import EventAttendee, EventReminder
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +106,7 @@ def despachar_lembretes(self):
         reminders = (
             EventReminder.objects
             .select_related("event", "event__user")
-            .prefetch_related("event__overrides")
+            .prefetch_related("event__overrides", "event__attendees__user")
         )
         for reminder in reminders:
             event = reminder.event
@@ -117,15 +118,16 @@ def despachar_lembretes(self):
             occ_start = vencendo[0]
             mensagem = _texto(event, occ_start, reminder.offset_minutes)
 
-            criar_notificacao(
-                user=event.user,
-                tenant_id=event.tenant_id,
-                titulo=f"Lembrete: {event.title}",
-                mensagem=mensagem,
-                tipo=Notificacao.Tipo.LEMBRETE,
-                url="/app/calendario",
-            )
-            _enviar_email(event, mensagem)
+            for pessoa in _quem_lembrar(event):
+                criar_notificacao(
+                    user=pessoa,
+                    tenant_id=event.tenant_id,
+                    titulo=f"Lembrete: {event.title}",
+                    mensagem=mensagem,
+                    tipo=Notificacao.Tipo.LEMBRETE,
+                    url="/app/calendario",
+                )
+                _enviar_email(pessoa, event, mensagem)
 
             reminder.last_sent_occurrence = occ_start
             reminder.save(update_fields=["last_sent_occurrence"])
@@ -134,7 +136,18 @@ def despachar_lembretes(self):
     return enviados
 
 
-def _enviar_email(event, mensagem):
+def _quem_lembrar(event):
+    """O dono do evento e os convidados que aceitaram (Fatia D). Pendente e
+    recusado não recebem: lembrar de um compromisso não assumido é ruído."""
+    pessoas = [event.user]
+    pessoas += [
+        a.user for a in event.attendees.all()
+        if a.status == EventAttendee.Status.ACEITO and a.user_id != event.user_id
+    ]
+    return pessoas
+
+
+def _enviar_email(pessoa, event, mensagem):
     """E-mail opcional do lembrete — no-op sem `MAIL_HOST` (paridade com o CRM).
 
     Texto em funcoesemail/templates/calendario/lembrete_evento.txt. O `enviar`
@@ -142,7 +155,7 @@ def _enviar_email(event, mensagem):
     devolve False), então aqui não há mais try/except: o lembrete in-app já foi
     criado antes desta chamada e não pode ser perdido por causa do e-mail.
     """
-    email = getattr(event.user, "email", "") or getattr(event.user, "email_pessoal", "")
+    email = getattr(pessoa, "email", "") or getattr(pessoa, "email_pessoal", "")
     enviar(
         "calendario.lembrete_evento",
         email,

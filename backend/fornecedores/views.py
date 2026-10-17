@@ -1,5 +1,6 @@
 # backend/fornecedores/views.py
 from nucleo.busca import BuscaSemAcento
+from nucleo.paginacao import PaginaSobPedido
 from rest_framework import viewsets, permissions, filters
 from django_filters.rest_framework import DjangoFilterBackend
 from nucleo.tenancy import TenantScopedViewSetMixin
@@ -24,8 +25,11 @@ class FornecedorViewSet(QuotaEnforcedMixin, TenantScopedViewSetMixin, viewsets.M
     filter_backends = [DjangoFilterBackend, BuscaSemAcento, filters.OrderingFilter]
     filterset_fields = ['cnpj']
     search_fields = ['razao_social', 'cnpj', 'email', 'contato', 'telefone']
-    ordering_fields = ['razao_social']
+    # `fornecedor_id` é o desempate do seletor: paginar só pelo nome deixa as
+    # razões sociais iguais sem ordem garantida entre uma página e a outra.
+    ordering_fields = ['razao_social', 'fornecedor_id']
     ordering = ['razao_social']
+    pagination_class = PaginaSobPedido
     permission_classes = [permissions.IsAuthenticated, RequirePermission]
     required_resource = "cadastro.fornecedor"
 

@@ -8,7 +8,10 @@ class Fornecedor(TenantScopedModel, Excluivel):
     razao_social = models.CharField(max_length=255, verbose_name=_("Razão Social"))
     cnpj = models.CharField(max_length=18, null=True, blank=True, verbose_name=_("CNPJ"))
     contato = models.CharField(max_length=100, blank=True, verbose_name=_("Contato"))
-    email = models.EmailField(max_length=255, verbose_name=_("E-mail"))
+    email = models.EmailField(max_length=255, blank=True, verbose_name=_("E-mail"))
+    # Demais e-mails do fornecedor. O conjunto (principal + adicionais) é único
+    # no tenant: nenhum endereço aparece em dois fornecedores.
+    emails_adicionais = models.JSONField(default=list, blank=True, verbose_name=_("E-mails adicionais"))
     telefone = models.CharField(max_length=20, blank=True, verbose_name=_("Telefone"))
 
     class Meta:
@@ -20,7 +23,7 @@ class Fornecedor(TenantScopedModel, Excluivel):
         constraints = [
             models.UniqueConstraint(fields=['tenant', 'razao_social'], condition=models.Q(excluido_em__isnull=True), name='fornecedor_razao_unica_por_tenant'),
             models.UniqueConstraint(fields=['tenant', 'cnpj'], condition=models.Q(excluido_em__isnull=True), name='fornecedor_cnpj_unico_por_tenant'),
-            models.UniqueConstraint(fields=['tenant', 'email'], condition=models.Q(excluido_em__isnull=True), name='fornecedor_email_unico_por_tenant'),
+            models.UniqueConstraint(fields=['tenant', 'email'], condition=models.Q(excluido_em__isnull=True) & ~models.Q(email=''), name='fornecedor_email_unico_por_tenant'),
         ]
 
     def __str__(self):

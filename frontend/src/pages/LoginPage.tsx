@@ -40,7 +40,7 @@ const LoginPage: React.FC = () => {
       }
       navigate(from, { replace: true })
     } catch {
-      setError('Usuário ou senha incorretos. Verifique seus dados e tente novamente.')
+      setError('Usuário ou senha incorretos.')
     } finally {
       setSubmitting(false)
     }
@@ -54,7 +54,7 @@ const LoginPage: React.FC = () => {
   const recomecar = useCallback(() => {
     setDesafio(null)
     setPassword('')
-    setError('O tempo para confirmar passou. Entre com a senha de novo.')
+    setError('Tempo esgotado. Entre com a senha de novo.')
   }, [])
 
   return (

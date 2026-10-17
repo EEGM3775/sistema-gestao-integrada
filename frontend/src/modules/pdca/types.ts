@@ -614,10 +614,11 @@ export interface ProgramacaoSemanal {
   comprometida_por: string
   encerrada_em: string | null
   encerrada_por: string
-  /** String, e não número: o DRF serializa `Decimal` assim, e é assim que a
-   *  ação `encerrar/` também o devolve. `null` enquanto a semana não encerra —
-   *  a tela mostra "sem apuração", nunca 0%. */
-  ppc: string | null
+  /** A leitura inteira (`services.ppc_de`), e não só o índice: o número mora
+   *  em `ppc.ppc` — string, `null` enquanto a semana não encerra (a tela mostra
+   *  "sem apuração", nunca 0%). Declarado como string, o índice da semana
+   *  encerrada virava `NaN` e a tela dizia "sem apuração" (D296). */
+  ppc: LeituraDePpc | null
   reaberta_em: string | null
   reaberta_por: string
   motivo_reabertura: string
@@ -674,6 +675,14 @@ export interface CandidatoDaSemana {
   fim_previsto: string | null
   critica: boolean
   restricoes_abertas: number
+  /** O que trava, uma linha por restrição aberta. */
+  travas?: {
+    restricao: number
+    tipo: string
+    descricao: string
+    responsavel: string
+    prazo: string | null
+  }[]
   ncs_abertas: number
   ja_no_quadro: boolean
 }

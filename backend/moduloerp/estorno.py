@@ -113,7 +113,7 @@ def estornar_baixas(conta, *, usuario, motivo: str):
     """Anula todas as baixas da conta e a devolve para "Aberto"."""
     motivo = (motivo or "").strip()
     if len(motivo) < 5:
-        raise EstornoRecusado("Diga o motivo do estorno — ele fica no histórico da conta.")
+        raise EstornoRecusado("Informe o motivo do estorno.")
     with transaction.atomic():
         type(conta).objects.select_for_update().get(pk=conta.pk)
         conta.refresh_from_db()

@@ -38,7 +38,7 @@ class CadastroDeFornecedores(RecursoDeCadastro):
         Coluna("razao_social", "Razão social", obrigatoria=True, exemplo="Concreto Forte Ltda",
                aliases=("fornecedor", "nome", "empresa")),
         Coluna("cnpj", "CNPJ", exemplo="12.345.678/0001-90", aliases=("cpf/cnpj", "documento")),
-        Coluna("email", "E-mail", obrigatoria=True, exemplo="compras@concretoforte.com.br",
+        Coluna("email", "E-mail", obrigatoria=False, exemplo="compras@concretoforte.com.br",
                aliases=("email", "e mail")),
         Coluna("telefone", "Telefone", exemplo="(71) 3333-0000", aliases=("fone",)),
         Coluna("contato", "Contato", exemplo="João (comercial)"),

@@ -321,8 +321,7 @@ function DialogoDeDecisao({
         {aprovar
           ? 'Aprovado o último degrau, as linhas do aditivo entram no contratado '
             + 'e passam a valer para a próxima medição.'
-          : 'O aditivo volta para quem o montou. Diga o que precisa mudar — sem '
-            + 'isso ele volta igual.'}
+          : 'O aditivo volta para quem o montou. Informe o que precisa mudar.'}
       </p>
       <textarea
         value={texto}

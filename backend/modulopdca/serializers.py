@@ -295,8 +295,8 @@ class AtividadeSerializer(TenantScopedModelSerializer):
 
         if cronograma is not None and not cronograma.editavel:
             raise serializers.ValidationError(
-                "Este cronograma não é mais rascunho. Para mudar o plano, replaneje — "
-                "é o que preserva a versão anterior como linha de base."
+                "Este cronograma não é mais rascunho. Para mudar o plano, replaneje; a versão anterior "
+                "é preservada como linha de base."
             )
 
         if pai is not None:
@@ -1220,8 +1220,7 @@ class AtestarSerializer(serializers.Serializer):
         ).strip():
             raise serializers.ValidationError({
                 "observacao": (
-                    "Diga por que está reprovando — quem montou o documento "
-                    "precisa saber o que corrigir."
+                    "Motivo da reprovação."
                 ),
             })
         return dados
@@ -1413,9 +1412,7 @@ class CausaNaoCumprimentoSerializer(TenantScopedModelSerializer):
         #: entre empresas na Esfera de Rede. O nome é do tenant; o código, não.
         if self.instance and self.instance.de_fabrica and valor != self.instance.codigo:
             raise serializers.ValidationError(
-                "O código de uma causa de fábrica não muda — é por ele que o "
-                "histórico de duas obras se compara. Renomeie o nome dela para "
-                "o vocabulário da sua casa; o código fica."
+                "O código de uma causa de fábrica não muda. Apenas renomeie-a."
             )
         return valor
 
@@ -1745,8 +1742,7 @@ class ItemProgramacaoSerializer(TenantScopedModelSerializer):
             raise serializers.ValidationError(
                 f"Esta programação está "
                 f"{programacao.get_status_display().lower()}: compromisso novo "
-                f"só entra enquanto o quadro é rascunho. Assumir depois que a "
-                f"semana andou é escrever a aposta depois do resultado."
+                f"só em rascunho."
             )
         if atividade is not None and programacao is not None:
             try:
@@ -1780,9 +1776,7 @@ class ItemProgramacaoSerializer(TenantScopedModelSerializer):
                 onde = f" em «{local.nome}»" if local is not None else ""
                 raise serializers.ValidationError(
                     f"«{atividade.nome}»{onde} já está no quadro desta semana. "
-                    f"Dois cartões do mesmo serviço fariam o PPC contar a mesma "
-                    f"falha duas vezes — para dividir a frente, puxe-a em locais "
-                    f"diferentes."
+                    f"Para dividir a frente, coloque em locais diferentes."
                 )
 
         #: **A equipe e o nome andam juntos.** Com a equipe, o `responsavel` é o
@@ -1888,14 +1882,8 @@ class RemoverRestricaoSerializer(serializers.Serializer):
     #: espaço recebia o erro do framework em vez da razão. Achado pelo
     #: `pdca5_programacao_test.py`.
     nota = serializers.CharField(error_messages={
-        "blank": (
-            "Diga como a restrição foi removida. Sem isso, a reunião da semana "
-            "que vem não sabe se ela foi resolvida ou apenas esquecida."
-        ),
-        "required": (
-            "Diga como a restrição foi removida. Sem isso, a reunião da semana "
-            "que vem não sabe se ela foi resolvida ou apenas esquecida."
-        ),
+        "blank": "Informe como a restrição foi removida.",
+        "required": "Informe como a restrição foi removida.",
     })
 
 
@@ -1911,16 +1899,8 @@ class ReabrirSerializer(serializers.Serializer):
     #: DRF recusaria vazio com o texto dele, e a razão ficaria no `services`,
     #: para ninguém.
     motivo = serializers.CharField(error_messages={
-        "blank": (
-            "Diga por que a semana está sendo reaberta. O PPC dela já foi lido "
-            "por alguém — mudar o número sem deixar a razão escrita contraria "
-            "em silêncio a reunião que olhou para ele."
-        ),
-        "required": (
-            "Diga por que a semana está sendo reaberta. O PPC dela já foi lido "
-            "por alguém — mudar o número sem deixar a razão escrita contraria "
-            "em silêncio a reunião que olhou para ele."
-        ),
+        "blank": "Informe o motivo da reabertura da semana.",
+        "required": "Informe o motivo da reabertura da semana.",
     })
 
 
@@ -2279,8 +2259,8 @@ class RegistrarEficaciaSerializer(serializers.Serializer):
     def validate_evidencia(self, valor):
         if not (valor or "").strip():
             raise serializers.ValidationError(
-                "Diga o que você olhou para concluir isso. Verificação de "
-                "eficácia sem evidência é um carimbo."
+                "Informe o que foi verificado. A verificação de eficácia "
+                "exige evidência."
             )
         return valor
 
@@ -2301,7 +2281,7 @@ class CancelarNcSerializer(serializers.Serializer):
     def validate_motivo(self, valor):
         if not (valor or "").strip():
             raise serializers.ValidationError(
-                "Diga por que esta NC não era uma não-conformidade."
+                "Informe por que esta NC não era uma não-conformidade."
             )
         return valor
 
@@ -2585,7 +2565,7 @@ class MaterialDaAtividadeSerializer(TenantScopedModelSerializer):
                 dados["unidade"] = item.unidade
         if self.instance is None:
             if not (dados.get("descricao") or "").strip():
-                raise serializers.ValidationError({"descricao": "Diga qual é o material (ou escolha do catálogo)."})
+                raise serializers.ValidationError({"descricao": "Informe o material ou escolha do catálogo."})
             if not (dados.get("unidade") or "").strip():
                 raise serializers.ValidationError({"unidade": "Informe a unidade."})
         return dados

@@ -81,7 +81,7 @@ def servir(entregue: ArquivoEntregue) -> FileResponse:
     de "o cliente não tem acesso".
     """
     if not entregue.campo:
-        raise FileNotFoundError("Esta linha não tem arquivo — nada a servir.")
+        raise FileNotFoundError("Esta linha não tem arquivo.")
 
     arquivo = entregue.campo.open("rb")
     resposta = FileResponse(

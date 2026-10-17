@@ -403,7 +403,7 @@ function BotaoDeSeta({
 }
 
 function SeloDaSemana({ programacao }: { programacao: ProgramacaoSemanal }) {
-  const ppc = percentual(programacao.ppc)
+  const ppc = percentual(programacao.ppc?.ppc)
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <Pill
@@ -764,7 +764,7 @@ function DialogoDeReabertura({
 
         <p style={{ fontSize: 12.5, color: 'var(--ink-2)', lineHeight: 1.6, margin: 0 }}>
           A semana volta a aceitar julgamento, e o cumprimento de{' '}
-          <strong>{percentual(programacao.ppc) ?? 'sem apuração'}</strong> deixa
+          <strong>{percentual(programacao.ppc?.ppc) ?? 'sem apuração'}</strong> deixa
           de valer até ela ser encerrada de novo. O índice já foi lido por
           alguém — a reabertura fica marcada na série para quem lembrar do número
           antigo saber o que houve.

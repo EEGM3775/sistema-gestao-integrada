@@ -84,7 +84,7 @@ def converter_lead(lead, usuario=None):
     lead.save(update_fields=["status", "updated_at"])
 
     return {
-        "message": "Lead convertido com sucesso!",
+        "message": "Lead convertido.",
         "account_id": str(account.id),
         "contact_id": str(contact.id),
         "opportunity_id": str(opportunity.id),

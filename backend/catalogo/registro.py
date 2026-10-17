@@ -85,7 +85,7 @@ def registrar_item_proprio(
     """
     descricao = re.sub(r"\s+", " ", (descricao or "").strip())[:255]
     if not descricao:
-        raise TextoInvalido("Diga o que é o item.")
+        raise TextoInvalido("Informe o que é o item.")
     unidade = (unidade or "").strip()[:20] or "un"
 
     existente = item_equivalente(tenant_id, descricao, unidade)
@@ -113,4 +113,4 @@ def registrar_item_proprio(
             # Outra gravação levou o número entre a leitura e o insert: o
             # próximo `proximo_codigo` já o enxerga e devolve o seguinte.
             continue
-    raise IntegrityError("Não foi possível reservar um código livre para o item.")
+    raise IntegrityError("Não foi possível reservar um código para o item.")

@@ -52,6 +52,8 @@ export interface Proposta {
   proposta_id: number; cotacao: number; fornecedor: number | null; origem_tenant: string | null
   fornecedor_nome: string; valor_total: string | null; prazo_entrega_dias: number | null
   status: StatusProposta; criado_em: string; fornecedor_label?: string
+  /** Quando o preço chegou (o comprador digita dias depois). */
+  recebida_em: string; observacao: string
   fornecedor_avaliacao_media?: string | null; fornecedor_avaliacao_count?: number
 }
 export interface ItemProposta {
@@ -149,6 +151,12 @@ export interface FichaItem {
     ultimo_preco_pago: string | null; ultima_compra: string | null
   }[]
   historico_precos: { pedido: number; data: string; fornecedor: number; fornecedor_nome: string; quantidade: string; unidade: string; preco_unitario: string }[]
+  /** Pontos do gráfico "preço por fornecedor ao longo do tempo", em ordem cronológica. */
+  grafico_precos: {
+    pagos: { data: string; fornecedor: number; fornecedor_nome: string; pedido: number; quantidade: string; preco_unitario: string }[]
+    /** `fornecedor` nulo = proposta da rede (só o rótulo). */
+    cotados: { data: string; fornecedor: number | null; fornecedor_nome: string; cotacao: number; status: 'recebida' | 'vencedora' | 'recusada'; quantidade: string; preco_unitario: string }[]
+  }
   preco_resumo: { ultimo: string | null; menor: string | null; maior: string | null; compras: number }
   orcamentos: { orcamento: number; descricao: string; versao: number; obra: string; linhas: number; quantidade: string | null }[]
   estoque: { local: number; local_nome: string; quantidade: string; reservado: string; custo_medio: string }[]

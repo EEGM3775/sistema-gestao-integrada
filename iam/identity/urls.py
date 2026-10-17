@@ -2,6 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from . import views
+from .auditoria import EventosSegurancaView
 
 router = DefaultRouter()
 router.register("tenants", views.TenantViewSet, basename="tenant")
@@ -81,6 +82,8 @@ urlpatterns = [
     path("catalogo-permissoes/", views.CatalogoPermissoesView.as_view(), name="catalogo-permissoes"),
     # Fase 6 — o suporte da plataforma só entra com consentimento (§10.7).
     path("suporte/", views.SuporteDaEmpresaView.as_view(), name="suporte-da-empresa"),
+    # D17 — a trilha de identidade, lida com a mesma permissão da do backend.
+    path("eventos-seguranca/", EventosSegurancaView.as_view(), name="eventos-seguranca"),
     path(".well-known/jwks.json", views.JwksView.as_view(), name="jwks"),
     path("", include(router.urls)),
 ]

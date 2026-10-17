@@ -158,7 +158,11 @@ demo = upsert_user(
      # `fiscal_de_obra`. O `demo` consertando e assinando que o próprio conserto
      # funcionou tornaria o laço da §4.5 indemonstrável com token real, que é
      # exatamente o que o `gestor_contratos` evitou na medição.
-     "tecnico_qualidade"],
+     "tecnico_qualidade"]
+    # Decisão do dono (17/10/2026): o `demo` testa tudo, sem virar admin (o admin
+    # exige segundo fator). Leva TODOS os papéis de fábrica do tenant — os papéis
+    # somam, então isto cobre também o que os acima omitiram de propósito.
+    + list(Perfil.objects.filter(tenant=tenant).values_list("nome", flat=True)),
 )
 semdrone = upsert_user(tenant, "semdrone", "semdrone123", ["erp_financeiro"], ["operacional"])
 # O `engenharia` aqui não é enfeite: é o único ator do seed capaz de provar a

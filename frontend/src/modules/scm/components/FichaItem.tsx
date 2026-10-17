@@ -3,7 +3,8 @@
  * existe de verdade e "sem …" quando não há, nunca um número inventado. */
 import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Store, Warehouse, FileSpreadsheet, History, Tag } from 'lucide-react'
+import { Store, Warehouse, FileSpreadsheet, Tag } from 'lucide-react'
+import { PrecoPorFornecedor } from './GraficoPrecos'
 import { fichaItem } from '../api/scmApi'
 import { brl, qty, dataBR } from '../lib'
 import { Btn, Card, Info, Loading, Modal, Pill } from './ui'
@@ -21,8 +22,6 @@ function Bloco({ icone, titulo, children }: { icone: ReactNode; titulo: string; 
   )
 }
 const vazio = (t: string) => <div style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>{t}</div>
-const th = { ...CAPS, fontSize: 10, textAlign: 'left' as const, padding: '7px 10px', borderBottom: '1px solid var(--line)', background: 'var(--surface-2)' }
-const td = { padding: '8px 10px', borderBottom: '1px solid var(--line-2)', fontSize: 12.5 }
 
 export function FichaItemModal({ item, onClose }: { item: number; onClose: () => void }) {
   const { data: f, isLoading } = useQuery({ queryKey: ['scm', 'ficha', item], queryFn: () => fichaItem(item) })
@@ -54,42 +53,8 @@ function Conteudo({ f }: { f: Ficha }) {
         </div>
       </Bloco>
 
-      <Bloco icone={<Store size={13} />} titulo={`Lojas (${f.lojas.length})`}>
-        {f.lojas.length === 0 ? vazio('Nenhum fornecedor vende este item ainda.') : (
-          <div style={{ overflowX: 'auto', border: '1px solid var(--line)', borderRadius: 'var(--r-sm)' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 520 }}>
-              <thead><tr><th style={th}>Fornecedor</th><th style={{ ...th, textAlign: 'right' }}>Preço de tabela</th><th style={{ ...th, textAlign: 'right' }}>Último pago</th><th style={th}>Última compra</th><th style={th}>Cód. na loja</th></tr></thead>
-              <tbody>{f.lojas.map(l => (
-                <tr key={l.fornecedor}>
-                  <td style={{ ...td, color: 'var(--ink)', fontWeight: 600 }}>{l.fornecedor_nome}{l.compra_direta && <> <Pill kind="net">compra direta</Pill></>}</td>
-                  <td style={{ ...td, ...mono, textAlign: 'right' }}>{l.preco_oferta ? brl(l.preco_oferta) : '—'}</td>
-                  <td style={{ ...td, ...mono, textAlign: 'right', fontWeight: 650 }}>{l.ultimo_preco_pago ? brl(l.ultimo_preco_pago) : 'sem compra'}</td>
-                  <td style={{ ...td, ...mono }}>{l.ultima_compra ? dataBR(l.ultima_compra) : '—'}</td>
-                  <td style={{ ...td, ...mono, color: 'var(--ink-3)' }}>{l.codigo_no_fornecedor || '—'}</td>
-                </tr>
-              ))}</tbody>
-            </table>
-          </div>
-        )}
-      </Bloco>
-
-      <Bloco icone={<History size={13} />} titulo="Preços pagos">
-        {f.historico_precos.length === 0 ? vazio('Sem compra registrada.') : (
-          <div style={{ overflowX: 'auto', border: '1px solid var(--line)', borderRadius: 'var(--r-sm)', maxHeight: 220, overflowY: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 460 }}>
-              <thead><tr><th style={th}>Data</th><th style={th}>Pedido</th><th style={th}>Fornecedor</th><th style={{ ...th, textAlign: 'right' }}>Qtd.</th><th style={{ ...th, textAlign: 'right' }}>Preço</th></tr></thead>
-              <tbody>{f.historico_precos.map((h, i) => (
-                <tr key={i}>
-                  <td style={{ ...td, ...mono }}>{dataBR(h.data)}</td>
-                  <td style={{ ...td, ...mono }}>#{h.pedido}</td>
-                  <td style={td}>{h.fornecedor_nome}</td>
-                  <td style={{ ...td, ...mono, textAlign: 'right' }}>{qty(h.quantidade)} {h.unidade}</td>
-                  <td style={{ ...td, ...mono, textAlign: 'right', fontWeight: 650 }}>{brl(h.preco_unitario)}</td>
-                </tr>
-              ))}</tbody>
-            </table>
-          </div>
-        )}
+      <Bloco icone={<Store size={13} />} titulo="Preço por fornecedor ao longo do tempo">
+        <PrecoPorFornecedor f={f} />
       </Bloco>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 16 }}>

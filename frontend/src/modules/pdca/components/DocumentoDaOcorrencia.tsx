@@ -205,7 +205,7 @@ function BlocoDaCat({ ocorrencia }: { ocorrencia: Ocorrencia }) {
                   corpo: { tipo, emitida_em: emitida, protocolo: protocolo.trim() },
                 })
                 if (!r.dentro_do_prazo) {
-                  setAviso('Registrada fora do prazo legal. O registro fica, com a data verdadeira.')
+                  setAviso('Registrada fora do prazo legal. A data real foi mantida.')
                 }
               } catch (e) {
                 setErro(primeiraFrase(e))

@@ -2,6 +2,7 @@
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from nucleo.busca import BuscaSemAcento
+from nucleo.paginacao import PaginaSobPedido
 from rest_framework.filters import OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
 from nucleo.tenancy import TenantScopedViewSetMixin
@@ -21,6 +22,23 @@ from .serializers import (
 from obras.models import Obra
 from django.db.models import Count, F, Q
 from payment.planos import PAGINA_MAXIMA, PAGINA_PADRAO
+from rest_framework.filters import BaseFilterBackend
+
+
+class BuscaDoEstoque(BaseFilterBackend):
+    """`?search=` da aba Unidades: entende "QD 12 LT 05" como a tela escreve.
+
+    A regra mora em `clientes.carteira.buscar_no_estoque`, junto da busca da
+    carteira — as duas telas mostram a mesma unidade e não podem discordar
+    sobre o que "QD 12" quer dizer.
+    """
+
+    def filter_queryset(self, request, queryset, view):
+        from clientes.carteira import buscar_no_estoque
+
+        busca = request.query_params.get('search', '').strip()
+        return buscar_no_estoque(queryset, busca) if busca else queryset
+
 
 class EmpreendimentoViewSet(QuotaEnforcedMixin, TenantScopedViewSetMixin, viewsets.ModelViewSet):
     queryset = Empreendimento.objects.all()
@@ -30,6 +48,7 @@ class EmpreendimentoViewSet(QuotaEnforcedMixin, TenantScopedViewSetMixin, viewse
     quota_recurso = "empreendimentos"  # D24
     filter_backends = [DjangoFilterBackend, BuscaSemAcento, OrderingFilter]
     search_fields = ['empreendimento', 'razao_social', 'cnpj']
+    pagination_class = PaginaSobPedido
 
     def get_queryset(self):
         # Contagem de unidades no próprio SELECT: a Visão Geral mostra "38
@@ -89,9 +108,8 @@ class UnidadeViewSet(TenantScopedViewSetMixin, viewsets.ModelViewSet):
     serializer_class = UnidadeSerializer
     permission_classes = [IsAuthenticated, RequirePermission]
     required_resource = "obra.empreendimento"
-    filter_backends = [DjangoFilterBackend, BuscaSemAcento, OrderingFilter]
+    filter_backends = [DjangoFilterBackend, BuscaDoEstoque, OrderingFilter]
     filterset_fields = ['empreendimento', 'situacao', 'tipo', 'quadra', 'bloco_torre']
-    search_fields = ['quadra', 'lote', 'bloco_torre', 'andar', 'apto', 'endereco']
     ordering_fields = ['valor_base', 'situacao', 'tipo', 'area_privativa', 'data_criacao']
     pagination_class = UnidadePagination
 

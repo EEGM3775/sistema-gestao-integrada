@@ -177,7 +177,8 @@ export const CATALOGO: ModuloDef[] = [
     descricao: 'Levantamento aéreo, ortofoto e modelo 3D por obra, com NodeODM e Potree.',
     icon: Plane,
     estagio: 'construir',
-    situacao: 'backend',
+    situacao: 'pronto',
+    rota: '/app/drone',
     modulo: 'drone',
   },
   {

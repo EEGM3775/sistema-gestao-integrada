@@ -30,11 +30,13 @@ Decisão de 07/06/2026, conforme o **AD-8** da [arquitetura.md](../arquitetura.m
 - **Agora:** **sandbox** (`https://api-sandbox.asaas.com/v3`) — cobranças de teste, sem dinheiro real,
   para construir e validar o fluxo ponta a ponta.
 - **Depois:** **real** (`https://api.asaas.com/v3`) — troca-se `ASAAS_BASE_URL` + `ASAAS_API_KEY`.
-- **Credencial — decisão do MVP (07/06/2026):** **chave global** em `.env`
-  (`ASAAS_API_KEY`/`ASAAS_BASE_URL`/`ASAAS_WEBHOOK_TOKEN`), compartilhada por todos os tenants. Migrar
-  para credencial **por tenant** (`IntegracaoAsaas`, cada empresa com a própria conta Asaas, segredo
-  cifrado) é pendência operacional da [Fase 5](../roadmap.md#fase-5--endurecimento-rs256jwks--borda) —
-  ver também a questão em aberto em [moduloerp.md §15](moduloerp.md#15-questões-em-aberto-decidir-antes-da-sub-fase-relevante).
+- **Credencial:** a do ambiente em `.env` (`ASAAS_API_KEY`/`ASAAS_BASE_URL`/`ASAAS_WEBHOOK_TOKEN`) é a
+  conta **da matriz**; cada entidade pode ter a sua (`moduloerp.IntegracaoAsaas`, chave cifrada,
+  cadastrada em ERP › Configurações). A escolha é `services.conta_asaas_da_entidade` — a conta própria
+  da entidade dona do título; a do ambiente só para a matriz ou para quem tem uma entidade só; a outra
+  entidade do grupo sem conta é recusada (`EntidadeSemContaAsaas`). O boleto grava a conta em que nasceu
+  (`Boleto.conta_asaas`) e `cliente_asaas_do_boleto` a devolve para cancelar e conferir. Regra completa
+  em [entidades.md §5](entidades.md).
 
 ## Arquitetura
 

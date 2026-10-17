@@ -263,7 +263,7 @@ export default function InserirItemModal({ onFechar, onInserir, inserindo, baseD
       if (!escolhas.length) { setErro('Marque ao menos um item.'); return }
       await onInserir(escolhas)
     } catch {
-      setErro('Não foi possível inserir. Verifique se você tem permissão de adoção no catálogo.')
+      setErro('Não foi possível inserir. Verifique a permissão de adoção no catálogo.')
     }
   }
 
@@ -280,7 +280,7 @@ export default function InserirItemModal({ onFechar, onInserir, inserindo, baseD
       })
       await onInserir([{ itemCatalogoId: criado.item_id, descricao: criado.descricao }])
     } catch {
-      setErro('Não foi possível criar o item. Código interno duplicado ou permissão `cadastro.item.edit` ausente.')
+      setErro('Não foi possível criar o item. Código duplicado ou sem a permissão cadastro.item.edit.')
     }
   }
 

@@ -36,7 +36,7 @@ export function AbaObra({ clienteId }: { clienteId: number }) {
   const { unidades, obras } = consulta.data!
 
   if (unidades.length === 0) {
-    return <Empty>Este cliente ainda não tem aquisição registrada — sem unidade, não há obra para acompanhar.</Empty>
+    return <Empty>Este cliente ainda não tem aquisição registrada.</Empty>
   }
 
   return (

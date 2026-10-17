@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { X, Loader2 } from 'lucide-react'
-import apiClient from '@/api/apiClient'
-import type { Obra, ObraFormData, StatusObra, Empreendimento } from '@/types'
+import type { Obra, ObraFormData, StatusObra } from '@/types'
+import { SeletorDeEmpreendimento } from '@/components/malha'
 import { FieldError, FormErrorBanner, parseApiErrors, type FieldErrors } from '@/utils/formErrors'
 import { validateISO_Vigencia, minCalendarioISO, maxCalendarioISO } from '@/utils/dates'
 import { useAuth } from '@/hooks/useAuth'
@@ -94,21 +94,12 @@ export const ObraForm: React.FC<Props> = ({ open, onClose, onSave, initial }) =>
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   /** O 400 de nome repetido, quando o servidor manda o conflito e a sugestão. */
   const [conflito, setConflito] = useState<ConflitoDeNome | null>(null)
-  const [empreendimentos, setEmpreendimentos] = useState<Empreendimento[]>([])
   const { hasPermission } = useAuth()
   const entidades = useEntidades('grupo', open && hasPermission('cadastro.entidade.view'))
   const executoras = hasPermission('cadastro.entidade.view') ? (entidades.data ?? []).filter(e => e.ativa) : []
 
   const overlayRef         = useRef<HTMLDivElement>(null)
   const mousedownOnOverlay = useRef(false)
-
-  // Carrega empreendimentos para o select
-  useEffect(() => {
-    if (!open) return
-    apiClient.get('/empreendimentos/')
-      .then(r => setEmpreendimentos(r.data.results ?? r.data))
-      .catch(() => {})
-  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -271,18 +262,15 @@ export const ObraForm: React.FC<Props> = ({ open, onClose, onSave, initial }) =>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label style={labelStyle}>Empreendimento</label>
-              <select
-                style={{ ...inputStyle, cursor: 'pointer' }}
-                value={form.empreendimento ?? ''}
-                onChange={e => set('empreendimento', e.target.value ? parseInt(e.target.value, 10) : null)}
-              >
-                <option value="">Nenhum (obra avulsa)</option>
-                {empreendimentos.map(emp => (
-                  <option key={emp.empreendimento_id} value={emp.empreendimento_id}>
-                    {emp.empreendimento}
-                  </option>
-                ))}
-              </select>
+              {/* Busca no servidor (F2); vazio = obra avulsa. */}
+              <SeletorDeEmpreendimento
+                valor={form.empreendimento ?? null}
+                aoMudar={id => set('empreendimento', id ?? null)}
+                permiteLimpar
+                placeholder="Nenhum (obra avulsa) — busque para escolher"
+                aria-label="Empreendimento"
+                style={inputStyle}
+              />
               <FieldError msg={fieldErrors.empreendimento} />
             </div>
             {executoras.length > 1 && (

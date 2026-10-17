@@ -79,7 +79,7 @@ class Parcela:
     que ninguém digitou.
     """
     numero: int
-    tipo: str  # a_vista | entrada | parcela | balao | cartao
+    tipo: str  # a_vista | entrada | parcela | balao | livre | cartao
     vencimento: date
     valor: Decimal
     juros: Decimal = ZERO
@@ -326,6 +326,9 @@ class TipoDeMeio:
     #: "obrigatoria", "opcional" ou "" (o meio não tem descrição).
     descricao: str = "opcional"
     rotulo_descricao: str = "Observação"
+    #: O meio é uma lista de (data, valor) digitada linha a linha, e não uma
+    #: série que se calcula de quantidade + 1º vencimento.
+    cronograma: bool = False
 
     def como_dict(self) -> dict:
         return {
@@ -344,6 +347,7 @@ class TipoDeMeio:
             "rotuloVencimento": self.rotulo_vencimento,
             "descricao": self.descricao,
             "rotuloDescricao": self.rotulo_descricao,
+            "cronograma": self.cronograma,
         }
 
 
@@ -377,10 +381,22 @@ TIPOS_DE_MEIO: dict[str, TipoDeMeio] = {
             codigo="anuais", descricao="", rotulo="Parcelas anuais (intercaladas)",
             rotulo_resumo="Anuais / intercaladas",
             no_carne=True, tipo_parcela="balao", condicao="financiamento_direto",
-            parcelas=True, rotulo_parcelas="Quantas", periodicidade=True,
+            parcelas=True, rotulo_parcelas="Quantas", periodicidade=True, juros=True,
             vencimento=True, rotulo_vencimento="1º vencimento",
-            nota="Reforços periódicos que somam à mensal do mês em que caem. Não pagam "
-                 "juros: são um meio à parte, com o seu próprio valor.",
+            nota="Reforços periódicos que somam à mensal do mês em que caem. Sem taxa, "
+                 "cada uma vale o que foi digitado. Com taxa, o valor digitado é o "
+                 "principal e os juros correm da data da venda até cada vencimento — "
+                 "as anuais saem iguais, com o juro dentro, como no financiamento.",
+        ),
+        TipoDeMeio(
+            codigo="datas_livres", descricao="", rotulo="Parcelas com datas livres",
+            rotulo_resumo="Parcelas com datas livres",
+            no_carne=True, tipo_parcela="livre", condicao="financiamento_direto",
+            cronograma=True,
+            nota="Cada parcela com a sua data e o seu valor, digitados um a um — para o "
+                 "que não segue mês a mês nem ano a ano (safra, chaves, 13º, um "
+                 "recebimento combinado). O valor do meio é a soma das linhas, e cada "
+                 "linha é o que o comprador paga: sem juros calculados.",
         ),
         TipoDeMeio(
             codigo="financiamento_bancario", rotulo="Financiamento bancário",
@@ -435,6 +451,10 @@ class Meio:
     juros_mensal: Decimal = ZERO
     sistema_amortizacao: str = "price"
     periodicidade: str = "anual"
+    #: Só nas parcelas com datas livres: `[{"vencimento": "2027-03-10",
+    #: "valor": "5000.00"}, …]`, em ordem de data. Texto e não `date`/`Decimal`
+    #: porque é assim que vai para o `JSONField` do modelo (`vars(meio)`).
+    cronograma: list = field(default_factory=list)
 
     @property
     def catalogo(self) -> TipoDeMeio:
@@ -458,6 +478,34 @@ def _data(valor) -> date | None:
         raise ValueError(f"Data inválida: {valor}.") from None
 
 
+def _cronograma_de(linhas, catalogo: TipoDeMeio, ordem: int) -> list[dict]:
+    """As parcelas com datas livres, lidas e conferidas, em ordem de data.
+
+    Ordenar aqui (e não confiar na ordem digitada) é o que faz "Parcela 1/4" ser
+    a primeira a vencer — o vendedor acrescenta a linha que esqueceu no fim.
+    """
+    from payment.planos import VENDA_TETO_PARCELAS_LIVRES
+
+    nome = _nome(catalogo, ordem)
+    if not isinstance(linhas, (list, tuple)):
+        raise ValueError(f"{nome}: lista de parcelas inválida.")
+    if len(linhas) > VENDA_TETO_PARCELAS_LIVRES:
+        raise ValueError(f"{nome}: comporta até {VENDA_TETO_PARCELAS_LIVRES} parcelas.")
+    lidas = []
+    for n, linha in enumerate(linhas, start=1):
+        vencimento = _data(_ler(linha, "vencimento"))
+        try:
+            valor = centavos(Decimal(str(_ler(linha, "valor", 0))))
+        except (ArithmeticError, ValueError, TypeError):
+            raise ValueError(f"{nome}, parcela {n}: valor inválido.") from None
+        if vencimento is None:
+            raise ValueError(f"{nome}, parcela {n}: informe a data.")
+        if valor <= 0:
+            raise ValueError(f"{nome}, parcela {n}: informe o valor.")
+        lidas.append({"vencimento": vencimento.isoformat(), "valor": str(valor)})
+    return sorted(lidas, key=lambda l: l["vencimento"])
+
+
 def meio_de(origem, ordem: int = 1) -> Meio:
     """Lê um meio do payload (dict) ou do registro (modelo) e **apaga o que o
     tipo não comporta**.
@@ -476,6 +524,18 @@ def meio_de(origem, ordem: int = 1) -> Meio:
         juros = Decimal(str(_ler(origem, "juros_mensal", 0)))
     except (ArithmeticError, ValueError, TypeError):
         raise ValueError(f"{_nome(catalogo, ordem)}: número inválido.") from None
+    if catalogo.cronograma:
+        # A lista manda: o valor do meio e a quantidade **saem** dela. Aceitar um
+        # `valor` enviado à parte abriria um meio cujo total não é a soma das
+        # parcelas que ele gera.
+        cronograma = _cronograma_de(_ler(origem, "cronograma", []) or [], catalogo, ordem)
+        return Meio(
+            tipo=tipo,
+            valor=centavos(sum((Decimal(l["valor"]) for l in cronograma), ZERO)),
+            parcelas=len(cronograma) or 1,
+            primeiro_vencimento=_data(cronograma[0]["vencimento"]) if cronograma else None,
+            cronograma=cronograma,
+        )
     return Meio(
         tipo=tipo,
         valor=valor,
@@ -527,6 +587,8 @@ def _nome(meio_ou_tipo, ordem: int) -> str:
 
 def _validar_meio(meio: Meio, ordem: int) -> None:
     nome = _nome(meio, ordem)
+    if meio.catalogo.cronograma and not meio.cronograma:
+        raise ValueError(f"{nome}: adicione ao menos uma parcela com data e valor.")
     if meio.valor <= 0:
         raise ValueError(f"{nome}: informe o valor.")
     if meio.catalogo.parcelas and meio.parcelas < 1:
@@ -594,7 +656,13 @@ def _detalhe(meio: Meio, linhas: list[Parcela]) -> str:
         return f"{meio.parcelas}x {juros}"
     if t == "anuais":
         passo = "semestrais" if meio.periodicidade == "semestral" else "anuais"
-        return f"{meio.parcelas} {passo} de {brl(linhas[-1].valor) if linhas else brl(ZERO)}"
+        texto = f"{meio.parcelas} {passo} de {brl(linhas[-1].valor) if linhas else brl(ZERO)}"
+        return f"{texto}, {_taxa_legivel(meio.juros_mensal)}" if meio.juros_mensal > 0 else texto
+    if t == "datas_livres":
+        if not linhas:
+            return ""
+        return (f"{len(linhas)}x de {linhas[0].vencimento:%d/%m/%Y} "
+                f"a {linhas[-1].vencimento:%d/%m/%Y}")
     if t == "cartao":
         return f"{meio.parcelas}x na operadora" if meio.parcelas > 1 else "à vista na operadora"
     return ""
@@ -638,6 +706,16 @@ def _linhas_do_meio(meio: Meio, ordem: int, hoje: date) -> list[Parcela]:
             in enumerate(calcular(meio.valor, taxa, meio.parcelas))
         ]
 
+    if t == "datas_livres":
+        # Cada linha é o que o comprador paga, na data combinada. Nada a calcular.
+        return [
+            Parcela(
+                numero=i + 1, tipo=tipo, vencimento=_data(linha["vencimento"]),
+                valor=Decimal(linha["valor"]), amortizacao=Decimal(linha["valor"]), meio=ordem,
+            )
+            for i, linha in enumerate(meio.cronograma)
+        ]
+
     # Entrada sem juros e anuais: partes iguais, sem juros. A sobra de centavos
     # vai na primeira — quem paga o sinal prefere a diferença no ato à surpresa
     # no fim.
@@ -647,6 +725,9 @@ def _linhas_do_meio(meio: Meio, ordem: int, hoje: date) -> list[Parcela]:
     if t == "anuais":
         passo = 6 if meio.periodicidade == "semestral" else 12
         inicio = meio.primeiro_vencimento or somar_meses(hoje, passo)
+        if meio.juros_mensal > 0:
+            vencimentos = [somar_meses(inicio, i * passo) for i in range(n)]
+            return _anuais_com_juros(meio, ordem, hoje, vencimentos)
     base = centavos(meio.valor / n)
     linhas = []
     for i in range(n):
@@ -654,6 +735,54 @@ def _linhas_do_meio(meio: Meio, ordem: int, hoje: date) -> list[Parcela]:
         linhas.append(Parcela(
             numero=i + 1, tipo=tipo, vencimento=somar_meses(inicio, i * passo),
             valor=valor, amortizacao=valor, meio=ordem,
+        ))
+    return linhas
+
+
+def _meses_entre(de: date, ate: date) -> int:
+    """Meses de calendário de `de` até `ate` — a mesma régua de `somar_meses`.
+
+    Juros correm por mês, não por dia (ver `montar`): a anual de 10/03/2028
+    numa venda de 10/03/2026 está a 24 meses, e não a 731 dias.
+    """
+    return max(0, (ate.year - de.year) * 12 + ate.month - de.month)
+
+
+def _anuais_com_juros(meio: Meio, ordem: int, hoje: date, vencimentos: list[date]) -> list[Parcela]:
+    """Anuais financiadas: valor igual em todas, com o juro de cada uma dentro.
+
+    Item 76 do dono: "as anuais não entram juros — incorporadoras fazem assim?".
+    Fazem dos dois jeitos, e por isso a taxa é opcional e parte de zero:
+
+    - **sem taxa**, a anual é um valor nominal combinado ("duas anuais de 10
+      mil") e o reajuste vem só da correção monetária do contrato;
+    - **com taxa**, ela é parte do saldo financiado — o principal fica com a
+      construtora até a data da anual e rende o mesmo juro do financiamento,
+      que é o caso comum de loteadora com tabela Price.
+
+    A conta é a de qualquer série com prazos desiguais: o valor de cada anual é
+    o que faz o valor presente da série, descontado mês a mês desde a venda,
+    igualar o principal — ``cada = P / Σ (1+i)^-mₖ``. Daí a evolução do saldo é
+    a mesma do Price: o saldo cresce pelo juro do intervalo e cai pela anual, e
+    a última fecha o saldo para o centavo não sobrar.
+    """
+    taxa = meio.juros_mensal / 100
+    meses = [_meses_entre(hoje, v) for v in vencimentos]
+    desconto = sum((1 / (1 + taxa) ** m for m in meses), ZERO)
+    cada = centavos(meio.valor / desconto)
+    linhas, saldo, anterior = [], meio.valor, 0
+    for i, (vencimento, m) in enumerate(zip(vencimentos, meses)):
+        juros = centavos(saldo * ((1 + taxa) ** (m - anterior) - 1))
+        if i == len(vencimentos) - 1:
+            amortizacao, valor = saldo, centavos(saldo + juros)
+        else:
+            amortizacao = centavos(cada - juros)
+            valor = cada
+        saldo = centavos(saldo - amortizacao)
+        anterior = m
+        linhas.append(Parcela(
+            numero=i + 1, tipo=meio.catalogo.tipo_parcela, vencimento=vencimento,
+            valor=valor, juros=juros, amortizacao=amortizacao, saldo=max(saldo, ZERO), meio=ordem,
         ))
     return linhas
 
@@ -764,7 +893,7 @@ def montar(
         desconto=desconto,
         valor_negociado=valor_negociado,
         entrada=soma_do("entrada"),
-        baloes=soma_do("anuais"),
+        baloes=centavos(soma_do("anuais") + soma_do("datas_livres")),
         saldo_financiado=soma_do("financiamento_direto"),
         total_juros=centavos(sum((p.juros for p in parcelas), ZERO)),
         total=centavos(sum((p.valor for p in parcelas), ZERO)),
@@ -805,7 +934,7 @@ def montar_da_aquisicao(aquisicao, *, ajustar_vencimento=_PADRAO) -> Plano:
 # ─── O texto do título ────────────────────────────────────────────────────────
 
 _NOME_DA_LINHA = {
-    "entrada": "Entrada", "parcela": "Parcela", "balao": "Balão",
+    "entrada": "Entrada", "parcela": "Parcela", "balao": "Balão", "livre": "Parcela",
 }
 
 

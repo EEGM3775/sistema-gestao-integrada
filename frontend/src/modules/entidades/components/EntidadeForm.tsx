@@ -131,7 +131,7 @@ export default function EntidadeForm({ entidade, grupo, onClose, onSalvo }: {
               }}
               inputMode="numeric" style={campo}
             />
-            <span className="text-xs" style={{ color: 'var(--ink-3)' }}>Pode ficar para depois; sem ele, a entidade não emite nota nem boleto.</span>
+            <span className="text-xs" style={{ color: 'var(--ink-3)' }}>Sem ele, a entidade não emite nota nem boleto.</span>
             <FieldError msg={erros.documento} />
           </Rotulo>
         </div>

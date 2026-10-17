@@ -104,6 +104,24 @@ export const cadastrarItem = (body: { descricao?: string; unidade?: string; forn
   apiClient.post<ItemCadastrado>('scm/pedidos/cadastrar_item/', body).then(r => r.data)
 export const fichaItem = (item: number) => apiClient.get<FichaItem>(`catalogo/itens/${item}/ficha/`).then(r => r.data)
 
+/** A proposta que o comprador digita (dono, 16/10/2026): item sem preço é o que o fornecedor não cotou. */
+export interface PropostaDigitada {
+  fornecedor: number; recebida_em: string; prazo_entrega_dias: number | null; observacao: string
+  itens: { item_demanda: number; preco_unitario: string }[]
+}
+export const registrarProposta = (cotacao: number, body: PropostaDigitada) =>
+  apiClient.post<Proposta>(`scm/cotacoes/${cotacao}/propostas/`, body).then(r => r.data)
+export const alterarProposta = (cotacao: number, proposta: number, body: PropostaDigitada) =>
+  apiClient.put<Proposta>(`scm/cotacoes/${cotacao}/propostas/${proposta}/`, body).then(r => r.data)
+export const apagarProposta = (cotacao: number, proposta: number) =>
+  apiClient.delete(`scm/cotacoes/${cotacao}/propostas/${proposta}/`)
+/** O mapa comparativo — uma cotação ou várias num arquivo. */
+export const mapaDeCotacoes = (ids: number[], formato: 'pdf' | 'xlsx') =>
+  (ids.length === 1
+    ? apiClient.get<Blob>(`scm/cotacoes/${ids[0]}/mapa/`, { params: { formato }, responseType: 'blob' })
+    : apiClient.get<Blob>('scm/cotacoes/mapas/', { params: { ids: ids.join(','), formato }, responseType: 'blob' })
+  ).then(r => r.data)
+
 /** Compra sem catálogo e sem cotação — fornecedor, itens, preço (dono, 10/10/2026). */
 export interface ItemDeCompraAvulsa { produto?: number | null; descricao?: string; unidade?: string; quantidade: string; preco_unitario: string }
 export const compraAvulsa = (body: {

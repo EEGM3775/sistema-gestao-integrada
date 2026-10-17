@@ -1114,7 +1114,7 @@ class OrcamentoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets.
         motivo = (request.data.get("motivo") or "").strip()
         if not motivo:
             return Response(
-                {"motivo": "Informe o motivo da revisão — é o que justifica o aditivo."},
+                {"motivo": "Informe o motivo da revisão."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if tipo not in RevisaoOrcamento.Tipo.values:
@@ -2002,7 +2002,7 @@ class BancoPrecoViewSet(_OrcamentoPermsMixin, TenantScopedViewSetMixin, viewsets
     def perform_destroy(self, instance):
         if instance.travado:
             raise exceptions.ValidationError(
-                {"detail": "Banco travado não é excluído — destrave primeiro, de propósito."}
+                {"detail": "Banco travado não pode ser excluído. Destrave primeiro."}
             )
         instance.delete()
 

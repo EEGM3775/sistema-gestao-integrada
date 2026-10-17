@@ -138,7 +138,7 @@ export function GerarCobrancaDialog({ open, contaId, onClose, onConfirm, pending
               {p.boleto_substituido && (
                 <p style={{ fontSize: 12.5, padding: '8px 10px', borderRadius: 'var(--r-sm)', background: 'var(--accent-soft)', color: 'var(--accent-ink)' }}>
                   O boleto de {dateToBR(p.boleto_substituido.vencimento)} ({reais(p.boleto_substituido.valor)}) será
-                  <strong> cancelado no Asaas</strong> e substituído por este. O cancelamento não se desfaz.
+                  <strong> cancelado na API</strong> e substituído por este. O cancelamento não se desfaz.
                 </p>
               )}
 
@@ -176,7 +176,7 @@ function Divergencias() {
       setEstado(e => ({ ...e, carregando: true, erro: null }))
       getDivergenciasAsaas()
         .then(r => setEstado({ carregando: false, itens: r.data.divergencias, erro: null, ok: true }))
-        .catch(() => setEstado({ carregando: false, itens: [], erro: 'Não foi possível verificar as divergências com o Asaas agora.', ok: false }))
+        .catch(() => setEstado({ carregando: false, itens: [], erro: 'Não foi possível verificar as divergências com a API agora.', ok: false }))
     }
   }
   return (

@@ -349,8 +349,8 @@ class RevisaoDocumentoViewSet(BasePranchetaViewSet):
             # um botão que desfaz silenciosamente.
             return Response(
                 {"detail": (
-                    f"A revisão {revisao.revisao} está superada. Para voltar a este "
-                    "desenho, registre-o como uma revisão nova, com o motivo."
+                    f"A revisão {revisao.revisao} está superada. Para voltar a ela, registre-a como "
+                    "revisão nova, com o motivo."
                 )},
                 status=status.HTTP_409_CONFLICT,
             )

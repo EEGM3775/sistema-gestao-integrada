@@ -27,6 +27,8 @@ import FuncionarioDetailPage from './modules/rh/pages/FuncionarioDetailPage'
 import CargosPage from './modules/rh/pages/CargosPage'
 import PlatformRoute from './components/PlatformRoute'
 import LixoPage from './modules/lixo/pages/LixoPage'
+import AuditoriaPage from './modules/auditoria/pages/AuditoriaPage'
+import DroneWrapperPage from './modules/drone/pages/DroneWrapperPage'
 import BasesOficiaisPage from './modules/sistema/pages/BasesOficiaisPage'
 import PersonasPage from './modules/admin/pages/PersonasPage'
 import UsuariosPage from './modules/admin/pages/UsuariosPage'
@@ -95,6 +97,18 @@ function App() {
           {/* ── Documentos (DMS) — registro de todo arquivo, sem entitlement:
                o gate é o da entrega de cada recurso (funcoesimpexp/arquivos.py). ── */}
           <Route path="documentos" element={<DocumentosPage />} />
+
+          {/* ── Trilha de auditoria (D17) — as duas trilhas, do sistema e das
+               contas, numa linha do tempo. Não é módulo nem é só do admin: quem
+               alcança é a permissão `plataforma.auditoria.view`, e a página se
+               guarda sozinha. ── */}
+          <Route path="auditoria" element={<AuditoriaPage />} />
+
+          {/* ── Drone & Mapeamento (entitlement `drone`, Fase 7 E.1) — o app do
+               drone em moldura, na mesma origem; a sessão é o cookie do BFF. ── */}
+          <Route element={<ModuleRoute module="drone" />}>
+            <Route path="drone" element={<DroneWrapperPage />} />
+          </Route>
 
           {/* ── RH (entitlement `rh` — guard de módulo, F4) ── */}
           <Route element={<ModuleRoute module="rh" />}>

@@ -1,6 +1,7 @@
 // Kit de UI Malha próprio do SIL (espelha o do SCM). Extraído para as abas
 // (operação/gestão/pessoas) compartilharem sem duplicar.
 import { type CSSProperties, type ReactNode, type HTMLAttributes, type ButtonHTMLAttributes } from 'react'
+import { createPortal } from 'react-dom'
 import { Inbox } from 'lucide-react'
 import type { Kind, Estado } from './lib'
 
@@ -44,27 +45,30 @@ export function Empty({ children }: { children: ReactNode }) { return <Card styl
 export const th = (_h: string, i: number, right?: (n: number) => boolean): CSSProperties => ({ ...CAPS, fontSize: 10.5, textAlign: right?.(i) ? 'right' : 'left', padding: '11px 16px', borderBottom: '1px solid var(--line)', background: 'var(--surface-2)' })
 
 export function Modal({ title, onClose, children, footer, wide }: { title: string; onClose: () => void; children: ReactNode; footer: ReactNode; wide?: boolean }) {
-  return <div onMouseDown={e => { if (e.target === e.currentTarget) onClose() }} style={{ position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(6,14,26,.5)', backdropFilter: 'blur(3px)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: '8vh 16px', overflowY: 'auto' }}>
-    <div style={{ width: '100%', maxWidth: wide ? 560 : 480, background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 'var(--r-lg)', boxShadow: 'var(--shadow-lg)' }}>
-      <div style={{ padding: '15px 20px', borderBottom: '1px solid var(--line)', fontFamily: 'var(--display)', fontSize: 16, fontWeight: 700, color: 'var(--ink)' }}>{title}</div>
-      <div style={{ padding: 20 }}>{children}</div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 9, padding: '14px 20px', borderTop: '1px solid var(--line)' }}>{footer}</div>
+  // A janela acompanha a área de trabalho: o diálogo largo ocupa a altura da tela (94vh), cabeçalho e
+  // botões ficam presos e quem rola é o miolo; o estreito centra e nunca passa da tela.
+  return createPortal(<div onMouseDown={e => { if (e.target === e.currentTarget) onClose() }} style={{ position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(6,14,26,.5)', backdropFilter: 'blur(3px)', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '3vh 16px', overflow: 'hidden' }}>
+    <div style={{ width: '100%', maxWidth: wide ? 1180 : 760, minWidth: 0, maxHeight: '94vh', ...(wide ? { height: '94vh' } : null), display: 'flex', flexDirection: 'column', background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 'var(--r-lg)', boxShadow: 'var(--shadow-lg)' }}>
+      <div style={{ flex: 'none', padding: '15px 20px', borderBottom: '1px solid var(--line)', fontFamily: 'var(--display)', fontSize: 16, fontWeight: 700, color: 'var(--ink)' }}>{title}</div>
+      {/* minHeight: a lista de um seletor com busca abre para baixo e precisa de chão. */}
+      <div style={{ flex: '1 1 auto', minHeight: wide ? 0 : 'min(52vh, 460px)', overflowY: 'auto', padding: 20 }}>{children}</div>
+      <div style={{ flex: 'none', display: 'flex', justifyContent: 'flex-end', gap: 9, flexWrap: 'wrap', padding: '14px 20px', borderTop: '1px solid var(--line)' }}>{footer}</div>
     </div>
-  </div>
+  </div>, document.body)
 }
 export function Field({ label, children }: { label: string; children: ReactNode }) { return <label style={{ display: 'block', marginBottom: 14 }}><span style={{ display: 'block', ...CAPS, fontSize: 10.5, marginBottom: 5 }}>{label}</span>{children}</label> }
 
 // Drawer lateral para as fichas (item/almoxarifado) — drill-down sem sair da aba.
 export function Drawer({ title, onClose, children }: { title: ReactNode; onClose: () => void; children: ReactNode }) {
-  return <div onMouseDown={e => { if (e.target === e.currentTarget) onClose() }} style={{ position: 'fixed', inset: 0, zIndex: 88, background: 'rgba(6,14,26,.45)', backdropFilter: 'blur(2px)', display: 'flex', justifyContent: 'flex-end' }}>
-    <div className="sil-drawer" style={{ width: 'min(560px,94vw)', height: '100%', background: 'var(--surface)', borderLeft: '1px solid var(--line)', boxShadow: 'var(--shadow-lg)', overflowY: 'auto' }}>
+  return createPortal(<div onMouseDown={e => { if (e.target === e.currentTarget) onClose() }} style={{ position: 'fixed', inset: 0, zIndex: 88, background: 'rgba(6,14,26,.45)', backdropFilter: 'blur(2px)', display: 'flex', justifyContent: 'flex-end' }}>
+    <div className="sil-drawer" style={{ width: 'min(820px,94vw)', height: '100%', background: 'var(--surface)', borderLeft: '1px solid var(--line)', boxShadow: 'var(--shadow-lg)', overflowY: 'auto' }}>
       <div style={{ position: 'sticky', top: 0, background: 'var(--surface)', borderBottom: '1px solid var(--line)', padding: '15px 20px', display: 'flex', alignItems: 'center', gap: 10, zIndex: 2 }}>
         <div style={{ flex: 1, minWidth: 0, fontFamily: 'var(--display)', fontSize: 16, fontWeight: 700, color: 'var(--ink)' }}>{title}</div>
         <button onClick={onClose} style={{ background: 'var(--surface-2)', border: '1px solid var(--line)', borderRadius: 'var(--r-sm)', color: 'var(--ink-2)', cursor: 'pointer', padding: '5px 9px', fontSize: 13 }}>Fechar</button>
       </div>
       <div style={{ padding: 20 }}>{children}</div>
     </div>
-  </div>
+  </div>, document.body)
 }
 
 export function Info({ k, v, mono: m }: { k: string; v: ReactNode; mono?: boolean }) {

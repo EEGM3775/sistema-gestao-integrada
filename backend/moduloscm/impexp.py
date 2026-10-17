@@ -25,6 +25,7 @@ from funcoesimpexp.registro import (
     NATUREZA_ARQUIVO,
     ArquivoEntregue,
     Coluna,
+    ContextoInvalido,
     EntregaInvalida,
     Guardado,
     Recurso,
@@ -247,3 +248,179 @@ class PedidosDeCompra(RecursoDeLista):
 
     def escopo(self, qs, request):
         return qs.select_related("fornecedor", "centro_custo")
+
+
+# --- A planilha da cotação: sai para o fornecedor, volta com o preço (16/10/2026) ---
+
+RECURSO_PROPOSTA = "scm.proposta"
+
+
+@registrar(RECURSO_PROPOSTA)
+class PlanilhaDaCotacao(Recurso):
+    """Os itens de uma cotação, para o fornecedor preencher o preço — e a volta.
+
+    *Dono, 16/10/2026:* a cotação também é alimentada por quem compra, digitando
+    ou importando; a rede ainda não está no ar. É o padrão do Senior e do
+    Alterdata: o sistema gera a planilha com o que se pede, o fornecedor devolve
+    com o preço, e ela entra como a proposta dele.
+
+    **Destino (`contexto`):** a cotação e, na volta, o fornecedor — com a data em
+    que o preço chegou e o prazo, que não são coluna (valem para a proposta
+    inteira). Linha sem preço é item que ele não cotou: não trava o lote, só não
+    entra. O total sai de `propostas.recalcular_total`, o mesmo da tela.
+    """
+
+    rotulo = "Planilha para cotação"
+    modulo = "scm"
+    permissoes_exigidas = ("scm.cotacao.view", "scm.cotacao.edit")
+    chave = "item_demanda"
+    contexto_requerido = ("cotacao", "fornecedor")
+    # A planilha vai ao fornecedor e volta preenchida: PDF não tem onde digitar.
+    formatos_saida = ("xlsx", "csv")
+
+    colunas = (
+        Coluna("item_demanda", "Nº da linha (não altere)", tipo=int, obrigatoria=True, exemplo="41",
+               aliases=("linha", "nº da linha", "n da linha")),
+        Coluna("codigo", "Código", exemplo="ITM-0012"),
+        Coluna("descricao", "Item", exemplo="Cimento CP-II 50 kg"),
+        Coluna("unidade", "Und", exemplo="sc"),
+        Coluna("quantidade", "Quantidade", tipo=Decimal, exemplo="50"),
+        Coluna("preco_unitario", "Preço unitário", tipo=Decimal, exemplo="32,50",
+               aliases=("preço", "preco", "valor unitário", "valor unitario")),
+    )
+
+    # --- destino ------------------------------------------------------------------
+
+    def validar_contexto(self, contexto, user, tenant_id) -> dict:
+        from fornecedores.models import Fornecedor
+
+        contexto = dict(contexto or {})
+        cotacao = Cotacao.objects.filter(pk=contexto.get("cotacao") or 0, tenant_id=tenant_id).first()
+        if cotacao is None:
+            raise ContextoInvalido("Abra uma cotação da sua empresa.")
+        saida = {"cotacao": cotacao.pk}
+        if not contexto.get("fornecedor"):
+            return saida  # a ida: a planilha sai sem fornecedor
+        fornecedor = Fornecedor.objects.filter(pk=contexto["fornecedor"], tenant_id=tenant_id).first()
+        if fornecedor is None:
+            raise ContextoInvalido("Escolha um fornecedor da sua empresa.")
+        if cotacao.status != Cotacao.Status.ABERTA:
+            raise ContextoInvalido("A cotação não está aberta: proposta só entra enquanto ela está em aberto.")
+        if cotacao.propostas.filter(fornecedor=fornecedor).exists():
+            raise ContextoInvalido("Este fornecedor já tem proposta nesta cotação — edite a que existe.")
+        try:
+            recebida = date.fromisoformat(contexto["recebida_em"]) if contexto.get("recebida_em") else None
+            prazo = contexto.get("prazo_entrega_dias")
+            prazo = int(prazo) if prazo not in (None, "") else None
+        except (TypeError, ValueError):
+            raise ContextoInvalido("Data ou prazo inválido.")
+        if prazo is not None and prazo < 0:
+            raise ContextoInvalido("Prazo negativo.")
+        return {
+            **saida, "fornecedor": fornecedor.pk,
+            "recebida_em": recebida.isoformat() if recebida else None, "prazo_entrega_dias": prazo,
+        }
+
+    def rotulo_do_contexto(self) -> str:
+        from fornecedores.models import Fornecedor
+
+        fornecedor = Fornecedor.objects.filter(pk=self.contexto.get("fornecedor") or 0).only("razao_social").first()
+        base = f"Cotação #{self.contexto.get('cotacao')}"
+        return f"{base} · {fornecedor.razao_social}" if fornecedor else base
+
+    def _cotacao(self):
+        return Cotacao.objects.filter(pk=self.contexto.get("cotacao") or 0).first()
+
+    # --- a ida --------------------------------------------------------------------
+
+    def queryset(self, request, recorte):
+        from .models import ItemDemanda
+
+        cotacao = self._cotacao()
+        if cotacao is None:
+            return ItemDemanda.objects.none()
+        return (ItemDemanda.objects.filter(demanda_id=cotacao.demanda_id)
+                .select_related("produto").order_by("item_demanda_id"))
+
+    def serializar_objeto(self, obj) -> dict:
+        produto = obj.produto if obj.produto_id else None
+        return {
+            "item_demanda": obj.pk,
+            "codigo": produto.codigo_interno if produto else "",
+            "descricao": produto.descricao if produto else (obj.descricao_servico or ""),
+            "unidade": obj.unidade or (produto.unidade if produto else ""),
+            "quantidade": obj.quantidade,
+            "preco_unitario": None,
+        }
+
+    # --- a volta ------------------------------------------------------------------
+
+    def validar_linha(self, dados) -> str:
+        if not self.contexto.get("fornecedor"):
+            return "Escolha o fornecedor desta proposta antes de importar."
+        preco = dados.get("preco_unitario")
+        if preco not in (None, "") and Decimal(str(preco)) < 0:
+            return "Preço negativo."
+        return ""
+
+    def validar_no_destino(self, dados, tenant_id) -> str:
+        from .models import ItemDemanda
+
+        cotacao = self._cotacao()
+        if cotacao is None or not ItemDemanda.objects.filter(
+            pk=dados.get("item_demanda") or 0, demanda_id=cotacao.demanda_id,
+        ).exists():
+            return "Linha que não é desta cotação — use a planilha baixada dela."
+        return ""
+
+    def localizar(self, dados, tenant_id):
+        from .models import ItemProposta
+
+        return ItemProposta.objects.filter(
+            proposta__cotacao_id=self.contexto.get("cotacao"),
+            proposta__fornecedor_id=self.contexto.get("fornecedor"),
+            item_demanda_id=dados.get("item_demanda") or 0,
+        ).first()
+
+    def aplicar_linha(self, dados, existente, tenant_id) -> dict | None:
+        from django.utils import timezone
+
+        from fornecedores.models import Fornecedor
+
+        from . import propostas
+        from .models import ItemDemanda, ItemProposta, Proposta
+
+        if dados.get("preco_unitario") in (None, ""):
+            return None  # item que o fornecedor não cotou
+        cotacao = self._cotacao()
+        linha = ItemDemanda.objects.get(pk=dados["item_demanda"], demanda_id=cotacao.demanda_id)
+        proposta = cotacao.propostas.filter(fornecedor_id=self.contexto["fornecedor"]).first()
+        if proposta is None:
+            fornecedor = Fornecedor.objects.get(pk=self.contexto["fornecedor"])
+            recebida = self.contexto.get("recebida_em")
+            proposta = Proposta.objects.create(
+                tenant_id=cotacao.tenant_id, cotacao=cotacao, fornecedor=fornecedor,
+                fornecedor_nome=fornecedor.razao_social,
+                recebida_em=date.fromisoformat(recebida) if recebida else timezone.localdate(),
+                prazo_entrega_dias=self.contexto.get("prazo_entrega_dias"),
+            )
+        item = ItemProposta.objects.create(
+            tenant_id=cotacao.tenant_id, proposta=proposta, item_demanda=linha,
+            preco_unitario=Decimal(str(dados["preco_unitario"])), quantidade=linha.quantidade,
+        )
+        propostas.recalcular_total(proposta)
+        return {"acao": "criou", "pk": item.pk}
+
+    def desfazer_linha(self, estado_anterior, tenant_id) -> None:
+        from . import propostas
+        from .models import ItemProposta
+
+        item = ItemProposta.objects.select_related("proposta").filter(pk=estado_anterior.get("pk")).first()
+        if item is None:
+            return
+        proposta = item.proposta
+        item.delete()
+        if proposta.itens.exists():
+            propostas.recalcular_total(proposta)
+        else:
+            proposta.delete()

@@ -560,11 +560,19 @@ export interface FluxoCaixaMes {
   despesas: string
 }
 
+/** Período do fluxo de caixa — meses `AAAA-MM`, inclusivos. */
+export interface PeriodoFluxo {
+  inicio: string
+  fim: string
+}
+
 /** Payload de `/api/erp/dashboard/` (chaves em camelCase no backend). */
 export interface ErpDashboardData {
   agingContasAReceber: AgingFaixa[]
   agingContasAPagar: AgingFaixa[]
   fluxoDeCaixaMensal: FluxoCaixaMes[]
+  /** O período efetivo do fluxo (o pedido, ou os 12 meses padrão). */
+  fluxoPeriodo: PeriodoFluxo
 }
 
 

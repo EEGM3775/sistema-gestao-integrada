@@ -22,7 +22,7 @@ export function useUsuarios() {
       setUsuarios(listOf<UsuarioAdmin>(us.data).sort((a, b) => a.username.localeCompare(b.username)))
       setPerfis(listOf<Perfil>(pf.data).sort((a, b) => a.nome.localeCompare(b.nome)))
     } catch {
-      setError('Erro ao carregar usuários. Você precisa ser administrador do tenant.')
+      setError('Erro ao carregar usuários. Exige administrador do tenant.')
     } finally {
       setLoading(false)
     }

@@ -135,9 +135,8 @@ class QuotaExcedida(APIException):
         # como está quando ele já é dict.
         self.detail = {
             "detail": (
-                f"O plano contratado inclui {limite} {rotulo} e o limite já foi "
-                "atingido. Exclua o que não usa mais ou faça upgrade do plano "
-                "para continuar cadastrando."
+                f"O plano contratado inclui {limite} {rotulo} e o limite foi atingido. Exclua o que "
+                "não usa ou faça upgrade do plano."
             ),
             "code": self.default_code,
             "quota": quota,

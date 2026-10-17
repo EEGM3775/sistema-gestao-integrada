@@ -25,11 +25,43 @@ um número no módulo quebra aqui, que é onde a regressão importa.
 
 A fronteira do que não é limite está escrita na §5.6 do `planos.py`.
 """
+import ast
 import inspect
+from decimal import Decimal
+from pathlib import Path
 
 from django.test import SimpleTestCase
 
 from payment import planos
+
+
+class ProcedenciaMixin:
+    """Prende constante a consumidor pela **procedência**, não pela identidade (D190).
+
+    A régua antiga era `assertIs(services.X, planos.X)`, e ela é cega para todo
+    inteiro de −5 a 256: o CPython interna esses valores, então dois módulos com
+    `X = 150` dão `is` verdadeiro — o `assertIs` passava **mesmo que o consumidor
+    tivesse redeclarado o literal**, que é a regressão que a regra existe para
+    impedir. Aqui o nome tem de chegar ao módulo por `from payment.planos import`
+    e não pode ser atribuído dentro dele.
+    """
+
+    def assertVemDoPayment(self, modulo, nome):
+        self.assertEqual(getattr(modulo, nome), getattr(planos, nome), nome)
+        arvore = ast.parse(inspect.getsource(modulo))
+        importado = any(
+            isinstance(no, ast.ImportFrom) and no.module == "payment.planos"
+            and any(a.name == nome and (a.asname or a.name) == nome for a in no.names)
+            for no in ast.walk(arvore)
+        )
+        reescrito = any(
+            isinstance(no, (ast.Assign, ast.AnnAssign))
+            and any(getattr(t, "id", None) == nome
+                    for t in (no.targets if isinstance(no, ast.Assign) else [no.target]))
+            for no in ast.walk(arvore)
+        )
+        self.assertTrue(importado, f"{modulo.__name__} não importa {nome} de payment.planos")
+        self.assertFalse(reescrito, f"{modulo.__name__} redeclara {nome}")
 
 
 class TetosDaPranchetaTests(SimpleTestCase):
@@ -142,6 +174,15 @@ class TetosDaPlataformaTests(SimpleTestCase):
             planos.ORCAMENTO_PROFUNDIDADE_MAXIMA_COMPOSICAO,
         )
 
+    def test_tetos_das_agendas_vem_do_payment(self):
+        """Fatias D e E do calendário: convidados por evento e o `.ics` importado."""
+        from modulocalendar import serializers as calendario
+        from modulocalendar import views
+
+        ProcedenciaMixin.assertVemDoPayment(self, calendario, "CALENDAR_TETO_CONVIDADOS")
+        ProcedenciaMixin.assertVemDoPayment(self, views, "CALENDAR_ICS_TETO_KB")
+        ProcedenciaMixin.assertVemDoPayment(self, views, "CALENDAR_ICS_TETO_EVENTOS")
+
     def test_tetos_da_memoria_do_quantitativo_vem_do_payment(self):
         """ORC.7 — quantas parciais uma linha aceita, e quão aninhada é a fórmula.
 
@@ -206,6 +247,12 @@ class PaginacaoTests(SimpleTestCase):
     #: por nome de arquivo deixou passar.
     PAGINADORES = {
         "catalogo": "catalogo.pagination:CatalogoPageNumberPagination",
+        # Pessoas do seletor de convidados e a busca de eventos (Fatias D e E).
+        "calendario": "modulocalendar.pagination:CalendarioPageNumberPagination",
+        # A trilha de auditoria (D17); a da IAM lê o mesmo número.
+        "auditoria": "nucleo.auditoria_views:AuditoriaPageNumberPagination",
+        # Seletor dos formulários: pagina só com `?page=` (nucleo/paginacao.py).
+        "cadastros": "nucleo.paginacao:PaginaSobPedido",
         "clientes": "clientes.pagination:ClientePageNumberPagination",
         # O registro de arquivos do DMS (funcoesimpexp/arquivos.py).
         "dms": "funcoesimpexp.pagination:DmsPageNumberPagination",
@@ -423,7 +470,7 @@ class EscadaDeMemoriaPorPlanoTests(SimpleTestCase):
             )
 
 
-class TetosDoPdcaTests(SimpleTestCase):
+class TetosDoPdcaTests(ProcedenciaMixin, SimpleTestCase):
     """PDCA.0 — a árvore que o cliente desenha e a escada que aprova dinheiro.
 
     Família nova de teto: as anteriores protegiam o que entra (bytes) ou o que a
@@ -435,22 +482,14 @@ class TetosDoPdcaTests(SimpleTestCase):
     def test_a_arvore_de_locais_le_os_tetos_do_payment(self):
         from modulopdca import services
 
-        self.assertIs(
-            services.PDCA_PROFUNDIDADE_MAXIMA_LOCAL, planos.PDCA_PROFUNDIDADE_MAXIMA_LOCAL,
-        )
-        self.assertIs(
-            services.PDCA_TETO_LOCAIS_POR_GERACAO, planos.PDCA_TETO_LOCAIS_POR_GERACAO,
-        )
-        self.assertIs(
-            services.PDCA_TETO_LOCAIS_POR_OBRA, planos.PDCA_TETO_LOCAIS_POR_OBRA,
-        )
+        self.assertVemDoPayment(services, "PDCA_PROFUNDIDADE_MAXIMA_LOCAL")
+        self.assertVemDoPayment(services, "PDCA_TETO_LOCAIS_POR_GERACAO")
+        self.assertVemDoPayment(services, "PDCA_TETO_LOCAIS_POR_OBRA")
 
     def test_a_escada_de_atesto_le_o_teto_de_niveis_do_payment(self):
         from nucleo import aprovacao
 
-        self.assertIs(
-            aprovacao.PDCA_TETO_NIVEIS_APROVACAO, planos.PDCA_TETO_NIVEIS_APROVACAO,
-        )
+        self.assertVemDoPayment(aprovacao, "PDCA_TETO_NIVEIS_APROVACAO")
 
     def test_o_corte_sincrono_cabe_dentro_do_teto_da_obra(self):
         """Uma geração não pode, sozinha, passar do que a obra inteira comporta —
@@ -470,23 +509,13 @@ class TetosDoPdcaTests(SimpleTestCase):
         """
         from modulopdca import services
 
-        self.assertIs(
-            services.PDCA_TETO_ATIVIDADES_POR_CRONOGRAMA,
-            planos.PDCA_TETO_ATIVIDADES_POR_CRONOGRAMA,
-        )
-        self.assertIs(
-            services.PDCA_PROFUNDIDADE_MAXIMA_WBS, planos.PDCA_PROFUNDIDADE_MAXIMA_WBS,
-        )
-        self.assertIs(services.PDCA_TETO_CPM_SINCRONO, planos.PDCA_TETO_CPM_SINCRONO)
-        self.assertIs(services.PDCA_CPM_SEGUNDOS, planos.PDCA_CPM_SEGUNDOS)
-        self.assertIs(
-            services.PDCA_TETO_VERSOES_POR_CRONOGRAMA,
-            planos.PDCA_TETO_VERSOES_POR_CRONOGRAMA,
-        )
+        self.assertVemDoPayment(services, "PDCA_TETO_ATIVIDADES_POR_CRONOGRAMA")
+        self.assertVemDoPayment(services, "PDCA_PROFUNDIDADE_MAXIMA_WBS")
+        self.assertVemDoPayment(services, "PDCA_TETO_CPM_SINCRONO")
+        self.assertVemDoPayment(services, "PDCA_CPM_SEGUNDOS")
+        self.assertVemDoPayment(services, "PDCA_TETO_VERSOES_POR_CRONOGRAMA")
         # 09/10/2026 — a ligação de fase multiplica setas no grafo do CPM.
-        self.assertIs(
-            services.PDCA_TETO_LIGACOES_EXPANDIDAS, planos.PDCA_TETO_LIGACOES_EXPANDIDAS,
-        )
+        self.assertVemDoPayment(services, "PDCA_TETO_LIGACOES_EXPANDIDAS")
 
     def test_o_cpm_sincrono_cabe_dentro_do_teto_de_atividades(self):
         """Se o corte síncrono fosse menor que o teto do cronograma sem existir
@@ -499,9 +528,7 @@ class TetosDoPdcaTests(SimpleTestCase):
     def test_a_escrita_em_lote_le_o_teto_do_payment(self):
         from modulopdca import services
 
-        self.assertIs(
-            services.PDCA_TETO_LINHAS_POR_LOTE, planos.PDCA_TETO_LINHAS_POR_LOTE,
-        )
+        self.assertVemDoPayment(services, "PDCA_TETO_LINHAS_POR_LOTE")
 
     def test_o_lote_cabe_dentro_do_cronograma(self):
         """Um lote maior que o cronograma inteiro seria teto que nunca morde — e
@@ -514,13 +541,8 @@ class TetosDoPdcaTests(SimpleTestCase):
         """PDCA.2 — os dois números do avanço saem do arquivo do dono."""
         from modulopdca import services
 
-        self.assertIs(
-            services.PDCA_TETO_APONTAMENTOS_POR_LOTE,
-            planos.PDCA_TETO_APONTAMENTOS_POR_LOTE,
-        )
-        self.assertIs(
-            services.PDCA_TETO_PONTOS_CURVA_S, planos.PDCA_TETO_PONTOS_CURVA_S,
-        )
+        self.assertVemDoPayment(services, "PDCA_TETO_APONTAMENTOS_POR_LOTE")
+        self.assertVemDoPayment(services, "PDCA_TETO_PONTOS_CURVA_S")
 
     def test_o_lote_de_apontamentos_cabe_dentro_do_cronograma(self):
         """Um lote maior que o cronograma inteiro seria teto que nunca morde —
@@ -540,30 +562,16 @@ class TetosDoPdcaTests(SimpleTestCase):
         """PDCA.3 — os dois números da fatia do dinheiro saem do arquivo do dono."""
         from modulopdca import services
 
-        self.assertIs(
-            services.PDCA_TETO_ITENS_POR_CONTRATO,
-            planos.PDCA_TETO_ITENS_POR_CONTRATO,
-        )
-        self.assertIs(
-            services.PDCA_TETO_LINHAS_POR_MEDICAO,
-            planos.PDCA_TETO_LINHAS_POR_MEDICAO,
-        )
+        self.assertVemDoPayment(services, "PDCA_TETO_ITENS_POR_CONTRATO")
+        self.assertVemDoPayment(services, "PDCA_TETO_LINHAS_POR_MEDICAO")
 
     def test_o_aditivo_e_as_deducoes_leem_os_tetos_do_payment(self):
         """PDCA.4 — os três números da fatia que muda o contrato."""
         from modulopdca import services
 
-        self.assertIs(
-            services.PDCA_TETO_ITENS_POR_ADITIVO, planos.PDCA_TETO_ITENS_POR_ADITIVO,
-        )
-        self.assertIs(
-            services.PDCA_TETO_ADITIVOS_ABERTOS_POR_CONTRATO,
-            planos.PDCA_TETO_ADITIVOS_ABERTOS_POR_CONTRATO,
-        )
-        self.assertIs(
-            services.PDCA_TETO_DEDUCOES_POR_MEDICAO,
-            planos.PDCA_TETO_DEDUCOES_POR_MEDICAO,
-        )
+        self.assertVemDoPayment(services, "PDCA_TETO_ITENS_POR_ADITIVO")
+        self.assertVemDoPayment(services, "PDCA_TETO_ADITIVOS_ABERTOS_POR_CONTRATO")
+        self.assertVemDoPayment(services, "PDCA_TETO_DEDUCOES_POR_MEDICAO")
 
     def test_o_aditivo_nao_reescreve_o_contrato_inteiro(self):
         """**Metade do contrato, e a metade é o ponto.** Aditivo que muda mais da
@@ -671,7 +679,7 @@ class TetosDoPdcaTests(SimpleTestCase):
         self.assertGreater(planos.PLANOS["empresarial"]["planos_modelo"], 0)
 
 
-class TetosDoLastPlannerTests(SimpleTestCase):
+class TetosDoLastPlannerTests(ProcedenciaMixin, SimpleTestCase):
     """PDCA.5 — os quatro números da fatia que fecha o Check e o Act.
 
     A mesma regra das anteriores: constante sem consumidor não é régua, é
@@ -681,21 +689,10 @@ class TetosDoLastPlannerTests(SimpleTestCase):
     def test_o_last_planner_le_os_tetos_do_payment(self):
         from modulopdca import services
 
-        self.assertIs(
-            services.PDCA_TETO_ITENS_POR_PROGRAMACAO,
-            planos.PDCA_TETO_ITENS_POR_PROGRAMACAO,
-        )
-        self.assertIs(
-            services.PDCA_TETO_RESTRICOES_ABERTAS_POR_OBRA,
-            planos.PDCA_TETO_RESTRICOES_ABERTAS_POR_OBRA,
-        )
-        self.assertIs(
-            services.PDCA_TETO_CAUSAS_POR_TENANT,
-            planos.PDCA_TETO_CAUSAS_POR_TENANT,
-        )
-        self.assertIs(
-            services.PDCA_TETO_SEMANAS_PPC, planos.PDCA_TETO_SEMANAS_PPC,
-        )
+        self.assertVemDoPayment(services, "PDCA_TETO_ITENS_POR_PROGRAMACAO")
+        self.assertVemDoPayment(services, "PDCA_TETO_RESTRICOES_ABERTAS_POR_OBRA")
+        self.assertVemDoPayment(services, "PDCA_TETO_CAUSAS_POR_TENANT")
+        self.assertVemDoPayment(services, "PDCA_TETO_SEMANAS_PPC")
 
     def test_o_quadro_cabe_numa_parede(self):
         """O quadro de programação é uma parede de reunião: existe para o time
@@ -744,7 +741,7 @@ class TetosDoLastPlannerTests(SimpleTestCase):
         self.assertEqual(suspeitos, [])
 
 
-class TetosDaLinhaDeBalancoTests(SimpleTestCase):
+class TetosDaLinhaDeBalancoTests(ProcedenciaMixin, SimpleTestCase):
     """PDCA.6 — os quatro números da §5.5k.
 
     A mesma regra das anteriores: constante sem consumidor não é régua, é
@@ -754,22 +751,10 @@ class TetosDaLinhaDeBalancoTests(SimpleTestCase):
     def test_a_linha_de_balanco_le_os_tetos_do_payment(self):
         from modulopdca import services
 
-        self.assertIs(
-            services.PDCA_TETO_LOCAIS_NA_LINHA_DE_BALANCO,
-            planos.PDCA_TETO_LOCAIS_NA_LINHA_DE_BALANCO,
-        )
-        self.assertIs(
-            services.PDCA_TETO_LINHAS_DE_BALANCO,
-            planos.PDCA_TETO_LINHAS_DE_BALANCO,
-        )
-        self.assertIs(
-            services.PDCA_TETO_LOCAIS_POR_RITMO,
-            planos.PDCA_TETO_LOCAIS_POR_RITMO,
-        )
-        self.assertIs(
-            services.PDCA_TETO_CONFLITOS_REPORTADOS,
-            planos.PDCA_TETO_CONFLITOS_REPORTADOS,
-        )
+        self.assertVemDoPayment(services, "PDCA_TETO_LOCAIS_NA_LINHA_DE_BALANCO")
+        self.assertVemDoPayment(services, "PDCA_TETO_LINHAS_DE_BALANCO")
+        self.assertVemDoPayment(services, "PDCA_TETO_LOCAIS_POR_RITMO")
+        self.assertVemDoPayment(services, "PDCA_TETO_CONFLITOS_REPORTADOS")
 
     def test_o_eixo_cabe_numa_tela(self):
         """A única razão de a LOB existir é que **o cruzamento de duas retas se
@@ -819,7 +804,7 @@ class TetosDaLinhaDeBalancoTests(SimpleTestCase):
         )
 
 
-class TetosDaVerificacaoTests(SimpleTestCase):
+class TetosDaVerificacaoTests(ProcedenciaMixin, SimpleTestCase):
     """PDCA.7 — os quatro números da máquina de verificação.
 
     A mesma regra das anteriores: constante sem consumidor não é régua, é
@@ -829,21 +814,10 @@ class TetosDaVerificacaoTests(SimpleTestCase):
     def test_a_verificacao_le_os_tetos_do_payment(self):
         from modulopdca import services
 
-        self.assertIs(
-            services.PDCA_TETO_ITENS_POR_MODELO_VERIFICACAO,
-            planos.PDCA_TETO_ITENS_POR_MODELO_VERIFICACAO,
-        )
-        self.assertIs(
-            services.PDCA_TETO_MODELOS_POR_TENANT,
-            planos.PDCA_TETO_MODELOS_POR_TENANT,
-        )
-        self.assertIs(
-            services.PDCA_TETO_NCS_ABERTAS_POR_OBRA,
-            planos.PDCA_TETO_NCS_ABERTAS_POR_OBRA,
-        )
-        self.assertIs(
-            services.PDCA_TETO_ACOES_POR_NC, planos.PDCA_TETO_ACOES_POR_NC,
-        )
+        self.assertVemDoPayment(services, "PDCA_TETO_ITENS_POR_MODELO_VERIFICACAO")
+        self.assertVemDoPayment(services, "PDCA_TETO_MODELOS_POR_TENANT")
+        self.assertVemDoPayment(services, "PDCA_TETO_NCS_ABERTAS_POR_OBRA")
+        self.assertVemDoPayment(services, "PDCA_TETO_ACOES_POR_NC")
 
     def test_a_ficha_termina_numa_visita(self):
         """**O instrumento do campo é uma pergunta por vez** (planta §5.2).
@@ -1348,3 +1322,122 @@ class TetosDoErpFinanceiroTests(SimpleTestCase):
                 self.assertTrue(valor is None or 0 < valor <= infra, f"{slug}.{chave}={valor}")
         self.assertIn("boletos_por_lote", planos.QUOTAS_APLICADAS)
         self.assertIn("notas_por_lote", planos.QUOTAS_APLICADAS)
+
+
+class VarreduraDeProcedenciaTests(SimpleTestCase):
+    """D190 — a varredura única que dispensa o par escrito à mão.
+
+    Os pares acima provam que **um consumidor conhecido** importa o teto. Esta
+    classe prova o outro lado, para **todo** escalar do `planos.py` e todo módulo
+    de engenharia: nenhum deles atribui um literal a um nome do dono — nem com o
+    nome original, nem com o apelido local que o `import ... as` deu. É a pergunta
+    que o `assertIs` queria fazer, sem depender do valor (o CPython interna os
+    inteiros até 256, e mais da metade dos tetos mora nessa faixa).
+
+    Continua valendo o que a docstring do arquivo diz: não se caça número solto
+    pelo repositório. Atribuir um literal a **um nome que é do `planos.py`** não é
+    heurística — é cópia do número do dono, por definição.
+    """
+
+    #: Pastas que não são código de engenharia: o próprio dono, os testes, o
+    #: histórico do banco e o que não é Python do projeto.
+    PULAR = {
+        "payment", "testes", "tests", "migrations", "node_modules", "__pycache__",
+        "venv", "media", "static", "staticfiles",
+    }
+    #: Construtores que ainda fazem de um valor um literal: `Decimal("2")` é cópia.
+    CONSTRUTORES = {"Decimal", "int", "float", "timedelta"}
+
+    @classmethod
+    def _nomes_do_dono(cls):
+        return {
+            nome for nome in dir(planos)
+            if nome.isupper() and not isinstance(getattr(planos, nome), bool)
+            and isinstance(getattr(planos, nome), (int, float, str, Decimal))
+        }
+
+    @classmethod
+    def _raizes(cls):
+        import funcoesautorizacao
+        import funcoesemail
+        import nucleo
+
+        raizes = [Path(nucleo.__file__).resolve().parent.parent]
+        for pacote in (funcoesautorizacao, funcoesemail):
+            pasta = Path(pacote.__file__).resolve().parent
+            if not any(pasta.is_relative_to(r) for r in raizes):
+                raizes.append(pasta)
+        return raizes
+
+    @classmethod
+    def _arquivos(cls):
+        for raiz in cls._raizes():
+            for caminho in raiz.rglob("*.py"):
+                pastas = caminho.relative_to(raiz).parts[:-1]
+                if any(p in cls.PULAR or p.startswith(".") for p in pastas):
+                    continue
+                if caminho.name.startswith("test"):
+                    continue
+                yield caminho
+
+    @classmethod
+    def _e_literal(cls, valor):
+        for no in ast.walk(valor):
+            if isinstance(no, ast.Attribute):
+                return False
+            if isinstance(no, ast.Name) and no.id not in cls.CONSTRUTORES:
+                return False
+        return True
+
+    @classmethod
+    def _copias(cls, fonte, nomes):
+        """(linha, nome, valor) de cada atribuição de literal a um nome do dono."""
+        arvore = ast.parse(fonte)
+        proibidos = set(nomes)
+        for no in ast.walk(arvore):
+            if isinstance(no, ast.ImportFrom) and no.module == "payment.planos":
+                proibidos.update(a.asname or a.name for a in no.names)
+        achados = []
+        for no in ast.walk(arvore):
+            if isinstance(no, ast.Assign):
+                pares = [(alvo, no.value) for alvo in no.targets]
+            elif isinstance(no, ast.AnnAssign) and no.value is not None:
+                pares = [(no.target, no.value)]
+            else:
+                continue
+            for alvo, valor in pares:
+                if isinstance(alvo, ast.Name) and alvo.id in proibidos and cls._e_literal(valor):
+                    achados.append((no.lineno, alvo.id, ast.unparse(valor)))
+        return achados
+
+    def test_a_varredura_pega_o_teto_pequeno_que_o_assertIs_deixava_passar(self):
+        """Sem isto, um detector quebrado passaria verde para sempre."""
+        nomes = {"PDCA_TETO_ACOES_POR_NC"}
+        self.assertEqual(
+            self._copias("PDCA_TETO_ACOES_POR_NC = 10", nomes),
+            [(1, "PDCA_TETO_ACOES_POR_NC", "10")],
+        )
+        self.assertTrue(self._copias("from payment.planos import X as TETO\nTETO = 5", nomes))
+        self.assertTrue(self._copias('MULTA: Decimal = Decimal("2")\n', {"MULTA"}))
+        self.assertEqual(
+            self._copias("from payment.planos import X as TETO\nLIMITE = TETO * 2", nomes), [],
+        )
+
+    def test_nenhum_modulo_copia_um_numero_do_dono(self):
+        nomes = self._nomes_do_dono()
+        # Mais da metade dos tetos cabe na faixa que o CPython interna — é o
+        # tamanho do buraco que a varredura fecha.
+        self.assertGreater(len(nomes), 50)
+
+        lidos, importadores, copias = 0, 0, []
+        for caminho in self._arquivos():
+            fonte = caminho.read_text(encoding="utf-8-sig")
+            lidos += 1
+            importadores += "payment.planos" in fonte
+            copias += [f"{caminho}:{linha} {nome} = {valor}"
+                       for linha, nome, valor in self._copias(fonte, nomes)]
+
+        # A raiz certa: se o caminho errar, a varredura lê nada e passa calada.
+        self.assertGreater(lidos, 200, f"varredura leu só {lidos} arquivos")
+        self.assertGreater(importadores, 30, f"só {importadores} módulos importam payment.planos")
+        self.assertEqual(copias, [], "número do dono redeclarado no módulo:\n" + "\n".join(copias))

@@ -127,9 +127,7 @@ def _integridade(exc, context):
         return Response(
             {
                 "detail": (
-                    "O registro viola uma regra de integridade deste cadastro e "
-                    "não pôde ser gravado. Confira os valores — em especial os "
-                    "que não podem ser zero, negativos ou fora de uma faixa."
+                    "O registro viola uma regra do cadastro e não foi gravado. Confira os valores."
                 ),
                 "regra": constraint,
             },
@@ -140,8 +138,7 @@ def _integridade(exc, context):
         return Response(
             {
                 "detail": (
-                    "Já existe um registro com este valor — ele precisa ser "
-                    "único neste cadastro."
+                    "Já existe um registro com este valor."
                 ),
                 "regra": constraint,
             },

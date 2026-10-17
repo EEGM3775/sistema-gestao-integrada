@@ -274,9 +274,8 @@ def recusar_purga_de_contrato_com_titulo(sender, alvo, item, **kwargs):
     ).count()
     if com_titulo:
         raise ValidationError(
-            f"O contrato {alvo.numero} tem {com_titulo} medição(ões) que geraram "
-            f"título no financeiro. Contrato com pagamento não é apagado — "
-            f"encerre-o em vez de excluí-lo."
+            f"O contrato {alvo.numero} tem {com_titulo} medição(ões) com título no financeiro. Encerre-o "
+            "em vez de excluir."
         )
 
 

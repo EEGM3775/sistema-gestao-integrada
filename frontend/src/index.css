@@ -201,3 +201,9 @@ input::-ms-clear {
   background: currentColor; opacity: .35; animation: malha-pulse 2s ease-out infinite;
 }
 @media (prefers-reduced-motion: reduce) { .malha-dot::after { animation: none } }
+
+/* O anel de foco de campo fica por dentro: células de tabela e cartões com
+   overflow cortam o anel que sai da caixa (item 83). */
+input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline-offset: -2px;
+}

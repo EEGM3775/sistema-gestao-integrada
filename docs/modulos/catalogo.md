@@ -88,7 +88,7 @@ assíncronos do frontend — não se carrega o catálogo inteiro no cliente).
 | Rota | Recurso | Filtros úteis |
 |---|---|---|
 | `itens/` | `Item` | `tipo`, `tipo_proprio`, `categoria`, `ativo`, `origem`, flags (`compravel`/`estocavel`/…) · busca `codigo_interno`/`descricao`/`gtin` |
-| `itens/{id}/ficha/` | **Ficha do item** ([`catalogo/ficha.py`](../../backend/catalogo/ficha.py)): de onde veio, lojas (preço de tabela da oferta + último preço pago + última compra), linha do tempo de preços pagos, orçamentos que o usam, saldo por local do estoque, nº de pedidos e demandas. Cada bloco importa o módulo tarde e tolerante | — |
+| `itens/{id}/ficha/` | **Ficha do item** ([`catalogo/ficha.py`](../../backend/catalogo/ficha.py)): de onde veio, lojas (preço de tabela da oferta + último preço pago + última compra), linha do tempo de preços pagos, `grafico_precos` (pagos e cotados — pela data `recebida_em` da proposta — por fornecedor, para o gráfico "preço ao longo do tempo"; a cotação que virou pedido vivo do item sai, substituída pelo preço pago; teto `CATALOGO_FICHA_GRAFICO_PONTOS` por série), orçamentos que o usam, saldo por local do estoque, nº de pedidos e demandas. Cada bloco importa o módulo tarde e tolerante | — |
 
 **Criar item próprio a partir de texto** — porta única [`catalogo/registro.py`](../../backend/catalogo/registro.py)
 (`registrar_item_proprio`), usada pelo "cadastrar" da compra e pela demanda do orçamento: código

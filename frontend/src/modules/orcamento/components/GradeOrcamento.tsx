@@ -299,9 +299,18 @@ export default function GradeOrcamento({
    *  para cima e para baixo sobre o mesmo ponto de partida. E quando ela aponta
    *  para uma linha que não está mais à vista — excluída, recolhida, escondida
    *  pelo filtro —, o Shift não vira clique simples em silêncio: a âncora é
-   *  refeita na linha clicada, que é onde a pessoa acabou de dizer que está. */
-  const clicarNaLinha = useCallback((id: number, e: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => {
-    const comando = e.ctrlKey || e.metaKey
+   *  refeita na linha clicada, que é onde a pessoa acabou de dizer que está.
+   *
+   *  **A caixinha é caixinha** (`caixa`). Item 80 do dono: clicar no quadrado
+   *  de outra linha trocava a seleção em vez de somar, e clicar de novo no
+   *  mesmo quadrado não o desmarcava — a caixa obedecia à regra do clique na
+   *  linha. Quem clica num quadrado espera o que todo quadrado faz: liga e
+   *  desliga aquela linha sem mexer nas outras. Então, na caixa, o clique puro
+   *  já é o `Ctrl` — alterna, e o Shift soma a faixa ao que estava marcado. */
+  const clicarNaLinha = useCallback((
+    id: number, e: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }, caixa = false,
+  ) => {
+    const comando = caixa || e.ctrlKey || e.metaKey
     if (e.shiftKey && ancora.current != null) {
       const de = idsVisiveis.indexOf(ancora.current)
       const ate = idsVisiveis.indexOf(id)
@@ -927,10 +936,10 @@ export default function GradeOrcamento({
                       type="checkbox"
                       checked={marcada}
                       onChange={() => {}}
-                      onClick={e => { e.stopPropagation(); clicarNaLinha(item.item_orcado_id, e) }}
+                      onClick={e => { e.stopPropagation(); clicarNaLinha(item.item_orcado_id, e, true) }}
                       title={vaiJunto
                         ? 'Esta linha já vai junto — ela pende de uma linha marcada.'
-                        : 'Selecionar · Shift marca a faixa · Ctrl soma uma linha'}
+                        : 'Marcar ou desmarcar · Shift soma a faixa'}
                       aria-label={`Selecionar ${item.descricao}`}
                       style={{ cursor: 'pointer', accentColor: 'var(--accent)' }}
                     />

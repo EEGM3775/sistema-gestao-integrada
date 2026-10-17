@@ -71,9 +71,8 @@ class FormatoNaoContratado(APIException):
         nomes = [FORMATO_POR_CODIGO[c].nome for c in aceitos if c in FORMATO_POR_CODIGO]
         self.detail = {
             "detail": (
-                f"O plano contratado não inclui arquivos {formato.nome}. "
-                f"Formatos disponíveis hoje: {', '.join(nomes) or 'nenhum'}. "
-                "Faça upgrade do plano para abrir este formato."
+                f"O plano contratado não inclui arquivos {formato.nome}. Disponíveis: {', '.join(nomes) or 'nenhum'}. "
+                "Faça upgrade para abrir este formato."
             ),
             "code": self.default_code,
             "formato": formato.codigo,

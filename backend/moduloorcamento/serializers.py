@@ -231,8 +231,8 @@ class ItemOrcadoSerializer(TenantScopedModelSerializer):
         ):
             raise serializers.ValidationError({
                 "tipo_linha": (
-                    "Esta linha tem sub-itens. Mova-os para fora antes de transformá-la "
-                    "em linha que custa, senão o valor dela seria somado duas vezes."
+                    "Esta linha tem sub-itens. Mova-os para fora antes de transformá-la em linha "
+                    "que custa, para o valor não ser somado duas vezes."
                 )
             })
         return attrs

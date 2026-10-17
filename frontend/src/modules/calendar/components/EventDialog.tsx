@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
-import { X, CalendarPlus, Trash2, Repeat, Bell } from 'lucide-react'
+import { X, CalendarPlus, Trash2, Repeat, Bell, MapPin, Users } from 'lucide-react'
 import { FieldError, FormErrorBanner, parseApiErrors, type FieldErrors } from '@/utils/formErrors'
 import {
   useCalendarEvent, useCreateEvent, useUpdateEvent, useDeleteEvent,
   useUpdateOccurrence, useDeleteOccurrence,
 } from '../hooks/useCalendarEvents'
+import { useAgendas } from '../hooks/useAgendas'
+import { PessoasPicker, type PessoaEscolhida } from './PessoasPicker'
 import type { CalendarEventPayload, EventType, OccurrenceRef, RecurrenceScope } from '../types'
 import { EVENT_TYPE_LABEL, isoToLocalInput, isoToDateInput, localInputToIso, dateInputToIso } from '../utils'
 import { RecurrenceEditor } from './RecurrenceEditor'
@@ -24,6 +26,8 @@ interface Props {
   initialStart?: string
   initialEnd?: string
   initialAllDay?: boolean
+  /** Agenda já escolhida ao criar (a única visível no painel, por exemplo). */
+  initialCalendar?: number | null
   onClose: () => void
 }
 
@@ -36,6 +40,9 @@ interface FormState {
   description: string
   recurrence_rule: string
   reminders: number[]  // offsets em minutos antes do início (Fatia C)
+  calendar: number | null  // agenda (Fatia D); null = Meus eventos
+  location: string  // Fatia E
+  attendees: PessoaEscolhida[]  // convidados (Fatia D)
 }
 
 /** Opções de lembrete oferecidas no diálogo (offset em minutos → rótulo). */
@@ -55,7 +62,7 @@ function allDayEndIso(dateStr: string): string {
   return d.toISOString()
 }
 
-function emptyForm(initialStart?: string, initialEnd?: string, initialAllDay?: boolean): FormState {
+function emptyForm(initialStart?: string, initialEnd?: string, initialAllDay?: boolean, initialCalendar?: number | null): FormState {
   const allDay = initialAllDay ?? false
   const now = new Date()
   const startIso = initialStart ?? now.toISOString()
@@ -69,11 +76,15 @@ function emptyForm(initialStart?: string, initialEnd?: string, initialAllDay?: b
     description: '',
     recurrence_rule: '',
     reminders: [],
+    calendar: initialCalendar ?? null,
+    location: '',
+    attendees: [],
   }
 }
 
-export function EventDialog({ open, mode, eventId, occurrence, initialStart, initialEnd, initialAllDay, onClose }: Props) {
-  const [form, setForm] = useState<FormState>(() => emptyForm(initialStart, initialEnd, initialAllDay))
+export function EventDialog({ open, mode, eventId, occurrence, initialStart, initialEnd, initialAllDay, initialCalendar, onClose }: Props) {
+  const [form, setForm] = useState<FormState>(() => emptyForm(initialStart, initialEnd, initialAllDay, initialCalendar))
+  const { data: agendas = [] } = useAgendas()
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   // Quando editamos/excluímos uma ocorrência recorrente, guardamos a ação até
   // o usuário escolher o alcance (este/série/futuros).
@@ -99,7 +110,7 @@ export function EventDialog({ open, mode, eventId, occurrence, initialStart, ini
     setFieldErrors({})
     setScopePrompt(null)
     if (mode === 'create') {
-      setForm(emptyForm(initialStart, initialEnd, initialAllDay))
+      setForm(emptyForm(initialStart, initialEnd, initialAllDay, initialCalendar))
     } else if (loaded) {
       const allDay = isRecurringEdit ? (initialAllDay ?? loaded.all_day) : loaded.all_day
       // Datas: da ocorrência (edição recorrente) ou do próprio evento.
@@ -114,9 +125,12 @@ export function EventDialog({ open, mode, eventId, occurrence, initialStart, ini
         description: loaded.description ?? '',
         recurrence_rule: isRecurringEdit ? occurrence!.recurrenceRule : (loaded.recurrence_rule ?? ''),
         reminders: loaded.reminders ?? [],
+        calendar: loaded.calendar ?? null,
+        location: loaded.location ?? '',
+        attendees: (loaded.attendees ?? []).map(a => ({ id: a.user, nome: a.nome, status: a.status })),
       })
     }
-  }, [open, mode, loaded, isRecurringEdit, initialStart, initialEnd, initialAllDay, occurrence])
+  }, [open, mode, loaded, isRecurringEdit, initialStart, initialEnd, initialAllDay, initialCalendar, occurrence])
 
   useEffect(() => {
     if (!open) return
@@ -173,6 +187,9 @@ export function EventDialog({ open, mode, eventId, occurrence, initialStart, ini
       event_type: form.event_type,
       recurrence_rule: form.recurrence_rule,
       reminders: [...form.reminders].sort((a, b) => a - b),
+      calendar: form.calendar,
+      location: form.location.trim(),
+      attendees: form.attendees.map(p => p.id),
     }
   }
 
@@ -224,6 +241,9 @@ export function EventDialog({ open, mode, eventId, occurrence, initialStart, ini
     // mestre; 'futuras' abastece o novo mestre; 'só esta', o override.
     // "Somente este" não altera a regra da série.
     if (scope === 'this') delete payload.recurrence_rule
+    // Agenda e convidados são da série: só a edição de "todas" os muda (as
+    // outras herdam os do mestre no backend).
+    if (scope !== 'all') { delete payload.calendar; delete payload.attendees }
     updateOccMut.mutate(
       { masterId: occurrence.masterId, scope, occurrenceStart: occurrence.occurrenceStart, payload },
       { onSuccess: onClose, onError },
@@ -297,6 +317,42 @@ export function EventDialog({ open, mode, eventId, occurrence, initialStart, ini
                 value={form.end} onChange={e => set('end', e.target.value)} />
               <FieldError msg={fieldErrors.end || fieldErrors.end_time} />
             </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="ev-agenda" style={labelStyle}>Agenda</label>
+              <select id="ev-agenda" style={selectStyle} value={form.calendar ?? ''}
+                onChange={e => set('calendar', e.target.value ? Number(e.target.value) : null)}>
+                <option value="">Meus eventos</option>
+                {agendas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label htmlFor="ev-local" style={labelStyle}>
+                <span className="inline-flex items-center gap-1"><MapPin size={12} /> Local</span>
+              </label>
+              <input id="ev-local" style={inputStyle} value={form.location} maxLength={255}
+                onChange={e => set('location', e.target.value)} placeholder="Ex.: canteiro, sala 2" />
+            </div>
+          </div>
+
+          <div className="pt-1" style={{ borderTop: '1px dashed #e2e8f0' }}>
+            <div className="flex items-center gap-1.5 mt-3 mb-2" style={{ color: 'var(--color-brand)' }}>
+              <Users size={14} />
+              <span className="text-xs font-bold uppercase tracking-wide" style={{ fontFamily: 'var(--font-body)' }}>Convidados</span>
+            </div>
+            <PessoasPicker
+              valor={form.attendees}
+              aoMudar={pessoas => set('attendees', pessoas)}
+              excluir={loaded ? [loaded.user] : []}
+              aria-label="Convidar pessoa"
+            />
+            <p className="mt-1.5 text-xs" style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-body)' }}>
+              {isRecurringEdit
+                ? 'Convidados e agenda valem para a série — mudam ao salvar "todos os eventos".'
+                : 'Quem você convidar vê o evento na própria agenda e responde se vai.'}
+            </p>
           </div>
 
           <div className="pt-1" style={{ borderTop: '1px dashed #e2e8f0' }}>

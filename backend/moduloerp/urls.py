@@ -20,6 +20,7 @@ from .views import (
     ConsultarStatusNFView,
     ConfiguracaoLotesView,
     IntegracaoFiscalView,
+    IntegracaoAsaasView,
     NotasDasComprasView,
     IntercompanyView,
     EncontroDeContasView,
@@ -53,6 +54,8 @@ urlpatterns = [
     path('obras/<int:obra_id>/dre/', DreObraView.as_view(), name='erp-dre-obra'),
     path('configuracao/lotes/', ConfiguracaoLotesView.as_view(), name='erp-configuracao-lotes'),
     path('configuracao/integracao-fiscal/', IntegracaoFiscalView.as_view(), name='erp-integracao-fiscal'),
+    # D293 — a conta do Asaas de cada entidade (o beneficiário do boleto).
+    path('configuracao/integracao-asaas/', IntegracaoAsaasView.as_view(), name='erp-integracao-asaas'),
     path('atualizar-status-nf/', AtualizarStatusNFView.as_view(), name='atualizar-status-nf'),
     path('nf/<int:nf_id>/consultar/', ConsultarStatusNFView.as_view(), name='consultar-status-nf'),
     # Entidades (docs/modulos/entidades.md §3 e §6)

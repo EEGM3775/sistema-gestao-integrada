@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { ArrowDown, ArrowUp, Pencil, Plus, Search, Trash2 } from 'lucide-react'
 import type { SituacaoUnidade, Unidade, UnidadeFormData } from '@/types'
 import UnidadeForm from './UnidadeForm'
@@ -135,6 +135,17 @@ const UnidadesTab: React.FC<Props> = ({ empreendimentoId, onMudou }) => {
   const resumo = useResumoUnidades(empreendimentoId, filtros)
   const quadras = resumo?.quadras ?? []
 
+  // A busca filtra enquanto se digita, como na carteira. Antes ela só valia no
+  // Enter ou ao sair do campo, e quem digitava "QD 12" e esperava via a grade
+  // parada — parecia busca quebrada (item 78). O atraso evita uma consulta por
+  // tecla.
+  useEffect(() => {
+    const t = setTimeout(() => setFiltros(f => (
+      (f.busca ?? '') === buscaDigitada.trim() ? f : { ...f, busca: buscaDigitada.trim() || undefined }
+    )), 300)
+    return () => clearTimeout(t)
+  }, [buscaDigitada])
+
   const ordenarPor = (chave: string) => {
     const atual = filtros.ordering
     setFiltros(f => ({ ...f, ordering: atual === chave ? `-${chave}` : chave }))
@@ -155,7 +166,7 @@ const UnidadesTab: React.FC<Props> = ({ empreendimentoId, onMudou }) => {
       recarregar()
       onMudou?.()
     } catch {
-      setErroAcao(`${unidade.rotulo} não pôde ser excluída — unidade vendida. Cancele a aquisição antes.`)
+      setErroAcao(`${unidade.rotulo} não pôde ser excluída: unidade vendida. Cancele a aquisição antes.`)
     }
   }
 
@@ -195,9 +206,8 @@ const UnidadesTab: React.FC<Props> = ({ empreendimentoId, onMudou }) => {
           <input
             value={buscaDigitada}
             onChange={e => setBuscaDigitada(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') setFiltros(f => ({ ...f, busca: buscaDigitada || undefined })) }}
-            onBlur={() => setFiltros(f => ({ ...f, busca: buscaDigitada || undefined }))}
-            placeholder="Buscar quadra, lote, apto…"
+            placeholder="QD 12 LT 5, Torre A 302, comprador…"
+            aria-label="Buscar unidade"
             style={{ ...campo, width: '100%', paddingLeft: 30 }}
           />
         </div>

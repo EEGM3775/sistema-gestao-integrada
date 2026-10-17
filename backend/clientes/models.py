@@ -40,7 +40,7 @@ class Cliente(TenantScopedModel, Excluivel):
     cliente_id = models.AutoField(primary_key=True)
     nome_completo = models.CharField(max_length=255, verbose_name=_("Nome Completo"))
     cpf_cnpj = models.CharField(max_length=18, blank=False, verbose_name=_("CPF/CNPJ"), validators=[cpf_cnpj_validator])
-    email = models.EmailField(max_length=255, blank=False, verbose_name=_("E-mail"))
+    email = models.EmailField(max_length=255, blank=True, verbose_name=_("E-mail"))
     telefone = models.CharField(max_length=20, blank=True, verbose_name=_("Telefone"))
     endereco = models.TextField(blank=True, verbose_name=_("Endereço"))
     numero_endereco = models.CharField(max_length=10, blank=True, verbose_name=_("Número do Endereço"))
@@ -67,7 +67,7 @@ class Cliente(TenantScopedModel, Excluivel):
         # CPF/CNPJ ou e-mail; dentro de um tenant, não.
         constraints = [
             models.UniqueConstraint(fields=['tenant', 'cpf_cnpj'], condition=models.Q(excluido_em__isnull=True), name='cliente_cpf_cnpj_unico_por_tenant'),
-            models.UniqueConstraint(fields=['tenant', 'email'], condition=models.Q(excluido_em__isnull=True), name='cliente_email_unico_por_tenant'),
+            models.UniqueConstraint(fields=['tenant', 'email'], condition=models.Q(excluido_em__isnull=True) & ~models.Q(email=''), name='cliente_email_unico_por_tenant'),
         ]
 
 
@@ -235,6 +235,7 @@ class MeioPagamento(TenantScopedModel):
         ('entrada', _('Entrada / sinal (ATO)')),
         ('financiamento_direto', _('Financiamento direto (construtora)')),
         ('anuais', _('Parcelas anuais (intercaladas)')),
+        ('datas_livres', _('Parcelas com datas livres')),
         ('financiamento_bancario', _('Financiamento bancário')),
         ('fgts', _('FGTS')),
         ('permuta', _('Permuta')),
@@ -268,7 +269,7 @@ class MeioPagamento(TenantScopedModel):
     primeiro_vencimento = models.DateField(null=True, blank=True, verbose_name=_("1º vencimento"))
     juros_mensal = models.DecimalField(
         max_digits=6, decimal_places=4, default=Decimal('0'), verbose_name=_("Juros (% ao mês)"),
-        help_text=_("Financiamento direto, e a entrada parcelada quando o contrato cobra."),
+        help_text=_("Financiamento direto; entrada parcelada e anuais quando o contrato cobra."),
     )
     sistema_amortizacao = models.CharField(
         max_length=10, choices=SISTEMA_AMORTIZACAO_CHOICES, default='price',
@@ -277,6 +278,12 @@ class MeioPagamento(TenantScopedModel):
     periodicidade = models.CharField(
         max_length=10, choices=PERIODICIDADE_CHOICES, default='anual',
         verbose_name=_("Periodicidade (anuais)"),
+    )
+    # Só nas parcelas com datas livres: [{"vencimento": "AAAA-MM-DD", "valor":
+    # "0.00"}, …]. Lista no próprio meio, e não tabela filha, porque é documento
+    # da proposta — gravada e trocada inteira, como a lista de meios.
+    cronograma = models.JSONField(
+        default=list, blank=True, verbose_name=_("Parcelas com data e valor"),
     )
 
     def __str__(self):

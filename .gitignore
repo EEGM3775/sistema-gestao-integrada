@@ -132,3 +132,8 @@ nul
 *Zone.Identifier
 # Worktrees do Claude Code (análises descartáveis): nunca versionar
 .claude/worktrees/
+
+# Monitor do servidor: NADA dele vai para o GitHub (decisão do dono, 15/10/2026) —
+# código, credenciais e testes ficam só na máquina e no servidor.
+/monitor/
+/testes/monitor/

@@ -555,6 +555,44 @@ def _condicao_do_termo(
     return alvo
 
 
+def buscar_no_estoque(qs: QuerySet, busca: str) -> QuerySet:
+    """A busca da aba Unidades do empreendimento — o estoque, não a carteira.
+
+    Item 78 do dono: a busca de lá era o `icontains` genérico sobre os cinco
+    campos do endereço, e não achava a unidade **do jeito que a própria tela a
+    escreve**: "QD 12 · LT 05" procurava a palavra "QD" em algum campo — e a
+    quadra guarda "12", então nada voltava. O inverso também errava: "5" casava
+    com o lote 5, 15, 25, 50 e com a quadra 105. É o mesmo defeito que a carteira
+    já tinha resolvido (03/10/2026), e a régua tem de ser uma só: o mesmo
+    `termos_da_busca`, o mesmo nível exato sem zero à esquerda.
+
+    Palavra com prefixo (`QD 12`, `LT5`, `Torre A`, `apto 302`) vai ao nível
+    dela. Palavra solta pode ser qualquer nível do endereço — e, se não for
+    número, também o endereço da unidade ou o **comprador**, que é coluna da
+    grade e é por quem a pessoa costuma lembrar da venda.
+
+    O comprador entra por subconsulta (`IN`), e não por junção: a contagem por
+    situação do `resumo/` usa este mesmo filtro, e uma junção com as aquisições
+    contaria duas vezes a unidade revendida.
+    """
+    from .models import ClienteEmpreendimento
+
+    for campo, termo in termos_da_busca(busca or ""):
+        if campo:
+            qs = qs.filter(_nivel_da_unidade(campo, termo))
+            continue
+        alvo = Q()
+        for nivel in ("quadra", "lote", "bloco_torre", "andar", "apto"):
+            alvo |= _nivel_da_unidade(nivel, termo)
+        if not termo.isdigit():
+            alvo |= _casa_palavra("bloco_torre", termo) | _casa_palavra("endereco", termo)
+            alvo |= Q(pk__in=ClienteEmpreendimento.objects.filter(
+                _casa_palavra("cliente__nome_completo", termo),
+            ).values("unidade_id"))
+        qs = qs.filter(alvo)
+    return qs
+
+
 # ─── Montagem das visões ──────────────────────────────────────────────────────
 
 def base_unidades(aquisicoes: QuerySet, contas: QuerySet, hoje: date) -> QuerySet:

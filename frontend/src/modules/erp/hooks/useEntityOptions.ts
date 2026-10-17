@@ -37,11 +37,10 @@ export function useClienteOptions(enabled: boolean): EntityOptionsResult {
   const q = useQuery({
     queryKey: ['erp', 'filter-options', 'clientes'],
     queryFn: async () => {
-      // `/clientes/` passou a ser paginado (a carteira pode ter milhares de
-      // linhas). Este select ainda carrega tudo de uma vez — pedimos a página
-      // máxima para não truncar a lista em silêncio, que seria pior do que
-      // lento: o cliente 200 simplesmente não apareceria no formulário. A
-      // correção de verdade é o select com busca server-side (pendência F2).
+      // **Não use em formulário.** `/clientes/` é paginado e serve no máximo
+      // 300 por página: este hook corta em silêncio o cliente nº 301 (F2). Os
+      // formulários escolhem o cliente pelo `SelectComBusca` da Malha, que
+      // busca no servidor; este só sobrevive para o `FilterBar` do ERP.
       const { data } = await apiClient.get<{ results?: Cliente[] } | Cliente[]>(
         '/clientes/', { params: { page_size: 300 } },
       )

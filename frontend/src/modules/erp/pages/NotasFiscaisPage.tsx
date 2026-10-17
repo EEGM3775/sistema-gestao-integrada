@@ -191,14 +191,14 @@ function NotasServicoTab({ canceladas }: { canceladas: boolean }) {
         }
         else if (win) win.close()
         if (!doc.gateway_online) setMensagem({ tom: 'erro', texto: doc.mensagem })
-        else if (!doc.url_pdf) setMensagem({ tom: 'erro', texto: 'Documento ainda indisponível na NFE.io.' })
+        else if (!doc.url_pdf) setMensagem({ tom: 'erro', texto: 'Documento ainda indisponível na API.' })
       },
-      onError: () => { if (win) win.close(); setMensagem({ tom: 'erro', texto: 'Não foi possível verificar o documento na NFE.io.' }) },
+      onError: () => { if (win) win.close(); setMensagem({ tom: 'erro', texto: 'Não foi possível verificar o documento na API.' }) },
     })
   }
 
   function aoCancelar(nf: NotaFiscalServico) {
-    if (!window.confirm(`Cancelar a NFS-e ${nf.numero ? `nº ${nf.numero}` : `#${nf.id}`} na NFE.io? A ação não pode ser desfeita.`)) return
+    if (!window.confirm(`Cancelar a NFS-e ${nf.numero ? `nº ${nf.numero}` : `#${nf.id}`} na API? A ação não pode ser desfeita.`)) return
     cancelar.mutate(nf.id, {
       onSuccess: r => setMensagem({ tom: 'ok', texto: r.message }),
       onError: () => setMensagem({ tom: 'erro', texto: 'Não foi possível cancelar a nota agora.' }),
@@ -252,7 +252,7 @@ function NotasServicoTab({ canceladas }: { canceladas: boolean }) {
         const nf = row.original
         // "Erro" vira botão → popup com todos os códigos/mensagens da NFE.io.
         return nf.status === 'ERRO'
-          ? <BotaoErroGateway dados={nf.dados_retorno_api} titulo="Erro na emissão da NFS-e (NFE.io)" />
+          ? <BotaoErroGateway dados={nf.dados_retorno_api} titulo="Erro na emissão da NFS-e (API)" />
           : <StatusNfeBadge status={nf.status} />
       },
     },
