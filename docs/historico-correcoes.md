@@ -37,9 +37,9 @@ diálogos do módulo, que usam o mesmo componente.
 ### D304 — a janela do Estoque não acompanhava a área de trabalho · ✅ corrigido 17/10/2026
 
 Item 95 do dono. O D302 deu altura mínima à caixa, mas ela continuava ancorada no topo e do tamanho do
-conteúdo e, pior, ficava presa ao contêiner da tela (posicionava relativo a ele, não à janela). **Correção:** `Modal` e `Drawer` do SIL vão ao `body` por portal; o diálogo largo ocupa a altura da tela (94vh) —
-cabeçalho e botões presos, o miolo rola — e a centrar e nunca passar da tela nos estreitos; vale para
-todos os diálogos do módulo (operação, gestão, pessoas).
+conteúdo e, pior, ficava presa ao contêiner da tela (posicionava relativo a ele, não à janela). **Correção:** `Modal` e `Drawer` do SIL vão ao `body` por portal. Tamanho intermediário, a pedido do dono, entre
+tela cheia e o do Orçamento/Planejamento: o largo tem 1000 px e altura mínima de 70% da tela, o estreito
+660 px; quem rola é o fundo. Vale para todos os diálogos do módulo (operação, gestão, pessoas).
 
 ### D305 — a semana cobrava 100% de atividade longa sem promessa · ✅ corrigido 17/10/2026
 
@@ -48,10 +48,14 @@ saíam" se não fechassem na semana. **Correção:** `andamento_dos_itens` usa a
 do plano (CPM) quando não há promessa; atividade que termina na semana, atrasada ou sem datas segue
 devendo 100%. O PPC continua binário.
 
-### D306 — a Segurança não mostrava as ocorrências na tela inicial · ✅ corrigido 17/10/2026
+### D306 — Segurança e Qualidade diziam "nada parado" com ocorrência em aberto · ✅ corrigido 17/10/2026
 
-Item 96 do dono. A vista "Hoje" tinha a fila e os indicadores, mas nenhuma ocorrência. **Correção:**
-cartão "Ocorrências recentes" (5 últimas, com tipo, estado e CAT pendente) e "Ver todas".
+Item 96 do dono. A fila do posto só mostra o que está **parado**: a ocorrência com investigação aberta e
+o defeito com plano saem dela, e a tela inicial dizia "nada esperando decisão" enquanto havia
+ocorrência correndo. **Correção:** `FilaDeDecisao` ganhou `emAberto` — dentro da própria caixa da fila,
+a Segurança lista as ocorrências abertas/em investigação e a Qualidade os defeitos abertos/em
+tratamento (`EmAbertoNoPosto.tsx`); havendo algum, a lista toma o lugar do "nada parado". Cada posto
+com a sua.
 
 ### D307 — "Apagar a demanda" usava o `confirm` do navegador · ✅ corrigido 17/10/2026
 

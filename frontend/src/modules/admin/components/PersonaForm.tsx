@@ -131,7 +131,7 @@ const PersonaForm: React.FC<Props> = ({ open, onClose, onSave, initialData, head
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 p-3">
                         {mod.permissoes.map(perm => (
                           <label key={perm.id} className="flex items-center gap-2 cursor-pointer py-0.5"
-                            title={perm.code}>
+                            title={perm.nome}>
                             <input type="checkbox" checked={selected.has(perm.id)}
                               onChange={() => toggle(perm.id)}
                               style={{ accentColor: 'var(--color-brand)', width: 15, height: 15 }} />

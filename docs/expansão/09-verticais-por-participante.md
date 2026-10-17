@@ -39,6 +39,46 @@ O cliente-âncora. Tudo de [03-mapa-de-modulos.md](03-mapa-de-modulos.md) é a p
 **Rede:** contratos e boletins de medição espelhados com a construtora-tenant; reputação portátil
 ([04](04-rede-e-marketplaces.md) §2.3). Menor delta de produto — quase tudo é reuso.
 
+#### Contratar o serviço pelo Suprimentos a partir do contrato de medição
+
+*(Item 90 do dono, 17/10/2026 — avaliado como útil e deixado para esta edição.)*
+
+**A dor.** Hoje o contrato de medição do PDCA, do lado do custo, só **aponta** para um pedido de serviço
+que já existe no Suprimentos (`ContratoObra.pedido_scm`; o formulário lista os pedidos do centro de custo
+da obra). Quem monta o contrato primeiro — o caso comum: o engenheiro sabe o escopo e as quantidades —
+precisa sair, abrir a demanda no Suprimentos, cotar, gerar o pedido e voltar para ligar. O escopo é
+digitado duas vezes e o vínculo depende de alguém lembrar.
+
+**O desenho.** O contrato **pede** o serviço ao Suprimentos, e o resto do fluxo já existe:
+
+1. **Botão "Pedir ao Suprimentos"** no contrato em rascunho, lado do custo, sem `pedido_scm`. Pede
+   `pdca.contrato.edit` + `scm.demanda.edit` (a mesma que o PDCA já usa ao gerar demanda de material).
+2. **Cria a `Demanda` de serviço** (`moduloscm`) no centro de custo da obra, com um `ItemDemanda` por
+   `ItemContrato`: `descricao_servico` = descrição do item, quantidade e unidade do contrato, sem
+   `produto`. Origem gravada na demanda (o contrato que pediu).
+3. **O contrato guarda a demanda** (FK nova `ContratoObra.demanda_scm`, nulo; `on_delete=SET_NULL`).
+   Enquanto ela anda, a ficha do contrato mostra o estado — em cotação, propostas, pedido gerado — com o
+   link para o Suprimentos.
+4. **Pedido gerado fecha o laço sozinho**: quando o pedido nasce de uma demanda que tem contrato ligado
+   (adjudicação ou compra direta), o `pedido_scm` do contrato é preenchido no mesmo gesto e o fornecedor
+   vencedor vira o do contrato se ainda estiver vazio. A medição passa a medir contra o pedido
+   (pedido × medido × saldo, que já existe).
+5. **Escrita cruzada com aviso** (regra do `CLAUDE.md`): criar a demanda avisa quem compra
+   (`avisar_quem_pode(permissao="scm.demanda.edit")`); preencher o pedido no contrato avisa quem gere o
+   contrato (`pdca.contrato.edit`). Demanda apagada/cancelada solta o vínculo e avisa o contrato.
+6. **Travas:** só lado do custo (o da receita é recusado, como já é o `pedido_scm`); uma demanda por
+   contrato; contrato vigente não troca de pedido por aqui (é aditivo).
+
+**Onde a edição Empreiteiro entra.** Com o prestador na rede, a demanda de serviço vira **RFQ de serviço**
+para os prestadores convidados ([moduloscm na expansão](modulos/moduloscm.md) — o motor
+`Demanda → Proposta` é um só): o prestador responde pela própria edição, a proposta vencedora gera o
+pedido, e o contrato de medição nasce **espelhado** no tenant dele como contrato de serviço (tabela de
+espelhos abaixo). Sem a edição, o fluxo dos passos 1–6 já funciona com fornecedor cadastrado.
+
+**Testes que fecham.** Demanda criada com as linhas do contrato; pedido adjudicado preenche
+`pedido_scm`; contrato de receita recusado; segunda demanda para o mesmo contrato recusada; avisos dos
+dois lados; RLS (demanda e contrato no mesmo tenant).
+
 ### Edição Loja de materiais / Distribuidor
 
 | Dia a dia dele | Módulo que atende |

@@ -98,6 +98,11 @@ export const restricoes = {
     })
     return lista<Restricao>(data)
   },
+  /** Uma trava, como está agora — para conferir antes de destravar. */
+  async obter(id: number): Promise<Restricao> {
+    const { data } = await apiClient.get(`/pdca/restricoes/${id}/`)
+    return data
+  },
   /** Abertas e resolvidas de uma atividade: a resolvida fica na lista, com a
    *  nota, e pode voltar a ser aberta. */
   async daAtividade(atividadeId: number): Promise<Restricao[]> {

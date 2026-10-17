@@ -17,7 +17,7 @@ import type { Consequencia, FaixaDaFila, FilaDoDia, LinhaDaFila } from '../types
  *  um "12 pendências" que mistura uma comunicação com prazo em lei e um defeito
  *  de pintura. */
 export function FilaDeDecisao({
-  fila, obraId, titulo = 'O que exige a sua decisão', vazio, noPosto,
+  fila, obraId, titulo = 'O que exige a sua decisão', vazio, noPosto, emAberto,
 }: {
   fila: FilaDoDia
   obraId: number
@@ -27,6 +27,11 @@ export function FilaDeDecisao({
   /** Dentro do posto a faixa não tem "Resolver": ela já está onde se resolve,
    *  e a linha abre o documento. */
   noPosto?: boolean
+  /** O que o posto tem **em aberto** e que já saiu da fila por ter dono (a
+   *  ocorrência em investigação, o defeito com plano). Aparece dentro da caixa
+   *  da fila e, havendo, toma o lugar do "nada parado" — achado do dono,
+   *  17/10/2026: a frase fazia a ocorrência aberta parecer inexistente. */
+  emAberto?: ReactNode
 }) {
   const porDegrau = useMemo(() => {
     return DEGRAUS
@@ -62,7 +67,7 @@ export function FilaDeDecisao({
         </div>
       )}
 
-      {fila.total === 0 ? (
+      {fila.total === 0 && emAberto ? null : fila.total === 0 ? (
         <Empty>
           {vazio ?? (
             <>
@@ -103,6 +108,8 @@ export function FilaDeDecisao({
           ))}
         </div>
       )}
+
+      {emAberto && <div style={{ marginTop: fila.total > 0 ? 16 : 0 }}>{emAberto}</div>}
     </section>
   )
 }

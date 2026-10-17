@@ -4,7 +4,7 @@ import { AlertTriangle, BookOpen, ClipboardCheck, RefreshCcw } from 'lucide-reac
 import { Card, Empty, Loading } from '@/components/malha'
 import { useAuth } from '@/hooks/useAuth'
 import { usePdca } from '../contexto'
-import { usePostoDaQualidade } from '../hooks'
+import { useNcs, usePostoDaQualidade } from '../hooks'
 import { BibliotecaDeModelos } from '../components/BibliotecaDeModelos'
 import { DocumentoDaNc } from '../components/DocumentoDaNc'
 import { FichaAplicada } from '../components/FichaAplicada'
@@ -12,6 +12,7 @@ import { FilaDeDecisao } from '../components/FilaDeDecisao'
 import { FormularioDeNc } from '../components/FormularioDeNc'
 import { ListaDeFichas } from '../components/ListaDeFichas'
 import { ListaDeNcs } from '../components/ListaDeNcs'
+import { NcsEmAberto, ncEmAberto } from '../components/EmAbertoNoPosto'
 import { PainelDeConformidade } from '../components/PainelDeConformidade'
 import { SemPermissaoAviso } from '../components/SemPermissaoAviso'
 import { VistasDoPosto, type VistaDoPosto } from '../components/VistasDoPosto'
@@ -59,6 +60,8 @@ export default function QualidadePage() {
   const podeVerNc = hasPermission('pdca.nc.view')
   const podeAbrirNc = hasPermission('pdca.nc.abrir')
   const podeAplicar = hasPermission('pdca.verificacao.aplicar')
+  const ncs = useNcs(obraId, '', podeVerNc)
+  const ncsAbertas = (ncs.data ?? []).filter(ncEmAberto)
 
   /** Uma escrita só no endereço: vista e documento saem juntos, senão duas
    *  chamadas seguidas partiriam do mesmo `params` e a segunda desfaria a
@@ -108,6 +111,13 @@ export default function QualidadePage() {
                 obraId={obraId}
                 titulo="O laço aberto"
                 noPosto
+                emAberto={ncsAbertas.length > 0 ? (
+                  <NcsEmAberto
+                    itens={ncsAbertas}
+                    aoAbrir={(id) => ir('defeitos', { nc: id })}
+                    aoVerTodas={() => ir('defeitos')}
+                  />
+                ) : undefined}
                 vazio={
                   <>
                     <strong style={{ color: 'var(--ink-2)' }}>Nenhum defeito parado nesta obra.</strong>

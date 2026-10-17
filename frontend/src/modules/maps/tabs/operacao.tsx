@@ -155,6 +155,10 @@ export function MapaDaEmpresa({ say, ir, temMaps, foco = null, filtroInicial }: 
       && (!termo || semAcento(`${l.nome} ${l.cidade} ${l.vinculo_rotulo}`).includes(termo)),
     ))
   }, [data, tipo, precisao, busca])
+  // Recorte sem nenhum pin (ex.: "sem coordenada" vindo da fila de decisão) não tem o que
+  // mostrar no mapa: abre sem restrição, em vez de um mapa vazio no meio do Brasil.
+  const todosPontos = useMemo(() => paraPontos(data?.locais ?? []), [data])
+  const pontosNoMapa = pontos.length > 0 ? pontos : todosPontos
 
   if (isLoading) return <Loading o="o mapa da empresa" />
   if (!data) return <Empty>Não foi possível carregar o mapa.</Empty>
@@ -185,7 +189,7 @@ export function MapaDaEmpresa({ say, ir, temMaps, foco = null, filtroInicial }: 
   const mapa = (
     <>
       <Mapa
-        pontos={modo?.tipo === 'posicionar' ? pontos.filter((p) => p.id !== modo.local.local_id) : pontos}
+        pontos={modo?.tipo === 'posicionar' ? pontosNoMapa.filter((p) => p.id !== modo.local.local_id) : pontosNoMapa}
         camadas={sobre.desenho}
         altura={600} satelite={satelite} foco={focoAtual} selecionado={selecionado}
         onSelecionar={(id) => {

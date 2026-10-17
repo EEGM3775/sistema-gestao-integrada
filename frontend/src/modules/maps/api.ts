@@ -61,6 +61,7 @@ export const listarPlanos = () =>
 /** Plano de polígono desenhado na tela — a área vem do desenho, não de um local. */
 export const salvarPlano = (dados: Partial<Pick<PlanoVoo,
   'nome' | 'tipo' | 'gsd_alvo_cm' | 'sobreposicao_frontal_pct' | 'sobreposicao_lateral_pct'
+  | 'angulo_graus' | 'velocidade_ms' | 'autorizacao_protocolo' | 'autorizacao_validade'
 >> & { plano_id?: number; area?: GeoJSON.Polygon }) =>
   dados.plano_id
     ? apiClient.patch<PlanoVoo>(`${base}/planos-voo/${dados.plano_id}/`, dados).then((r) => r.data)

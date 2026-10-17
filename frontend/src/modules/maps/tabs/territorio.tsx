@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import {
-  Calculator, Download, Layers, MapPin, PenLine, Plane, Plus, Route as RouteIcon, Search, ShieldAlert,
+  Calculator, Copy, Download, Layers, MapPin, PenLine, Plus, Route as RouteIcon, Search, ShieldAlert,
   Spline, Timer, Trash2, Undo2, X,
 } from 'lucide-react'
 import { Btn, Card, Empty, KpiTile, Loading, Mapa, Num, Pill, SectionHead } from '@/components/malha'
@@ -10,6 +10,7 @@ import {
   useCalcularPlano, useCriarPlanoDoLocal, useExcluirPlano, useExcluirRota, useLocais, useMapa, useOrtofotos,
   useOtimizarRota, usePlanos, useRotas, useSalvarPlano, useSalvarRota, useStatusMaps, useTracarRota,
 } from '../hooks'
+import { DroneIcon } from '../DroneIcon'
 import type { MemoriaDoVoo, PlanoVoo, Rota, ViolacaoDeJanela } from '../types'
 import { AvisoDeProvedores, FaixaDoMapa, MapaComPainel } from './comum'
 import { ROTULO_TIPO, inputEstilo, motivo, type Say } from './util'
@@ -116,7 +117,19 @@ type Edicao = {
   nome: string
   tipo: string
   gsd_alvo_cm: string
+  sobreposicao_frontal_pct: number
+  sobreposicao_lateral_pct: number
+  angulo_graus: number
+  velocidade_ms: string
+  autorizacao_protocolo: string
+  autorizacao_validade: string
   vertices: LonLat[]
+}
+
+/** Parâmetros de voo com o padrão do backend — o plano novo nasce com eles. */
+const PADRAO_DE_VOO = {
+  sobreposicao_frontal_pct: 80, sobreposicao_lateral_pct: 70, angulo_graus: 0, velocidade_ms: '5',
+  autorizacao_protocolo: '', autorizacao_validade: '',
 }
 
 const TIPOS_DE_VOO: Array<[string, string]> = [
@@ -185,6 +198,12 @@ export function Voos({ say }: { say: Say }) {
       nome: edicao.nome.trim() || 'Plano de voo',
       tipo: edicao.tipo,
       gsd_alvo_cm: edicao.gsd_alvo_cm,
+      sobreposicao_frontal_pct: edicao.sobreposicao_frontal_pct,
+      sobreposicao_lateral_pct: edicao.sobreposicao_lateral_pct,
+      angulo_graus: edicao.angulo_graus,
+      velocidade_ms: edicao.velocidade_ms,
+      autorizacao_protocolo: edicao.autorizacao_protocolo.trim(),
+      autorizacao_validade: edicao.autorizacao_validade || null,
       area: { type: 'Polygon', coordinates: [anel] },
     }, {
       onSuccess: (plano) => {
@@ -201,9 +220,25 @@ export function Voos({ say }: { say: Say }) {
     const anel = p.area.coordinates[0] ?? []
     // O anel GeoJSON repete o primeiro ponto no fim; no desenho, cada vértice é um marcador.
     const vertices = anel.slice(0, anel.length > 1 ? -1 : undefined).map((c) => [c[0], c[1]] as LonLat)
-    setEdicao({ plano_id: p.plano_id, nome: p.nome, tipo: p.tipo, gsd_alvo_cm: p.gsd_alvo_cm, vertices })
+    setEdicao({
+      plano_id: p.plano_id, nome: p.nome, tipo: p.tipo, gsd_alvo_cm: p.gsd_alvo_cm, vertices,
+      sobreposicao_frontal_pct: p.sobreposicao_frontal_pct, sobreposicao_lateral_pct: p.sobreposicao_lateral_pct,
+      angulo_graus: p.angulo_graus, velocidade_ms: String(p.velocidade_ms),
+      autorizacao_protocolo: p.autorizacao_protocolo ?? '', autorizacao_validade: p.autorizacao_validade ?? '',
+    })
     setFoco({ ...centroDe(p.area), zoom: 16, selo: Date.now() })
   }
+
+  /** Cópia do plano (mesma área e parâmetros, sem o protocolo — autorização é por voo). */
+  const duplicar = (p: PlanoVoo) =>
+    salvar.mutate({
+      nome: `${p.nome} (cópia)`.slice(0, 180), tipo: p.tipo, gsd_alvo_cm: p.gsd_alvo_cm, area: p.area,
+      sobreposicao_frontal_pct: p.sobreposicao_frontal_pct, sobreposicao_lateral_pct: p.sobreposicao_lateral_pct,
+      angulo_graus: p.angulo_graus, velocidade_ms: p.velocidade_ms,
+    }, {
+      onSuccess: (novo) => { setSelecionado(novo.plano_id); say('Plano duplicado — calculando o voo…'); rodarCalculo(novo.plano_id) },
+      onError: (e) => say(motivo(e, 'Não foi possível duplicar o plano.')),
+    })
 
   const mapa = (
     <>
@@ -256,6 +291,38 @@ export function Voos({ say }: { say: Say }) {
         <input type="number" min={0.5} max={20} step={0.1} value={edicao.gsd_alvo_cm}
           onChange={(e) => setEdicao({ ...edicao, gsd_alvo_cm: e.target.value })} style={inputEstilo} />
       </label>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <label style={{ display: 'grid', gap: 4, fontSize: 12, color: 'var(--ink-3)' }}>
+          Sobreposição frontal (%)
+          <input type="number" min={50} max={95} value={edicao.sobreposicao_frontal_pct}
+            onChange={(e) => setEdicao({ ...edicao, sobreposicao_frontal_pct: Number(e.target.value) })} style={inputEstilo} />
+        </label>
+        <label style={{ display: 'grid', gap: 4, fontSize: 12, color: 'var(--ink-3)' }}>
+          Sobreposição lateral (%)
+          <input type="number" min={40} max={95} value={edicao.sobreposicao_lateral_pct}
+            onChange={(e) => setEdicao({ ...edicao, sobreposicao_lateral_pct: Number(e.target.value) })} style={inputEstilo} />
+        </label>
+        <label style={{ display: 'grid', gap: 4, fontSize: 12, color: 'var(--ink-3)' }}>
+          Ângulo das linhas (°)
+          <input type="number" min={0} max={359} value={edicao.angulo_graus}
+            onChange={(e) => setEdicao({ ...edicao, angulo_graus: Number(e.target.value) })} style={inputEstilo} />
+        </label>
+        <label style={{ display: 'grid', gap: 4, fontSize: 12, color: 'var(--ink-3)' }}>
+          Velocidade (m/s)
+          <input type="number" min={1} max={20} step={0.5} value={edicao.velocidade_ms}
+            onChange={(e) => setEdicao({ ...edicao, velocidade_ms: e.target.value })} style={inputEstilo} />
+        </label>
+      </div>
+      <label style={{ display: 'grid', gap: 4, fontSize: 12, color: 'var(--ink-3)' }}>
+        Protocolo de autorização (DECEA/SARPAS)
+        <input value={edicao.autorizacao_protocolo} maxLength={60} style={inputEstilo}
+          onChange={(e) => setEdicao({ ...edicao, autorizacao_protocolo: e.target.value })} />
+      </label>
+      <label style={{ display: 'grid', gap: 4, fontSize: 12, color: 'var(--ink-3)' }}>
+        Validade da autorização
+        <input type="date" value={edicao.autorizacao_validade} style={inputEstilo}
+          onChange={(e) => setEdicao({ ...edicao, autorizacao_validade: e.target.value })} />
+      </label>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
         <Btn variant="primary" tam="sm" disabled={edicao.vertices.length < 3 || salvar.isPending} onClick={salvarEdicao}>
           {edicao.plano_id ? 'Salvar área e recalcular' : 'Criar e calcular'}
@@ -272,7 +339,7 @@ export function Voos({ say }: { say: Say }) {
             Planos de voo <span style={{ color: 'var(--ink-3)', fontWeight: 600, fontSize: 12.5 }}>{planos.length}</span>
           </b>
           <Btn tam="sm" variant="primary" title="Desenhar a área do voo no mapa"
-            onClick={() => { setDeLocal(false); setSelecionado(null); setEdicao({ nome: '', tipo: 'grid', gsd_alvo_cm: '2', vertices: [] }) }}>
+            onClick={() => { setDeLocal(false); setSelecionado(null); setEdicao({ nome: '', tipo: 'grid', gsd_alvo_cm: '2', ...PADRAO_DE_VOO, vertices: [] }) }}>
             <PenLine size={13} /> Desenhar
           </Btn>
           <Btn tam="sm" title="Criar a partir de um local cadastrado" onClick={() => setDeLocal((v) => !v)}>
@@ -295,6 +362,7 @@ export function Voos({ say }: { say: Say }) {
             aoCalcular={() => rodarCalculo(p.plano_id)}
             calculando={calcular.isPending}
             aoEditar={() => editarArea(p)}
+            aoDuplicar={() => duplicar(p)}
             aoExcluir={() => {
               if (!window.confirm(`Excluir o plano "${p.nome}"? Isto não pode ser desfeito.`)) return
               excluir.mutate(p.plano_id, {
@@ -312,9 +380,9 @@ export function Voos({ say }: { say: Say }) {
   return <MapaComPainel mapa={mapa} painel={painel} />
 }
 
-function CartaoDoPlano({ plano, aberto, memoria, aoAbrir, aoCalcular, calculando, aoEditar, aoExcluir, say }: {
+function CartaoDoPlano({ plano, aberto, memoria, aoAbrir, aoCalcular, calculando, aoEditar, aoDuplicar, aoExcluir, say }: {
   plano: PlanoVoo; aberto: boolean; memoria?: MemoriaDoVoo
-  aoAbrir: () => void; aoCalcular: () => void; calculando: boolean; aoEditar: () => void; aoExcluir: () => void
+  aoAbrir: () => void; aoCalcular: () => void; calculando: boolean; aoEditar: () => void; aoDuplicar: () => void; aoExcluir: () => void
   say: Say
 }) {
   const semAutorizacao = !plano.autorizacao_protocolo
@@ -322,7 +390,7 @@ function CartaoDoPlano({ plano, aberto, memoria, aoAbrir, aoCalcular, calculando
     <div style={{ borderBottom: '1px solid var(--line-2)', background: aberto ? 'var(--surface-2)' : 'transparent' }}>
       <button type="button" onClick={aoAbrir}
         style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '10px 11px', textAlign: 'left', font: 'inherit', background: 'none', border: 'none', cursor: 'pointer' }}>
-        <Plane size={15} style={{ color: aberto ? 'var(--accent-ink)' : 'var(--ink-3)', flex: 'none' }} />
+        <DroneIcon size={15} style={{ color: aberto ? 'var(--accent-ink)' : 'var(--ink-3)', flex: 'none' }} />
         <span style={{ flex: 1, minWidth: 0 }}>
           <span style={{ display: 'block', fontSize: 13.5, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{plano.nome}</span>
           <span style={{ display: 'block', fontSize: 11.5, color: 'var(--ink-3)' }}>
@@ -353,7 +421,8 @@ function CartaoDoPlano({ plano, aberto, memoria, aoAbrir, aoCalcular, calculando
           )}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             <Btn variant="primary" tam="sm" disabled={calculando} onClick={aoCalcular}><Calculator size={13} /> Calcular</Btn>
-            <Btn tam="sm" onClick={aoEditar}><PenLine size={13} /> Editar área</Btn>
+            <Btn tam="sm" onClick={aoEditar}><PenLine size={13} /> Editar</Btn>
+            <Btn tam="sm" onClick={aoDuplicar} title="Duplicar este plano"><Copy size={13} /> Duplicar</Btn>
             <Btn tam="sm" onClick={aoExcluir} title="Excluir este plano"><Trash2 size={13} /> Excluir</Btn>
           </div>
           {plano.waypoints?.length > 0 && (
@@ -467,7 +536,8 @@ export function Rotas({ say }: { say: Say }) {
     ]
   }, [rota, contexto])
   const camadas: CamadaGeoJSON[] = useMemo(() => (rota?.linha
-    ? [{ id: `rota-${rota.rota_id}`, data: rota.linha, cor: '#3E9C6E', largura: 4, tracejado: rota.procedencia !== 'osrm' }]
+    // O traço vai na chave: ao traçar/otimizar a camada é refeita e o mapa reenquadra.
+    ? [{ id: `rota-${rota.rota_id}-${rota.procedencia}-${rota.distancia_km}-${rota.duracao_s}`, data: rota.linha, cor: '#3E9C6E', largura: 4, tracejado: rota.procedencia !== 'osrm' }]
     : []), [rota])
 
   if (isLoading) return <Loading o="as rotas" />
@@ -681,7 +751,7 @@ function NovaRota({ say, aoCancelar, aoCriar }: { say: Say; aoCancelar: () => vo
 export function TerritorioBloqueado() {
   return (
     <Card style={{ textAlign: 'center', padding: 40 }}>
-      <Plane size={30} style={{ color: 'var(--ink-3)', marginBottom: 12 }} />
+      <DroneIcon size={30} style={{ color: 'var(--ink-3)', marginBottom: 12 }} />
       <h3 style={{ fontFamily: 'var(--display)', fontSize: 18, fontWeight: 700, color: 'var(--ink)', marginBottom: 8 }}>
         Esta aba é do módulo Maps
       </h3>

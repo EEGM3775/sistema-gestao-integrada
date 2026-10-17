@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react'
-import { Lock, Map as MapIcon, Plane, Radar, Route as RouteIcon, Layers } from 'lucide-react'
+import { Lock, Map as MapIcon, Radar, Route as RouteIcon, Layers } from 'lucide-react'
+import { DroneIcon } from '../DroneIcon'
 import { useAuth } from '@/hooks/useAuth'
 import { MapaDaEmpresa, Vizinhanca, type Say } from '../tabs/operacao'
 import { Acervo, Rotas, TerritorioBloqueado, Voos } from '../tabs/territorio'
@@ -25,7 +26,7 @@ interface TabDef { id: TabMaps; label: string; icon: ReactNode; pago: boolean }
 const TABS: TabDef[] = [
   { id: 'mapa', label: 'Mapa da empresa', icon: <MapIcon size={15} />, pago: false },
   { id: 'vizinhanca', label: 'Vizinhança', icon: <Radar size={15} />, pago: false },
-  { id: 'voos', label: 'Planos de voo', icon: <Plane size={15} />, pago: true },
+  { id: 'voos', label: 'Planos de voo', icon: <DroneIcon size={15} />, pago: true },
   { id: 'acervo', label: 'Acervo de voos', icon: <Layers size={15} />, pago: true },
   { id: 'rotas', label: 'Rotas', icon: <RouteIcon size={15} />, pago: true },
 ]

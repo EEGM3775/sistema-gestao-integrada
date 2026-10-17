@@ -4,14 +4,14 @@ import { HardHat, MessagesSquare, Siren } from 'lucide-react'
 import { Btn, Card, Empty, Loading } from '@/components/malha'
 import { useAuth } from '@/hooks/useAuth'
 import { usePdca } from '../contexto'
-import { usePostoDaSeguranca } from '../hooks'
+import { useOcorrencias, usePostoDaSeguranca } from '../hooks'
 import { DocumentoDoDds, ListaDeDds } from '../components/DialogoDeSeguranca'
 import { DocumentoDaOcorrencia } from '../components/DocumentoDaOcorrencia'
 import { FilaDeDecisao } from '../components/FilaDeDecisao'
 import { FormularioDeOcorrencia } from '../components/FormularioDeOcorrencia'
 import { ListaDeOcorrencias } from '../components/ListaDeOcorrencias'
 import { PainelDeSeguranca } from '../components/PainelDeSeguranca'
-import { OcorrenciasRecentes } from '../components/OcorrenciasRecentes'
+import { OcorrenciasEmAberto, ocorrenciaEmAberto } from '../components/EmAbertoNoPosto'
 import { SemPermissaoAviso } from '../components/SemPermissaoAviso'
 import { VistasDoPosto, type VistaDoPosto } from '../components/VistasDoPosto'
 
@@ -51,6 +51,8 @@ export default function SegurancaPage() {
   const podeVer = hasPermission('pdca.ocorrencia.view')
   const podeRegistrar = hasPermission('pdca.ocorrencia.registrar')
   const podeVerDds = hasPermission('pdca.dds.view')
+  const ocorrencias = useOcorrencias(obraId, podeVer)
+  const abertas = (ocorrencias.data ?? []).filter(ocorrenciaEmAberto)
 
   function ir(qual: Vista, doc?: { ocorrencia?: number; dds?: number }) {
     const novo = new URLSearchParams()
@@ -97,6 +99,13 @@ export default function SegurancaPage() {
                   obraId={obraId}
                   titulo="O que pede ação"
                   noPosto
+                  emAberto={abertas.length > 0 ? (
+                    <OcorrenciasEmAberto
+                      itens={abertas}
+                      aoAbrir={(id) => ir('ocorrencias', { ocorrencia: id })}
+                      aoVerTodas={() => ir('ocorrencias')}
+                    />
+                  ) : undefined}
                   vazio={
                     <>
                       <strong style={{ color: 'var(--ink-2)' }}>Nada esperando decisão.</strong>
@@ -110,13 +119,6 @@ export default function SegurancaPage() {
                   <Btn variant="primary" onClick={() => setRegistrando(true)} style={{ alignSelf: 'flex-start' }}>
                     Registrar ocorrência
                   </Btn>
-                )}
-                {podeVer && (
-                  <OcorrenciasRecentes
-                    obraId={obraId}
-                    aoAbrir={(id) => ir('ocorrencias', { ocorrencia: id })}
-                    aoVerTodas={() => ir('ocorrencias')}
-                  />
                 )}
               </div>
               {dados.indicadores ? (

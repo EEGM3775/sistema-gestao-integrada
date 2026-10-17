@@ -1,6 +1,9 @@
 import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Btn, Modal } from '@/components/malha'
 import { parseApiErrors } from '@/utils/formErrors'
+import { restricoes } from '../api/pdcaApi'
+import { AndamentoDaCompra } from '../components/AndamentoDaCompra'
 import type { TravaDaFrente } from '../types'
 
 /** Destravar no canteiro — **uma decisão, uma tela**.
@@ -19,6 +22,15 @@ export function DialogoDeDestrave({
 }) {
   const [nota, setNota] = useState('')
   const [erro, setErro] = useState<string | null>(null)
+  // A conferência no sistema: a trava ainda está aberta? a compra que ela abriu chegou?
+  const conferencia = useQuery({
+    queryKey: ['pdca', 'restricao', trava.restricao, 'conferencia'],
+    queryFn: () => restricoes.obter(trava.restricao),
+    staleTime: 0, retry: false,
+  })
+  const atual = conferencia.data
+  const jaResolvida = !!atual && atual.status !== 'aberta'
+  const compra = atual?.compra ?? null
 
   async function confirmar() {
     setErro(null)
@@ -38,7 +50,7 @@ export function DialogoDeDestrave({
       rodape={
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <Btn onClick={aoFechar}>Cancelar</Btn>
-          <Btn variant="primary" onClick={confirmar} disabled={salvando}>
+          <Btn variant="primary" onClick={confirmar} disabled={salvando || jaResolvida}>
             {salvando ? 'Destravando…' : 'Destravar'}
           </Btn>
         </div>
@@ -65,6 +77,44 @@ export function DialogoDeDestrave({
           }}
         >
           {trava.descricao}
+        </div>
+
+        <div
+          role="status"
+          style={{
+            fontSize: 12.5, lineHeight: 1.5, borderRadius: 'var(--r-sm)', padding: '10px 12px',
+            border: '1px solid var(--line)', background: 'var(--surface-2)', color: 'var(--ink-2)',
+            display: 'flex', flexDirection: 'column', gap: 6,
+          }}
+        >
+          <b style={{ color: 'var(--ink)' }}>Conferência no sistema</b>
+          {conferencia.isPending && <span>Conferindo a trava e a compra…</span>}
+          {conferencia.isError && (
+            <span>Não consegui conferir agora. A nota abaixo é o registro de como foi resolvida.</span>
+          )}
+          {jaResolvida && (
+            <span style={{ color: 'var(--danger-ink)' }}>
+              Esta trava já não está aberta ({atual?.status_rotulo?.toLowerCase()}
+              {atual?.removida_por ? ` por ${atual.removida_por}` : ''}). Nada a destravar.
+            </span>
+          )}
+          {atual && !jaResolvida && !compra && (
+            <span>
+              {trava.demanda_scm
+                ? `Há a demanda #${trava.demanda_scm} no Suprimentos, sem andamento registrado ainda.`
+                : 'Sem compra ligada a esta trava — nada no Suprimentos confirma; vale a sua palavra e a nota.'}
+            </span>
+          )}
+          {compra && (
+            <>
+              <AndamentoDaCompra compra={compra} />
+              <span style={{ color: compra.sugerir_destravar ? 'var(--good-ink)' : 'var(--warn-ink, var(--ink-2))' }}>
+                {compra.sugerir_destravar
+                  ? 'O Suprimentos registra o material recebido — pode destravar.'
+                  : 'O Suprimentos ainda não registra o recebimento completo. Se o material chegou, avise o escritório para dar a entrada.'}
+              </span>
+            </>
+          )}
         </div>
 
         <textarea

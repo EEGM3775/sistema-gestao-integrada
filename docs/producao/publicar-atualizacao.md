@@ -30,6 +30,18 @@ git archive 0x70726f64 backend iam frontend payment funcoesemail funcoesautoriza
   | ssh -i ~/.ssh/gmaxis root@75.119.143.64 'tar -x -C /opt/sgi'
 ```
 
+**Publicar o que ainda não tem commit** (a pasta de trabalho): nunca `tar` direto das pastas — ele leva o
+que o git ignora, inclusive `infra/keys/*.pem` (as chaves de dev **sobrescrevem as do servidor** e toda a
+API cai em 401) e os `.env` de dev (entram na imagem do ERP). Mande só o que o git enxerga:
+
+```bash
+git ls-files -co --exclude-standard -- backend iam frontend payment funcoesemail funcoesautorizacao \
+  funcoesODM infra deploy/compose/base.yml deploy/compose/vps.yml deploy/env/vps.env.example \
+  THIRD-PARTY-LICENSES.md | while read f; do [ -f "$f" ] && echo "$f"; done > /tmp/envio.txt
+grep -E '\.pem$|(^|/)\.env$' /tmp/envio.txt && echo 'PARE: segredo na lista'
+tar -cz -T /tmp/envio.txt | ssh -i ~/.ssh/gmaxis root@75.119.143.64 'tar -x -C /opt/sgi'
+```
+
 Isso **não** leva testes, ambiente dev, docs, ferramentas nem `vps.env` (ver
 [README.md](README.md#o-que-não-sobe-para-o-servidor-decisão-do-dono-12102026)). O `tar` só acrescenta
 e sobrescreve; arquivo removido no repositório continua no servidor, sem efeito.

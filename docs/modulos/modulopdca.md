@@ -827,7 +827,9 @@ que é o irmão do teto de pontos da curva S.
 
 Importação de cronograma de MS Project/P6 · nivelamento de recursos · simulação Monte Carlo de prazo ·
 4D (cronograma × modelo, sobre a Prancheta) · benchmark de produtividade entre empresas (Esfera de
-Rede) · previsão de atraso por IA sobre PPC e causas.
+Rede) · previsão de atraso por IA sobre PPC e causas · **pedir o serviço ao Suprimentos a partir do
+contrato de medição** (demanda de serviço com as linhas do contrato, pedido volta ligado sozinho —
+desenho em [expansão/09 §Edição Empreiteiro](../expansão/09-verticais-por-participante.md#contratar-o-serviço-pelo-suprimentos-a-partir-do-contrato-de-medição)).
 
 ## 11. Decisões de rumo (tomadas pelo dono do produto)
 

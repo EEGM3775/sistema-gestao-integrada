@@ -45,13 +45,14 @@ export function Empty({ children }: { children: ReactNode }) { return <Card styl
 export const th = (_h: string, i: number, right?: (n: number) => boolean): CSSProperties => ({ ...CAPS, fontSize: 10.5, textAlign: right?.(i) ? 'right' : 'left', padding: '11px 16px', borderBottom: '1px solid var(--line)', background: 'var(--surface-2)' })
 
 export function Modal({ title, onClose, children, footer, wide }: { title: string; onClose: () => void; children: ReactNode; footer: ReactNode; wide?: boolean }) {
-  // A janela acompanha a área de trabalho: o diálogo largo ocupa a altura da tela (94vh), cabeçalho e
-  // botões ficam presos e quem rola é o miolo; o estreito centra e nunca passa da tela.
-  return createPortal(<div onMouseDown={e => { if (e.target === e.currentTarget) onClose() }} style={{ position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(6,14,26,.5)', backdropFilter: 'blur(3px)', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '3vh 16px', overflow: 'hidden' }}>
-    <div style={{ width: '100%', maxWidth: wide ? 1180 : 760, minWidth: 0, maxHeight: '94vh', ...(wide ? { height: '94vh' } : null), display: 'flex', flexDirection: 'column', background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 'var(--r-lg)', boxShadow: 'var(--shadow-lg)' }}>
+  // Portal no `body`: a janela cobre a tela inteira, não o contêiner da aba (D304). Tamanho
+  // intermediário (dono, 17/10/2026) entre o de tela cheia e o do Orçamento/Planejamento: o largo tem
+  // 1000 px e altura mínima de 70% da tela; o estreito, 660 px. Quem rola é o fundo — o miolo não
+  // corta a lista de um seletor com busca, que abre para baixo.
+  return createPortal(<div onMouseDown={e => { if (e.target === e.currentTarget) onClose() }} style={{ position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(6,14,26,.5)', backdropFilter: 'blur(3px)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: '5vh 16px', overflowY: 'auto' }}>
+    <div style={{ width: '100%', maxWidth: wide ? 1000 : 660, minWidth: 0, minHeight: wide ? '70vh' : undefined, display: 'flex', flexDirection: 'column', background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 'var(--r-lg)', boxShadow: 'var(--shadow-lg)' }}>
       <div style={{ flex: 'none', padding: '15px 20px', borderBottom: '1px solid var(--line)', fontFamily: 'var(--display)', fontSize: 16, fontWeight: 700, color: 'var(--ink)' }}>{title}</div>
-      {/* minHeight: a lista de um seletor com busca abre para baixo e precisa de chão. */}
-      <div style={{ flex: '1 1 auto', minHeight: wide ? 0 : 'min(52vh, 460px)', overflowY: 'auto', padding: 20 }}>{children}</div>
+      <div style={{ flex: '1 1 auto', minHeight: wide ? 0 : 'min(40vh, 360px)', padding: 20 }}>{children}</div>
       <div style={{ flex: 'none', display: 'flex', justifyContent: 'flex-end', gap: 9, flexWrap: 'wrap', padding: '14px 20px', borderTop: '1px solid var(--line)' }}>{footer}</div>
     </div>
   </div>, document.body)
